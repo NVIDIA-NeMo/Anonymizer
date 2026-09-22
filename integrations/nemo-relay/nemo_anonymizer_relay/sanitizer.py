@@ -8,14 +8,17 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import re
+import threading
 from collections import OrderedDict
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Protocol
 
 from nemo_anonymizer_relay.backend import RedactionSpan
 from nemo_anonymizer_relay.projection import (
-    ExportTextLeaf,
-    collect_export_text_leaves,
-    replace_export_text_leaves,
+    TextLeaf,
+    collect_text_leaves,
+    omit_unsupported_media,
+    replace_text_leaves,
 )
 
 Json = Any
@@ -87,18 +90,30 @@ class ObservationSanitizer:
         self._cache_entries = cache_entries
         self._replacement_template = replacement_template
         self._cache: OrderedDict[bytes, tuple[RedactionSpan, ...]] = OrderedDict()
+        self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="nemo-anonymizer")
+        self._detector_state_lock = threading.Lock()
+        self._detector_active = False
+        self._closed = False
         # The stable Anonymizer/Data Designer API does not document concurrent
         # calls on one pipeline. Serialize calls until that contract exists.
         self._lock = asyncio.Lock()
 
-    async def sanitize_export(self, value: Json) -> Json:
-        """Sanitize the protected exporter projection, including unusual keys."""
+    async def sanitize(self, value: Json, *, preserve_protocol_values: bool = False) -> Json:
+        """Sanitize one copied observability value without mutating its source."""
+
+        if self._closed:
+            raise RuntimeError("observation sanitizer is closed")
 
         # Credentials are not useful model input. Remove recognizable tokens
         # and values under credential-bearing keys before the detector or
         # evaluator can receive them.
-        protected = _redact_secrets(value)
-        leaves = collect_export_text_leaves(protected, max_leaves=self._max_leaves, max_bytes=self._max_bytes)
+        protected = _redact_secrets(omit_unsupported_media(value))
+        leaves = collect_text_leaves(
+            protected,
+            max_leaves=self._max_leaves,
+            max_bytes=self._max_bytes,
+            preserve_protocol_values=preserve_protocol_values,
+        )
         if not leaves:
             return protected
         decisions = await self._resolve_decisions(leaves)
@@ -109,9 +124,9 @@ class ObservationSanitizer:
         # probabilistic detector, but secret-shaped strings must never gain the
         # same exemption. Apply the deterministic pass to the whole projected
         # payload after entity replacements.
-        return _redact_secrets(replace_export_text_leaves(protected, replacements))
+        return _redact_secrets(replace_text_leaves(protected, replacements))
 
-    async def _resolve_decisions(self, leaves: list[ExportTextLeaf]) -> dict[bytes, tuple[RedactionSpan, ...]]:
+    async def _resolve_decisions(self, leaves: list[TextLeaf]) -> dict[bytes, tuple[RedactionSpan, ...]]:
         pending: OrderedDict[bytes, str] = OrderedDict()
         decisions: dict[bytes, tuple[RedactionSpan, ...]] = {}
         for leaf in leaves:
@@ -133,7 +148,24 @@ class ObservationSanitizer:
                 else:
                     decisions[key] = cached
             if unresolved:
-                spans = await asyncio.to_thread(self._detector.detect, list(unresolved.values()))
+                if not self._reserve_detector():
+                    raise RuntimeError("Anonymizer detector is still completing prior work")
+                try:
+                    future = asyncio.get_running_loop().run_in_executor(
+                        self._executor,
+                        self._detect_reserved,
+                        list(unresolved.values()),
+                    )
+                    future.add_done_callback(_consume_future_exception)
+                except BaseException:
+                    self._release_detector()
+                    raise
+                # A Relay timeout cancels this coroutine but cannot stop a
+                # synchronous model call. Shield the executor future so the
+                # reservation remains held until that call actually exits;
+                # later events fail closed instead of filling an unbounded
+                # executor queue.
+                spans = await asyncio.shield(future)
                 if len(spans) != len(unresolved):
                     raise RuntimeError("Anonymizer returned the wrong number of decisions")
                 for key, text_spans in zip(unresolved, spans, strict=True):
@@ -149,6 +181,30 @@ class ObservationSanitizer:
             for key in pending:
                 decisions.setdefault(key, self._cache_get(key) or ())
         return decisions
+
+    def close(self) -> None:
+        self._closed = True
+        self._executor.shutdown(wait=False, cancel_futures=True)
+
+    def _reserve_detector(self) -> bool:
+        with self._detector_state_lock:
+            if self._detector_active:
+                return False
+            self._detector_active = True
+            return True
+
+    def _release_detector(self) -> None:
+        with self._detector_state_lock:
+            self._detector_active = False
+
+    def _detect_reserved(self, texts: list[str]) -> list[list[RedactionSpan]]:
+        try:
+            try:
+                return self._detector.detect(texts)
+            except Exception:
+                raise RuntimeError("Anonymizer detector failed") from None
+        finally:
+            self._release_detector()
 
     def _apply(self, text: str, spans: tuple[RedactionSpan, ...]) -> str:
         redacted = text
@@ -184,6 +240,13 @@ class ObservationSanitizer:
 
 def _text_key(text: str) -> bytes:
     return hashlib.sha256(text.encode("utf-8")).digest()
+
+
+def _consume_future_exception(future: asyncio.Future[Any]) -> None:
+    """Prevent a post-timeout executor failure from becoming an unhandled log."""
+
+    if not future.cancelled():
+        future.exception()
 
 
 def _redact_secret_string(value: str) -> str:

@@ -88,9 +88,6 @@ jobs:
       - name: Install worker test environment
         run: uv sync --project integrations/nemo-relay --group test --locked
 
-      - name: Install exporter service environment
-        run: uv sync --project integrations/nemo-relay/service --group dev --locked
-
       - name: Run integration tests
         run: uv run --project integrations/nemo-relay --group test --locked pytest -q integrations/nemo-relay/tests
 
@@ -100,19 +97,15 @@ jobs:
           uv run --project integrations/nemo-relay --group test --locked ruff format --check integrations/nemo-relay
 
       - name: Run integration type checks
-        run: uv run --project integrations/nemo-relay/service --group dev --locked ty check --project integrations/nemo-relay
+        run: uv run --project integrations/nemo-relay --group test --locked ty check --project integrations/nemo-relay
 
       - name: Check integration locks
-        run: |
-          uv lock --project integrations/nemo-relay --check
-          uv lock --project integrations/nemo-relay/service --check
+        run: uv lock --project integrations/nemo-relay --check
 
-      - name: Verify standalone worker bundle
+      - name: Verify future release bundle layout
         run: |
           uv run --project integrations/nemo-relay --group test --locked \
             python integrations/nemo-relay/scripts/package_bundle.py \
             --output "${RUNNER_TEMP}/nemo-anonymizer-relay-bundle"
-          UV_PROJECT_ENVIRONMENT="${RUNNER_TEMP}/nemo-anonymizer-relay-worker" \
-            uv sync --project "${RUNNER_TEMP}/nemo-anonymizer-relay-bundle" --locked
-          "${RUNNER_TEMP}/nemo-anonymizer-relay-worker/bin/python" -c \
-            'from nemo_anonymizer_relay.worker import NemoAnonymizerWorker; assert NemoAnonymizerWorker.plugin_id == "nvidia.nemo_anonymizer"'
+          uv build --project "${RUNNER_TEMP}/nemo-anonymizer-relay-bundle" \
+            --wheel --out-dir "${RUNNER_TEMP}/nemo-anonymizer-relay-dist"

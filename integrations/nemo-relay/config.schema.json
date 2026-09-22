@@ -1,11 +1,10 @@
 {
   "$comment": "SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. SPDX-License-Identifier: Apache-2.0",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "NeMo Anonymizer protected exporter connector",
-  "description": "Forwards copied NeMo Relay events to a separately managed local NeMo Anonymizer exporter.",
+  "title": "NeMo Anonymizer observability sanitizer worker",
+  "description": "Sanitizes copied NeMo Relay observability values before normal subscriber and exporter fan-out.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["endpoint"],
   "properties": {
     "version": {
       "description": "Integration configuration schema version.",
@@ -13,28 +12,99 @@
       "const": 1,
       "default": 1
     },
-    "endpoint": {
-      "description": "Private Unix socket endpoint for the exporter service.",
+    "priority": {
+      "description": "Relay middleware priority. Lower values run first.",
+      "type": "integer",
+      "minimum": -2147483648,
+      "maximum": 2147483647,
+      "default": 100
+    },
+    "max_text_leaves": {
+      "description": "Maximum number of text leaves inspected in one event.",
+      "type": "integer",
+      "minimum": 1,
+      "default": 8192
+    },
+    "max_text_bytes": {
+      "description": "Maximum UTF-8 text bytes inspected in one event.",
+      "type": "integer",
+      "minimum": 1,
+      "default": 4194304
+    },
+    "cache_entries": {
+      "description": "Maximum number of positive span decisions cached without retaining source text.",
+      "type": "integer",
+      "minimum": 1,
+      "default": 16384
+    },
+    "detector_endpoint": {
+      "description": "OpenAI-compatible endpoint for the Anonymizer entity detector.",
       "type": "string",
-      "minLength": 1
+      "minLength": 1,
+      "default": "http://127.0.0.1:8001/v1"
     },
-    "enqueue_timeout_ms": {
-      "description": "Maximum time to wait for the exporter service to accept one copied event.",
+    "detector_model": {
+      "type": "string",
+      "minLength": 1,
+      "default": "fastino/gliner2-privacy-filter-PII-multi"
+    },
+    "detector_api_key_env": {
+      "description": "Environment name installed through secret_env, or EMPTY for a local unauthenticated detector.",
+      "type": "string",
+      "minLength": 1,
+      "default": "EMPTY"
+    },
+    "evaluator_endpoint": {
+      "description": "OpenAI-compatible endpoint for validation and augmentation.",
+      "type": "string",
+      "minLength": 1,
+      "default": "https://integrate.api.nvidia.com/v1"
+    },
+    "evaluator_model": {
+      "type": "string",
+      "minLength": 1,
+      "default": "nvidia/nemotron-3.5-lightning-30b-a3b"
+    },
+    "evaluator_api_key_env": {
+      "description": "Environment name containing the evaluator credential.",
+      "type": "string",
+      "minLength": 1,
+      "default": "NVIDIA_API_KEY"
+    },
+    "threshold": {
+      "description": "GLiNER candidate threshold.",
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1,
+      "default": 0.3
+    },
+    "provider_timeout_seconds": {
+      "description": "Timeout passed to Anonymizer provider calls. Relay separately limits each worker callback to 30 seconds.",
       "type": "integer",
       "minimum": 1,
-      "default": 1000
+      "maximum": 3600,
+      "default": 300
     },
-    "max_event_bytes": {
-      "description": "Maximum encoded size of one copied Relay event.",
-      "type": "integer",
-      "minimum": 1,
-      "default": 2097152
+    "data_summary": {
+      "description": "Optional context supplied to Anonymizer detection.",
+      "type": ["string", "null"],
+      "maxLength": 16384,
+      "default": "Copied AI-agent observability containing prompts, model responses, and tool traffic."
     },
-    "max_frame_bytes": {
-      "description": "Maximum encoded size of one worker-to-exporter transport frame.",
-      "type": "integer",
-      "minimum": 2,
-      "default": 8388608
+    "secret_env": {
+      "description": "Literal environment values made available only inside the managed worker. Relay does not resolve secret references; protect the plugin configuration file.",
+      "type": "object",
+      "default": {},
+      "maxProperties": 32,
+      "propertyNames": {
+        "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,127}$"
+      },
+      "additionalProperties": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 65536,
+        "writeOnly": true
+      }
     }
   }
 }

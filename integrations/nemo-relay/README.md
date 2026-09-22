@@ -1,174 +1,122 @@
-<!--
-SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-SPDX-License-Identifier: Apache-2.0
--->
+<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
 
 # NeMo Anonymizer integration for NeMo Relay
 
-This integration sanitizes copies of NeMo Relay observability events before
-writing them to a protected destination. It does not inspect or change the LLM
-requests, LLM responses, or tool traffic used by the application.
+This integration runs NeMo Anonymizer inside one Relay-managed Python worker.
+It sanitizes Relay's copied observability values before Relay sends the event
+to its normal subscribers. Provider requests, tool calls, and application
+results remain unchanged.
 
 ```text
-application traffic ───────────────► provider and tools (unchanged)
+application traffic ─────────────────────────────► provider/tools (unchanged)
         │
-        └─ Relay event copy ─► thin subscriber worker ─► bounded service queue
-                                                         │
-                                                         └─ Anonymizer ─► protected ATOF JSONL
+        └─ copied observability value
+                    ↓
+           Anonymizer worker sanitizer
+                    ↓ returns protected copy
+                Relay runtime
+                    ↓
+          ATOF / OTLP / Phoenix / custom subscribers
 ```
 
-The process split is deliberate. The Relay-managed worker performs a health
-check and quickly forwards copied events to a separately managed service. The
-service owns the larger Anonymizer environment, batching, sanitization, queue
-lifetime, explicit drain, and destination output. Anonymization therefore stays
-off the application request path and outside Relay's worker callback lifetime.
+The worker does not run a private service, socket, queue, or exporter. Relay
+owns its process and authenticated transport. The integration follows the
+same middleware shape as Rampart: it registers mark, scope-start, scope-end,
+tool request/response, and LLM request/response sanitizers.
 
-Selected raw observability text is sent to both the configured entity detector
-and LLM evaluator. Both endpoints must be inside the deployment's approved data
-boundary. The defaults use a local detector and NVIDIA's hosted evaluator; a
-fully local deployment must also configure a local evaluator. Detection is
-probabilistic and can produce both false positives and false negatives.
+## What it protects
 
-## Protection boundary
-
-Only output written by this integration is protected. Relay subscribers
-configured beside it—including ATOF, OTLP, and Phoenix exporters—continue to
-receive the original unsanitized event copy. Do not enable those destinations
-for data that must pass through Anonymizer first.
-
-The exporter retains trace identifiers and relationships while inspecting
-caller-controlled text in supported Relay event fields. It omits exact provider
-bodies when a normalized LLM annotation is available, removes streaming chunk
-payloads, and emits an envelope-only omission record when projection or
-anonymization fails. It never falls back to exporting the original payload.
-
-This first version uses Anonymizer's full detection pipeline: GLiNER candidate
-detection followed by LLM validation and augmentation. A detector-only profile
-is not part of the initial supported behavior.
-
-| Event content | Behavior |
+| Surface | Behavior |
 |---|---|
-| Relay trace IDs, timing, lifecycle, and known scope flags | Preserved |
-| Normalized LLM requests and responses | Text is inspected; duplicate exact provider bodies are omitted |
-| Tool and custom event JSON | String values and data-shaped keys are inspected |
-| Credentials with known token shapes or secret-bearing keys | Removed before detector or evaluator calls |
-| Streaming chunk payloads | Omitted; the trace receipt is preserved |
-| Recognized media objects, data URLs, and long encoded blobs | Omitted rather than claimed as inspected |
-| Projection or Anonymizer failure | Envelope-only omission record; original payload is never exported |
+| LLM request | Uses Relay's active request codec when available, sanitizes the semantic annotation and exact copied request, then returns a provider-shaped observability copy |
+| LLM response | Sanitizes the copied provider response, then validates the returned shape with Relay's active response codec when available |
+| Tool request and response | Sanitizes copied JSON values and application-defined keys |
+| Marks and ordinary scopes | Sanitizes `data`, `category_profile`, and `metadata` |
+| LLM and tool scopes | Rechecks every mutable field so generic scopes, compatibility fallbacks, and future profile fields cannot bypass the typed sanitizers |
+| Streaming chunk marks | Omits the chunk payload while retaining Relay's trace envelope |
+| Credentials and recognized media | Removes known secret shapes before model calls; replaces media and large encoded bodies rather than claiming inspection |
+| Sanitizer failure or timeout | Relay clears the mutable observability fields before subscriber fan-out |
 
-## Operation
+Relay intentionally keeps event identity immutable. Names, categories, schema
+names, UUIDs, timestamps, lifecycle phases, and parentage are not writable by
+sanitizers and must not contain PII.
 
-Start the exporter service before enabling the Relay worker. The worker refuses
-activation when the service health check fails. The initial integration accepts
-only an owner-only Unix socket in an owner-only directory and therefore targets
-Linux and macOS. TCP and Windows are not supported in this first version.
+Detection uses Anonymizer's full pipeline: GLiNER candidate detection followed
+by LLM validation and augmentation. Both configured endpoints must be inside
+the deployment's approved data boundary. Detection is probabilistic and can
+produce false positives and false negatives.
 
-The service queue is bounded by event count and total bytes. Admission returns
-after an event is placed in memory, before anonymization or destination output
-finishes. Operators must explicitly flush and stop the service during graceful
-shutdown. Relay does not currently own that service lifecycle.
+## Runtime behavior
 
-### Run from a source checkout
+Relay queues copied observability work off the provider and tool execution
+path. Its observability dispatcher then waits for Anonymizer before delivering
+that event to subscribers. `flush_subscribers` therefore covers both
+sanitization and downstream delivery; there is no hidden worker backlog.
 
-Install the worker/test environment and the larger service environment
-separately:
+Each dynamic-worker callback has a 30-second host timeout. Current full
+Anonymizer measurements exceed that budget, so this remains an implementation
+spike. A slow callback does not delay the application call, but it does delay
+the serial observability dispatcher and will eventually produce an event with
+its mutable fields cleared.
 
-```bash
-uv sync --python 3.11 --project integrations/nemo-relay --group test --locked
-uv sync --python 3.11 --project integrations/nemo-relay/service --no-dev --locked
-```
+## Configuration
 
-Start a compatible GLiNER endpoint as described in the
-[self-hosting guide](https://github.com/NVIDIA-NeMo/Anonymizer/blob/main/docs/concepts/self-hosting-gliner.md),
-then start the exporter. Create a private runtime directory first. The
-evaluator credential exists only in the service process:
-
-```bash
-install -d -m 700 "$HOME/.cache/nemo-anonymizer-relay"
-NVIDIA_API_KEY="..." \
-uv run --project integrations/nemo-relay/service --no-dev --locked \
-  python -m nemo_anonymizer_relay.service serve \
-  --endpoint "unix://$HOME/.cache/nemo-anonymizer-relay/exporter.sock" \
-  --output /absolute/path/protected-events.jsonl
-```
-
-Materialize and install the thin Relay worker bundle:
-
-```bash
-uv run --project integrations/nemo-relay --group test --locked \
-  python integrations/nemo-relay/scripts/package_bundle.py \
-  --output /tmp/nemo-anonymizer-relay-bundle
-nemo-relay plugins add --user /tmp/nemo-anonymizer-relay-bundle/relay-plugin.toml
-nemo-relay plugins edit
-```
-
-Configure the generated plugin entry before enabling it:
+Relay scrubs the worker's inherited environment. `secret_env` contains literal
+values copied into this worker process; it is not a secret-reference mechanism.
+Protect the plugin configuration file.
 
 ```toml
 [plugins.dynamic.config]
 version = 1
-endpoint = "unix:///absolute/path/to/.cache/nemo-anonymizer-relay/exporter.sock"
+priority = 100
+detector_endpoint = "http://127.0.0.1:8001/v1"
+detector_model = "fastino/gliner2-privacy-filter-PII-multi"
+detector_api_key_env = "EMPTY"
+evaluator_endpoint = "https://integrate.api.nvidia.com/v1"
+evaluator_model = "nvidia/nemotron-3.5-lightning-30b-a3b"
+evaluator_api_key_env = "NVIDIA_API_KEY"
+
+[plugins.dynamic.config.secret_env]
+NVIDIA_API_KEY = "..."
 ```
 
-```bash
-nemo-relay plugins enable nvidia.nemo_anonymizer
-nemo-relay plugins validate nvidia.nemo_anonymizer
-```
-
-Before stopping the service, drain and shut it down through the same private
-socket:
-
-```bash
-uv run --project integrations/nemo-relay/service --no-dev --locked \
-  python -m nemo_anonymizer_relay.service flush \
-  --endpoint "unix://$HOME/.cache/nemo-anonymizer-relay/exporter.sock"
-uv run --project integrations/nemo-relay/service --no-dev --locked \
-  python -m nemo_anonymizer_relay.service shutdown \
-  --endpoint "unix://$HOME/.cache/nemo-anonymizer-relay/exporter.sock"
-```
-
-## Current limitations
-
-- Accepted events are held in memory. A service or machine failure can lose
-  events that were acknowledged but not yet exported.
-- The destination is protected only when competing raw Relay subscribers are
-  disabled.
-- Service health proves queue and sink readiness, but does not yet preflight
-  detector or evaluator credentials and connectivity.
-- Recognized media and long encoded blobs are omitted. Provider-native
-  representations without a Relay annotation do not have a complete
-  inspection guarantee.
-- Short opaque encodings without a media or encoding marker are treated as
-  visible text. Their decoded contents are not inspected; applications should
-  label attachments or omit them before publication.
-- The service has no durable spool, restart recovery, or destination retry.
-- Relay worker shutdown does not flush or stop the external service.
-- The current protected destination is ATOF JSONL; OTLP and Phoenix export are
-  not implemented by this service.
-- The thin Relay worker can be packaged independently, but the heavy service
-  environment currently resolves this Anonymizer source checkout. A release
-  needs a separately installable service artifact or container with a
-  relocatable lock.
-- The manifest requires Relay 0.9.1 or newer because packaged Python workers
-  depend on the Linux environment-attestation fix in that release line.
-
-This integration is an implementation spike. It is not yet a production
-readiness claim.
+See `config.schema.json` for text budgets, cache controls, and provider timeout
+settings.
 
 ## Development
 
-The integration is an independent Python project so Relay-specific dependencies
-do not enter the main `nemo-anonymizer` wheel.
+The integration is a separate Python project so Relay dependencies do not
+enter the main Anonymizer wheel.
 
 ```bash
 uv sync --python 3.11 --project integrations/nemo-relay --group test --locked
 uv run --project integrations/nemo-relay --group test --locked \
   pytest -q integrations/nemo-relay/tests
-uv sync --python 3.11 --project integrations/nemo-relay/service --group dev --locked
-uv run --project integrations/nemo-relay/service --group dev --locked \
+uv run --project integrations/nemo-relay --group test --locked \
+  ruff check integrations/nemo-relay
+uv run --project integrations/nemo-relay --group test --locked \
   ty check --project integrations/nemo-relay
 ```
 
-Behavioral tests live with this source. Cross-platform release assembly,
-attribution generation, and installed-archive smoke tests belong to the
-NeMo Relay Plugins release repository.
+The development lock resolves this Anonymizer checkout. The bundle generator
+removes that local source override and deliberately requires a release newer
+than 0.4.0, which is the current release without the required in-memory API.
+Do not publish or install the bundle until the prerequisite release exists and
+the dependency is replaced with an exact supported pin.
+
+## Release gates
+
+- Provide an online Anonymizer profile whose per-event latency stays
+  comfortably below Relay's 30-second callback limit.
+- Reuse one initialized Anonymizer pipeline instead of constructing it for
+  every callback.
+- Build a managed environment below Relay's 512 MiB closure limit on every
+  supported platform.
+- Publish the required Anonymizer API and replace the bundle's temporary
+  `>0.4.0,<1` requirement with an exact supported version.
+- From the final checksummed archive, prove that provider/tool inputs retain
+  their original PII while ordinary ATOF, OTLP, and Phoenix subscribers receive
+  only the sanitized copy.
+
+This integration is not yet a production-readiness claim.

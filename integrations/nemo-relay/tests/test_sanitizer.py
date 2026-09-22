@@ -4,6 +4,9 @@
 from __future__ import annotations
 
 import asyncio
+import threading
+
+import pytest
 
 from nemo_anonymizer_relay.backend import RedactionSpan
 from nemo_anonymizer_relay.sanitizer import ObservationSanitizer
@@ -22,13 +25,13 @@ class FakeDetector:
         return decisions
 
 
-def test_export_sanitizer_batches_unique_leaves_and_caches_span_decisions() -> None:
+def test_sanitizer_batches_unique_leaves_and_caches_span_decisions() -> None:
     detector = FakeDetector()
     sanitizer = ObservationSanitizer(detector)
     value = {"prompt": "Email ana@example.com", "history": ["Email ana@example.com"]}
 
-    first = asyncio.run(sanitizer.sanitize_export(value))
-    second = asyncio.run(sanitizer.sanitize_export(value))
+    first = asyncio.run(sanitizer.sanitize(value))
+    second = asyncio.run(sanitizer.sanitize(value))
 
     assert (
         first
@@ -51,7 +54,7 @@ def test_secret_patterns_cover_preserved_protocol_identifiers_and_keys() -> None
     nvidia_secret = "nvapi-abcdefghijklmnop"
 
     result = asyncio.run(
-        sanitizer.sanitize_export(
+        sanitizer.sanitize(
             {
                 "category_profile": {
                     "annotated_request": {
@@ -94,7 +97,7 @@ def test_secret_bearing_keys_redact_values_without_substring_matches() -> None:
     }
 
     result = asyncio.run(
-        sanitizer.sanitize_export(
+        sanitizer.sanitize(
             {
                 "metadata": {
                     **secret_values,
@@ -118,10 +121,39 @@ def test_empty_decisions_are_rechecked_in_later_contexts() -> None:
     detector = FakeDetector()
     sanitizer = ObservationSanitizer(detector)
 
-    asyncio.run(sanitizer.sanitize_export({"prompt": "ordinary label"}))
-    asyncio.run(sanitizer.sanitize_export({"context": "private customer", "prompt": "ordinary label"}))
+    asyncio.run(sanitizer.sanitize({"prompt": "ordinary label"}))
+    asyncio.run(sanitizer.sanitize({"context": "private customer", "prompt": "ordinary label"}))
 
     assert detector.calls == [
         ["prompt", "ordinary label"],
         ["context", "private customer", "prompt", "ordinary label"],
     ]
+
+
+async def test_cancelled_detection_does_not_queue_more_executor_work() -> None:
+    started = threading.Event()
+    release = threading.Event()
+    finished = threading.Event()
+
+    class BlockingDetector:
+        def detect(self, texts: list[str]) -> list[list[RedactionSpan]]:
+            started.set()
+            release.wait(timeout=5)
+            finished.set()
+            return [[] for _ in texts]
+
+    sanitizer = ObservationSanitizer(BlockingDetector())
+    first = asyncio.create_task(sanitizer.sanitize({"prompt": "first"}))
+    assert await asyncio.to_thread(started.wait, 2)
+    first.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await first
+
+    with pytest.raises(RuntimeError, match="still completing prior work"):
+        await sanitizer.sanitize({"prompt": "second"})
+
+    release.set()
+    assert await asyncio.to_thread(finished.wait, 2)
+    await asyncio.sleep(0)
+    assert await sanitizer.sanitize({"prompt": "third"}) == {"prompt": "third"}
+    sanitizer.close()

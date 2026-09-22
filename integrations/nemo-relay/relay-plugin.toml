@@ -22,7 +22,7 @@ path = "config.schema.json"
 
 [source]
 manifest_root = "."
-artifact = "src/nemo_anonymizer_relay/worker.py"
+artifact = "nemo_anonymizer_relay/worker.py"
 
 [integrity]
 sha256 = "sha256:<artifact-sha256>"

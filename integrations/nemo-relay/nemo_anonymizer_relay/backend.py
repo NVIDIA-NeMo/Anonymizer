@@ -109,26 +109,32 @@ class AnonymizerBackend:
                 model_providers=providers,
                 artifact_path=Path(directory) / "artifacts",
             )
-            result = anonymizer.run(
-                config=AnonymizerConfig(
-                    detect=Detect(gliner_threshold=config.threshold),
-                    replace=Redact(),
-                    emit_telemetry=False,
-                ),
-                data=TextRecordsInput(records=records, data_summary=config.data_summary),
-            )
-
-        if result.failed_records:
-            raise BackendResultError("anonymizer_record_failure")
-        if result.id_column is None:
-            raise BackendResultError("missing_result_id_column")
-        return _spans_from_result(
-            result.dataframe,
-            packed,
-            len(texts),
-            id_column=result.id_column,
-            text_column=result.resolved_text_column,
-        )
+            try:
+                result = anonymizer.run(
+                    config=AnonymizerConfig(
+                        detect=Detect(gliner_threshold=config.threshold),
+                        replace=Redact(),
+                        emit_telemetry=False,
+                    ),
+                    data=TextRecordsInput(records=records, data_summary=config.data_summary),
+                )
+                if result.failed_records:
+                    raise BackendResultError("anonymizer_record_failure")
+                if result.id_column is None:
+                    raise BackendResultError("missing_result_id_column")
+                return _spans_from_result(
+                    result.dataframe,
+                    packed,
+                    len(texts),
+                    id_column=result.id_column,
+                    text_column=result.resolved_text_column,
+                )
+            except BackendResultError:
+                raise
+            except Exception:
+                # Provider and parser exceptions may contain source text. Only
+                # a fixed code is allowed to cross the worker RPC boundary.
+                raise BackendResultError("anonymizer_runtime_failure") from None
 
     def _model_config_json(self) -> str:
         config = self._config
@@ -157,6 +163,10 @@ class AnonymizerBackend:
                         "alias": "relay-evaluator",
                         "model": config.evaluator_model,
                         "provider": "relay-evaluator",
+                        # Avoid a paid generation probe every time an event
+                        # constructs an Anonymizer pipeline. Runtime provider
+                        # failures become fail-closed omission records.
+                        "skip_health_check": True,
                         "inference_parameters": evaluator_parameters,
                     },
                 ],

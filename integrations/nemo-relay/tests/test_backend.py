@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import json
+import sys
+from types import SimpleNamespace
 from typing import Any
 
 import pandas as pd
@@ -12,6 +14,7 @@ import pytest
 from nemo_anonymizer_relay.backend import (
     AnonymizerBackend,
     BackendConfig,
+    BackendResultError,
     RedactionSpan,
     _pack_texts,
     _spans_from_result,
@@ -116,13 +119,20 @@ def test_packing_splits_at_budget() -> None:
     assert [record.text for record in packed] == ["Ana", "safe", "Bob"]
 
 
-def test_model_config_includes_detector_and_evaluator() -> None:
+def test_model_config_wires_detection_pipeline() -> None:
     payload = json.loads(AnonymizerBackend(backend_config())._model_config_json())
 
     assert [model["alias"] for model in payload["model_configs"]] == [
         "relay-gliner",
         "relay-evaluator",
     ]
+    assert all(model["skip_health_check"] is True for model in payload["model_configs"])
+    assert payload["selected_models"]["detection"] == {
+        "entity_detector": "relay-gliner",
+        "entity_validator": ["relay-evaluator"],
+        "entity_augmenter": "relay-evaluator",
+        "latent_detector": "relay-evaluator",
+    }
 
 
 def test_full_pipeline_requires_evaluator_key(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -130,3 +140,33 @@ def test_full_pipeline_requires_evaluator_key(monkeypatch: pytest.MonkeyPatch) -
 
     with pytest.raises(ValueError, match="MISSING_TEST_EVALUATOR_KEY"):
         require_api_keys(backend_config())
+
+
+def test_backend_normalizes_provider_errors_before_worker_boundary(monkeypatch: pytest.MonkeyPatch) -> None:
+    class Value:
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            self.args = args
+            self.kwargs = kwargs
+
+    class FailingAnonymizer(Value):
+        def run(self, **_kwargs: Any) -> Any:
+            raise RuntimeError("provider echoed Marisol Vega")
+
+    monkeypatch.setitem(
+        sys.modules,
+        "anonymizer",
+        SimpleNamespace(
+            Anonymizer=FailingAnonymizer,
+            AnonymizerConfig=Value,
+            Detect=Value,
+            ModelProvider=Value,
+            Redact=Value,
+            TextRecord=Value,
+            TextRecordsInput=Value,
+        ),
+    )
+
+    with pytest.raises(BackendResultError) as error:
+        AnonymizerBackend(backend_config()).detect(["Marisol Vega"])
+
+    assert str(error.value) == "anonymizer_runtime_failure"
