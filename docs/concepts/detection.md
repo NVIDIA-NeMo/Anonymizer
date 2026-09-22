@@ -133,7 +133,9 @@ detect = Detect(
 )
 ```
 
-A custom validator receives a `RegexCandidate` with the matched value, character offsets, named capture groups, nearby context, and rule ID. It returns `bool` or `RegexValidationResult`. The validator is optional; without one, every regex match passes local validation.
+A custom validator receives a `RegexCandidate` with the matched value, character offsets, named capture groups, nearby context, and rule ID. It returns `bool` or `RegexValidationResult`. Use `RegexValidationResult(valid=..., reason=...)` to attach an explanation to the decision. Reasons for both accepted and rejected candidates are retained in the internal `_regex_validation_trace` column of `result.trace_dataframe`; ordinary output rows do not include this column or duplicate the matched value in its metadata. Validator reasons are user-authored trace data and should not contain secrets or unnecessary PII. The validator is optional; without one, every regex match passes local validation.
+
+Custom patterns may use the supported `regex` syntax except for `\K` match resets, which are rejected during configuration because they can move the reported match boundary or produce an empty span. Runtime matching also rejects any zero-width result as a defensive backstop.
 
 Pass a callable directly when using `run()` or `preview()`. For exported configurations, package the validator under the `nemo_anonymizer.regex_validators` Python entry-point group and pass its registered name instead.
 

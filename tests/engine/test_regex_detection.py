@@ -280,7 +280,11 @@ def test_llm_validation_can_be_disabled_per_builtin() -> None:
 
 def test_custom_rule_uses_callable_validator_and_defaults_to_llm_validation() -> None:
     def is_valid(candidate: RegexCandidate) -> RegexValidationResult:
-        return RegexValidationResult(valid=candidate.groups["number"] == "42")
+        number = candidate.groups["number"]
+        return RegexValidationResult(
+            valid=number == "42",
+            reason="recognized support case" if number == "42" else "unsupported case number",
+        )
 
     rules = resolve_regex_rules(
         labels=["support_case"],
@@ -298,6 +302,27 @@ def test_custom_rule_uses_callable_validator_and_defaults_to_llm_validation() ->
 
     assert [entity.value for entity in result.llm_entities] == ["CASE-42"]
     assert result.accepted_entities == []
+    assert [entry.as_dict() for entry in result.validation_trace] == [
+        {
+            "rule_id": rules[0].rule_id,
+            "validator_id": rules[0].validator_id,
+            "label": "support_case",
+            "start": 0,
+            "end": 7,
+            "valid": False,
+            "reason": "unsupported case number",
+        },
+        {
+            "rule_id": rules[0].rule_id,
+            "validator_id": rules[0].validator_id,
+            "label": "support_case",
+            "start": 13,
+            "end": 20,
+            "valid": True,
+            "reason": "recognized support case",
+        },
+    ]
+    assert all("value" not in entry.as_dict() for entry in result.validation_trace)
 
 
 def test_distinct_validator_closures_from_same_factory_do_not_collide() -> None:

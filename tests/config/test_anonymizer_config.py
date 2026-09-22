@@ -188,10 +188,21 @@ def test_regex_rule_rejects_invalid_and_zero_width_patterns() -> None:
         r"(?<=Z{20})",
         r"CASE-[0-9]+|(?=Z{20})",
         r"(?=Z{20})(?:CASE)?",
-        r"CASE\K",
     ):
         with pytest.raises(ValidationError, match="must not produce zero-width matches"):
             RegexRule(label="case_id", pattern=pattern)
+
+
+@pytest.mark.parametrize("pattern", [r"CASE\K", r"CASE(?:\K)", r"(?:CASE(?:\K))"])
+def test_regex_rule_rejects_match_reset_anywhere(pattern: str) -> None:
+    with pytest.raises(ValidationError, match=r"unsupported match reset \\K"):
+        RegexRule(label="case_id", pattern=pattern)
+
+
+def test_regex_rule_allows_escaped_literal_backslash_k() -> None:
+    rule = RegexRule(label="case_id", pattern=r"CASE\\K")
+
+    assert rule.pattern == r"CASE\\K"
 
 
 def test_regex_rule_allows_consuming_lookarounds() -> None:

@@ -14,7 +14,12 @@ from data_designer.engine.column_generators.generators.base import (
     ColumnGeneratorWithModelRegistry,
 )
 
-from anonymizer.engine.constants import COL_REGEX_ACCEPTED_ENTITIES, COL_REGEX_ENTITIES, COL_TEXT
+from anonymizer.engine.constants import (
+    COL_REGEX_ACCEPTED_ENTITIES,
+    COL_REGEX_ENTITIES,
+    COL_REGEX_VALIDATION_TRACE,
+    COL_TEXT,
+)
 from anonymizer.engine.detection.chunked_validation import (
     ChunkedValidationParams,
     chunked_validate_row,
@@ -170,6 +175,7 @@ class RegexDetectionGenerator(ColumnGeneratorCellByCell[RegexDetectionConfig]):
         data[COL_REGEX_ACCEPTED_ENTITIES] = EntitiesSchema(
             entities=[entity.as_dict() for entity in result.accepted_entities]
         ).model_dump(mode="json")
+        data[COL_REGEX_VALIDATION_TRACE] = [entry.as_dict() for entry in result.validation_trace]
         return data
 
 

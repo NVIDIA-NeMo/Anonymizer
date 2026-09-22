@@ -39,7 +39,6 @@ class RegexValidationResult:
 
     valid: bool
     reason: str | None = None
-    normalized_value: str | None = None
 
 
 RegexValidatorReturn: TypeAlias = bool | RegexValidationResult
@@ -184,16 +183,12 @@ def _minimum_match_width(pattern: str) -> int:
 
 def _minimum_node_width(node: Any, core: Any) -> int:
     """Return the minimum characters consumed by a parsed regex node."""
+    if isinstance(node, core.Keep):
+        raise ValueError("Regex patterns must not use unsupported match reset \\K.")
     if isinstance(node, (core.ZeroWidthBase, core.LookAround)):
         return 0
     if isinstance(node, core.Sequence):
-        width = 0
-        for item in node.items:
-            if isinstance(item, core.Keep):
-                width = 0
-            else:
-                width += _minimum_node_width(item, core)
-        return width
+        return sum(_minimum_node_width(item, core) for item in node.items)
     if isinstance(node, core.Branch):
         return min((_minimum_node_width(branch, core) for branch in node.branches), default=0)
     if isinstance(node, core.GreedyRepeat):

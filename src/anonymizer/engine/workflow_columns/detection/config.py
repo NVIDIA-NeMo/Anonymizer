@@ -17,6 +17,7 @@ from anonymizer.engine.constants import (
     COL_RAW_DETECTED,
     COL_REGEX_ACCEPTED_ENTITIES,
     COL_REGEX_ENTITIES,
+    COL_REGEX_VALIDATION_TRACE,
     COL_SEED_ENTITIES,
     COL_SEED_ENTITIES_JSON,
     COL_SEED_TAGGED_TEXT,
@@ -158,4 +159,4 @@ class RegexDetectionConfig(SingleColumnConfig):
 
     @property
     def side_effect_columns(self) -> list[str]:
-        return [COL_REGEX_ACCEPTED_ENTITIES]
+        return [COL_REGEX_ACCEPTED_ENTITIES, COL_REGEX_VALIDATION_TRACE]
