@@ -95,9 +95,26 @@ from anonymizer import DEFAULT_ENTITY_LABELS
 print(DEFAULT_ENTITY_LABELS)
 ```
 
-### Positive examples and custom labels
+The two label settings serve different purposes:
 
-Use `entity_label_examples` to show the validator and augmenter representative positive values. Examples improve contextual interpretation; they are not format allowlists, guaranteed matches, negative examples, or replacement templates.
+- `entity_labels` defines **which entity types** are in scope, such as `api_key`.
+- `entity_label_examples` provides **representative values** for those types, such as `sk-ant-api03-abc123`.
+
+### Custom labels
+
+When you pass `entity_labels` explicitly, the augmenter operates in **strict mode** -- it only outputs entities matching your list. When `entity_labels=None`, the augmenter can create additional labels beyond the defaults (e.g., `clinic_name`, `server_name`).
+
+```python
+# Strict: only detect these 3 labels
+Detect(entity_labels=["first_name", "last_name", "email"])
+
+# Permissive: detect all defaults + LLM can infer new label types
+Detect()  # entity_labels=None
+```
+
+### Positive examples
+
+Use `entity_label_examples` to help detection recognize dataset- or domain-specific value formats, such as vendor-prefixed API keys, account handles, or organization-specific identifiers. These are positive examples of what a label may look like—not format allowlists, guaranteed matches, negative examples, or replacement templates.
 
 ```python
 # Add guidance to an existing built-in label. Its bundled examples remain active.
@@ -113,14 +130,12 @@ Detect(
 )
 ```
 
-With `entity_labels=None`, custom example keys intentionally activate alongside all defaults and the augmenter remains permissive, so it may still create additional labels. This convenience differs from issue #259's original examples-do-not-activate wording. With an explicit `entity_labels` list, every non-excluded example key must already be listed and the augmenter is strict.
-
-GLiNER receives only the effective label names. The validator receives all effective labels with bundled plus configured examples. To limit prompt growth, the augmenter receives all effective names but only the examples you configured. The validator ontology repeats for each validation chunk; prefer a few representative synthetic examples.
+With `entity_labels=None`, custom example keys intentionally activate alongside all defaults and the augmenter remains permissive, so it may still create additional labels. With an explicit `entity_labels` list, every non-excluded example key must already be listed and the augmenter is strict.
 
 !!! warning "Examples are sent to model providers"
     Configured examples are embedded in prompts and exported detection builders. Use synthetic patterns, not production credentials, secrets, or real PII. Explicitly enabled raw DataDesigner message traces also contain the rendered prompts.
 
-Configured examples affect detection only. They are not passed to substitution or evaluation and are not persisted on result objects. Consequently, post-hoc evaluation cannot reproduce the example guidance; when the original `entity_labels` was `None`, entity coverage remains permissive.
+Configured examples affect detection only; they do not guide substitution or evaluation.
 
 `entity_label_examples` is currently configured through the Python `Detect` API; the CLI does not provide a mapping syntax for this field.
 
