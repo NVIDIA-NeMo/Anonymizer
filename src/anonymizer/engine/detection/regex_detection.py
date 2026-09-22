@@ -283,9 +283,13 @@ def _resolve_validator(validator_id: str) -> RegexValidatorCallable:
 
 
 def validate_exportable_regex_rules(rules: list[BuiltinRegex | RegexRule] | None) -> None:
-    """Require installed validator names for portable workflow exports."""
+    """Require installed validator names for enabled rules in portable workflow exports."""
     callable_labels = sorted(
-        {rule.label for rule in rules or [] if isinstance(rule, RegexRule) and callable(rule.validator)}
+        {
+            rule.label
+            for rule in rules or []
+            if isinstance(rule, RegexRule) and rule.enabled and callable(rule.validator)
+        }
     )
     if callable_labels:
         raise ValueError(
