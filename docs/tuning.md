@@ -156,14 +156,17 @@ For Replace, `Redact` can isolate detection cost because it does not generate su
 
 Compare each candidate with the current accepted setting, then keep or reject it before moving to the next layer:
 
-| Layer | Change | Hold fixed |
-| --- | --- | --- |
-| Detector admission | Increase the detector alias's `max_parallel_requests` gradually | GLiNER batch policy and all LLM settings |
-| Validator admission | Increase validator alias limits gradually | Pool topology, chunk size, excerpt size, and model |
-| Validator topology | Compare one alias with multiple equivalent aliases | Same total client-side alias limits and provider quotas |
-| Validator chunking | Vary `validation_max_entities_per_call` | Validator model, excerpt size, and total client-side admission |
-| Augmenter admission | Increase the augmenter alias's `max_parallel_requests` gradually | Selected detector and validator settings |
-| DataDesigner scheduling | Vary `max_in_flight_tasks` and `buffer_size` separately | Selected per-alias limits |
+| Layer | Change | Example sweep | Hold fixed |
+| --- | --- | --- | --- |
+| Detector admission | Increase the detector alias's `max_parallel_requests` | `1`, `2`, `4`, `8` | GLiNER batch policy and all LLM settings |
+| Validator admission | Increase validator alias limits | `1`, `2`, `4`, `8` per alias; change one alias at a time | Pool topology, chunk size, excerpt size, and model |
+| Validator topology | Compare one alias with multiple equivalent aliases | One alias at `4` versus two equivalent aliases at `2` each | Same total client-side alias limits and provider quotas |
+| Validator chunking | Vary `validation_max_entities_per_call` | Half, current, and twice the accepted size; for example, `50`, `100`, `200` when the accepted size is `100` | Validator model, excerpt size, and total client-side admission |
+| Augmenter admission | Increase the augmenter alias's `max_parallel_requests` | `1`, `2`, `4`, `8` | Selected detector and validator settings |
+| DataDesigner task scheduling | Vary `max_in_flight_tasks` | `1`, `2`, `4`, `8` from the benchmark baseline | Selected per-alias limits and `buffer_size` |
+| DataDesigner buffering | Vary `buffer_size` | Half, current, and twice the accepted buffer size | Selected per-alias limits and `max_in_flight_tasks` |
+
+These sweeps are illustrative experiments, not recommended production settings or required ranges. Use positive integers for chunk and buffer sizes. Omit candidates that exceed provider quotas, model context limits, or the benchmark's resource budget. Stop at the first quality or stability failure rather than completing the sweep; if useful, test intermediate values between the last accepted setting and that failure. When moving beyond `8`, continue doubling only while the measured gains and stop conditions below justify it.
 
 `max_parallel_requests` applies per model alias. A validator pool's client-side admission limit is bounded by the sum of its alias limits, but provider quotas, routing, and shared backends may cap actual concurrency. Treat the sum as offered load, not guaranteed model capacity. Multiple aliases that point to the same backend do not create capacity, although they may expose capacity that was previously idle. See [Validator pools](concepts/models.md#validator-pools).
 
