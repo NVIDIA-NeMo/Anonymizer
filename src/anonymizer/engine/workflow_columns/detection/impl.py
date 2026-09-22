@@ -104,6 +104,11 @@ class _AsyncBridgedModelFacade:
 class DetectionTransformGenerator(ColumnGeneratorCellByCell[DetectionTransformConfig]):
     def generate(self, data: dict[str, Any]) -> dict[str, Any]:
         operation = DetectionTransformOperation(self.config.operation)
+        if operation == DetectionTransformOperation.PARSE_DETECTED_ENTITIES:
+            return parse_detected_entities(
+                data,
+                excluded_entity_labels=self.config.excluded_entity_labels,
+            )
         if operation == DetectionTransformOperation.APPLY_VALIDATION_TO_SEED_ENTITIES:
             return apply_validation_to_seed_entities(
                 data,
@@ -113,6 +118,7 @@ class DetectionTransformGenerator(ColumnGeneratorCellByCell[DetectionTransformCo
             return merge_and_build_candidates(
                 data,
                 excluded_entity_labels=self.config.excluded_entity_labels,
+                excluded_augmented_entity_labels=self.config.excluded_augmented_entity_labels,
             )
         if operation == DetectionTransformOperation.APPLY_VALIDATION_AND_FINALIZE:
             return apply_validation_and_finalize(

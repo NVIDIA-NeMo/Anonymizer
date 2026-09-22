@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from typing import Any, TypeAlias
 
 import regex
-from pydantic import BaseModel, ConfigDict, field_serializer, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_serializer, field_validator, model_validator
 
 MAX_REGEX_PATTERN_LENGTH = 4096
 BUILTIN_REGEX_LABELS: tuple[str, ...] = (
@@ -54,6 +54,13 @@ class BuiltinRegex(BaseModel):
     label: str
     enabled: bool = True
     validate_with_llm: bool = True
+    regex_only: bool = Field(
+        default=False,
+        description=(
+            "Make regex recognition authoritative for this label by disabling contextual LLM validation "
+            "and excluding the label from GLiNER and LLM augmentation."
+        ),
+    )
 
     @field_validator("label")
     @classmethod
@@ -64,6 +71,13 @@ class BuiltinRegex(BaseModel):
                 f"Unsupported built-in regex label {cleaned!r}. Supported labels are {list(BUILTIN_REGEX_LABELS)!r}."
             )
         return cleaned
+
+    @model_validator(mode="after")
+    def apply_regex_only_policy(self) -> BuiltinRegex:
+        """Regex-only labels bypass contextual LLM validation."""
+        if self.regex_only:
+            self.validate_with_llm = False
+        return self
 
 
 class RegexRule(BaseModel):
@@ -76,6 +90,13 @@ class RegexRule(BaseModel):
     validator: RegexValidatorCallable | str | None = None
     enabled: bool = True
     validate_with_llm: bool = True
+    regex_only: bool = Field(
+        default=False,
+        description=(
+            "Make regex recognition authoritative for this label by disabling contextual LLM validation "
+            "and excluding the label from GLiNER and LLM augmentation."
+        ),
+    )
 
     @field_validator("label")
     @classmethod
@@ -110,6 +131,13 @@ class RegexRule(BaseModel):
         if isinstance(value, str) and value.strip():
             return value.strip()
         raise ValueError("Regex rule validator must be a callable or non-empty registered name.")
+
+    @model_validator(mode="after")
+    def apply_regex_only_policy(self) -> RegexRule:
+        """Regex-only labels bypass contextual LLM validation."""
+        if self.regex_only:
+            self.validate_with_llm = False
+        return self
 
     @field_serializer("validator")
     def serialize_validator(
