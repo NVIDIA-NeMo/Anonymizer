@@ -20,6 +20,7 @@ from anonymizer.engine.constants import (
     COL_DETECTED_ENTITIES,
     COL_ENTITIES_BY_VALUE,
     COL_FINAL_ENTITIES,
+    COL_INITIAL_TAGGED_TEXT,
     COL_LATENT_ENTITIES,
     COL_MERGED_ENTITIES,
     COL_SEED_ENTITIES,
@@ -31,6 +32,7 @@ from anonymizer.engine.constants import (
     COL_VALIDATED_ENTITIES,
     COL_VALIDATION_DECISIONS,
     DEFAULT_ENTITY_LABELS,
+    _jinja,
 )
 from anonymizer.engine.detection.detection_workflow import (
     EntityDetectionWorkflow,
@@ -502,6 +504,17 @@ def test_augment_prompt_always_includes_disguised_identifier_hints(labels: list[
     assert "letter by letter" in prompt
     assert "nine o two" in prompt
     assert "J-O-H-N" in prompt
+
+
+def test_augment_prompt_uses_plain_text_and_excludes_seed_entities() -> None:
+    """Regression: the augmenter must see a clean-slate plain-text input, not the
+    GLiNER-tagged text, and must not be told about seed entities to avoid repeating."""
+    prompt = _get_augment_prompt(data_summary=None, labels=["phone_number", "age"], strict_labels=False)
+    assert _jinja(COL_TEXT) in prompt
+    assert COL_INITIAL_TAGGED_TEXT not in prompt
+    assert COL_SEED_ENTITIES_JSON not in prompt
+    assert "seed entities" not in prompt.lower()
+    assert "do not repeat" not in prompt.lower()
 
 
 def test_custom_entity_labels_filters_out_of_scope_augmented_entities(
