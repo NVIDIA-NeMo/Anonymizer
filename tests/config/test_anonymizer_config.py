@@ -178,6 +178,23 @@ def test_regex_rule_accepts_direct_validator_callable() -> None:
     assert rule.validator is validate
 
 
+def test_regex_rule_rejects_async_validator_function() -> None:
+    async def validate(candidate: RegexCandidate) -> bool:
+        return bool(candidate.value)
+
+    with pytest.raises(ValidationError, match="validators must be synchronous"):
+        RegexRule(label="case_id", pattern=r"CASE-[0-9]{8}", validator=validate)
+
+
+def test_regex_rule_rejects_async_callable_validator() -> None:
+    class AsyncValidator:
+        async def __call__(self, candidate: RegexCandidate) -> bool:
+            return bool(candidate.value)
+
+    with pytest.raises(ValidationError, match="validators must be synchronous"):
+        RegexRule(label="case_id", pattern=r"CASE-[0-9]{8}", validator=AsyncValidator())
+
+
 def test_regex_rule_rejects_invalid_and_zero_width_patterns() -> None:
     with pytest.raises(ValidationError, match="Invalid regex pattern"):
         RegexRule(label="case_id", pattern="[")

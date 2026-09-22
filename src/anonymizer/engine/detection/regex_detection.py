@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import inspect
 import ipaddress
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -311,6 +312,13 @@ def _run_local_validator(
         raise RuntimeError(
             f"Regex validator {rule.validator_id!r} failed for rule {rule.rule_id!r} with {type(exc).__name__}."
         ) from exc
+    if inspect.isawaitable(result):
+        close = getattr(result, "close", None)
+        if callable(close):
+            close()
+        raise TypeError(
+            f"Regex validator {rule.validator_id!r} returned an awaitable. Regex validators must be synchronous."
+        )
     if isinstance(result, bool):
         return _LocalValidationOutcome(valid=result)
     if isinstance(result, RegexValidationResult):
@@ -324,7 +332,6 @@ def _register_or_resolve_validator(
     if validator is None:
         return None
     if isinstance(validator, str):
-        _resolve_validator(validator)
         return validator
     module = getattr(validator, "__module__", "")
     qualified_name = getattr(validator, "__qualname__", "")
@@ -346,19 +353,47 @@ def _resolve_validator(validator_id: str) -> RegexValidatorCallable:
     )
     if validator is not None:
         return validator
-    for entry_point in entry_points(group=REGEX_VALIDATOR_ENTRYPOINT_GROUP):
-        if entry_point.name != validator_id:
-            continue
-        loaded = entry_point.load()
+    matches = [
+        entry_point
+        for entry_point in entry_points(group=REGEX_VALIDATOR_ENTRYPOINT_GROUP)
+        if entry_point.name == validator_id
+    ]
+    if len(matches) > 1:
+        providers = sorted({_entry_point_provider(entry_point) for entry_point in matches})
+        raise ValueError(
+            f"Regex validator {validator_id!r} is registered by multiple packages: {', '.join(providers)}. "
+            "Validator entry-point names must be unique."
+        )
+    if matches:
+        loaded = matches[0].load()
         if not callable(loaded):
             raise TypeError(f"Regex validator entry point {validator_id!r} is not callable.")
+        call_method = getattr(loaded, "__call__", None)
+        if inspect.iscoroutinefunction(loaded) or inspect.iscoroutinefunction(call_method):
+            raise TypeError(
+                f"Regex validator entry point {validator_id!r} is asynchronous. Regex validators must be synchronous."
+            )
         _ENTRY_POINT_VALIDATORS[validator_id] = loaded
         return loaded
     raise ValueError(f"Unknown regex validator {validator_id!r}.")
 
 
+def _entry_point_provider(entry_point: Any) -> str:
+    """Return a useful distribution name for an entry-point conflict."""
+    distribution = getattr(entry_point, "dist", None)
+    name = getattr(distribution, "name", None)
+    if isinstance(name, str) and name:
+        return name
+    metadata = getattr(distribution, "metadata", None)
+    if metadata is not None:
+        metadata_name = metadata.get("Name")
+        if isinstance(metadata_name, str) and metadata_name:
+            return metadata_name
+    return str(getattr(entry_point, "value", "unknown package"))
+
+
 def validate_exportable_regex_rules(rules: list[BuiltinRegex | RegexRule] | None) -> None:
-    """Require installed validator names for enabled rules in portable workflow exports."""
+    """Require named validators for enabled rules in portable workflow exports."""
     callable_labels = sorted(
         {
             rule.label

@@ -163,7 +163,7 @@ with the same label while the rest of the built-in registry remains active.
 - compile the pattern during configuration validation;
 - reject patterns that match an empty string;
 - preserve the pattern string, not a compiled regex object, for serialization;
-- accept a direct callable for local use or a stable installed validator name;
+- accept a direct synchronous callable for local use or a stable validator name;
 - report the offending label and pattern in configuration errors.
 
 `Detect` validation must:
@@ -180,11 +180,11 @@ candidates without changing detection behavior. Because this changes the public
 detection surface, update the bundled agent skill template and detection
 documentation in the same release.
 
-Direct callables are the primary Python API. A callable used by an exported
-workflow must resolve to a stable name supplied by an installed validator
-package on every worker. Whether a decorator should provide optional naming and
-version metadata remains a PR review question; it is not required for local
-callable use and must not be the primary documented path.
+Direct callables are the primary Python API. An exported workflow stores a
+stable validator name and resolves it through the
+`nemo_anonymizer.regex_validators` entry-point group on each execution host.
+The plugin need not be installed where the configuration is authored, but its
+entry-point name must resolve uniquely on every worker.
 
 ## Built-In Rule Model
 
@@ -500,8 +500,8 @@ For each built-in rule:
 - Reconstructing the builder restores user and built-in patterns.
 - No compiled regex or Python callback is serialized.
 - Local callable validators resolve in-process.
-- Installed validator names reconstruct on workers and missing names fail
-  preflight.
+- Installed validator names reconstruct on workers; missing or duplicate names
+  fail when detection begins on an execution host.
 - In-process and reconstructed/exported workflows produce equivalent spans.
 - Plugin discovery works when `nemo-anonymizer` is installed on a worker.
 
