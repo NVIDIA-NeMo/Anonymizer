@@ -26,6 +26,40 @@ from anonymizer.engine.detection.postprocess import normalize_label
 logger = logging.getLogger(__name__)
 
 
+def resolve_effective_detection_labels(
+    entity_labels: list[str] | None,
+    *,
+    regex_rules: list[BuiltinRegex | RegexRule] | None = None,
+    excluded_entity_labels: list[str] | set[str] | None = None,
+) -> list[str]:
+    """Resolve the labels used by detection after custom rules and exclusions.
+
+    An explicit ``entity_labels`` list is authoritative. When it is ``None``,
+    detection starts with ``DEFAULT_ENTITY_LABELS`` and appends labels from
+    enabled custom ``RegexRule`` entries. Only enabled custom rules extend the
+    effective label set: disabled custom rules are inert, and ``BuiltinRegex``
+    settings configure existing built-ins without adding labels. Exclusions
+    are applied last using normalized label comparisons.
+
+    This helper intentionally returns only the resolved labels. Callers must
+    retain the original ``entity_labels is None`` state because it separately
+    controls permissive versus strict augmentation.
+    """
+    labels = list(DEFAULT_ENTITY_LABELS) if entity_labels is None else list(entity_labels)
+    if entity_labels is None:
+        known = {label.strip().casefold() for label in labels}
+        for rule in regex_rules or []:
+            if not isinstance(rule, RegexRule) or not rule.enabled:
+                continue
+            normalized = rule.label.strip().casefold()
+            if normalized not in known:
+                labels.append(rule.label)
+                known.add(normalized)
+
+    excluded = {label.strip().casefold() for label in excluded_entity_labels or []}
+    return [label for label in labels if label.strip().casefold() not in excluded]
+
+
 def is_remote_input_source(value: str) -> bool:
     """Return True when the input source is an HTTP(S) URL."""
     parsed = urlparse(value)
@@ -101,8 +135,9 @@ class Detect(BaseModel):
             "Entity labels to never detect, even if present in entity_labels or the default set. "
             "Excluded labels are removed before GLiNER and LLM prompts run, and are also filtered "
             "from the final entity output as a safety net. If this entirely overlaps the effective "
-            "label set (entity_labels if set, otherwise the default label set), leaving an empty "
-            "effective detection set, Detect raises a ValueError at config time."
+            "allowlist (entity_labels if set, otherwise the default label set plus labels from enabled "
+            "custom regex rules), leaving an empty effective detection set, Detect raises a ValueError "
+            "at config time."
         ),
     )
     gliner_threshold: float = Field(
@@ -193,10 +228,16 @@ class Detect(BaseModel):
             )
 
         active_example_labels = example_labels - excluded_set
+        effective_labels = set(
+            resolve_effective_detection_labels(
+                self.entity_labels,
+                regex_rules=self.regex_rules,
+                excluded_entity_labels=excluded_set,
+            )
+        )
         if self.entity_labels is not None:
             entity_labels_set = set(self.entity_labels)
             overlap = sorted(entity_labels_set & excluded_set)
-            effective_labels = entity_labels_set - excluded_set
             if overlap:
                 logger.warning(
                     "entity_labels and excluded_entity_labels share labels that will never be detected: %s",
@@ -204,7 +245,6 @@ class Detect(BaseModel):
                 )
         else:
             entity_labels_set = set(DEFAULT_ENTITY_LABELS)
-            effective_labels = entity_labels_set - excluded_set
 
         unknown_examples = sorted(active_example_labels - entity_labels_set)
         if unknown_examples:
@@ -216,13 +256,15 @@ class Detect(BaseModel):
         if not effective_labels:
             source = "entity_labels" if self.entity_labels is not None else "DEFAULT_ENTITY_LABELS"
             raise ValueError(
-                f"excluded_entity_labels entirely overlaps {source}, leaving an empty effective detection set."
+                f"excluded_entity_labels entirely overlaps {source} and all enabled custom regex labels, "
+                "leaving an empty effective detection set."
             )
         return self
 
     @model_validator(mode="after")
     def validate_regex_rule_scope(self) -> Detect:
         custom_rules = [rule for rule in self.regex_rules if isinstance(rule, RegexRule)]
+        enabled_custom_rules = [rule for rule in custom_rules if rule.enabled]
         builtin_rules = [rule for rule in self.regex_rules if isinstance(rule, BuiltinRegex)]
         identities = [(rule.label, rule.pattern) for rule in custom_rules]
         if len(set(identities)) != len(identities):
@@ -231,11 +273,10 @@ class Detect(BaseModel):
         if len(set(builtin_labels)) != len(builtin_labels):
             raise ValueError("regex_rules contains duplicate built-in labels.")
         if self.entity_labels is not None:
-            missing = sorted({rule.label for rule in custom_rules} - set(self.entity_labels))
+            missing = sorted({rule.label for rule in enabled_custom_rules} - set(self.entity_labels))
             if missing:
                 raise ValueError(f"Regex rule labels {missing!r} are missing from explicit entity_labels.")
         return self
-
 
 class Rewrite(BaseModel):
     """Configuration for rewrite-mode execution."""

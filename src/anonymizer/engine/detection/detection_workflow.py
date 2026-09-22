@@ -17,7 +17,12 @@ from data_designer.config.config_builder import DataDesignerConfigBuilder
 from data_designer.config.models import ModelConfig
 from pydantic import Field
 
-from anonymizer.config.anonymizer_config import Detect as AnonymizerDetectConfig
+from anonymizer.config.anonymizer_config import (
+    Detect as AnonymizerDetectConfig,
+)
+from anonymizer.config.anonymizer_config import (
+    resolve_effective_detection_labels,
+)
 from anonymizer.config.models import DetectionModelSelection
 from anonymizer.config.regex import BuiltinRegex, RegexRule
 from anonymizer.config.rewrite import PrivacyGoal
@@ -41,7 +46,6 @@ from anonymizer.engine.constants import (
     COL_VALIDATED_ENTITIES,
     COL_VALIDATION_DECISIONS,
     COL_VALIDATION_SKELETON,
-    DEFAULT_ENTITY_LABELS,
     ENTITY_LABEL_EXAMPLES,
     _jinja,
 )
@@ -182,17 +186,18 @@ class EntityDetectionWorkflow:
         and :meth:`build_detection_config` (which exports it for an external runtime),
         so both paths run exactly the same workflow.
         """
-        label_config = _resolved_label_config or resolve_entity_label_config(
-            entity_labels=entity_labels,
-            excluded_entity_labels=excluded_entity_labels,
-            entity_label_examples=entity_label_examples,
-        )
         custom_rules = regex_rules or []
         labels = _resolve_detection_labels(
-            None if entity_labels is None else label_config.labels,
+            entity_labels,
             regex_rules=custom_rules,
             excluded_entity_labels=set(excluded_entity_labels or []),
         )
+        label_config = _resolved_label_config or resolve_entity_label_config(
+            entity_labels=labels,
+            excluded_entity_labels=excluded_entity_labels,
+            entity_label_examples=entity_label_examples,
+        )
+        label_config.strict_labels = entity_labels is not None
         label_config.labels = labels
         for label in labels:
             label_config.validator_examples.setdefault(label, [])
@@ -492,11 +497,17 @@ class EntityDetectionWorkflow:
                 raise ValueError("privacy_goal is required when tag_latent_entities=True (rewrite mode)")
 
             compute_grouped = True if compute_grouped_entities is None else compute_grouped_entities
+            effective_labels = _resolve_detection_labels(
+                entity_labels,
+                regex_rules=regex_rules,
+                excluded_entity_labels=excluded_entity_labels,
+            )
             label_config = resolve_entity_label_config(
-                entity_labels=entity_labels,
+                entity_labels=effective_labels,
                 excluded_entity_labels=excluded_entity_labels,
                 entity_label_examples=entity_label_examples,
             )
+            label_config.strict_labels = entity_labels is not None
             detected_result = self.detect_and_validate_entities(
                 dataframe,
                 model_configs=model_configs,
@@ -589,18 +600,16 @@ def _resolve_detection_labels(
     regex_rules: list[BuiltinRegex | RegexRule] | None = None,
     excluded_entity_labels: set[str] | None = None,
 ) -> list[str]:
-    excluded = normalize_labels(excluded_entity_labels)
-    if entity_labels is None:
-        labels = [label for label in DEFAULT_ENTITY_LABELS if normalize_label(label) not in excluded]
-        known = set(labels)
-        for rule in regex_rules or []:
-            if isinstance(rule, BuiltinRegex):
-                continue
-            if normalize_label(rule.label) not in excluded and rule.label not in known:
-                labels.append(rule.label)
-                known.add(rule.label)
-        return labels
-    return [label for label in entity_labels if normalize_label(label) not in excluded]
+    labels = resolve_effective_detection_labels(
+        entity_labels,
+        regex_rules=regex_rules,
+        excluded_entity_labels=excluded_entity_labels,
+    )
+    if not labels:
+        logger.warning(
+            "excluded_entity_labels removed all labels from the effective detection set. No entities will be detected."
+        )
+    return labels
 
 
 def _materialize_final_entities(
