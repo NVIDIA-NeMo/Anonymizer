@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import gc
 from collections.abc import Callable
+from dataclasses import dataclass
+from typing import Any
 from weakref import ref
 
 import pytest
@@ -18,6 +20,26 @@ from anonymizer.engine.detection.regex_detection import (
     resolve_regex_rules,
     validate_exportable_regex_rules,
 )
+
+
+@dataclass
+class _FakeDistribution:
+    name: str
+
+
+@dataclass
+class _FakeEntryPoint:
+    name: str
+    value: str
+    loaded: Any
+    distribution_name: str
+
+    @property
+    def dist(self) -> _FakeDistribution:
+        return _FakeDistribution(self.distribution_name)
+
+    def load(self) -> Any:
+        return self.loaded
 
 
 def test_runtime_rejects_zero_width_match_that_bypasses_config_validation() -> None:
@@ -226,6 +248,104 @@ def test_custom_rules_only_activate_for_requested_labels() -> None:
     )
 
     assert rules == []
+
+
+def test_named_validator_is_resolved_only_when_detection_runs() -> None:
+    rules = resolve_regex_rules(
+        labels=["support_case"],
+        builtin_regexes=False,
+        rules=[
+            RegexRule(
+                label="support_case",
+                pattern=r"CASE-[0-9]+",
+                validator="uninstalled.support-case.v1",
+            )
+        ],
+    )
+
+    assert rules[0].validator_id == "uninstalled.support-case.v1"
+    with pytest.raises(ValueError, match="Unknown regex validator"):
+        detect_regex_entities("CASE-42", rules=rules)
+
+
+def test_entry_point_validator_is_loaded_on_execution_host(monkeypatch: pytest.MonkeyPatch) -> None:
+    validator_id = "test.support-case.v1"
+
+    def validate(candidate: RegexCandidate) -> bool:
+        return candidate.value == "CASE-42"
+
+    entry_point = _FakeEntryPoint(
+        name=validator_id,
+        value="test_validators:validate",
+        loaded=validate,
+        distribution_name="test-validator-package",
+    )
+    monkeypatch.setattr(regex_detection, "entry_points", lambda **kwargs: [entry_point])
+    regex_detection._ENTRY_POINT_VALIDATORS.pop(validator_id, None)
+    rules = resolve_regex_rules(
+        labels=["support_case"],
+        builtin_regexes=False,
+        rules=[RegexRule(label="support_case", pattern=r"CASE-[0-9]+", validator=validator_id)],
+    )
+
+    result = detect_regex_entities("CASE-41 CASE-42", rules=rules)
+
+    assert [entity.value for entity in result.llm_entities] == ["CASE-42"]
+    regex_detection._ENTRY_POINT_VALIDATORS.pop(validator_id, None)
+
+
+def test_duplicate_entry_point_validator_names_are_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
+    validator_id = "duplicate.support-case.v1"
+    registered_entry_points = [
+        _FakeEntryPoint(validator_id, "first:validate", lambda candidate: True, "first-package"),
+        _FakeEntryPoint(validator_id, "second:validate", lambda candidate: True, "second-package"),
+    ]
+    monkeypatch.setattr(regex_detection, "entry_points", lambda **kwargs: registered_entry_points)
+    regex_detection._ENTRY_POINT_VALIDATORS.pop(validator_id, None)
+    rules = resolve_regex_rules(
+        labels=["support_case"],
+        builtin_regexes=False,
+        rules=[RegexRule(label="support_case", pattern=r"CASE-[0-9]+", validator=validator_id)],
+    )
+
+    with pytest.raises(ValueError, match=r"first-package.*second-package.*must be unique"):
+        detect_regex_entities("CASE-42", rules=rules)
+
+
+def test_async_entry_point_validator_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
+    validator_id = "async.support-case.v1"
+
+    async def validate(candidate: RegexCandidate) -> bool:
+        return bool(candidate.value)
+
+    entry_point = _FakeEntryPoint(validator_id, "async_validators:validate", validate, "async-package")
+    monkeypatch.setattr(regex_detection, "entry_points", lambda **kwargs: [entry_point])
+    regex_detection._ENTRY_POINT_VALIDATORS.pop(validator_id, None)
+    rules = resolve_regex_rules(
+        labels=["support_case"],
+        builtin_regexes=False,
+        rules=[RegexRule(label="support_case", pattern=r"CASE-[0-9]+", validator=validator_id)],
+    )
+
+    with pytest.raises(TypeError, match="is asynchronous"):
+        detect_regex_entities("CASE-42", rules=rules)
+
+
+def test_sync_validator_returning_awaitable_is_rejected() -> None:
+    async def result() -> bool:
+        return True
+
+    def validate(candidate: RegexCandidate) -> Any:
+        return result()
+
+    rules = resolve_regex_rules(
+        labels=["support_case"],
+        builtin_regexes=False,
+        rules=[RegexRule(label="support_case", pattern=r"CASE-[0-9]+", validator=validate)],
+    )
+
+    with pytest.raises(TypeError, match="returned an awaitable"):
+        detect_regex_entities("CASE-42", rules=rules)
 
 
 def test_builtin_regexes_can_be_disabled() -> None:
