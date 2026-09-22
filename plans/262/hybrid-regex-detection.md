@@ -174,7 +174,9 @@ with the same label while the rest of the built-in registry remains active.
 
 Re-export `BuiltinRegex`, `RegexRule`, `RegexCandidate`, and `RegexValidationResult` from
 `anonymizer.__init__`. A custom validator accepts `RegexCandidate` and returns
-either `bool` or `RegexValidationResult`. Because this changes the public
+either `bool` or `RegexValidationResult`. A result may include a `reason`, which
+is retained in PII-minimized internal trace metadata for accepted and rejected
+candidates without changing detection behavior. Because this changes the public
 detection surface, update the bundled agent skill template and detection
 documentation in the same release.
 

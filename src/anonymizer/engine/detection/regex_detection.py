@@ -64,6 +64,37 @@ class RegexDetectionResult:
 
     llm_entities: list[EntitySpan]
     accepted_entities: list[EntitySpan]
+    validation_trace: list[RegexValidationTrace]
+
+
+@dataclass(frozen=True)
+class RegexValidationTrace:
+    """PII-minimized trace metadata for one local-validator decision."""
+
+    rule_id: str
+    validator_id: str
+    label: str
+    start: int
+    end: int
+    valid: bool
+    reason: str | None = None
+
+    def as_dict(self) -> dict[str, str | int | bool | None]:
+        return {
+            "rule_id": self.rule_id,
+            "validator_id": self.validator_id,
+            "label": self.label,
+            "start": self.start,
+            "end": self.end,
+            "valid": self.valid,
+            "reason": self.reason,
+        }
+
+
+@dataclass(frozen=True)
+class _LocalValidationOutcome:
+    valid: bool
+    reason: str | None = None
 
 
 _LOCAL_VALIDATORS: WeakValueDictionary[str, RegexValidatorCallable] = WeakValueDictionary()
@@ -156,6 +187,7 @@ def detect_regex_entities(
     """Match, locally validate, and route regex entity candidates."""
     llm_entities: list[EntitySpan] = []
     accepted_entities: list[EntitySpan] = []
+    validation_trace: list[RegexValidationTrace] = []
 
     for rule in rules:
         pattern = _compile_pattern(rule.pattern)
@@ -181,14 +213,27 @@ def detect_regex_entities(
                     if end <= start:
                         continue
                 value = text[start:end]
-                if not _passes_validator(
+                validation = _run_local_validator(
                     text=text,
                     rule=rule,
                     value=value,
                     start=start,
                     end=end,
                     groups={key: val or "" for key, val in match.groupdict().items()},
-                ):
+                )
+                if rule.validator_id is not None:
+                    validation_trace.append(
+                        RegexValidationTrace(
+                            rule_id=rule.rule_id,
+                            validator_id=rule.validator_id,
+                            label=rule.label,
+                            start=start,
+                            end=end,
+                            valid=validation.valid,
+                            reason=validation.reason,
+                        )
+                    )
+                if not validation.valid:
                     continue
                 entity = EntitySpan(
                     entity_id=f"{rule.label}_{start}_{end}",
@@ -209,6 +254,7 @@ def detect_regex_entities(
     return RegexDetectionResult(
         llm_entities=_coalesce_regex_sources(llm_entities),
         accepted_entities=_coalesce_regex_sources(accepted_entities),
+        validation_trace=validation_trace,
     )
 
 
@@ -235,7 +281,7 @@ def _trim_url_trailing_punctuation(value: str) -> str:
     return trimmed
 
 
-def _passes_validator(
+def _run_local_validator(
     *,
     text: str,
     rule: ResolvedRegexRule,
@@ -243,9 +289,9 @@ def _passes_validator(
     start: int,
     end: int,
     groups: dict[str, str],
-) -> bool:
+) -> _LocalValidationOutcome:
     if rule.validator_id is None:
-        return True
+        return _LocalValidationOutcome(valid=True)
     validator = rule.local_validator
     if validator is None:
         validator = _resolve_validator(rule.validator_id)
@@ -266,9 +312,9 @@ def _passes_validator(
             f"Regex validator {rule.validator_id!r} failed for rule {rule.rule_id!r} with {type(exc).__name__}."
         ) from exc
     if isinstance(result, bool):
-        return result
+        return _LocalValidationOutcome(valid=result)
     if isinstance(result, RegexValidationResult):
-        return result.valid
+        return _LocalValidationOutcome(valid=result.valid, reason=result.reason)
     raise TypeError(f"Regex validator {rule.validator_id!r} returned unsupported type {type(result)!r}.")
 
 
