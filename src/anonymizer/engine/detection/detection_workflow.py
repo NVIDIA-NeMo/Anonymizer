@@ -16,7 +16,12 @@ from data_designer.config.column_types import ColumnConfigT
 from data_designer.config.config_builder import DataDesignerConfigBuilder
 from data_designer.config.models import ModelConfig
 
-from anonymizer.config.anonymizer_config import Detect as AnonymizerDetectConfig
+from anonymizer.config.anonymizer_config import (
+    Detect as AnonymizerDetectConfig,
+)
+from anonymizer.config.anonymizer_config import (
+    resolve_effective_detection_labels,
+)
 from anonymizer.config.models import DetectionModelSelection
 from anonymizer.config.regex import BuiltinRegex, RegexRule
 from anonymizer.config.rewrite import PrivacyGoal
@@ -40,7 +45,6 @@ from anonymizer.engine.constants import (
     COL_VALIDATED_ENTITIES,
     COL_VALIDATION_DECISIONS,
     COL_VALIDATION_SKELETON,
-    DEFAULT_ENTITY_LABELS,
     ENTITY_LABEL_EXAMPLES,
     _jinja,
 )
@@ -540,18 +544,11 @@ def _resolve_detection_labels(
     regex_rules: list[BuiltinRegex | RegexRule] | None = None,
     excluded_entity_labels: set[str] | None = None,
 ) -> list[str]:
-    labels = list(DEFAULT_ENTITY_LABELS) if entity_labels is None else list(entity_labels)
-    if entity_labels is None:
-        known = set(labels)
-        for rule in regex_rules or []:
-            if isinstance(rule, BuiltinRegex):
-                continue
-            if rule.label not in known:
-                labels.append(rule.label)
-                known.add(rule.label)
-    if excluded_entity_labels:
-        excluded = normalize_labels(excluded_entity_labels)
-        labels = [label for label in labels if normalize_label(label) not in excluded]
+    labels = resolve_effective_detection_labels(
+        entity_labels,
+        regex_rules=regex_rules,
+        excluded_entity_labels=excluded_entity_labels,
+    )
     if not labels:
         logger.warning(
             "excluded_entity_labels removed all labels from the effective detection set. No entities will be detected."

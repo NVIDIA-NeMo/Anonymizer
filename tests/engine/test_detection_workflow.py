@@ -422,6 +422,15 @@ def test_resolve_detection_labels_adds_custom_regex_labels_to_defaults() -> None
     assert merged == [*DEFAULT_ENTITY_LABELS, "support_case"]
 
 
+def test_resolve_detection_labels_does_not_add_disabled_custom_regex_labels() -> None:
+    merged = _resolve_detection_labels(
+        None,
+        regex_rules=[RegexRule(label="support_case", pattern=r"CASE-\d+", enabled=False)],
+    )
+
+    assert merged == DEFAULT_ENTITY_LABELS
+
+
 def test_resolve_detection_labels_does_not_append_defaults_when_custom_labels_provided() -> None:
     merged = _resolve_detection_labels(["custom_label"])
     assert merged == ["custom_label"]
@@ -595,6 +604,16 @@ def test_resolve_detection_labels_excludes_custom_regex_labels() -> None:
     )
 
     assert "support_case" not in labels
+
+
+def test_resolve_detection_labels_retains_enabled_custom_label_when_all_defaults_are_excluded() -> None:
+    labels = _resolve_detection_labels(
+        None,
+        regex_rules=[RegexRule(label="support_case", pattern=r"CASE-[0-9]+")],
+        excluded_entity_labels=set(DEFAULT_ENTITY_LABELS),
+    )
+
+    assert labels == ["support_case"]
 
 
 def test_resolve_detection_labels_none_exclusions_is_noop() -> None:

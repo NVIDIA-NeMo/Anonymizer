@@ -401,6 +401,38 @@ def test_excluded_entity_labels_covering_all_defaults_raises() -> None:
         )
 
 
+def test_enabled_custom_rule_keeps_default_scope_nonempty_when_all_defaults_are_excluded() -> None:
+    config = AnonymizerConfig(
+        detect={
+            "excluded_entity_labels": list(DEFAULT_ENTITY_LABELS),
+            "regex_rules": [{"label": "support_case", "pattern": r"CASE-[0-9]+"}],
+        },
+        replace=Redact(),
+    )
+
+    assert config.detect.entity_labels is None
+
+
+def test_disabled_custom_rule_does_not_keep_default_scope_nonempty_when_all_defaults_are_excluded() -> None:
+    with pytest.raises(ValidationError, match="empty effective detection set"):
+        AnonymizerConfig(
+            detect={
+                "excluded_entity_labels": list(DEFAULT_ENTITY_LABELS),
+                "regex_rules": [{"label": "support_case", "pattern": r"CASE-[0-9]+", "enabled": False}],
+            },
+            replace=Redact(),
+        )
+
+
+def test_disabled_custom_rule_does_not_require_an_explicit_entity_label() -> None:
+    config = Detect(
+        entity_labels=["email"],
+        regex_rules=[RegexRule(label="support_case", pattern=r"CASE-[0-9]+", enabled=False)],
+    )
+
+    assert config.entity_labels == ["email"]
+
+
 def test_excluded_entity_labels_partial_default_coverage_does_not_raise() -> None:
     """Excluding some — but not all — default labels is the documented common case."""
     config = AnonymizerConfig(
