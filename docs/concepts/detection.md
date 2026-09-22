@@ -135,7 +135,7 @@ A custom validator receives a `RegexCandidate` with the matched value, character
 
 Pass a callable directly when using `run()` or `preview()`. For exported configurations, package the validator under the `nemo_anonymizer.regex_validators` Python entry-point group and pass its registered name instead.
 
-If you provide `entity_labels`, include the label of every custom regex rule. If you leave `entity_labels` unset, Anonymizer enables custom rule labels automatically.
+If you provide `entity_labels`, include the label of every enabled custom regex rule. Disabled custom rules are ignored. If you leave `entity_labels` unset, Anonymizer adds labels from enabled custom rules automatically.
 
 ---
 

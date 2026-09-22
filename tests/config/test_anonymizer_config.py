@@ -433,6 +433,18 @@ def test_disabled_custom_rule_does_not_require_an_explicit_entity_label() -> Non
     assert config.entity_labels == ["email"]
 
 
+def test_disabled_custom_rule_does_not_conflict_with_an_enabled_duplicate() -> None:
+    config = Detect(
+        entity_labels=["support_case"],
+        regex_rules=[
+            RegexRule(label="support_case", pattern=r"CASE-[0-9]+", enabled=False),
+            RegexRule(label="support_case", pattern=r"CASE-[0-9]+"),
+        ],
+    )
+
+    assert len(config.regex_rules) == 2
+
+
 def test_excluded_entity_labels_partial_default_coverage_does_not_raise() -> None:
     """Excluding some — but not all — default labels is the documented common case."""
     config = AnonymizerConfig(

@@ -171,10 +171,9 @@ class Detect(BaseModel):
 
     @model_validator(mode="after")
     def validate_regex_rule_scope(self) -> Detect:
-        custom_rules = [rule for rule in self.regex_rules if isinstance(rule, RegexRule)]
-        enabled_custom_rules = [rule for rule in custom_rules if rule.enabled]
+        enabled_custom_rules = [rule for rule in self.regex_rules if isinstance(rule, RegexRule) and rule.enabled]
         builtin_rules = [rule for rule in self.regex_rules if isinstance(rule, BuiltinRegex)]
-        identities = [(rule.label, rule.pattern) for rule in custom_rules]
+        identities = [(rule.label, rule.pattern) for rule in enabled_custom_rules]
         if len(set(identities)) != len(identities):
             raise ValueError("regex_rules contains duplicate label and pattern pairs.")
         builtin_labels = [rule.label for rule in builtin_rules]
