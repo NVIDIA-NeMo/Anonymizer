@@ -462,6 +462,11 @@ def test_excluded_entity_labels_fully_overlapping_entity_labels_raises() -> None
         )
 
 
+def test_unicode_casefolded_exclusion_cannot_leave_explicit_detection_scope_empty() -> None:
+    with pytest.raises(ValidationError, match="empty effective detection set"):
+        Detect(entity_labels=["straße"], excluded_entity_labels=["STRASSE"])
+
+
 def test_excluded_entity_labels_superset_of_entity_labels_raises() -> None:
     """excluded_entity_labels covering entity_labels plus extra labels still empties the set."""
     with pytest.raises(ValidationError, match="entirely overlaps"):

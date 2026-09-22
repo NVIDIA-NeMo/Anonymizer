@@ -23,6 +23,11 @@ from anonymizer.engine.constants import DEFAULT_ENTITY_LABELS
 logger = logging.getLogger(__name__)
 
 
+def _normalize_detection_label(label: str) -> str:
+    """Normalize an entity label for detection-scope comparisons."""
+    return label.strip().casefold()
+
+
 def resolve_effective_detection_labels(
     entity_labels: list[str] | None,
     *,
@@ -44,17 +49,17 @@ def resolve_effective_detection_labels(
     """
     labels = list(DEFAULT_ENTITY_LABELS) if entity_labels is None else list(entity_labels)
     if entity_labels is None:
-        known = {label.strip().casefold() for label in labels}
+        known = {_normalize_detection_label(label) for label in labels}
         for rule in regex_rules or []:
             if not isinstance(rule, RegexRule) or not rule.enabled:
                 continue
-            normalized = rule.label.strip().casefold()
+            normalized = _normalize_detection_label(rule.label)
             if normalized not in known:
                 labels.append(rule.label)
                 known.add(normalized)
 
-    excluded = {label.strip().casefold() for label in excluded_entity_labels or []}
-    return [label for label in labels if label.strip().casefold() not in excluded]
+    excluded = {_normalize_detection_label(label) for label in excluded_entity_labels or []}
+    return [label for label in labels if _normalize_detection_label(label) not in excluded]
 
 
 def is_remote_input_source(value: str) -> bool:
@@ -202,16 +207,18 @@ class Detect(BaseModel):
     def validate_entity_label_overlap(self) -> "Detect":
         if self.excluded_entity_labels is None:
             return self
-        excluded_set = set(self.excluded_entity_labels)
+        excluded_labels = self.excluded_entity_labels
         effective_labels = resolve_effective_detection_labels(
             self.entity_labels,
             regex_rules=self.regex_rules,
-            excluded_entity_labels=excluded_set,
+            excluded_entity_labels=excluded_labels,
         )
 
         if self.entity_labels is not None:
-            entity_labels_set = set(self.entity_labels)
-            overlap = sorted(entity_labels_set & excluded_set)
+            normalized_exclusions = {_normalize_detection_label(label) for label in excluded_labels}
+            overlap = sorted(
+                label for label in self.entity_labels if _normalize_detection_label(label) in normalized_exclusions
+            )
             if not overlap:
                 return self
             if not effective_labels:
