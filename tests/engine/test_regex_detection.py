@@ -515,3 +515,10 @@ def test_export_requires_registered_name_instead_of_direct_callable() -> None:
         validate_exportable_regex_rules([RegexRule(label="ticket", pattern=r"TKT-\d+", validator=validator)])
 
     validate_exportable_regex_rules([RegexRule(label="ticket", pattern=r"TKT-\d+", validator="installed.ticket.v1")])
+
+
+def test_export_ignores_callable_validator_on_disabled_custom_rule() -> None:
+    def validator(candidate: RegexCandidate) -> bool:
+        return bool(candidate.value)
+
+    validate_exportable_regex_rules([RegexRule(label="ticket", pattern=r"TKT-\d+", validator=validator, enabled=False)])
