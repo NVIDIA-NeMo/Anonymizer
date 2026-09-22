@@ -19,7 +19,13 @@ from data_designer.engine.testing.utils import assert_valid_plugin
 from data_designer.interface.data_designer import DataDesigner
 from data_designer.plugins import Plugin
 
-from anonymizer.engine.constants import COL_TEXT, COL_VALIDATION_DECISIONS
+from anonymizer.config.regex import RegexRule
+from anonymizer.engine.constants import (
+    COL_AUGMENTED_ENTITIES,
+    COL_RAW_DETECTED,
+    COL_TEXT,
+    COL_VALIDATION_DECISIONS,
+)
 from anonymizer.engine.detection.detection_workflow import EntityDetectionWorkflow
 from anonymizer.engine.ndd.adapter import NddAdapter
 from anonymizer.engine.ndd.model_loader import parse_model_configs
@@ -170,6 +176,31 @@ def test_build_detection_config_respects_excluded_entity_labels(tmp_path: Path) 
     assert "email" not in labels
     assert "first_name" in labels
     assert "city" in labels
+
+
+def test_regex_only_detection_config_round_trips_with_model_columns_skipped(tmp_path: Path) -> None:
+    seed_path = tmp_path / "seed.parquet"
+    pd.DataFrame({COL_TEXT: ["TKT-123"]}).to_parquet(seed_path, index=False)
+
+    parsed_models = parse_model_configs(None)
+    workflow = EntityDetectionWorkflow(adapter=NddAdapter(data_designer=cast(DataDesigner, Mock())))
+    builder = workflow.build_detection_builder_for_seed(
+        seed_path=seed_path,
+        model_configs=parsed_models.model_configs,
+        selected_models=parsed_models.selected_models.detection,
+        gliner_detection_threshold=0.3,
+        entity_labels=["ticket"],
+        regex_rules=[RegexRule(label="ticket", pattern=r"TKT-\d+", regex_only=True)],
+    )
+
+    payload = builder.get_builder_config().to_json()
+    assert payload is not None
+    restored = DataDesignerConfigBuilder.from_config(payload)
+    columns = restored.get_column_configs()
+
+    assert _get_gliner_labels_from_builder(builder) == []
+    assert next(column for column in columns if column.name == COL_RAW_DETECTED).skip is not None
+    assert next(column for column in columns if column.name == COL_AUGMENTED_ENTITIES).skip is not None
 
 
 def test_fresh_process_discovers_plugins_when_loading_native_config(tmp_path: Path) -> None:

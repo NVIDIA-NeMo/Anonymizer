@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import cast
 
 import pandas as pd
+from data_designer.config.base import SkipConfig
 from data_designer.config.column_configs import LLMStructuredColumnConfig, LLMTextColumnConfig
 from data_designer.config.column_types import ColumnConfigT
 from data_designer.config.config_builder import DataDesignerConfigBuilder
@@ -57,6 +58,7 @@ from anonymizer.engine.detection.postprocess import (
 from anonymizer.engine.detection.regex_detection import (
     DEFAULT_MAX_MATCHES_PER_RULE,
     DEFAULT_REGEX_TIMEOUT_SECONDS,
+    resolve_regex_only_labels,
     resolve_regex_rules,
     validate_exportable_regex_rules,
 )
@@ -177,6 +179,13 @@ class EntityDetectionWorkflow:
             regex_rules=custom_rules,
             excluded_entity_labels=set(excluded_entity_labels or []),
         )
+        regex_only_labels = resolve_regex_only_labels(
+            labels=labels,
+            builtin_regexes=builtin_regexes,
+            rules=custom_rules,
+        )
+        normalized_regex_only_labels = normalize_labels(regex_only_labels)
+        model_labels = [label for label in labels if normalize_label(label) not in normalized_regex_only_labels]
         resolved_regex_rules = resolve_regex_rules(
             labels=labels,
             builtin_regexes=builtin_regexes,
@@ -185,7 +194,7 @@ class EntityDetectionWorkflow:
         workflow_model_configs = self._inject_detector_params(
             model_configs=model_configs,
             selected_models=selected_models,
-            labels=labels,
+            labels=model_labels,
             gliner_detection_threshold=gliner_detection_threshold,
         )
 
@@ -226,10 +235,14 @@ class EntityDetectionWorkflow:
                     name=COL_RAW_DETECTED,
                     prompt=_jinja(COL_TEXT),
                     model_alias=detection_alias,
+                    skip=(
+                        SkipConfig(when=f"{{{{ {COL_TEXT} == {COL_TEXT} }}}}", value="") if not model_labels else None
+                    ),
                 ),
                 DetectionTransformConfig(
                     name=COL_SEED_ENTITIES,
                     operation=DetectionTransformOperation.PARSE_DETECTED_ENTITIES,
+                    excluded_entity_labels=sorted(regex_only_labels),
                 ),
                 DetectionTransformConfig(
                     name=COL_SEED_VALIDATION_CANDIDATES,
@@ -241,7 +254,7 @@ class EntityDetectionWorkflow:
                     max_entities_per_call=validation_max_entities_per_call,
                     excerpt_window_chars=validation_excerpt_window_chars,
                     single_chunk_full_text=validation_single_chunk_full_text,
-                    prompt_template=_get_validation_prompt(data_summary=data_summary, labels=labels),
+                    prompt_template=_get_validation_prompt(data_summary=data_summary, labels=model_labels),
                     drop=True,
                 ),
                 DetectionTransformConfig(
@@ -256,15 +269,26 @@ class EntityDetectionWorkflow:
                 LLMStructuredColumnConfig(
                     name=COL_AUGMENTED_ENTITIES,
                     prompt=_get_augment_prompt(
-                        data_summary=data_summary, labels=labels, strict_labels=entity_labels is not None
+                        data_summary=data_summary,
+                        labels=model_labels,
+                        strict_labels=entity_labels is not None,
                     ),
                     model_alias=augmenter_alias,
                     output_format=AugmentedEntitiesSchema,
+                    skip=(
+                        SkipConfig(
+                            when=f"{{{{ {COL_TEXT} == {COL_TEXT} }}}}",
+                            value='{"entities":[]}',
+                        )
+                        if not model_labels
+                        else None
+                    ),
                 ),
                 DetectionTransformConfig(
                     name=COL_MERGED_ENTITIES,
                     operation=DetectionTransformOperation.MERGE_AND_BUILD_CANDIDATES,
                     excluded_entity_labels=list(excluded_entity_labels or []),
+                    excluded_augmented_entity_labels=sorted(regex_only_labels),
                 ),
                 DetectionTransformConfig(
                     name=COL_DETECTED_ENTITIES,

@@ -257,6 +257,41 @@ def test_detect_accepts_builtin_regex_enabled_override() -> None:
     assert rule.validate_with_llm is True
 
 
+@pytest.mark.parametrize(
+    "rule",
+    [
+        BuiltinRegex(label="email", regex_only=True),
+        RegexRule(label="support_case", pattern=r"CASE-[0-9]+", regex_only=True),
+    ],
+)
+def test_regex_only_rules_disable_llm_validation(rule: BuiltinRegex | RegexRule) -> None:
+    assert rule.regex_only is True
+    assert rule.validate_with_llm is False
+
+
+def test_enabled_rules_sharing_a_label_must_agree_on_regex_only() -> None:
+    with pytest.raises(ValidationError, match="same regex_only value"):
+        Detect(
+            entity_labels=["support_case"],
+            regex_rules=[
+                RegexRule(label="support_case", pattern=r"CASE-[0-9]+", regex_only=True),
+                RegexRule(label="support_case", pattern=r"SUP-[0-9]+"),
+            ],
+        )
+
+
+def test_disabled_rule_does_not_create_regex_only_policy_conflict() -> None:
+    config = Detect(
+        entity_labels=["support_case"],
+        regex_rules=[
+            RegexRule(label="support_case", pattern=r"CASE-[0-9]+", regex_only=True),
+            RegexRule(label="support_case", pattern=r"SUP-[0-9]+", enabled=False),
+        ],
+    )
+
+    assert config.regex_rules[0].regex_only is True
+
+
 def test_detect_rejects_duplicate_builtin_regex_entries() -> None:
     with pytest.raises(ValidationError, match="duplicate built-in labels"):
         Detect(

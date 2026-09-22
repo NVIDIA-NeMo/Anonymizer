@@ -436,6 +436,26 @@ def test_custom_rule_can_bypass_llm_validation() -> None:
     assert [entity.value for entity in result.accepted_entities] == ["TKT-123"]
 
 
+@pytest.mark.parametrize(
+    "rules",
+    [
+        [RegexRule(label="ticket", pattern=r"TKT-\d+", regex_only=True)],
+        [BuiltinRegex(label="email", regex_only=True)],
+    ],
+)
+def test_regex_only_rule_routes_matches_without_llm_validation(
+    rules: list[BuiltinRegex | RegexRule],
+) -> None:
+    label = rules[0].label
+    text = "TKT-123" if label == "ticket" else "alice@example.com"
+    resolved = resolve_regex_rules(labels=[label], builtin_regexes=True, rules=rules)
+
+    result = detect_regex_entities(text, rules=resolved)
+
+    assert result.llm_entities == []
+    assert [entity.value for entity in result.accepted_entities] == [text]
+
+
 def test_custom_rule_ids_and_results_are_stable_when_rules_are_reordered() -> None:
     first = RegexRule(label="ticket", pattern=r"TKT-\d+")
     second = RegexRule(label="case", pattern=r"CASE-\d+")

@@ -78,6 +78,11 @@ def resolve_regex_rules(
 ) -> list[ResolvedRegexRule]:
     """Resolve active built-in and custom rules into a serializable form."""
     active_labels = set(labels)
+    regex_only_labels = resolve_regex_only_labels(
+        labels=active_labels,
+        builtin_regexes=builtin_regexes,
+        rules=rules,
+    )
     resolved: list[ResolvedRegexRule] = []
     custom_rules = [rule for rule in rules if isinstance(rule, RegexRule)]
     builtin_settings = {rule.label: rule for rule in rules if isinstance(rule, BuiltinRegex)}
@@ -92,7 +97,7 @@ def resolve_regex_rules(
                 pattern=rule.pattern,
                 validator_id=validator_id,
                 local_validator=rule.validator if callable(rule.validator) else None,
-                validate_with_llm=rule.validate_with_llm,
+                validate_with_llm=rule.validate_with_llm and rule.label not in regex_only_labels,
                 source="regex_user",
             )
         )
@@ -106,10 +111,34 @@ def resolve_regex_rules(
                 continue
             resolved.append(
                 rule.model_copy(
-                    update={"validate_with_llm": (override.validate_with_llm if override is not None else True)}
+                    update={
+                        "validate_with_llm": (
+                            False
+                            if rule.label in regex_only_labels
+                            else (override.validate_with_llm if override is not None else True)
+                        )
+                    }
                 )
             )
     return resolved
+
+
+def resolve_regex_only_labels(
+    *,
+    labels: Iterable[str],
+    builtin_regexes: bool,
+    rules: list[BuiltinRegex | RegexRule],
+) -> set[str]:
+    """Return active labels whose enabled regex configuration is authoritative."""
+    active_labels = set(labels)
+    return {
+        rule.label
+        for rule in rules
+        if rule.enabled
+        and rule.regex_only
+        and rule.label in active_labels
+        and (builtin_regexes or isinstance(rule, RegexRule))
+    }
 
 
 def _build_user_rule_id(rule: RegexRule) -> str:

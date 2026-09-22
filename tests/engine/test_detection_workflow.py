@@ -18,11 +18,14 @@ from anonymizer.config.models import DetectionModelSelection
 from anonymizer.config.regex import RegexRule
 from anonymizer.config.rewrite import PrivacyGoal
 from anonymizer.engine.constants import (
+    COL_AUGMENTED_ENTITIES,
     COL_DETECTED_ENTITIES,
     COL_ENTITIES_BY_VALUE,
     COL_FINAL_ENTITIES,
     COL_LATENT_ENTITIES,
     COL_MERGED_ENTITIES,
+    COL_RAW_DETECTED,
+    COL_REGEX_ENTITIES,
     COL_SEED_ENTITIES,
     COL_SEED_ENTITIES_JSON,
     COL_SEED_VALIDATION_CANDIDATES,
@@ -54,6 +57,7 @@ from anonymizer.engine.workflow_columns.detection.config import (
     ChunkedValidationConfig,
     DetectionTransformConfig,
     DetectionTransformOperation,
+    RegexDetectionConfig,
 )
 
 
@@ -788,6 +792,68 @@ def test_excluded_labels_are_removed_from_gliner_labels(
     assert "email" not in gliner_labels
     assert "first_name" in gliner_labels
     assert "city" in gliner_labels
+
+
+def test_regex_only_label_is_removed_from_model_detection_routes(
+    stub_detector_model_configs: list[ModelConfig],
+    stub_detection_model_selection: DetectionModelSelection,
+) -> None:
+    adapter = Mock()
+    adapter.run_workflow.return_value = WorkflowRunResult(
+        dataframe=pd.DataFrame({COL_TEXT: ["TKT-123 alice@example.com"]}), failed_records=[]
+    )
+    workflow = EntityDetectionWorkflow(adapter=adapter)
+
+    workflow.run(
+        pd.DataFrame({COL_TEXT: ["TKT-123 alice@example.com"]}),
+        model_configs=stub_detector_model_configs,
+        selected_models=stub_detection_model_selection,
+        gliner_detection_threshold=0.5,
+        entity_labels=["ticket", "email"],
+        regex_rules=[RegexRule(label="ticket", pattern=r"TKT-\d+", regex_only=True)],
+        tag_latent_entities=False,
+    )
+
+    injected_configs = adapter.run_workflow.call_args.kwargs["model_configs"]
+    gliner_labels = injected_configs[0].inference_parameters.extra_body["labels"]
+    columns = adapter.run_workflow.call_args.kwargs["columns"]
+    regex_config = _find_column(columns, COL_REGEX_ENTITIES)
+    parse_config = _find_column(columns, COL_SEED_ENTITIES)
+    merge_config = _find_column(columns, COL_MERGED_ENTITIES)
+    augment_config = _find_column(columns, COL_AUGMENTED_ENTITIES)
+
+    assert gliner_labels == ["email"]
+    assert isinstance(regex_config, RegexDetectionConfig)
+    assert regex_config.rules[0].validate_with_llm is False
+    assert parse_config.excluded_entity_labels == ["ticket"]
+    assert merge_config.excluded_entity_labels == []
+    assert merge_config.excluded_augmented_entity_labels == ["ticket"]
+    assert "- ticket" not in augment_config.prompt
+
+
+def test_all_regex_only_labels_skip_detector_and_augmenter_calls(
+    stub_detector_model_configs: list[ModelConfig],
+    stub_detection_model_selection: DetectionModelSelection,
+) -> None:
+    adapter = Mock()
+    adapter.run_workflow.return_value = WorkflowRunResult(
+        dataframe=pd.DataFrame({COL_TEXT: ["TKT-123"]}), failed_records=[]
+    )
+    workflow = EntityDetectionWorkflow(adapter=adapter)
+
+    workflow.run(
+        pd.DataFrame({COL_TEXT: ["TKT-123"]}),
+        model_configs=stub_detector_model_configs,
+        selected_models=stub_detection_model_selection,
+        gliner_detection_threshold=0.5,
+        entity_labels=["ticket"],
+        regex_rules=[RegexRule(label="ticket", pattern=r"TKT-\d+", regex_only=True)],
+        tag_latent_entities=False,
+    )
+
+    columns = adapter.run_workflow.call_args.kwargs["columns"]
+    assert _find_column(columns, COL_RAW_DETECTED).skip is not None
+    assert _find_column(columns, COL_AUGMENTED_ENTITIES).skip is not None
 
 
 # ---------------------------------------------------------------------------

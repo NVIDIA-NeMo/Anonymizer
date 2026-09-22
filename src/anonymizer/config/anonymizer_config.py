@@ -178,12 +178,22 @@ class Detect(BaseModel):
     def validate_regex_rule_scope(self) -> Detect:
         enabled_custom_rules = [rule for rule in self.regex_rules if isinstance(rule, RegexRule) and rule.enabled]
         builtin_rules = [rule for rule in self.regex_rules if isinstance(rule, BuiltinRegex)]
+        enabled_rules = [rule for rule in self.regex_rules if rule.enabled]
         identities = [(rule.label, rule.pattern) for rule in enabled_custom_rules]
         if len(set(identities)) != len(identities):
             raise ValueError("regex_rules contains duplicate label and pattern pairs.")
         builtin_labels = [rule.label for rule in builtin_rules]
         if len(set(builtin_labels)) != len(builtin_labels):
             raise ValueError("regex_rules contains duplicate built-in labels.")
+        regex_only_policies: dict[str, set[bool]] = {}
+        for rule in enabled_rules:
+            regex_only_policies.setdefault(rule.label, set()).add(rule.regex_only)
+        conflicting_labels = sorted(label for label, policies in regex_only_policies.items() if len(policies) > 1)
+        if conflicting_labels:
+            raise ValueError(
+                "Enabled regex rules sharing a label must use the same regex_only value. "
+                f"Conflicting labels: {conflicting_labels!r}."
+            )
         if self.entity_labels is not None:
             missing = sorted({rule.label for rule in enabled_custom_rules} - set(self.entity_labels))
             if missing:

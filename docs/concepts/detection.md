@@ -64,6 +64,8 @@ Each built-in recognizer performs two local steps:
 
 Matches that pass these checks go to the contextual LLM validator by default. The LLM uses the surrounding text to decide whether the match is sensitive. Set `validate_with_llm=False` to accept locally validated matches without this step.
 
+Set `regex_only=True` when regex recognition should be authoritative for a label. This accepts locally valid matches without LLM validation and removes that label from GLiNER and LLM augmentation. Other labels in the same record can still use model-based detection. If every active label is regex-only, the detector and augmenter calls are skipped. Enabled rules that share a label must use the same `regex_only` value.
+
 | Entity label | Checks | Accepted forms | Rejected forms |
 | --- | --- | --- | --- |
 | `credit_debit_card` | Removes spaces and hyphens, requires 13--19 digits, and verifies the Luhn checksum. | Contiguous digits and digits separated by spaces or hyphens. A card issuer prefix is not required. | Incorrect length, repeated identical digits, or an invalid Luhn checksum. |
@@ -125,7 +127,7 @@ detect = Detect(
             label="support_case",
             pattern=r"CASE-(?P<number>\d{6})",
             validator=validate_support_case,
-            # validate_with_llm=True is the default
+            regex_only=True,
         )
     ],
 )

@@ -241,6 +241,7 @@ def apply_augmented_entities(
     entities: list[EntitySpan],
     augmented_output: dict | str,
     excluded_entity_labels: set[str] | None = None,
+    excluded_augmented_entity_labels: set[str] | None = None,
 ) -> list[EntitySpan]:
     """Add allowed augmented entities, split full names, and resolve overlaps."""
     payload = _safe_json_loads(augmented_output) if isinstance(augmented_output, str) else augmented_output
@@ -248,6 +249,7 @@ def apply_augmented_entities(
     if not isinstance(augmented, list):
         augmented = []
     excluded = normalize_labels(excluded_entity_labels)
+    excluded_from_augmentation = excluded | normalize_labels(excluded_augmented_entity_labels)
 
     merged = filter_excluded_entity_spans(entities, excluded)
     for idx, suggestion in enumerate(augmented):
@@ -255,7 +257,7 @@ def apply_augmented_entities(
             continue
         value = str(suggestion.get("value", "")).strip()
         label = str(suggestion.get("label", "")).strip()
-        if not value or not label or normalize_label(label) in excluded:
+        if not value or not label or normalize_label(label) in excluded_from_augmentation:
             continue
         for start, end in _find_all_occurrences(text=text, needle=value):
             entity_id = _build_entity_id(label=label, start=start, end=end)
@@ -271,11 +273,19 @@ def apply_augmented_entities(
                 )
             )
 
-    merged = _split_full_names(text=text, entities=merged)
+    merged = _split_full_names(
+        text=text,
+        entities=merged,
+        excluded_entity_labels=excluded_augmented_entity_labels,
+    )
     return resolve_overlaps(merged)
 
 
-def _split_full_names(text: str, entities: list[EntitySpan]) -> list[EntitySpan]:
+def _split_full_names(
+    text: str,
+    entities: list[EntitySpan],
+    excluded_entity_labels: set[str] | None = None,
+) -> list[EntitySpan]:
     """Split ``full_name`` entities into first/middle/last name parts.
 
     When a ``full_name`` span like "John Smith" is detected, this adds
@@ -283,11 +293,12 @@ def _split_full_names(text: str, entities: list[EntitySpan]) -> list[EntitySpan]
     each part so that standalone occurrences elsewhere in the text are
     also caught.
     """
+    excluded = normalize_labels(excluded_entity_labels)
     existing_values: set[str] = {entity.value.lower() for entity in entities}
     extra: list[EntitySpan] = []
 
     for entity in entities:
-        if entity.label != "full_name":
+        if entity.label != "full_name" or normalize_label(entity.label) in excluded:
             continue
         parts = entity.value.split()
         if len(parts) < 2:

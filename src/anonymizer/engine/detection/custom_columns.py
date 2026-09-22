@@ -66,13 +66,18 @@ from anonymizer.engine.schemas import (
     required_columns=[COL_TEXT, COL_RAW_DETECTED, COL_REGEX_ENTITIES],
     side_effect_columns=[COL_TAG_NOTATION],
 )
-def parse_detected_entities(row: dict[str, Any]) -> dict[str, Any]:
+def parse_detected_entities(
+    row: dict[str, Any],
+    *,
+    excluded_entity_labels: list[str] | None = None,
+) -> dict[str, Any]:
     """Parse detector payload and produce seed entities."""
     text = str(row.get(COL_TEXT, ""))
     detector_entities = parse_raw_entities(
         raw_response=str(row.get(COL_RAW_DETECTED, "")),
         text=text,
     )
+    detector_entities = filter_excluded_entity_spans(detector_entities, excluded_entity_labels)
     regex_entities = _parse_entity_spans(row.get(COL_REGEX_ENTITIES, {}))
     entities = coalesce_exact_entity_candidates(regex_entities, detector_entities)
     seed_entities = [entity.as_dict() for entity in entities]
@@ -89,6 +94,7 @@ def merge_and_build_candidates(
     row: dict[str, Any],
     *,
     excluded_entity_labels: list[str] | None = None,
+    excluded_augmented_entity_labels: list[str] | None = None,
 ) -> dict[str, Any]:
     """Merge validated seed + augmented entities, then build tagged text and validation candidates.
 
@@ -103,6 +109,7 @@ def merge_and_build_candidates(
         entities=seed_spans,
         augmented_output=row.get(COL_AUGMENTED_ENTITIES, {}),
         excluded_entity_labels=set(excluded_entity_labels or []),
+        excluded_augmented_entity_labels=set(excluded_augmented_entity_labels or []),
     )
     merged_entities = [entity.as_dict() for entity in merged]
     row[COL_MERGED_ENTITIES] = EntitiesSchema(entities=merged_entities).model_dump(mode="json")

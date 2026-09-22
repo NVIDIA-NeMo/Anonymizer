@@ -88,6 +88,44 @@ def test_parse_produces_seed_entities_and_notation() -> None:
     assert result[COL_TAG_NOTATION] in {"xml", "bracket", "paren", "sentinel"}
 
 
+def test_parse_excludes_detector_candidates_for_regex_only_label_but_keeps_regex_candidates() -> None:
+    text = "allow:TKT-1 deny:TKT-2"
+    row: dict[str, Any] = {
+        COL_TEXT: text,
+        COL_RAW_DETECTED: _raw(
+            [
+                {
+                    "text": "TKT-2",
+                    "label": "ticket",
+                    "start": 17,
+                    "end": 22,
+                    "score": 0.9,
+                }
+            ]
+        ),
+        COL_REGEX_ENTITIES: {
+            "entities": [
+                {
+                    "id": "ticket_6_11",
+                    "value": "TKT-1",
+                    "label": "ticket",
+                    "start_position": 6,
+                    "end_position": 11,
+                    "score": 1.0,
+                    "source": "regex_user:user:ticket:v1",
+                }
+            ]
+        },
+        COL_REGEX_ACCEPTED_ENTITIES: {"entities": []},
+    }
+
+    result = parse_detected_entities(row, excluded_entity_labels=["ticket"])
+
+    assert [(entity["value"], entity["start_position"]) for entity in result[COL_SEED_ENTITIES]["entities"]] == [
+        ("TKT-1", 6)
+    ]
+
+
 def test_overlapping_fallback_survives_when_longer_candidate_is_dropped() -> None:
     text = "ABC-123"
     row: dict[str, Any] = {
@@ -441,6 +479,48 @@ def test_merge_filters_excluded_validated_seed_entities() -> None:
     assert result[COL_MERGED_ENTITIES]["entities"] == []
     assert result[COL_VALIDATION_CANDIDATES]["candidates"] == []
     assert result[COL_MERGED_TAGGED_TEXT] == "San Diego"
+
+
+def test_merge_filters_regex_only_label_from_augmentation_but_preserves_regex_seed() -> None:
+    regex_entity = {
+        "id": "ticket_6_11",
+        "value": "TKT-1",
+        "label": "ticket",
+        "start_position": 6,
+        "end_position": 11,
+        "score": 1.0,
+        "source": "regex_user:user:ticket:v1",
+    }
+    row: dict[str, Any] = {
+        COL_TEXT: "allow:TKT-1 deny:TKT-2",
+        COL_VALIDATED_SEED_ENTITIES: {"entities": [regex_entity]},
+        COL_AUGMENTED_ENTITIES: {"entities": [{"value": "TKT-2", "label": "ticket"}]},
+    }
+
+    result = merge_and_build_candidates(row, excluded_augmented_entity_labels=["ticket"])
+
+    assert result[COL_MERGED_ENTITIES]["entities"] == [regex_entity]
+
+
+def test_merge_does_not_split_regex_only_full_name() -> None:
+    regex_entity = {
+        "id": "full_name_0_10",
+        "value": "John Smith",
+        "label": "full_name",
+        "start_position": 0,
+        "end_position": 10,
+        "score": 1.0,
+        "source": "regex_user:user:full_name:v1",
+    }
+    row: dict[str, Any] = {
+        COL_TEXT: "John Smith met John",
+        COL_VALIDATED_SEED_ENTITIES: {"entities": [regex_entity]},
+        COL_AUGMENTED_ENTITIES: {"entities": []},
+    }
+
+    result = merge_and_build_candidates(row, excluded_augmented_entity_labels=["full_name"])
+
+    assert result[COL_MERGED_ENTITIES]["entities"] == [regex_entity]
 
 
 def test_finalize_filters_reclassification_to_excluded_label() -> None:
