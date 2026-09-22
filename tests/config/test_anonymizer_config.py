@@ -169,8 +169,8 @@ def test_entity_label_examples_rejects_invalid_shapes(examples: object) -> None:
         Detect(entity_label_examples=examples)  # type: ignore[arg-type]
 
 
-def test_entity_label_examples_explicit_allowlist_is_strict() -> None:
-    with pytest.raises(ValidationError, match="outside the explicit entity_labels allowlist"):
+def test_entity_label_examples_explicit_label_set_is_strict() -> None:
+    with pytest.raises(ValidationError, match="outside the explicit entity_labels set"):
         Detect(
             entity_labels=["email"],
             entity_label_examples={"vendor_api_key": ["acme_live_abc123"]},
@@ -193,7 +193,7 @@ def test_entity_label_examples_exclusion_wins_over_explicit_mismatch(
     assert "acme_live_abc123" not in caplog.text
 
 
-def test_entity_label_examples_custom_key_survives_all_default_exclusions() -> None:
+def test_entity_label_examples_non_default_key_survives_all_default_exclusions() -> None:
     detect = Detect(
         excluded_entity_labels=list(DEFAULT_ENTITY_LABELS),
         entity_label_examples={"vendor_api_key": ["acme_live_abc123"]},
@@ -202,7 +202,7 @@ def test_entity_label_examples_custom_key_survives_all_default_exclusions() -> N
     assert detect.entity_label_examples == {"vendor_api_key": ["acme_live_abc123"]}
 
 
-def test_entity_label_examples_excluding_all_defaults_and_custom_key_raises() -> None:
+def test_entity_label_examples_excluding_all_defaults_and_non_default_key_raises() -> None:
     with pytest.raises(ValidationError, match="empty effective detection set"):
         Detect(
             excluded_entity_labels=[*DEFAULT_ENTITY_LABELS, "vendor_api_key"],

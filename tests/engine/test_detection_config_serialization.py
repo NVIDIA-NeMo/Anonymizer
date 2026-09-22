@@ -180,7 +180,7 @@ def test_build_detection_config_respects_excluded_entity_labels(tmp_path: Path) 
     assert "city" in labels
 
 
-def test_exported_builder_auto_activates_custom_example_label(tmp_path: Path) -> None:
+def test_exported_builder_auto_activates_non_default_example_label(tmp_path: Path) -> None:
     seed_path = tmp_path / "seed.parquet"
     pd.DataFrame({COL_TEXT: ["Credential acme_live_abc123"]}).to_parquet(seed_path, index=False)
 

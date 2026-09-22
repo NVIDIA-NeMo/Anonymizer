@@ -44,7 +44,7 @@ config = AnonymizerConfig(
 | Field | Default | Description |
 |-------|---------|-------------|
 | `entity_labels` | `None` (all defaults) | List of labels to detect. Leave unset (or pass `None`) to use the full default set. |
-| `entity_label_examples` | `{}` | Positive examples keyed by label. Built-in labels append these examples; custom keys automatically extend the defaults when `entity_labels=None`. |
+| `entity_label_examples` | `{}` | User-configured positive examples keyed by label. Examples for default labels extend their built-in examples; keys for non-default labels automatically extend the default label set when `entity_labels=None`. |
 | `excluded_entity_labels` | `None` | List of labels to **never** detect, even if present in `entity_labels` or the default set. Excluded labels are removed before GLiNER and the LLM prompts run, and are also filtered from the final entity output as a safety net. |
 | `gliner_threshold` | `0.3` | GLiNER confidence threshold (0.0--1.0). Lower values detect more entities but may increase false positives. |
 | `validation_max_entities_per_call` | `100` | Maximum candidate entities per validator LLM call. Rows with more candidates are split into chunks. See [Chunked validation](#chunked-validation). |
@@ -95,12 +95,19 @@ from anonymizer import DEFAULT_ENTITY_LABELS
 print(DEFAULT_ENTITY_LABELS)
 ```
 
-The two label settings serve different purposes:
+The label settings serve different purposes:
 
 - `entity_labels` defines **which entity types** are in scope, such as `api_key`.
 - `entity_label_examples` provides **representative values** for those types, such as `sk-ant-api03-abc123`.
 
-### Custom labels
+The following terms distinguish label scope from example origin:
+
+- A **default label** is present in `DEFAULT_ENTITY_LABELS`; a **non-default label** is absent from it.
+- An **explicit label set** is any set supplied through `entity_labels` and may contain default labels, non-default labels, or both.
+- **Built-in examples** ship with Anonymizer in `ENTITY_LABEL_EXAMPLES`.
+- **Configured examples** are values you supply through `entity_label_examples`.
+
+### Label scope
 
 When you pass `entity_labels` explicitly, the augmenter operates in **strict mode** -- it only outputs entities matching your list. When `entity_labels=None`, the augmenter can create additional labels beyond the defaults (e.g., `clinic_name`, `server_name`).
 
@@ -116,21 +123,34 @@ Detect()  # entity_labels=None
 
 Use `entity_label_examples` to help detection recognize dataset- or domain-specific value formats, such as vendor-prefixed API keys, account handles, or organization-specific identifiers. These are positive examples of what a label may look like—not format allowlists, guaranteed matches, negative examples, or replacement templates.
 
+#### Examples for default labels
+
+Configured examples for a default label are appended to its built-in examples:
+
 ```python
-# Add guidance to an existing built-in label. Its bundled examples remain active.
 Detect(entity_label_examples={"api_key": ["sk-ant-api03-abc123"]})
+```
 
-# Defaults plus a custom label. The custom key activates automatically.
+Here, `api_key` is already active through `DEFAULT_ENTITY_LABELS`; its built-in examples remain active alongside the configured example.
+
+#### Examples for non-default labels
+
+With `entity_labels=None`, a configured example key for a non-default label activates that label alongside all default labels:
+
+```python
 Detect(entity_label_examples={"vendor_api_key": ["acme_live_abc123"]})
+```
 
-# Strict custom-only detection requires the key in the explicit allowlist.
+To detect only selected labels, provide an explicit label set. Every non-excluded configured example key must appear in that set:
+
+```python
 Detect(
     entity_labels=["vendor_api_key"],
     entity_label_examples={"vendor_api_key": ["acme_live_abc123"]},
 )
 ```
 
-With `entity_labels=None`, custom example keys intentionally activate alongside all defaults and the augmenter remains permissive, so it may still create additional labels. With an explicit `entity_labels` list, every non-excluded example key must already be listed and the augmenter is strict.
+Automatic activation with `entity_labels=None` remains permissive, so the augmenter may still create additional labels. An explicit label set is strict.
 
 !!! warning "Examples are sent to model providers"
     Configured examples are embedded in prompts and exported detection builders. Use synthetic patterns, not production credentials, secrets, or real PII. Explicitly enabled raw DataDesigner message traces also contain the rendered prompts.
@@ -147,12 +167,12 @@ Use `excluded_entity_labels` to omit specific labels from detection without havi
 # Detect all defaults except occupation and gender
 Detect(excluded_entity_labels=["occupation", "gender"])
 
-# Combine with an explicit allowlist — exclusions always win
+# Combine with an explicit label set — exclusions always win
 Detect(entity_labels=["first_name", "email", "city"], excluded_entity_labels=["city"])
 ```
 
 !!! warning
-    Exclusions always win. Examples for an excluded key are ignored with a warning that names the label but never the example values. A total overlap with the effective set—including automatically activated custom keys—raises a `ValueError` instead of silently detecting nothing.
+    Exclusions always win. Configured examples for an excluded label are ignored with a warning that names the label but never the example values. A total overlap with the effective set—including automatically activated non-default labels—raises a `ValueError` instead of silently detecting nothing.
 
 ## Tuning the threshold
 

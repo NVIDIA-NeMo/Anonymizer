@@ -57,16 +57,16 @@ What to leave out:
 
 ## 2. (Detection) Detection knobs
 
-For most datasets the [detection](detection.md) defaults work. Use `entity_label_examples` when representative positive values help explain a built-in or domain-specific concept. Match the snake_case convention of `DEFAULT_ENTITY_LABELS`. Adjust `gliner_threshold` only when you see a specific recall or precision problem in preview.
+For most datasets the [detection](detection.md) defaults work. Use `entity_label_examples` when representative positive values help explain a default or non-default label. Match the snake_case convention of `DEFAULT_ENTITY_LABELS`. Adjust `gliner_threshold` only when you see a specific recall or precision problem in preview.
 
 ### `entity_labels`
 
 | Setting | Behavior | Use when |
 |---|---|---|
 | `None` (default) | Detect all `DEFAULT_ENTITY_LABELS`; the augmenter LLM can also infer new labels not in the default set | General-purpose — almost always the right starting point |
-| Explicit list | **Strict mode** — only the labels you list are detected, augmenter cannot invent new ones | You have a domain-specific entity that the defaults don't cover, or you want to *narrow* detection to a known short list |
+| Explicit list | **Strict mode** — only the labels you list are detected, augmenter cannot invent new ones | You have a non-default label, or you want to *narrow* detection to a known short list |
 
-Common custom labels include:
+Common non-default labels include:
 
 - Healthcare: `clinical_facility`, `diagnosis_code`, `medication_name`, `lab_test_code`
 - Legal: `case_number`, `docket_number`, `statute_citation`, `judge_name`
@@ -76,7 +76,7 @@ Common custom labels include:
 ```python
 from anonymizer import Detect
 
-# Defaults plus these custom labels; examples activate custom keys automatically.
+# Defaults plus these non-default labels; their configured example keys activate them automatically.
 detect = Detect(
     entity_label_examples={
         "clinical_facility": ["North Valley Oncology Center"],
@@ -84,7 +84,7 @@ detect = Detect(
     }
 )
 
-# Strict custom-only detection uses an explicit allowlist.
+# Strict non-default-only detection uses an explicit label set.
 strict_detect = Detect(
     entity_labels=["clinical_facility", "diagnosis_code"],
     entity_label_examples={
@@ -94,7 +94,7 @@ strict_detect = Detect(
 )
 ```
 
-For a built-in label, configured examples are additive rather than replacements. Examples are positive guidance, not format allowlists: an `api_key` in a different format may still be detected. Keep the list short because the full validator ontology repeats per validation chunk, and use synthetic values because configured examples are sent to model providers.
+For a default label, configured examples are added to its built-in examples rather than replacing them. A non-default label has no built-in examples, so its resolved examples come from the configured values. Examples are positive guidance, not format allowlists: an `api_key` in a different format may still be detected. Keep configured lists short and use synthetic values because they are sent to model providers.
 
 ### `excluded_entity_labels`
 
@@ -104,12 +104,12 @@ Use when you want to **exclude** specific label types from detection without enu
 # Never detect occupation or gender, keep everything else
 Detect(excluded_entity_labels=["occupation", "gender"])
 
-# Combine with an explicit allowlist — exclusions always win
+# Combine with an explicit label set — exclusions always win
 Detect(entity_labels=["first_name", "email", "city"], excluded_entity_labels=["city"])
 ```
 
 !!! warning
-    Exclusions take precedence over labels and examples. Examples for an excluded key are ignored with a warning. A total overlap with the effective defaults-plus-custom or explicit set raises a `ValueError` instead of silently detecting nothing.
+    Exclusions take precedence over labels and examples. Configured examples for an excluded label are ignored with a warning. A total overlap with the effective default-plus-non-default or explicit label set raises a `ValueError` instead of silently detecting nothing.
 
 ### `gliner_threshold`
 

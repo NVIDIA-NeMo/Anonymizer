@@ -623,8 +623,8 @@ def _format_label_examples(
 ) -> str:
     """Build a formatted list of entity classes with examples.
 
-    Labels present in ENTITY_LABEL_EXAMPLES get their examples; custom labels
-    added by the user appear without examples so the LLM still knows they're valid.
+    ``examples_by_label`` supplies the resolved built-in and configured examples.
+    Labels without resolved examples still appear so the LLM knows they are valid.
     """
     examples_by_label = ENTITY_LABEL_EXAMPLES if examples_by_label is None else examples_by_label
     configured_examples = configured_examples or {}

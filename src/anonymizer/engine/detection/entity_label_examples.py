@@ -85,9 +85,7 @@ def resolve_entity_ontology(
     if strict_labels:
         unknown = sorted(set(active_configured) - seen_labels)
         if unknown:
-            raise ValueError(
-                f"entity_label_examples contains labels outside the explicit entity_labels allowlist: {unknown}"
-            )
+            raise ValueError(f"entity_label_examples contains labels outside the explicit entity_labels set: {unknown}")
     else:
         for label in active_configured:
             if label not in seen_labels:

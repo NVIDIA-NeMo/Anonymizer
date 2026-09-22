@@ -414,9 +414,9 @@ def test_resolve_entity_ontology_none_uses_defaults() -> None:
     assert ontology.labels == list(DEFAULT_ENTITY_LABELS)
 
 
-def test_resolve_entity_ontology_does_not_append_defaults_when_custom_labels_provided() -> None:
-    ontology = resolve_entity_ontology(entity_labels=["custom_label"])
-    assert ontology.labels == ["custom_label"]
+def test_resolve_entity_ontology_does_not_append_defaults_for_explicit_label_set() -> None:
+    ontology = resolve_entity_ontology(entity_labels=["non_default_label"])
+    assert ontology.labels == ["non_default_label"]
 
 
 def test_resolve_entity_ontology_normalizes_provided_labels() -> None:
@@ -437,7 +437,7 @@ def test_resolve_entity_ontology_merges_built_in_examples_without_global_mutatio
     assert ENTITY_LABEL_EXAMPLES["api_key"] == original
 
 
-def test_resolve_entity_ontology_auto_activates_custom_labels_but_remains_permissive() -> None:
+def test_resolve_entity_ontology_auto_activates_non_default_labels_but_remains_permissive() -> None:
     ontology = resolve_entity_ontology(
         entity_labels=None,
         entity_label_examples={"vendor_api_key": ["acme_live_abc123"]},
@@ -449,7 +449,7 @@ def test_resolve_entity_ontology_auto_activates_custom_labels_but_remains_permis
     assert ontology.strict_labels is False
 
 
-def test_resolve_entity_ontology_explicit_custom_only_is_strict() -> None:
+def test_resolve_entity_ontology_explicit_non_default_only_is_strict() -> None:
     ontology = resolve_entity_ontology(
         entity_labels=["vendor_api_key"],
         entity_label_examples={"vendor_api_key": ["acme_live_abc123"]},
@@ -473,11 +473,11 @@ def test_format_label_examples_includes_known_labels() -> None:
     assert "- race_ethnicity: white, African-American, Korean, Hispanic" in result
 
 
-def test_format_label_examples_handles_custom_labels_without_examples() -> None:
-    result = _format_label_examples(["first_name", "custom_label"])
+def test_format_label_examples_handles_non_default_labels_without_examples() -> None:
+    result = _format_label_examples(["first_name", "non_default_label"])
     assert "- first_name: Michael, Isabella, Carlos, Wei" in result
-    assert "- custom_label" in result
-    assert "- custom_label:" not in result
+    assert "- non_default_label" in result
+    assert "- non_default_label:" not in result
 
 
 def test_validation_prompt_includes_label_examples() -> None:
@@ -533,7 +533,7 @@ def test_augment_prompt_permissive_when_using_defaults() -> None:
     assert "employment_status" in prompt
 
 
-def test_augment_prompt_strict_when_custom_labels_provided() -> None:
+def test_augment_prompt_strict_when_explicit_labels_provided() -> None:
     prompt = _get_augment_prompt(data_summary=None, labels=["hostname", "ipv4"], strict_labels=True)
     assert "Use ONLY labels from this list" in prompt
     assert "hostname, ipv4" in prompt
@@ -633,7 +633,7 @@ def test_augment_prompt_always_includes_disguised_identifier_hints(labels: list[
     assert "J-O-H-N" in prompt
 
 
-def test_custom_entity_labels_filters_out_of_scope_augmented_entities(
+def test_explicit_entity_labels_filter_out_of_scope_augmented_entities(
     _detection_with_novel_augmented_label: tuple[
         EntityDetectionWorkflow, pd.DataFrame, list[ModelConfig], DetectionModelSelection
     ],
@@ -684,7 +684,7 @@ def test_default_entity_labels_preserves_novel_augmented_entities(
     assert "ipv4" in final_labels
 
 
-def test_auto_activated_custom_examples_preserve_permissive_augmentation(
+def test_auto_activated_non_default_examples_preserve_permissive_augmentation(
     _detection_with_novel_augmented_label: tuple[
         EntityDetectionWorkflow, pd.DataFrame, list[ModelConfig], DetectionModelSelection
     ],

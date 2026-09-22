@@ -236,7 +236,7 @@ def test_finalize_filters_reclassification_to_excluded_label() -> None:
     assert result[COL_TAGGED_TEXT] == "San Diego"
 
 
-def test_finalize_filters_reclassification_outside_explicit_allowlist() -> None:
+def test_finalize_filters_reclassification_outside_explicit_label_set() -> None:
     row: dict[str, Any] = {
         COL_TEXT: "San Diego",
         COL_MERGED_ENTITIES: {

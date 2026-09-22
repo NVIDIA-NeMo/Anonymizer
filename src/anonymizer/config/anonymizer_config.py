@@ -88,9 +88,10 @@ class Detect(BaseModel):
     entity_label_examples: dict[str, list[str]] = Field(
         default_factory=dict,
         description=(
-            "Positive detection examples keyed by entity label. Built-in labels retain their default "
-            "examples and append these values. When entity_labels is None, custom keys are activated "
-            "alongside the default labels; explicit entity_labels remain a strict allowlist."
+            "Configured positive detection examples keyed by entity label. For default labels, these "
+            "values are appended to the built-in examples. When entity_labels is None, keys for "
+            "non-default labels activate those labels alongside the defaults; explicit entity_labels "
+            "remain a strict label set."
         ),
     )
     excluded_entity_labels: list[str] | None = Field(
@@ -99,7 +100,7 @@ class Detect(BaseModel):
             "Entity labels to never detect, even if present in entity_labels or the default set. "
             "Excluded labels are removed before GLiNER and LLM prompts run, and are also filtered "
             "from the final entity output as a safety net. If this entirely overlaps the effective "
-            "allowlist (entity_labels if set, otherwise the default label set), leaving an empty "
+            "label set (entity_labels if set, otherwise the default label set), leaving an empty "
             "effective detection set, Detect raises a ValueError at config time."
         ),
     )
@@ -187,9 +188,9 @@ class Detect(BaseModel):
             unknown_examples = sorted(active_example_labels - entity_labels_set)
             if unknown_examples:
                 raise ValueError(
-                    "entity_label_examples contains labels outside the explicit entity_labels allowlist: "
+                    "entity_label_examples contains labels outside the explicit entity_labels set: "
                     f"{unknown_examples}. Add them to entity_labels, remove their examples, or unset "
-                    "entity_labels to activate custom example labels alongside the defaults."
+                    "entity_labels to activate non-default labels through configured examples alongside the defaults."
                 )
             overlap = sorted(entity_labels_set & excluded_set)
             effective_labels = entity_labels_set - excluded_set
@@ -207,7 +208,7 @@ class Detect(BaseModel):
             if not effective_labels:
                 raise ValueError(
                     "excluded_entity_labels entirely overlaps DEFAULT_ENTITY_LABELS and all automatically "
-                    "activated custom example labels, leaving an empty effective detection set."
+                    "activated non-default labels, leaving an empty effective detection set."
                 )
         return self
 
