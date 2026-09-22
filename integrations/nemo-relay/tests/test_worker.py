@@ -29,6 +29,14 @@ def valid_config() -> dict[str, Any]:
     }
 
 
+async def registered_subscriber(monkeypatch, *responses: dict[str, Any]) -> tuple[AsyncMock, Context, Any]:
+    exchange = AsyncMock(side_effect=responses)
+    monkeypatch.setattr(worker, "exchange", exchange)
+    context = Context()
+    await worker.NemoAnonymizerWorker().register(cast(PluginContext, context), valid_config())
+    return exchange, context, context.registrations[0][1]
+
+
 def test_normalized_config_rejects_unknown_or_unsafe_limits() -> None:
     with pytest.raises(TypeError, match="endpoint must be"):
         worker.normalized_config({})
@@ -46,13 +54,8 @@ def test_normalized_config_rejects_unknown_or_unsafe_limits() -> None:
         worker.normalized_config({"endpoint": "tcp://127.0.0.1:8123"})
 
 
-@pytest.mark.asyncio
 async def test_worker_registers_only_subscriber_after_health_check(monkeypatch) -> None:
-    exchange = AsyncMock(return_value={"status": "ready"})
-    monkeypatch.setattr(worker, "exchange", exchange)
-    context = Context()
-
-    await worker.NemoAnonymizerWorker().register(cast(PluginContext, context), valid_config())
+    exchange, context, _ = await registered_subscriber(monkeypatch, {"status": "ready"})
 
     assert [name for name, _ in context.registrations] == ["protected_export"]
     exchange.assert_awaited_once_with(
@@ -63,13 +66,12 @@ async def test_worker_registers_only_subscriber_after_health_check(monkeypatch) 
     )
 
 
-@pytest.mark.asyncio
-async def test_worker_subscriber_sends_event_and_requires_acceptance(monkeypatch) -> None:
-    exchange = AsyncMock(side_effect=[{"status": "ready"}, {"status": "accepted"}])
-    monkeypatch.setattr(worker, "exchange", exchange)
-    context = Context()
-    await worker.NemoAnonymizerWorker().register(cast(PluginContext, context), valid_config())
-    callback = context.registrations[0][1]
+async def test_worker_subscriber_forwards_event_without_mutating(monkeypatch) -> None:
+    exchange, _, callback = await registered_subscriber(
+        monkeypatch,
+        {"status": "ready"},
+        {"status": "accepted"},
+    )
 
     source = {"uuid": "event-1", "data": {"owner": "Marisol Vega"}}
     await callback(source)
@@ -79,7 +81,6 @@ async def test_worker_subscriber_sends_event_and_requires_acceptance(monkeypatch
     assert source == {"uuid": "event-1", "data": {"owner": "Marisol Vega"}}
 
 
-@pytest.mark.asyncio
 async def test_worker_fails_activation_when_service_is_not_ready(monkeypatch) -> None:
     monkeypatch.setattr(worker, "exchange", AsyncMock(return_value={"status": "starting"}))
 
@@ -87,13 +88,8 @@ async def test_worker_fails_activation_when_service_is_not_ready(monkeypatch) ->
         await worker.NemoAnonymizerWorker().register(cast(PluginContext, Context()), valid_config())
 
 
-@pytest.mark.asyncio
 async def test_worker_fails_closed_on_oversize_or_rejected_event(monkeypatch) -> None:
-    exchange = AsyncMock(side_effect=[{"status": "ready"}, {"status": "full"}])
-    monkeypatch.setattr(worker, "exchange", exchange)
-    context = Context()
-    await worker.NemoAnonymizerWorker().register(cast(PluginContext, context), valid_config())
-    callback = context.registrations[0][1]
+    _, _, callback = await registered_subscriber(monkeypatch, {"status": "ready"}, {"status": "full"})
 
     with pytest.raises(RuntimeError, match="rejected event: full"):
         await callback({"data": "short"})

@@ -43,25 +43,25 @@ def spans_from_result(dataframe: Any, packed: Any, text_count: int) -> list[list
     )
 
 
-def test_result_mapping_uses_explicit_segment_ids() -> None:
-    result = pd.DataFrame(
+def result_frame(text: str, *entities: tuple[str, str, int, int]) -> pd.DataFrame:
+    return pd.DataFrame(
         [
             {
                 "relay_batch_id": "0",
-                "text": "Ana\n\n[RELAY OBSERVABILITY FIELD]\n\nsafe",
+                "text": text,
                 "final_entities": {
                     "entities": [
-                        {
-                            "value": "Ana",
-                            "label": "first_name",
-                            "start_position": 0,
-                            "end_position": 3,
-                        }
+                        {"value": value, "label": label, "start_position": start, "end_position": end}
+                        for value, label, start, end in entities
                     ]
                 },
             }
         ]
     )
+
+
+def test_result_mapping_uses_explicit_segment_ids() -> None:
+    result = result_frame("Ana\n\n[RELAY OBSERVABILITY FIELD]\n\nsafe", ("Ana", "first_name", 0, 3))
 
     decisions = spans_from_result(result, _pack_texts(["Ana", "safe"]), 2)
 
@@ -83,23 +83,9 @@ def test_result_mapping_rejects_missing_rows() -> None:
 
 def test_result_mapping_clips_cross_field_span_fail_closed() -> None:
     packed = _pack_texts(["Ana", "Bob"])
-    result = pd.DataFrame(
-        [
-            {
-                "relay_batch_id": "0",
-                "text": packed[0].text,
-                "final_entities": {
-                    "entities": [
-                        {
-                            "value": packed[0].text,
-                            "label": "combined_identity",
-                            "start_position": 0,
-                            "end_position": len(packed[0].text),
-                        }
-                    ]
-                },
-            }
-        ]
+    result = result_frame(
+        packed[0].text,
+        (packed[0].text, "combined_identity", 0, len(packed[0].text)),
     )
 
     assert spans_from_result(result, packed, 2) == [
@@ -110,54 +96,20 @@ def test_result_mapping_clips_cross_field_span_fail_closed() -> None:
 
 def test_result_mapping_accepts_anonymizer_trimmed_display_value() -> None:
     packed = _pack_texts([" Ana "])
-    result = pd.DataFrame(
-        [
-            {
-                "relay_batch_id": "0",
-                "text": packed[0].text,
-                "final_entities": {
-                    "entities": [
-                        {
-                            "value": "Ana",
-                            "label": "first_name",
-                            "start_position": 0,
-                            "end_position": 5,
-                        }
-                    ]
-                },
-            }
-        ]
-    )
+    result = result_frame(packed[0].text, ("Ana", "first_name", 0, 5))
 
     assert spans_from_result(result, packed, 1) == [[RedactionSpan(0, 5, "first_name")]]
 
 
 def test_result_mapping_rejects_inconsistent_detector_offsets() -> None:
     packed = _pack_texts(["Ana greeted Ana"])
-    result = pd.DataFrame(
-        [
-            {
-                "relay_batch_id": "0",
-                "text": packed[0].text,
-                "final_entities": {
-                    "entities": [
-                        {
-                            "value": "Ana",
-                            "label": "first_name",
-                            "start_position": 4,
-                            "end_position": 11,
-                        }
-                    ]
-                },
-            }
-        ]
-    )
+    result = result_frame(packed[0].text, ("Ana", "first_name", 4, 11))
 
     with pytest.raises(RuntimeError, match="entity_value_mismatch"):
         spans_from_result(result, packed, 1)
 
 
-def test_packing_splits_at_budget_and_maps_offsets() -> None:
+def test_packing_splits_at_budget() -> None:
     packed = _pack_texts(["Ana", "safe", "Bob"], max_chars=30)
 
     assert [len(record.placements) for record in packed] == [1, 1, 1]

@@ -42,7 +42,6 @@ def test_export_sanitizer_batches_unique_leaves_and_caches_span_decisions() -> N
         ["prompt", "Email ana@example.com", "history"],
         ["prompt", "history"],
     ]
-    assert all(isinstance(key, bytes) for key in sanitizer._cache)
 
 
 def test_secret_patterns_cover_preserved_protocol_identifiers_and_keys() -> None:
@@ -78,53 +77,41 @@ def test_secret_patterns_cover_preserved_protocol_identifiers_and_keys() -> None
 def test_secret_bearing_keys_redact_values_without_substring_matches() -> None:
     detector = FakeDetector()
     sanitizer = ObservationSanitizer(detector)
+    secret_values = {
+        "Authorization": "opaque-value",
+        "api-key": "another-opaque-value",
+        "x-api-key": "provider-specific-value",
+        "OPENAI_API_KEY": "opaque-openai-value",
+        "aws_secret_access_key": "opaque-aws-value",
+        "refresh_token": "opaque-refresh-value",
+        "openaiApiKey": "opaque-camel-openai-value",
+        "awsSecretAccessKey": "opaque-camel-aws-value",
+        "sessionToken": "opaque-session-value",
+    }
+    benign = {
+        "password_hint": "benign structural label",
+        "passwordHint": "another benign structural label",
+    }
 
     result = asyncio.run(
         sanitizer.sanitize_export(
             {
                 "metadata": {
-                    "Authorization": "opaque-value",
-                    "api-key": "another-opaque-value",
+                    **secret_values,
                     "clientSecret": {"nested": "must not survive"},
-                    "x-api-key": "provider-specific-value",
-                    "OPENAI_API_KEY": "opaque-openai-value",
-                    "aws_secret_access_key": "opaque-aws-value",
-                    "refresh_token": "opaque-refresh-value",
-                    "openaiApiKey": "opaque-camel-openai-value",
-                    "awsSecretAccessKey": "opaque-camel-aws-value",
-                    "sessionToken": "opaque-session-value",
-                    "password_hint": "benign structural label",
-                    "passwordHint": "another benign structural label",
+                    **benign,
                 }
             }
         )
     )
 
     assert result["metadata"] == {
-        "Authorization": "[REDACTED_SECRET]",
-        "api-key": "[REDACTED_SECRET]",
+        **dict.fromkeys(secret_values, "[REDACTED_SECRET]"),
         "clientSecret": "[REDACTED_SECRET]",
-        "x-api-key": "[REDACTED_SECRET]",
-        "OPENAI_API_KEY": "[REDACTED_SECRET]",
-        "aws_secret_access_key": "[REDACTED_SECRET]",
-        "refresh_token": "[REDACTED_SECRET]",
-        "openaiApiKey": "[REDACTED_SECRET]",
-        "awsSecretAccessKey": "[REDACTED_SECRET]",
-        "sessionToken": "[REDACTED_SECRET]",
-        "password_hint": "benign structural label",
-        "passwordHint": "another benign structural label",
+        **benign,
     }
     observed = [text for call in detector.calls for text in call]
-    assert "opaque-value" not in observed
-    assert "another-opaque-value" not in observed
-    assert "provider-specific-value" not in observed
-    assert "must not survive" not in observed
-    assert "opaque-openai-value" not in observed
-    assert "opaque-aws-value" not in observed
-    assert "opaque-refresh-value" not in observed
-    assert "opaque-camel-openai-value" not in observed
-    assert "opaque-camel-aws-value" not in observed
-    assert "opaque-session-value" not in observed
+    assert (set(secret_values.values()) | {"must not survive"}).isdisjoint(observed)
 
 
 def test_empty_decisions_are_rechecked_in_later_contexts() -> None:

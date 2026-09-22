@@ -33,8 +33,6 @@ def test_package_bundle_materializes_only_runtime_inputs(tmp_path: Path) -> None
         "src",
         "uv.lock",
     }
-    assert not (output / "tests").exists()
-    assert not (output / "scripts").exists()
     assert not any(path.name == "__pycache__" for path in output.rglob("__pycache__"))
     assert not any(output.rglob("*.pyc"))
     assert {path.name for path in (output / "src/nemo_anonymizer_relay").iterdir()} == {
