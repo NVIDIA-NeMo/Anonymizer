@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import inspect
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any, TypeAlias
@@ -125,7 +126,12 @@ class RegexRule(BaseModel):
     @field_validator("validator")
     @classmethod
     def validate_validator(cls, value: Any) -> RegexValidatorCallable | str | None:
-        if value is None or callable(value):
+        if value is None:
+            return value
+        if callable(value):
+            call_method = getattr(value, "__call__", None)
+            if inspect.iscoroutinefunction(value) or inspect.iscoroutinefunction(call_method):
+                raise ValueError("Regex rule validators must be synchronous; async callables are not supported.")
             return value
         if isinstance(value, str) and value.strip():
             return value.strip()
