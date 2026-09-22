@@ -24,6 +24,7 @@ If you are an agent helping a user **anonymize data**, use the [product document
 - **`anonymizer.engine`** — internal pipeline implementation: detection, replacement, and rewrite sub-workflows, the NDD adapter, prompt utilities, and all `COL_*` column constants. Never imported directly by users.
 - **`anonymizer.interface`** — user-facing entry points: the `Anonymizer` class, CLI, `AnonymizerResult`, `PreviewResult`, and canonical error types. Thin layer that wires config → engine and exposes results.
 - **`anonymizer.logging`** — public logging configuration (`LoggingConfig`, `configure_logging`) used by the API, CLI, and examples.
+- **`integrations/nemo-relay`** — independently locked NeMo Relay subscriber and external exporter service. It protects copied observability events without adding Relay dependencies to the main Anonymizer wheel.
 
 NeMo Anonymizer wraps [DataDesigner](https://github.com/NVIDIA-NeMo/DataDesigner) (NDD) for LLM column generation. `NddAdapter.run_workflow()` is the engine boundary for *executing* DataDesigner workflows — engine sub-workflows may declare DataDesigner column configs (e.g. `LLMStructuredColumnConfig`), but they do not call `DataDesigner.create()` or `preview()` directly.
 

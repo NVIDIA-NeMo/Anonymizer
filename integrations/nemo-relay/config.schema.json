@@ -1,0 +1,40 @@
+{
+  "$comment": "SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. SPDX-License-Identifier: Apache-2.0",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "NeMo Anonymizer protected exporter connector",
+  "description": "Forwards copied NeMo Relay events to a separately managed local NeMo Anonymizer exporter.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["endpoint"],
+  "properties": {
+    "version": {
+      "description": "Integration configuration schema version.",
+      "type": "integer",
+      "const": 1,
+      "default": 1
+    },
+    "endpoint": {
+      "description": "Private Unix socket endpoint for the exporter service.",
+      "type": "string",
+      "minLength": 1
+    },
+    "enqueue_timeout_ms": {
+      "description": "Maximum time to wait for the exporter service to accept one copied event.",
+      "type": "integer",
+      "minimum": 1,
+      "default": 1000
+    },
+    "max_event_bytes": {
+      "description": "Maximum encoded size of one copied Relay event.",
+      "type": "integer",
+      "minimum": 1,
+      "default": 2097152
+    },
+    "max_frame_bytes": {
+      "description": "Maximum encoded size of one worker-to-exporter transport frame.",
+      "type": "integer",
+      "minimum": 2,
+      "default": 8388608
+    }
+  }
+}

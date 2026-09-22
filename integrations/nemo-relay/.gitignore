@@ -1,0 +1,10 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+/.venv/
+/service/.venv/
+/build/
+/dist/
+/*.egg-info/
+/.pytest_cache/
+/.ruff_cache/
