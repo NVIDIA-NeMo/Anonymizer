@@ -49,6 +49,8 @@ RegexValidatorCallable: TypeAlias = Callable[[RegexCandidate], RegexValidatorRet
 class BuiltinRegex(BaseModel):
     """Configuration for one recognizer from the built-in regex registry."""
 
+    model_config = ConfigDict(extra="forbid")
+
     label: str
     enabled: bool = True
     validate_with_llm: bool = True
@@ -67,7 +69,7 @@ class BuiltinRegex(BaseModel):
 class RegexRule(BaseModel):
     """A user-defined regex rule for producing entity candidates."""
 
-    model_config = ConfigDict(arbitrary_types_allowed=True)
+    model_config = ConfigDict(arbitrary_types_allowed=True, extra="forbid")
 
     label: str
     pattern: str

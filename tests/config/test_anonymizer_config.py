@@ -282,6 +282,42 @@ def test_detect_parses_builtin_and_custom_rules_from_serialized_config() -> None
     assert restored == original
 
 
+@pytest.mark.parametrize(
+    "rule",
+    [
+        {"label": "email", "pattern": "("},
+        {"label": "email", "pattern": r"internal-[0-9]+", "validator": 123},
+    ],
+)
+def test_detect_rejects_malformed_custom_rule_dict_instead_of_falling_back_to_builtin(
+    rule: dict[str, object],
+) -> None:
+    with pytest.raises(ValidationError):
+        Detect.model_validate({"regex_rules": [rule]})
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        '{"regex_rules":[{"label":"email","pattern":"("}]}',
+        '{"regex_rules":[{"label":"email","pattern":"internal-[0-9]+","validator":123}]}',
+    ],
+)
+def test_detect_rejects_malformed_custom_rule_json_instead_of_falling_back_to_builtin(payload: str) -> None:
+    with pytest.raises(ValidationError):
+        Detect.model_validate_json(payload)
+
+
+def test_builtin_regex_rejects_unknown_fields() -> None:
+    with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
+        BuiltinRegex.model_validate({"label": "email", "pattern": r"custom-pattern"})
+
+
+def test_regex_rule_rejects_unknown_fields() -> None:
+    with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
+        RegexRule.model_validate({"label": "email", "pattern": r"custom-pattern", "unexpected": True})
+
+
 def test_builtin_regex_rejects_unknown_label() -> None:
     with pytest.raises(ValidationError, match="Unsupported built-in regex label"):
         BuiltinRegex(label="support_case")
