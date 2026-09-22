@@ -24,6 +24,8 @@ from anonymizer.config.regex import RegexRule
 from anonymizer.engine.constants import (
     COL_AUGMENTED_ENTITIES,
     COL_RAW_DETECTED,
+    COL_REGEX_ACCEPTED_ENTITIES,
+    COL_REGEX_VALIDATION_TRACE,
     COL_TEXT,
     COL_VALIDATION_DECISIONS,
     DEFAULT_ENTITY_LABELS,
@@ -129,7 +131,8 @@ def test_detection_builder_round_trips_through_native_data_designer_config(tmp_p
     assert "configured@example.test" not in augmenter.prompt
 
     regex_detection = next(column for column in columns if isinstance(column, RegexDetectionConfig))
-    assert [rule.label for rule in regex_detection.rules] == ["email"]
+    assert regex_detection.rules == []
+    assert regex_detection.side_effect_columns == [COL_REGEX_ACCEPTED_ENTITIES, COL_REGEX_VALIDATION_TRACE]
 
     serialized = json.loads(payload)
     serialized_text = json.dumps(serialized)
