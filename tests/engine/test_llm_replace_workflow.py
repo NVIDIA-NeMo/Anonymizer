@@ -494,3 +494,63 @@ def test_filter_replacement_map_complete_map_skips_omission_fill_warning(
     assert len(result["replacements"]) == 2
     assert "filled omitted entries" not in caplog.text
     _assert_no_pii_in_logs(caplog)
+
+
+def test_filter_replacement_map_omission_fill_avoids_cross_label_token_clash(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Labels that normalize to the same token must not mint duplicate placeholders."""
+    parsed_entities = EntitiesByValueSchema.model_validate(
+        {
+            "entities_by_value": [
+                {"value": "alpha-value", "labels": ["foo-bar"]},
+                {"value": "beta-value", "labels": ["foo_bar"]},
+            ]
+        }
+    )
+    raw_map = {"replacements": []}
+
+    with caplog.at_level(logging.WARNING, logger="anonymizer"):
+        result = _filter_replacement_map_to_input_entities(
+            raw_map=raw_map, parsed_entities=parsed_entities, record_id="row-token-clash"
+        )
+
+    synthetics = [entry["synthetic"] for entry in result["replacements"]]
+    assert len(synthetics) == 2
+    assert len(set(synthetics)) == 2
+    assert set(synthetics) == {"[SUBSTITUTE_FOO_BAR_1]", "[SUBSTITUTE_FOO_BAR_2]"}
+    by_key = {(entry["original"], entry["label"]): entry["synthetic"] for entry in result["replacements"]}
+    assert by_key[("alpha-value", "foo-bar")] == "[SUBSTITUTE_FOO_BAR_1]"
+    assert by_key[("beta-value", "foo_bar")] == "[SUBSTITUTE_FOO_BAR_2]"
+    assert "filled omitted entries" in caplog.text
+    _assert_no_pii_in_logs(caplog, extra_secrets=("alpha-value", "beta-value"))
+
+
+def test_filter_replacement_map_omission_fill_avoids_accepted_llm_synthetics(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Omission fills must skip placeholders already used as accepted LLM synthetics."""
+    parsed_entities = EntitiesByValueSchema.model_validate(
+        {
+            "entities_by_value": [
+                {"value": "Alice Example", "labels": ["name"]},
+                {"value": "Bob Example", "labels": ["name"]},
+            ]
+        }
+    )
+    raw_map = {
+        "replacements": [
+            {"original": "Alice Example", "label": "name", "synthetic": "[SUBSTITUTE_NAME_1]"},
+        ]
+    }
+
+    with caplog.at_level(logging.WARNING, logger="anonymizer"):
+        result = _filter_replacement_map_to_input_entities(
+            raw_map=raw_map, parsed_entities=parsed_entities, record_id="row-llm-placeholder"
+        )
+
+    by_key = {(entry["original"], entry["label"]): entry["synthetic"] for entry in result["replacements"]}
+    assert by_key[("Alice Example", "name")] == "[SUBSTITUTE_NAME_1]"
+    assert by_key[("Bob Example", "name")] == "[SUBSTITUTE_NAME_2]"
+    assert "filled omitted entries" in caplog.text
+    _assert_no_pii_in_logs(caplog, extra_secrets=("Alice Example", "Bob Example"))

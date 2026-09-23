@@ -166,8 +166,14 @@ def _filter_replacement_map_to_input_entities(
         if entity.value and label
     }
     protected_original_values = {value for value, _ in allowed_pairs}
+    # Occupied values start as protected originals and grow with every accepted
+    # LLM synthetic and every minted placeholder so later fills cannot collide.
+    occupied_values = set(protected_original_values)
     filtered: list[dict[str, str]] = []
     seen: set[tuple[str, str]] = set()
+    # Index counters are keyed by normalized label token so labels that collapse
+    # to the same token (e.g. foo-bar / foo_bar -> FOO_BAR) share one sequence.
+    placeholder_indices: Counter[str] = Counter()
     synthetic_collision_labels: Counter[str] = Counter()
     for replacement in parsed_map.replacements:
         key = (replacement.original, replacement.label)
@@ -176,19 +182,24 @@ def _filter_replacement_map_to_input_entities(
         if replacement.synthetic in protected_original_values:
             synthetic_collision_labels[replacement.label] += 1
             seen.add(key)
+            label_token = _normalize_label_token(replacement.label)
+            placeholder_indices[label_token] += 1
+            synthetic = _collision_safe_synthetic(
+                replacement.label,
+                index=placeholder_indices[label_token],
+                occupied_values=occupied_values,
+            )
+            occupied_values.add(synthetic)
             filtered.append(
                 {
                     "original": replacement.original,
                     "label": replacement.label,
-                    "synthetic": _collision_safe_synthetic(
-                        replacement.label,
-                        index=synthetic_collision_labels[replacement.label],
-                        protected_original_values=protected_original_values,
-                    ),
+                    "synthetic": synthetic,
                 }
             )
             continue
         seen.add(key)
+        occupied_values.add(replacement.synthetic)
         filtered.append(replacement.model_dump())
 
     if synthetic_collision_labels:
@@ -219,22 +230,25 @@ def _filter_replacement_map_to_input_entities(
 
     # Fill any requested pairs the LLM omitted so rewrite readiness (#246) is not
     # lost to a partial map. Reuse the collision-repair placeholder helper and share
-    # its per-label index counter so indices stay unique within a record.
+    # its per-label-token index counter so indices stay unique within a record.
     filled_pairs = {(entry["original"], entry["label"]) for entry in filtered}
     unfilled_pairs = allowed_pairs - filled_pairs
     omission_fill_labels: Counter[str] = Counter()
     for original, label in sorted(unfilled_pairs, key=lambda pair: (pair[1], pair[0])):
         omission_fill_labels[label] += 1
-        synthetic_collision_labels[label] += 1
+        label_token = _normalize_label_token(label)
+        placeholder_indices[label_token] += 1
+        synthetic = _collision_safe_synthetic(
+            label,
+            index=placeholder_indices[label_token],
+            occupied_values=occupied_values,
+        )
+        occupied_values.add(synthetic)
         filtered.append(
             {
                 "original": original,
                 "label": label,
-                "synthetic": _collision_safe_synthetic(
-                    label,
-                    index=synthetic_collision_labels[label],
-                    protected_original_values=protected_original_values,
-                ),
+                "synthetic": synthetic,
             }
         )
     if omission_fill_labels:
@@ -256,11 +270,17 @@ def _filter_replacement_map_to_input_entities(
     return {"replacements": filtered}
 
 
-def _collision_safe_synthetic(label: str, *, index: int, protected_original_values: set[str]) -> str:
-    label_token = "".join(char.upper() if char.isalnum() else "_" for char in label).strip("_") or "VALUE"
+def _normalize_label_token(label: str) -> str:
+    """Collapse a label to the SUBSTITUTE_ token form (non-alnum -> _, uppercased)."""
+    return "".join(char.upper() if char.isalnum() else "_" for char in label).strip("_") or "VALUE"
+
+
+def _collision_safe_synthetic(label: str, *, index: int, occupied_values: set[str]) -> str:
+    """Mint [SUBSTITUTE_<TOKEN>_<n>] skipping any value already occupied in this record."""
+    label_token = _normalize_label_token(label)
     while True:
         candidate = f"[SUBSTITUTE_{label_token}_{index}]"
-        if candidate not in protected_original_values:
+        if candidate not in occupied_values:
             return candidate
         index += 1
 
