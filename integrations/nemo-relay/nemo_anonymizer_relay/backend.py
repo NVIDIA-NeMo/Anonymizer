@@ -7,7 +7,9 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import tempfile
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -58,65 +60,43 @@ class BackendConfig:
     data_summary: str | None
 
 
-class AnonymizerBackend:
-    """Run the full Anonymizer pipeline and return validated entity spans.
+@dataclass(frozen=True)
+class _BackendRuntime:
+    api: Any
+    anonymizer: Any
+    temporary_directory: tempfile.TemporaryDirectory[str]
+    artifact_path: Path
 
-    Each call uses typed in-memory records. A private temporary directory holds
-    Anonymizer and Data Designer artifacts and is removed before this method
-    returns.
-    """
+
+class AnonymizerBackend:
+    """Run one reusable Anonymizer pipeline and return validated entity spans."""
 
     def __init__(self, config: BackendConfig) -> None:
         self._config = config
+        self._runtime: _BackendRuntime | None = None
+        self._lock = threading.Lock()
+        self._closed = False
 
     def detect(self, texts: list[str]) -> list[list[RedactionSpan]]:
         if not texts:
             return []
 
-        # Importing Anonymizer is expensive. Keep it off plugin discovery and
-        # config-validation paths and load it only when sanitization is used.
-        from anonymizer import (
-            Anonymizer,
-            AnonymizerConfig,
-            Detect,
-            ModelProvider,
-            Redact,
-            TextRecord,
-            TextRecordsInput,
-        )
-
-        config = self._config
-        providers = [
-            ModelProvider(
-                name="relay-gliner",
-                endpoint=config.detector_endpoint,
-                provider_type="openai",
-                api_key=config.detector_api_key_env,
-            ),
-            ModelProvider(
-                name="relay-evaluator",
-                endpoint=config.evaluator_endpoint,
-                provider_type="openai",
-                api_key=config.evaluator_api_key_env,
-            ),
-        ]
-        packed = _pack_texts(texts)
-        records = [TextRecord(id=str(index), text=record.text) for index, record in enumerate(packed)]
-
-        with tempfile.TemporaryDirectory(prefix="nemo-relay-anonymizer-") as directory:
-            anonymizer = Anonymizer(
-                model_configs=self._model_config_json(),
-                model_providers=providers,
-                artifact_path=Path(directory) / "artifacts",
-            )
+        with self._lock:
+            if self._closed:
+                raise BackendResultError("anonymizer_backend_closed")
+            runtime: _BackendRuntime | None = None
+            packed = _pack_texts(texts)
             try:
-                result = anonymizer.run(
-                    config=AnonymizerConfig(
-                        detect=Detect(gliner_threshold=config.threshold),
-                        replace=Redact(),
+                runtime = self._get_runtime()
+                api = runtime.api
+                records = [api.TextRecord(id=str(index), text=record.text) for index, record in enumerate(packed)]
+                result = runtime.anonymizer.run(
+                    config=api.AnonymizerConfig(
+                        detect=api.Detect(gliner_threshold=self._config.threshold),
+                        replace=api.Redact(),
                         emit_telemetry=False,
                     ),
-                    data=TextRecordsInput(records=records, data_summary=config.data_summary),
+                    data=api.TextRecordsInput(records=records, data_summary=self._config.data_summary),
                 )
                 if result.failed_records:
                     raise BackendResultError("anonymizer_record_failure")
@@ -135,6 +115,77 @@ class AnonymizerBackend:
                 # Provider and parser exceptions may contain source text. Only
                 # a fixed code is allowed to cross the worker RPC boundary.
                 raise BackendResultError("anonymizer_runtime_failure") from None
+            finally:
+                if runtime is not None:
+                    self._clear_artifacts(runtime)
+
+    def close(self) -> None:
+        """Release the private artifact directory after active detection ends."""
+
+        with self._lock:
+            if self._closed:
+                return
+            self._closed = True
+            runtime = self._runtime
+            self._runtime = None
+            if runtime is not None:
+                try:
+                    runtime.temporary_directory.cleanup()
+                except Exception:
+                    raise BackendResultError("anonymizer_artifact_cleanup_failure") from None
+
+    def _get_runtime(self) -> _BackendRuntime:
+        runtime = self._runtime
+        if runtime is not None:
+            return runtime
+
+        # Importing Anonymizer is expensive. Keep it off plugin discovery and
+        # config-validation paths and initialize it on the first copied event.
+        import anonymizer as api
+
+        config = self._config
+        providers = [
+            api.ModelProvider(
+                name="relay-gliner",
+                endpoint=config.detector_endpoint,
+                provider_type="openai",
+                api_key=config.detector_api_key_env,
+            ),
+            api.ModelProvider(
+                name="relay-evaluator",
+                endpoint=config.evaluator_endpoint,
+                provider_type="openai",
+                api_key=config.evaluator_api_key_env,
+            ),
+        ]
+        directory = tempfile.TemporaryDirectory(prefix="nemo-relay-anonymizer-")
+        artifact_path = Path(directory.name) / "artifacts"
+        try:
+            runtime = _BackendRuntime(
+                api=api,
+                anonymizer=api.Anonymizer(
+                    model_configs=self._model_config_json(),
+                    model_providers=providers,
+                    artifact_path=artifact_path,
+                ),
+                temporary_directory=directory,
+                artifact_path=artifact_path,
+            )
+        except Exception:
+            directory.cleanup()
+            raise
+        self._runtime = runtime
+        return runtime
+
+    @staticmethod
+    def _clear_artifacts(runtime: _BackendRuntime) -> None:
+        try:
+            if runtime.artifact_path.exists():
+                shutil.rmtree(runtime.artifact_path)
+        except Exception:
+            # Artifacts can contain copied source text. Treat retention as a
+            # failed sanitization rather than silently accumulating them.
+            raise BackendResultError("anonymizer_artifact_cleanup_failure") from None
 
     def _model_config_json(self) -> str:
         config = self._config

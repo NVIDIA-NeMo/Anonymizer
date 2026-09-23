@@ -157,3 +157,34 @@ async def test_cancelled_detection_does_not_queue_more_executor_work() -> None:
     await asyncio.sleep(0)
     assert await sanitizer.sanitize({"prompt": "third"}) == {"prompt": "third"}
     sanitizer.close()
+
+
+async def test_close_drains_cancelled_detection_before_closing_backend() -> None:
+    started = threading.Event()
+    release = threading.Event()
+    backend_closed = threading.Event()
+
+    class ClosableDetector:
+        def detect(self, texts: list[str]) -> list[list[RedactionSpan]]:
+            started.set()
+            release.wait(timeout=5)
+            return [[] for _ in texts]
+
+        def close(self) -> None:
+            backend_closed.set()
+
+    sanitizer = ObservationSanitizer(ClosableDetector())
+    pending = asyncio.create_task(sanitizer.sanitize({"prompt": "copied event"}))
+    assert await asyncio.to_thread(started.wait, 2)
+    pending.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await pending
+
+    closing = asyncio.create_task(asyncio.to_thread(sanitizer.close))
+    await asyncio.sleep(0.05)
+    assert not closing.done()
+    assert not backend_closed.is_set()
+
+    release.set()
+    await closing
+    assert backend_closed.is_set()

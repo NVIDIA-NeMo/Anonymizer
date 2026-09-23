@@ -183,8 +183,16 @@ class ObservationSanitizer:
         return decisions
 
     def close(self) -> None:
+        if self._closed:
+            return
         self._closed = True
-        self._executor.shutdown(wait=False, cancel_futures=True)
+        # A synchronous detector keeps running after its Relay callback is
+        # cancelled. Drain that one bounded executor task before releasing the
+        # reusable backend and its private artifact directory.
+        self._executor.shutdown(wait=True, cancel_futures=True)
+        close_detector = getattr(self._detector, "close", None)
+        if callable(close_detector):
+            close_detector()
 
     def _reserve_detector(self) -> bool:
         with self._detector_state_lock:

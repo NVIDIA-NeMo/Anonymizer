@@ -200,7 +200,7 @@ class NemoAnonymizerWorker(WorkerPlugin):
         failed = False
         if sanitizer is not None:
             try:
-                sanitizer.close()
+                await asyncio.to_thread(sanitizer.close)
             except Exception:
                 failed = True
         try:

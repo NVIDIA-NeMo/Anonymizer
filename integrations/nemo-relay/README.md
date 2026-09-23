@@ -54,6 +54,12 @@ path. Its observability dispatcher then waits for Anonymizer before delivering
 that event to subscribers. `flush_subscribers` therefore covers both
 sanitization and downstream delivery; there is no hidden worker backlog.
 
+The worker creates one Anonymizer pipeline lazily, serializes calls through it,
+and removes its per-call artifact tree after each completed run. This avoids
+reloading the pipeline for every event. Relay can still terminate a worker
+whose synchronous model call outlives shutdown, so cleanup after forced
+termination remains a release gate.
+
 Each dynamic-worker callback has a 30-second host timeout. Current full
 Anonymizer measurements exceed that budget, so this remains an implementation
 spike. A slow callback does not delay the application call, but it does delay
@@ -109,8 +115,8 @@ the dependency is replaced with an exact supported pin.
 
 - Provide an online Anonymizer profile whose per-event latency stays
   comfortably below Relay's 30-second callback limit.
-- Reuse one initialized Anonymizer pipeline instead of constructing it for
-  every callback.
+- Prove that copied artifacts are removed when Relay terminates a worker with
+  an in-flight model call; normal callback and plugin cleanup already pass.
 - Build a managed environment below Relay's 512 MiB closure limit on every
   supported platform.
 - Publish the required Anonymizer API and replace the bundle's temporary

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import sys
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
@@ -135,6 +136,71 @@ def test_model_config_wires_detection_pipeline() -> None:
     }
 
 
+def test_backend_reuses_pipeline_and_cleans_per_call_artifacts(monkeypatch: pytest.MonkeyPatch) -> None:
+    instances: list[Any] = []
+
+    class Value:
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            self.args = args
+            self.kwargs = kwargs
+
+    class ReusableAnonymizer(Value):
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            super().__init__(*args, **kwargs)
+            self.artifact_path = kwargs["artifact_path"]
+            self.run_count = 0
+            instances.append(self)
+
+        def run(self, *, data: Any, **_kwargs: Any) -> Any:
+            self.run_count += 1
+            self.artifact_path.mkdir(parents=True, exist_ok=True)
+            (self.artifact_path / "copied-event.txt").write_text("temporary copied source")
+            records = data.kwargs["records"]
+            return SimpleNamespace(
+                dataframe=pd.DataFrame(
+                    [
+                        {
+                            "relay_batch_id": record.kwargs["id"],
+                            "text": record.kwargs["text"],
+                            "final_entities": {"entities": []},
+                        }
+                        for record in records
+                    ]
+                ),
+                failed_records=[],
+                id_column="relay_batch_id",
+                resolved_text_column="text",
+            )
+
+    monkeypatch.setitem(
+        sys.modules,
+        "anonymizer",
+        SimpleNamespace(
+            Anonymizer=ReusableAnonymizer,
+            AnonymizerConfig=Value,
+            Detect=Value,
+            ModelProvider=Value,
+            Redact=Value,
+            TextRecord=Value,
+            TextRecordsInput=Value,
+        ),
+    )
+    backend = AnonymizerBackend(backend_config())
+
+    assert backend.detect(["first copied event"]) == [[]]
+    assert backend.detect(["second copied event"]) == [[]]
+    assert len(instances) == 1
+    assert instances[0].run_count == 2
+    assert not instances[0].artifact_path.exists()
+    private_directory = instances[0].artifact_path.parent
+
+    backend.close()
+
+    assert not private_directory.exists()
+    with pytest.raises(BackendResultError, match="anonymizer_backend_closed"):
+        backend.detect(["after close"])
+
+
 def test_full_pipeline_requires_evaluator_key(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("MISSING_TEST_EVALUATOR_KEY", raising=False)
 
@@ -143,13 +209,21 @@ def test_full_pipeline_requires_evaluator_key(monkeypatch: pytest.MonkeyPatch) -
 
 
 def test_backend_normalizes_provider_errors_before_worker_boundary(monkeypatch: pytest.MonkeyPatch) -> None:
+    artifact_paths: list[Path] = []
+
     class Value:
         def __init__(self, *args: Any, **kwargs: Any) -> None:
             self.args = args
             self.kwargs = kwargs
 
     class FailingAnonymizer(Value):
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            super().__init__(*args, **kwargs)
+            artifact_paths.append(kwargs["artifact_path"])
+
         def run(self, **_kwargs: Any) -> Any:
+            artifact_paths[0].mkdir(parents=True)
+            (artifact_paths[0] / "copied-event.txt").write_text("Marisol Vega")
             raise RuntimeError("provider echoed Marisol Vega")
 
     monkeypatch.setitem(
@@ -166,7 +240,10 @@ def test_backend_normalizes_provider_errors_before_worker_boundary(monkeypatch: 
         ),
     )
 
+    backend = AnonymizerBackend(backend_config())
     with pytest.raises(BackendResultError) as error:
-        AnonymizerBackend(backend_config()).detect(["Marisol Vega"])
+        backend.detect(["Marisol Vega"])
 
     assert str(error.value) == "anonymizer_runtime_failure"
+    assert not artifact_paths[0].exists()
+    backend.close()
