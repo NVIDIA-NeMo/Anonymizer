@@ -87,11 +87,11 @@ class Detect(BaseModel):
     )
     entity_label_examples: dict[str, list[str]] = Field(
         default_factory=dict,
+        repr=False,
         description=(
             "Configured positive detection examples keyed by entity label. For default labels, these "
-            "values are appended to the built-in examples. When entity_labels is None, keys for "
-            "non-default labels activate those labels alongside the defaults; explicit entity_labels "
-            "remain a strict label set."
+            "values are appended to the built-in examples. Non-default labels must also be declared "
+            "in an explicit entity_labels set; examples never activate labels implicitly."
         ),
     )
     excluded_entity_labels: list[str] | None = Field(
@@ -185,31 +185,29 @@ class Detect(BaseModel):
         active_example_labels = example_labels - excluded_set
         if self.entity_labels is not None:
             entity_labels_set = set(self.entity_labels)
-            unknown_examples = sorted(active_example_labels - entity_labels_set)
-            if unknown_examples:
-                raise ValueError(
-                    "entity_label_examples contains labels outside the explicit entity_labels set: "
-                    f"{unknown_examples}. Add them to entity_labels, remove their examples, or unset "
-                    "entity_labels to activate non-default labels through configured examples alongside the defaults."
-                )
             overlap = sorted(entity_labels_set & excluded_set)
             effective_labels = entity_labels_set - excluded_set
-            if not effective_labels:
-                raise ValueError(
-                    "excluded_entity_labels entirely overlaps entity_labels, leaving an empty effective detection set."
-                )
             if overlap:
                 logger.warning(
                     "entity_labels and excluded_entity_labels share labels that will never be detected: %s",
                     overlap,
                 )
         else:
-            effective_labels = (set(DEFAULT_ENTITY_LABELS) | active_example_labels) - excluded_set
-            if not effective_labels:
-                raise ValueError(
-                    "excluded_entity_labels entirely overlaps DEFAULT_ENTITY_LABELS and all automatically "
-                    "activated non-default labels, leaving an empty effective detection set."
-                )
+            entity_labels_set = set(DEFAULT_ENTITY_LABELS)
+            effective_labels = entity_labels_set - excluded_set
+
+        unknown_examples = sorted(active_example_labels - entity_labels_set)
+        if unknown_examples:
+            raise ValueError(
+                "entity_label_examples contains labels outside the active label set: "
+                f"{unknown_examples}. Add every example label to entity_labels "
+                "(non-default labels require an explicit entity_labels set) or remove their examples."
+            )
+        if not effective_labels:
+            source = "entity_labels" if self.entity_labels is not None else "DEFAULT_ENTITY_LABELS"
+            raise ValueError(
+                f"excluded_entity_labels entirely overlaps {source}, leaving an empty effective detection set."
+            )
         return self
 
 

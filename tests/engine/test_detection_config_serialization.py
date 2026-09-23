@@ -20,7 +20,12 @@ from data_designer.engine.testing.utils import assert_valid_plugin
 from data_designer.interface.data_designer import DataDesigner
 from data_designer.plugins import Plugin
 
-from anonymizer.engine.constants import COL_AUGMENTED_ENTITIES, COL_TEXT, COL_VALIDATION_DECISIONS
+from anonymizer.engine.constants import (
+    COL_AUGMENTED_ENTITIES,
+    COL_TEXT,
+    COL_VALIDATION_DECISIONS,
+    DEFAULT_ENTITY_LABELS,
+)
 from anonymizer.engine.detection.detection_workflow import EntityDetectionWorkflow
 from anonymizer.engine.ndd.adapter import NddAdapter
 from anonymizer.engine.ndd.model_loader import parse_model_configs
@@ -180,7 +185,7 @@ def test_build_detection_config_respects_excluded_entity_labels(tmp_path: Path) 
     assert "city" in labels
 
 
-def test_exported_builder_auto_activates_non_default_example_label(tmp_path: Path) -> None:
+def test_exported_builder_includes_explicit_non_default_example_label(tmp_path: Path) -> None:
     seed_path = tmp_path / "seed.parquet"
     pd.DataFrame({COL_TEXT: ["Credential acme_live_abc123"]}).to_parquet(seed_path, index=False)
 
@@ -191,6 +196,7 @@ def test_exported_builder_auto_activates_non_default_example_label(tmp_path: Pat
         model_configs=parsed_models.model_configs,
         selected_models=parsed_models.selected_models.detection,
         gliner_detection_threshold=0.3,
+        entity_labels=[*DEFAULT_ENTITY_LABELS, "vendor_api_key"],
         entity_label_examples={"vendor_api_key": ["acme_live_abc123"]},
     )
 
@@ -208,8 +214,8 @@ def test_exported_builder_auto_activates_non_default_example_label(tmp_path: Pat
     )
     assert "- vendor_api_key: acme_live_abc123" in validation.prompt_template
     assert "vendor_api_key: acme_live_abc123" in augmenter.prompt
-    assert "Strongly prefer labels from this list" in augmenter.prompt
-    assert finalize.allowed_entity_labels is None
+    assert "Use ONLY labels from this list" in augmenter.prompt
+    assert finalize.allowed_entity_labels == [*DEFAULT_ENTITY_LABELS, "vendor_api_key"]
 
 
 def test_fresh_process_discovers_plugins_when_loading_native_config(tmp_path: Path) -> None:

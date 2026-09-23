@@ -136,26 +136,36 @@ def test_run_passes_detect_entity_labels_to_detection_workflow(stub_input: Anony
 
 def test_run_passes_entity_label_examples_only_to_detection_workflow(stub_input: AnonymizerInput) -> None:
     examples = {"vendor_api_key": ["acme_live_abc123"]}
-    config = AnonymizerConfig(detect={"entity_label_examples": examples}, replace=Redact())
-    anonymizer, detection_wf, _, _ = _make_anonymizer()
+    config = AnonymizerConfig(
+        detect={"entity_labels": ["vendor_api_key"], "entity_label_examples": examples},
+        replace=Redact(),
+    )
+    anonymizer, detection_wf, replace_runner, _ = _make_anonymizer()
 
     result = anonymizer.run(config=config, data=stub_input)
 
     assert detection_wf.run.call_args.kwargs["entity_label_examples"] == examples
-    assert result.entity_labels is None
+    assert result.entity_labels == ["vendor_api_key"]
     assert not hasattr(result, "entity_label_examples")
+    assert "entity_label_examples" not in replace_runner.run.call_args.kwargs
+    assert "acme_live_abc123" not in (result.dataframe.to_json() or "")
 
 
 def test_rewrite_run_passes_entity_label_examples_to_detection_workflow(stub_input: AnonymizerInput) -> None:
     examples = {"vendor_api_key": ["acme_live_abc123"]}
-    config = AnonymizerConfig(detect={"entity_label_examples": examples}, rewrite=Rewrite())
-    anonymizer, detection_wf, _, _ = _make_anonymizer()
+    config = AnonymizerConfig(
+        detect={"entity_labels": ["vendor_api_key"], "entity_label_examples": examples},
+        rewrite=Rewrite(),
+    )
+    anonymizer, detection_wf, _, rewrite_runner = _make_anonymizer()
 
     result = anonymizer.run(config=config, data=stub_input)
 
     assert detection_wf.run.call_args.kwargs["entity_label_examples"] == examples
     assert detection_wf.run.call_args.kwargs["tag_latent_entities"] is True
-    assert result.entity_labels is None
+    assert result.entity_labels == ["vendor_api_key"]
+    assert "entity_label_examples" not in rewrite_runner.run.call_args.kwargs
+    assert "acme_live_abc123" not in (result.dataframe.to_json() or "")
 
 
 def test_preview_passes_entity_label_examples_to_detection_workflow(stub_input: AnonymizerInput) -> None:
@@ -173,7 +183,10 @@ def test_export_detection_paths_pass_entity_label_examples(
     tmp_path: Path,
 ) -> None:
     examples = {"vendor_api_key": ["acme_live_abc123"]}
-    config = AnonymizerConfig(detect={"entity_label_examples": examples}, replace=Redact())
+    config = AnonymizerConfig(
+        detect={"entity_labels": ["vendor_api_key"], "entity_label_examples": examples},
+        replace=Redact(),
+    )
     anonymizer, detection_wf, _, _ = _make_anonymizer()
     detection_wf.build_detection_config.return_value = Mock()
     detection_wf.build_detection_builder_for_seed.return_value = Mock()
@@ -937,7 +950,13 @@ def test_run_rewrite_does_not_include_judge_in_user_dataframe(stub_input: Anonym
 
 def test_evaluate_rewrite_result_adds_judge_columns(stub_input: AnonymizerInput) -> None:
     """anonymizer.evaluate() on a rewrite result must add COL_JUDGE_EVALUATION."""
-    config = AnonymizerConfig(rewrite=Rewrite())
+    config = AnonymizerConfig(
+        detect={
+            "entity_labels": ["vendor_api_key"],
+            "entity_label_examples": {"vendor_api_key": ["acme_live_abc123"]},
+        },
+        rewrite=Rewrite(),
+    )
     anonymizer, _, _, rewrite_runner = _make_anonymizer()
 
     run_result = anonymizer.run(config=config, data=stub_input)
@@ -960,6 +979,8 @@ def test_evaluate_rewrite_result_adds_judge_columns(stub_input: AnonymizerInput)
     evaluated = anonymizer.evaluate(run_result)
 
     assert COL_JUDGE_EVALUATION in evaluated.dataframe.columns
+    assert "entity_label_examples" not in rewrite_runner.evaluate.call_args.kwargs
+    assert "acme_live_abc123" not in (evaluated.dataframe.to_json() or "")
 
 
 def test_evaluate_rewrite_result_adds_detection_valid(stub_input: AnonymizerInput) -> None:

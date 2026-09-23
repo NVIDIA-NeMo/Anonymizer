@@ -569,7 +569,14 @@ def _build_case_row(
                 "detect.entity_label_source",
             ],
         ),
-        entity_label_count=_first_int([measurement_rows], ["run_tags.entity_label_count", "detect.entity_label_count"]),
+        entity_label_count=_first_int(
+            [measurement_rows],
+            [
+                "detect.effective_entity_label_count",
+                "run_tags.entity_label_count",
+                "detect.entity_label_count",
+            ],
+        ),
         gliner_threshold=_first_float([measurement_rows], ["run_tags.gliner_threshold", "detect.gliner_threshold"]),
         repetition=_first_int([measurement_rows, artifact_rows, trace_rows], ["run_tags.repetition", "repetition"]),
         case_id=case_id,

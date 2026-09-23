@@ -82,15 +82,9 @@ def resolve_entity_ontology(
             seen_labels.add(label)
 
     active_configured = {label: list(examples) for label, examples in configured.items() if label not in excluded}
-    if strict_labels:
-        unknown = sorted(set(active_configured) - seen_labels)
-        if unknown:
-            raise ValueError(f"entity_label_examples contains labels outside the explicit entity_labels set: {unknown}")
-    else:
-        for label in active_configured:
-            if label not in seen_labels:
-                normalized_labels.append(label)
-                seen_labels.add(label)
+    unknown = sorted(set(active_configured) - seen_labels)
+    if unknown:
+        raise ValueError(f"entity_label_examples contains labels outside the active label set: {unknown}")
 
     if not normalized_labels:
         raise ValueError("The effective detection label set is empty.")

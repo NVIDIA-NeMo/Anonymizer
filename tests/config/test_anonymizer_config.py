@@ -170,11 +170,24 @@ def test_entity_label_examples_rejects_invalid_shapes(examples: object) -> None:
 
 
 def test_entity_label_examples_explicit_label_set_is_strict() -> None:
-    with pytest.raises(ValidationError, match="outside the explicit entity_labels set"):
+    with pytest.raises(ValidationError, match="outside the active label set"):
         Detect(
             entity_labels=["email"],
             entity_label_examples={"vendor_api_key": ["acme_live_abc123"]},
         )
+
+
+def test_entity_label_examples_default_label_must_belong_to_explicit_set() -> None:
+    with pytest.raises(ValidationError, match="outside the active label set"):
+        Detect(
+            entity_labels=["email"],
+            entity_label_examples={"api_key": ["sk-ant-api03-abc123"]},
+        )
+
+
+def test_entity_label_examples_non_default_label_requires_explicit_membership() -> None:
+    with pytest.raises(ValidationError, match="non-default labels require an explicit entity_labels set"):
+        Detect(entity_label_examples={"vendor_api_key": ["acme_live_abc123"]})
 
 
 def test_entity_label_examples_exclusion_wins_over_explicit_mismatch(
@@ -195,10 +208,12 @@ def test_entity_label_examples_exclusion_wins_over_explicit_mismatch(
 
 def test_entity_label_examples_non_default_key_survives_all_default_exclusions() -> None:
     detect = Detect(
+        entity_labels=[*DEFAULT_ENTITY_LABELS, "vendor_api_key"],
         excluded_entity_labels=list(DEFAULT_ENTITY_LABELS),
         entity_label_examples={"vendor_api_key": ["acme_live_abc123"]},
     )
 
+    assert detect.entity_labels is not None
     assert detect.entity_label_examples == {"vendor_api_key": ["acme_live_abc123"]}
 
 
@@ -212,7 +227,10 @@ def test_entity_label_examples_excluding_all_defaults_and_non_default_key_raises
 
 def test_entity_label_examples_copies_caller_owned_lists_and_round_trips() -> None:
     caller_examples = ["acme_live_abc123"]
-    detect = Detect(entity_label_examples={"vendor_api_key": caller_examples})
+    detect = Detect(
+        entity_labels=["vendor_api_key"],
+        entity_label_examples={"vendor_api_key": caller_examples},
+    )
     caller_examples.append("mutated")
 
     restored = Detect.model_validate_json(detect.model_dump_json())
@@ -230,6 +248,17 @@ def test_entity_label_examples_validation_error_hides_example_values() -> None:
         )
 
     assert secret not in str(exc_info.value)
+
+
+def test_entity_label_examples_are_hidden_from_config_repr() -> None:
+    secret = "real-production-secret"
+    detect = Detect(
+        entity_labels=["vendor_api_key"],
+        entity_label_examples={"vendor_api_key": [secret]},
+    )
+
+    assert secret not in repr(detect)
+    assert "entity_label_examples" not in repr(detect)
 
 
 def test_both_modes_set_exits() -> None:

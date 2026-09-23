@@ -1,22 +1,22 @@
 ---
 name: entity label examples
-overview: "Support configured examples for default and non-default labels in one detection-only implementation for issue #259. Configured examples merge additively with built-in examples; configured example keys for non-default labels automatically extend defaults when `entity_labels=None`, while explicit label sets remain strict."
+overview: "Support configured examples for default and non-default labels in one detection-only implementation for issue #259. Configured examples merge additively with built-in examples; non-default example keys must be declared in an explicit `entity_labels` set."
 todos:
   - id: configure-label-examples
     content: Add normalized, isolated configured examples for default and non-default labels with cross-field validation.
-    status: pending
+    status: completed
   - id: resolve-effective-ontology
-    content: Resolve additive built-in examples and automatic defaults-plus-non-default labels without global mutation.
-    status: pending
+    content: Resolve additive built-in examples and strict non-default-label membership without global mutation.
+    status: completed
   - id: propagate-detection-examples
     content: Pass effective labels to GLiNER, full resolved examples to validator, and configured examples only to augmenter.
-    status: pending
+    status: completed
   - id: test-example-behavior
-    content: Cover validation, activation, prompts, workflow parity, isolation, prompt growth, and detection-only boundaries.
-    status: pending
+    content: Cover validation, explicit membership, prompts, workflow parity, isolation, prompt growth, and detection-only boundaries.
+    status: completed
   - id: document-example-api
-    content: Document default/non-default label semantics, built-in/configured example semantics, issue divergence, costs, risks, and update the agent skill.
-    status: pending
+    content: Document default/non-default label semantics, built-in/configured example semantics, the issue divergence, costs, risks, and update the agent skill.
+    status: completed
 isProject: false
 ---
 
@@ -27,7 +27,7 @@ isProject: false
 - Add `Detect.entity_label_examples: dict[str, list[str]]` as per-run positive detection guidance.
 - Pass the full resolved example ontology to the validator and only user-configured examples to the augmenter. Do not change substitution, evaluation, or `AnonymizerResult`/`PreviewResult`.
   - Example: a detected non-default `vendor_api_key` is still substituted using the existing generic non-default-label fallback; its configured detection examples do not guide replacement generation.
-  - Evaluation example: suppose detection uses `{"vendor_api_key": ["acme_live_abc123"]}`, finds `acme_live_xyz789`, and `Substitute()` produces `acme_live_qrs456`. Existing evaluation may report `entity_coverage=1.0` when the original value is covered, `detection_valid=True` when the optional detection judge accepts the value/label from context, and `type_fidelity_valid=True` when the synthetic value preserves a plausible class and structure. These outcomes are model-dependent, and none of these judges receive `acme_live_abc123`; a non-default label falls back to generic/contextual judgment rather than configured-example comparison.
+  - Evaluation example: suppose detection uses `entity_labels=["vendor_api_key"]` with `entity_label_examples={"vendor_api_key": ["acme_live_abc123"]}`, finds `acme_live_xyz789`, and `Substitute()` produces `acme_live_qrs456`. Existing evaluation may report `entity_coverage=1.0` when the original value is covered, `detection_valid=True` when the optional detection judge accepts the value/label from context, and `type_fidelity_valid=True` when the synthetic value preserves a plausible class and structure. These outcomes are model-dependent, and none of these judges receive `acme_live_abc123`; a non-default label falls back to generic/contextual judgment rather than configured-example comparison.
 - Examples improve model interpretation but are not format allowlists or guaranteed exclusions.
 
 ## Terminology
@@ -38,12 +38,11 @@ isProject: false
 - **Built-in examples:** examples shipped with Anonymizer in `ENTITY_LABEL_EXAMPLES`.
 - **Configured examples:** user-supplied positive examples in `entity_label_examples`; they may target default or non-default labels.
 
-## Intentional divergences and known limitations
+## Intentional divergence and known limitations
 
-- Document two intentional differences from issue #259:
-  - configured example keys for non-default labels automatically activate those labels alongside defaults when `entity_labels=None`;
-  - the augmenter receives only configured examples rather than the full resolved mapping of built-in and configured examples.
-- Keep evaluation out of scope and record the consequence: configured examples are not persisted on `AnonymizerResult`/`PreviewResult`, and automatically activated non-default labels are not reproduced as an explicit evaluation allowlist. Entity coverage remains permissive when the originating `entity_labels` was `None` and does not receive the configured examples.
+- Follow issue #259 by requiring every non-excluded example key to belong to the active label set. A non-default label must therefore be declared in an explicit `entity_labels` set; examples never activate it implicitly.
+- Document one intentional difference from issue #259: the augmenter receives only configured examples rather than the full resolved mapping of built-in and configured examples.
+- Keep evaluation out of scope. Configured examples are not persisted on `AnonymizerResult`/`PreviewResult` or passed to evaluation, but an explicit label set containing non-default labels is persisted and scopes entity coverage consistently.
 - Treat example values as potentially sensitive configuration. They are embedded in validator/augmenter prompts, included in exported detection builders, and sent to configured model providers.
   - Example: use synthetic `acme_live_abc123`, never a real production credential or customer identifier.
 - Do not include example values in telemetry, logs, warning text, or measurement attributes.
@@ -84,7 +83,7 @@ flowchart TB
         BuiltNormalize --> BuiltExplicit{"entity_labels explicitly set?"}
         BuiltExplicit -->|"No"| BuiltDefaults["Use default labels"]
         BuiltExplicit -->|"Yes"| BuiltListed{"Example key in explicit list?"}
-        BuiltListed -->|"No"| BuiltMismatch["Raise allowlist mismatch"]
+        BuiltListed -->|"No"| BuiltMismatch["Raise explicit-set mismatch"]
         BuiltListed -->|"Yes"| BuiltSelected["Use explicit labels"]
         BuiltDefaults --> BuiltExcluded{"Example label excluded?"}
         BuiltSelected --> BuiltExcluded
@@ -124,24 +123,27 @@ flowchart TB
 
 ### Behavior
 
-- When a configured example key identifies a non-default label and `entity_labels=None`, automatically activate it alongside all defaults.
-  - Example: `{"vendor_api_key": ["acme_live_abc123"]}` resolves to `[*DEFAULT_ENTITY_LABELS, "vendor_api_key"]`.
-- This intentionally differs from issue #259, which says examples should not activate labels. The divergence avoids requiring users to inspect, import, and unpack `DEFAULT_ENTITY_LABELS` for the common defaults-plus-non-default case.
-- When `entity_labels` is explicit, keep it strict: every non-default-label example key must already be listed.
+- When a configured example key identifies a non-default label, require an explicit `entity_labels` set containing that label.
+  - Example: `entity_label_examples={"vendor_api_key": [...]}` with `entity_labels=None` raises a clear inactive-label error.
+- Keep explicit label sets strict: every non-excluded configured example key must already be listed.
   - Example: `entity_labels=["vendor_api_key"]` with matching examples detects only that non-default label.
   - Example: `entity_labels=["email"]` with examples for `vendor_api_key` is an error.
-- Let exclusions take precedence under automatic and explicit activation. Warn, omit the configured examples, and do not auto-activate an excluded non-default label; error only if all effective default and non-default labels are excluded.
-  - Example: excluded `vendor_api_key` is ignored while defaults continue; `entity_labels=["vendor_api_key"]` plus the same exclusion is an empty-set error.
-- Treat unknown normalized keys as intentional non-default labels when `entity_labels=None`; spelling intent cannot be inferred.
-  - Example: `vendor_api_ky` is activated as written. With explicit `entity_labels=["vendor_api_key"]`, the mismatch is caught.
-- Preserve existing augmenter strictness: automatic defaults-plus-non-default mode remains permissive; an explicit label set remains strict.
+- To detect defaults plus a non-default label, require `entity_labels=[*DEFAULT_ENTITY_LABELS, "vendor_api_key"]`.
+- Let exclusions take precedence. Warn and omit configured examples for an excluded non-default label; error only if all explicitly selected labels are excluded.
+  - Example: with `entity_labels=[*DEFAULT_ENTITY_LABELS, "vendor_api_key"]`, excluding `vendor_api_key` leaves the defaults active; `entity_labels=["vendor_api_key"]` plus the same exclusion is an empty-set error.
+- Reject unknown normalized keys rather than treating them as intentional labels.
+  - Example: `vendor_api_ky` raises unless that exact label also appears in the explicit label set.
+- An explicit label set keeps the augmenter strict.
 
 ### Resolution examples
 
 Defaults plus a non-default label:
 
 ```python
+from anonymizer import DEFAULT_ENTITY_LABELS
+
 Detect(
+    entity_labels=[*DEFAULT_ENTITY_LABELS, "vendor_api_key"],
     entity_label_examples={
         "vendor_api_key": ["acme_live_abc123"],
     },
@@ -167,18 +169,17 @@ flowchart TB
         NonDefaultStart["Non-default-label example key"] --> NonDefaultNormalize["Normalize key and values"]
         NonDefaultNormalize --> NonDefaultKnown{"Key identifies a default label?"}
         NonDefaultKnown -->|"Yes"| NonDefaultBuiltIn["Use default-label flow"]
-        NonDefaultKnown -->|"No"| NonDefaultExplicit{"entity_labels explicitly set?"}
-        NonDefaultExplicit -->|"No"| NonDefaultAuto["Activate defaults plus non-default key"]
-        NonDefaultExplicit -->|"Yes"| NonDefaultListed{"Key in explicit label set?"}
-        NonDefaultListed -->|"No"| NonDefaultMismatch["Raise allowlist mismatch"]
-        NonDefaultListed -->|"Yes"| NonDefaultSelected["Use explicit labels exactly"]
-        NonDefaultAuto --> NonDefaultExcluded{"Non-default label excluded?"}
-        NonDefaultSelected --> NonDefaultExcluded
-        NonDefaultExcluded -->|"Yes"| NonDefaultWarn["Warn, omit examples, and do not activate"]
+        NonDefaultKnown -->|"No"| NonDefaultExcluded{"Non-default label excluded?"}
+        NonDefaultExcluded -->|"Yes"| NonDefaultWarn["Warn and omit configured examples"]
         NonDefaultWarn --> NonDefaultRemaining{"Any labels remain?"}
         NonDefaultRemaining -->|"No"| NonDefaultEmpty["Raise empty-set error"]
         NonDefaultRemaining -->|"Yes"| NonDefaultResolve["Resolve remaining labels"]
-        NonDefaultExcluded -->|"No"| NonDefaultExamples["Create run-local configured examples"]
+        NonDefaultExcluded -->|"No"| NonDefaultExplicit{"entity_labels explicitly set?"}
+        NonDefaultExplicit -->|"No"| NonDefaultInactive["Raise inactive-label error"]
+        NonDefaultExplicit -->|"Yes"| NonDefaultListed{"Key in explicit label set?"}
+        NonDefaultListed -->|"No"| NonDefaultMismatch["Raise explicit-set mismatch"]
+        NonDefaultListed -->|"Yes"| NonDefaultSelected["Use explicit labels exactly"]
+        NonDefaultSelected --> NonDefaultExamples["Create run-local configured examples"]
         NonDefaultExamples --> NonDefaultResolve
         NonDefaultResolve --> NonDefaultOntology["Effective labels and resolved examples"]
     end
@@ -200,9 +201,9 @@ flowchart TB
 ```
 
 - Diagram key: rectangles and decision diamonds are new or modified behavior; rounded nodes are unchanged stages from `main`.
-- With `entity_labels=None`, a normalized non-default key is intentionally treated as defaults-plus-non-default activation. This is a documented usability divergence from issue #259.
-- With explicit `entity_labels`, the set remains strict. It can select non-default-only detection or defaults plus non-default labels, but every example key must already be listed.
-- A misspelled unknown key is treated as an intentional non-default label in automatic mode; an explicit label set can catch a mismatch.
+- A configured example key never activates a non-default label implicitly.
+- An explicit label set can select non-default-only detection or defaults plus non-default labels, but every non-excluded example key must already be listed.
+- A misspelled non-default key raises a mismatch instead of becoming an active label.
 - Default and non-default labels use the same detection sequence. GLiNER-found candidates receive validator review; the augmenter then searches for misses using all active label names and only user-configured examples.
 - Augmented findings are not independently revalidated. If validator cost later justifies augmenter-only non-default labels, that should be a separate feature with explicit scopes and documented quality tradeoffs.
 
@@ -219,29 +220,30 @@ flowchart TB
         LabelKind -->|"Yes"| DefaultExplicit{"entity_labels explicitly set?"}
         DefaultExplicit -->|"No"| DefaultActive["Label already active through defaults"]
         DefaultExplicit -->|"Yes"| DefaultListed{"Key in explicit label set?"}
-        DefaultListed -->|"No"| DefaultMismatch["Raise allowlist mismatch"]
+        DefaultListed -->|"No"| DefaultMismatch["Raise explicit-set mismatch"]
         DefaultListed -->|"Yes"| DefaultSelected["Use explicit label set"]
         DefaultActive --> DefaultMerge["Copy built-in examples and append configured examples"]
         DefaultSelected --> DefaultMerge
     end
 
     subgraph nonDefaultResolution [Non-default-label resolution]
-        LabelKind -->|"No"| NonDefaultExplicit{"entity_labels explicitly set?"}
-        NonDefaultExplicit -->|"No"| NonDefaultAuto["Activate defaults plus non-default label"]
+        LabelKind -->|"No"| NonDefaultExcluded{"Non-default label excluded?"}
+        NonDefaultExcluded -->|"Yes"| Omit
+        NonDefaultExcluded -->|"No"| NonDefaultExplicit{"entity_labels explicitly set?"}
+        NonDefaultExplicit -->|"No"| NonDefaultInactive["Raise inactive-label error"]
         NonDefaultExplicit -->|"Yes"| NonDefaultListed{"Key in explicit label set?"}
-        NonDefaultListed -->|"No"| NonDefaultMismatch["Raise allowlist mismatch"]
+        NonDefaultListed -->|"No"| NonDefaultMismatch["Raise explicit-set mismatch"]
         NonDefaultListed -->|"Yes"| NonDefaultSelected["Use explicit label set"]
-        NonDefaultAuto --> NonDefaultExamples["Use configured examples only"]
-        NonDefaultSelected --> NonDefaultExamples
+        NonDefaultSelected --> NonDefaultExamples["Use configured examples"]
     end
 
     DefaultMerge --> Excluded{"Example label excluded?"}
-    NonDefaultExamples --> Excluded
     Excluded -->|"Yes"| Omit["Warn, remove label, and omit its examples"]
     Omit --> Remaining{"Any labels remain?"}
     Remaining -->|"No"| Empty["Raise empty-set error"]
     Remaining -->|"Yes"| Ontology["Effective labels and resolved examples"]
     Excluded -->|"No"| Ontology
+    NonDefaultExamples --> Ontology
 
     subgraph sharedPipeline [Shared detection pipeline]
         Ontology --> Gliner(["GLiNER gets effective label names"])
@@ -259,12 +261,12 @@ flowchart TB
 ## Validation shared by both cases
 
 - Extend `[src/anonymizer/config/anonymizer_config.py](src/anonymizer/config/anonymizer_config.py)` with an isolated `default_factory=dict`.
-- Normalize keys with `strip().lower()`, trim values without changing case, and copy nested input state.
+- Normalize keys consistently with `entity_labels` using `strip().casefold()`, trim values without changing case, and copy nested input state.
 - Reject blank/non-string keys, empty or non-list collections, and blank/non-string examples.
 - Merge normalized duplicate keys in input order and stable-deduplicate their values, emitting a warning.
   - Example: `{" Email ": ["alice@example.test"], "email": ["bob@example.test"]}` becomes one ordered `email` list.
-- Compute the effective label set after automatic activation and exclusions, and reject only when that final set is empty.
-  - Example: excluding every default remains valid when a non-excluded non-default key is automatically activated; excluding that non-default label too raises.
+- Require every non-excluded configured example key to belong to `entity_labels` when explicit, or `DEFAULT_ENTITY_LABELS` when `entity_labels=None`.
+- Compute the effective label set after exclusions and reject when that final set is empty.
 - Ensure separate configs, caller-owned lists, and sequential runs cannot contaminate one another.
 
 ## Shared detection pipeline
@@ -285,24 +287,44 @@ flowchart TB
 - Keep all active labels/examples in validator prompts because candidate-only examples weaken reclassification into labels absent from a chunk.
 - Add non-blocking prompt-size regression measurements to inform future limits or retrieval-based designs.
 
+## Telemetry semantics
+
+- Never record configured example values.
+- Continue recording the raw label configuration:
+  - `entity_labels` contains the explicit label set when supplied and remains `None` when defaults are used;
+  - `excluded_entity_labels` records exclusions separately;
+  - `entity_label_count` retains its existing pre-exclusion meaning for compatibility.
+- Add `effective_entity_labels` containing the resolved default or explicit label set after exclusions. This list includes every non-default label associated with configured examples because those labels now require explicit membership in `entity_labels`.
+- Add `effective_entity_label_count` as the length of `effective_entity_labels`.
+- Define `effective_entity_labels` as the labels passed into the configured detection ontology; in permissive mode, the augmenter may still emit additional labels not present in this list.
+- Add both effective fields as optional in measurement records and downstream ingestion/reporting models so historical records without them remain valid.
+- Update aggregate reporting to prefer `effective_entity_label_count` and fall back to the existing `entity_label_count` for historical records.
+
 ## Tests
 
-- In `[tests/config/test_anonymizer_config.py](tests/config/test_anonymizer_config.py)`, cover shared normalization/isolation plus built-in-example merging, automatic non-default-label activation, explicit non-default-only and mismatch cases, typo behavior, excluded-example warnings, remaining-label continuation, empty effective sets, and serialization.
+- In `[tests/config/test_anonymizer_config.py](tests/config/test_anonymizer_config.py)`, cover shared normalization/isolation plus built-in-example merging, rejection of undeclared non-default labels, explicit non-default-only and defaults-plus-non-default cases, typo behavior, excluded-example warnings, empty effective sets, and serialization.
 - In `[tests/engine/test_detection_workflow.py](tests/engine/test_detection_workflow.py)`, separately cover:
   - configured examples merging with built-in examples without global mutation;
-  - non-default names reaching GLiNER, full resolved examples reaching validator, and configured-only examples reaching augmenter;
+  - explicitly declared non-default names reaching GLiNER, full resolved examples reaching validator, and configured-only examples reaching augmenter;
   - built-in examples remaining absent from the augmenter unless the user supplied configured examples for that label;
   - validator keep/drop/reclass and augmenter recovery;
   - effective-label filtering, strict/permissive behavior, safe special characters, and cross-run isolation.
 - In `[tests/engine/test_detection_config_serialization.py](tests/engine/test_detection_config_serialization.py)` and interface tests, verify parity across run, preview, rewrite detection, dataframe export, seed export, and round-trip reconstruction.
 - Add regressions proving replacement prompts/outputs, evaluation judges, and result dataclasses receive no example state.
 - Add telemetry/logging regressions proving configured example values are never emitted, while exported detection builders intentionally contain the prompt examples required for remote execution.
+- Add telemetry regressions proving:
+  - explicit non-default labels and exclusions remain recorded;
+  - `entity_label_count` retains its existing pre-exclusion value;
+  - `effective_entity_labels` contains the post-exclusion default or explicit label set;
+  - `effective_entity_label_count == len(effective_entity_labels)`;
+  - configured example values never appear in telemetry;
+  - historical records without the effective fields remain valid and reporting falls back to `entity_label_count`.
 
 ## Documentation and agent skill
 
-- Update `[docs/concepts/detection.md](docs/concepts/detection.md)`, `[docs/concepts/choosing-a-strategy.md](docs/concepts/choosing-a-strategy.md)`, and `[docs/troubleshooting.md](docs/troubleshooting.md)` with separate examples for default labels, defaults plus non-default labels, and explicit non-default-only detection.
-- Document positive-only semantics, exclusion precedence and warnings, empty-set errors, typo activation, prompt cost, synthetic-data guidance, and deterministic alternatives for guaranteed negatives.
-- Explicitly explain both intentional issue #259 divergences, their user-experience/prompt-size rationale, and the evaluation reproducibility limitation.
+- Update `[docs/concepts/detection.md](docs/concepts/detection.md)`, `[docs/concepts/choosing-a-strategy.md](docs/concepts/choosing-a-strategy.md)`, and `[docs/troubleshooting.md](docs/troubleshooting.md)` with separate examples for default labels, explicit defaults plus non-default labels, and explicit non-default-only detection.
+- Document positive-only semantics, explicit membership for non-default labels, exclusion precedence and warnings, empty-set errors, typo rejection, prompt cost, synthetic-data guidance, and deterministic alternatives for guaranteed negatives.
+- Explain the configured-examples-only augmenter divergence and its prompt-size rationale.
 - Warn that exported builders and provider requests contain configured examples, and recommend synthetic values rather than real secrets or PII.
-- Update `[skills/anonymizer/SKILL.md](skills/anonymizer/SKILL.md)` and its `Detect(...)` template to use automatic defaults-plus-non-default behavior unless the user requests strict non-default-only detection.
+- Update `[skills/anonymizer/SKILL.md](skills/anonymizer/SKILL.md)` and its `Detect(...)` template to require explicit `entity_labels` membership for every non-default configured example key.
 

@@ -63,6 +63,14 @@ run metadata.
 Use `tools/measurement/export_measurements.py` to convert raw measurement JSONL
 into Parquet, CSV, or JSONL tables.
 
+Run records retain the raw detection configuration in `entity_labels`,
+`excluded_entity_labels`, and the pre-exclusion `entity_label_count`. They also
+include `effective_entity_labels` and `effective_entity_label_count`, which
+describe the configured/default label set after exclusions. Configured example
+values are never recorded. In permissive mode, augmentation may still emit a
+label outside this configured ontology. Readers prefer the effective count and
+fall back to `entity_label_count` for historical records.
+
 ## Output and Sinks
 
 `MeasurementConfig` controls output:

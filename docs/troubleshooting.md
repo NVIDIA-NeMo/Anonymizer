@@ -99,19 +99,20 @@ print(preview.dataframe.iloc[0][f"{data.text_column}_with_spans"])
 Try in order:
 
 1. **Lower `gliner_threshold`** from `0.3` to `0.2` (or `0.15`). False positives get caught downstream by validation.
-2. **Add a configured example** for the relevant default or non-default label. With `entity_labels=None`, a configured example key for a non-default label automatically activates that label alongside the defaults without switching the augmenter to strict mode:
+2. **Add a configured example** for the relevant default or non-default label. A non-default label must also appear in an explicit `entity_labels` set:
 
    ```python
-   from anonymizer import Detect
+   from anonymizer import DEFAULT_ENTITY_LABELS, Detect
 
    detect = Detect(
+       entity_labels=[*DEFAULT_ENTITY_LABELS, "clinical_facility"],
        entity_label_examples={
            "clinical_facility": ["North Valley Oncology Center"],
        }
    )
    ```
 
-   Configured examples are positive guidance, not a format allowlist, so the detector can still find other facility-name formats. A key absent from `DEFAULT_ENTITY_LABELS` is treated as an intentional non-default label; check spelling carefully because `clinical_facilty` would activate as a separate label. Use only synthetic examples—the values are included in prompts, exported builders, and explicitly enabled raw message traces.
+   Configured examples are positive guidance, not a format allowlist, so the detector can still find other facility-name formats. A non-default or misspelled example key that is absent from the explicit label set raises a validation error. Use only synthetic examples—the values are included in prompts, exported builders, and explicitly enabled raw message traces.
 3. **Set `AnonymizerInput.data_summary`** so the augmenter LLM has domain context. A line like `"De-identified pediatric oncology progress notes"` materially improves coverage.
 4. **For rewrite mode**, latent entities are detected separately. If a piece of inferable information (e.g. "during her third round of chemo" → cancer treatment) is being preserved verbatim, the latent detector likely missed it — refine `Rewrite.privacy_goal.protect` to call out the inference category explicitly.
 

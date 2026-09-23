@@ -15,6 +15,7 @@ from data_designer.config.column_configs import LLMStructuredColumnConfig, LLMTe
 from data_designer.config.column_types import ColumnConfigT
 from data_designer.config.config_builder import DataDesignerConfigBuilder
 from data_designer.config.models import ModelConfig
+from pydantic import Field
 
 from anonymizer.config.anonymizer_config import Detect as AnonymizerDetectConfig
 from anonymizer.config.models import DetectionModelSelection
@@ -65,6 +66,13 @@ from anonymizer.engine.workflow_columns.detection.config import (
 from anonymizer.measurement import stage_timer
 
 logger = logging.getLogger("anonymizer.detection")
+
+
+class _PrivatePromptLLMStructuredColumnConfig(LLMStructuredColumnConfig):
+    """Structured column config whose prompt is omitted from repr-based setup logs."""
+
+    prompt: str = Field(repr=False)
+
 
 # Defaults for the two chunked-validation knobs. Sourced from the Detect config
 # so there is a single source of truth; the workflow method defaults exist so
@@ -234,7 +242,7 @@ class EntityDetectionWorkflow:
                     operation=DetectionTransformOperation.APPLY_VALIDATION_TO_SEED_ENTITIES,
                     excluded_entity_labels=list(excluded_entity_labels or []),
                 ),
-                LLMStructuredColumnConfig(
+                _PrivatePromptLLMStructuredColumnConfig(
                     name=COL_AUGMENTED_ENTITIES,
                     prompt=_get_augment_prompt(
                         data_summary=data_summary,
@@ -481,7 +489,6 @@ class EntityDetectionWorkflow:
             # When entity_labels is explicitly provided (even if it matches DEFAULT_ENTITY_LABELS),
             # the augmenter is strict and out-of-scope labels are filtered.
             # entity_labels=None is the only way to get permissive augmentation.
-            # TODO(docs): document this None-vs-explicit contract in user-facing docs.
             if COL_DETECTED_ENTITIES in final_df.columns:
                 allowed = set(ontology.labels) if ontology.strict_labels else None
                 excluded_entity_labels_set = set(excluded_entity_labels) if excluded_entity_labels else None

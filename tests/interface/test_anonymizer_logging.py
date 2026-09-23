@@ -138,6 +138,25 @@ def test_run_logs_pipeline_stages(stub_input: AnonymizerInput, caplog: pytest.Lo
     assert "2 records processed" in messages
 
 
+def test_run_logs_do_not_include_configured_entity_examples(
+    stub_input: AnonymizerInput,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    secret = "real-production-secret"
+    config = AnonymizerConfig(
+        detect={
+            "entity_labels": ["vendor_api_key"],
+            "entity_label_examples": {"vendor_api_key": [secret]},
+        },
+        replace=Redact(),
+    )
+
+    with caplog.at_level(logging.DEBUG, logger="anonymizer"):
+        _make_logging_anonymizer().run(config=config, data=stub_input)
+
+    assert secret not in caplog.text
+
+
 def test_run_logs_numpy_wrapped_entity_counts(stub_input: AnonymizerInput, caplog: pytest.LogCaptureFixture) -> None:
     detection_entities: list[object] = [
         {

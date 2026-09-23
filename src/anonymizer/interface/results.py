@@ -67,9 +67,9 @@ class AnonymizerResult(_DisplayMixin):
         entity_labels: Allowlist of entity labels that were in scope during
             detection. Preserved for ``evaluate()`` so the coverage judge scopes
             its evaluation to the same label set. ``None`` means detection was
-            permissive; default labels and any non-default labels activated by
-            configured example keys may have been active, but configured examples
-            are intentionally not persisted for evaluation.
+            permissive: default labels were configured, and the augmenter may
+            have emitted additional labels. Configured examples are intentionally
+            not persisted for evaluation.
         data_summary: Optional dataset context supplied with the original input.
             Preserved for ``evaluate()`` so entity-coverage judging uses the
             same context as detection.
@@ -123,9 +123,9 @@ class PreviewResult(_DisplayMixin):
         entity_labels: Allowlist of entity labels that were in scope during
             detection. Preserved for ``evaluate()`` so the coverage judge scopes
             its evaluation to the same label set. ``None`` means detection was
-            permissive; default labels and any non-default labels activated by
-            configured example keys may have been active, but configured examples
-            are intentionally not persisted for evaluation.
+            permissive: default labels were configured, and the augmenter may
+            have emitted additional labels. Configured examples are intentionally
+            not persisted for evaluation.
         data_summary: Optional dataset context supplied with the original input.
             Preserved for ``evaluate()`` so entity-coverage judging uses the
             same context as detection.

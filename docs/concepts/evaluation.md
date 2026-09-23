@@ -69,7 +69,7 @@ The judge is scoped and contextualized by the same signals used during anonymiza
 - **`excluded_entity_labels`** — labels explicitly excluded from detection; the judge ignores entities of these types so excluded labels are never penalised in the coverage score.
 - **`data_summary`** — used purely to interpret literal values and their semantic types, never to invent entities absent from the text.
 
-`Detect.entity_label_examples` is detection-only guidance and is not persisted on result objects or passed to evaluation judges. If configured examples activated non-default labels while `entity_labels=None`, post-hoc entity coverage remains permissive rather than reconstructing a strict explicit label set.
+`Detect.entity_label_examples` is detection-only guidance and is not persisted on result objects or passed to evaluation judges. Non-default labels must be declared in `entity_labels`, so their explicit label scope is preserved for post-hoc evaluation even though the configured example values are not.
 
 | Output column | Type | Description |
 |---|---|---|

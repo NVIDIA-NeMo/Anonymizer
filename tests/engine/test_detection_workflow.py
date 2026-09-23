@@ -437,16 +437,12 @@ def test_resolve_entity_ontology_merges_built_in_examples_without_global_mutatio
     assert ENTITY_LABEL_EXAMPLES["api_key"] == original
 
 
-def test_resolve_entity_ontology_auto_activates_non_default_labels_but_remains_permissive() -> None:
-    ontology = resolve_entity_ontology(
-        entity_labels=None,
-        entity_label_examples={"vendor_api_key": ["acme_live_abc123"]},
-    )
-
-    assert ontology.labels == [*DEFAULT_ENTITY_LABELS, "vendor_api_key"]
-    assert ontology.validator_examples["vendor_api_key"] == ["acme_live_abc123"]
-    assert ontology.augmenter_examples["vendor_api_key"] == ["acme_live_abc123"]
-    assert ontology.strict_labels is False
+def test_resolve_entity_ontology_rejects_undeclared_non_default_example_label() -> None:
+    with pytest.raises(ValueError, match="outside the active label set"):
+        resolve_entity_ontology(
+            entity_labels=None,
+            entity_label_examples={"vendor_api_key": ["acme_live_abc123"]},
+        )
 
 
 def test_resolve_entity_ontology_explicit_non_default_only_is_strict() -> None:
@@ -457,6 +453,19 @@ def test_resolve_entity_ontology_explicit_non_default_only_is_strict() -> None:
 
     assert ontology.labels == ["vendor_api_key"]
     assert ontology.strict_labels is True
+
+
+def test_resolve_entity_ontology_keeps_sequential_runs_isolated() -> None:
+    first = resolve_entity_ontology(
+        entity_labels=[*DEFAULT_ENTITY_LABELS, "vendor_api_key"],
+        entity_label_examples={"vendor_api_key": ["acme_live_abc123"]},
+    )
+    second = resolve_entity_ontology(entity_labels=None)
+
+    assert "vendor_api_key" in first.labels
+    assert "vendor_api_key" not in second.labels
+    assert "vendor_api_key" not in second.validator_examples
+    assert second.augmenter_examples == {}
 
 
 def test_latent_prompt_uses_not_provided_defaults() -> None:
@@ -504,7 +513,7 @@ def test_validation_prompt_includes_data_summary() -> None:
 
 def test_validation_prompt_adds_configured_examples_to_full_ontology() -> None:
     ontology = resolve_entity_ontology(
-        entity_labels=None,
+        entity_labels=[*DEFAULT_ENTITY_LABELS, "vendor_api_key"],
         entity_label_examples={
             "api_key": ["sk-ant-api03-abc123"],
             "vendor_api_key": ["acme_live_abc123"],
@@ -557,21 +566,29 @@ def test_augment_prompt_receives_only_configured_examples() -> None:
     assert "derez_lester94@icloud.com" not in prompt
 
 
-def test_configured_examples_are_encoded_as_prompt_data() -> None:
+def test_configured_examples_are_encoded_as_validator_and_augmenter_prompt_data() -> None:
     configured_value = '{{ dangerous }}\n{% include "secret" %}'
     configured_label = "custom_{{ label_template }}"
-    prompt = _get_augment_prompt(
+    configured_examples = {configured_label: [configured_value]}
+    augmenter_prompt = _get_augment_prompt(
         data_summary=None,
         labels=[configured_label],
         strict_labels=False,
-        configured_examples={configured_label: [configured_value]},
+        configured_examples=configured_examples,
+    )
+    validator_prompt = _get_validation_prompt(
+        data_summary=None,
+        labels=[configured_label],
+        examples_by_label=configured_examples,
+        configured_examples=configured_examples,
     )
 
-    assert "{{ dangerous }}" not in prompt
-    assert "{{ label_template }}" not in prompt
-    assert '{% include "secret" %}' not in prompt
-    assert r"\u007b\u007b dangerous \u007d\u007d" in prompt
-    assert r"\n" in prompt
+    for prompt in (validator_prompt, augmenter_prompt):
+        assert "{{ dangerous }}" not in prompt
+        assert "{{ label_template }}" not in prompt
+        assert '{% include "secret" %}' not in prompt
+        assert r"\u007b\u007b dangerous \u007d\u007d" in prompt
+        assert r"\n" in prompt
 
 
 def test_no_configured_examples_preserves_existing_prompt_text() -> None:
@@ -684,7 +701,7 @@ def test_default_entity_labels_preserves_novel_augmented_entities(
     assert "ipv4" in final_labels
 
 
-def test_auto_activated_non_default_examples_preserve_permissive_augmentation(
+def test_defaults_plus_non_default_examples_use_strict_augmentation(
     _detection_with_novel_augmented_label: tuple[
         EntityDetectionWorkflow, pd.DataFrame, list[ModelConfig], DetectionModelSelection
     ],
@@ -695,20 +712,22 @@ def test_auto_activated_non_default_examples_preserve_permissive_augmentation(
         model_configs=model_configs,
         selected_models=selected_models,
         gliner_detection_threshold=0.5,
+        entity_labels=[*DEFAULT_ENTITY_LABELS, "vendor_api_key"],
         entity_label_examples={"vendor_api_key": ["acme_live_abc123"]},
         tag_latent_entities=False,
     )
 
     final = EntitiesSchema.from_raw(result.dataframe[COL_FINAL_ENTITIES].iloc[0])
-    assert "server_name" in {entity.label for entity in final.entities}
+    assert "server_name" not in {entity.label for entity in final.entities}
 
     adapter = cast(Mock, workflow._adapter)
     call = adapter.run_workflow.call_args
     detector_config = next(config for config in call.kwargs["model_configs"] if config.alias == "gliner-pii-detector")
     assert "vendor_api_key" in detector_config.inference_parameters.extra_body["labels"]
     augmenter = next(column for column in call.kwargs["columns"] if column.name == COL_AUGMENTED_ENTITIES)
-    assert "Strongly prefer labels from this list" in augmenter.prompt
+    assert "Use ONLY labels from this list" in augmenter.prompt
     assert "vendor_api_key: acme_live_abc123" in augmenter.prompt
+    assert "acme_live_abc123" not in repr(augmenter)
 
 
 # ── excluded_entity_labels ────────────────────────────────────────────────────

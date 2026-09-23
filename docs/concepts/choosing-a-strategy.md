@@ -74,10 +74,15 @@ Common non-default labels include:
 - Internal: `cost_center`, `internal_project_codename`, `experiment_id`
 
 ```python
-from anonymizer import Detect
+from anonymizer import DEFAULT_ENTITY_LABELS, Detect
 
-# Defaults plus these non-default labels; their configured example keys activate them automatically.
+# Defaults plus these explicitly declared non-default labels.
 detect = Detect(
+    entity_labels=[
+        *DEFAULT_ENTITY_LABELS,
+        "clinical_facility",
+        "diagnosis_code",
+    ],
     entity_label_examples={
         "clinical_facility": ["North Valley Oncology Center"],
         "diagnosis_code": ["C50.919"],
@@ -94,11 +99,13 @@ strict_detect = Detect(
 )
 ```
 
-For a default label, configured examples are added to its built-in examples rather than replacing them. A non-default label has no built-in examples, so its resolved examples come from the configured values. Examples are positive guidance, not format allowlists: an `api_key` in a different format may still be detected. Keep configured lists short and use synthetic values because they are sent to model providers.
+For a default label, configured examples are added to its built-in examples rather than replacing them. A non-default label has no built-in examples and must appear in an explicit `entity_labels` set. Examples are positive guidance, not format allowlists: an `api_key` in a different format may still be detected.
+
+Keep configured lists short and use synthetic values because they are sent to model providers. The validator receives the full resolved examples in each validation chunk; the augmenter receives only configured examples.
 
 ### `excluded_entity_labels`
 
-Use when you want to **exclude** specific label types from detection without enumerating the entire allowlist. Excluded labels are removed before GLiNER runs, so they are never detected, augmented, or surfaced in results. The evaluation judges also ignore excluded label types so they don't lower your coverage score.
+Use when you want to **exclude** specific label types from detection without enumerating the entire label set. Excluded labels are removed from the active scope before GLiNER runs and filtered from final results if a model emits them anyway. The evaluation judges also ignore excluded label types so they don't lower your coverage score.
 
 ```python
 # Never detect occupation or gender, keep everything else
@@ -109,7 +116,7 @@ Detect(entity_labels=["first_name", "email", "city"], excluded_entity_labels=["c
 ```
 
 !!! warning
-    Exclusions take precedence over labels and examples. Configured examples for an excluded label are ignored with a warning. A total overlap with the effective default-plus-non-default or explicit label set raises a `ValueError` instead of silently detecting nothing.
+    Exclusions take precedence over labels and examples. Configured examples for an excluded label are ignored with a warning. A total overlap with the default or explicit label set raises a `ValueError` instead of silently detecting nothing.
 
 ### `gliner_threshold`
 
