@@ -63,6 +63,8 @@ The chunked path is always on; if a row has fewer candidates than the limit, it 
 - **Raise `validation_excerpt_window_chars`** when short windows hide the context needed to disambiguate entities (e.g., `"John"` as first name vs. last name depends on surrounding text).
 - **Lower it** to reduce per-chunk prompt tokens, at the risk of lower validation quality on context-sensitive labels.
 
+Each validator call includes the full resolved label/example pairs. Lowering `validation_max_entities_per_call` reduces the candidates in each call, but repeats that complete label/example section across more calls, which can increase total input tokens and cost—especially when many examples are configured.
+
 ### Validator pools
 
 `entity_validator` can be a single alias (the default) or a list of aliases — a **pool**. When multiple aliases are configured, each chunk in a row is dispatched to the next alias in round-robin order, which lets you work around per-alias rate limits by spreading requests across equivalent endpoints.

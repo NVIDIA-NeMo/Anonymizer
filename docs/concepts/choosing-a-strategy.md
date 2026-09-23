@@ -101,7 +101,7 @@ strict_detect = Detect(
 
 For a default label, configured examples are added to its built-in examples rather than replacing them. A non-default label has no built-in examples and must appear in an explicit `entity_labels` set. Examples are positive guidance, not format allowlists: an `api_key` in a different format may still be detected.
 
-Keep configured lists short and use synthetic values because they are sent to model providers. The validator receives the full resolved examples in each validation chunk; the augmenter receives only configured examples.
+Keep configured lists short and use synthetic values because they are sent to model providers. The validator receives the full resolved examples in each validation chunk; lowering `validation_max_entities_per_call` creates more chunks and repeats that complete example section more often, potentially increasing total input tokens and cost. The augmenter receives only configured examples.
 
 ### `excluded_entity_labels`
 

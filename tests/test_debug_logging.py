@@ -80,6 +80,9 @@ def debug_messages(
         "r2",
         "input text lengths:",
         "detection config: threshold=",
+        "configured_label_count=",
+        "effective_label_count=",
+        "removed_by_exclusions=",
     ],
 )
 def test_debug_log_contains(debug_messages: list[str], expected_substring: str) -> None:
