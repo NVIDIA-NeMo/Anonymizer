@@ -135,7 +135,8 @@ COL_NEEDS_HUMAN_REVIEW = "needs_human_review"
 # Entity labels and examples
 #
 # Source of truth for default entity labels and their examples.
-# Used by both detection (validation/augment prompts) and replacement prompts.
+# Used by the detection validator and replacement prompts. The augmenter receives
+# effective label names plus only the examples configured for the current run.
 # ---------------------------------------------------------------------------
 
 ENTITY_LABEL_EXAMPLES: dict[str, list[str]] = {

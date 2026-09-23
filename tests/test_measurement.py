@@ -472,6 +472,8 @@ def test_anonymizer_records_per_record_measurement_without_raw_pii(tmp_path: Pat
     assert run_record["input_has_data_summary"] is False
     assert run_record["detect"]["entity_label_source"] == "default"
     assert run_record["detect"]["entity_label_count"] > 0
+    assert run_record["detect"]["effective_entity_label_count"] == run_record["detect"]["entity_label_count"]
+    assert len(run_record["detect"]["effective_entity_labels"]) == run_record["detect"]["effective_entity_label_count"]
     assert run_record["detect"]["excluded_entity_labels"] is None
     assert run_record["replace"]["strategy"] == "Redact"
     assert run_record["replace"]["normalize_label"] is True
@@ -490,6 +492,9 @@ def test_detect_config_metadata_includes_excluded_entity_labels() -> None:
     metadata = _detect_config_metadata(detect)
     assert metadata["excluded_entity_labels"] == ["email"]
     assert metadata["entity_labels"] == ["email", "first_name"]
+    assert metadata["entity_label_count"] == 2
+    assert metadata["effective_entity_labels"] == ["first_name"]
+    assert metadata["effective_entity_label_count"] == 1
 
 
 def test_detect_config_metadata_exclusions_none_when_not_set() -> None:
@@ -498,6 +503,22 @@ def test_detect_config_metadata_exclusions_none_when_not_set() -> None:
     detect = Detect()
     metadata = _detect_config_metadata(detect)
     assert metadata["excluded_entity_labels"] is None
+
+
+def test_detect_config_metadata_omits_entity_label_example_values() -> None:
+    from anonymizer.measurement.records.run import _detect_config_metadata
+
+    secret_example = "real-production-secret"
+    metadata = _detect_config_metadata(
+        Detect(
+            entity_labels=["vendor_api_key"],
+            entity_label_examples={"vendor_api_key": [secret_example]},
+        )
+    )
+
+    assert secret_example not in json.dumps(metadata)
+    assert "entity_label_examples" not in metadata
+    assert metadata["effective_entity_labels"] == ["vendor_api_key"]
 
 
 def test_anonymizer_measurement_config_writes_jsonl(tmp_path: Path) -> None:

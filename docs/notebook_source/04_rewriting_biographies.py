@@ -196,7 +196,7 @@ evaluated.display_record(0)
 # ## ⏭️ Next steps
 #
 # - **[⚖️ Rewriting Legal Documents](../05_rewriting_legal_documents/)** --
-#   rewrite legal text with custom entity labels and domain-specific privacy goals.
+#   rewrite legal text with non-default entity labels and domain-specific privacy goals.
 # - **[📊 Evaluation](../../concepts/evaluation/#rewrite-evaluation)** --
 #   learn about the detection validity and rewrite quality judges in detail.
 # - **[🎯 Choosing a Replacement Strategy](../03_choosing_a_replacement_strategy/)** --

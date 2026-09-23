@@ -44,6 +44,8 @@ from anonymizer.engine.detection.postprocess import (
     expand_entity_occurrences,
     filter_excluded_entity_spans,
     get_tag_notation,
+    normalize_label,
+    normalize_labels,
     parse_raw_entities,
 )
 from anonymizer.engine.schemas import (
@@ -179,6 +181,7 @@ def apply_validation_and_finalize(
     row: dict[str, Any],
     *,
     excluded_entity_labels: list[str] | None = None,
+    allowed_entity_labels: list[str] | None = None,
 ) -> dict[str, Any]:
     """Apply keep/reclass/drop decisions, expand to all occurrences, and produce final outputs."""
     text = str(row.get(COL_TEXT, ""))
@@ -187,6 +190,9 @@ def apply_validation_and_finalize(
         entities=merged,
         validation_output=row.get(COL_VALIDATED_ENTITIES, {}),
     )
+    if allowed_entity_labels is not None:
+        allowed = normalize_labels(allowed_entity_labels)
+        validated = [entity for entity in validated if normalize_label(entity.label) in allowed]
     validated = filter_excluded_entity_spans(validated, excluded_entity_labels)
     expanded = expand_entity_occurrences(text=text, entities=validated)
     row[COL_DETECTED_ENTITIES] = EntitiesSchema(entities=[entity.as_dict() for entity in expanded]).model_dump(

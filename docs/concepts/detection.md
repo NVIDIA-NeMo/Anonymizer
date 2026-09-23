@@ -9,9 +9,7 @@ Entity detection is the first stage of every Anonymizer pipeline. Both replace a
 
 ## How it works
 
-Detection combines a lightweight GLiNER2 PII model with LLM-based refinement. GLiNER2 produces an
-initial set of entity spans, then an LLM augments it with entities the NER missed and validates each
-detection—keeping, reclassifying, or dropping entities based on context.
+Detection combines a lightweight GLiNER2 PII model with LLM-based refinement. GLiNER2 produces an initial set of entity spans, an LLM validates those candidates by keeping, reclassifying, or dropping them based on context, and then an augmenter finds entities GLiNER2 missed. Augmented findings are merged directly and are not independently revalidated.
 
 When rewrite is configured, an additional step identifies **latent entities** -- sensitive information inferable from context but not explicitly stated in the text.
 
@@ -46,7 +44,8 @@ config = AnonymizerConfig(
 | Field | Default | Description |
 |-------|---------|-------------|
 | `entity_labels` | `None` (all defaults) | List of labels to detect. Leave unset (or pass `None`) to use the full default set. |
-| `excluded_entity_labels` | `None` | List of labels to **never** detect, even if present in `entity_labels` or the default set. Excluded labels are removed before GLiNER and the LLM prompts run, and are also filtered from the final entity output as a safety net. |
+| `entity_label_examples` | `{}` | User-configured positive examples keyed by label. Examples for default labels extend their built-in examples; non-default keys must also appear in an explicit `entity_labels` set. |
+| `excluded_entity_labels` | `None` | List of labels to exclude from detection, even if present in `entity_labels` or the default set. Excluded labels are removed from the active detection scope and filtered from the final entity output. |
 | `gliner_threshold` | `0.3` | GLiNER confidence threshold (0.0--1.0). Lower values detect more entities but may increase false positives. |
 | `validation_max_entities_per_call` | `100` | Maximum candidate entities per validator LLM call. Rows with more candidates are split into chunks. See [Chunked validation](#chunked-validation). |
 | `validation_excerpt_window_chars` | `500` | Characters of context included before and after a chunk's entity spans in the validator prompt. Bounds per-chunk prompt size; not the model's context-window limit. |
@@ -63,6 +62,8 @@ The chunked path is always on; if a row has fewer candidates than the limit, it 
 - **Lower it** if you hit provider rate limits or want more uniform per-call latency.
 - **Raise `validation_excerpt_window_chars`** when short windows hide the context needed to disambiguate entities (e.g., `"John"` as first name vs. last name depends on surrounding text).
 - **Lower it** to reduce per-chunk prompt tokens, at the risk of lower validation quality on context-sensitive labels.
+
+Each validator call includes the full resolved label/example pairs. Lowering `validation_max_entities_per_call` reduces the candidates in each call, but repeats that complete label/example section across more calls, which can increase total input tokens and cost—especially when many examples are configured.
 
 ### Validator pools
 
@@ -96,7 +97,19 @@ from anonymizer import DEFAULT_ENTITY_LABELS
 print(DEFAULT_ENTITY_LABELS)
 ```
 
-### Custom labels
+The label settings serve different purposes:
+
+- `entity_labels` defines **which entity types** are in scope, such as `api_key`.
+- `entity_label_examples` provides **representative values** for those types, such as `sk-ant-api03-abc123`.
+
+The following terms distinguish label scope from example origin:
+
+- A **default label** is present in `DEFAULT_ENTITY_LABELS`; a **non-default label** is absent from it.
+- An **explicit label set** is any set supplied through `entity_labels` and may contain default labels, non-default labels, or both.
+- **Built-in examples** ship with Anonymizer in `ENTITY_LABEL_EXAMPLES`.
+- **Configured examples** are values you supply through `entity_label_examples`.
+
+### Label scope
 
 When you pass `entity_labels` explicitly, the augmenter operates in **strict mode** -- it only outputs entities matching your list. When `entity_labels=None`, the augmenter can create additional labels beyond the defaults (e.g., `clinic_name`, `server_name`).
 
@@ -108,20 +121,69 @@ Detect(entity_labels=["first_name", "last_name", "email"])
 Detect()  # entity_labels=None
 ```
 
+### Positive examples
+
+Use `entity_label_examples` to help detection recognize dataset- or domain-specific value formats, such as vendor-prefixed API keys, account handles, or organization-specific identifiers. These are positive examples of what a label may look like—not format allowlists, guaranteed matches, negative examples, or replacement templates.
+
+To deterministically exclude an entire label type, use `excluded_entity_labels`. Configured examples cannot express value-level negative examples.
+
+#### Examples for default labels
+
+Configured examples for a default label are appended to its built-in examples:
+
+```python
+Detect(entity_label_examples={"api_key": ["sk-ant-api03-abc123"]})
+```
+
+Here, `api_key` is already active through `DEFAULT_ENTITY_LABELS`; its built-in examples remain active alongside the configured example.
+
+#### Examples for non-default labels
+
+A configured example does not activate a non-default label. Declare the label explicitly:
+
+```python
+Detect(
+    entity_labels=["vendor_api_key"],
+    entity_label_examples={"vendor_api_key": ["acme_live_abc123"]},
+)
+```
+
+To detect all defaults plus a non-default label, include both in the explicit label set:
+
+```python
+from anonymizer import DEFAULT_ENTITY_LABELS
+
+Detect(
+    entity_labels=[*DEFAULT_ENTITY_LABELS, "vendor_api_key"],
+    entity_label_examples={"vendor_api_key": ["acme_live_abc123"]},
+)
+```
+
+Every non-excluded configured example key must appear in the explicit label set. A missing or misspelled key raises a validation error. Because the label set is explicit, the augmenter is strict.
+
+!!! warning "Examples are sent to model providers"
+    Configured examples are embedded in prompts and exported detection builders. Use synthetic patterns, not production credentials, secrets, or real PII. Explicitly enabled raw DataDesigner message traces also contain the rendered prompts.
+
+Configured examples affect detection only; they do not guide substitution or evaluation.
+
+The validator receives the full resolved examples: built-in plus configured examples for default labels, and configured examples for non-default labels. The augmenter receives all active label names but only configured examples, which show it the intended value shape beyond the label name alone. Built-in examples are omitted from the augmenter to limit prompt growth. Keep configured lists short because the validator's full example set is repeated for each validation chunk.
+
+`entity_label_examples` is currently configured through the Python `Detect` API; the CLI does not provide a mapping syntax for this field.
+
 ### Excluding entity labels
 
-Use `excluded_entity_labels` to omit specific labels from detection without having to enumerate the entire allowlist. Excluded labels are removed before GLiNER runs and before the LLM prompts are built, so they are never detected or augmented.
+Use `excluded_entity_labels` to omit specific labels from detection without having to enumerate the entire label set. Excluded labels are removed from the active label set before GLiNER runs. If a model still emits an excluded label, final filtering prevents it from appearing in detection results.
 
 ```python
 # Detect all defaults except occupation and gender
 Detect(excluded_entity_labels=["occupation", "gender"])
 
-# Combine with an explicit allowlist — exclusions always win
+# Combine with an explicit label set — exclusions always win
 Detect(entity_labels=["first_name", "email", "city"], excluded_entity_labels=["city"])
 ```
 
 !!! warning
-    `excluded_entity_labels` is always checked against the effective allowlist — `entity_labels` if set, otherwise `DEFAULT_ENTITY_LABELS`. A total overlap raises a `ValueError` at config time instead of silently detecting nothing. A partial overlap logs a warning only when `entity_labels` is explicit; against the default label set, it's silent.
+    Exclusions always win. Configured examples for an excluded label are ignored with a warning that names the label but never the example values. A total overlap with the default or explicit label set raises a `ValueError` instead of silently detecting nothing.
 
 ## Tuning the threshold
 

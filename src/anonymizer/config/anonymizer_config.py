@@ -5,9 +5,10 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+from typing import Any
 from urllib.parse import urlparse
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from anonymizer.config.replace_strategies import ReplaceMethod
 from anonymizer.config.rewrite import (
@@ -18,6 +19,8 @@ from anonymizer.config.rewrite import (
     RiskTolerance,
 )
 from anonymizer.engine.constants import DEFAULT_ENTITY_LABELS
+from anonymizer.engine.detection.entity_label_examples import normalize_entity_label_examples
+from anonymizer.engine.detection.postprocess import normalize_label
 
 logger = logging.getLogger(__name__)
 
@@ -73,11 +76,22 @@ class AnonymizerInput(BaseModel):
 class Detect(BaseModel):
     """Configuration for the entity detection stage."""
 
+    model_config = ConfigDict(hide_input_in_errors=True)
+
     entity_labels: list[str] | None = Field(
         default=None,
         description=(
             "Labels to detect. None uses the built-in default detection label set. "
             "To inspect the default set, use `from anonymizer import DEFAULT_ENTITY_LABELS`."
+        ),
+    )
+    entity_label_examples: dict[str, list[str]] = Field(
+        default_factory=dict,
+        repr=False,
+        description=(
+            "Configured positive detection examples keyed by entity label. For default labels, these "
+            "values are appended to the built-in examples. Non-default labels must also be declared "
+            "in an explicit entity_labels set; examples never activate labels implicitly."
         ),
     )
     excluded_entity_labels: list[str] | None = Field(
@@ -86,7 +100,7 @@ class Detect(BaseModel):
             "Entity labels to never detect, even if present in entity_labels or the default set. "
             "Excluded labels are removed before GLiNER and LLM prompts run, and are also filtered "
             "from the final entity output as a safety net. If this entirely overlaps the effective "
-            "allowlist (entity_labels if set, otherwise the default label set), leaving an empty "
+            "label set (entity_labels if set, otherwise the default label set), leaving an empty "
             "effective detection set, Detect raises a ValueError at config time."
         ),
     )
@@ -117,7 +131,7 @@ class Detect(BaseModel):
     def validate_entity_labels(cls, value: list[str] | None) -> list[str] | None:
         if value is None:
             return value
-        cleaned = [label.strip().lower() for label in value if label.strip()]
+        cleaned = [normalize_label(label) for label in value if normalize_label(label)]
         if not cleaned:
             raise ValueError("entity_labels must not be empty. Use None to detect all default labels.")
         deduped = sorted(set(cleaned))
@@ -130,7 +144,7 @@ class Detect(BaseModel):
     def validate_excluded_entity_labels(cls, value: list[str] | None) -> list[str] | None:
         if value is None:
             return value
-        cleaned = [label.strip().lower() for label in value if label.strip()]
+        cleaned = [normalize_label(label) for label in value if normalize_label(label)]
         if not cleaned:
             raise ValueError("excluded_entity_labels must not be empty. Use None to disable exclusions.")
         deduped = sorted(set(cleaned))
@@ -138,38 +152,61 @@ class Detect(BaseModel):
             logger.warning("excluded_entity_labels contained duplicates, removed automatically.")
         return deduped
 
+    @field_validator("entity_label_examples", mode="before")
+    @classmethod
+    def validate_entity_label_examples(cls, value: Any) -> dict[str, list[str]]:
+        if not isinstance(value, dict):
+            raise ValueError("entity_label_examples must be a dictionary of label names to lists of examples.")
+
+        normalized, duplicate_keys, duplicate_value_labels = normalize_entity_label_examples(value)
+        if duplicate_keys:
+            logger.warning(
+                "entity_label_examples contained keys that normalize to the same label; merged automatically: %s",
+                duplicate_keys,
+            )
+        if duplicate_value_labels:
+            logger.warning(
+                "entity_label_examples contained duplicate examples; removed automatically for labels: %s",
+                duplicate_value_labels,
+            )
+        return normalized
+
     @model_validator(mode="after")
     def validate_entity_label_overlap(self) -> "Detect":
-        if self.excluded_entity_labels is None:
-            return self
-        excluded_set = set(self.excluded_entity_labels)
+        excluded_set = set(self.excluded_entity_labels or [])
+        example_labels = set(self.entity_label_examples)
+        excluded_examples = sorted(example_labels & excluded_set)
+        if excluded_examples:
+            logger.warning(
+                "entity_label_examples configured excluded labels; their examples will be ignored: %s",
+                excluded_examples,
+            )
 
+        active_example_labels = example_labels - excluded_set
         if self.entity_labels is not None:
             entity_labels_set = set(self.entity_labels)
             overlap = sorted(entity_labels_set & excluded_set)
-            if not overlap:
-                return self
-            if entity_labels_set <= excluded_set:
-                raise ValueError(
-                    "excluded_entity_labels entirely overlaps entity_labels, leaving an empty "
-                    f"effective detection set. Overlapping labels: {overlap}. Remove these labels from "
-                    "excluded_entity_labels, add other labels to entity_labels, or unset entity_labels "
-                    "(use None) to fall back to the default detection set — note excluded_entity_labels "
-                    "still applies against it."
+            effective_labels = entity_labels_set - excluded_set
+            if overlap:
+                logger.warning(
+                    "entity_labels and excluded_entity_labels share labels that will never be detected: %s",
+                    overlap,
                 )
-            logger.warning(
-                "entity_labels and excluded_entity_labels share labels that will never be detected: %s",
-                overlap,
-            )
-            return self
+        else:
+            entity_labels_set = set(DEFAULT_ENTITY_LABELS)
+            effective_labels = entity_labels_set - excluded_set
 
-        # entity_labels=None falls back to DEFAULT_ENTITY_LABELS; guard that path too.
-        if set(DEFAULT_ENTITY_LABELS) <= excluded_set:
+        unknown_examples = sorted(active_example_labels - entity_labels_set)
+        if unknown_examples:
             raise ValueError(
-                "excluded_entity_labels entirely overlaps DEFAULT_ENTITY_LABELS, leaving an empty "
-                "effective detection set (entity_labels is unset, so the default label set applies). "
-                "Set entity_labels explicitly to a non-empty subset of labels you still want detected, "
-                "or remove some labels from excluded_entity_labels."
+                "entity_label_examples contains labels outside the active label set: "
+                f"{unknown_examples}. Add every example label to entity_labels "
+                "(non-default labels require an explicit entity_labels set) or remove their examples."
+            )
+        if not effective_labels:
+            source = "entity_labels" if self.entity_labels is not None else "DEFAULT_ENTITY_LABELS"
+            raise ValueError(
+                f"excluded_entity_labels entirely overlaps {source}, leaving an empty effective detection set."
             )
         return self
 
@@ -232,6 +269,8 @@ class Rewrite(BaseModel):
 
 class AnonymizerConfig(BaseModel):
     """Primary user-facing config for anonymization behavior."""
+
+    model_config = ConfigDict(hide_input_in_errors=True)
 
     detect: Detect = Field(default_factory=Detect, description="Entity detection configuration.")
     replace: ReplaceMethod | None = Field(

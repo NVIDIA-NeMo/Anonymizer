@@ -138,6 +138,50 @@ def test_run_logs_pipeline_stages(stub_input: AnonymizerInput, caplog: pytest.Lo
     assert "2 records processed" in messages
 
 
+def test_run_logs_do_not_include_configured_entity_examples(
+    stub_input: AnonymizerInput,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    secret = "real-production-secret"
+    config = AnonymizerConfig(
+        detect={
+            "entity_labels": ["vendor_api_key"],
+            "entity_label_examples": {"vendor_api_key": [secret]},
+        },
+        replace=Redact(),
+    )
+
+    with caplog.at_level(logging.DEBUG, logger="anonymizer"):
+        _make_logging_anonymizer().run(config=config, data=stub_input)
+
+    assert secret not in caplog.text
+
+
+def test_run_logs_effective_detection_scope_after_exclusions(
+    stub_input: AnonymizerInput,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    config = AnonymizerConfig(
+        detect={
+            "entity_labels": ["email", "vendor_api_key"],
+            "excluded_entity_labels": ["email"],
+            "entity_label_examples": {"vendor_api_key": ["acme_live_abc123"]},
+        },
+        replace=Redact(),
+    )
+
+    with caplog.at_level(logging.INFO, logger="anonymizer"):
+        _make_logging_anonymizer().run(config=config, data=stub_input)
+
+    scope_messages = [
+        record.getMessage() for record in caplog.records if "effective detection scope" in record.getMessage()
+    ]
+    assert scope_messages
+    assert "effective detection scope: 1 label (configured: 2, removed by exclusions: 1):" in scope_messages[-1]
+    assert "vendor_api_key" in scope_messages[-1]
+    assert "email" not in scope_messages[-1]
+
+
 def test_run_logs_numpy_wrapped_entity_counts(stub_input: AnonymizerInput, caplog: pytest.LogCaptureFixture) -> None:
     detection_entities: list[object] = [
         {

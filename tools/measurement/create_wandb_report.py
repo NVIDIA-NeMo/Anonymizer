@@ -800,9 +800,16 @@ def _config_line(item: ConfigMetadata) -> str:
     detect = item.detect
     replace = item.replace
     rewrite = item.rewrite
+    entity_label_count = None
+    if detect is not None:
+        entity_label_count = (
+            detect.effective_entity_label_count
+            if detect.effective_entity_label_count is not None
+            else detect.entity_label_count
+        )
     parts = [
         f"strategy={_code_span(replace.strategy if replace else ('rewrite' if rewrite else None))}",
-        f"entity_label_count={_escape_list_text(detect.entity_label_count if detect else None)}",
+        f"entity_label_count={_escape_list_text(entity_label_count)}",
         f"gliner_threshold={_escape_list_text(detect.gliner_threshold if detect else None)}",
     ]
     if rewrite:

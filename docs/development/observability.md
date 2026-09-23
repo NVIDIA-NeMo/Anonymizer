@@ -63,6 +63,14 @@ run metadata.
 Use `tools/measurement/export_measurements.py` to convert raw measurement JSONL
 into Parquet, CSV, or JSONL tables.
 
+Run records retain the raw detection configuration in `entity_labels`,
+`excluded_entity_labels`, and the pre-exclusion `entity_label_count`. They also
+include `effective_entity_labels` and `effective_entity_label_count`, which
+describe the configured/default label set after exclusions. Configured example
+values are never recorded. In permissive mode, augmentation may still emit a
+label outside this configured ontology. Readers prefer the effective count and
+fall back to `entity_label_count` for historical records.
+
 ## Output and Sinks
 
 `MeasurementConfig` controls output:
@@ -211,7 +219,15 @@ model call. `all_messages` stores the full message list.
 
 Message traces are separate from measurement records. They may contain raw input
 text, prompts, generated output, entity values, replacement values, secrets, and
-PII. Do not share them unless they have been reviewed or redacted.
+PII. This includes `Detect.entity_label_examples`, which are embedded in rendered
+validator and augmenter prompts. Do not share traces unless they have been reviewed
+or redacted.
+
+Outside explicitly enabled traces, Anonymizer does not intentionally add configured
+examples to telemetry or normal runtime log messages. This is not an end-to-end
+content-safety guarantee: model-provider or DataDesigner messages, including
+exception text, may contain request or prompt content. Treat logs as potentially
+sensitive.
 
 Anonymizer requests standard LLM-column traces through DataDesigner native LLM
 column trace side effects. That covers `LLMTextColumnConfig` and

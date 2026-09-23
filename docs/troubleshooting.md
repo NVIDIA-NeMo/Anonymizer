@@ -44,7 +44,7 @@ GLiNER candidate set → chunked into validator calls → each call dispatched t
 Fix in this order:
 
 1. **If failures are at `step="detection"`, add aliases to the validator pool** in `models.yaml`. The validator is the only role that supports a pool — set `entity_validator` to a list of aliases and chunked validation will round-robin across them, giving you failover when one provider rate-limits. Every other role (detector, augmenter, rewriter, evaluator, etc.) is a single alias.
-2. **Lower `validation_max_entities_per_call`** (default `100`) on `Detect` so each call sends fewer tokens — easier on tight per-minute token budgets. Helps any stage that's hitting per-call token limits, but most useful for validation.
+2. **Lower `validation_max_entities_per_call`** (default `100`) on `Detect` if individual validator requests exceed a context or per-request token limit. This creates more calls, each of which repeats the full resolved label/example section, so it can increase total tokens and is not necessarily helpful for a tokens-per-minute limit.
 3. **Switch the heavy alias to a different `provider`** in `providers.yaml`. If you're hammering one tenant's quota, moving to a second deployment of the same model helps more than tuning batch sizes. This is the only lever for non-validator stages (rewrite, evaluate, etc.) since they don't have pools.
 4. **Re-run on just the failed records** — filter the input dataframe to those `record_id`s and call `anonymizer.run` again. Failures are usually transient.
 
@@ -99,14 +99,20 @@ print(preview.dataframe.iloc[0][f"{data.text_column}_with_spans"])
 Try in order:
 
 1. **Lower `gliner_threshold`** from `0.3` to `0.2` (or `0.15`). False positives get caught downstream by validation.
-2. **Extend the default list** with the entity's label if it's not in `DEFAULT_ENTITY_LABELS`. Setting `Detect.entity_labels` to a custom list switches detection to **strict mode** (only listed labels detected, augmenter can't invent), so to keep the defaults *plus* one extra label use:
+2. **Add a configured example** for the relevant default or non-default label. A non-default label must also appear in an explicit `entity_labels` set:
 
    ```python
    from anonymizer import DEFAULT_ENTITY_LABELS, Detect
-   detect = Detect(entity_labels=[*DEFAULT_ENTITY_LABELS, "clinical_facility"])
+
+   detect = Detect(
+       entity_labels=[*DEFAULT_ENTITY_LABELS, "clinical_facility"],
+       entity_label_examples={
+           "clinical_facility": ["North Valley Oncology Center"],
+       }
+   )
    ```
 
-   Domain-specific labels (`clinical_facility`, `case_number`, `internal_project_codename`) won't be detected reliably without being listed this way.
+   Configured examples are positive guidance, not a format allowlist, so the detector can still find other facility-name formats. A non-default or misspelled example key that is absent from the explicit label set raises a validation error. Use only synthetic examples—the values are included in prompts, exported builders, and explicitly enabled raw message traces.
 3. **Set `AnonymizerInput.data_summary`** so the augmenter LLM has domain context. A line like `"De-identified pediatric oncology progress notes"` materially improves coverage.
 4. **For rewrite mode**, latent entities are detected separately. If a piece of inferable information (e.g. "during her third round of chemo" → cancer treatment) is being preserved verbatim, the latent detector likely missed it — refine `Rewrite.privacy_goal.protect` to call out the inference category explicitly.
 
