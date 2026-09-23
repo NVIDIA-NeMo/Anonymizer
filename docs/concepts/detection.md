@@ -9,7 +9,7 @@ Entity detection is the first stage of every Anonymizer pipeline. Both replace a
 
 ## How it works
 
-Detection combines a lightweight NER model (GLiNER-PII) with LLM-based refinement. GLiNER PII produces an initial set of entity spans, an LLM validates those candidates by keeping, reclassifying, or dropping them based on context, and then an augmenter finds entities GLiNER missed. Augmented findings are merged directly and are not independently revalidated.
+Detection combines a lightweight GLiNER2 PII model with LLM-based refinement. GLiNER2 produces an initial set of entity spans, an LLM validates those candidates by keeping, reclassifying, or dropping them based on context, and then an augmenter finds entities GLiNER2 missed. Augmented findings are merged directly and are not independently revalidated.
 
 When rewrite is configured, an additional step identifies **latent entities** -- sensitive information inferable from context but not explicitly stated in the text.
 
@@ -195,9 +195,9 @@ The detection pipeline uses three model roles, each mapped to a model alias in t
 
 | Role | Default alias | Purpose |
 |------|--------------|---------|
-| `entity_detector` | [`gliner-pii-detector`](https://build.nvidia.com/nvidia/gliner-pii) | GLiNER-PII NER model. |
-| `entity_validator` | [`gpt-oss-120b`](https://build.nvidia.com/openai/gpt-oss-120b) | Validates and reclassifies detected entities. |
-| `entity_augmenter` | [`gpt-oss-120b`](https://build.nvidia.com/openai/gpt-oss-120b) | Finds entities the NER model missed. |
-| `latent_detector` | [`nemotron-30b-thinking`](https://build.nvidia.com/nvidia/nemotron-3-nano-30b-a3b) | Identifies inferable entities (rewrite only). |
+| `entity_detector` | [`gliner-pii-detector`](https://huggingface.co/fastino/gliner2-privacy-filter-PII-multi) | GLiNER2 PII model, served through a compatible local endpoint. |
+| `entity_validator` | [`gpt-oss-120b`](https://openrouter.ai/openai/gpt-oss-120b) | Validates and reclassifies detected entities. |
+| `entity_augmenter` | [`gpt-oss-120b`](https://openrouter.ai/openai/gpt-oss-120b) | Finds entities the NER model missed. |
+| `latent_detector` | [`nemotron-30b-thinking`](https://openrouter.ai/nvidia/nemotron-3-nano-30b-a3b) | Identifies inferable entities (rewrite only). |
 
 See [Models](models.md) for how to override these.

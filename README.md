@@ -36,14 +36,17 @@ make install
 
 ### 2. Set up model providers
 
-By default, Anonymizer uses models hosted on [build.nvidia.com](https://build.nvidia.com/models) — GLiNER-PII for entity detection and a text LLM for augmentation/validation. You can also bring your own models via custom provider configs.
+By default, Anonymizer expects a compatible local GLiNER2 endpoint for entity detection and uses
+text LLMs hosted on [OpenRouter](https://openrouter.ai) for augmentation and validation.
+The tutorial notebooks can start the local detector automatically. You can also bring your own models
+via custom provider configs.
 
-The default build.nvidia.com (NVIDIA Build) setup is a convenient way to try Anonymizer and iterate on previews. Use of NVIDIA Build is subject to NVIDIA Build's own terms of service and privacy practices, which are separate from and independent of the NeMo Framework library. NVIDIA Build is intended for evaluation and testing purposes only and may not be used in production environments. Do not upload any confidential information or personal data when using NVIDIA Build. Your use of NVIDIA Build is logged for security purposes and to improve NVIDIA products and services.
-
-Request and token rate limits on build.nvidia.com vary by account and model access, and lower-volume development access can be slow for full-dataset runs. Start with preview() on a small sample, then move to your own endpoint for production data and usage.
+Use of OpenRouter is subject to its own terms of service and privacy practices, which are separate
+from and independent of the NeMo Framework library. Review those terms and the data policies of the
+models you select before sending sensitive data to the default endpoint.
 
 ```bash
-export NVIDIA_API_KEY="your-nvidia-api-key"
+export OPENROUTER_API_KEY="your-openrouter-api-key"
 ```
 
 ### 3. Anonymize text
@@ -166,7 +169,8 @@ make install-pre-commit   # Install pre-commit hooks
 
 - Python 3.11+
 - [NeMo Data Designer](https://github.com/NVIDIA-NeMo/DataDesigner) (installed as dependency)
-- [NVIDIA API key](https://build.nvidia.com) for default model providers (GLiNER-PII + text LLM), or custom model endpoints
+- A compatible local GLiNER2 endpoint (the tutorial notebooks can start one automatically)
+- [OpenRouter API key](https://openrouter.ai/settings/keys) for the default text LLM provider, or custom model endpoints
 
 ---
 
@@ -191,7 +195,7 @@ You may opt out of telemetry at any time:
 
 Aggregate usage data (such as which models are most popular) will be shared back with the community. It is not used to track any individual user behavior.
 
-**Use of third-party endpoints, including NVIDIA Build:** Anonymizer can be configured to use various inference endpoints, including [build.nvidia.com](https://build.nvidia.com), [OpenRouter](https://openrouter.ai), or local model servers. If you choose to use a third-party endpoint, that endpoint's own terms of service and privacy practices apply independently of this library. Any opt-out you exercise within Anonymizer does not extend to data collection by your chosen endpoint.
+**Use of third-party endpoints, including OpenRouter and NVIDIA Build:** Anonymizer can be configured to use various inference endpoints, including [OpenRouter](https://openrouter.ai), [build.nvidia.com](https://build.nvidia.com), or local model servers. If you choose to use a third-party endpoint, that endpoint's own terms of service and privacy practices apply independently of this library. Any opt-out you exercise within Anonymizer does not extend to data collection by your chosen endpoint.
 
 ---
 

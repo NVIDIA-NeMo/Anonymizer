@@ -16,6 +16,11 @@ These YAML files are the single source of truth for default role-to-alias mappin
 
 At startup, `load_default_model_selection()` reads these YAML files and constructs the default `ModelSelection`. Users override roles via the unified YAML passed to `Anonymizer(model_configs=...)`.
 
+The default `gliner-pii-detector` alias targets a compatible GLiNER2 server on loopback. Plain
+`Anonymizer()` is only the client and does not start that service. Tutorial notebooks use
+`anonymizer.notebooks.create_anonymizer()` to own an ephemeral local process; production callers
+should configure a separately managed endpoint.
+
 ## Unified YAML Format
 
 Users provide a single YAML with the model pool and optional role overrides:
@@ -30,7 +35,7 @@ selected_models:          # optional — omitted roles use defaults
 model_configs:
   - alias: my-custom-detector
     model: some/model
-    provider: nvidia
+    provider: openrouter
   # ...
 ```
 

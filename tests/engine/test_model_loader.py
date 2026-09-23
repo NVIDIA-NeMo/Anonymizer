@@ -207,6 +207,24 @@ def test_bundled_model_providers_cover_bundled_model_configs() -> None:
     assert not unknown, f"Bundled models.yaml references unknown providers: {unknown}"
 
 
+def test_bundled_external_models_use_openrouter_without_changing_model_ids() -> None:
+    """The hosted defaults use OpenRouter while preserving their model IDs."""
+    providers = {provider.name: provider for provider in load_default_model_providers()}
+    assert set(providers) == {"local-gliner2", "openrouter"}
+    assert providers["openrouter"].endpoint == "https://openrouter.ai/api/v1"
+    assert providers["openrouter"].api_key == "OPENROUTER_API_KEY"
+
+    models = {entry["alias"]: entry for entry in load_models_config()["model_configs"]}
+    expected_model_ids = {
+        "gpt-oss-120b": "openai/gpt-oss-120b",
+        "nemotron-30b-thinking": "nvidia/nemotron-3-nano-30b-a3b",
+        "nemotron-super": "nvidia/nemotron-3-super-120b-a12b",
+    }
+    for alias, expected_model_id in expected_model_ids.items():
+        assert models[alias]["model"] == expected_model_id
+        assert models[alias]["provider"] == "openrouter"
+
+
 def test_validate_model_configs_reference_providers_rejects_unknown_provider() -> None:
     configs = [ModelConfig(alias="detector", model="test/detector", provider="missing-provider")]
     providers = [ModelProvider(name="nvidia", endpoint="https://example.com/v1")]

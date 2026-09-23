@@ -2,7 +2,12 @@
 # SPDX-License-Identifier: Apache-2.0
 
 providers:
-  - name: nvidia
-    endpoint: https://integrate.api.nvidia.com/v1
+  - name: local-gliner2
+    endpoint: http://127.0.0.1:8001/v1
     provider_type: openai
-    api_key: NVIDIA_API_KEY
+    api_key: EMPTY
+
+  - name: openrouter
+    endpoint: https://openrouter.ai/api/v1
+    provider_type: openai
+    api_key: OPENROUTER_API_KEY
