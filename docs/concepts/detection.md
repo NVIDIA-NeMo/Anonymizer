@@ -166,7 +166,7 @@ Every non-excluded configured example key must appear in the explicit label set.
 
 Configured examples affect detection only; they do not guide substitution or evaluation.
 
-The validator receives the full resolved examples: built-in plus configured examples for default labels, and configured examples for non-default labels. The augmenter receives all active label names but only configured examples, avoiding the prompt growth of repeating every built-in example. Keep configured lists short because the validator's full example set is repeated for each validation chunk.
+The validator receives the full resolved examples: built-in plus configured examples for default labels, and configured examples for non-default labels. The augmenter receives all active label names but only configured examples, which show it the intended value shape beyond the label name alone. Built-in examples are omitted from the augmenter to limit prompt growth. Keep configured lists short because the validator's full example set is repeated for each validation chunk.
 
 `entity_label_examples` is currently configured through the Python `Detect` API; the CLI does not provide a mapping syntax for this field.
 
