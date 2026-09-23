@@ -223,6 +223,12 @@ PII. This includes `Detect.entity_label_examples`, which are embedded in rendere
 validator and augmenter prompts. Do not share traces unless they have been reviewed
 or redacted.
 
+Outside explicitly enabled traces, Anonymizer does not intentionally add configured
+examples to telemetry or normal runtime log messages. This is not an end-to-end
+content-safety guarantee: model-provider or DataDesigner messages, including
+exception text, may contain request or prompt content. Treat logs as potentially
+sensitive.
+
 Anonymizer requests standard LLM-column traces through DataDesigner native LLM
 column trace side effects. That covers `LLMTextColumnConfig` and
 `LLMStructuredColumnConfig`.

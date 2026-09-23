@@ -45,7 +45,7 @@ isProject: false
 - Keep evaluation out of scope. Configured examples are not persisted on `AnonymizerResult`/`PreviewResult` or passed to evaluation, but an explicit label set containing non-default labels is persisted and scopes entity coverage consistently.
 - Treat example values as potentially sensitive configuration. They are embedded in validator/augmenter prompts, included in exported detection builders, and sent to configured model providers.
   - Example: use synthetic `acme_live_abc123`, never a real production credential or customer identifier.
-- Do not include example values in telemetry, logs, warning text, or measurement attributes.
+- Do not intentionally include example values in telemetry, configuration representations, normal Anonymizer runtime logs, warning text, or measurement attributes. This is not an end-to-end content-safety guarantee: provider/DataDesigner exception messages may contain request or prompt content, and explicitly enabled message traces contain rendered prompts.
 
 ## Examples for default labels
 
@@ -311,7 +311,7 @@ flowchart TB
   - effective-label filtering, strict/permissive behavior, safe special characters, and cross-run isolation.
 - In `[tests/engine/test_detection_config_serialization.py](tests/engine/test_detection_config_serialization.py)` and interface tests, verify parity across run, preview, rewrite detection, dataframe export, seed export, and round-trip reconstruction.
 - Add regressions proving replacement prompts/outputs, evaluation judges, and result dataclasses receive no example state.
-- Add telemetry/logging regressions proving configured example values are never emitted, while exported detection builders intentionally contain the prompt examples required for remote execution.
+- Add regressions proving configured example values are omitted from telemetry, configuration representations, and the normal Anonymizer runtime log messages exercised by this feature, while exported detection builders intentionally contain the prompt examples required for remote execution. Do not treat these tests as a guarantee that upstream provider/DataDesigner exceptions or explicitly enabled message traces are content-safe.
 - Add telemetry regressions proving:
   - explicit non-default labels and exclusions remain recorded;
   - `entity_label_count` retains its existing pre-exclusion value;
