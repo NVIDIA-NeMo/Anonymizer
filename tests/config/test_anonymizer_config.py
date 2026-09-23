@@ -13,6 +13,8 @@ from anonymizer.config.anonymizer_config import (
     AnonymizerConfig,
     AnonymizerInput,
     Rewrite,
+    TextRecord,
+    TextRecordsInput,
     infer_input_source_suffix,
 )
 from anonymizer.config.replace_strategies import (
@@ -62,6 +64,28 @@ def test_infer_input_source_suffix_ignores_url_fragment() -> None:
 def test_input_source_rejects_unsupported_url_scheme() -> None:
     with pytest.raises(ValidationError, match="Unsupported input URL scheme"):
         AnonymizerInput(source="ftp://example.com/data.csv")
+
+
+def test_input_accepts_typed_in_memory_records() -> None:
+    records = [TextRecord(id="turn-2", text="Bob"), TextRecord(id="turn-1", text="Alice")]
+
+    inp = TextRecordsInput(records=records)
+
+    assert inp.records == records
+
+
+def test_file_input_schema_still_requires_source() -> None:
+    assert "source" in AnonymizerInput.model_json_schema()["required"]
+
+
+def test_input_rejects_duplicate_in_memory_record_ids() -> None:
+    with pytest.raises(ValidationError, match="record IDs must be unique"):
+        TextRecordsInput(
+            records=[
+                TextRecord(id="turn-1", text="Alice"),
+                TextRecord(id="turn-1", text="Bob"),
+            ]
+        )
 
 
 def test_replace_and_rewrite_together_raises() -> None:

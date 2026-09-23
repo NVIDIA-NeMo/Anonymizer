@@ -29,6 +29,7 @@ from data_designer.config.seed_source import LocalFileSeedSource
 from data_designer.config.utils.constants import TRACE_COLUMN_POSTFIX
 from data_designer.config.utils.trace_type import TraceType
 
+from anonymizer.engine.constants import RECORD_ID_COLUMN
 from anonymizer.interface.errors import AnonymizerWorkflowError
 from anonymizer.measurement import current_collector, record_ndd_workflow
 
@@ -38,7 +39,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("anonymizer.ndd")
 
-RECORD_ID_COLUMN = "_anonymizer_record_id"
 _TRACEABLE_LLM_COLUMN_TYPES = (LLMTextColumnConfig, LLMStructuredColumnConfig)
 _MODEL_TRACE_COLUMN: ContextVar[str | None] = ContextVar("anonymizer_dd_model_trace_column", default=None)
 _MODEL_TRACE_PURPOSE: ContextVar[str | None] = ContextVar("anonymizer_dd_model_trace_purpose", default=None)

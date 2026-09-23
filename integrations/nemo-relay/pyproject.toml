@@ -1,0 +1,74 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+[project]
+name = "nemo-anonymizer-relay"
+version = "0.1.0"
+description = "NeMo Anonymizer observability sanitizer worker for NeMo Relay"
+readme = "README.md"
+requires-python = ">=3.11,<3.12"
+license = "Apache-2.0"
+dependencies = [
+    # The current 0.4.0 release does not contain TextRecordsInput. Keep normal
+    # installation fail-fast until the prerequisite API ships, then pin it.
+    "nemo-anonymizer>0.4.0,<1",
+    "nemo-relay-plugin==0.9.0",
+    # Data Designer currently requires this matching OpenTelemetry beta line.
+    "opentelemetry-exporter-prometheus==0.64b0",
+    "opentelemetry-semantic-conventions==0.64b0",
+]
+
+[project.urls]
+repository = "https://github.com/NVIDIA-NeMo/Anonymizer"
+documentation = "https://nvidia-nemo.github.io/Anonymizer/"
+issues = "https://github.com/NVIDIA-NeMo/Anonymizer/issues"
+
+[dependency-groups]
+test = [
+    "pandas>=2.2,<3",
+    "pytest>=9.0.3,<10",
+    "pytest-asyncio>=1,<2",
+    "ruff>=0.12.3,<1",
+    "ty==0.0.69",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["nemo_anonymizer_relay"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.ruff]
+extend = "../../ruff.toml"
+
+[tool.ruff.lint.isort]
+known-first-party = ["anonymizer", "nemo_anonymizer_relay"]
+
+[tool.ty.src]
+include = ["nemo_anonymizer_relay", "tests"]
+
+[tool.ty.environment]
+python-version = "3.11"
+root = ["."]
+
+[tool.uv]
+required-version = ">=0.5.0"
+package = true
+prerelease = "explicit"
+constraint-dependencies = [
+    "grpcio>=1.68.0",
+    "pyjwt>=2.13.0",
+    "python-dotenv>=1.2.2",
+    "urllib3>=2.7.0",
+]
+
+[tool.uv.sources]
+# Development uses the Anonymizer source containing this integration. Release
+# packaging must replace this with the first published version containing the
+# in-memory TextRecordsInput contract.
+nemo-anonymizer = {path = "../..", editable = true}

@@ -101,6 +101,29 @@ For custom model endpoints, pass a providers YAML:
 anonymizer = Anonymizer(model_providers="path/to/model_providers.yaml")
 ```
 
+For services and other applications that already hold text in memory, pass
+typed records instead of writing a temporary CSV or Parquet file:
+
+```python
+from anonymizer import TextRecord, TextRecordsInput
+
+data = TextRecordsInput(
+    records=[
+        TextRecord(id="turn-1", text="Contact Alice at alice@example.com"),
+        TextRecord(id="turn-2", text="Bob works at Acme"),
+    ],
+    data_summary="Application observability messages",
+)
+result = anonymizer.run(config=config, data=data)
+
+# Stable public output: IDs, transformed text, and validated entity spans.
+print(result.dataframe[["id", "text_replaced", "final_entities"]])
+```
+
+IDs and input order are retained for records that complete the pipeline. A
+dropped record uses the same caller-provided ID in `result.failed_records`.
+`trace_dataframe` is for pipeline diagnostics.
+
 ## Language And Regional Coverage
 
 Anonymizer has been tested most extensively on English-language data. Multilingual quality has not yet been evaluated systematically across languages, domains, and models.
@@ -151,6 +174,11 @@ npx skills add NVIDIA-NeMo/Anonymizer
 After installation, invoke it with `/anonymizer` in an agent that supports slash-style skill calls, or describe what you want to anonymize and let it auto-trigger.
 
 ---
+
+## Integrations
+
+- [NeMo Relay](integrations/nemo-relay/README.md) — sanitizes copied Relay
+  observability events in a separately managed Anonymizer exporter.
 
 ## Development
 

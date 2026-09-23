@@ -201,7 +201,9 @@ def record_run_metadata(
         return
 
     detect = getattr(config, "detect", None)
-    source = str(getattr(data, "source", ""))
+    source_value = getattr(data, "source", None)
+    source = str(source_value) if source_value is not None else ""
+    is_in_memory = hasattr(data, "records")
     collector.record(
         "run",
         mode=mode,
@@ -209,9 +211,11 @@ def record_run_metadata(
         input_row_count=input_row_count,
         preview_num_records=preview_num_records,
         source_hash=collector.record_hash(row_index="source", text=source),
-        input_source=_source_metadata(source),
-        input_text_column=str(getattr(data, "text_column", "")),
-        input_has_id_column=bool(getattr(data, "id_column", None)),
+        input_source=(
+            {"kind": "in_memory", "scheme": None, "suffix": None} if is_in_memory else _source_metadata(source)
+        ),
+        input_text_column="text" if is_in_memory else str(getattr(data, "text_column", "")),
+        input_has_id_column=is_in_memory or bool(getattr(data, "id_column", None)),
         input_has_data_summary=bool(getattr(data, "data_summary", None)),
         detect=_detect_config_metadata(detect),
         replace=_replace_config_metadata(getattr(config, "replace", None)),
