@@ -216,6 +216,34 @@ def _filter_replacement_map_to_input_entities(
             if synthetic_collision_labels
             else "",
         )
+
+    # Fill any requested pairs the LLM omitted so rewrite readiness (#246) is not
+    # lost to a partial map. Reuse the collision-repair placeholder helper and share
+    # its per-label index counter so indices stay unique within a record.
+    filled_pairs = {(entry["original"], entry["label"]) for entry in filtered}
+    unfilled_pairs = allowed_pairs - filled_pairs
+    omission_fill_labels: Counter[str] = Counter()
+    for original, label in sorted(unfilled_pairs, key=lambda pair: (pair[1], pair[0])):
+        omission_fill_labels[label] += 1
+        synthetic_collision_labels[label] += 1
+        filtered.append(
+            {
+                "original": original,
+                "label": label,
+                "synthetic": _collision_safe_synthetic(
+                    label,
+                    index=synthetic_collision_labels[label],
+                    protected_original_values=protected_original_values,
+                ),
+            }
+        )
+    if omission_fill_labels:
+        logger.warning(
+            "Replacement map filled omitted entries for record %s; filled=%d (filled_by_label=%s)",
+            record_id or "<unknown>",
+            sum(omission_fill_labels.values()),
+            dict(omission_fill_labels),
+        )
     if not filtered and allowed_pairs:
         requested_labels = Counter(label for _, label in allowed_pairs)
         logger.warning(

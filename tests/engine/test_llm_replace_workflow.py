@@ -255,8 +255,9 @@ def test_generate_map_only_strips_internal_prompt_columns_when_no_entities(
 # PII-free logging regression tests for _filter_replacement_map_to_input_entities
 #
 # The replacement map filter runs after the LLM proposes substitutions and
-# emits a DEBUG summary plus a WARNING when the filter empties out. Both
-# log paths must report counts and labels only, never raw entity values.
+# emits a DEBUG summary plus WARNINGs for collision repair, omission fills,
+# and (still-empty) maps. All log paths must report counts and labels only,
+# never raw entity values.
 # ---------------------------------------------------------------------------
 
 _ORIGINAL_PII = ("Jane Doe", "jane.doe@example.com", "+1-555-867-5309")
@@ -365,10 +366,10 @@ def test_filter_replacement_map_repairs_synthetic_original_collisions_without_pi
     _assert_no_pii_in_logs(caplog, extra_secrets=("1979-01-01", "1980-02-02", "1991-03-04"))
 
 
-def test_filter_replacement_map_empty_warning_does_not_leak_pii(
+def test_filter_replacement_map_fills_all_omitted_pairs_without_pii(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """The empty-after-filtering WARNING must report counts + labels only."""
+    """When the LLM returns no matching entries, fill every requested pair with a placeholder."""
     parsed_entities = EntitiesByValueSchema.model_validate(
         {
             "entities_by_value": [
@@ -387,7 +388,109 @@ def test_filter_replacement_map_empty_warning_does_not_leak_pii(
             raw_map=raw_map, parsed_entities=parsed_entities, record_id="row-empty"
         )
 
-    assert "Replacement map empty after filtering" in caplog.text
+    assert "Replacement map filled omitted entries" in caplog.text
+    assert "filled_by_label" in caplog.text
     assert "first_name" in caplog.text
-    _assert_no_pii_in_logs(caplog, extra_secrets=("Acme Corp", "NovaCorp"))
-    assert result == {"replacements": []}
+    assert "Replacement map empty after filtering" not in caplog.text
+    _assert_no_pii_in_logs(caplog, extra_secrets=("Acme Corp", "NovaCorp", "Jane Doe"))
+    assert result == {
+        "replacements": [
+            {"original": "Jane Doe", "label": "first_name", "synthetic": "[SUBSTITUTE_FIRST_NAME_1]"},
+        ]
+    }
+
+
+def test_filter_replacement_map_fills_partial_omissions_without_pii(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A partial LLM map must be completed with collision-safe placeholders for omitted pairs."""
+    parsed_entities = EntitiesByValueSchema.model_validate(
+        {
+            "entities_by_value": [
+                {"value": "Jane Doe", "labels": ["first_name"]},
+                {"value": "jane.doe@example.com", "labels": ["email"]},
+                {"value": "12 Oak Street", "labels": ["street_address"]},
+            ]
+        }
+    )
+    raw_map = {
+        "replacements": [
+            {"original": "Jane Doe", "label": "first_name", "synthetic": "Maya Chen"},
+            {"original": "jane.doe@example.com", "label": "email", "synthetic": "maya.chen@example.com"},
+        ]
+    }
+
+    with caplog.at_level(logging.WARNING, logger="anonymizer"):
+        result = _filter_replacement_map_to_input_entities(
+            raw_map=raw_map, parsed_entities=parsed_entities, record_id="row-partial"
+        )
+
+    assert len(result["replacements"]) == 3
+    by_key = {(entry["original"], entry["label"]): entry["synthetic"] for entry in result["replacements"]}
+    assert by_key[("Jane Doe", "first_name")] == "Maya Chen"
+    assert by_key[("jane.doe@example.com", "email")] == "maya.chen@example.com"
+    assert by_key[("12 Oak Street", "street_address")] == "[SUBSTITUTE_STREET_ADDRESS_1]"
+    assert "Replacement map filled omitted entries" in caplog.text
+    assert "street_address" in caplog.text
+    assert "filled=1" in caplog.text
+    _assert_no_pii_in_logs(caplog, extra_secrets=("12 Oak Street",))
+
+
+def test_filter_replacement_map_omission_fill_continues_collision_indices(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Omission fills must share the per-label index counter with collision repairs."""
+    parsed_entities = EntitiesByValueSchema.model_validate(
+        {
+            "entities_by_value": [
+                {"value": "1979-01-01", "labels": ["date"]},
+                {"value": "1980-02-02", "labels": ["date"]},
+            ]
+        }
+    )
+    raw_map = {
+        "replacements": [
+            {"original": "1979-01-01", "label": "date", "synthetic": "1980-02-02"},
+        ]
+    }
+
+    with caplog.at_level(logging.WARNING, logger="anonymizer"):
+        result = _filter_replacement_map_to_input_entities(
+            raw_map=raw_map, parsed_entities=parsed_entities, record_id="row-index"
+        )
+
+    by_key = {(entry["original"], entry["label"]): entry["synthetic"] for entry in result["replacements"]}
+    assert by_key[("1979-01-01", "date")] == "[SUBSTITUTE_DATE_1]"
+    assert by_key[("1980-02-02", "date")] == "[SUBSTITUTE_DATE_2]"
+    assert "synthetic-original collision" in caplog.text
+    assert "filled omitted entries" in caplog.text
+    _assert_no_pii_in_logs(caplog, extra_secrets=("1979-01-01", "1980-02-02"))
+
+
+def test_filter_replacement_map_complete_map_skips_omission_fill_warning(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A complete exact-match map must not emit the omission-fill WARNING."""
+    parsed_entities = EntitiesByValueSchema.model_validate(
+        {
+            "entities_by_value": [
+                {"value": "Jane Doe", "labels": ["first_name"]},
+                {"value": "jane.doe@example.com", "labels": ["email"]},
+            ]
+        }
+    )
+    raw_map = {
+        "replacements": [
+            {"original": "Jane Doe", "label": "first_name", "synthetic": "Maya Chen"},
+            {"original": "jane.doe@example.com", "label": "email", "synthetic": "maya.chen@example.com"},
+        ]
+    }
+
+    with caplog.at_level(logging.WARNING, logger="anonymizer"):
+        result = _filter_replacement_map_to_input_entities(
+            raw_map=raw_map, parsed_entities=parsed_entities, record_id="row-complete"
+        )
+
+    assert len(result["replacements"]) == 2
+    assert "filled omitted entries" not in caplog.text
+    _assert_no_pii_in_logs(caplog)
