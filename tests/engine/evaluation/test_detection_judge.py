@@ -6,7 +6,9 @@ from __future__ import annotations
 import logging
 
 import pandas as pd
+import pytest
 from data_designer.config.column_configs import LLMStructuredColumnConfig
+from pydantic import ValidationError
 
 from anonymizer.config.models import EvaluateModelSelection
 from anonymizer.engine.constants import (
@@ -88,6 +90,35 @@ def test_label_examples_for_judge_empty_when_no_entities() -> None:
 # ---------------------------------------------------------------------------
 # Tests: _flatten_judgment
 # ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("all_valid", "invalid_entities", "accepted"),
+    [
+        (True, None, True),
+        (True, [], True),
+        (False, None, False),
+        (False, [], False),
+        (
+            False,
+            [{"value": "morning", "label": "date_time", "reasoning": "common word"}],
+            True,
+        ),
+    ],
+)
+def test_judgment_schema_normalizes_null_details_only_for_positive_verdicts(
+    all_valid: bool,
+    invalid_entities: list[dict[str, str]] | None,
+    accepted: bool,
+) -> None:
+    payload = {"all_valid": all_valid, "invalid_entities": invalid_entities}
+    if not accepted:
+        with pytest.raises(ValidationError):
+            DetectionJudgmentSchema.model_validate(payload)
+        return
+
+    judgment = DetectionJudgmentSchema.model_validate(payload)
+    assert judgment.model_dump()["invalid_entities"] == (invalid_entities or [])
 
 
 def test_flatten_judgment_all_valid_path() -> None:

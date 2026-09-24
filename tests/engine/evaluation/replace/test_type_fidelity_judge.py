@@ -4,7 +4,9 @@
 from __future__ import annotations
 
 import pandas as pd
+import pytest
 from data_designer.config.column_configs import LLMStructuredColumnConfig
+from pydantic import ValidationError
 
 from anonymizer.config.models import EvaluateModelSelection
 from anonymizer.engine.constants import (
@@ -104,6 +106,42 @@ def test_label_examples_for_judge_empty_when_no_replacements() -> None:
 # ---------------------------------------------------------------------------
 # Tests: _flatten_judgment
 # ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("all_valid", "invalid_replacements", "accepted"),
+    [
+        (True, None, True),
+        (True, [], True),
+        (False, None, False),
+        (False, [], False),
+        (
+            False,
+            [
+                {
+                    "original": "Alice",
+                    "label": "first_name",
+                    "synthetic": "[REDACTED]",
+                    "reasoning": "placeholder, not a person name",
+                }
+            ],
+            True,
+        ),
+    ],
+)
+def test_judgment_schema_normalizes_null_details_only_for_positive_verdicts(
+    all_valid: bool,
+    invalid_replacements: list[dict[str, str]] | None,
+    accepted: bool,
+) -> None:
+    payload = {"all_valid": all_valid, "invalid_replacements": invalid_replacements}
+    if not accepted:
+        with pytest.raises(ValidationError):
+            TypeFidelityJudgmentSchema.model_validate(payload)
+        return
+
+    judgment = TypeFidelityJudgmentSchema.model_validate(payload)
+    assert judgment.model_dump()["invalid_replacements"] == (invalid_replacements or [])
 
 
 def test_flatten_judgment_all_valid_path() -> None:

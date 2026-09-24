@@ -4,7 +4,9 @@
 from __future__ import annotations
 
 import pandas as pd
+import pytest
 from data_designer.config.column_configs import LLMStructuredColumnConfig
+from pydantic import ValidationError
 
 from anonymizer.config.models import EvaluateModelSelection
 from anonymizer.engine.constants import (
@@ -84,6 +86,63 @@ def test_replacements_for_judge_returns_empty_for_malformed() -> None:
 # ---------------------------------------------------------------------------
 # Tests: _flatten_judgment
 # ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("all_valid", "entities", "accepted"),
+    [
+        (True, None, True),
+        (True, [], True),
+        (False, None, False),
+        (False, [], False),
+        (
+            False,
+            [
+                {
+                    "original": "40",
+                    "label": "age",
+                    "synthetic": "12",
+                    "attributes_checked": ["age_bucket"],
+                    "passes": False,
+                    "reasoning": "Adult bucket changed to child.",
+                }
+            ],
+            True,
+        ),
+    ],
+)
+def test_judgment_schema_normalizes_null_details_only_for_positive_verdicts(
+    all_valid: bool,
+    entities: list[dict[str, object]] | None,
+    accepted: bool,
+) -> None:
+    payload = {"all_valid": all_valid, "entities": entities}
+    if not accepted:
+        with pytest.raises(ValidationError):
+            AttributeFidelityJudgmentSchema.model_validate(payload)
+        return
+
+    judgment = AttributeFidelityJudgmentSchema.model_validate(payload)
+    assert judgment.model_dump()["entities"] == (entities or [])
+
+
+def test_judgment_schema_does_not_normalize_null_nested_attributes_checked() -> None:
+    with pytest.raises(ValidationError):
+        AttributeFidelityJudgmentSchema.model_validate(
+            {
+                "all_valid": False,
+                "entities": [
+                    {
+                        "original": "40",
+                        "label": "age",
+                        "synthetic": "12",
+                        "attributes_checked": None,
+                        "passes": False,
+                        "reasoning": "Adult bucket changed to child.",
+                    }
+                ],
+            }
+        )
 
 
 def test_flatten_judgment_all_valid_keeps_invalid_empty() -> None:

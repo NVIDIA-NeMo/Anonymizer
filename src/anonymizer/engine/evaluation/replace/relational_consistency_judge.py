@@ -8,7 +8,7 @@ import logging
 from typing import ClassVar, cast
 
 import pandas as pd
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from anonymizer.engine.constants import (
     COL_RELATIONAL_CONSISTENCY_INVALID_RELATIONS,
@@ -62,6 +62,19 @@ class RelationalConsistencyJudgmentSchema(BaseModel):
         default_factory=list,
         description=("Every relation actually checked in this record. Empty when no checkable relations exist."),
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_positive_null_details(cls, value: object) -> object:
+        if not isinstance(value, dict) or value.get("all_consistent") is not True or value.get("relations") is not None:
+            return value
+        return {**value, "relations": []}
+
+    @model_validator(mode="after")
+    def require_negative_details(self) -> RelationalConsistencyJudgmentSchema:
+        if not self.all_consistent and not self.relations:
+            raise ValueError("relations must be non-empty when all_consistent is False.")
+        return self
 
 
 # ---------------------------------------------------------------------------

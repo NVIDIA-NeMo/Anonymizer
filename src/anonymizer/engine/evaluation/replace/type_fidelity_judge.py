@@ -8,7 +8,7 @@ import logging
 from typing import ClassVar, cast
 
 import pandas as pd
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from anonymizer.engine.constants import (
     COL_REPLACEMENT_MAP,
@@ -50,6 +50,23 @@ class TypeFidelityJudgmentSchema(BaseModel):
         default_factory=list,
         description="Every replacement that fails type fidelity. Empty when all_valid is True.",
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_positive_null_details(cls, value: object) -> object:
+        if (
+            not isinstance(value, dict)
+            or value.get("all_valid") is not True
+            or value.get("invalid_replacements") is not None
+        ):
+            return value
+        return {**value, "invalid_replacements": []}
+
+    @model_validator(mode="after")
+    def require_negative_details(self) -> TypeFidelityJudgmentSchema:
+        if not self.all_valid and not self.invalid_replacements:
+            raise ValueError("invalid_replacements must be non-empty when all_valid is False.")
+        return self
 
 
 # ---------------------------------------------------------------------------
