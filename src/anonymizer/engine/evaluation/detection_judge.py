@@ -8,7 +8,7 @@ import logging
 from typing import ClassVar, cast
 
 import pandas as pd
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from anonymizer.engine.constants import (
     COL_DETECTION_INVALID_ENTITIES,
@@ -50,6 +50,23 @@ class DetectionJudgmentSchema(BaseModel):
         default_factory=list,
         description="Every detected entity that is not a valid detection. Empty when all_valid is True.",
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_positive_null_details(cls, value: object) -> object:
+        if (
+            not isinstance(value, dict)
+            or value.get("all_valid") is not True
+            or value.get("invalid_entities") is not None
+        ):
+            return value
+        return {**value, "invalid_entities": []}
+
+    @model_validator(mode="after")
+    def require_negative_details(self) -> DetectionJudgmentSchema:
+        if not self.all_valid and not self.invalid_entities:
+            raise ValueError("invalid_entities must be non-empty when all_valid is False.")
+        return self
 
 
 # ---------------------------------------------------------------------------

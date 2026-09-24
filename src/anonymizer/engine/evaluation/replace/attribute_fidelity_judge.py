@@ -9,7 +9,7 @@ from datetime import datetime
 from typing import ClassVar, cast
 
 import pandas as pd
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from anonymizer.engine.constants import (
     COL_ATTRIBUTE_FIDELITY_INVALID_ENTITIES,
@@ -61,6 +61,19 @@ class AttributeFidelityJudgmentSchema(BaseModel):
             "Triples with no salient attributes (opaque identifiers) are omitted."
         ),
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_positive_null_details(cls, value: object) -> object:
+        if not isinstance(value, dict) or value.get("all_valid") is not True or value.get("entities") is not None:
+            return value
+        return {**value, "entities": []}
+
+    @model_validator(mode="after")
+    def require_negative_details(self) -> AttributeFidelityJudgmentSchema:
+        if not self.all_valid and not self.entities:
+            raise ValueError("entities must be non-empty when all_valid is False.")
+        return self
 
 
 # ---------------------------------------------------------------------------
