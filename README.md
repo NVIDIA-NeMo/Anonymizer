@@ -177,8 +177,8 @@ After installation, invoke it with `/anonymizer` in an agent that supports slash
 
 ## Integrations
 
-- [NeMo Relay](integrations/nemo-relay/README.md) — sanitizes copied Relay
-  observability events in a separately managed Anonymizer exporter.
+- [NeMo Relay](integrations/nemo-relay/README.md) — experimental Relay-managed
+  worker for sanitizing copied observability events before subscriber export.
 
 ## Development
 

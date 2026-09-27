@@ -3,8 +3,11 @@
 
 from __future__ import annotations
 
+import json
 import os
+import re
 from copy import deepcopy
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
@@ -19,10 +22,6 @@ SURFACES = (
     "register_mark_sanitize_guardrail",
     "register_scope_sanitize_start_guardrail",
     "register_scope_sanitize_end_guardrail",
-    "register_tool_sanitize_request_guardrail",
-    "register_tool_sanitize_response_guardrail",
-    "register_llm_sanitize_request_guardrail",
-    "register_llm_sanitize_response_guardrail",
 )
 
 
@@ -41,6 +40,14 @@ class Context:
 
     def callback(self, surface: str) -> Any:
         return self.registrations[surface][1]
+
+
+class RedactingDetector:
+    def detect(self, texts: list[str]) -> list[list[RedactionSpan]]:
+        return [
+            [RedactionSpan(start, start + 12, "person")] if (start := text.find("Marisol Vega")) >= 0 else []
+            for text in texts
+        ]
 
 
 def valid_config() -> dict[str, Any]:
@@ -70,13 +77,34 @@ def test_normalized_config_rejects_unknown_or_unsafe_values() -> None:
         worker.normalized_config({"priority": True})
     with pytest.raises(TypeError, match="positive integer"):
         worker.normalized_config({"max_text_bytes": 0})
+    with pytest.raises(ValueError, match="must not exceed max_text_bytes"):
+        worker.normalized_config({"max_text_bytes": 10, "max_text_leaf_bytes": 11})
+    with pytest.raises(ValueError, match="must not exceed 29"):
+        worker.normalized_config({"provider_timeout_seconds": 30})
     with pytest.raises(ValueError, match="threshold"):
         worker.normalized_config({"threshold": 1.1})
     with pytest.raises(ValueError, match="secret_env"):
         worker.normalized_config({"secret_env": {"BAD-NAME": "value"}})
+    with pytest.raises(ValueError, match="configured provider credential"):
+        worker.normalized_config({"secret_env": {"UNUSED_KEY": "value"}})
+    with pytest.raises(ValueError, match="must not exceed 65536"):
+        worker.normalized_config({"max_text_leaf_bytes": 65_537})
 
 
-async def test_worker_registers_rampart_shaped_sanitizer_surfaces(monkeypatch) -> None:
+def test_schema_defaults_match_runtime_defaults() -> None:
+    schema_path = Path(__file__).resolve().parents[1] / "config.schema.json"
+    schema = json.loads(schema_path.read_text(encoding="utf-8"))
+
+    assert {name: field["default"] for name, field in schema["properties"].items()} == worker.DEFAULT_CONFIG
+    for field in ("detector_endpoint", "detector_model", "evaluator_endpoint", "evaluator_model"):
+        assert re.fullmatch(schema["properties"][field]["pattern"], "   ") is None
+    for field in ("detector_api_key_env", "evaluator_api_key_env"):
+        pattern = schema["properties"][field]["pattern"]
+        assert re.fullmatch(pattern, "NVIDIA_API_KEY") is not None
+        assert re.fullmatch(pattern, "BAD-NAME") is None
+
+
+async def test_worker_registers_event_sanitizer_surfaces(monkeypatch: pytest.MonkeyPatch) -> None:
     sanitizer = install_runtime_fakes(monkeypatch)
     context = Context()
     plugin = worker.NemoAnonymizerWorker()
@@ -85,19 +113,12 @@ async def test_worker_registers_rampart_shaped_sanitizer_surfaces(monkeypatch) -
 
     assert set(context.registrations) == set(SURFACES)
     assert {registration[2] for registration in context.registrations.values()} == {100}
-    fields = {"data": {"owner": "Marisol Vega"}, "category_profile": None, "metadata": {}}
-    result = await context.callback("register_mark_sanitize_guardrail")(
-        {"kind": "mark", "name": "custom", "category": "custom"},
-        fields,
-    )
-    assert result == fields
-    sanitizer.sanitize.assert_awaited()
 
     await plugin.close()
     sanitizer.close.assert_called_once_with()
 
 
-async def test_secret_environment_is_worker_scoped(monkeypatch) -> None:
+async def test_secret_environment_is_worker_scoped(monkeypatch: pytest.MonkeyPatch) -> None:
     install_runtime_fakes(monkeypatch)
     monkeypatch.setenv("TEST_EVALUATOR_KEY", "prior-value")
     plugin = worker.NemoAnonymizerWorker()
@@ -108,113 +129,68 @@ async def test_secret_environment_is_worker_scoped(monkeypatch) -> None:
     assert os.environ["TEST_EVALUATOR_KEY"] == "prior-value"
 
 
-async def test_all_observability_surfaces_return_redacted_copies(monkeypatch) -> None:
-    class Detector:
-        def detect(self, texts: list[str]) -> list[list[RedactionSpan]]:
-            results: list[list[RedactionSpan]] = []
-            for text in texts:
-                start = text.find("Marisol Vega")
-                results.append([RedactionSpan(start, start + 12, "person")] if start >= 0 else [])
-            return results
-
-    monkeypatch.setattr(worker, "AnonymizerBackend", MagicMock(return_value=Detector()))
+async def test_marks_and_scopes_return_redacted_copies(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(worker, "AnonymizerBackend", MagicMock(return_value=RedactingDetector()))
     monkeypatch.setattr(worker, "require_api_keys", MagicMock())
     plugin = worker.NemoAnonymizerWorker()
     context = Context()
     await plugin.register(cast(PluginContext, context), valid_config())
 
     source = {"owner": "Marisol Vega"}
-    tool_result = await context.callback("register_tool_sanitize_response_guardrail")("lookup", source)
     mark_result = await context.callback("register_mark_sanitize_guardrail")(
         {"kind": "mark", "name": "custom", "category": "custom"},
         {"data": source, "category_profile": None, "metadata": {}},
     )
-    generic_llm_result = await context.callback("register_scope_sanitize_start_guardrail")(
-        {"kind": "scope", "name": "manual", "category": "llm"},
-        {"data": source, "category_profile": {"model_name": "Marisol Vega"}, "metadata": {}},
+    custom_scope_result = await context.callback("register_scope_sanitize_start_guardrail")(
+        {"kind": "scope", "name": "manual", "category": "custom"},
+        {"data": source, "category_profile": None, "metadata": {}},
+    )
+    llm_scope_result = await context.callback("register_scope_sanitize_start_guardrail")(
+        {"kind": "scope", "name": "generic", "category": "llm", "scope_category": "start"},
+        {
+            "data": {"content": {"input": [{"role": "user", "content": "Marisol Vega"}]}},
+            "category_profile": {
+                "model_name": "Marisol Vega",
+                "annotated_request": {"messages": [{"role": "user", "content": "Marisol Vega"}]},
+            },
+            "metadata": source,
+        },
+    )
+    tool_scope_result = await context.callback("register_scope_sanitize_end_guardrail")(
+        {"kind": "scope", "name": "generic", "category": "tool", "scope_category": "end"},
+        {
+            "data": source,
+            "category_profile": {
+                "tool_call_id": "Marisol Vega",
+                "tool_result_annotation": {"owner": "Marisol Vega"},
+            },
+            "metadata": source,
+        },
     )
 
     assert source == {"owner": "Marisol Vega"}
-    assert tool_result == {"owner": "[REDACTED]"}
     assert mark_result["data"] == {"owner": "[REDACTED]"}
-    assert generic_llm_result["data"] == {"owner": "[REDACTED]"}
-    assert generic_llm_result["category_profile"] == {"model_name": "[REDACTED]"}
-    await plugin.close()
-
-
-async def test_llm_request_uses_active_codec_without_mutating_provider_request(monkeypatch) -> None:
-    class Detector:
-        def detect(self, texts: list[str]) -> list[list[RedactionSpan]]:
-            return [
-                [RedactionSpan(start, start + 12, "person")] if (start := text.find("Marisol Vega")) >= 0 else []
-                for text in texts
-            ]
-
-    monkeypatch.setattr(worker, "AnonymizerBackend", MagicMock(return_value=Detector()))
-    monkeypatch.setattr(worker, "require_api_keys", MagicMock())
-    plugin = worker.NemoAnonymizerWorker()
-    context = Context()
-    await plugin.register(cast(PluginContext, context), valid_config())
-
-    request = {"headers": {}, "content": {"messages": [{"role": "user", "content": "Marisol Vega"}]}}
-    codec = SimpleNamespace(
-        decode=AsyncMock(return_value={"messages": [{"role": "user", "content": "Marisol Vega"}]}),
-        encode=AsyncMock(side_effect=lambda _annotated, original: original),
-    )
-    codec_context = SimpleNamespace(resolve_codec=lambda: codec)
-    result = await context.callback("register_llm_sanitize_request_guardrail")(request, codec_context)
-
-    assert request["content"]["messages"][0]["content"] == "Marisol Vega"
-    assert result["content"]["messages"][0]["content"] == "[REDACTED]"
-    encoded_annotation, encoded_original = codec.encode.await_args.args
-    assert encoded_annotation["messages"][0]["content"] == "[REDACTED]"
-    assert encoded_original["content"]["messages"][0]["content"] == "[REDACTED]"
-    await plugin.close()
-
-
-async def test_scope_sanitizer_covers_all_mutable_fields(monkeypatch) -> None:
-    sanitizer = install_runtime_fakes(monkeypatch)
-    context = Context()
-    plugin = worker.NemoAnonymizerWorker()
-    await plugin.register(cast(PluginContext, context), valid_config())
-    fields = {
-        "data": {"already": "handled"},
-        "category_profile": {"annotated_request": {"already": "handled"}},
-        "metadata": {"owner": "Marisol Vega"},
+    assert custom_scope_result["data"] == {"owner": "[REDACTED]"}
+    assert llm_scope_result == {
+        "data": {"content": {"input": [{"role": "user", "content": "[REDACTED]"}]}},
+        "category_profile": {
+            "model_name": "[REDACTED]",
+            "annotated_request": {"messages": [{"role": "user", "content": "[REDACTED]"}]},
+        },
+        "metadata": {"owner": "[REDACTED]"},
     }
-
-    result = await context.callback("register_scope_sanitize_start_guardrail")(
-        {"kind": "scope", "category": "llm"}, fields
-    )
-
-    assert sanitizer.sanitize.await_args.args == (fields,)
-    assert result == fields
-
-    await context.callback("register_scope_sanitize_end_guardrail")({"kind": "scope", "category": "tool"}, fields)
-    assert sanitizer.sanitize.await_args.args == (fields,)
+    assert tool_scope_result == {
+        "data": {"owner": "[REDACTED]"},
+        "category_profile": {
+            "tool_call_id": "[REDACTED]",
+            "tool_result_annotation": {"owner": "[REDACTED]"},
+        },
+        "metadata": {"owner": "[REDACTED]"},
+    }
     await plugin.close()
 
 
-async def test_llm_response_validates_the_sanitized_provider_copy(monkeypatch) -> None:
-    sanitizer = install_runtime_fakes(monkeypatch)
-    sanitizer.sanitize.side_effect = None
-    sanitizer.sanitize.return_value = {"content": "[REDACTED]"}
-    context = Context()
-    plugin = worker.NemoAnonymizerWorker()
-    await plugin.register(cast(PluginContext, context), valid_config())
-    codec = SimpleNamespace(decode=AsyncMock(return_value={"message": "[REDACTED]"}))
-
-    result = await context.callback("register_llm_sanitize_response_guardrail")(
-        {"content": "Marisol Vega"},
-        SimpleNamespace(resolve_codec=lambda: codec),
-    )
-
-    assert result == {"content": "[REDACTED]"}
-    codec.decode.assert_awaited_once_with(result)
-    await plugin.close()
-
-
-async def test_stream_chunks_are_omitted_without_anonymizer_call(monkeypatch) -> None:
+async def test_stream_chunks_are_omitted_without_anonymizer_call(monkeypatch: pytest.MonkeyPatch) -> None:
     sanitizer = install_runtime_fakes(monkeypatch)
     context = Context()
     plugin = worker.NemoAnonymizerWorker()
@@ -234,7 +210,8 @@ async def test_stream_chunks_are_omitted_without_anonymizer_call(monkeypatch) ->
     await plugin.close()
 
 
-async def test_failed_registration_restores_secrets(monkeypatch) -> None:
+async def test_failed_registration_restores_secrets(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("TEST_EVALUATOR_KEY", raising=False)
     monkeypatch.setattr(worker, "require_api_keys", MagicMock(side_effect=ValueError("missing credential")))
     plugin = worker.NemoAnonymizerWorker()
 
@@ -244,7 +221,29 @@ async def test_failed_registration_restores_secrets(monkeypatch) -> None:
     assert "TEST_EVALUATOR_KEY" not in os.environ
 
 
-async def test_worker_errors_never_echo_source_text(monkeypatch) -> None:
+async def test_failed_registration_closes_created_sanitizer(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("TEST_EVALUATOR_KEY", raising=False)
+    sanitizer = install_runtime_fakes(monkeypatch)
+
+    class FailingContext(Context):
+        def __getattr__(self, surface: str) -> Any:
+            if surface == "register_scope_sanitize_start_guardrail":
+
+                def fail(*_args: Any, **_kwargs: Any) -> None:
+                    raise RuntimeError("registration failed")
+
+                return fail
+            return super().__getattr__(surface)
+
+    plugin = worker.NemoAnonymizerWorker()
+    with pytest.raises(RuntimeError, match="registration failed"):
+        await plugin.register(cast(PluginContext, FailingContext()), valid_config())
+
+    sanitizer.close.assert_called_once_with()
+    assert "TEST_EVALUATOR_KEY" not in os.environ
+
+
+async def test_worker_errors_never_echo_source_text(monkeypatch: pytest.MonkeyPatch) -> None:
     class FailingDetector:
         def detect(self, _texts: list[str]) -> list[list[RedactionSpan]]:
             raise RuntimeError("provider rejected Marisol Vega")
@@ -256,13 +255,16 @@ async def test_worker_errors_never_echo_source_text(monkeypatch) -> None:
     await plugin.register(cast(PluginContext, context), valid_config())
 
     with pytest.raises(RuntimeError) as error:
-        await context.callback("register_tool_sanitize_request_guardrail")("lookup", {"owner": "Marisol Vega"})
+        await context.callback("register_scope_sanitize_start_guardrail")(
+            {"kind": "scope", "name": "lookup", "category": "tool"},
+            {"data": {"owner": "Marisol Vega"}, "category_profile": None, "metadata": None},
+        )
 
-    assert str(error.value) == "nemo_anonymizer.tool_sanitization_failed"
+    assert str(error.value) == "nemo_anonymizer.event_sanitization_failed"
     await plugin.close()
 
 
-async def test_main_closes_worker_after_host_shutdown(monkeypatch) -> None:
+async def test_main_closes_worker_after_host_shutdown(monkeypatch: pytest.MonkeyPatch) -> None:
     plugin = SimpleNamespace(close=AsyncMock())
     serve = AsyncMock()
     monkeypatch.setattr(worker, "NemoAnonymizerWorker", MagicMock(return_value=plugin))

@@ -17,7 +17,13 @@ from nemo_anonymizer_relay.projection import (
 
 def test_projection_budget_is_fail_closed_signal() -> None:
     with pytest.raises(ProjectionLimitError):
-        collect_text_leaves(["a", "b"], max_leaves=1, max_bytes=100)
+        collect_text_leaves(["a", "b"], max_leaves=1, max_bytes=100, max_leaf_bytes=100)
+
+    with pytest.raises(ProjectionLimitError, match="one selected text leaf"):
+        collect_text_leaves(["large"], max_leaves=1, max_bytes=100, max_leaf_bytes=4)
+
+    with pytest.raises(ProjectionLimitError, match="selected text exceeds"):
+        collect_text_leaves(["four", "five"], max_leaves=10, max_bytes=7, max_leaf_bytes=7)
 
 
 def test_protocol_mode_preserves_control_values_but_inspects_identifiers() -> None:
@@ -31,13 +37,14 @@ def test_protocol_mode_preserves_control_values_but_inspects_identifiers() -> No
         value,
         max_leaves=20,
         max_bytes=2000,
+        max_leaf_bytes=2000,
         preserve_protocol_values=True,
     )
-    selected = {leaf.text for leaf in leaves}
+    selected_values = {leaf.text for leaf in leaves if leaf.key is None}
 
-    assert "assistant" not in selected
-    assert "function" not in selected
-    assert selected >= {
+    assert "assistant" not in selected_values
+    assert "function" not in selected_values
+    assert selected_values >= {
         "Marisol at marisol@example.com",
         "lookup_Marisol_Vega",
         "marisol@example.com",
@@ -49,20 +56,27 @@ def test_generic_mode_does_not_exempt_protocol_shaped_application_data() -> None
         {"role": "user", "type": "message"},
         max_leaves=10,
         max_bytes=100,
+        max_leaf_bytes=100,
     )
 
-    assert [leaf.text for leaf in leaves] == ["user", "message"]
+    assert [leaf.text for leaf in leaves] == ["role", "user", "type", "message"]
 
 
-def test_projection_inspects_and_rewrites_application_mapping_keys() -> None:
+def test_projection_inspects_application_mapping_keys() -> None:
     value = {"data": {"marisol@example.com": "case owner", "ordinary_field": "safe"}}
     original = deepcopy(value)
-    leaves = collect_text_leaves(value, max_leaves=10, max_bytes=1000)
-    email = next(leaf for leaf in leaves if leaf.key == "marisol@example.com")
+    leaves = collect_text_leaves(value, max_leaves=10, max_bytes=1000, max_leaf_bytes=1000)
 
-    rewritten = replace_text_leaves(value, {(email.path, email.key): "[REDACTED]"})
+    rewritten = replace_text_leaves(value, {("data", "marisol@example.com"): "[REDACTED]"})
 
-    assert rewritten == {"data": {"[REDACTED]": "case owner", "ordinary_field": "safe"}}
+    assert {leaf.text for leaf in leaves} == {
+        "data",
+        "marisol@example.com",
+        "case owner",
+        "ordinary_field",
+        "safe",
+    }
+    assert rewritten == {"data": {"marisol@example.com": "[REDACTED]", "ordinary_field": "safe"}}
     assert value == original
 
 
@@ -78,9 +92,20 @@ def test_projection_omits_media_without_mutating_source() -> None:
 
     assert projected["messages"][1] == {
         "type": "input_image",
-        "content": "[UNSUPPORTED MEDIA OMITTED]",
+        "image_url": "[UNSUPPORTED MEDIA OMITTED]",
     }
     assert source["messages"][1]["image_url"].startswith("data:")
+
+
+@pytest.mark.parametrize("prefix", ["DATA:", "  data:"])
+def test_projection_omits_case_and_whitespace_varied_data_uris(prefix: str) -> None:
+    assert omit_unsupported_media(f"{prefix}image/png;base64,SECRET") == "[UNSUPPORTED MEDIA OMITTED]"
+
+
+def test_projection_does_not_treat_relay_file_configuration_as_media() -> None:
+    source = {"type": "file", "path": "/tmp/Marisol Vega/events.jsonl"}
+
+    assert omit_unsupported_media(source) == source
 
 
 def test_projection_distinguishes_large_binary_from_short_encoded_text() -> None:

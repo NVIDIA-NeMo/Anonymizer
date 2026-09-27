@@ -6,7 +6,6 @@
 from __future__ import annotations
 
 import re
-from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any, TypeAlias
 
@@ -21,7 +20,7 @@ class ProjectionLimitError(ValueError):
 
 @dataclass(frozen=True)
 class TextLeaf:
-    """One replaceable string value or application-defined mapping key."""
+    """One replaceable string value or mapping key."""
 
     path: JsonPath
     text: str
@@ -38,100 +37,41 @@ _PROTOCOL_VALUE_LITERALS = {
             "function",
             "function_call",
             "function_call_output",
+            "file",
+            "image",
+            "image_url",
+            "input_audio",
+            "input_file",
+            "input_image",
             "input_text",
             "json_schema",
             "message",
+            "output_audio",
+            "output_file",
+            "output_image",
             "output_text",
+            "screenshot",
             "text",
+            "video",
         }
     ),
 }
-
-# Closed Relay/provider vocabulary is structural. Other keys are application
-# data and are inspected because identifiers can themselves contain PII.
-_STRUCTURAL_MAPPING_KEYS = frozenset(
-    {
-        "annotated_request",
-        "annotated_response",
-        "annotation",
-        "api",
-        "api_specific",
-        "arguments",
-        "atof_version",
-        "attributes",
-        "category",
-        "category_profile",
-        "content",
-        "created",
-        "data",
-        "data_schema",
-        "description",
-        "finish_reason",
-        "function",
-        "headers",
-        "id",
-        "index",
-        "input",
-        "input_schema",
-        "kind",
-        "max_tokens",
-        "message",
-        "messages",
-        "metadata",
-        "model",
-        "model_name",
-        "name",
-        "object",
-        "output",
-        "parameters",
-        "parent_uuid",
-        "params",
-        "provider",
-        "propagation_root_uuid",
-        "request",
-        "response",
-        "role",
-        "scope_category",
-        "stop_reason",
-        "stream",
-        "stream_options",
-        "subtype",
-        "text",
-        "timestamp",
-        "tool_call_id",
-        "tool_calls",
-        "tools",
-        "type",
-        "usage",
-        "uuid",
-    }
-)
-
-_MEDIA_TYPES = frozenset(
-    {
-        "audio",
-        "computer_screenshot",
-        "file",
-        "image",
-        "image_url",
-        "input_audio",
-        "input_file",
-        "input_image",
-        "output_audio",
-        "output_file",
-        "output_image",
-        "screenshot",
-        "video",
-    }
-)
+_DATA_URI = re.compile(r"^\s*data:", re.IGNORECASE)
 _ENCODED_BINARY = re.compile(r"^[A-Za-z0-9+/_-]{4096,}={0,2}$")
 _OMITTED_MEDIA = "[UNSUPPORTED MEDIA OMITTED]"
+_INTERNAL_MARKERS = frozenset({_OMITTED_MEDIA, "[REDACTED]", "[REDACTED_SECRET]"})
 
 
 def omit_unsupported_media(value: Json) -> Json:
-    """Copy a value while replacing recognized media and large binary bodies."""
+    """Copy a value while replacing inline media and large encoded bodies.
 
-    return _omit_unsupported_media(deepcopy(value))
+    Mapping shape and field names are retained for downstream consumers of
+    copied provider and annotation schemas. URLs, file IDs, and ordinary text
+    remain available for text inspection; only data URIs and binary-looking
+    strings are omitted.
+    """
+
+    return _omit_unsupported_media(value)
 
 
 def collect_text_leaves(
@@ -139,6 +79,7 @@ def collect_text_leaves(
     *,
     max_leaves: int,
     max_bytes: int,
+    max_leaf_bytes: int,
     preserve_protocol_values: bool = False,
 ) -> list[TextLeaf]:
     """Select caller-controlled strings within a copied observability value."""
@@ -149,6 +90,8 @@ def collect_text_leaves(
     def add(leaf: TextLeaf) -> None:
         nonlocal selected_bytes
         encoded_bytes = len(leaf.text.encode("utf-8"))
+        if encoded_bytes > max_leaf_bytes:
+            raise ProjectionLimitError(f"one selected text leaf exceeds {max_leaf_bytes} UTF-8 bytes")
         if len(leaves) >= max_leaves or selected_bytes + encoded_bytes > max_bytes:
             raise ProjectionLimitError(f"selected text exceeds {max_leaves} leaves or {max_bytes} UTF-8 bytes")
         leaves.append(leaf)
@@ -156,7 +99,11 @@ def collect_text_leaves(
 
     def visit(current: Json, path: JsonPath, field: str | None) -> None:
         if isinstance(current, str):
-            if current and not _is_protocol_literal(field, current, preserve_protocol_values):
+            if (
+                current
+                and current not in _INTERNAL_MARKERS
+                and not _is_protocol_literal(field, current, preserve_protocol_values)
+            ):
                 add(TextLeaf(path=path, text=current))
             return
         if isinstance(current, list):
@@ -165,7 +112,7 @@ def collect_text_leaves(
             return
         if isinstance(current, dict):
             for key, item in current.items():
-                if isinstance(key, str) and key not in _STRUCTURAL_MAPPING_KEYS:
+                if isinstance(key, str):
                     add(TextLeaf(path=path, text=key, key=key))
                 visit(item, (*path, key), key)
 
@@ -175,27 +122,18 @@ def collect_text_leaves(
 
 def replace_text_leaves(
     value: Json,
-    replacements: dict[tuple[JsonPath, str | None], str],
+    replacements: dict[JsonPath, str],
 ) -> Json:
-    """Copy a value while applying decisions to string values and mapping keys."""
+    """Copy a value while applying decisions to string values."""
 
     def visit(current: Json, path: JsonPath) -> Json:
-        value_replacement = replacements.get((path, None))
+        value_replacement = replacements.get(path)
         if value_replacement is not None:
             return value_replacement
         if isinstance(current, list):
             return [visit(item, (*path, index)) for index, item in enumerate(current)]
         if isinstance(current, dict):
-            rewritten: dict[str, Json] = {}
-            for key, item in current.items():
-                candidate = replacements.get((path, key), key)
-                unique = candidate
-                suffix = 2
-                while unique in rewritten:
-                    unique = f"{candidate}__{suffix}"
-                    suffix += 1
-                rewritten[unique] = visit(item, (*path, key))
-            return rewritten
+            return {key: visit(item, (*path, key)) for key, item in current.items()}
         return current
 
     return visit(value, ())
@@ -207,20 +145,13 @@ def _is_protocol_literal(field: str | None, value: str, preserve: bool) -> bool:
 
 def _omit_unsupported_media(value: Json) -> Json:
     if isinstance(value, str):
-        if value.startswith("data:") or _ENCODED_BINARY.fullmatch(value):
+        if _DATA_URI.match(value) or _ENCODED_BINARY.fullmatch(value):
             return _OMITTED_MEDIA
         return value
     if isinstance(value, list):
         return [_omit_unsupported_media(item) for item in value]
     if not isinstance(value, dict):
         return value
-
-    media_type = value.get("type")
-    normalized_type = media_type.lower() if isinstance(media_type, str) else ""
-    if normalized_type in _MEDIA_TYPES or normalized_type.startswith(("audio/", "image/", "video/")):
-        return {"type": media_type, "content": _OMITTED_MEDIA}
-    if isinstance(value.get("mime_type"), str) and "data" in value:
-        return {"mime_type": value["mime_type"], "data": _OMITTED_MEDIA}
     return {key: _omit_unsupported_media(item) for key, item in value.items()}
 
 

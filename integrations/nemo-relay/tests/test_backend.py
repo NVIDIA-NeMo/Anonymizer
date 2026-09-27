@@ -120,6 +120,11 @@ def test_packing_splits_at_budget() -> None:
     assert [record.text for record in packed] == ["Ana", "safe", "Bob"]
 
 
+def test_packing_rejects_one_text_over_budget() -> None:
+    with pytest.raises(BackendResultError, match="input_text_exceeds_packed_record_limit"):
+        _pack_texts(["oversized"], max_chars=8)
+
+
 def test_model_config_wires_detection_pipeline() -> None:
     payload = json.loads(AnonymizerBackend(backend_config())._model_config_json())
 

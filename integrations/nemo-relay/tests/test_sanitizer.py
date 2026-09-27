@@ -25,29 +25,55 @@ class FakeDetector:
         return decisions
 
 
-def test_sanitizer_batches_unique_leaves_and_caches_span_decisions() -> None:
+@pytest.mark.parametrize(
+    "token",
+    [
+        "sk-proj-abcdefghijklmnop",
+        "nvapi-abcdefghijklmnop",
+        "ghp_01234567890123456789",
+        "github_pat_0123456789_abcdefghijklmnop",
+        "glpat-01234567890123456789",
+        "hf_01234567890123456789",
+        "npm_01234567890123456789",
+        "xoxb-0123456789",
+        f"AIza{'0' * 35}",
+        f"AKIA{'0' * 16}",
+        "Bearer abcdefghijklmnop",
+    ],
+)
+def test_known_credentials_are_removed_before_detection(token: str) -> None:
+    detector = FakeDetector()
+
+    result = asyncio.run(ObservationSanitizer(detector).sanitize({"value": token}))
+
+    assert result == {"value": "[REDACTED_SECRET]"}
+    assert token not in [text for call in detector.calls for text in call]
+
+
+def test_sanitizer_batches_unique_leaves() -> None:
     detector = FakeDetector()
     sanitizer = ObservationSanitizer(detector)
     value = {"prompt": "Email ana@example.com", "history": ["Email ana@example.com"]}
 
-    first = asyncio.run(sanitizer.sanitize(value))
-    second = asyncio.run(sanitizer.sanitize(value))
+    result = asyncio.run(sanitizer.sanitize(value))
 
-    assert (
-        first
-        == second
-        == {
-            "prompt": "Email [REDACTED]",
-            "history": ["Email [REDACTED]"],
-        }
-    )
-    assert detector.calls == [
-        ["prompt", "Email ana@example.com", "history"],
-        ["prompt", "history"],
-    ]
+    assert result == {
+        "prompt": "Email [REDACTED]",
+        "history": ["Email [REDACTED]"],
+    }
+    assert detector.calls == [["prompt", "Email ana@example.com", "history"]]
 
 
-def test_secret_patterns_cover_preserved_protocol_identifiers_and_keys() -> None:
+def test_sensitive_application_keys_fail_closed() -> None:
+    detector = FakeDetector()
+    sanitizer = ObservationSanitizer(detector)
+    value = {"ana@example.com": "Email ana@example.com"}
+
+    with pytest.raises(RuntimeError, match="sensitive mapping key"):
+        asyncio.run(sanitizer.sanitize(value))
+
+
+def test_secret_patterns_cover_preserved_protocol_identifiers() -> None:
     detector = FakeDetector()
     sanitizer = ObservationSanitizer(detector)
     openai_secret = "sk-proj-abcdefghijklmnop"
@@ -61,20 +87,30 @@ def test_secret_patterns_cover_preserved_protocol_identifiers_and_keys() -> None
                         "model": openai_secret,
                         "provider": nvidia_secret,
                         "messages": [{"role": "user", "content": "safe"}],
-                        openai_secret: "structural key",
                     }
                 }
-            }
+            },
+            preserve_protocol_values=True,
         )
     )
 
     request = result["category_profile"]["annotated_request"]
     assert request["model"] == "[REDACTED_SECRET]"
     assert request["provider"] == "[REDACTED_SECRET]"
-    assert "[REDACTED_SECRET]" in request
     observed = [text for call in detector.calls for text in call]
     assert openai_secret not in observed
     assert nvidia_secret not in observed
+
+
+def test_secret_shaped_mapping_key_fails_before_detection() -> None:
+    detector = FakeDetector()
+    sanitizer = ObservationSanitizer(detector)
+    token = "sk-proj-abcdefghijklmnop"
+
+    with pytest.raises(RuntimeError, match="secret-shaped mapping key"):
+        asyncio.run(sanitizer.sanitize({token: "value"}))
+
+    assert detector.calls == []
 
 
 def test_secret_bearing_keys_redact_values_without_substring_matches() -> None:
@@ -117,16 +153,33 @@ def test_secret_bearing_keys_redact_values_without_substring_matches() -> None:
     assert (set(secret_values.values()) | {"must not survive"}).isdisjoint(observed)
 
 
-def test_empty_decisions_are_rechecked_in_later_contexts() -> None:
-    detector = FakeDetector()
+def test_context_dependent_positive_decisions_are_not_reused() -> None:
+    class ContextDetector:
+        def __init__(self) -> None:
+            self.calls: list[list[str]] = []
+
+        def detect(self, texts: list[str]) -> list[list[RedactionSpan]]:
+            self.calls.append(texts)
+            include_bob = "private customer" in texts
+            decisions: list[list[RedactionSpan]] = []
+            for text in texts:
+                spans = [RedactionSpan(0, 5, "person")] if text == "Alice and Bob" else []
+                if text == "Alice and Bob" and include_bob:
+                    spans.append(RedactionSpan(10, 13, "person"))
+                decisions.append(spans)
+            return decisions
+
+    detector = ContextDetector()
     sanitizer = ObservationSanitizer(detector)
 
-    asyncio.run(sanitizer.sanitize({"prompt": "ordinary label"}))
-    asyncio.run(sanitizer.sanitize({"context": "private customer", "prompt": "ordinary label"}))
+    first = asyncio.run(sanitizer.sanitize({"prompt": "Alice and Bob"}))
+    second = asyncio.run(sanitizer.sanitize({"context": "private customer", "prompt": "Alice and Bob"}))
 
+    assert first == {"prompt": "[REDACTED] and Bob"}
+    assert second == {"context": "private customer", "prompt": "[REDACTED] and [REDACTED]"}
     assert detector.calls == [
-        ["prompt", "ordinary label"],
-        ["context", "private customer", "prompt", "ordinary label"],
+        ["prompt", "Alice and Bob"],
+        ["context", "private customer", "prompt", "Alice and Bob"],
     ]
 
 

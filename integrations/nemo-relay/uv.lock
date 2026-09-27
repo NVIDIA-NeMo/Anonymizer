@@ -800,7 +800,7 @@ test = [
 [package.metadata]
 requires-dist = [
     { name = "nemo-anonymizer", editable = "../../" },
-    { name = "nemo-relay-plugin", specifier = "==0.9.0" },
+    { name = "nemo-relay-plugin", specifier = "==0.9.2" },
     { name = "opentelemetry-exporter-prometheus", specifier = "==0.64b0" },
     { name = "opentelemetry-semantic-conventions", specifier = "==0.64b0" },
 ]
@@ -816,14 +816,14 @@ test = [
 
 [[package]]
 name = "nemo-relay-plugin"
-version = "0.9.0"
+version = "0.9.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "grpcio" },
     { name = "protobuf" },
 ]
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/fc/e0/4d3e1c4c41b9ee96ba9a8f552a13ee06a945ba2c1af64054dc71e11af6a9/nemo_relay_plugin-0.9.0-py3-none-any.whl", hash = "sha256:3876b5834e62bca6119bdc60f8f03c497026656b0fa3f8e6dacb14ee610b07fe", size = 41395, upload-time = "2026-09-17T16:20:38.283Z" },
+    { url = "https://files.pythonhosted.org/packages/98/d8/b140cdc4582c28257acf43e9f9b92dc4d08defbc2696a4793bc129d318d6/nemo_relay_plugin-0.9.2-py3-none-any.whl", hash = "sha256:cd33791f8098a05e21f2d62ba9287f65153412a12bfbdb71fc764c912e7e990f", size = 41397, upload-time = "2026-09-23T00:19:41.369Z" },
 ]
 
 [[package]]

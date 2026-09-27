@@ -20,55 +20,64 @@
       "default": 100
     },
     "max_text_leaves": {
-      "description": "Maximum number of text leaves inspected in one event.",
+      "description": "Maximum number of text values and mapping keys inspected per sanitizer invocation.",
       "type": "integer",
       "minimum": 1,
-      "default": 8192
+      "maximum": 4096,
+      "default": 1024
     },
     "max_text_bytes": {
-      "description": "Maximum UTF-8 text bytes inspected in one event.",
+      "description": "Maximum aggregate UTF-8 bytes inspected per sanitizer invocation.",
       "type": "integer",
       "minimum": 1,
-      "default": 4194304
+      "maximum": 4194304,
+      "default": 262144
     },
-    "cache_entries": {
-      "description": "Maximum number of positive span decisions cached without retaining source text.",
+    "max_text_leaf_bytes": {
+      "description": "Maximum UTF-8 bytes accepted in one selected text value or key. Must not exceed max_text_bytes.",
       "type": "integer",
       "minimum": 1,
-      "default": 16384
+      "maximum": 65536,
+      "default": 65536
     },
     "detector_endpoint": {
       "description": "OpenAI-compatible endpoint for the Anonymizer entity detector.",
       "type": "string",
       "minLength": 1,
+      "pattern": ".*\\S.*",
       "default": "http://127.0.0.1:8001/v1"
     },
     "detector_model": {
       "type": "string",
       "minLength": 1,
+      "pattern": ".*\\S.*",
       "default": "fastino/gliner2-privacy-filter-PII-multi"
     },
     "detector_api_key_env": {
       "description": "Environment name installed through secret_env, or EMPTY for a local unauthenticated detector.",
       "type": "string",
       "minLength": 1,
+      "pattern": "^(?:EMPTY|[A-Za-z_][A-Za-z0-9_]{0,127})$",
       "default": "EMPTY"
     },
     "evaluator_endpoint": {
       "description": "OpenAI-compatible endpoint for validation and augmentation.",
       "type": "string",
       "minLength": 1,
+      "pattern": ".*\\S.*",
       "default": "https://integrate.api.nvidia.com/v1"
     },
     "evaluator_model": {
       "type": "string",
       "minLength": 1,
+      "pattern": ".*\\S.*",
       "default": "nvidia/nemotron-3.5-lightning-30b-a3b"
     },
     "evaluator_api_key_env": {
       "description": "Environment name containing the evaluator credential.",
       "type": "string",
       "minLength": 1,
+      "pattern": "^(?:EMPTY|[A-Za-z_][A-Za-z0-9_]{0,127})$",
       "default": "NVIDIA_API_KEY"
     },
     "threshold": {
@@ -82,8 +91,8 @@
       "description": "Timeout passed to Anonymizer provider calls. Relay separately limits each worker callback to 30 seconds.",
       "type": "integer",
       "minimum": 1,
-      "maximum": 3600,
-      "default": 300
+      "maximum": 29,
+      "default": 20
     },
     "data_summary": {
       "description": "Optional context supplied to Anonymizer detection.",

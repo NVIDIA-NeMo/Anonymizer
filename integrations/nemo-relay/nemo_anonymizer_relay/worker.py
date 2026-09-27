@@ -33,9 +33,9 @@ _MISSING = object()
 DEFAULT_CONFIG: dict[str, Json] = {
     "version": 1,
     "priority": 100,
-    "max_text_leaves": 8192,
-    "max_text_bytes": 4 * 1024 * 1024,
-    "cache_entries": 16384,
+    "max_text_leaves": 1024,
+    "max_text_bytes": 256 * 1024,
+    "max_text_leaf_bytes": 64 * 1024,
     "detector_endpoint": "http://127.0.0.1:8001/v1",
     "detector_model": "fastino/gliner2-privacy-filter-PII-multi",
     "detector_api_key_env": "EMPTY",
@@ -43,7 +43,7 @@ DEFAULT_CONFIG: dict[str, Json] = {
     "evaluator_model": "nvidia/nemotron-3.5-lightning-30b-a3b",
     "evaluator_api_key_env": "NVIDIA_API_KEY",
     "threshold": 0.3,
-    "provider_timeout_seconds": 300,
+    "provider_timeout_seconds": 20,
     "data_summary": "Copied AI-agent observability containing prompts, model responses, and tool traffic.",
     "secret_env": {},
 }
@@ -112,6 +112,7 @@ class NemoAnonymizerWorker(WorkerPlugin):
         if self._sanitizer is not None:
             raise RuntimeError("NeMo Anonymizer worker is already registered")
 
+        sanitizer: ObservationSanitizer | None = None
         try:
             self._secret_environment.install(cast(dict[str, str], settings["secret_env"]))
             backend_config = BackendConfig(
@@ -130,7 +131,7 @@ class NemoAnonymizerWorker(WorkerPlugin):
                 AnonymizerBackend(backend_config),
                 max_leaves=cast(int, settings["max_text_leaves"]),
                 max_bytes=cast(int, settings["max_text_bytes"]),
-                cache_entries=cast(int, settings["cache_entries"]),
+                max_leaf_bytes=cast(int, settings["max_text_leaf_bytes"]),
             )
             priority = cast(int, settings["priority"])
 
@@ -142,55 +143,19 @@ class NemoAnonymizerWorker(WorkerPlugin):
                 except Exception:
                     raise RuntimeError("nemo_anonymizer.event_sanitization_failed") from None
 
-            async def sanitize_tool(_name: str, value: Json) -> Json:
-                return await _sanitize_value(sanitizer, value, failure_code="tool_sanitization_failed")
-
-            async def sanitize_llm_request(request: dict[str, Any], context: Any) -> dict[str, Any]:
-                try:
-                    codec = context.resolve_codec()
-                    if codec is None:
-                        sanitized = await sanitizer.sanitize(request, preserve_protocol_values=True)
-                    else:
-                        annotated = await codec.decode(request)
-                        values = await sanitizer.sanitize(
-                            {"annotation": annotated, "request": request},
-                            preserve_protocol_values=True,
-                        )
-                        if not isinstance(values, dict):
-                            raise TypeError
-                        sanitized = await codec.encode(values["annotation"], values["request"])
-                    if not isinstance(sanitized, dict):
-                        raise TypeError
-                    return sanitized
-                except asyncio.CancelledError:
-                    raise
-                except Exception:
-                    raise RuntimeError("nemo_anonymizer.llm_request_sanitization_failed") from None
-
-            async def sanitize_llm_response(response: Json, context: Any) -> Json:
-                try:
-                    codec = context.resolve_codec()
-                    sanitized = await sanitizer.sanitize(response, preserve_protocol_values=True)
-                    if codec is not None:
-                        # The response proxy cannot encode. Decode the returned
-                        # copy so a rewrite that invalidates the active provider
-                        # shape fails closed before subscriber fan-out.
-                        await codec.decode(sanitized)
-                    return sanitized
-                except asyncio.CancelledError:
-                    raise
-                except Exception:
-                    raise RuntimeError("nemo_anonymizer.llm_response_sanitization_failed") from None
-
+            # Relay finishes its observability-only LLM/tool transforms before
+            # these event sanitizers run. One pass therefore sees the final
+            # copied data, normalized profile, and metadata together.
             ctx.register_mark_sanitize_guardrail("mark", sanitize_event, priority=priority)
             ctx.register_scope_sanitize_start_guardrail("scope_start", sanitize_event, priority=priority)
             ctx.register_scope_sanitize_end_guardrail("scope_end", sanitize_event, priority=priority)
-            ctx.register_tool_sanitize_request_guardrail("tool_input", sanitize_tool, priority=priority)
-            ctx.register_tool_sanitize_response_guardrail("tool_output", sanitize_tool, priority=priority)
-            ctx.register_llm_sanitize_request_guardrail("llm_input", sanitize_llm_request, priority=priority)
-            ctx.register_llm_sanitize_response_guardrail("llm_output", sanitize_llm_response, priority=priority)
             self._sanitizer = sanitizer
         except BaseException:
+            if sanitizer is not None:
+                try:
+                    await asyncio.to_thread(sanitizer.close)
+                except Exception:
+                    pass
             self._secret_environment.restore()
             raise
 
@@ -225,9 +190,12 @@ def normalized_config(raw: Json) -> dict[str, Json]:
     priority = config["priority"]
     if not isinstance(priority, int) or isinstance(priority, bool) or not -(2**31) <= priority < 2**31:
         raise TypeError("priority must be a signed 32-bit integer")
-    for field in ("max_text_leaves", "max_text_bytes", "cache_entries"):
-        _positive_integer(config, field)
-    _positive_integer(config, "provider_timeout_seconds", maximum=3600)
+    _positive_integer(config, "max_text_leaves", maximum=4096)
+    _positive_integer(config, "max_text_bytes", maximum=4 * 1024 * 1024)
+    _positive_integer(config, "max_text_leaf_bytes", maximum=64 * 1024)
+    if cast(int, config["max_text_leaf_bytes"]) > cast(int, config["max_text_bytes"]):
+        raise ValueError("max_text_leaf_bytes must not exceed max_text_bytes")
+    _positive_integer(config, "provider_timeout_seconds", maximum=29)
     for field in ("detector_endpoint", "detector_model", "evaluator_endpoint", "evaluator_model"):
         _nonempty_string(config, field)
     for field in ("detector_api_key_env", "evaluator_api_key_env"):
@@ -241,7 +209,16 @@ def normalized_config(raw: Json) -> dict[str, Json]:
     summary = config["data_summary"]
     if summary is not None and (not isinstance(summary, str) or len(summary) > 16_384):
         raise TypeError("data_summary must be null or a string no longer than 16384 characters")
-    _validate_secret_env(config["secret_env"])
+    secret_env = config["secret_env"]
+    _validate_secret_env(secret_env)
+    allowed_secret_names = {
+        cast(str, config[field])
+        for field in ("detector_api_key_env", "evaluator_api_key_env")
+        if config[field] != "EMPTY"
+    }
+    unexpected_secret_names = set(cast(dict[str, str], secret_env)) - allowed_secret_names
+    if unexpected_secret_names:
+        raise ValueError("secret_env may contain only the configured provider credential variables")
     return config
 
 
@@ -259,31 +236,16 @@ async def _sanitize_event_fields(
             "metadata": {"nemo_anonymizer.coverage": "stream_chunk_payload_omitted"},
         }
 
-    # Typed tool and LLM sanitizers protect Relay-managed lifecycle payloads,
-    # but callers may also emit generic scopes with those categories. Relay
-    # does not expose provenance here, so inspect every mutable field again.
-    # This also covers compatibility fallbacks and future profile fields.
+    # Relay's dispatcher has already assembled the final observability copy for
+    # managed LLM/tool lifecycles. Generic scopes use the same event shape, so
+    # one complete pass covers both paths without provenance heuristics.
+
     sanitized = await sanitizer.sanitize(dict(fields), preserve_protocol_values=True)
     if not isinstance(sanitized, dict):
         raise RuntimeError("Anonymizer returned invalid event sanitizer fields")
     result = dict(fields)
     result.update(sanitized)
     return cast(EventSanitizeFields, result)
-
-
-async def _sanitize_value(
-    sanitizer: ObservationSanitizer,
-    value: Json,
-    *,
-    failure_code: str,
-    preserve_protocol_values: bool = False,
-) -> Json:
-    try:
-        return await sanitizer.sanitize(value, preserve_protocol_values=preserve_protocol_values)
-    except asyncio.CancelledError:
-        raise
-    except Exception:
-        raise RuntimeError(f"nemo_anonymizer.{failure_code}") from None
 
 
 def _positive_integer(config: dict[str, Json], field: str, *, maximum: int | None = None) -> None:

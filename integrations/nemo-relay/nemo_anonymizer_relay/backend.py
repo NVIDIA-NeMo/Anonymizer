@@ -25,10 +25,6 @@ class RedactionSpan:
 class BackendResultError(RuntimeError):
     """A safe, text-free adapter failure suitable for exported diagnostics."""
 
-    def __init__(self, code: str) -> None:
-        self.safe_code = code
-        super().__init__(code)
-
 
 @dataclass(frozen=True)
 class _Placement:
@@ -44,7 +40,7 @@ class _PackedRecord:
 
 
 _FIELD_SEPARATOR = "\n\n[RELAY OBSERVABILITY FIELD]\n\n"
-_MAX_PACKED_RECORD_CHARS = 16_000
+_MAX_PACKED_RECORD_CHARS = 64 * 1024
 
 
 @dataclass(frozen=True)
@@ -302,6 +298,8 @@ def _pack_texts(texts: list[str], max_chars: int = _MAX_PACKED_RECORD_CHARS) -> 
         length = 0
 
     for text_index, text in enumerate(texts):
+        if len(text) > max_chars:
+            raise BackendResultError("input_text_exceeds_packed_record_limit")
         addition = len(text) + (len(_FIELD_SEPARATOR) if parts else 0)
         if parts and length + addition > max_chars:
             flush()
