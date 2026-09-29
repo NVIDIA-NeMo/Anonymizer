@@ -51,7 +51,7 @@ from anonymizer.engine.constants import (
     DEFAULT_ENTITY_LABELS,
 )
 from anonymizer.engine.detection.detection_workflow import EntityDetectionWorkflow
-from anonymizer.engine.detection.entity_label_examples import resolve_entity_ontology
+from anonymizer.engine.detection.entity_label_examples import resolve_entity_label_config
 from anonymizer.engine.evaluation.detection_judge import DetectionJudgeWorkflow
 from anonymizer.engine.evaluation.entity_coverage_judge import EntityCoverageWorkflow
 from anonymizer.engine.evaluation.replace.attribute_fidelity_judge import AttributeFidelityJudgeWorkflow
@@ -694,7 +694,7 @@ class Anonymizer:
             preview_num_records = effective_records
         else:
             logger.info("🔍 Running entity detection on %d records", num_records)
-        ontology = resolve_entity_ontology(
+        label_config = resolve_entity_label_config(
             entity_labels=config.detect.entity_labels,
             excluded_entity_labels=config.detect.excluded_entity_labels,
             entity_label_examples=config.detect.entity_label_examples,
@@ -702,13 +702,13 @@ class Anonymizer:
         configured_label_count = len(
             config.detect.entity_labels if config.detect.entity_labels is not None else DEFAULT_ENTITY_LABELS
         )
-        effective_label_count = len(ontology.labels)
+        effective_label_count = len(label_config.labels)
         removed_label_count = configured_label_count - effective_label_count
         label_scope: list[str] | str
         if config.detect.entity_labels is None:
             label_scope = "(defaults; see anonymizer.DEFAULT_ENTITY_LABELS for the pre-exclusion list)"
         else:
-            label_scope = ontology.labels
+            label_scope = label_config.labels
         if logger.isEnabledFor(logging.DEBUG):
             text_lengths = input_df[COL_TEXT].astype(str).str.len()
             logger.debug(

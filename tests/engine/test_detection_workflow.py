@@ -43,7 +43,7 @@ from anonymizer.engine.detection.detection_workflow import (
     _get_validation_prompt,
     _materialize_final_entities,
 )
-from anonymizer.engine.detection.entity_label_examples import resolve_entity_ontology
+from anonymizer.engine.detection.entity_label_examples import resolve_entity_label_config
 from anonymizer.engine.ndd.adapter import FailedRecord, WorkflowRunResult
 from anonymizer.engine.ndd.model_loader import (
     load_default_model_selection,
@@ -409,58 +409,58 @@ def test_resolve_model_aliases_wraps_scalar_roles() -> None:
     assert resolve_model_aliases("entity_detector", selection) == [selection.entity_detector]
 
 
-def test_resolve_entity_ontology_none_uses_defaults() -> None:
-    ontology = resolve_entity_ontology(entity_labels=None)
-    assert ontology.labels == list(DEFAULT_ENTITY_LABELS)
+def test_resolve_entity_label_config_none_uses_defaults() -> None:
+    label_config = resolve_entity_label_config(entity_labels=None)
+    assert label_config.labels == list(DEFAULT_ENTITY_LABELS)
 
 
-def test_resolve_entity_ontology_does_not_append_defaults_for_explicit_label_set() -> None:
-    ontology = resolve_entity_ontology(entity_labels=["non_default_label"])
-    assert ontology.labels == ["non_default_label"]
+def test_resolve_entity_label_config_does_not_append_defaults_for_explicit_label_set() -> None:
+    label_config = resolve_entity_label_config(entity_labels=["non_default_label"])
+    assert label_config.labels == ["non_default_label"]
 
 
-def test_resolve_entity_ontology_normalizes_provided_labels() -> None:
-    ontology = resolve_entity_ontology(entity_labels=["FIRST_NAME", " email "])
-    assert ontology.labels == ["first_name", "email"]
+def test_resolve_entity_label_config_normalizes_provided_labels() -> None:
+    label_config = resolve_entity_label_config(entity_labels=["FIRST_NAME", " email "])
+    assert label_config.labels == ["first_name", "email"]
 
 
-def test_resolve_entity_ontology_merges_built_in_examples_without_global_mutation() -> None:
+def test_resolve_entity_label_config_merges_built_in_examples_without_global_mutation() -> None:
     original = list(ENTITY_LABEL_EXAMPLES["api_key"])
 
-    ontology = resolve_entity_ontology(
+    label_config = resolve_entity_label_config(
         entity_labels=None,
         entity_label_examples={"api_key": ["sk-ant-api03-abc123", original[0]]},
     )
 
-    assert ontology.validator_examples["api_key"] == [*original, "sk-ant-api03-abc123"]
-    assert ontology.augmenter_examples == {"api_key": ["sk-ant-api03-abc123", original[0]]}
+    assert label_config.validator_examples["api_key"] == [*original, "sk-ant-api03-abc123"]
+    assert label_config.augmenter_examples == {"api_key": ["sk-ant-api03-abc123", original[0]]}
     assert ENTITY_LABEL_EXAMPLES["api_key"] == original
 
 
-def test_resolve_entity_ontology_rejects_undeclared_non_default_example_label() -> None:
+def test_resolve_entity_label_config_rejects_undeclared_non_default_example_label() -> None:
     with pytest.raises(ValueError, match="outside the active label set"):
-        resolve_entity_ontology(
+        resolve_entity_label_config(
             entity_labels=None,
             entity_label_examples={"vendor_api_key": ["acme_live_abc123"]},
         )
 
 
-def test_resolve_entity_ontology_explicit_non_default_only_is_strict() -> None:
-    ontology = resolve_entity_ontology(
+def test_resolve_entity_label_config_explicit_non_default_only_is_strict() -> None:
+    label_config = resolve_entity_label_config(
         entity_labels=["vendor_api_key"],
         entity_label_examples={"vendor_api_key": ["acme_live_abc123"]},
     )
 
-    assert ontology.labels == ["vendor_api_key"]
-    assert ontology.strict_labels is True
+    assert label_config.labels == ["vendor_api_key"]
+    assert label_config.strict_labels is True
 
 
-def test_resolve_entity_ontology_keeps_sequential_runs_isolated() -> None:
-    first = resolve_entity_ontology(
+def test_resolve_entity_label_config_keeps_sequential_runs_isolated() -> None:
+    first = resolve_entity_label_config(
         entity_labels=[*DEFAULT_ENTITY_LABELS, "vendor_api_key"],
         entity_label_examples={"vendor_api_key": ["acme_live_abc123"]},
     )
-    second = resolve_entity_ontology(entity_labels=None)
+    second = resolve_entity_label_config(entity_labels=None)
 
     assert "vendor_api_key" in first.labels
     assert "vendor_api_key" not in second.labels
@@ -511,8 +511,8 @@ def test_validation_prompt_includes_data_summary() -> None:
     assert "Data context: Medical records" in prompt
 
 
-def test_validation_prompt_adds_configured_examples_to_full_ontology() -> None:
-    ontology = resolve_entity_ontology(
+def test_validation_prompt_adds_configured_examples_to_full_label_config() -> None:
+    label_config = resolve_entity_label_config(
         entity_labels=[*DEFAULT_ENTITY_LABELS, "vendor_api_key"],
         entity_label_examples={
             "api_key": ["sk-ant-api03-abc123"],
@@ -522,9 +522,9 @@ def test_validation_prompt_adds_configured_examples_to_full_ontology() -> None:
 
     prompt = _get_validation_prompt(
         data_summary=None,
-        labels=ontology.labels,
-        examples_by_label=ontology.validator_examples,
-        configured_examples=ontology.augmenter_examples,
+        labels=label_config.labels,
+        examples_by_label=label_config.validator_examples,
+        configured_examples=label_config.augmenter_examples,
     )
 
     assert "sk-abc123def456" in prompt
@@ -733,33 +733,37 @@ def test_defaults_plus_non_default_examples_use_strict_augmentation(
 # ── excluded_entity_labels ────────────────────────────────────────────────────
 
 
-def test_resolve_entity_ontology_exclusions_remove_labels() -> None:
-    ontology = resolve_entity_ontology(entity_labels=["first_name", "email", "city"], excluded_entity_labels={"email"})
-    assert "email" not in ontology.labels
-    assert "first_name" in ontology.labels
-    assert "city" in ontology.labels
+def test_resolve_entity_label_config_exclusions_remove_labels() -> None:
+    label_config = resolve_entity_label_config(
+        entity_labels=["first_name", "email", "city"], excluded_entity_labels={"email"}
+    )
+    assert "email" not in label_config.labels
+    assert "first_name" in label_config.labels
+    assert "city" in label_config.labels
 
 
-def test_resolve_entity_ontology_exclusions_normalize_configured_labels() -> None:
-    ontology = resolve_entity_ontology(entity_labels=["first_name", " Email "], excluded_entity_labels={" EMAIL "})
-    assert ontology.labels == ["first_name"]
+def test_resolve_entity_label_config_exclusions_normalize_configured_labels() -> None:
+    label_config = resolve_entity_label_config(
+        entity_labels=["first_name", " Email "], excluded_entity_labels={" EMAIL "}
+    )
+    assert label_config.labels == ["first_name"]
 
 
-def test_resolve_entity_ontology_exclusions_apply_to_defaults() -> None:
-    ontology = resolve_entity_ontology(entity_labels=None, excluded_entity_labels={"ssn", "first_name"})
-    assert "ssn" not in ontology.labels
-    assert "first_name" not in ontology.labels
-    assert "email" in ontology.labels
+def test_resolve_entity_label_config_exclusions_apply_to_defaults() -> None:
+    label_config = resolve_entity_label_config(entity_labels=None, excluded_entity_labels={"ssn", "first_name"})
+    assert "ssn" not in label_config.labels
+    assert "first_name" not in label_config.labels
+    assert "email" in label_config.labels
 
 
-def test_resolve_entity_ontology_none_exclusions_is_noop() -> None:
-    ontology = resolve_entity_ontology(entity_labels=["email", "city"], excluded_entity_labels=None)
-    assert ontology.labels == ["email", "city"]
+def test_resolve_entity_label_config_none_exclusions_is_noop() -> None:
+    label_config = resolve_entity_label_config(entity_labels=["email", "city"], excluded_entity_labels=None)
+    assert label_config.labels == ["email", "city"]
 
 
-def test_resolve_entity_ontology_empty_result_raises() -> None:
+def test_resolve_entity_label_config_empty_result_raises() -> None:
     with pytest.raises(ValueError, match="effective detection label set is empty"):
-        resolve_entity_ontology(entity_labels=["email"], excluded_entity_labels={"email"})
+        resolve_entity_label_config(entity_labels=["email"], excluded_entity_labels={"email"})
 
 
 def test_materialize_final_entities_normalizes_configured_labels() -> None:

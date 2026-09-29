@@ -44,7 +44,7 @@ config = AnonymizerConfig(
 | Field | Default | Description |
 |-------|---------|-------------|
 | `entity_labels` | `None` (all defaults) | List of labels to detect. Leave unset (or pass `None`) to use the full default set. |
-| `entity_label_examples` | `{}` | User-configured positive examples keyed by label. Examples for default labels extend their built-in examples; non-default keys must also appear in an explicit `entity_labels` set. |
+| `entity_label_examples` | `{}` | User-configured positive examples organized by label. Examples for default labels extend their built-in examples; every referenced non-default label must also appear in an explicit `entity_labels` set. |
 | `excluded_entity_labels` | `None` | List of labels to exclude from detection, even if present in `entity_labels` or the default set. Excluded labels are removed from the active detection scope and filtered from the final entity output. |
 | `gliner_threshold` | `0.3` | GLiNER confidence threshold (0.0--1.0). Lower values detect more entities but may increase false positives. |
 | `validation_max_entities_per_call` | `100` | Maximum candidate entities per validator LLM call. Rows with more candidates are split into chunks. See [Chunked validation](#chunked-validation). |
@@ -159,7 +159,7 @@ Detect(
 )
 ```
 
-Every non-excluded configured example key must appear in the explicit label set. A missing or misspelled key raises a validation error. Because the label set is explicit, the augmenter is strict.
+Every non-excluded label referenced by `entity_label_examples` must appear in the explicit label set. A missing or misspelled label raises a validation error. Because the label set is explicit, the augmenter is strict.
 
 !!! warning "Examples are sent to model providers"
     Configured examples are embedded in prompts and exported detection builders. Use synthetic patterns, not production credentials, secrets, or real PII. Explicitly enabled raw DataDesigner message traces also contain the rendered prompts.

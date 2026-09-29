@@ -206,7 +206,7 @@ def test_entity_label_examples_exclusion_wins_over_explicit_mismatch(
     assert "acme_live_abc123" not in caplog.text
 
 
-def test_entity_label_examples_non_default_key_survives_all_default_exclusions() -> None:
+def test_entity_label_examples_for_non_default_label_survive_all_default_exclusions() -> None:
     detect = Detect(
         entity_labels=[*DEFAULT_ENTITY_LABELS, "vendor_api_key"],
         excluded_entity_labels=list(DEFAULT_ENTITY_LABELS),
@@ -217,7 +217,7 @@ def test_entity_label_examples_non_default_key_survives_all_default_exclusions()
     assert detect.entity_label_examples == {"vendor_api_key": ["acme_live_abc123"]}
 
 
-def test_entity_label_examples_excluding_all_defaults_and_non_default_key_raises() -> None:
+def test_entity_label_examples_excluding_all_defaults_and_non_default_label_raises() -> None:
     with pytest.raises(ValidationError, match="empty effective detection set"):
         Detect(
             excluded_entity_labels=[*DEFAULT_ENTITY_LABELS, "vendor_api_key"],

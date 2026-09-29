@@ -68,7 +68,7 @@ Run records retain the raw detection configuration in `entity_labels`,
 include `effective_entity_labels` and `effective_entity_label_count`, which
 describe the configured/default label set after exclusions. Configured example
 values are never recorded. In permissive mode, augmentation may still emit a
-label outside this configured ontology. Readers prefer the effective count and
+label outside this configured label set. Readers prefer the effective count and
 fall back to `entity_label_count` for historical records.
 
 ## Output and Sinks

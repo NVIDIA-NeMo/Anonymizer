@@ -107,12 +107,18 @@ Try in order:
    detect = Detect(
        entity_labels=[*DEFAULT_ENTITY_LABELS, "clinical_facility"],
        entity_label_examples={
-           "clinical_facility": ["North Valley Oncology Center"],
+           "clinical_facility": [
+               "North Valley Oncology Center",
+               "Lakeside Children's Clinic",
+               "Cedar Grove Medical Pavilion",
+           ],
        }
    )
    ```
 
-   Configured examples are positive guidance, not a format allowlist, so the detector can still find other facility-name formats. A non-default or misspelled example key that is absent from the explicit label set raises a validation error. Use only synthetic examples—the values are included in prompts, exported builders, and explicitly enabled raw message traces.
+   Providing three or more diverse examples can help show the model the range of values associated with a non-default label. Default labels already have built-in examples, so add only the dataset-specific formats that need extra guidance. Keep configured lists short because they increase prompt size.
+
+   Configured examples are positive guidance, not a format allowlist, so the detector can still find other facility-name formats. A non-default or misspelled label referenced by `entity_label_examples` must appear in the explicit label set or configuration raises a validation error. Use only synthetic examples—the values are included in prompts, exported builders, and explicitly enabled raw message traces.
 3. **Set `AnonymizerInput.data_summary`** so the augmenter LLM has domain context. A line like `"De-identified pediatric oncology progress notes"` materially improves coverage.
 4. **For rewrite mode**, latent entities are detected separately. If a piece of inferable information (e.g. "during her third round of chemo" → cancer treatment) is being preserved verbatim, the latent detector likely missed it — refine `Rewrite.privacy_goal.protect` to call out the inference category explicitly.
 

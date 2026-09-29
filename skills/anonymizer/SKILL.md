@@ -44,7 +44,7 @@ regulatory and business context.
 
 - **`Detect.entity_labels=None` (the default) is permissive** — the augmenter LLM may invent labels not in `DEFAULT_ENTITY_LABELS`. Setting an explicit list switches to **strict mode** where *only* the listed labels are detected.
 - **Label terminology:** A **default label** is present in `DEFAULT_ENTITY_LABELS`, while any label not present in this list is called a  **non-default label**. An **explicit label set** is supplied through `entity_labels` and may contain either kind.
-- **`Detect.entity_label_examples` provides configured positive examples.** For a default label, configured examples are appended to its built-in examples. A non-default example key must also appear in the explicit `entity_labels` set. To keep every default while adding one, use `entity_labels=[*DEFAULT_ENTITY_LABELS, "clinical_facility"]`. Examples do not constrain formats, guide substitution, or flow into evaluation. Use short synthetic examples because prompts, exported builders, provider requests, and explicitly enabled raw message traces contain them.
+- **`Detect.entity_label_examples` provides configured positive examples for detection.** For a default label, configured examples are appended to its built-in examples. Every non-default label referenced by `entity_label_examples` must also appear in the explicit `entity_labels` set. To keep every default while adding one, use `entity_labels=[*DEFAULT_ENTITY_LABELS, "clinical_facility"]`. Configured examples are soft detection guidance: they do not limit detection to the listed value formats, and they are not passed to substitution or evaluation. Keep configured examples concise and lists short to limit prompt growth, token cost, latency, and context-window pressure. Use synthetic values because configured examples are included in prompts, exported builders, provider requests, and explicitly enabled raw message traces.
 - **`Detect.excluded_entity_labels`** removes specific label types from the active detection scope and final results. Use it when a label type is systematically noisy for your data or should never be anonymized (e.g. `Detect(excluded_entity_labels=["occupation", "gender"])`). Exclusions take precedence over labels and examples; configured examples for excluded labels are ignored with a warning. If exclusions empty the default or explicit label set, `Detect` raises a `ValueError`.
 - **GLiNER is zero-shot** — entity labels are natural-language concept names (e.g. `"clinical_facility"`, `"internal_project_codename"`), not codes or enum values. Any concept you can name in English is a label GLiNER can detect.
 - **`Rewrite.instructions` is a dead field today** — it exists on the model but the rewrite engine never reads it. Do not use it. Put rewriter guidance in `privacy_goal.protect` / `privacy_goal.preserve` instead.
@@ -123,7 +123,7 @@ def build_config() -> tuple[AnonymizerInput, AnonymizerConfig]:
     )
 
     detect = Detect(
-        # Non-default example keys must also be in this explicit label set.
+        # Every non-default label referenced by entity_label_examples must also be in this explicit label set.
         # entity_labels=["clinical_facility", "diagnosis_code"],
         # entity_label_examples={
         #     "clinical_facility": ["North Valley Oncology Center"],

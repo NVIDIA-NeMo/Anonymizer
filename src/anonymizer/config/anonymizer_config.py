@@ -89,7 +89,7 @@ class Detect(BaseModel):
         default_factory=dict,
         repr=False,
         description=(
-            "Configured positive detection examples keyed by entity label. For default labels, these "
+            "Configured positive detection examples organized by entity label. For default labels, these "
             "values are appended to the built-in examples. Non-default labels must also be declared "
             "in an explicit entity_labels set; examples never activate labels implicitly."
         ),
@@ -161,7 +161,8 @@ class Detect(BaseModel):
         normalized, duplicate_keys, duplicate_value_labels = normalize_entity_label_examples(value)
         if duplicate_keys:
             logger.warning(
-                "entity_label_examples contained keys that normalize to the same label; merged automatically: %s",
+                "entity_label_examples contained label names that normalize to the same label; "
+                "merged automatically: %s",
                 duplicate_keys,
             )
         if duplicate_value_labels:

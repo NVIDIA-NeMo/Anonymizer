@@ -42,7 +42,7 @@ from anonymizer.engine.constants import (
     ENTITY_LABEL_EXAMPLES,
     _jinja,
 )
-from anonymizer.engine.detection.entity_label_examples import ResolvedEntityOntology, resolve_entity_ontology
+from anonymizer.engine.detection.entity_label_examples import ResolvedEntityLabelConfig, resolve_entity_label_config
 from anonymizer.engine.detection.postprocess import (
     EntitySpan,
     group_entities_by_value,
@@ -112,7 +112,7 @@ class EntityDetectionWorkflow:
         entity_label_examples: dict[str, list[str]] | None = None,
         data_summary: str | None = None,
         preview_num_records: int | None = None,
-        _resolved_ontology: ResolvedEntityOntology | None = None,
+        _resolved_label_config: ResolvedEntityLabelConfig | None = None,
     ) -> EntityDetectionResult:
         """Run the core detection pipeline: GLiNER NER, LLM validation, LLM augmentation, and finalization.
 
@@ -133,7 +133,7 @@ class EntityDetectionWorkflow:
             excluded_entity_labels=excluded_entity_labels,
             entity_label_examples=entity_label_examples,
             data_summary=data_summary,
-            _resolved_ontology=_resolved_ontology,
+            _resolved_label_config=_resolved_label_config,
         )
         detection_result = self._adapter.run_workflow(
             dataframe,
@@ -158,7 +158,7 @@ class EntityDetectionWorkflow:
         excluded_entity_labels: list[str] | None = None,
         entity_label_examples: dict[str, list[str]] | None = None,
         data_summary: str | None = None,
-        _resolved_ontology: ResolvedEntityOntology | None = None,
+        _resolved_label_config: ResolvedEntityLabelConfig | None = None,
     ) -> tuple[list[ModelConfig], list[ColumnConfigT]]:
         """Build the (model_configs, columns) for the core detection workflow.
 
@@ -166,12 +166,12 @@ class EntityDetectionWorkflow:
         and :meth:`build_detection_config` (which exports it for an external runtime),
         so both paths run exactly the same workflow.
         """
-        ontology = _resolved_ontology or resolve_entity_ontology(
+        label_config = _resolved_label_config or resolve_entity_label_config(
             entity_labels=entity_labels,
             excluded_entity_labels=excluded_entity_labels,
             entity_label_examples=entity_label_examples,
         )
-        labels = ontology.labels
+        labels = label_config.labels
         workflow_model_configs = self._inject_detector_params(
             model_configs=model_configs,
             selected_models=selected_models,
@@ -228,8 +228,8 @@ class EntityDetectionWorkflow:
                     prompt_template=_get_validation_prompt(
                         data_summary=data_summary,
                         labels=labels,
-                        examples_by_label=ontology.validator_examples,
-                        configured_examples=ontology.augmenter_examples,
+                        examples_by_label=label_config.validator_examples,
+                        configured_examples=label_config.augmenter_examples,
                     ),
                     drop=True,
                 ),
@@ -247,8 +247,8 @@ class EntityDetectionWorkflow:
                     prompt=_get_augment_prompt(
                         data_summary=data_summary,
                         labels=labels,
-                        strict_labels=ontology.strict_labels,
-                        configured_examples=ontology.augmenter_examples,
+                        strict_labels=label_config.strict_labels,
+                        configured_examples=label_config.augmenter_examples,
                     ),
                     model_alias=augmenter_alias,
                     output_format=AugmentedEntitiesSchema,
@@ -262,7 +262,7 @@ class EntityDetectionWorkflow:
                     name=COL_DETECTED_ENTITIES,
                     operation=DetectionTransformOperation.APPLY_VALIDATION_AND_FINALIZE,
                     excluded_entity_labels=list(excluded_entity_labels or []),
-                    allowed_entity_labels=labels if ontology.strict_labels else None,
+                    allowed_entity_labels=labels if label_config.strict_labels else None,
                 ),
             ],
         )
@@ -366,19 +366,19 @@ class EntityDetectionWorkflow:
         privacy_goal: PrivacyGoal | None,
         data_summary: str | None = None,
         preview_num_records: int | None = None,
-        _resolved_ontology: ResolvedEntityOntology | None = None,
+        _resolved_label_config: ResolvedEntityLabelConfig | None = None,
     ) -> EntityDetectionResult:
         """Detect latent/inferred entities that could enable re-identification.
 
         Runs after ``detect_and_validate_entities`` when rewrite mode is
         enabled. Uses an LLM to identify entities inferable from context.
         """
-        ontology = _resolved_ontology or resolve_entity_ontology(
+        label_config = _resolved_label_config or resolve_entity_label_config(
             entity_labels=entity_labels,
             excluded_entity_labels=excluded_entity_labels,
             entity_label_examples=entity_label_examples,
         )
-        labels = ontology.labels
+        labels = label_config.labels
         workflow_model_configs = self._inject_detector_params(
             model_configs=model_configs,
             selected_models=selected_models,
@@ -445,7 +445,7 @@ class EntityDetectionWorkflow:
                 raise ValueError("privacy_goal is required when tag_latent_entities=True (rewrite mode)")
 
             compute_grouped = True if compute_grouped_entities is None else compute_grouped_entities
-            ontology = resolve_entity_ontology(
+            label_config = resolve_entity_label_config(
                 entity_labels=entity_labels,
                 excluded_entity_labels=excluded_entity_labels,
                 entity_label_examples=entity_label_examples,
@@ -463,7 +463,7 @@ class EntityDetectionWorkflow:
                 entity_label_examples=entity_label_examples,
                 data_summary=data_summary,
                 preview_num_records=preview_num_records,
-                _resolved_ontology=ontology,
+                _resolved_label_config=label_config,
             )
 
             if tag_latent_entities:
@@ -478,7 +478,7 @@ class EntityDetectionWorkflow:
                     privacy_goal=privacy_goal,
                     data_summary=data_summary,
                     preview_num_records=preview_num_records,
-                    _resolved_ontology=ontology,
+                    _resolved_label_config=label_config,
                 )
                 final_df = latent_result.dataframe.copy()
                 final_failures = [*detected_result.failed_records, *latent_result.failed_records]
@@ -490,7 +490,7 @@ class EntityDetectionWorkflow:
             # the augmenter is strict and out-of-scope labels are filtered.
             # entity_labels=None is the only way to get permissive augmentation.
             if COL_DETECTED_ENTITIES in final_df.columns:
-                allowed = set(ontology.labels) if ontology.strict_labels else None
+                allowed = set(label_config.labels) if label_config.strict_labels else None
                 excluded_entity_labels_set = set(excluded_entity_labels) if excluded_entity_labels else None
                 final_df[COL_FINAL_ENTITIES] = final_df[COL_DETECTED_ENTITIES].apply(
                     lambda raw: _materialize_final_entities(

@@ -12,7 +12,7 @@ from anonymizer.engine.detection.postprocess import normalize_label, normalize_l
 
 
 @dataclass
-class ResolvedEntityOntology:
+class ResolvedEntityLabelConfig:
     """Effective detection labels and stage-specific example mappings."""
 
     labels: list[str]
@@ -28,7 +28,7 @@ def normalize_entity_label_examples(
 
     Single source of truth for these rules, shared by ``Detect``'s pydantic
     validation (`anonymizer.config.anonymizer_config`), which reports the
-    returned duplicate info as warnings, and :func:`resolve_entity_ontology`,
+    returned duplicate info as warnings, and :func:`resolve_entity_label_config`,
     which validates direct engine callers (e.g. distributed export paths) that
     bypass ``Detect``. Returns a fresh, defensively copied mapping plus the
     normalized keys that were merged as duplicates and the labels that had
@@ -39,10 +39,10 @@ def normalize_entity_label_examples(
     duplicate_value_labels: list[str] = []
     for raw_label, raw_examples in (entity_label_examples or {}).items():
         if not isinstance(raw_label, str):
-            raise ValueError("entity_label_examples keys must be non-blank strings.")
+            raise ValueError("Labels in entity_label_examples must be non-blank strings.")
         label = normalize_label(raw_label)
         if not label:
-            raise ValueError("entity_label_examples keys must be non-blank strings.")
+            raise ValueError("Labels in entity_label_examples must be non-blank strings.")
         if not isinstance(raw_examples, list) or not raw_examples:
             raise ValueError(f"entity_label_examples[{label!r}] must be a non-empty list of strings.")
 
@@ -61,12 +61,12 @@ def normalize_entity_label_examples(
     return normalized, sorted(set(duplicate_keys)), sorted(set(duplicate_value_labels))
 
 
-def resolve_entity_ontology(
+def resolve_entity_label_config(
     *,
     entity_labels: list[str] | None,
     excluded_entity_labels: list[str] | set[str] | None = None,
     entity_label_examples: dict[str, list[str]] | None = None,
-) -> ResolvedEntityOntology:
+) -> ResolvedEntityLabelConfig:
     """Resolve effective labels and fresh stage-specific example mappings."""
     strict_labels = entity_labels is not None
     labels = list(DEFAULT_ENTITY_LABELS) if entity_labels is None else list(entity_labels)
@@ -97,7 +97,7 @@ def resolve_entity_ontology(
                 examples.append(example)
         validator_examples[label] = examples
 
-    return ResolvedEntityOntology(
+    return ResolvedEntityLabelConfig(
         labels=normalized_labels,
         validator_examples=validator_examples,
         augmenter_examples={
