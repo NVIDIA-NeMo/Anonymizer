@@ -63,7 +63,9 @@ class TypeFidelityJudgmentSchema(BaseModel):
         return {**value, "invalid_replacements": []}
 
     @model_validator(mode="after")
-    def require_negative_details(self) -> TypeFidelityJudgmentSchema:
+    def validate_verdict_details_consistency(self) -> TypeFidelityJudgmentSchema:
+        if self.all_valid and self.invalid_replacements:
+            raise ValueError("invalid_replacements must be empty when all_valid is True.")
         if not self.all_valid and not self.invalid_replacements:
             raise ValueError("invalid_replacements must be non-empty when all_valid is False.")
         return self

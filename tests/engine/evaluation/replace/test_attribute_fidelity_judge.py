@@ -93,8 +93,50 @@ def test_replacements_for_judge_returns_empty_for_malformed() -> None:
     [
         (True, None, True),
         (True, [], True),
+        (
+            True,
+            [
+                {
+                    "original": "Sarah",
+                    "label": "first_name",
+                    "synthetic": "Maria",
+                    "attributes_checked": ["gender"],
+                    "passes": True,
+                    "reasoning": "Both names imply feminine gender.",
+                }
+            ],
+            True,
+        ),
+        (
+            True,
+            [
+                {
+                    "original": "40",
+                    "label": "age",
+                    "synthetic": "12",
+                    "attributes_checked": ["age_bucket"],
+                    "passes": False,
+                    "reasoning": "Adult bucket changed to child.",
+                }
+            ],
+            False,
+        ),
         (False, None, False),
         (False, [], False),
+        (
+            False,
+            [
+                {
+                    "original": "Sarah",
+                    "label": "first_name",
+                    "synthetic": "Maria",
+                    "attributes_checked": ["gender"],
+                    "passes": True,
+                    "reasoning": "Both names imply feminine gender.",
+                }
+            ],
+            False,
+        ),
         (
             False,
             [
@@ -111,7 +153,7 @@ def test_replacements_for_judge_returns_empty_for_malformed() -> None:
         ),
     ],
 )
-def test_judgment_schema_normalizes_null_details_only_for_positive_verdicts(
+def test_judgment_schema_normalizes_positive_null_and_enforces_verdict_consistency(
     all_valid: bool,
     entities: list[dict[str, object]] | None,
     accepted: bool,

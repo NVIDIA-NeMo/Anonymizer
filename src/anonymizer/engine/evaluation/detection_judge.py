@@ -63,7 +63,9 @@ class DetectionJudgmentSchema(BaseModel):
         return {**value, "invalid_entities": []}
 
     @model_validator(mode="after")
-    def require_negative_details(self) -> DetectionJudgmentSchema:
+    def validate_verdict_details_consistency(self) -> DetectionJudgmentSchema:
+        if self.all_valid and self.invalid_entities:
+            raise ValueError("invalid_entities must be empty when all_valid is True.")
         if not self.all_valid and not self.invalid_entities:
             raise ValueError("invalid_entities must be non-empty when all_valid is False.")
         return self

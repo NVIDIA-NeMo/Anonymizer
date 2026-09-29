@@ -116,8 +116,44 @@ def test_replacements_for_judge_returns_empty_for_malformed() -> None:
     [
         (True, None, True),
         (True, [], True),
+        (
+            True,
+            [
+                {
+                    "description": "city <-> state",
+                    "entities": ["Austin (city) -> Portland", "TX (state) -> OR"],
+                    "passes": True,
+                    "reasoning": "Portland is in Oregon.",
+                }
+            ],
+            True,
+        ),
+        (
+            True,
+            [
+                {
+                    "description": "city <-> state",
+                    "entities": ["Austin (city) -> Portland", "TX (state) -> CA"],
+                    "passes": False,
+                    "reasoning": "Portland is not in California.",
+                }
+            ],
+            False,
+        ),
         (False, None, False),
         (False, [], False),
+        (
+            False,
+            [
+                {
+                    "description": "city <-> state",
+                    "entities": ["Austin (city) -> Portland", "TX (state) -> OR"],
+                    "passes": True,
+                    "reasoning": "Portland is in Oregon.",
+                }
+            ],
+            False,
+        ),
         (
             False,
             [
@@ -132,7 +168,7 @@ def test_replacements_for_judge_returns_empty_for_malformed() -> None:
         ),
     ],
 )
-def test_judgment_schema_normalizes_null_details_only_for_positive_verdicts(
+def test_judgment_schema_normalizes_positive_null_and_enforces_verdict_consistency(
     all_consistent: bool,
     relations: list[dict[str, object]] | None,
     accepted: bool,

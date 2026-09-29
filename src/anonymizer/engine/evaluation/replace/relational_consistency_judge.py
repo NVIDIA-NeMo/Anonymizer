@@ -71,9 +71,12 @@ class RelationalConsistencyJudgmentSchema(BaseModel):
         return {**value, "relations": []}
 
     @model_validator(mode="after")
-    def require_negative_details(self) -> RelationalConsistencyJudgmentSchema:
-        if not self.all_consistent and not self.relations:
-            raise ValueError("relations must be non-empty when all_consistent is False.")
+    def validate_verdict_details_consistency(self) -> RelationalConsistencyJudgmentSchema:
+        has_failure = any(not relation.passes for relation in self.relations)
+        if self.all_consistent and has_failure:
+            raise ValueError("relations must not contain a failing check when all_consistent is True.")
+        if not self.all_consistent and not has_failure:
+            raise ValueError("relations must contain at least one failing check when all_consistent is False.")
         return self
 
 

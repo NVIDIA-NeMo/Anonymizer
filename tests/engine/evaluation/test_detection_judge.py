@@ -97,6 +97,11 @@ def test_label_examples_for_judge_empty_when_no_entities() -> None:
     [
         (True, None, True),
         (True, [], True),
+        (
+            True,
+            [{"value": "morning", "label": "date_time", "reasoning": "common word"}],
+            False,
+        ),
         (False, None, False),
         (False, [], False),
         (
@@ -106,7 +111,7 @@ def test_label_examples_for_judge_empty_when_no_entities() -> None:
         ),
     ],
 )
-def test_judgment_schema_normalizes_null_details_only_for_positive_verdicts(
+def test_judgment_schema_normalizes_positive_null_and_enforces_verdict_consistency(
     all_valid: bool,
     invalid_entities: list[dict[str, str]] | None,
     accepted: bool,

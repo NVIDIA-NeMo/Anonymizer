@@ -70,9 +70,12 @@ class AttributeFidelityJudgmentSchema(BaseModel):
         return {**value, "entities": []}
 
     @model_validator(mode="after")
-    def require_negative_details(self) -> AttributeFidelityJudgmentSchema:
-        if not self.all_valid and not self.entities:
-            raise ValueError("entities must be non-empty when all_valid is False.")
+    def validate_verdict_details_consistency(self) -> AttributeFidelityJudgmentSchema:
+        has_failure = any(not entity.passes for entity in self.entities)
+        if self.all_valid and has_failure:
+            raise ValueError("entities must not contain a failing check when all_valid is True.")
+        if not self.all_valid and not has_failure:
+            raise ValueError("entities must contain at least one failing check when all_valid is False.")
         return self
 
 
