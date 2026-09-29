@@ -57,16 +57,16 @@ What to leave out:
 
 ## 2. (Detection) Detection knobs
 
-For most datasets the [detection](detection.md) defaults work. The main reason to adjust `entity_labels` is when your data has **domain-specific entities that can be described in plain English** — GLiNER is zero-shot, so any concept you can name (e.g. `"clinical_facility"`, `"internal_project_codename"`) becomes an entity it can find. Match the snake_case convention of `DEFAULT_ENTITY_LABELS`. If the entities you care about aren't in the default list, write them down and add them. Adjust `gliner_threshold` only when you see a specific recall or precision problem in preview.
+For most datasets the [detection](detection.md) defaults work. Use `entity_label_examples` when representative positive values help explain a default or non-default label. Match the snake_case convention of `DEFAULT_ENTITY_LABELS`. Adjust `gliner_threshold` only when you see a specific recall or precision problem in preview.
 
 ### `entity_labels`
 
 | Setting | Behavior | Use when |
 |---|---|---|
 | `None` (default) | Detect all `DEFAULT_ENTITY_LABELS`; the augmenter LLM can also infer new labels not in the default set | General-purpose — almost always the right starting point |
-| Explicit list | **Strict mode** — only the labels you list are detected, augmenter cannot invent new ones | You have a domain-specific entity that the defaults don't cover, or you want to *narrow* detection to a known short list |
+| Explicit list | **Strict mode** — only the labels you list are detected, augmenter cannot invent new ones | You have a non-default label, or you want to *narrow* detection to a known short list |
 
-Common ways to extend the default list:
+Common non-default labels include:
 
 - Healthcare: `clinical_facility`, `diagnosis_code`, `medication_name`, `lab_test_code`
 - Legal: `case_number`, `docket_number`, `statute_citation`, `judge_name`
@@ -76,23 +76,47 @@ Common ways to extend the default list:
 ```python
 from anonymizer import DEFAULT_ENTITY_LABELS, Detect
 
-detect = Detect(entity_labels=[*DEFAULT_ENTITY_LABELS, "clinical_facility", "diagnosis_code", "medication_name"])
+# Defaults plus these explicitly declared non-default labels.
+detect = Detect(
+    entity_labels=[
+        *DEFAULT_ENTITY_LABELS,
+        "clinical_facility",
+        "diagnosis_code",
+    ],
+    entity_label_examples={
+        "clinical_facility": ["North Valley Oncology Center"],
+        "diagnosis_code": ["C50.919"],
+    }
+)
+
+# Strict non-default-only detection uses an explicit label set.
+strict_detect = Detect(
+    entity_labels=["clinical_facility", "diagnosis_code"],
+    entity_label_examples={
+        "clinical_facility": ["North Valley Oncology Center"],
+        "diagnosis_code": ["C50.919"],
+    },
+)
 ```
+
+For a default label, configured examples are added to its built-in examples rather than replacing them. A non-default label has no built-in examples and must appear in an explicit `entity_labels` set. Examples are positive guidance, not format allowlists: an `api_key` in a different format may still be detected.
+
+Keep configured lists short and use synthetic values because they are sent to model providers. The validator receives the full resolved examples in each validation chunk; lowering `validation_max_entities_per_call` creates more chunks and repeats that complete example section more often, potentially increasing total input tokens and cost. The augmenter receives only configured examples.
 
 ### `excluded_entity_labels`
 
-Use when you want to **exclude** specific label types from detection without enumerating the entire allowlist. Excluded labels are removed before GLiNER runs, so they are never detected, augmented, or surfaced in results. The evaluation judges also ignore excluded label types so they don't lower your coverage score.
+Use when you want to **exclude** specific label types from detection without enumerating the entire label set. Excluded labels are removed from the active scope before GLiNER runs and filtered from final results if a model emits them anyway. The evaluation judges also ignore excluded label types so they don't lower your coverage score.
 
 ```python
 # Never detect occupation or gender, keep everything else
 Detect(excluded_entity_labels=["occupation", "gender"])
 
-# Combine with an explicit allowlist — exclusions always win
+# Combine with an explicit label set — exclusions always win
 Detect(entity_labels=["first_name", "email", "city"], excluded_entity_labels=["city"])
 ```
 
 !!! warning
-    `excluded_entity_labels` is always checked against the effective allowlist — `entity_labels` if set, otherwise `DEFAULT_ENTITY_LABELS`. A total overlap raises a `ValueError` at config time instead of silently detecting nothing. A partial overlap logs a warning only when `entity_labels` is explicit; against the default label set, it's silent.
+    Exclusions take precedence over labels and examples. Configured examples for an excluded label are ignored with a warning. A total overlap with the default or explicit label set raises a `ValueError` instead of silently detecting nothing.
 
 ### `gliner_threshold`
 
