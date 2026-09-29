@@ -3215,7 +3215,7 @@ GLiNER candidate set → chunked into validator calls → each call dispatched t
 <p>Fix in this order:</p>
 <ol>
 <li><strong>If failures are at <code>step="detection"</code>, add aliases to the validator pool</strong> in <code>models.yaml</code>. The validator is the only role that supports a pool — set <code>entity_validator</code> to a list of aliases and chunked validation will round-robin across them, giving you failover when one provider rate-limits. Every other role (detector, augmenter, rewriter, evaluator, etc.) is a single alias.</li>
-<li><strong>Lower <code>validation_max_entities_per_call</code></strong> (default <code>100</code>) on <code>Detect</code> so each call sends fewer tokens — easier on tight per-minute token budgets. Helps any stage that's hitting per-call token limits, but most useful for validation.</li>
+<li><strong>Lower <code>validation_max_entities_per_call</code></strong> (default <code>100</code>) on <code>Detect</code> if individual validator requests exceed a context or per-request token limit. This creates more calls, each of which repeats the full resolved label/example section, so it can increase total tokens and is not necessarily helpful for a tokens-per-minute limit.</li>
 <li><strong>Switch the heavy alias to a different <code>provider</code></strong> in <code>providers.yaml</code>. If you're hammering one tenant's quota, moving to a second deployment of the same model helps more than tuning batch sizes. This is the only lever for non-validator stages (rewrite, evaluate, etc.) since they don't have pools.</li>
 <li><strong>Re-run on just the failed records</strong> — filter the input dataframe to those <code>record_id</code>s and call <code>anonymizer.run</code> again. Failures are usually transient.</li>
 </ol>
@@ -3286,11 +3286,22 @@ print(preview.dataframe.iloc[0][f"{data.text_column}_with_spans"])</code></pre>
 <p>Try in order:</p>
 <ol>
 <li><strong>Lower <code>gliner_threshold</code></strong> from <code>0.3</code> to <code>0.2</code> (or <code>0.15</code>). False positives get caught downstream by validation.</li>
-<li><strong>Extend the default list</strong> with the entity's label if it's not in <code>DEFAULT_ENTITY_LABELS</code>. Setting <code>Detect.entity_labels</code> to a custom list switches detection to <strong>strict mode</strong> (only listed labels detected, augmenter can't invent), so to keep the defaults <em>plus</em> one extra label use:</li>
+<li><strong>Add a configured example</strong> for the relevant default or non-default label. A non-default label must also appear in an explicit <code>entity_labels</code> set:</li>
 </ol>
 <pre class="highlight"><code class="language-python">from anonymizer import DEFAULT_ENTITY_LABELS, Detect
-detect = Detect(entity_labels=[*DEFAULT_ENTITY_LABELS, "clinical_facility"])</code></pre>
-<p>Domain-specific labels (<code>clinical_facility</code>, <code>case_number</code>, <code>internal_project_codename</code>) won't be detected reliably without being listed this way.
+
+detect = Detect(
+    entity_labels=[*DEFAULT_ENTITY_LABELS, "clinical_facility"],
+    entity_label_examples={
+        "clinical_facility": [
+            "North Valley Oncology Center",
+            "Lakeside Children's Clinic",
+            "Cedar Grove Medical Pavilion",
+        ],
+    }
+)</code></pre>
+<p>Providing three or more diverse examples can help show the model the range of values associated with a non-default label. Default labels already have built-in examples, so add only the dataset-specific formats that need extra guidance. Keep configured lists short because they increase prompt size.</p>
+<p>Configured examples are positive guidance, not a format allowlist, so the detector can still find other facility-name formats. A non-default or misspelled label referenced by <code>entity_label_examples</code> must appear in the explicit label set or configuration raises a validation error. Use only synthetic examples—the values are included in prompts, exported builders, and explicitly enabled raw message traces.
 3. <strong>Set <code>AnonymizerInput.data_summary</code></strong> so the augmenter LLM has domain context. A line like <code>"De-identified pediatric oncology progress notes"</code> materially improves coverage.
 4. <strong>For rewrite mode</strong>, latent entities are detected separately. If a piece of inferable information (e.g. "during her third round of chemo" → cancer treatment) is being preserved verbatim, the latent detector likely missed it — refine <code>Rewrite.privacy_goal.protect</code> to call out the inference category explicitly.</p>
 <p>Verify by re-running <code>preview</code> with <code>Annotate</code> and confirming the entity now appears tagged.</p>

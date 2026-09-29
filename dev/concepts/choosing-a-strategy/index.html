@@ -3148,7 +3148,7 @@ data = AnonymizerInput(
 </ul>
 <hr />
 <h2 id="2-detection-detection-knobs">2. (Detection) Detection knobs<a class="headerlink" href="#2-detection-detection-knobs" title="Permanent link">&para;</a></h2>
-<p>For most datasets the <a href="../detection/">detection</a> defaults work. The main reason to adjust <code>entity_labels</code> is when your data has <strong>domain-specific entities that can be described in plain English</strong> — GLiNER is zero-shot, so any concept you can name (e.g. <code>"clinical_facility"</code>, <code>"internal_project_codename"</code>) becomes an entity it can find. Match the snake_case convention of <code>DEFAULT_ENTITY_LABELS</code>. If the entities you care about aren't in the default list, write them down and add them. Adjust <code>gliner_threshold</code> only when you see a specific recall or precision problem in preview.</p>
+<p>For most datasets the <a href="../detection/">detection</a> defaults work. Use <code>entity_label_examples</code> when representative positive values help explain a default or non-default label. Match the snake_case convention of <code>DEFAULT_ENTITY_LABELS</code>. Adjust <code>gliner_threshold</code> only when you see a specific recall or precision problem in preview.</p>
 <h3 id="entity_labels"><code>entity_labels</code><a class="headerlink" href="#entity_labels" title="Permanent link">&para;</a></h3>
 <table>
 <thead>
@@ -3167,11 +3167,11 @@ data = AnonymizerInput(
 <tr>
 <td>Explicit list</td>
 <td><strong>Strict mode</strong> — only the labels you list are detected, augmenter cannot invent new ones</td>
-<td>You have a domain-specific entity that the defaults don't cover, or you want to <em>narrow</em> detection to a known short list</td>
+<td>You have a non-default label, or you want to <em>narrow</em> detection to a known short list</td>
 </tr>
 </tbody>
 </table>
-<p>Common ways to extend the default list:</p>
+<p>Common non-default labels include:</p>
 <ul>
 <li>Healthcare: <code>clinical_facility</code>, <code>diagnosis_code</code>, <code>medication_name</code>, <code>lab_test_code</code></li>
 <li>Legal: <code>case_number</code>, <code>docket_number</code>, <code>statute_citation</code>, <code>judge_name</code></li>
@@ -3180,17 +3180,39 @@ data = AnonymizerInput(
 </ul>
 <pre class="highlight"><code class="language-python">from anonymizer import DEFAULT_ENTITY_LABELS, Detect
 
-detect = Detect(entity_labels=[*DEFAULT_ENTITY_LABELS, "clinical_facility", "diagnosis_code", "medication_name"])</code></pre>
+# Defaults plus these explicitly declared non-default labels.
+detect = Detect(
+    entity_labels=[
+        *DEFAULT_ENTITY_LABELS,
+        "clinical_facility",
+        "diagnosis_code",
+    ],
+    entity_label_examples={
+        "clinical_facility": ["North Valley Oncology Center"],
+        "diagnosis_code": ["C50.919"],
+    }
+)
+
+# Strict non-default-only detection uses an explicit label set.
+strict_detect = Detect(
+    entity_labels=["clinical_facility", "diagnosis_code"],
+    entity_label_examples={
+        "clinical_facility": ["North Valley Oncology Center"],
+        "diagnosis_code": ["C50.919"],
+    },
+)</code></pre>
+<p>For a default label, configured examples are added to its built-in examples rather than replacing them. A non-default label has no built-in examples and must appear in an explicit <code>entity_labels</code> set. Examples are positive guidance, not format allowlists: an <code>api_key</code> in a different format may still be detected.</p>
+<p>Keep configured lists short and use synthetic values because they are sent to model providers. The validator receives the full resolved examples in each validation chunk; lowering <code>validation_max_entities_per_call</code> creates more chunks and repeats that complete example section more often, potentially increasing total input tokens and cost. The augmenter receives only configured examples.</p>
 <h3 id="excluded_entity_labels"><code>excluded_entity_labels</code><a class="headerlink" href="#excluded_entity_labels" title="Permanent link">&para;</a></h3>
-<p>Use when you want to <strong>exclude</strong> specific label types from detection without enumerating the entire allowlist. Excluded labels are removed before GLiNER runs, so they are never detected, augmented, or surfaced in results. The evaluation judges also ignore excluded label types so they don't lower your coverage score.</p>
+<p>Use when you want to <strong>exclude</strong> specific label types from detection without enumerating the entire label set. Excluded labels are removed from the active scope before GLiNER runs and filtered from final results if a model emits them anyway. The evaluation judges also ignore excluded label types so they don't lower your coverage score.</p>
 <pre class="highlight"><code class="language-python"># Never detect occupation or gender, keep everything else
 Detect(excluded_entity_labels=["occupation", "gender"])
 
-# Combine with an explicit allowlist — exclusions always win
+# Combine with an explicit label set — exclusions always win
 Detect(entity_labels=["first_name", "email", "city"], excluded_entity_labels=["city"])</code></pre>
 <div class="admonition warning">
 <p class="admonition-title">Warning</p>
-<p><code>excluded_entity_labels</code> is always checked against the effective allowlist — <code>entity_labels</code> if set, otherwise <code>DEFAULT_ENTITY_LABELS</code>. A total overlap raises a <code>ValueError</code> at config time instead of silently detecting nothing. A partial overlap logs a warning only when <code>entity_labels</code> is explicit; against the default label set, it's silent.</p>
+<p>Exclusions take precedence over labels and examples. Configured examples for an excluded label are ignored with a warning. A total overlap with the default or explicit label set raises a <code>ValueError</code> instead of silently detecting nothing.</p>
 </div>
 <h3 id="gliner_threshold"><code>gliner_threshold</code><a class="headerlink" href="#gliner_threshold" title="Permanent link">&para;</a></h3>
 <p>Default <code>0.3</code>. The validator catches false positives downstream, so erring low is safe.</p>

@@ -1171,6 +1171,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#anonymizer.config.anonymizer_config.Detect.entity_label_examples" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-attribute"></code>&nbsp;entity_label_examples
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#anonymizer.config.anonymizer_config.Detect.excluded_entity_labels" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3131,6 +3142,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#anonymizer.config.anonymizer_config.Detect.entity_label_examples" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-attribute"></code>&nbsp;entity_label_examples
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#anonymizer.config.anonymizer_config.Detect.excluded_entity_labels" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3850,6 +3872,10 @@
         <p>Configuration for the entity detection stage.</p>
 
     
+      <p>Config:</p>
+      <ul>
+          <li><code>hide_input_in_errors</code>: <code class="highlight language-python">True</code></li>
+      </ul>
 
         <p>Fields:</p>
         <ul>
@@ -3860,6 +3886,14 @@
       pydantic-field
    (anonymizer.config.anonymizer_config.Detect.entity_labels)" href="#anonymizer.config.anonymizer_config.Detect.entity_labels">entity_labels</a></code>
                 (<code><span title="list">list</span>[<span title="str">str</span>] | None</code>)
+            </li>
+            <li>
+              <code><a class="autorefs autorefs-internal" title="            entity_label_examples
+
+  
+      pydantic-field
+   (anonymizer.config.anonymizer_config.Detect.entity_label_examples)" href="#anonymizer.config.anonymizer_config.Detect.entity_label_examples">entity_label_examples</a></code>
+                (<code><span title="dict">dict</span>[<span title="str">str</span>, <span title="list">list</span>[<span title="str">str</span>]]</code>)
             </li>
             <li>
               <code><a class="autorefs autorefs-internal" title="            excluded_entity_labels = None
@@ -3914,6 +3948,14 @@
       pydantic-field
    (anonymizer.config.anonymizer_config.Detect.excluded_entity_labels)" href="#anonymizer.config.anonymizer_config.Detect.excluded_entity_labels">excluded_entity_labels</a></code>            </li>
             <li>
+              <code><span title="anonymizer.config.anonymizer_config.Detect.validate_entity_label_examples">validate_entity_label_examples</span></code>
+                &rarr;
+                  <code><a class="autorefs autorefs-internal" title="            entity_label_examples
+
+  
+      pydantic-field
+   (anonymizer.config.anonymizer_config.Detect.entity_label_examples)" href="#anonymizer.config.anonymizer_config.Detect.entity_label_examples">entity_label_examples</a></code>            </li>
+            <li>
               <code><span title="anonymizer.config.anonymizer_config.Detect.validate_entity_label_overlap">validate_entity_label_overlap</span></code>
             </li>
         </ul>
@@ -3954,6 +3996,28 @@
 
 
 
+<h4 id="anonymizer.config.anonymizer_config.Detect.entity_label_examples" class="doc doc-heading">
+<code class="doc-symbol doc-symbol-heading doc-symbol-attribute"></code>            <code class="highlight language-python">entity_label_examples</code>
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-pydantic-field"><code>pydantic-field</code></small>
+  </span>
+
+<a href="#anonymizer.config.anonymizer_config.Detect.entity_label_examples" class="headerlink" title="Permanent link">&para;</a></h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Configured positive detection examples organized by entity label. For default labels, these values are appended to the built-in examples. Non-default labels must also be declared in an explicit entity_labels set; examples never activate labels implicitly.</p>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-attribute">
+
+
+
 <h4 id="anonymizer.config.anonymizer_config.Detect.excluded_entity_labels" class="doc doc-heading">
 <code class="doc-symbol doc-symbol-heading doc-symbol-attribute"></code>            <code class="highlight language-python">excluded_entity_labels = None</code>
 
@@ -3966,7 +4030,7 @@
 
     <div class="doc doc-contents ">
 
-        <p>Entity labels to never detect, even if present in entity_labels or the default set. Excluded labels are removed before GLiNER and LLM prompts run, and are also filtered from the final entity output as a safety net. If this entirely overlaps the effective allowlist (entity_labels if set, otherwise the default label set), leaving an empty effective detection set, Detect raises a ValueError at config time.</p>
+        <p>Entity labels to never detect, even if present in entity_labels or the default set. Excluded labels are removed before GLiNER and LLM prompts run, and are also filtered from the final entity output as a safety net. If this entirely overlaps the effective label set (entity_labels if set, otherwise the default label set), leaving an empty effective detection set, Detect raises a ValueError at config time.</p>
 
     </div>
 
@@ -4343,6 +4407,10 @@ user-facing <code>Rewrite</code>.</p>
         <p>Primary user-facing config for anonymization behavior.</p>
 
     
+      <p>Config:</p>
+      <ul>
+          <li><code>hide_input_in_errors</code>: <code class="highlight language-python">True</code></li>
+      </ul>
 
         <p>Fields:</p>
         <ul>

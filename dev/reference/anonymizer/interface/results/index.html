@@ -3037,8 +3037,10 @@ with <code>replace_method</code>.</p>
               <div class="doc-md-description">
                 <p>Allowlist of entity labels that were in scope during
 detection. Preserved for <code>evaluate()</code> so the coverage judge scopes
-its evaluation to the same label set. <code>None</code> means all default
-labels were in scope.</p>
+its evaluation to the same label set. <code>None</code> means detection was
+permissive: default labels were configured, and the augmenter may
+have emitted additional labels. Configured examples are intentionally
+not persisted for evaluation.</p>
               </div>
             </td>
           </tr>
@@ -3237,8 +3239,10 @@ dispatch the rewrite judges. Mutually exclusive with <code>replace_method</code>
               <div class="doc-md-description">
                 <p>Allowlist of entity labels that were in scope during
 detection. Preserved for <code>evaluate()</code> so the coverage judge scopes
-its evaluation to the same label set. <code>None</code> means all default
-labels were in scope.</p>
+its evaluation to the same label set. <code>None</code> means detection was
+permissive: default labels were configured, and the augmenter may
+have emitted additional labels. Configured examples are intentionally
+not persisted for evaluation.</p>
               </div>
             </td>
           </tr>

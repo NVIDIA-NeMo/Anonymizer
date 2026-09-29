@@ -565,13 +565,52 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#custom-labels" class="md-nav__link">
+  <a href="#label-scope" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Custom labels
+        Label scope
       
     </span>
   </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#positive-examples" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Positive examples
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Positive examples">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#examples-for-default-labels" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Examples for default labels
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#examples-for-non-default-labels" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Examples for non-default labels
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
         
@@ -2948,13 +2987,52 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#custom-labels" class="md-nav__link">
+  <a href="#label-scope" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Custom labels
+        Label scope
       
     </span>
   </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#positive-examples" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Positive examples
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Positive examples">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#examples-for-default-labels" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Examples for default labels
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#examples-for-non-default-labels" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Examples for non-default labels
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
         
@@ -3071,9 +3149,7 @@
 <p>Entity detection is the first stage of every Anonymizer pipeline. Both replace and rewrite modes depend on it.</p>
 <hr />
 <h2 id="how-it-works">How it works<a class="headerlink" href="#how-it-works" title="Permanent link">&para;</a></h2>
-<p>Detection combines a lightweight GLiNER2 PII model with LLM-based refinement. GLiNER2 produces an
-initial set of entity spans, then an LLM augments it with entities the NER missed and validates each
-detection—keeping, reclassifying, or dropping entities based on context.</p>
+<p>Detection combines a lightweight GLiNER2 PII model with LLM-based refinement. GLiNER2 produces an initial set of entity spans, an LLM validates those candidates by keeping, reclassifying, or dropping them based on context, and then an augmenter finds entities GLiNER2 missed. Augmented findings are merged directly and are not independently revalidated.</p>
 <p>When rewrite is configured, an additional step identifies <strong>latent entities</strong> -- sensitive information inferable from context but not explicitly stated in the text.</p>
 <h3 id="example-standard-vs-latent-entities">Example: standard vs. latent entities<a class="headerlink" href="#example-standard-vs-latent-entities" title="Permanent link">&para;</a></h3>
 <p>Consider this short passage:</p>
@@ -3126,9 +3202,14 @@ config = AnonymizerConfig(
 <td>List of labels to detect. Leave unset (or pass <code>None</code>) to use the full default set.</td>
 </tr>
 <tr>
+<td><code>entity_label_examples</code></td>
+<td><code>{}</code></td>
+<td>User-configured positive examples organized by label. Examples for default labels extend their built-in examples; every referenced non-default label must also appear in an explicit <code>entity_labels</code> set.</td>
+</tr>
+<tr>
 <td><code>excluded_entity_labels</code></td>
 <td><code>None</code></td>
-<td>List of labels to <strong>never</strong> detect, even if present in <code>entity_labels</code> or the default set. Excluded labels are removed before GLiNER and the LLM prompts run, and are also filtered from the final entity output as a safety net.</td>
+<td>List of labels to exclude from detection, even if present in <code>entity_labels</code> or the default set. Excluded labels are removed from the active detection scope and filtered from the final entity output.</td>
 </tr>
 <tr>
 <td><code>gliner_threshold</code></td>
@@ -3157,6 +3238,7 @@ config = AnonymizerConfig(
 <li><strong>Raise <code>validation_excerpt_window_chars</code></strong> when short windows hide the context needed to disambiguate entities (e.g., <code>"John"</code> as first name vs. last name depends on surrounding text).</li>
 <li><strong>Lower it</strong> to reduce per-chunk prompt tokens, at the risk of lower validation quality on context-sensitive labels.</li>
 </ul>
+<p>Each validator call includes the full resolved label/example pairs. Lowering <code>validation_max_entities_per_call</code> reduces the candidates in each call, but repeats that complete label/example section across more calls, which can increase total input tokens and cost—especially when many examples are configured.</p>
 <h3 id="validator-pools">Validator pools<a class="headerlink" href="#validator-pools" title="Permanent link">&para;</a></h3>
 <p><code>entity_validator</code> can be a single alias (the default) or a list of aliases — a <strong>pool</strong>. When multiple aliases are configured, each chunk in a row is dispatched to the next alias in round-robin order, which lets you work around per-alias rate limits by spreading requests across equivalent endpoints.</p>
 <p>Pools also act as <strong>failover</strong>. If a chunk's assigned alias can't complete the call (an unrecoverable rate limit, a 5xx that didn't clear on retry, a malformed response), the same chunk is automatically retried against the other aliases in your pool before the row is given up on. A chunk only fails once every alias in the pool has failed for it. This is a cheap way to harden validation against any one endpoint having a bad day, on top of the load-spreading role.</p>
@@ -3176,23 +3258,63 @@ config = AnonymizerConfig(
 <p>To inspect the full list:</p>
 <pre class="highlight"><code class="language-python">from anonymizer import DEFAULT_ENTITY_LABELS
 print(DEFAULT_ENTITY_LABELS)</code></pre>
-<h3 id="custom-labels">Custom labels<a class="headerlink" href="#custom-labels" title="Permanent link">&para;</a></h3>
+<p>The label settings serve different purposes:</p>
+<ul>
+<li><code>entity_labels</code> defines <strong>which entity types</strong> are in scope, such as <code>api_key</code>.</li>
+<li><code>entity_label_examples</code> provides <strong>representative values</strong> for those types, such as <code>sk-ant-api03-abc123</code>.</li>
+</ul>
+<p>The following terms distinguish label scope from example origin:</p>
+<ul>
+<li>A <strong>default label</strong> is present in <code>DEFAULT_ENTITY_LABELS</code>; a <strong>non-default label</strong> is absent from it.</li>
+<li>An <strong>explicit label set</strong> is any set supplied through <code>entity_labels</code> and may contain default labels, non-default labels, or both.</li>
+<li><strong>Built-in examples</strong> ship with Anonymizer in <code>ENTITY_LABEL_EXAMPLES</code>.</li>
+<li><strong>Configured examples</strong> are values you supply through <code>entity_label_examples</code>.</li>
+</ul>
+<h3 id="label-scope">Label scope<a class="headerlink" href="#label-scope" title="Permanent link">&para;</a></h3>
 <p>When you pass <code>entity_labels</code> explicitly, the augmenter operates in <strong>strict mode</strong> -- it only outputs entities matching your list. When <code>entity_labels=None</code>, the augmenter can create additional labels beyond the defaults (e.g., <code>clinic_name</code>, <code>server_name</code>).</p>
 <pre class="highlight"><code class="language-python"># Strict: only detect these 3 labels
 Detect(entity_labels=["first_name", "last_name", "email"])
 
 # Permissive: detect all defaults + LLM can infer new label types
 Detect()  # entity_labels=None</code></pre>
+<h3 id="positive-examples">Positive examples<a class="headerlink" href="#positive-examples" title="Permanent link">&para;</a></h3>
+<p>Use <code>entity_label_examples</code> to help detection recognize dataset- or domain-specific value formats, such as vendor-prefixed API keys, account handles, or organization-specific identifiers. These are positive examples of what a label may look like—not format allowlists, guaranteed matches, negative examples, or replacement templates.</p>
+<p>To deterministically exclude an entire label type, use <code>excluded_entity_labels</code>. Configured examples cannot express value-level negative examples.</p>
+<h4 id="examples-for-default-labels">Examples for default labels<a class="headerlink" href="#examples-for-default-labels" title="Permanent link">&para;</a></h4>
+<p>Configured examples for a default label are appended to its built-in examples:</p>
+<pre class="highlight"><code class="language-python">Detect(entity_label_examples={"api_key": ["sk-ant-api03-abc123"]})</code></pre>
+<p>Here, <code>api_key</code> is already active through <code>DEFAULT_ENTITY_LABELS</code>; its built-in examples remain active alongside the configured example.</p>
+<h4 id="examples-for-non-default-labels">Examples for non-default labels<a class="headerlink" href="#examples-for-non-default-labels" title="Permanent link">&para;</a></h4>
+<p>A configured example does not activate a non-default label. Declare the label explicitly:</p>
+<pre class="highlight"><code class="language-python">Detect(
+    entity_labels=["vendor_api_key"],
+    entity_label_examples={"vendor_api_key": ["acme_live_abc123"]},
+)</code></pre>
+<p>To detect all defaults plus a non-default label, include both in the explicit label set:</p>
+<pre class="highlight"><code class="language-python">from anonymizer import DEFAULT_ENTITY_LABELS
+
+Detect(
+    entity_labels=[*DEFAULT_ENTITY_LABELS, "vendor_api_key"],
+    entity_label_examples={"vendor_api_key": ["acme_live_abc123"]},
+)</code></pre>
+<p>Every non-excluded label referenced by <code>entity_label_examples</code> must appear in the explicit label set. A missing or misspelled label raises a validation error. Because the label set is explicit, the augmenter is strict.</p>
+<div class="admonition warning">
+<p class="admonition-title">Examples are sent to model providers</p>
+<p>Configured examples are embedded in prompts and exported detection builders. Use synthetic patterns, not production credentials, secrets, or real PII. Explicitly enabled raw DataDesigner message traces also contain the rendered prompts.</p>
+</div>
+<p>Configured examples affect detection only; they do not guide substitution or evaluation.</p>
+<p>The validator receives the full resolved examples: built-in plus configured examples for default labels, and configured examples for non-default labels. The augmenter receives all active label names but only configured examples, which show it the intended value shape beyond the label name alone. Built-in examples are omitted from the augmenter to limit prompt growth. Keep configured lists short because the validator's full example set is repeated for each validation chunk.</p>
+<p><code>entity_label_examples</code> is currently configured through the Python <code>Detect</code> API; the CLI does not provide a mapping syntax for this field.</p>
 <h3 id="excluding-entity-labels">Excluding entity labels<a class="headerlink" href="#excluding-entity-labels" title="Permanent link">&para;</a></h3>
-<p>Use <code>excluded_entity_labels</code> to omit specific labels from detection without having to enumerate the entire allowlist. Excluded labels are removed before GLiNER runs and before the LLM prompts are built, so they are never detected or augmented.</p>
+<p>Use <code>excluded_entity_labels</code> to omit specific labels from detection without having to enumerate the entire label set. Excluded labels are removed from the active label set before GLiNER runs. If a model still emits an excluded label, final filtering prevents it from appearing in detection results.</p>
 <pre class="highlight"><code class="language-python"># Detect all defaults except occupation and gender
 Detect(excluded_entity_labels=["occupation", "gender"])
 
-# Combine with an explicit allowlist — exclusions always win
+# Combine with an explicit label set — exclusions always win
 Detect(entity_labels=["first_name", "email", "city"], excluded_entity_labels=["city"])</code></pre>
 <div class="admonition warning">
 <p class="admonition-title">Warning</p>
-<p><code>excluded_entity_labels</code> is always checked against the effective allowlist — <code>entity_labels</code> if set, otherwise <code>DEFAULT_ENTITY_LABELS</code>. A total overlap raises a <code>ValueError</code> at config time instead of silently detecting nothing. A partial overlap logs a warning only when <code>entity_labels</code> is explicit; against the default label set, it's silent.</p>
+<p>Exclusions always win. Configured examples for an excluded label are ignored with a warning that names the label but never the example values. A total overlap with the default or explicit label set raises a <code>ValueError</code> instead of silently detecting nothing.</p>
 </div>
 <h2 id="tuning-the-threshold">Tuning the threshold<a class="headerlink" href="#tuning-the-threshold" title="Permanent link">&para;</a></h2>
 <p>For <code>gliner_threshold</code>, start with the default <code>0.3</code>. If you're seeing too many false positives, raise it to <code>0.5</code>. If entities are being missed, try lowering to <code>0.2</code>. The LLM validation step catches many false positives, so erring on the side of lower thresholds is usually safe.</p>

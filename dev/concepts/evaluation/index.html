@@ -3302,6 +3302,7 @@ evaluated = anonymizer.evaluate(loaded)</code></pre>
 <li><strong><code>excluded_entity_labels</code></strong> — labels explicitly excluded from detection; the judge ignores entities of these types so excluded labels are never penalised in the coverage score.</li>
 <li><strong><code>data_summary</code></strong> — used purely to interpret literal values and their semantic types, never to invent entities absent from the text.</li>
 </ul>
+<p><code>Detect.entity_label_examples</code> is detection-only guidance and is not persisted on result objects or passed to evaluation judges. Non-default labels must be declared in <code>entity_labels</code>, so their explicit label scope is preserved for post-hoc evaluation even though the configured example values are not.</p>
 <table>
 <thead>
 <tr>
