@@ -11,6 +11,7 @@ from __future__ import annotations
 
 # Input
 COL_TEXT = "__nemo_anonymizer_text_input__"
+RECORD_ID_COLUMN = "_anonymizer_record_id"
 
 # Step 1: GLiNER detection
 COL_RAW_DETECTED = "_raw_detected_entities"

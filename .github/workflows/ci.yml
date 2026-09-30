@@ -70,3 +70,42 @@ jobs:
 
       - name: Check copyright headers
         run: make copyright-check
+
+  nemo-relay-integration:
+    name: NeMo Relay integration
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: "0"
+
+      - uses: ./.github/actions/setup-python-env
+        with:
+          fetch-depth: "0"
+          python-version: ${{ env.DEFAULT_PYTHON_VERSION }}
+
+      - name: Install worker test environment
+        run: uv sync --project integrations/nemo-relay --group test --locked
+
+      - name: Run integration tests
+        run: uv run --project integrations/nemo-relay --group test --locked pytest -q integrations/nemo-relay/tests
+
+      - name: Check integration format and lint
+        run: |
+          uv run --project integrations/nemo-relay --group test --locked ruff check integrations/nemo-relay
+          uv run --project integrations/nemo-relay --group test --locked ruff format --check integrations/nemo-relay
+
+      - name: Run integration type checks
+        run: uv run --project integrations/nemo-relay --group test --locked ty check --project integrations/nemo-relay
+
+      - name: Check integration locks
+        run: uv lock --project integrations/nemo-relay --check
+
+      - name: Verify future release bundle layout
+        run: |
+          uv run --project integrations/nemo-relay --group test --locked \
+            python integrations/nemo-relay/scripts/package_bundle.py \
+            --output "${RUNNER_TEMP}/nemo-anonymizer-relay-bundle"
+          uv build --project "${RUNNER_TEMP}/nemo-anonymizer-relay-bundle" \
+            --wheel --out-dir "${RUNNER_TEMP}/nemo-anonymizer-relay-dist"
