@@ -9,7 +9,7 @@ from datetime import datetime
 from typing import ClassVar, cast
 
 import pandas as pd
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from anonymizer.engine.constants import (
     COL_ATTRIBUTE_FIDELITY_INVALID_ENTITIES,
@@ -20,6 +20,7 @@ from anonymizer.engine.constants import (
 from anonymizer.engine.evaluation.judge_base import _BaseJudgeWorkflow
 from anonymizer.engine.prompt_utils import substitute_placeholders
 from anonymizer.engine.schemas import EntityReplacementMapSchema
+from anonymizer.engine.workflow_columns.evaluation.judge.config import JudgeKind
 
 logger = logging.getLogger("anonymizer.evaluation.replace.attribute_fidelity_judge")
 
@@ -61,6 +62,22 @@ class AttributeFidelityJudgmentSchema(BaseModel):
             "Triples with no salient attributes (opaque identifiers) are omitted."
         ),
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_positive_null_details(cls, value: object) -> object:
+        if not isinstance(value, dict) or value.get("all_valid") is not True or value.get("entities") is not None:
+            return value
+        return {**value, "entities": []}
+
+    @model_validator(mode="after")
+    def validate_verdict_details_consistency(self) -> AttributeFidelityJudgmentSchema:
+        has_failure = any(not entity.passes for entity in self.entities)
+        if self.all_valid and has_failure:
+            raise ValueError("entities must not contain a failing check when all_valid is True.")
+        if not self.all_valid and not has_failure:
+            raise ValueError("entities must contain at least one failing check when all_valid is False.")
+        return self
 
 
 # ---------------------------------------------------------------------------
@@ -161,9 +178,9 @@ are either checked by other metrics or are too unreliable to judge here.
 </rules>
 
 <output_format>
-Return ONLY the JSON object that matches the required schema. Do NOT wrap your output in \
-``` or ```json markdown fences. Do NOT include any commentary, reasoning, preamble, or text \
-outside the JSON object. Your entire response must be a single valid JSON object.
+Return ONLY the JSON object that matches the required schema, wrapped in a single ```json \
+Markdown code fence. Do NOT include any commentary, reasoning, preamble, or text outside \
+the code fence.
 </output_format>
 """
     return substitute_placeholders(
@@ -219,6 +236,7 @@ class AttributeFidelityJudgeWorkflow(_BaseJudgeWorkflow):
     VALID_COL: ClassVar[str] = COL_ATTRIBUTE_FIDELITY_VALID
     INVALID_COL: ClassVar[str] = COL_ATTRIBUTE_FIDELITY_INVALID_ENTITIES
     SCHEMA: ClassVar[type[BaseModel]] = AttributeFidelityJudgmentSchema
+    JUDGE_KIND: ClassVar[JudgeKind] = JudgeKind.ATTRIBUTE_FIDELITY
     VERDICT_FIELD: ClassVar[str] = "all_valid"
     DEFAULT_PAYLOAD: ClassVar[dict] = {"all_valid": True, "entities": []}
     MODEL_ROLE: ClassVar[str] = "replace_attribute_fidelity_judge"

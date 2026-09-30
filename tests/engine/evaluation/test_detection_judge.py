@@ -6,7 +6,8 @@ from __future__ import annotations
 import logging
 
 import pandas as pd
-from data_designer.config.column_configs import LLMStructuredColumnConfig
+import pytest
+from pydantic import ValidationError
 
 from anonymizer.config.models import EvaluateModelSelection
 from anonymizer.engine.constants import (
@@ -24,6 +25,7 @@ from anonymizer.engine.evaluation.detection_judge import (
     _label_examples_for_judge,
 )
 from anonymizer.engine.schemas import EntitiesByValueSchema
+from anonymizer.engine.workflow_columns.evaluation.judge.config import JudgeColumnConfig, JudgeKind
 
 _flatten_judgment = DetectionJudgeWorkflow._flatten_judgment
 
@@ -88,6 +90,40 @@ def test_label_examples_for_judge_empty_when_no_entities() -> None:
 # ---------------------------------------------------------------------------
 # Tests: _flatten_judgment
 # ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("all_valid", "invalid_entities", "accepted"),
+    [
+        (True, None, True),
+        (True, [], True),
+        (
+            True,
+            [{"value": "morning", "label": "date_time", "reasoning": "common word"}],
+            False,
+        ),
+        (False, None, False),
+        (False, [], False),
+        (
+            False,
+            [{"value": "morning", "label": "date_time", "reasoning": "common word"}],
+            True,
+        ),
+    ],
+)
+def test_judgment_schema_normalizes_positive_null_and_enforces_verdict_consistency(
+    all_valid: bool,
+    invalid_entities: list[dict[str, str]] | None,
+    accepted: bool,
+) -> None:
+    payload = {"all_valid": all_valid, "invalid_entities": invalid_entities}
+    if not accepted:
+        with pytest.raises(ValidationError):
+            DetectionJudgmentSchema.model_validate(payload)
+        return
+
+    judgment = DetectionJudgmentSchema.model_validate(payload)
+    assert judgment.model_dump()["invalid_entities"] == (invalid_entities or [])
 
 
 def test_flatten_judgment_all_valid_path() -> None:
@@ -209,10 +245,10 @@ def test_evaluate_invokes_adapter_for_rows_with_entities(
     assert captured["workflow_name"] == "replace-detection-judge"
     assert len(captured["columns"]) == 1
     col = captured["columns"][0]
-    assert isinstance(col, LLMStructuredColumnConfig)
+    assert isinstance(col, JudgeColumnConfig)
     assert col.name == COL_DETECTION_JUDGE
     assert col.model_alias == stub_evaluate_model_selection.detection_validity_judge
-    assert col.output_format == DetectionJudgmentSchema.model_json_schema()
+    assert col.judge_kind == JudgeKind.DETECTION.value
 
     assert bool(result.dataframe[COL_DETECTION_VALID].iloc[0]) is False
     invalid = result.dataframe[COL_DETECTION_INVALID_ENTITIES].iloc[0]

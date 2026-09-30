@@ -8,7 +8,7 @@ import logging
 from typing import ClassVar, cast
 
 import pandas as pd
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from anonymizer.engine.constants import (
     COL_REPLACEMENT_MAP,
@@ -20,6 +20,7 @@ from anonymizer.engine.constants import (
 from anonymizer.engine.evaluation.judge_base import _BaseJudgeWorkflow
 from anonymizer.engine.prompt_utils import substitute_placeholders
 from anonymizer.engine.schemas import EntityReplacementMapSchema
+from anonymizer.engine.workflow_columns.evaluation.judge.config import JudgeKind
 
 logger = logging.getLogger("anonymizer.evaluation.replace.type_fidelity_judge")
 
@@ -50,6 +51,25 @@ class TypeFidelityJudgmentSchema(BaseModel):
         default_factory=list,
         description="Every replacement that fails type fidelity. Empty when all_valid is True.",
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_positive_null_details(cls, value: object) -> object:
+        if (
+            not isinstance(value, dict)
+            or value.get("all_valid") is not True
+            or value.get("invalid_replacements") is not None
+        ):
+            return value
+        return {**value, "invalid_replacements": []}
+
+    @model_validator(mode="after")
+    def validate_verdict_details_consistency(self) -> TypeFidelityJudgmentSchema:
+        if self.all_valid and self.invalid_replacements:
+            raise ValueError("invalid_replacements must be empty when all_valid is True.")
+        if not self.all_valid and not self.invalid_replacements:
+            raise ValueError("invalid_replacements must be non-empty when all_valid is False.")
+        return self
 
 
 # ---------------------------------------------------------------------------
@@ -201,9 +221,9 @@ as a valid instance of that label's type to a reasonable reader.
 </output_rules>
 
 <output_format>
-Return ONLY the JSON object that matches the required schema. Do NOT wrap your output in \
-``` or ```json markdown fences. Do NOT include any commentary, reasoning, preamble, or text \
-outside the JSON object. Your entire response must be a single valid JSON object.
+Return ONLY the JSON object that matches the required schema, wrapped in a single ```json \
+Markdown code fence. Do NOT include any commentary, reasoning, preamble, or text outside \
+the code fence.
 </output_format>
 """
     return substitute_placeholders(
@@ -277,6 +297,7 @@ class TypeFidelityJudgeWorkflow(_BaseJudgeWorkflow):
     VALID_COL: ClassVar[str] = COL_TYPE_FIDELITY_VALID
     INVALID_COL: ClassVar[str] = COL_TYPE_FIDELITY_INVALID_REPLACEMENTS
     SCHEMA: ClassVar[type[BaseModel]] = TypeFidelityJudgmentSchema
+    JUDGE_KIND: ClassVar[JudgeKind] = JudgeKind.TYPE_FIDELITY
     VERDICT_FIELD: ClassVar[str] = "all_valid"
     DEFAULT_PAYLOAD: ClassVar[dict] = {"all_valid": True, "invalid_replacements": []}
     MODEL_ROLE: ClassVar[str] = "replace_type_fidelity_judge"
