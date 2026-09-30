@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import pandas as pd
 import pytest
-from data_designer.config.column_configs import LLMStructuredColumnConfig
 from pydantic import ValidationError
 
 from anonymizer.config.models import EvaluateModelSelection
@@ -21,6 +20,7 @@ from anonymizer.engine.evaluation.replace.attribute_fidelity_judge import (
     _judge_prompt,
     _replacements_for_judge,
 )
+from anonymizer.engine.workflow_columns.evaluation.judge.config import JudgeColumnConfig, JudgeKind
 
 _flatten_judgment = AttributeFidelityJudgeWorkflow._flatten_judgment
 
@@ -335,10 +335,10 @@ def test_evaluate_invokes_adapter_with_correct_alias_and_schema(
 
     assert captured["workflow_name"] == "replace-attribute-fidelity-judge"
     col = captured["columns"][0]
-    assert isinstance(col, LLMStructuredColumnConfig)
+    assert isinstance(col, JudgeColumnConfig)
     assert col.name == COL_ATTRIBUTE_FIDELITY_JUDGE
     assert col.model_alias == stub_evaluate_model_selection.replace_attribute_fidelity_judge
-    assert col.output_format == AttributeFidelityJudgmentSchema.model_json_schema()
+    assert col.judge_kind == JudgeKind.ATTRIBUTE_FIDELITY.value
 
     assert bool(result.dataframe[COL_ATTRIBUTE_FIDELITY_VALID].iloc[0]) is False
     invalid = result.dataframe[COL_ATTRIBUTE_FIDELITY_INVALID_ENTITIES].iloc[0]

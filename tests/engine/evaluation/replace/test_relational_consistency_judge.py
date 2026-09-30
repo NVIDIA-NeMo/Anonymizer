@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import pandas as pd
 import pytest
-from data_designer.config.column_configs import LLMStructuredColumnConfig
 from pydantic import ValidationError
 
 from anonymizer.config.models import EvaluateModelSelection
@@ -22,6 +21,7 @@ from anonymizer.engine.evaluation.replace.relational_consistency_judge import (
     _judge_prompt,
     _replacements_for_judge,
 )
+from anonymizer.engine.workflow_columns.evaluation.judge.config import JudgeColumnConfig, JudgeKind
 
 _flatten_judgment = RelationalConsistencyJudgeWorkflow._flatten_judgment
 
@@ -345,10 +345,10 @@ def test_evaluate_invokes_adapter_with_correct_alias_and_schema(
 
     assert captured["workflow_name"] == "replace-relational-consistency-judge"
     col = captured["columns"][0]
-    assert isinstance(col, LLMStructuredColumnConfig)
+    assert isinstance(col, JudgeColumnConfig)
     assert col.name == COL_RELATIONAL_CONSISTENCY_JUDGE
     assert col.model_alias == stub_evaluate_model_selection.replace_relational_consistency_judge
-    assert col.output_format == RelationalConsistencyJudgmentSchema.model_json_schema()
+    assert col.judge_kind == JudgeKind.RELATIONAL_CONSISTENCY.value
 
     assert bool(result.dataframe[COL_RELATIONAL_CONSISTENCY_VALID].iloc[0]) is True
     assert result.dataframe[COL_RELATIONAL_CONSISTENCY_INVALID_RELATIONS].iloc[0] == []

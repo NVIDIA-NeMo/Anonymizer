@@ -22,6 +22,7 @@ from anonymizer.engine.constants import (
 from anonymizer.engine.evaluation.judge_base import _BaseJudgeWorkflow
 from anonymizer.engine.prompt_utils import substitute_placeholders
 from anonymizer.engine.schemas import EntitiesByValueSchema
+from anonymizer.engine.workflow_columns.evaluation.judge.config import JudgeKind
 
 logger = logging.getLogger("anonymizer.evaluation.detection_judge")
 
@@ -212,6 +213,7 @@ class DetectionJudgeWorkflow(_BaseJudgeWorkflow):
     VALID_COL: ClassVar[str] = COL_DETECTION_VALID
     INVALID_COL: ClassVar[str] = COL_DETECTION_INVALID_ENTITIES
     SCHEMA: ClassVar[type[BaseModel]] = DetectionJudgmentSchema
+    JUDGE_KIND: ClassVar[JudgeKind] = JudgeKind.DETECTION
     VERDICT_FIELD: ClassVar[str] = "all_valid"
     DEFAULT_PAYLOAD: ClassVar[dict] = {"all_valid": True, "invalid_entities": []}
     MODEL_ROLE: ClassVar[str] = "detection_validity_judge"

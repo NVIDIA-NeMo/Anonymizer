@@ -21,6 +21,7 @@ from anonymizer.engine.constants import (
 from anonymizer.engine.evaluation.judge_base import _BaseJudgeWorkflow
 from anonymizer.engine.prompt_utils import substitute_placeholders
 from anonymizer.engine.schemas import EntityReplacementMapSchema
+from anonymizer.engine.workflow_columns.evaluation.judge.config import JudgeKind
 
 logger = logging.getLogger("anonymizer.evaluation.replace.relational_consistency_judge")
 
@@ -292,6 +293,7 @@ class RelationalConsistencyJudgeWorkflow(_BaseJudgeWorkflow):
     VALID_COL: ClassVar[str] = COL_RELATIONAL_CONSISTENCY_VALID
     INVALID_COL: ClassVar[str] = COL_RELATIONAL_CONSISTENCY_INVALID_RELATIONS
     SCHEMA: ClassVar[type[BaseModel]] = RelationalConsistencyJudgmentSchema
+    JUDGE_KIND: ClassVar[JudgeKind] = JudgeKind.RELATIONAL_CONSISTENCY
     VERDICT_FIELD: ClassVar[str] = "all_consistent"
     DEFAULT_PAYLOAD: ClassVar[dict] = {"all_consistent": True, "relations": []}
     MODEL_ROLE: ClassVar[str] = "replace_relational_consistency_judge"

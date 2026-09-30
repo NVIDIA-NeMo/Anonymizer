@@ -20,6 +20,7 @@ from anonymizer.engine.constants import (
 from anonymizer.engine.evaluation.judge_base import _BaseJudgeWorkflow
 from anonymizer.engine.prompt_utils import substitute_placeholders
 from anonymizer.engine.schemas import EntityReplacementMapSchema
+from anonymizer.engine.workflow_columns.evaluation.judge.config import JudgeKind
 
 logger = logging.getLogger("anonymizer.evaluation.replace.type_fidelity_judge")
 
@@ -296,6 +297,7 @@ class TypeFidelityJudgeWorkflow(_BaseJudgeWorkflow):
     VALID_COL: ClassVar[str] = COL_TYPE_FIDELITY_VALID
     INVALID_COL: ClassVar[str] = COL_TYPE_FIDELITY_INVALID_REPLACEMENTS
     SCHEMA: ClassVar[type[BaseModel]] = TypeFidelityJudgmentSchema
+    JUDGE_KIND: ClassVar[JudgeKind] = JudgeKind.TYPE_FIDELITY
     VERDICT_FIELD: ClassVar[str] = "all_valid"
     DEFAULT_PAYLOAD: ClassVar[dict] = {"all_valid": True, "invalid_replacements": []}
     MODEL_ROLE: ClassVar[str] = "replace_type_fidelity_judge"

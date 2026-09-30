@@ -7,7 +7,6 @@ import logging
 
 import pandas as pd
 import pytest
-from data_designer.config.column_configs import LLMStructuredColumnConfig
 from pydantic import ValidationError
 
 from anonymizer.config.models import EvaluateModelSelection
@@ -26,6 +25,7 @@ from anonymizer.engine.evaluation.detection_judge import (
     _label_examples_for_judge,
 )
 from anonymizer.engine.schemas import EntitiesByValueSchema
+from anonymizer.engine.workflow_columns.evaluation.judge.config import JudgeColumnConfig, JudgeKind
 
 _flatten_judgment = DetectionJudgeWorkflow._flatten_judgment
 
@@ -245,10 +245,10 @@ def test_evaluate_invokes_adapter_for_rows_with_entities(
     assert captured["workflow_name"] == "replace-detection-judge"
     assert len(captured["columns"]) == 1
     col = captured["columns"][0]
-    assert isinstance(col, LLMStructuredColumnConfig)
+    assert isinstance(col, JudgeColumnConfig)
     assert col.name == COL_DETECTION_JUDGE
     assert col.model_alias == stub_evaluate_model_selection.detection_validity_judge
-    assert col.output_format == DetectionJudgmentSchema.model_json_schema()
+    assert col.judge_kind == JudgeKind.DETECTION.value
 
     assert bool(result.dataframe[COL_DETECTION_VALID].iloc[0]) is False
     invalid = result.dataframe[COL_DETECTION_INVALID_ENTITIES].iloc[0]
