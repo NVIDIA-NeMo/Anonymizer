@@ -8,7 +8,7 @@ on:
     types: [opened, edited, reopened, ready_for_review, synchronize]
     branches: [main]
   issues:
-    types: [labeled]
+    types: [labeled, unlabeled, closed, reopened]
 
 permissions:
   contents: read
@@ -37,7 +37,13 @@ jobs:
           fi
 
           permission=$(gh api "repos/${{ github.repository }}/collaborators/${PR_AUTHOR}/permission" \
-            --jq '.permission' 2>/dev/null || echo "none")
+            --jq '.permission' 2>/tmp/permission-api-error) || {
+            if ! grep -q 'HTTP 404' /tmp/permission-api-error; then
+              cat /tmp/permission-api-error >&2
+              exit 1
+            fi
+            permission="none"
+          }
           echo "permission=${permission}"
 
           if [ "$permission" = "admin" ] || [ "$permission" = "write" ]; then
@@ -116,11 +122,14 @@ jobs:
         id: parse
         if: steps.author.outputs.is_collaborator != 'true'
         env:
-          PR_BODY: ${{ github.event.pull_request.body }}
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
 
-          if [ -z "$PR_BODY" ] || [ "$PR_BODY" = "null" ]; then
+          PR_BODY=$(gh pr view "$PR_NUMBER" --repo "$REPO" --json body --jq '.body // ""')
+          if [ -z "$PR_BODY" ]; then
             echo "issue_num=" >> "$GITHUB_OUTPUT"
             echo "No PR body found"
             exit 0
@@ -131,52 +140,66 @@ jobs:
           printf '%s' "$PR_BODY" > "$body_file"
           perl -0pe 's/<!--.*?-->//gs' "$body_file" > "$clean_body_file"
 
-          issue_num=$(
+          issue_nums=$(
             grep -ioE '(fixes|closes|resolves)[[:space:]]+#[0-9]+' "$clean_body_file" \
               | grep -oE '[0-9]+' \
-              | head -1 \
+              | awk '!seen[$0]++' \
+              | paste -sd ' ' - \
               || true
           )
+          issue_num=${issue_nums%% *}
           echo "issue_num=${issue_num}" >> "$GITHUB_OUTPUT"
-          echo "Parsed issue number: ${issue_num:-<none>}"
+          echo "issue_nums=${issue_nums}" >> "$GITHUB_OUTPUT"
+          echo "Parsed issue numbers: ${issue_nums:-<none>}"
 
-      - name: Validate issue exists and is triaged
+      - name: Validate issue is open and triaged
         id: validate
-        if: steps.author.outputs.is_collaborator != 'true' && steps.parse.outputs.issue_num != ''
+        if: steps.author.outputs.is_collaborator != 'true' && steps.parse.outputs.issue_nums != ''
         env:
           GH_TOKEN: ${{ github.token }}
-          ISSUE_NUM: ${{ steps.parse.outputs.issue_num }}
+          ISSUE_NUMS: ${{ steps.parse.outputs.issue_nums }}
         run: |
           set -euo pipefail
 
-          response=$(gh api "repos/${{ github.repository }}/issues/${ISSUE_NUM}" 2>/dev/null) || {
-            echo "issue_exists=false" >> "$GITHUB_OUTPUT"
-            echo "is_triaged=false" >> "$GITHUB_OUTPUT"
-            echo "Issue #${ISSUE_NUM} not found"
-            exit 0
-          }
+          issue_exists=false
+          issue_open=false
+          is_triaged=false
+          for issue_num in $ISSUE_NUMS; do
+            response=$(gh api "repos/${{ github.repository }}/issues/${issue_num}" 2>/tmp/issue-api-error) || {
+              if grep -q 'HTTP 404' /tmp/issue-api-error; then
+                echo "Issue #${issue_num} not found"
+                continue
+              fi
+              cat /tmp/issue-api-error >&2
+              exit 1
+            }
 
-          is_pr=$(echo "$response" | jq -r 'has("pull_request")')
-          if [ "$is_pr" = "true" ]; then
-            echo "issue_exists=false" >> "$GITHUB_OUTPUT"
-            echo "is_triaged=false" >> "$GITHUB_OUTPUT"
-            echo "#${ISSUE_NUM} is a pull request, not an issue"
-            exit 0
-          fi
+            if [ "$(printf '%s' "$response" | jq -r 'has("pull_request")')" = "true" ]; then
+              echo "#${issue_num} is a pull request, not an issue"
+              continue
+            fi
 
-          echo "issue_exists=true" >> "$GITHUB_OUTPUT"
+            issue_exists=true
+            if [ "$(printf '%s' "$response" | jq -r '.state == "open"')" = "true" ]; then
+              issue_open=true
+              if [ "$(printf '%s' "$response" | jq -r '[.labels[].name] | any(. == "triaged")')" = "true" ]; then
+                is_triaged=true
+                break
+              fi
+            fi
+          done
 
-          triaged=$(echo "$response" | jq -r '[.labels[].name] | any(. == "triaged")')
-          echo "is_triaged=${triaged}" >> "$GITHUB_OUTPUT"
-          echo "Issue #${ISSUE_NUM} exists, triaged=${triaged}"
+          echo "issue_exists=${issue_exists}" >> "$GITHUB_OUTPUT"
+          echo "issue_open=${issue_open}" >> "$GITHUB_OUTPUT"
+          echo "is_triaged=${is_triaged}" >> "$GITHUB_OUTPUT"
+          echo "Linked issue status: exists=${issue_exists}, open=${issue_open}, valid=${is_triaged}"
 
       - name: Build comment body and post result
         id: comment
         env:
           GH_TOKEN: ${{ github.token }}
           IS_COLLABORATOR: ${{ steps.author.outputs.is_collaborator }}
-          ISSUE_NUM: ${{ steps.parse.outputs.issue_num }}
-          ISSUE_EXISTS: ${{ steps.validate.outputs.issue_exists }}
+          ISSUE_NUMS: ${{ steps.parse.outputs.issue_nums }}
           IS_TRIAGED: ${{ steps.validate.outputs.is_triaged }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           REPO: ${{ github.repository }}
@@ -196,14 +219,14 @@ jobs:
             exit 0
           fi
 
-          if [ -z "$ISSUE_NUM" ]; then
+          if [ -z "$ISSUE_NUMS" ]; then
             status="fail"
             cat > /tmp/comment-body.md <<'MSG'
           <!-- linked-issue-check -->
           ### Linked Issue Check
 
           This PR does not reference an issue. External contributions must link to
-          a triaged issue before the PR can be merged.
+          an open, triaged issue before the PR is submitted.
 
           Add one of the following to your PR description:
           - `Fixes #<issue-number>`
@@ -211,19 +234,10 @@ jobs:
           - `Resolves #<issue-number>`
 
           If no issue exists yet, [open one](https://github.com/NVIDIA-NeMo/Anonymizer/issues/new/choose)
-          and a maintainer will triage it.
+          and wait for a maintainer to add the `triaged` label. You may then reopen this PR.
 
           See [CONTRIBUTING.md](https://github.com/NVIDIA-NeMo/Anonymizer/blob/main/CONTRIBUTING.md)
           for details.
-          MSG
-          elif [ "$ISSUE_EXISTS" != "true" ]; then
-            status="fail"
-            cat > /tmp/comment-body.md <<MSG
-          <!-- linked-issue-check -->
-          ### Linked Issue Check
-
-          The referenced issue #${ISSUE_NUM} was not found. Please check the issue
-          number in your PR description.
           MSG
           elif [ "$IS_TRIAGED" != "true" ]; then
             status="fail"
@@ -231,12 +245,12 @@ jobs:
           <!-- linked-issue-check -->
           ### Linked Issue Check
 
-          Issue #${ISSUE_NUM} has not been triaged yet. A maintainer needs to review
-          the issue and add the \`triaged\` label before this PR can be merged.
+          None of the referenced issues (${ISSUE_NUMS}) is both open and labeled
+          \`triaged\`. Check that the issue numbers are correct and wait for a
+          maintainer to triage an open issue.
 
-          You can continue working on the PR in the meantime. When the issue is
-          triaged, the workflow will rerun this linked-issue check for open PRs
-          that reference the issue.
+          New or reopened PRs without a triaged issue are closed. If this PR was
+          closed, you may reopen it after a maintainer adds the label.
           MSG
           else
             status="pass"
@@ -249,21 +263,82 @@ jobs:
               gh api -X PATCH "repos/${REPO}/issues/comments/${comment_id}" \
                 -f body="$(cat /tmp/comment-body.md)"
             else
-              gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" \
-                -f body="$(cat /tmp/comment-body.md)"
+              comment_id=$(gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" \
+                -f body="$(cat /tmp/comment-body.md)" --jq '.id')
             fi
+            echo "comment_id=${comment_id}" >> "$GITHUB_OUTPUT"
           elif [ -n "$comment_id" ]; then
             gh api -X DELETE "repos/${REPO}/issues/comments/${comment_id}" || true
           fi
 
+      - name: Close new or reopened PR without an open, triaged issue
+        id: close
+        if: >-
+          steps.comment.outputs.status == 'fail'
+          && github.run_attempt == '1'
+          && (github.event.action == 'opened' || github.event.action == 'reopened')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+          COMMENT_ID: ${{ steps.comment.outputs.comment_id }}
+        run: |
+          set -euo pipefail
+
+          pr=$(gh pr view "$PR_NUMBER" --repo "$REPO" --json state,labels,body)
+          state=$(printf '%s' "$pr" | jq -r '.state')
+          if [ "$state" != "OPEN" ]; then
+            echo "PR is already ${state}; no close needed"
+            exit 0
+          fi
+
+          if printf '%s' "$pr" | jq -e '.labels | any(.name == "keep-open")' >/dev/null; then
+            echo "Skipping close: keep-open label present"
+            exit 0
+          fi
+
+          body_file=$(mktemp)
+          clean_body_file=$(mktemp)
+          printf '%s' "$pr" | jq -r '.body // ""' > "$body_file"
+          perl -0pe 's/<!--.*?-->//gs' "$body_file" > "$clean_body_file"
+          current_issues=$(
+            grep -ioE '(fixes|closes|resolves)[[:space:]]+#[0-9]+' "$clean_body_file" \
+              | grep -oE '[0-9]+' \
+              | awk '!seen[$0]++' \
+              || true
+          )
+          for current_issue in $current_issues; do
+            current_response=$(gh api "repos/${REPO}/issues/${current_issue}" 2>/tmp/current-issue-api-error) || {
+              if grep -q 'HTTP 404' /tmp/current-issue-api-error; then
+                continue
+              fi
+              cat /tmp/current-issue-api-error >&2
+              exit 1
+            }
+            current_valid=$(printf '%s' "$current_response" | jq -r '
+              (has("pull_request") | not) and (.state == "open")
+              and ([.labels[].name] | any(. == "triaged"))')
+            if [ "$current_valid" = "true" ]; then
+              echo "PR now links to open, triaged issue #${current_issue}; skipping close"
+              if [ -n "$COMMENT_ID" ]; then
+                gh api -X DELETE "repos/${REPO}/issues/comments/${COMMENT_ID}" \
+                  || echo "::warning::Could not remove the outdated linked-issue comment."
+              fi
+              echo "current_valid=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          done
+
+          gh pr close "$PR_NUMBER" --repo "$REPO"
+
       - name: Set check result
-        if: steps.comment.outputs.status == 'fail'
+        if: steps.comment.outputs.status == 'fail' && steps.close.outputs.current_valid != 'true'
         run: |
           echo "::error::Linked issue check failed. See the PR comment for details."
           exit 1
 
   retrigger:
-    name: Recheck PRs when issue is triaged
+    name: Recheck PRs when issue changes
     permissions:
       contents: read
       actions: write
@@ -272,7 +347,8 @@ jobs:
     if: >-
       github.repository_owner == 'NVIDIA-NeMo'
       && github.event_name == 'issues'
-      && github.event.label.name == 'triaged'
+      && (github.event.action == 'closed' || github.event.action == 'reopened'
+          || github.event.label.name == 'triaged')
     runs-on: ubuntu-latest
     steps:
       - name: Validate recheck selection cases
@@ -373,6 +449,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           PR_NUMBERS: ${{ steps.find-prs.outputs.prs }}
+          ISSUE_ACTION: ${{ github.event.action }}
         run: |
           set -euo pipefail
 
@@ -380,9 +457,9 @@ jobs:
             echo "Finding latest linked-issue check run for PR #${pr_num}..."
             head_sha=$(gh pr view "$pr_num" --repo "$REPO" --json headRefOid -q '.headRefOid')
 
-            # Triaged-label validation path: rerun the existing PR-head
-            # pull_request_target workflow run directly. Do not edit the PR body
-            # or require the contributor to push another commit.
+            # Rerun the existing PR-head pull_request_target workflow directly
+            # after a referenced issue changes. Do not edit the PR body or
+            # require the contributor to push another commit.
             runs_json=$(gh api --paginate --slurp \
               "repos/${REPO}/actions/workflows/pr-linked-issue.yml/runs?event=pull_request_target&per_page=100")
             run_json=$(
@@ -407,7 +484,7 @@ jobs:
               echo "  Skipping: linked-issue check is already ${run_status}."
               continue
             fi
-            if [ "$run_conclusion" = "success" ]; then
+            if [ "$run_conclusion" = "success" ] && [ "$ISSUE_ACTION" = "labeled" ]; then
               echo "  Skipping: linked-issue check already passed."
               continue
             fi

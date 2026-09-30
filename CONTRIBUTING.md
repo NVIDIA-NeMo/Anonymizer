@@ -171,13 +171,19 @@ stage it again, and retry the commit. Do not bypass repository hooks with `git c
 
 ## Pull Request Expectations
 
+### Issue triage for external pull requests
+
+Before submitting a PR, link it to an existing, open issue that a maintainer has reviewed and labeled `triaged`. Open an issue and wait for that label if needed. Use `Fixes #NNN`, `Closes #NNN`, or `Resolves #NNN` in the PR description.
+
+A newly opened or reopened external PR without an open, triaged issue is automatically closed. After a maintainer adds the label, you may reopen the PR. Later issue changes update the linked-issue check without automatically closing a PR already under review. Maintainers can add `keep-open` to exempt a PR from automatic closure. Repository collaborators and exempt automation bots are not subject to this requirement.
+
 Every PR should include:
 
 - A linked issue using `Fixes #NNN`, `Closes #NNN`, or `Resolves #NNN`, or, for maintainer-owned
-  changes only, a clear explanation for why no issue is needed. External contributors must link a real
-  issue with the maintainer-applied `triaged` label before the PR can merge. The linked-issue workflow
-  checks the visible PR body, ignores HTML comments, verifies that the issue exists, and reruns the
-  linked-issue check for open PRs that reference an issue when `triaged` is added to that issue.
+  changes only, a clear explanation for why no issue is needed. External contributors must link a real,
+  open issue with the maintainer-applied `triaged` label before submitting a PR. The linked-issue workflow
+  checks the visible PR body, ignores HTML comments, verifies that an issue is open, and reruns the
+  linked-issue check for open PRs when a referenced issue opens, closes, or gains or loses `triaged`.
 - A conventional PR title.
 - A summary of user-visible behavior, developer-facing behavior, or policy changed by the PR.
 - Relevant tests or a brief explanation for why tests do not apply.
