@@ -221,9 +221,9 @@ as a valid instance of that label's type to a reasonable reader.
 </output_rules>
 
 <output_format>
-Return ONLY the JSON object that matches the required schema. Do NOT wrap your output in \
-``` or ```json markdown fences. Do NOT include any commentary, reasoning, preamble, or text \
-outside the JSON object. Your entire response must be a single valid JSON object.
+Return ONLY the JSON object that matches the required schema, wrapped in a single ```json \
+Markdown code fence. Do NOT include any commentary, reasoning, preamble, or text outside \
+the code fence.
 </output_format>
 """
     return substitute_placeholders(

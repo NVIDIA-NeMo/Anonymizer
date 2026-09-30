@@ -270,6 +270,8 @@ def test_workflow_column_config_uses_judge_column_with_matching_schema(
     assert isinstance(column, JudgeColumnConfig)
     assert column.name == workflow_cls.RAW_COL
     assert _JUDGE_SCHEMAS[JudgeKind(column.judge_kind)] is workflow_cls.SCHEMA
+    assert "wrapped in a single ```json Markdown code fence" in column.prompt
+    assert "Do NOT wrap your output" not in column.prompt
 
 
 def test_generator_prompt_includes_response_schema_instructions() -> None:
