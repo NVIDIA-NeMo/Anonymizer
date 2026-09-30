@@ -37,7 +37,8 @@ regulatory and business context.
 - **In Replace mode, default to `Substitute`** if the user hasn't specified a strategy. It's the most general-purpose choice and matches the bulk of production usage.
 - **`Annotate` is for inspection, not production.** Its output keeps the original entity text and is not privacy-safe. Use it during iteration to confirm detection is working, then switch.
 - **Evaluation is opt-in and runs as a separate step** (Replace and Rewrite modes). After `preview()` / `run()`, call `anonymizer.evaluate(result)` to score the output with LLM-as-judge. **Entity coverage always runs** in both modes — it reports detection recall over the judge's unique candidate values (`entity_coverage` + `missed_entities`). On top of that: Replace `Substitute` adds three quality judges (type fidelity, relational consistency, attribute fidelity); Rewrite adds the holistic privacy/quality/style judge. Detection validity is **opt-in** via `EvaluateConfig(compute_detection_validity=True)` (off by default). Evaluation is diagnostic — it scores quality, it does not change the anonymized output.
-- **Always set `AnonymizerInput.data_summary`**, even briefly. It is the single cheapest quality lever and it improves both detection and rewrite.
+- **Always set `data_summary` on the input**, even briefly. It is the single cheapest quality lever and it improves both detection and rewrite.
+- **Use `TextRecordsInput` when text is already in memory.** Give every `TextRecord` a unique caller ID; completed rows and `failed_records` retain it. Keep `AnonymizerInput` for CSV or Parquet sources.
 - **Never claim privacy guarantees.** Anonymizer is best-effort. Outputs may need human review depending on `risk_tolerance`. Tell the user this when you finalize.
 
 # Usage Tips and Common Pitfalls
