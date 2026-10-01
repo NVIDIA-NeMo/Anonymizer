@@ -23,6 +23,7 @@ from anonymizer.engine.constants import (
     COL_ENTITIES_FOR_REPLACE,
     COL_ENTITIES_FOR_REPLACE_JSON,
     COL_ENTITY_EXAMPLES,
+    COL_GENERALIZATION_NEEDS_REVIEW,
     COL_LEAKAGE_MASS,
     COL_LEAKED_PRIVACY_ITEMS,
     COL_NEEDS_HUMAN_REVIEW,
@@ -337,7 +338,7 @@ def _finalization_column(
             )
         )
     )
-    required_columns.append(COL_SENSITIVITY_DISPOSITION)
+    required_columns.extend([COL_SENSITIVITY_DISPOSITION, COL_GENERALIZATION_NEEDS_REVIEW])
     side_effect_columns = [
         COL_QUALITY_QA_REANSWER,
         COL_PRIVACY_QA_REANSWER,
@@ -376,7 +377,7 @@ def _finalization_column(
             needs_review = needs_review or float(row[COL_UTILITY_SCORE]) < generator_params.flag_utility_below
         if generator_params.flag_leakage_above is not None:
             needs_review = needs_review or float(row[COL_LEAKAGE_MASS]) > generator_params.flag_leakage_above
-        row[COL_NEEDS_HUMAN_REVIEW] = needs_review
+        row[COL_NEEDS_HUMAN_REVIEW] = needs_review or bool(row.get(COL_GENERALIZATION_NEEDS_REVIEW, False))
         return row
 
     return CustomColumnConfig(

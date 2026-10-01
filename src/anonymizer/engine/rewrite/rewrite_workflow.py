@@ -16,6 +16,7 @@ from anonymizer.engine.constants import (
     COL_DETECTION_INVALID_ENTITIES,
     COL_DETECTION_VALID,
     COL_ENTITIES_BY_VALUE,
+    COL_GENERALIZATION_NEEDS_REVIEW,
     COL_JUDGE_EVALUATION,
     COL_LEAKAGE_MASS,
     COL_NEEDS_HUMAN_REVIEW,
@@ -469,6 +470,8 @@ class RewriteWorkflow:
             needs_review = needs_review | (df[COL_UTILITY_SCORE].apply(float) < evaluation.flag_utility_below)
         if evaluation.flag_leakage_above is not None:
             needs_review = needs_review | (df[COL_LEAKAGE_MASS].apply(float) > evaluation.flag_leakage_above)
+        if COL_GENERALIZATION_NEEDS_REVIEW in df.columns:
+            needs_review = needs_review | df[COL_GENERALIZATION_NEEDS_REVIEW].fillna(False).astype(bool)
         df[COL_NEEDS_HUMAN_REVIEW] = needs_review
 
         return df, all_failed

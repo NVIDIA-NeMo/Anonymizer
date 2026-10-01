@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any
 
@@ -16,6 +17,7 @@ from anonymizer.config.models import RewriteModelSelection
 from anonymizer.config.rewrite import PrivacyGoal
 from anonymizer.engine.constants import (
     COL_ANY_HIGH_LEAKED,
+    COL_GENERALIZATION_SUGGESTIONS,
     COL_LEAKAGE_MASS,
     COL_LEAKED_PRIVACY_ITEMS,
     COL_PRIVACY_QA,
@@ -23,6 +25,7 @@ from anonymizer.engine.constants import (
     COL_REWRITE_BASELINE_TEXT,
     COL_REWRITTEN_TEXT,
     COL_REWRITTEN_TEXT_NEXT,
+    COL_SENSITIVITY_DISPOSITION,
     COL_TEXT,
     COL_UTILITY_SCORE,
 )
@@ -30,6 +33,7 @@ from anonymizer.engine.ndd.adapter import NddAdapter
 from anonymizer.engine.ndd.model_loader import resolve_model_alias
 from anonymizer.engine.prompt_utils import substitute_placeholders
 from anonymizer.engine.rewrite.parsers import (
+    normalize_payload,
     parse_privacy_answers,
     parse_privacy_qa,
 )
@@ -96,6 +100,17 @@ def _render_repair_prompt(row: dict[str, Any], params: RepairParams) -> str:
 <previous_rewrite>
 <<REWRITTEN_TEXT>>
 </previous_rewrite>
+
+<generalization_guidance>
+Entity IDs and dispositions:
+<<DISPOSITION>>
+Suggestions:
+<<GENERALIZATIONS>>
+Preserve the chosen abstractions and grammatical instructions unless they still leak.
+If necessary, broaden further or omit protected details; do not restore original values.
+For no_effective_generalization, omit the protected detail rather than inventing a synonym.
+Never change an entity assigned leave_as_is to satisfy a conflicting instruction.
+</generalization_guidance>
 
 <privacy_issues>
 The following questions about sensitive information can still be answered from the rewrite.
@@ -167,6 +182,12 @@ Provide ONLY the rewritten text.
 </task>
 """
     replacements = {
+        "<<DISPOSITION>>": json.dumps(
+            normalize_payload(row.get(COL_SENSITIVITY_DISPOSITION)) or {}, ensure_ascii=False
+        ),
+        "<<GENERALIZATIONS>>": json.dumps(
+            normalize_payload(row.get(COL_GENERALIZATION_SUGGESTIONS)) or {}, ensure_ascii=False
+        ),
         "<<PRIVACY_GOAL>>": params.privacy_goal_str,
         "<<MAX_PRIVACY_LEAK>>": str(params.max_privacy_leak),
         "<<ORIGINAL_TEXT>>": str(row.get(COL_REWRITE_BASELINE_TEXT, row.get(COL_TEXT, ""))),
@@ -203,6 +224,8 @@ def _make_repair_column(repairer_alias: str) -> Any:
             COL_LEAKED_PRIVACY_ITEMS,
             COL_REWRITTEN_TEXT,
             COL_REWRITE_BASELINE_TEXT,
+            COL_GENERALIZATION_SUGGESTIONS,
+            COL_SENSITIVITY_DISPOSITION,
             COL_TEXT,
             COL_LEAKAGE_MASS,
             COL_ANY_HIGH_LEAKED,

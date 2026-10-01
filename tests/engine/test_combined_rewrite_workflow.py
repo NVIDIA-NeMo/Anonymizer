@@ -22,6 +22,7 @@ from anonymizer.engine.constants import (
     COL_ANY_HIGH_LEAKED,
     COL_ENTITIES_BY_VALUE,
     COL_FULL_REWRITE,
+    COL_GENERALIZATION_NEEDS_REVIEW,
     COL_LATENT_ENTITIES,
     COL_LEAKAGE_MASS,
     COL_NEEDS_HUMAN_REVIEW,
@@ -151,7 +152,9 @@ def test_graph_unrolls_conditional_repairs(
         assert previous.needs_repair in condition.columns
 
 
+@pytest.mark.parametrize("generalization_review", [False, True])
 def test_finalizer_selects_last_executed_iteration(
+    generalization_review: bool,
     stub_rewrite_model_selection: RewriteModelSelection,
     stub_replace_model_selection: ReplaceModelSelection,
 ) -> None:
@@ -163,6 +166,7 @@ def test_finalizer_selects_last_executed_iteration(
     )
     initial, repaired, skipped = graph.evaluation_states
     row = {
+        COL_GENERALIZATION_NEEDS_REVIEW: generalization_review,
         initial.rewritten_text: "Initial rewrite",
         initial.quality_reanswer: {"answers": []},
         initial.privacy_reanswer: {"answers": []},
@@ -195,7 +199,7 @@ def test_finalizer_selects_last_executed_iteration(
     assert result[COL_ANY_HIGH_LEAKED] is False
     assert result[COL_NEEDS_REPAIR] is False
     assert result[COL_REPAIR_ITERATIONS] == 1
-    assert result[COL_NEEDS_HUMAN_REVIEW] is False
+    assert result[COL_NEEDS_HUMAN_REVIEW] is generalization_review
 
 
 def test_combined_graph_preserves_malformed_rewrite_handling(
@@ -234,7 +238,13 @@ def test_conditional_repairs_execute_independently_per_row(
 
     with measurement_session(collector):
         result = adapter.run_workflow(
-            pd.DataFrame({_REPAIRS_NEEDED: [0, 1, 2, 3], COL_SENSITIVITY_DISPOSITION: [None] * 4}),
+            pd.DataFrame(
+                {
+                    _REPAIRS_NEEDED: [0, 1, 2, 3],
+                    COL_SENSITIVITY_DISPOSITION: [None] * 4,
+                    COL_GENERALIZATION_NEEDS_REVIEW: [False] * 4,
+                }
+            ),
             model_configs=[],
             columns=columns,
             workflow_name="rewrite-combined",
@@ -519,7 +529,13 @@ def test_conditional_graph_handles_larger_mixed_batches(
     )
 
     result = adapter.run_workflow(
-        pd.DataFrame({_REPAIRS_NEEDED: repairs_needed, COL_SENSITIVITY_DISPOSITION: [None] * len(repairs_needed)}),
+        pd.DataFrame(
+            {
+                _REPAIRS_NEEDED: repairs_needed,
+                COL_SENSITIVITY_DISPOSITION: [None] * len(repairs_needed),
+                COL_GENERALIZATION_NEEDS_REVIEW: [False] * len(repairs_needed),
+            }
+        ),
         model_configs=[],
         columns=_deterministic_columns(graph),
         workflow_name="rewrite-combined-scale-test",

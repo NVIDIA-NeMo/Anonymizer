@@ -118,6 +118,7 @@ def test_format_rewrite_disposition_block_serializes_required_fields(
     block = result[COL_REWRITE_DISPOSITION_BLOCK]
     entry = block[0]
     assert set(entry.keys()) == {
+        "entity_id",
         "entity_label",
         "entity_value",
         "sensitivity",
@@ -585,13 +586,13 @@ def test_get_rewrite_prompt_references_required_columns(privacy_goal: PrivacyGoa
 # ---------------------------------------------------------------------------
 
 
-def test_columns_returns_five_configs(
+def test_columns_includes_generalization_step(
     stub_rewrite_model_selection: RewriteModelSelection,
     privacy_goal: PrivacyGoal,
 ) -> None:
     workflow = RewriteGenerationWorkflow()
     cols = workflow.columns(selected_models=stub_rewrite_model_selection, privacy_goal=privacy_goal)
-    assert len(cols) == 5
+    assert len(cols) == 8
 
 
 def test_columns_has_llm_config_with_rewriter_alias(
@@ -601,8 +602,8 @@ def test_columns_has_llm_config_with_rewriter_alias(
     workflow = RewriteGenerationWorkflow()
     cols = workflow.columns(selected_models=stub_rewrite_model_selection, privacy_goal=privacy_goal)
     llm_cols = [c for c in cols if isinstance(c, LLMStructuredColumnConfig)]
-    assert len(llm_cols) == 1
-    assert llm_cols[0].name == COL_FULL_REWRITE
+    assert len(llm_cols) == 2
+    assert llm_cols[-1].name == COL_FULL_REWRITE
 
 
 def test_columns_full_rewrite_uses_rewrite_output_schema(
