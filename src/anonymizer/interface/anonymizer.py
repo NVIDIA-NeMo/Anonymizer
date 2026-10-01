@@ -21,6 +21,7 @@ from anonymizer.config.anonymizer_config import (
     AnonymizerInput,
     EvaluateConfig,
     Rewrite,
+    resolve_effective_detection_labels,
 )
 from anonymizer.config.replace_strategies import ReplaceMethod, Substitute
 from anonymizer.config.rewrite import PrivacyGoal
@@ -698,19 +699,33 @@ class Anonymizer:
             preview_num_records = effective_records
         else:
             logger.info("🔍 Running entity detection on %d records", num_records)
+        configured_labels = resolve_effective_detection_labels(
+            config.detect.entity_labels,
+            regex_rules=config.detect.regex_rules,
+        )
+        effective_labels = resolve_effective_detection_labels(
+            config.detect.entity_labels,
+            regex_rules=config.detect.regex_rules,
+            excluded_entity_labels=config.detect.excluded_entity_labels,
+        )
         label_config = resolve_entity_label_config(
-            entity_labels=config.detect.entity_labels,
+            entity_labels=effective_labels,
             excluded_entity_labels=config.detect.excluded_entity_labels,
             entity_label_examples=config.detect.entity_label_examples,
         )
-        configured_label_count = len(
-            config.detect.entity_labels if config.detect.entity_labels is not None else DEFAULT_ENTITY_LABELS
-        )
+        label_config.strict_labels = config.detect.entity_labels is not None
+        configured_label_count = len(configured_labels)
         effective_label_count = len(label_config.labels)
         removed_label_count = configured_label_count - effective_label_count
         label_scope: list[str] | str
         if config.detect.entity_labels is None:
-            label_scope = "(defaults; see anonymizer.DEFAULT_ENTITY_LABELS for the pre-exclusion list)"
+            default_labels = set(DEFAULT_ENTITY_LABELS)
+            effective_custom_labels = [label for label in label_config.labels if label not in default_labels]
+            label_scope = (
+                f"(defaults plus enabled custom regex labels; effective custom labels: {effective_custom_labels})"
+                if effective_custom_labels
+                else "(defaults; see anonymizer.DEFAULT_ENTITY_LABELS for the pre-exclusion list)"
+            )
         else:
             label_scope = label_config.labels
         if logger.isEnabledFor(logging.DEBUG):
