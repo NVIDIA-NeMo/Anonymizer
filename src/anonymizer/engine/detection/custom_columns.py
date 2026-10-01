@@ -248,6 +248,7 @@ def _parse_entity_spans(raw_payload: object) -> list[EntitySpan]:
             end_position=e.end_position,
             score=e.score,
             source=e.source,
+            propagate_occurrences=e.propagate_occurrences,
         )
         for e in parsed.entities
     ]

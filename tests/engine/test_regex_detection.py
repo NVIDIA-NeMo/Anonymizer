@@ -664,6 +664,8 @@ def test_regex_entities_are_not_propagated_to_unvalidated_occurrences() -> None:
     )
     result = detect_regex_entities("allow:ABC deny:ABC", rules=rules)
 
+    assert result.accepted_entities[0].propagate_occurrences is False
+
     expanded = expand_entity_occurrences(
         text="allow:ABC deny:ABC",
         entities=result.accepted_entities,

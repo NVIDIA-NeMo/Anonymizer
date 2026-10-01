@@ -65,6 +65,29 @@ def test_entities_payload_from_raw_model_instance() -> None:
     assert payload.entities[0].label == "organization"
 
 
+def test_entities_payload_round_trips_span_restricted_occurrence_permission() -> None:
+    payload = EntitiesSchema(
+        entities=[
+            {
+                "id": "token_0_3",
+                "value": "ABC",
+                "label": "token",
+                "start_position": 0,
+                "end_position": 3,
+                "score": 1.0,
+                "source": "regex_user:user:token:v1",
+                "propagate_occurrences": False,
+            }
+        ]
+    )
+
+    serialized = payload.model_dump(mode="json")
+    restored = EntitiesSchema.from_raw(serialized)
+
+    assert serialized["entities"][0]["propagate_occurrences"] is False
+    assert restored.entities[0].propagate_occurrences is False
+
+
 def test_entities_payload_from_raw_numpy_array() -> None:
     """Regression: parquet round-trips produce {"entities": numpy_array}."""
     raw = {

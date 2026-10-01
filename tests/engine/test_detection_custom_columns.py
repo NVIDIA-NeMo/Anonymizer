@@ -13,17 +13,21 @@ from __future__ import annotations
 import json
 from typing import Any
 
+import pandas as pd
 import pytest
 
+from anonymizer.config.replace_strategies import Redact
 from anonymizer.engine.constants import (
     COL_AUGMENTED_ENTITIES,
     COL_DETECTED_ENTITIES,
+    COL_FINAL_ENTITIES,
     COL_INITIAL_TAGGED_TEXT,
     COL_MERGED_ENTITIES,
     COL_MERGED_TAGGED_TEXT,
     COL_RAW_DETECTED,
     COL_REGEX_ACCEPTED_ENTITIES,
     COL_REGEX_ENTITIES,
+    COL_REPLACED_TEXT,
     COL_SEED_ENTITIES,
     COL_SEED_ENTITIES_JSON,
     COL_SEED_VALIDATION_CANDIDATES,
@@ -44,6 +48,7 @@ from anonymizer.engine.detection.custom_columns import (
     parse_detected_entities,
     prepare_validation_inputs,
 )
+from anonymizer.engine.replace.strategies import apply_local_replace_strategy
 
 
 def test_parse_entity_spans_handles_malformed_payload() -> None:
@@ -235,6 +240,58 @@ def test_exact_accepted_duplicate_skips_llm_validation_and_retains_origins() -> 
             "source": "regex_builtin:nemo-anonymizer.email.v1|detector",
         }
     ]
+
+
+@pytest.mark.parametrize("regex_route", ["accepted", "llm_validated"])
+def test_mixed_regex_and_detector_origin_preserves_occurrence_propagation(regex_route: str) -> None:
+    text = "allow:ABC deny:ABC"
+    accepted = {
+        "id": "token_6_9",
+        "value": "ABC",
+        "label": "token",
+        "start_position": 6,
+        "end_position": 9,
+        "score": 1.0,
+        "source": "regex_user:user:token:v1",
+        "propagate_occurrences": False,
+    }
+    row: dict[str, Any] = {
+        COL_TEXT: text,
+        COL_RAW_DETECTED: _raw(
+            [
+                {
+                    "text": "ABC",
+                    "label": "token",
+                    "start": 6,
+                    "end": 9,
+                    "score": 0.9,
+                }
+            ]
+        ),
+        COL_REGEX_ENTITIES: {"entities": [accepted] if regex_route == "llm_validated" else []},
+        COL_REGEX_ACCEPTED_ENTITIES: {"entities": [accepted] if regex_route == "accepted" else []},
+        COL_AUGMENTED_ENTITIES: {"entities": []},
+    }
+
+    parse_detected_entities(row)
+    prepare_validation_inputs(row)
+    row[COL_VALIDATED_ENTITIES] = {
+        "decisions": ([{"id": "token_6_9", "decision": "keep"}] if regex_route == "llm_validated" else [])
+    }
+    apply_validation_to_seed_entities(row)
+    merge_and_build_candidates(row)
+    result = apply_validation_and_finalize(row)
+
+    entities = result[COL_DETECTED_ENTITIES]["entities"]
+    assert [(entity["start_position"], entity["end_position"]) for entity in entities] == [(6, 9), (15, 18)]
+    assert entities[0]["source"] == "regex_user:user:token:v1|detector"
+    assert entities[1]["source"] == "propagation"
+
+    replaced = apply_local_replace_strategy(
+        pd.DataFrame({COL_TEXT: [text], COL_FINAL_ENTITIES: [result[COL_DETECTED_ENTITIES]]}),
+        strategy=Redact(),
+    )
+    assert replaced[COL_REPLACED_TEXT].iloc[0] == "allow:[REDACTED_TOKEN] deny:[REDACTED_TOKEN]"
 
 
 def test_regex_candidate_bypassing_llm_survives_a_drop_decision() -> None:

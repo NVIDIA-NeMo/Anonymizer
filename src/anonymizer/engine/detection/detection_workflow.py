@@ -649,7 +649,7 @@ def _materialize_final_entities(
         for e in parsed.entities
         if (allowed is None or normalize_label(e.label) in allowed) and normalize_label(e.label) not in excluded
     ]
-    return EntitiesSchema(entities=kept).model_dump()
+    return EntitiesSchema(entities=kept).model_dump(exclude={"entities": {"__all__": {"propagate_occurrences"}}})
 
 
 def _filter_excluded_latent_entities(raw: object, excluded_entity_labels: list[str] | None) -> object:
@@ -705,6 +705,7 @@ def _build_entities_by_value(final_entities_raw: object) -> dict:
             end_position=e.end_position,
             score=e.score,
             source=e.source,
+            propagate_occurrences=e.propagate_occurrences,
         )
         for e in parsed.entities
     ]

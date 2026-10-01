@@ -19,7 +19,13 @@ _SOURCE_ORIGIN_SEPARATOR = "|"
 
 @dataclass(frozen=True)
 class EntitySpan:
-    """Canonical standoff entity representation."""
+    """Canonical standoff entity representation.
+
+    ``propagate_occurrences`` records whether an independently accepted
+    producer permits the value to expand beyond this exact span. Regex
+    candidates disable it because their pattern or validator may be
+    context-specific; exact duplicates combine the permission with OR.
+    """
 
     entity_id: str
     value: str
@@ -28,8 +34,9 @@ class EntitySpan:
     end_position: int
     score: float
     source: str
+    propagate_occurrences: bool = True
 
-    def as_dict(self) -> dict[str, str | int | float]:
+    def as_dict(self) -> dict[str, str | int | float | bool]:
         return {
             "id": self.entity_id,
             "value": self.value,
@@ -38,6 +45,7 @@ class EntitySpan:
             "end_position": self.end_position,
             "score": self.score,
             "source": self.source,
+            "propagate_occurrences": self.propagate_occurrences,
         }
 
 
@@ -125,9 +133,10 @@ def coalesce_exact_entity_candidates(
     """Coalesce exact label/span duplicates while preserving overlapping alternatives.
 
     Source argument order defines provenance priority for an exact duplicate.
-    All distinct origins are retained in a deterministic source chain. Partial
-    overlaps and same-span candidates with different labels remain independent
-    so contextual validation can decide which candidates survive.
+    All distinct origins are retained in a deterministic source chain, and
+    occurrence propagation remains allowed when any accepted origin permits
+    it. Partial overlaps and same-span candidates with different labels remain
+    independent so contextual validation can decide which candidates survive.
     """
     grouped: dict[tuple[str, int, int], list[tuple[int, EntitySpan]]] = {}
     for priority, entities in enumerate(sources):
@@ -152,7 +161,13 @@ def coalesce_exact_entity_candidates(
             for origin in candidate.source.split(_SOURCE_ORIGIN_SEPARATOR):
                 if origin and origin not in origins:
                     origins.append(origin)
-        coalesced.append(replace(winner, source=_SOURCE_ORIGIN_SEPARATOR.join(origins)))
+        coalesced.append(
+            replace(
+                winner,
+                source=_SOURCE_ORIGIN_SEPARATOR.join(origins),
+                propagate_occurrences=any(candidate.propagate_occurrences for _, candidate in ranked),
+            )
+        )
 
     return sorted(
         coalesced,
@@ -220,17 +235,7 @@ def apply_validation_decisions(entities: list[EntitySpan], validation_output: di
         if entry["decision"] == "drop":
             continue
         if entry["decision"] == "reclass" and entry["proposed_label"]:
-            validated.append(
-                EntitySpan(
-                    entity_id=entity.entity_id,
-                    value=entity.value,
-                    label=entry["proposed_label"],
-                    start_position=entity.start_position,
-                    end_position=entity.end_position,
-                    score=entity.score,
-                    source=entity.source,
-                )
-            )
+            validated.append(replace(entity, label=entry["proposed_label"]))
         else:
             validated.append(entity)
     return validated
@@ -290,8 +295,9 @@ def _split_full_names(
 
     When a ``full_name`` span like "John Smith" is detected, this adds
     separate ``first_name``/``last_name``/``middle_name`` entities for
-    each part so that standalone occurrences elsewhere in the text are
-    also caught.
+    each part. Parts expand to standalone occurrences only when the parent
+    entity permits occurrence propagation; span-restricted parents derive
+    parts only inside their accepted span.
     """
     excluded = normalize_labels(excluded_entity_labels)
     existing_values: set[str] = {entity.value.lower() for entity in entities}
@@ -312,7 +318,17 @@ def _split_full_names(
                 part_label = "last_name"
             else:
                 part_label = "middle_name"
-            for start, end in _find_all_occurrences(text=text, needle=part):
+            if entity.propagate_occurrences:
+                occurrences = _find_all_occurrences(text=text, needle=part)
+            else:
+                occurrences = [
+                    (entity.start_position + start, entity.start_position + end)
+                    for start, end in _find_all_occurrences(
+                        text=text[entity.start_position : entity.end_position],
+                        needle=part,
+                    )
+                ]
+            for start, end in occurrences:
                 entity_id = _build_entity_id(label=part_label, start=start, end=end)
                 extra.append(
                     EntitySpan(
@@ -323,6 +339,7 @@ def _split_full_names(
                         end_position=end,
                         score=entity.score,
                         source="name_split",
+                        propagate_occurrences=entity.propagate_occurrences,
                     )
                 )
             existing_values.add(part.lower())
@@ -528,14 +545,15 @@ def get_tag_notation(text: str) -> str:
 
 
 def expand_entity_occurrences(text: str, entities: list[EntitySpan]) -> list[EntitySpan]:
-    """Expand validated non-regex entities to all occurrences in the text.
+    """Expand values whose accepted origins permit document-wide propagation.
 
-    Regex spans are not propagated because their pattern or validator may
-    intentionally accept only some occurrences. Other detected values are
-    expanded as before, and overlaps prefer longer spans.
+    Regex spans start span-restricted because their pattern or validator may
+    intentionally accept only some occurrences. Coalescing with an accepted
+    detector origin grants propagation permission. Overlaps prefer longer
+    spans after expansion.
     """
     entity_map: dict[str, str] = {}
-    propagatable_entities = [entity for entity in entities if not entity_has_source_prefix(entity, "regex_")]
+    propagatable_entities = [entity for entity in entities if entity.propagate_occurrences]
     for entity in propagatable_entities:
         key = entity.value.lower()
         if key not in entity_map:

@@ -244,6 +244,7 @@ def detect_regex_entities(
                     end_position=end,
                     score=_REGEX_SCORE,
                     source=f"{rule.source}:{rule.rule_id}",
+                    propagate_occurrences=False,
                 )
                 if rule.validate_with_llm:
                     llm_entities.append(entity)
