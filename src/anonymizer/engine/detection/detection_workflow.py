@@ -620,7 +620,7 @@ def _resolve_detection_labels(
     entity_labels: list[str] | None,
     *,
     regex_rules: list[BuiltinRegex | RegexRule] | None = None,
-    excluded_entity_labels: set[str] | None = None,
+    excluded_entity_labels: list[str] | set[str] | None = None,
 ) -> list[str]:
     labels = resolve_effective_detection_labels(
         entity_labels,
