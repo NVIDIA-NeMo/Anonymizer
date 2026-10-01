@@ -71,12 +71,16 @@ Key columns:
 |---|---|
 | `_domain` | Which domain the classifier picked. Wrong domain → wrong supplement → poor rewrite |
 | `_sensitivity_disposition` | Per-entity sensitivity assignments (high/medium/low) |
+| `_generalization_suggestions` | Per-target wording, contextual instructions, and unresolved limitations |
+| `_generalization_needs_review` | At least one generalization needs contextual changes or has no effective suggestion |
 | `leakage_mass` | Confidence-weighted sum of leaked entities |
 | `utility_score` | 0–1 quality preservation score |
 | `weighted_leakage_rate` | Leakage normalized by maximum possible leakage |
 | `any_high_leaked` | Whether any high-sensitivity entity leaked through |
-| `needs_human_review` | Crossed the configured threshold |
+| `needs_human_review` | Crossed a review threshold or has an unresolved generalization |
 | `judge_evaluation` | Final-judge qualitative comments |
+
+Generalization runs after sensitivity disposition and replacement-map filtering, using the configured rewriter model. Only entities assigned `generalize` receive suggestions; records without targets skip that LLM call. Rewrite and repair consume the suggestions. When no effective generalization is available, rewrite is instructed to omit the protected detail, and the record is flagged for human review. These flags are conservative planning signals, not proof of leakage or successful protection.
 
 ### Re-run with `Annotate` to see detection output
 
@@ -216,4 +220,3 @@ Configuration is structurally valid but a runtime model call failed. Check:
 1. The provider for the model alias has an API key set in your environment.
 2. The base URL is reachable (corporate VPN / proxy).
 3. The model alias actually exists at the provider — `anonymizer validate` checks the alias is in your config; it doesn't dial out to confirm the model is live.
-

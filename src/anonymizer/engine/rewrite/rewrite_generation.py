@@ -18,6 +18,7 @@ from anonymizer.engine.constants import (
     COL_DISPOSITION_COVERAGE,
     COL_FINAL_ENTITIES,
     COL_FULL_REWRITE,
+    COL_GENERALIZATION_SUGGESTIONS,
     COL_REPLACEMENT_APPLICATION,
     COL_REPLACEMENT_MAP,
     COL_REPLACEMENT_MAP_FOR_PROMPT,
@@ -40,7 +41,8 @@ from anonymizer.engine.replace.strategies import (
     _parse_replacements,
     apply_replacements_to_spans,
 )
-from anonymizer.engine.rewrite.parsers import parse_sensitivity_disposition
+from anonymizer.engine.rewrite.generalization import GeneralizationWorkflow
+from anonymizer.engine.rewrite.parsers import normalize_payload, parse_sensitivity_disposition
 from anonymizer.engine.schemas import (
     EntitiesSchema,
     EntitySchema,
@@ -92,7 +94,7 @@ Tagged text:
 <sensitivity_disposition>
 Protection decisions for each entity that needs protection:
 {% for entity in <<REWRITE_DISPOSITION_BLOCK>> %}
-- {{ entity.entity_label }}: "{{ entity.entity_value }}"
+- ID {{ entity.entity_id }}: {{ entity.entity_label }}: "{{ entity.entity_value }}"
   Sensitivity: {{ entity.sensitivity }}
   Protection method: {{ entity.protection_method_suggestion }}
   Reason: {{ entity.protection_reason }}
@@ -107,12 +109,20 @@ Synthetic replacement values for entities with protection_method "replace":
 <<REPLACEMENT_MAP>>
 </replacement_map>
 {% endif %}
+<generalization_suggestions>
+<<GENERALIZATION_SUGGESTIONS>>
+</generalization_suggestions>
 <output_requirements>
 Apply each protection method as follows:
 - "replace": Substitute the entity value with the corresponding synthetic value from the replacement map.
   Use the synthetic value consistently for every occurrence.
 - "generalize": Replace with a broader category or range
-  (e.g., a specific city → "a city in the Pacific Northwest", exact age → "in their late 30s").
+  Follow the supplied suggestion for that entity ID. Adapt articles, prepositions,
+  inflection and references to the sentence without restoring identifying specificity.
+  Apply contextual instructions for needs_context_change. Never change a leave_as_is
+  entity to resolve a conflict; omit the conflicting protected detail instead.
+  For no_effective_generalization, omit the protected detail and repair surrounding
+  prose rather than inventing a safe-sounding synonym. Such records require review.
 - "remove": Omit the detail entirely. Rewrite the surrounding sentence so it reads naturally without it.
 - "suppress_inference": Modify the text so the attribute cannot be reliably inferred by a motivated reader.
 
@@ -128,6 +138,7 @@ Rules:
     return substitute_placeholders(
         prompt,
         {
+            "<<GENERALIZATION_SUGGESTIONS>>": _jinja(COL_GENERALIZATION_SUGGESTIONS),
             "<<PRIVACY_GOAL>>": privacy_goal.to_prompt_string(),
             "<<DATA_CONTEXT>>": data_context_section,
             "<<TAG_NOTATION>>": COL_TAG_NOTATION,
@@ -155,6 +166,7 @@ def _format_rewrite_disposition_block(row: dict[str, Any]) -> dict[str, Any]:
         d = e.model_dump(mode="json")
         block.append(
             {
+                "entity_id": d["id"],
                 "entity_label": d["entity_label"],
                 "entity_value": d["entity_value"],
                 "sensitivity": d["sensitivity"],
@@ -185,7 +197,7 @@ def _filter_replacement_map_for_prompt(row: dict[str, Any]) -> dict[str, Any]:
         return row
     filtered = [
         {"original": replacement.original, "label": replacement.label, "synthetic": replacement.synthetic}
-        for replacement in _parse_replacements(raw_map)
+        for replacement in _parse_replacements(normalize_payload(raw_map))
         if (replacement.original, replacement.label) in replace_pairs
     ]
     row[COL_REPLACEMENT_MAP_FOR_PROMPT] = {"replacements": filtered}
@@ -212,7 +224,7 @@ def _prepare_rewrite_tagged_text(row: dict[str, Any]) -> dict[str, Any]:
     entities = EntitiesSchema.from_raw(row.get(COL_FINAL_ENTITIES, {}))
     replace_pairs = _replace_pairs(row.get(COL_REWRITE_DISPOSITION_BLOCK, []))
     target_entities = EntitiesSchema(entities=[e for e in entities.entities if (e.value, e.label) in replace_pairs])
-    replacements = _parse_replacements(row.get(COL_REPLACEMENT_MAP))
+    replacements = _parse_replacements(normalize_payload(row.get(COL_REPLACEMENT_MAP)))
     baseline, application = apply_replacements_to_spans(
         str(row.get(COL_TEXT, "")), target_entities, replacements, allow_value_fallback=False
     )
@@ -354,7 +366,7 @@ class RewriteGenerationWorkflow:
     """Column factory for the rewrite generation step.
 
     Returns column configs for disposition-block formatting,
-    replacement-map filtering, LLM rewrite, and text extraction.
+    replacement-map filtering, generalization suggestions, LLM rewrite, and text extraction.
     The orchestrator (``RewriteWorkflow``) collects these alongside
     domain/disposition/QA columns for a single adapter call.
     """
@@ -376,6 +388,7 @@ class RewriteGenerationWorkflow:
                 name=COL_REPLACEMENT_MAP_FOR_PROMPT,
                 generator_function=_filter_replacement_map_for_prompt,
             ),
+            *GeneralizationWorkflow().columns(selected_models=selected_models, privacy_goal=privacy_goal),
             CustomColumnConfig(
                 name=COL_REWRITE_TAGGED_TEXT,
                 generator_function=_prepare_rewrite_tagged_text,

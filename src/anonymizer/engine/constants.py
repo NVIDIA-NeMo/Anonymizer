@@ -116,6 +116,10 @@ COL_DISPOSITION_COVERAGE = (
     "_disposition_coverage"  # True once the disposition is verified to cover every supplied entity
 )
 COL_SENSITIVITY_DISPOSITION_BLOCK = "_sensitivity_disposition_block"
+COL_GENERALIZATION_TARGETS = "_generalization_targets"
+COL_RAW_GENERALIZATION_SUGGESTIONS = "_raw_generalization_suggestions"
+COL_GENERALIZATION_SUGGESTIONS = "_generalization_suggestions"
+COL_GENERALIZATION_NEEDS_REVIEW = "_generalization_needs_review"
 COL_REWRITE_DISPOSITION_BLOCK = "_rewrite_disposition_block"
 COL_REPLACEMENT_MAP_FOR_PROMPT = "_replacement_map_for_prompt"
 COL_REWRITE_TAGGED_TEXT = "_rewrite_tagged_text"

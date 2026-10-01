@@ -19,6 +19,7 @@ from anonymizer.engine.constants import (
     COL_DETECTION_VALID,
     COL_DOMAIN,
     COL_ENTITIES_BY_VALUE,
+    COL_GENERALIZATION_NEEDS_REVIEW,
     COL_JUDGE_EVALUATION,
     COL_LEAKAGE_MASS,
     COL_NEEDS_HUMAN_REVIEW,
@@ -247,7 +248,9 @@ def test_has_entities_returns_false_for_none() -> None:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.parametrize("generalization_review", [False, True])
 def test_calls_sub_workflows_in_order(
+    generalization_review: bool,
     stub_model_configs: list[ModelConfig],
     stub_rewrite_model_selection: RewriteModelSelection,
     stub_replace_model_selection: ReplaceModelSelection,
@@ -257,6 +260,7 @@ def test_calls_sub_workflows_in_order(
     stub_eval_df: pd.DataFrame,
 ) -> None:
     adapter = Mock()
+    stub_eval_df[COL_GENERALIZATION_NEEDS_REVIEW] = generalization_review
     adapter.run_workflow.side_effect = _standard_side_effect(stub_pipeline_df, stub_eval_df)
 
     with patch(_REPLACE_PATCH) as mock_replace_cls:
@@ -277,6 +281,7 @@ def test_calls_sub_workflows_in_order(
     assert "rewrite-final-judge" not in workflow_names
 
     assert len(result.dataframe) == 1
+    assert bool(result.dataframe[COL_NEEDS_HUMAN_REVIEW].iloc[0]) is generalization_review
 
 
 # ---------------------------------------------------------------------------
