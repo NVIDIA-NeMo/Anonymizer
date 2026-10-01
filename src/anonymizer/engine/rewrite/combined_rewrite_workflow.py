@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass
 from typing import Any
 
@@ -36,6 +37,7 @@ from anonymizer.engine.constants import (
     COL_REWRITTEN_TEXT,
     COL_REWRITTEN_TEXT_INITIAL,
     COL_REWRITTEN_TEXT_NEXT,
+    COL_SENSITIVITY_DISPOSITION,
     COL_UTILITY_SCORE,
     COL_WEIGHTED_LEAKAGE_RATE,
 )
@@ -70,6 +72,8 @@ from anonymizer.engine.rewrite.workflow_utils import derive_seed_columns, select
 from anonymizer.engine.row_partitioning import merge_and_reorder, split_rows
 from anonymizer.engine.schemas import EntitiesByValueSchema, EntityReplacementMapSchema
 from anonymizer.measurement import stage_timer
+
+logger = logging.getLogger("anonymizer.rewrite.combined_workflow")
 
 
 @dataclass(frozen=True)
@@ -333,6 +337,7 @@ def _finalization_column(
             )
         )
     )
+    required_columns.append(COL_SENSITIVITY_DISPOSITION)
     side_effect_columns = [
         COL_QUALITY_QA_REANSWER,
         COL_PRIVACY_QA_REANSWER,
@@ -410,7 +415,6 @@ class CombinedRewriteWorkflow(RewriteWorkflow):
             SensitivityDispositionWorkflow().columns(
                 selected_models=selected_models,
                 privacy_goal=privacy_goal,
-                data_summary=data_summary,
                 strict_entity_protection=strict_entity_protection,
             )
         )

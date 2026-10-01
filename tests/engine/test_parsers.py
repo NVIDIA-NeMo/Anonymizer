@@ -177,9 +177,8 @@ def test_parse_sensitivity_disposition_from_dict() -> None:
                 "entity_value": "Alice",
                 "protection_reason": "Direct identifier that enables re-identification",
                 "protection_method_suggestion": "replace",
-                "combined_risk_level": "high",
             }
-        ]
+        ],
     }
     assert len(parse_sensitivity_disposition(raw).sensitivity_disposition) == 1
 
@@ -202,10 +201,9 @@ def test_parse_sensitivity_disposition_normalizes_numpy_array_payload() -> None:
                     "entity_value": "Alice",
                     "protection_reason": "Direct identifier that enables re-identification",
                     "protection_method_suggestion": "replace",
-                    "combined_risk_level": "high",
                 }
             ],
             dtype=object,
-        )
+        ),
     }
     assert len(parse_sensitivity_disposition(raw).sensitivity_disposition) == 1

@@ -310,7 +310,6 @@ class RewriteWorkflow:
                 *self._disposition_wf.columns(
                     selected_models=selected_models,
                     privacy_goal=privacy_goal,
-                    data_summary=data_summary,
                     strict_entity_protection=strict_entity_protection,
                 ),
                 *self._qa_wf.columns(selected_models=selected_models),

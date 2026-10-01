@@ -19,7 +19,7 @@ MODEL_REVISION = "59894c087cb2923b01f337d4ee72f6ff84d5bdd6"
 
 def resolve_device(requested: str) -> str:
     """Resolve and validate a notebook inference device."""
-    import torch  # ty: ignore[unresolved-import] -- installed in the isolated server environment
+    import torch
 
     normalized = requested.strip().lower()
     if normalized not in SUPPORTED_DEVICES:
@@ -42,7 +42,7 @@ def resolve_device(requested: str) -> str:
 
 def load_model(device: str) -> Any:
     """Download the pinned checkpoint and load it on ``device``."""
-    from gliner2 import GLiNER2  # ty: ignore[unresolved-import] -- isolated server dependency
+    from gliner2 import GLiNER2
     from huggingface_hub import snapshot_download
 
     snapshot_path = snapshot_download(repo_id=MODEL_ID, revision=MODEL_REVISION)

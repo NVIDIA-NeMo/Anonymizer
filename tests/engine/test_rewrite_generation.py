@@ -66,9 +66,8 @@ def stub_sensitivity_disposition() -> dict:
                 "entity_value": "Alice",
                 "protection_reason": "Full name uniquely identifies the subject",
                 "protection_method_suggestion": "replace",
-                "combined_risk_level": "high",
             }
-        ]
+        ],
     }
 
 
@@ -104,9 +103,8 @@ def test_format_rewrite_disposition_block_excludes_unprotected_entities() -> Non
                 "entity_value": "Portland",
                 "protection_reason": "Not identifying alone",
                 "protection_method_suggestion": "leave_as_is",
-                "combined_risk_level": "low",
             }
-        ]
+        ],
     }
     row = {COL_SENSITIVITY_DISPOSITION: disposition}
     result = _format_rewrite_disposition_block(row)
@@ -141,9 +139,8 @@ def test_format_rewrite_disposition_block_empty_when_no_protected_entities() -> 
                 "entity_value": "Portland",
                 "protection_reason": "Not identifying alone",
                 "protection_method_suggestion": "leave_as_is",
-                "combined_risk_level": "low",
             }
-        ]
+        ],
     }
     row = {COL_SENSITIVITY_DISPOSITION: disposition}
     result = _format_rewrite_disposition_block(row)

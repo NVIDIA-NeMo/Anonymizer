@@ -15,6 +15,7 @@ from data_designer.config.column_types import ColumnConfigT
 from anonymizer.config.models import RewriteModelSelection
 from anonymizer.config.rewrite import PrivacyGoal
 from anonymizer.engine.constants import (
+    COL_DISPOSITION_COVERAGE,
     COL_FINAL_ENTITIES,
     COL_FULL_REWRITE,
     COL_REPLACEMENT_APPLICATION,
@@ -121,6 +122,8 @@ Rules:
 3. Entities with protection_method_suggestion="leave_as_is" should be retained verbatim (tags removed only).
 4. The rewritten text must flow naturally and preserve the meaning and narrative structure of the original.
 5. Do not introduce new identifying details not present in the original.
+6. Follow the privacy outcome described in each protection reason, including changes to
+   supporting context needed to suppress latent inferences.
 </output_requirements>"""
     return substitute_placeholders(
         prompt,
@@ -141,7 +144,7 @@ Rules:
 # ---------------------------------------------------------------------------
 
 
-@custom_column_generator(required_columns=[COL_SENSITIVITY_DISPOSITION])
+@custom_column_generator(required_columns=[COL_SENSITIVITY_DISPOSITION, COL_DISPOSITION_COVERAGE])
 def _format_rewrite_disposition_block(row: dict[str, Any]) -> dict[str, Any]:
     """Pre-filter and serialize protected entities (protection_method_suggestion != "leave_as_is") for the rewrite prompt."""
     disposition = parse_sensitivity_disposition(row[COL_SENSITIVITY_DISPOSITION])

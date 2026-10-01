@@ -104,7 +104,17 @@ COL_ENTITY_CLASSIFICATION_LOCAL = "_entity_classification_local"  # label -> cat
 COL_ENTITY_CLASSIFICATION_UNMAPPED_LABELS = "_entity_classification_unmapped_labels"  # labels not in default table
 COL_ENTITY_CLASSIFICATION_LLM = "_entity_classification_llm"  # raw LLM output for unmapped labels only
 COL_ENTITY_CLASSIFICATION = "_entity_classification"  # merged map, consumed by sensitivity disposition
+COL_DISPOSITION_EXPLICIT_ENTITIES = (
+    "_disposition_explicit_entities"  # numbered explicit entities fed to the disposition prompt
+)
+COL_DISPOSITION_LATENT_ENTITIES = (
+    "_disposition_latent_entities"  # numbered latent entities (IDs continue after explicit)
+)
+COL_RAW_SENSITIVITY_DISPOSITION = "_raw_sensitivity_disposition"
 COL_SENSITIVITY_DISPOSITION = "_sensitivity_disposition"
+COL_DISPOSITION_COVERAGE = (
+    "_disposition_coverage"  # True once the disposition is verified to cover every supplied entity
+)
 COL_SENSITIVITY_DISPOSITION_BLOCK = "_sensitivity_disposition_block"
 COL_REWRITE_DISPOSITION_BLOCK = "_rewrite_disposition_block"
 COL_REPLACEMENT_MAP_FOR_PROMPT = "_replacement_map_for_prompt"
