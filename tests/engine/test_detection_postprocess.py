@@ -68,6 +68,27 @@ def test_apply_validation_decisions_drops_entities() -> None:
     assert [item.entity_id for item in validated] == ["id1"]
 
 
+def test_apply_validation_decisions_preserves_occurrence_permission_on_reclassification() -> None:
+    entity = EntitySpan(
+        "id1",
+        "ABC",
+        "token",
+        0,
+        3,
+        1.0,
+        "regex_user:user:token:v1",
+        propagate_occurrences=False,
+    )
+
+    validated = apply_validation_decisions(
+        entities=[entity],
+        validation_output={"decisions": [{"id": "id1", "decision": "reclass", "proposed_label": "account_number"}]},
+    )
+
+    assert validated[0].label == "account_number"
+    assert validated[0].propagate_occurrences is False
+
+
 def test_apply_validation_decisions_reclassifies_label() -> None:
     entities = [
         EntitySpan("id1", "San Diego", "country", 5, 14, 1.0, "detector"),
@@ -187,6 +208,28 @@ def test_augmented_splits_full_name_into_parts() -> None:
     smiths = [e for e in merged if e.value == "Smith"]
     assert len(smiths) == 1
     assert smiths[0].start_position == 35
+
+
+def test_name_split_does_not_escape_a_span_restricted_regex_full_name() -> None:
+    text = "allow:John Smith deny:John Smith and John"
+    merged = apply_augmented_entities(
+        text=text,
+        entities=[
+            EntitySpan(
+                "fn",
+                "John Smith",
+                "full_name",
+                6,
+                16,
+                1.0,
+                "regex_user:user:full_name:v1",
+                propagate_occurrences=False,
+            )
+        ],
+        augmented_output={"entities": []},
+    )
+
+    assert [(entity.value, entity.start_position, entity.end_position) for entity in merged] == [("John Smith", 6, 16)]
 
 
 def test_apply_augmented_entities_does_not_split_single_token_full_name() -> None:
@@ -454,6 +497,7 @@ def test_coalesce_exact_candidates_keeps_best_duplicate_and_all_origins() -> Non
         17,
         1.0,
         "regex_builtin:nemo-anonymizer.email.v1",
+        propagate_occurrences=False,
     )
     detector_entity = EntitySpan("email_0_17", "alice@example.com", "email", 0, 17, 0.9, "detector")
 
@@ -470,6 +514,7 @@ def test_coalesce_exact_candidates_keeps_best_duplicate_and_all_origins() -> Non
             "regex_builtin:nemo-anonymizer.email.v1|detector",
         )
     ]
+    assert result[0].propagate_occurrences is True
 
 
 def test_parse_raw_entities_keeps_highest_score_for_an_exact_duplicate() -> None:

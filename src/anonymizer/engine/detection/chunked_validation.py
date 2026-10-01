@@ -219,6 +219,7 @@ def build_chunk_excerpt(
             end_position=span.end_position - excerpt_start,
             score=span.score,
             source=span.source,
+            propagate_occurrences=span.propagate_occurrences,
         )
         for span in all_spans
         if span.start_position >= excerpt_start and span.end_position <= excerpt_end
@@ -515,6 +516,7 @@ def _build_dispatch_kwargs_per_chunk(
             end_position=entity.end_position,
             score=entity.score,
             source=entity.source,
+            propagate_occurrences=entity.propagate_occurrences,
         )
         for entity in seed_entities_schema.entities
     ]

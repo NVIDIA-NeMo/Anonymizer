@@ -812,7 +812,13 @@ def test_resolve_entity_label_config_empty_result_raises() -> None:
 def test_materialize_final_entities_normalizes_configured_labels() -> None:
     raw = {
         "entities": [
-            {"value": "Alice", "label": "First_Name", "start_position": 0, "end_position": 5},
+            {
+                "value": "Alice",
+                "label": "First_Name",
+                "start_position": 0,
+                "end_position": 5,
+                "propagate_occurrences": False,
+            },
             {"value": "alice@example.com", "label": "Email", "start_position": 7, "end_position": 24},
             {"value": "Houston", "label": "City", "start_position": 28, "end_position": 35},
         ]
@@ -826,6 +832,7 @@ def test_materialize_final_entities_normalizes_configured_labels() -> None:
 
     final = EntitiesSchema.from_raw(result)
     assert [entity.label for entity in final.entities] == ["First_Name"]
+    assert "propagate_occurrences" not in result["entities"][0]
 
 
 def test_excluded_labels_are_removed_from_final_entities(

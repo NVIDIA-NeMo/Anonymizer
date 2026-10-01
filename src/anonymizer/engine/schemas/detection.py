@@ -26,6 +26,11 @@ class EntitySchema(BaseModel):
     end_position: int = Field(default=0)
     score: float = Field(default=0.0)
     source: str = Field(default="detector")
+    propagate_occurrences: bool = Field(
+        default=True,
+        exclude_if=lambda value: value,
+        description="Internal permission to expand this value beyond its accepted span.",
+    )
 
 
 class EntitiesSchema(BaseModel):
