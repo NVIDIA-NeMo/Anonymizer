@@ -33,6 +33,7 @@ from anonymizer.engine.constants import (
     COL_REWRITTEN_TEXT,
     COL_REWRITTEN_TEXT_INITIAL,
     COL_REWRITTEN_TEXT_NEXT,
+    COL_SENSITIVITY_DISPOSITION,
     COL_TAG_NOTATION,
     COL_TAGGED_TEXT,
     COL_TEXT,
@@ -270,7 +271,7 @@ def test_conditional_repairs_execute_independently_per_row(
 
     with measurement_session(collector):
         result = adapter.run_workflow(
-            pd.DataFrame({_REPAIRS_NEEDED: [0, 1, 2, 3], COL_REWRITE_REPLACEMENT_READY: replacement_ready}),
+            pd.DataFrame({_REPAIRS_NEEDED: [0, 1, 2, 3], COL_REWRITE_REPLACEMENT_READY: replacement_ready, COL_SENSITIVITY_DISPOSITION: [None] * 4}),
             model_configs=[],
             columns=columns,
             workflow_name="rewrite-combined",
@@ -561,7 +562,7 @@ def test_conditional_graph_handles_larger_mixed_batches(
     )
 
     result = adapter.run_workflow(
-        pd.DataFrame({_REPAIRS_NEEDED: repairs_needed, COL_REWRITE_REPLACEMENT_READY: True}),
+        pd.DataFrame({_REPAIRS_NEEDED: repairs_needed, COL_REWRITE_REPLACEMENT_READY: True, COL_SENSITIVITY_DISPOSITION: [None] * len(repairs_needed)}),
         model_configs=[],
         columns=_deterministic_columns(graph),
         workflow_name="rewrite-combined-scale-test",

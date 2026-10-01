@@ -22,7 +22,10 @@ from anonymizer.engine.constants import (
 )
 from anonymizer.engine.rewrite.final_judge import PRIVACY_RUBRIC, QUALITY_RUBRIC, STYLE_RUBRIC
 from anonymizer.engine.schemas import EntitiesSchema, EntitySchema
-from anonymizer.engine.schemas.rewrite import EntityDispositionSchema, SensitivityDispositionSchema
+from anonymizer.engine.schemas.rewrite import (
+    EntityDispositionSchema,
+    SensitivityDispositionSchema,
+)
 from anonymizer.interface.display import (
     _build_replaced_entities,
     _extract_judge_scores,
@@ -632,9 +635,8 @@ def test_render_record_html_rewrite_mode_with_disposition() -> None:
                 entity_value="Alice",
                 protection_reason="Direct identifier that uniquely identifies the subject.",
                 protection_method_suggestion="replace",
-                combined_risk_level="high",
             ),
-        ]
+        ],
     ).model_dump()
     row = pd.Series(
         {

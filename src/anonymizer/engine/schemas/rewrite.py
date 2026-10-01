@@ -11,7 +11,7 @@ Each schema group corresponds to one pipeline step:
     Step 1b — Entity classification (direct vs. quasi-identifier, non-latent entities)
         EntityLabelClassificationSchema, EntityLabelClassificationsSchema
 
-    Step 2 — Sensitivity disposition (per-entity protection plan)
+    Step 2 — Sensitivity disposition (document-level protection plan + per-entity dispositions)
         EntityDispositionSchema, SensitivityDispositionSchema
 
     Step 3a — Meaning unit extraction
@@ -36,7 +36,7 @@ Each schema group corresponds to one pipeline step:
         Uses LLMJudgeColumnConfig with Score rubrics (no custom schema needed)
 
 Supporting enums: Domain, EntitySource, EntityCategory, SensitivityLevel,
-                  ProtectionMethod, CombinedRiskLevel, PrivacyAnswer
+                  ProtectionMethod, PrivacyAnswer
 """
 
 from __future__ import annotations
@@ -149,17 +149,14 @@ class ProtectionMethod(str, Enum):
     leave_as_is = "leave_as_is"
 
 
-class CombinedRiskLevel(str, Enum):
-    low = "low"
-    medium = "medium"
-    high = "high"
-
-
 class EntityDispositionSchema(BaseModel):
     """Protection decision for one tagged or latent entity in rewrite planning.
 
     Each instance represents one entry in the sensitivity disposition, not each
     repeated text span where that entity may appear.
+
+    ``sensitivity`` is a protection-policy tier that drives both protection and
+    leakage weighting. ``low`` ⇔ ``leave_as_is``; ``medium``/``high`` ⇒ protected.
     """
 
     model_config = ConfigDict(use_enum_values=True)
@@ -172,7 +169,6 @@ class EntityDispositionSchema(BaseModel):
     entity_value: str = Field(min_length=1)
     protection_reason: str = Field(min_length=10, max_length=500)
     protection_method_suggestion: ProtectionMethod
-    combined_risk_level: CombinedRiskLevel
 
     @property
     def needs_protection(self) -> bool:
@@ -180,39 +176,29 @@ class EntityDispositionSchema(BaseModel):
 
     @model_validator(mode="after")
     def _validate_protection_consistency(self) -> EntityDispositionSchema:
-        if (
-            self.combined_risk_level == CombinedRiskLevel.low
-            and self.protection_method_suggestion != ProtectionMethod.leave_as_is
-        ):
+        retained = not self.needs_protection
+        if self.sensitivity == SensitivityLevel.low and not retained:
             logger.warning(
-                "Entity %d (label=%r): combined_risk_level='low' conflicts with "
-                "protection_method_suggestion=%r; promoting risk to 'medium'.",
+                "Entity %d (label=%r): sensitivity='low' conflicts with "
+                "protection_method_suggestion=%r; promoting sensitivity to 'medium'.",
                 self.id,
                 self.entity_label,
                 self.protection_method_suggestion,
             )
-            # Trust the protection intent over the risk label; promote risk to medium
-            # rather than suppressing the protection.
-            self.combined_risk_level = CombinedRiskLevel.medium.value  # type: ignore[assignment]  # ty: ignore[invalid-assignment]
-        if (
-            self.combined_risk_level == CombinedRiskLevel.high
-            and self.protection_method_suggestion == ProtectionMethod.leave_as_is
-        ):
+            # Normalize toward more protection: trust the protection intent over the level.
+            self.sensitivity = SensitivityLevel.medium.value  # type: ignore[assignment]  # ty: ignore[invalid-assignment]
+        elif self.sensitivity != SensitivityLevel.low and retained:
+            # No safe normalization exists (the schema cannot pick a method), so fail closed.
             raise ValueError(
-                f"Entity {self.id}: combined_risk_level='high' cannot have protection_method_suggestion='leave_as_is'"
+                f"Entity {self.id}: sensitivity={self.sensitivity!r} cannot have protection_method_suggestion='leave_as_is'"
             )
         return self
 
 
 class SensitivityDispositionSchema(BaseModel):
-    """Complete sensitivity disposition for a document — LLM output schema.
+    """Per-entity dispositions with stable sequential IDs and protection consistency.
 
-    Validates that entity IDs are sequential from 1 and that each entity's
-    ``protection_method_suggestion`` is consistent with its ``combined_risk_level``.
-
-    ``sensitivity_disposition`` requires at least one entry (``min_length=1``).
-    The orchestrator short-circuits before this step when detection finds no
-    entities, so an empty list here indicates a pipeline bug.
+    The orchestrator skips this step when detection finds no entities.
     """
 
     # Non-empty by design: the rewrite workflow only runs when entities were detected.
@@ -221,9 +207,13 @@ class SensitivityDispositionSchema(BaseModel):
     sensitivity_disposition: list[EntityDispositionSchema] = Field(min_length=1)
 
     @model_validator(mode="after")
-    def _normalize_ids(self) -> SensitivityDispositionSchema:
-        for i, entry in enumerate(self.sensitivity_disposition, start=1):
-            entry.id = i
+    def _validate_ids(self) -> SensitivityDispositionSchema:
+        # IDs are assigned upstream (1..N, explicit then latent) and must not be renumbered.
+        ids = [entry.id for entry in self.sensitivity_disposition]
+        expected = list(range(1, len(ids) + 1))
+        if ids != expected:
+            raise ValueError(f"Entity IDs must be sequential 1..{len(ids)} in input order; got {ids}")
+
         return self
 
     @property
@@ -266,16 +256,16 @@ class StrictProtectionMethod(str, Enum):
     suppress_inference = "suppress_inference"
 
 
-class StrictCombinedRiskLevel(str, Enum):
+class StrictSensitivityLevel(str, Enum):
     medium = "medium"
     high = "high"
 
 
 class StrictEntityDispositionSchema(EntityDispositionSchema):
-    """Strict variant: leave_as_is and low combined_risk_level are excluded."""
+    """Strict variant: leave_as_is and low sensitivity are excluded."""
 
+    sensitivity: StrictSensitivityLevel
     protection_method_suggestion: StrictProtectionMethod
-    combined_risk_level: StrictCombinedRiskLevel
 
 
 class StrictSensitivityDispositionSchema(SensitivityDispositionSchema):

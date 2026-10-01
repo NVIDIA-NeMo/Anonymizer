@@ -54,7 +54,6 @@ _STUB_DISPOSITION = SensitivityDispositionSchema(
             entity_value="Alice",
             protection_reason="Full name directly identifies the individual.",
             protection_method_suggestion=ProtectionMethod.replace,
-            combined_risk_level="high",
         ),
         EntityDispositionSchema(
             id=2,
@@ -65,9 +64,8 @@ _STUB_DISPOSITION = SensitivityDispositionSchema(
             entity_value="Portland",
             protection_reason="City alone does not create meaningful re-identification risk here.",
             protection_method_suggestion=ProtectionMethod.leave_as_is,
-            combined_risk_level="low",
         ),
-    ]
+    ],
 )
 
 _STUB_MEANING_UNITS = MeaningUnitsSchema(
@@ -200,9 +198,8 @@ def test_generate_privacy_qa_column_no_protected_entities() -> None:
                 entity_value="Portland",
                 protection_reason="City alone does not create meaningful re-identification risk.",
                 protection_method_suggestion=ProtectionMethod.leave_as_is,
-                combined_risk_level="low",
             )
-        ]
+        ],
     )
     row = {COL_SENSITIVITY_DISPOSITION: disposition}
     result = _generate_privacy_qa_column(row)
@@ -230,9 +227,8 @@ def test_generate_privacy_qa_from_disposition_empty_when_nothing_to_protect() ->
                 entity_value="Portland",
                 protection_reason="City alone does not create meaningful re-identification risk.",
                 protection_method_suggestion=ProtectionMethod.leave_as_is,
-                combined_risk_level="low",
             )
-        ]
+        ],
     )
     assert generate_privacy_qa_from_disposition(disposition).items == []
 
@@ -249,7 +245,6 @@ def test_generate_privacy_qa_from_disposition_ids_are_sequential() -> None:
                 entity_value="Alice",
                 protection_reason="Direct identifier.",
                 protection_method_suggestion=ProtectionMethod.replace,
-                combined_risk_level="high",
             ),
             EntityDispositionSchema(
                 id=2,
@@ -260,9 +255,8 @@ def test_generate_privacy_qa_from_disposition_ids_are_sequential() -> None:
                 entity_value="Smith",
                 protection_reason="Direct identifier.",
                 protection_method_suggestion=ProtectionMethod.replace,
-                combined_risk_level="high",
             ),
-        ]
+        ],
     )
     qa = generate_privacy_qa_from_disposition(disposition)
     assert [item.id for item in qa.items] == [1, 2]
@@ -296,3 +290,11 @@ def test_meaning_unit_prompt_keeps_xml_style_blocks() -> None:
 def test_quality_qa_prompt_references_meaning_units_serialized() -> None:
     prompt = _get_quality_qa_prompt()
     assert _jinja(COL_MEANING_UNITS_SERIALIZED) in prompt
+
+
+def test_format_disposition_block_preserves_protection_guidance() -> None:
+    row = _format_disposition_block({COL_SENSITIVITY_DISPOSITION: _STUB_DISPOSITION})
+    block = json.loads(row[COL_SENSITIVITY_DISPOSITION_BLOCK])
+    assert [entry["protection_reason"] for entry in block] == [
+        entry.protection_reason for entry in _STUB_DISPOSITION.sensitivity_disposition
+    ]

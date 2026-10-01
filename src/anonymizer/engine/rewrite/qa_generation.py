@@ -12,6 +12,7 @@ from data_designer.config.column_types import ColumnConfigT
 
 from anonymizer.config.models import RewriteModelSelection
 from anonymizer.engine.constants import (
+    COL_DISPOSITION_COVERAGE,
     COL_DOMAIN,
     COL_DOMAIN_SUPPLEMENT,
     COL_MEANING_UNITS,
@@ -51,7 +52,7 @@ if _DOMAIN_KEY is None:
 # ---------------------------------------------------------------------------
 
 
-@custom_column_generator(required_columns=[COL_SENSITIVITY_DISPOSITION])
+@custom_column_generator(required_columns=[COL_SENSITIVITY_DISPOSITION, COL_DISPOSITION_COVERAGE])
 def _format_disposition_block(row: dict[str, Any]) -> dict[str, Any]:
     """Serialize sensitivity disposition into a JSON block for the meaning unit extraction prompt."""
     disposition = parse_sensitivity_disposition(row.get(COL_SENSITIVITY_DISPOSITION, {}))
@@ -61,6 +62,7 @@ def _format_disposition_block(row: dict[str, Any]) -> dict[str, Any]:
             "does_need_protection": e.needs_protection,
             "protection_method_suggestion": e.protection_method_suggestion,
             "category": e.category,
+            "protection_reason": e.protection_reason,
         }
         for e in disposition.sensitivity_disposition
     ]
@@ -94,6 +96,7 @@ You are given a SENSITIVITY DISPOSITION BLOCK, which contains entries like:
 - does_need_protection (True/False)
 - protection_method_suggestion (replace/remove/generalize/suppress_inference/leave_as_is)
 - category (direct_identifier/quasi_identifier/latent_identifier/etc.)
+- protection_reason (the privacy outcome the selected method must achieve)
 
 Use it as follows:
 
@@ -125,6 +128,8 @@ This may include:
 
 The generalized phrasing must prevent recovery or lookup of the original entity_value while
 still preserving the meaning needed for usefulness.
+For protected entries, follow the privacy outcome described in protection_reason. Do not
+retain identifying details or supporting evidence that the protection must eliminate.
 
 C) SAFE / LEFT-AS-IS (no special avoidance required)
 If an entry has:
@@ -322,7 +327,7 @@ def generate_privacy_qa_from_disposition(
     return PrivacyQAPairsSchema(items=questions)
 
 
-@custom_column_generator(required_columns=[COL_SENSITIVITY_DISPOSITION])
+@custom_column_generator(required_columns=[COL_SENSITIVITY_DISPOSITION, COL_DISPOSITION_COVERAGE])
 def _generate_privacy_qa_column(row: dict[str, Any]) -> dict[str, Any]:
     """Generate privacy QA questions from sensitivity disposition without an LLM call."""
     disposition = parse_sensitivity_disposition(row.get(COL_SENSITIVITY_DISPOSITION, {}))
