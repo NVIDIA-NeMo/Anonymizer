@@ -287,6 +287,7 @@ class Detect(BaseModel):
                 raise ValueError(f"Regex rule labels {missing!r} are missing from explicit entity_labels.")
         return self
 
+
 class Rewrite(BaseModel):
     """Configuration for rewrite-mode execution."""
 
