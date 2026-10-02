@@ -73,6 +73,8 @@ Choose the mode that defines how regex and model detection interact:
 | `RegexMode.accept_matches` | Accepted after local validation. | Enabled and may find additional matches. |
 | `RegexMode.regex_only` | Accepted after local validation. | Disabled; regex recognition is authoritative for the label. |
 
+Every directly accepted regex match remains restricted to its exact span. If a detector independently finds the same label and span, that detector route still goes through contextual validation before it can authorize protection of matching occurrences elsewhere in the document.
+
 If every active label uses `RegexMode.regex_only`, the detector and augmenter calls are skipped. Rules for one label may mix `validate_matches` and `accept_matches`, but they cannot combine `regex_only` with another mode because model participation is a label-level policy.
 
 For a `regex_only` label, every final entity must have accepted regex evidence for that exact label and character span. Model reclassification and derived spans, including name splitting, cannot introduce that label without a matching regex result.

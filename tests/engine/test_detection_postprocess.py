@@ -50,7 +50,6 @@ def test_regex_only_evidence_must_match_normalized_label_and_exact_span() -> Non
         7,
         1.0,
         "regex_user:user:ticket:v1",
-        propagate_occurrences=False,
     )
     unsupported = EntitySpan("identifier_12_21", "OTHER-123", "ticket", 12, 21, 0.9, "detector")
 
@@ -60,7 +59,9 @@ def test_regex_only_evidence_must_match_normalized_label_and_exact_span() -> Non
         regex_evidence=[genuine],
     )
 
-    assert result == [genuine]
+    assert len(result) == 1
+    assert result[0].entity_id == genuine.entity_id
+    assert result[0].propagate_occurrences is False
 
 
 def test_parse_raw_entities_parses_valid_spans() -> None:

@@ -156,20 +156,20 @@ def apply_validation_to_seed_entities(
 
 
 @custom_column_generator(
-    required_columns=[COL_TEXT, COL_SEED_ENTITIES, COL_REGEX_ACCEPTED_ENTITIES],
+    required_columns=[COL_TEXT, COL_SEED_ENTITIES],
     side_effect_columns=[COL_SEED_TAGGED_TEXT],
 )
 def prepare_validation_inputs(row: dict[str, Any]) -> dict[str, Any]:
-    """Build prompt inputs for seed candidates that still require LLM validation."""
+    """Build prompt inputs for every detector or validation-route regex candidate.
+
+    Locally accepted regex entities travel in ``COL_REGEX_ACCEPTED_ENTITIES``
+    and are not part of the seed set. An exact accepted regex match therefore
+    must not suppress validation of an independent detector candidate at the
+    same label and span; only that validation can grant occurrence propagation.
+    """
     text = str(row.get(COL_TEXT, ""))
     seed_spans = _parse_entity_spans(row.get(COL_SEED_ENTITIES, {}))
-    accepted_regex = _parse_entity_spans(row.get(COL_REGEX_ACCEPTED_ENTITIES, {}))
-    accepted_identities = {(entity.label, entity.start_position, entity.end_position) for entity in accepted_regex}
-    validation_spans = [
-        entity
-        for entity in seed_spans
-        if (entity.label, entity.start_position, entity.end_position) not in accepted_identities
-    ]
+    validation_spans = seed_spans
     overlap_groups = build_validation_overlap_groups(
         seed_spans,
         {entity.entity_id for entity in validation_spans},

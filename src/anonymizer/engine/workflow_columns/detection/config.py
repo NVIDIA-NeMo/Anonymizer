@@ -58,7 +58,6 @@ class DetectionTransformConfig(SingleColumnConfig):
         DetectionTransformOperation.PREPARE_VALIDATION_INPUTS: [
             COL_TEXT,
             COL_SEED_ENTITIES,
-            COL_REGEX_ACCEPTED_ENTITIES,
         ],
         DetectionTransformOperation.ENRICH_VALIDATION_DECISIONS: [
             COL_VALIDATION_DECISIONS,
