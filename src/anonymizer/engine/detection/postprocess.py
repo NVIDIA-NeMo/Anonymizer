@@ -83,15 +83,17 @@ def parse_raw_entities(raw_response: str, text: str) -> list[EntitySpan]:
     for idx, raw_entity in enumerate(raw_entities):
         if not isinstance(raw_entity, dict):
             continue
-        value = str(raw_entity.get("text", "")).strip()
+        detector_text = str(raw_entity.get("text", "")).strip()
         label = str(raw_entity.get("label", "")).strip()
         start = _coerce_int(raw_entity.get("start"))
         end = _coerce_int(raw_entity.get("end"))
         score = _coerce_float(raw_entity.get("score"), default=0.0)
-        if not value or not label:
+        if not detector_text or not label:
             continue
         if start is None or end is None or start < 0 or end <= start or end > len(text):
             continue
+        # Valid source offsets are authoritative; detector text may be normalized.
+        value = text[start:end]
         entity_id = _build_entity_id(label=label, start=start, end=end)
         parsed.append(
             EntitySpan(
