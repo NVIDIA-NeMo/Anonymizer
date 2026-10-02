@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 from typing import Any
 
 from data_designer.config import SkipConfig, custom_column_generator
@@ -59,7 +60,21 @@ def prepare_generalization_review(row: dict[str, Any]) -> dict[str, Any]:
 )
 def validate_generalization_suggestions(row: dict[str, Any]) -> dict[str, Any]:
     targets = normalize_payload(row[COL_GENERALIZATION_TARGETS])
-    payload = normalize_payload(row.get(COL_REVIEWED_GENERALIZATION_SUGGESTIONS))
+    payload = deepcopy(normalize_payload(row.get(COL_REVIEWED_GENERALIZATION_SUGGESTIONS)))
+    if targets and isinstance(payload, dict):
+        entries = payload.get("generalization_suggestions")
+        if isinstance(entries, list):
+            for entry in entries:
+                if not isinstance(entry, dict) or entry.get("status") != "needs_context_change":
+                    continue
+                value = entry.get("suggested_value")
+                if value is None or (isinstance(value, str) and not value.strip()):
+                    entry.update(
+                        status="no_effective_generalization",
+                        suggested_value=None,
+                        privacy_reason="No usable generalized wording was supplied for the required context change.",
+                        rewrite_instruction="Omit the affected detail and repair the surrounding sentence.",
+                    )
     suggestions = GeneralizationSuggestions.model_validate(payload if targets else {"generalization_suggestions": []})
     expected_ids = [target["id"] for target in targets]
     returned_ids = [entry.entity_id for entry in suggestions.generalization_suggestions]
@@ -81,7 +96,10 @@ def validate_generalization_suggestions(row: dict[str, Any]) -> dict[str, Any]:
         if suggestion.suggested_value is not None:
             original = entities[suggestion.entity_id].entity_value
             if suggestion.suggested_value.strip().casefold() == original.strip().casefold():
-                raise ValueError(f"Generalization {suggestion.entity_id} repeats original value {original!r}")
+                suggestion.suggested_value = None
+                suggestion.status = "no_effective_generalization"
+                suggestion.privacy_reason = "The suggested value repeats the original and provides no generalization."
+                suggestion.rewrite_instruction = "Omit the affected detail and repair the surrounding sentence."
         if suggestion.status == "ready" and any(
             not entities[entity_id].needs_protection for entity_id in suggestion.related_entity_ids
         ):

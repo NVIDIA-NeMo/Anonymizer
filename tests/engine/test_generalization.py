@@ -16,6 +16,7 @@ from anonymizer.config.models import RewriteModelSelection
 from anonymizer.config.rewrite import PrivacyGoal
 from anonymizer.engine.constants import (
     COL_DISPOSITION_COVERAGE,
+    COL_DISPOSITION_LATENT_ENTITIES,
     COL_GENERALIZATION_NEEDS_REVIEW,
     COL_GENERALIZATION_REVIEW_INPUT,
     COL_GENERALIZATION_SUGGESTIONS,
@@ -24,6 +25,7 @@ from anonymizer.engine.constants import (
     COL_REPLACEMENT_MAP,
     COL_REPLACEMENT_MAP_FOR_PROMPT,
     COL_REVIEWED_GENERALIZATION_SUGGESTIONS,
+    COL_REWRITE_ACTIONS,
     COL_REWRITE_DISPOSITION_BLOCK,
     COL_SENSITIVITY_DISPOSITION,
 )
@@ -35,6 +37,7 @@ from anonymizer.engine.rewrite.generalization import (
 )
 from anonymizer.engine.rewrite.parsers import normalize_payload
 from anonymizer.engine.rewrite.rewrite_generation import (
+    _build_rewrite_actions,
     _filter_replacement_map_for_prompt,
     _format_rewrite_disposition_block,
 )
@@ -92,13 +95,55 @@ def test_rejects_missing_extra_or_duplicate_targets(ids: list[int]) -> None:
         validate_generalization_suggestions(row)
 
 
-def test_rejects_unchanged_value_and_unknown_dependencies() -> None:
+@pytest.mark.parametrize("status", ["ready", "needs_context_change"])
+@pytest.mark.parametrize("value", ["patent attorney", " Patent Attorney "])
+def test_unchanged_value_becomes_removal(value: str, status: str) -> None:
+    row = _row()
+    row[COL_REVIEWED_GENERALIZATION_SUGGESTIONS]["generalization_suggestions"][0] = _suggestion(status=status)
+    suggestion = row[COL_REVIEWED_GENERALIZATION_SUGGESTIONS]["generalization_suggestions"][0]
+    suggestion["suggested_value"] = value
+    result = validate_generalization_suggestions(row)
+    canonical = result[COL_GENERALIZATION_SUGGESTIONS]["generalization_suggestions"][0]
+    assert canonical["status"] == "no_effective_generalization"
+    assert canonical["suggested_value"] is None
+    GeneralizationSuggestion.model_validate(canonical)
+    assert result[COL_GENERALIZATION_NEEDS_REVIEW] is True
+    assert suggestion["suggested_value"] == value
+    assert suggestion["status"] == status
+    result[COL_DISPOSITION_LATENT_ENTITIES] = ""
+    actions = _build_rewrite_actions(result)[COL_REWRITE_ACTIONS]
+    assert actions["generalize"] == []
+    assert [action["entity_id"] for action in actions["remove"]] == [2]
+    assert "Do not substitute" in actions["remove"][0]["rewrite_instruction"]
+
+
+@pytest.mark.parametrize("value", ["a professional", "patent attorney"])
+def test_rejects_unknown_dependencies(value: str) -> None:
     row = _row()
     suggestion = row[COL_REVIEWED_GENERALIZATION_SUGGESTIONS]["generalization_suggestions"][0]
-    suggestion["suggested_value"] = " Patent Attorney "
-    with pytest.raises(ValueError, match="repeats original"):
+    suggestion["suggested_value"] = value
+    suggestion["related_entity_ids"] = [99]
+    with pytest.raises(ValueError, match="unknown entity"):
         validate_generalization_suggestions(row)
-    suggestion["suggested_value"] = "a professional"
+
+
+@pytest.mark.parametrize("value", [None, "", "   "])
+def test_context_change_without_wording_becomes_removal(value: str | None) -> None:
+    row = _row()
+    suggestion = {**_suggestion(status="needs_context_change"), "suggested_value": value, "rewrite_instruction": ""}
+    row[COL_REVIEWED_GENERALIZATION_SUGGESTIONS]["generalization_suggestions"] = [suggestion]
+    result = validate_generalization_suggestions(row)
+    canonical = result[COL_GENERALIZATION_SUGGESTIONS]["generalization_suggestions"][0]
+    assert canonical["status"] == "no_effective_generalization"
+    assert canonical["suggested_value"] is None
+    GeneralizationSuggestion.model_validate(canonical)
+    assert result[COL_GENERALIZATION_NEEDS_REVIEW] is True
+    assert suggestion["status"] == "needs_context_change"
+    assert suggestion["suggested_value"] == value
+    result[COL_DISPOSITION_LATENT_ENTITIES] = ""
+    actions = _build_rewrite_actions(result)[COL_REWRITE_ACTIONS]
+    assert actions["generalize"] == []
+    assert [action["entity_id"] for action in actions["remove"]] == [2]
     suggestion["related_entity_ids"] = [99]
     with pytest.raises(ValueError, match="unknown entity"):
         validate_generalization_suggestions(row)

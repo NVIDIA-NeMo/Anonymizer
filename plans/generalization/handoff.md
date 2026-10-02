@@ -50,6 +50,31 @@ No further architecture change has been approved. Proposed:
 4. Evaluate initial rewrite separately from repair; max_repair_iterations=0 can help, but freezing upstream inputs is better.
 Avoid adding more broad prompt instructions until failures are isolated. Additional validators, model changes, replay harnesses, and evaluator calibration were discussed but not implemented.
 
+## Resume investigation — 2026-10-02
+
+- Verified checkpoint commit `4c659df`; tracked working tree was clean on resume.
+- Both the pre-judge `rewrite_synth_bio5_sensdisp_branch_run13.csv` and evaluated CSV contain four records. The missing record therefore predates the final judge evaluation; its failing workflow and reason remain unknown.
+- No saved failure report or log was found in `~/Documents/rewrite_results_new/`. The repository's `.anonymizer-artifacts/` contains only entity-detection artifacts last modified February 26, so these cannot explain the October run. No artifact directory exists under `docs/notebooks/` or the results directory. Other runtime artifact locations have not been established.
+- Run 13 retains `_full_rewrite` as a Python-literal dictionary containing the initial `rewritten_text`. CSV nested payloads must not be assumed to be JSON.
+- Repair counts by record ID: `08e0bc93ea49595ea5d9cecdc30e2d34`: 1; `f73a93b8df4f5fa9aa8decab757b3851`: 2; `62af6b74f83c5918bc0762dde5d5fecc`: 3; `1067912d4e555ed6813186743557a587`: 3.
+- `_leaked_privacy_items` persists the feedback used by the last repair, while `biography_rewritten` and `_rewritten_text__next` hold post-repair text. For rows repaired more than once, the CSV does not preserve the immediately preceding text needed to reconstruct that last repair request. Do not pair initial text with last-iteration feedback and call it an exact replay.
+- Next evidence needed: run 13's `AnonymizerResult.failed_records` or runtime logs/artifacts, plus paired current text and leaked-item feedback captured immediately before each repair for controlled comparisons. No production prompt or architecture changes made during this investigation.
+- Verification on resume: engine and display tests **815 passed**; `.venv/bin/ty check --error-on-warning` passed.
+
+## Unchanged generalization fix — 2026-10-02
+
+The user supplied a warning identifying `validate_generalization_suggestions` rejecting target 30 for repeating `science`, causing DataDesigner to skip the record. The user approved converting unchanged suggestions to `no_effective_generalization` rather than dropping the record.
+
+Validation now normalizes values equal to the original after trimming and case folding: canonical status becomes `no_effective_generalization`, value becomes null, and deterministic explanation/omission guidance replaces the ineffective wording. Raw reviewed suggestions remain intact. Existing action construction routes the entry to removal and the review flag becomes true. Structural ID and dependency checks still raise on malformed output.
+
+Regression coverage checks both `ready` and `needs_context_change`, exact and case/whitespace matches, preserved reviewed output, schema validity, removal actions, and unknown dependencies. Engine/display tests **820 passed**; Ruff lint/format and ty checks passed. No live model rerun performed.
+
+## Context change without wording — 2026-10-02
+
+A subsequent warning reported two `needs_context_change` suggestions with empty/null wording failing schema validation and dropping a record. Validation now normalizes these entries on a copied review payload before parsing either suggestions or the review: null, empty, or whitespace-only wording becomes `no_effective_generalization` with deterministic omission guidance. Raw review output and dependency references remain intact; the strict schema is unchanged. Nonempty context-change suggestions retain their existing behavior.
+
+Regression coverage verifies each empty-wording variant, downstream removal, review flags, preserved raw values, and continued rejection of unknown dependencies. Engine/display tests **823 passed**; Ruff lint/format, ty, and diff whitespace checks passed. Restart the notebook kernel before rerunning; no live model rerun performed.
+
 ## Files and verification
 
 Core: engine/rewrite/generalization.py, rewrite_generation.py, repair.py; engine/schemas/generalization.py; engine/constants.py.

@@ -52,3 +52,9 @@ At the user’s request, restore repair.py to local main: remove the disposition
 ## Current-text-only repair
 
 Replace main’s repair prompt with the approved focused editing prompt. Remove baseline/original text and aggregate metric dependencies from the repair generator. Preserve evaluation/threshold logic in the pipeline; the model sees only privacy goal, current rewrite, and leaked-item diagnostics. Prompt explicitly prohibits adding facts from feedback. Validate rendered input isolation and both orchestration paths.
+
+## Retain records with unchanged generalizations
+
+Convert reviewed suggestions whose value equals the original after whitespace trimming and case folding to `no_effective_generalization`, with a null value and deterministic omission guidance. Preserve reviewed output for diagnostics and retain structural ID/dependency validation. Existing rewrite action construction routes this status to removal and flags the record for review. This avoids dropping an entire record when a reviewer proposes no effective change, without accepting the unchanged value as protection. No public API changes or prompt changes are needed. Validate normalization, preserved diagnostics, removal actions, and existing pipeline tests; live reruns remain separate.
+
+Extend boundary normalization to `needs_context_change` entries with null, empty, or whitespace-only suggested wording before schema validation. Convert these to omission using the same canonical status; leave the strict schema and malformed-ID/dependency rejection intact. Preserve raw review diagnostics and verify downstream removal and review flags.
