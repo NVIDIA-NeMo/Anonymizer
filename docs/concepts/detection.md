@@ -9,7 +9,7 @@ Entity detection is the first stage of every Anonymizer pipeline. Both replace a
 
 ## How it works
 
-Detection combines built-in regex recognizers, a lightweight GLiNER2 PII model, and LLM-based refinement. Regex and GLiNER2 produce an initial set of entity spans, an LLM validates those candidates by keeping, reclassifying, or dropping them based on context, and then an augmenter finds entities the other detectors missed. Augmented findings are merged directly and are not independently revalidated.
+Detection combines built-in regex recognizers, a lightweight GLiNER2 PII model, and LLM-based refinement. Regex and GLiNER2 produce an initial set of entity spans. By default, an LLM validates those candidates by keeping, reclassifying, or dropping them based on context; regex rules can instead accept their locally valid matches directly. An augmenter then finds entities the other detectors missed. Augmented findings are merged directly and are not independently revalidated.
 
 When rewrite is configured, an additional step identifies **latent entities** -- sensitive information inferable from context but not explicitly stated in the text.
 
@@ -63,9 +63,21 @@ Each built-in recognizer performs two local steps:
 1. A regex finds text with the expected shape.
 2. A deterministic validator rejects invalid matches.
 
-Matches that pass these checks go to the contextual LLM validator by default. The LLM uses the surrounding text to decide whether the match is sensitive. Set `validate_with_llm=False` to accept locally validated matches without this step.
+Matches that pass these checks use `RegexMode.validate_matches` by default. The contextual LLM validator uses the surrounding text to keep, drop, or reclassify each match.
 
-Set `regex_only=True` when regex recognition should be authoritative for a label. This accepts locally valid matches without LLM validation and removes that label from GLiNER and LLM augmentation. Other labels in the same record can still use model-based detection. If every active label is regex-only, the detector and augmenter calls are skipped. Enabled rules that share a label must use the same `regex_only` value.
+Choose the mode that defines how regex and model detection interact:
+
+| Mode | Regex matches | GLiNER and LLM augmentation for the label |
+| --- | --- | --- |
+| `RegexMode.validate_matches` | Sent to contextual LLM validation. | Enabled. |
+| `RegexMode.accept_matches` | Accepted after local validation. | Enabled and may find additional matches. |
+| `RegexMode.regex_only` | Accepted after local validation. | Disabled; regex recognition is authoritative for the label. |
+
+If every active label uses `RegexMode.regex_only`, the detector and augmenter calls are skipped. Rules for one label may mix `validate_matches` and `accept_matches`, but they cannot combine `regex_only` with another mode because model participation is a label-level policy.
+
+For a `regex_only` label, every final entity must have accepted regex evidence for that exact label and character span. Model reclassification and derived spans, including name splitting, cannot introduce that label without a matching regex result.
+
+Skipping those per-row model calls does not remove their model aliases or providers from the Data Designer workflow. Provider health checks are a separate startup concern and may still run unless the corresponding model configuration sets `skip_health_check=True`.
 
 | Entity label | Checks | Accepted forms | Rejected forms |
 | --- | --- | --- | --- |
@@ -74,18 +86,18 @@ Set `regex_only=True` when regex recognition should be authoritative for a label
 | `ipv4` | Parses the complete candidate as an IPv4 address. | Four decimal octets in the range 0--255. | Extra octets, out-of-range octets, and ambiguous leading-zero forms. |
 | `ipv6` | Parses the complete candidate as an IPv6 address. | Full and compressed IPv6, plus dotted IPv4 tails such as `::ffff:192.0.2.128`. | Malformed compression, invalid hexadecimal groups, and invalid IPv4 tails. |
 | `mac_address` | Requires either six two-digit hexadecimal groups using one consistent `:` or `-` separator, or three four-digit groups separated by dots. | Forms such as `00:1A:2B:3C:4D:5E`, `00-1A-2B-3C-4D-5E`, and `001A.2B3C.4D5E`. | Mixed separators, missing groups, and non-hexadecimal digits. |
-| `url` | Parses only HTTP(S) and `www.` candidates, requires a host, validates ports in the range 1--65535, and validates the host as either an IP address or an NFC-normalized IDNA domain. DNS names require multiple labels with valid lengths and characters. | HTTP(S) URLs, case-insensitive `www.` prefixes, Unicode domains, IPv4 hosts, bracketed IPv6 hosts, paths, and query strings. Balanced closing delimiters in paths are retained while surrounding sentence punctuation is trimmed. | Malformed hosts, IPv4-shaped invalid hosts, single-label hosts such as `localhost`, and invalid ports. |
+| `url` | Parses only HTTP(S) and `www.` candidates, requires a host, validates ports in the range 1--65535, and validates the host as either an IP address or an NFC-normalized IDNA domain. DNS names require multiple labels with valid lengths and characters. | HTTP(S) URLs, case-insensitive `www.` prefixes, Unicode domains, DNS names with an explicit terminal root dot, IPv4 hosts, bracketed IPv6 hosts, paths, and query strings. Balanced closing delimiters in paths are retained while surrounding sentence punctuation is trimmed. | Malformed hosts, IPv4-shaped invalid hosts, single-label hosts such as `localhost`, and invalid ports. |
 
 Entity provenance includes the built-in rule ID, for example `regex_builtin:nemo-anonymizer.email.v1`. Users do not set these IDs.
 
 To skip LLM validation for one built-in:
 
 ```python
-from anonymizer import BuiltinRegex, Detect
+from anonymizer import BuiltinRegex, Detect, RegexMode
 
 detect = Detect(
     entity_labels=["email", "ipv4"],
-    regex_rules=[BuiltinRegex(label="ipv4", validate_with_llm=False)],
+    regex_rules=[BuiltinRegex(label="ipv4", mode=RegexMode.accept_matches)],
 )
 ```
 
@@ -110,10 +122,10 @@ detect = Detect(
 
 ### Custom regex rules and validators
 
-`regex_rules` accepts both built-in settings and custom rules. Use `BuiltinRegex` to configure a built-in recognizer. Use `RegexRule` to add a regex for any entity label. `validate_with_llm` defaults to `True` for both.
+`regex_rules` accepts both built-in settings and custom rules. Use `BuiltinRegex` to configure a built-in recognizer. Use `RegexRule` to add a regex for any entity label. Both default to `RegexMode.validate_matches`.
 
 ```python
-from anonymizer import Detect, RegexCandidate, RegexRule
+from anonymizer import Detect, RegexCandidate, RegexMode, RegexRule
 
 
 def validate_support_case(candidate: RegexCandidate) -> bool:
@@ -128,7 +140,7 @@ detect = Detect(
             label="support_case",
             pattern=r"CASE-(?P<number>\d{6})",
             validator=validate_support_case,
-            regex_only=True,
+            mode=RegexMode.regex_only,
         )
     ],
 )
@@ -138,9 +150,13 @@ A custom validator receives a `RegexCandidate` with the matched value, character
 
 Custom patterns may use the supported `regex` syntax except for `\K` match resets, which are rejected during configuration because they can move the reported match boundary or produce an empty span. Runtime matching also rejects any zero-width result as a defensive backstop.
 
+Built-in URL recognition trims surrounding sentence punctuation while preserving balanced delimiters. Custom rules retain the exact boundaries produced by their patterns, including custom rules that use the `url` label.
+
 Pass a callable directly when using `run()` or `preview()`. For exported configurations, package the validator under the `nemo_anonymizer.regex_validators` Python entry-point group and pass its registered name instead. The plugin does not need to be installed where the configuration is authored, but it must be installed on the execution host. Entry-point names must be unique across installed packages; Anonymizer reports a configuration error if more than one package registers the requested name.
 
 If you provide `entity_labels`, include the label of every enabled custom regex rule. Disabled custom rules are ignored. If you leave `entity_labels` unset, Anonymizer adds labels from enabled custom rules automatically.
+
+Entity labels are trimmed and Unicode-casefolded before scope, activation, exclusion, and per-label mode comparisons. Equivalent spellings therefore share one label identity while retaining every distinct configured pattern.
 
 ---
 

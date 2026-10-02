@@ -18,6 +18,7 @@ from anonymizer.engine.detection.postprocess import (
     build_validation_overlap_groups,
     build_validation_tagged_text,
     coalesce_exact_entity_candidates,
+    enforce_regex_only_evidence,
     expand_entity_occurrences,
     get_tag_notation,
     group_entities_by_value,
@@ -38,6 +39,28 @@ def test_normalize_labels_dedupes_and_drops_empty_entries() -> None:
 
 def test_normalize_labels_none_returns_empty_set() -> None:
     assert normalize_labels(None) == set()
+
+
+def test_regex_only_evidence_must_match_normalized_label_and_exact_span() -> None:
+    genuine = EntitySpan(
+        "ticket_0_7",
+        "TKT-123",
+        "Ticket",
+        0,
+        7,
+        1.0,
+        "regex_user:user:ticket:v1",
+        propagate_occurrences=False,
+    )
+    unsupported = EntitySpan("identifier_12_21", "OTHER-123", "ticket", 12, 21, 0.9, "detector")
+
+    result = enforce_regex_only_evidence(
+        [genuine, unsupported],
+        regex_only_entity_labels=[" TICKET "],
+        regex_evidence=[genuine],
+    )
+
+    assert result == [genuine]
 
 
 def test_parse_raw_entities_parses_valid_spans() -> None:

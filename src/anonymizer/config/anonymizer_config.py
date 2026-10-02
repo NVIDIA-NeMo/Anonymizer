@@ -10,7 +10,8 @@ from urllib.parse import urlparse
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from anonymizer.config.regex import BuiltinRegex, RegexRule
+from anonymizer.config.entity_labels import normalize_entity_label
+from anonymizer.config.regex import BuiltinRegex, RegexMode, RegexRule
 from anonymizer.config.replace_strategies import ReplaceMethod
 from anonymizer.config.rewrite import (
     DEFAULT_PRESERVE_TEXT,
@@ -21,7 +22,6 @@ from anonymizer.config.rewrite import (
 )
 from anonymizer.engine.constants import DEFAULT_ENTITY_LABELS
 from anonymizer.engine.detection.entity_label_examples import normalize_entity_label_examples
-from anonymizer.engine.detection.postprocess import normalize_label
 
 logger = logging.getLogger(__name__)
 
@@ -47,17 +47,17 @@ def resolve_effective_detection_labels(
     """
     labels = list(DEFAULT_ENTITY_LABELS) if entity_labels is None else list(entity_labels)
     if entity_labels is None:
-        known = {label.strip().casefold() for label in labels}
+        known = {normalize_entity_label(label) for label in labels}
         for rule in regex_rules or []:
             if not isinstance(rule, RegexRule) or not rule.enabled:
                 continue
-            normalized = rule.label.strip().casefold()
+            normalized = normalize_entity_label(rule.label)
             if normalized not in known:
                 labels.append(rule.label)
                 known.add(normalized)
 
-    excluded = {label.strip().casefold() for label in excluded_entity_labels or []}
-    return [label for label in labels if label.strip().casefold() not in excluded]
+    excluded = {normalize_entity_label(label) for label in excluded_entity_labels or []}
+    return [label for label in labels if normalize_entity_label(label) not in excluded]
 
 
 def is_remote_input_source(value: str) -> bool:
@@ -175,7 +175,7 @@ class Detect(BaseModel):
     def validate_entity_labels(cls, value: list[str] | None) -> list[str] | None:
         if value is None:
             return value
-        cleaned = [normalize_label(label) for label in value if normalize_label(label)]
+        cleaned = [normalize_entity_label(label) for label in value if normalize_entity_label(label)]
         if not cleaned:
             raise ValueError("entity_labels must not be empty. Use None to detect all default labels.")
         deduped = sorted(set(cleaned))
@@ -188,7 +188,7 @@ class Detect(BaseModel):
     def validate_excluded_entity_labels(cls, value: list[str] | None) -> list[str] | None:
         if value is None:
             return value
-        cleaned = [normalize_label(label) for label in value if normalize_label(label)]
+        cleaned = [normalize_entity_label(label) for label in value if normalize_entity_label(label)]
         if not cleaned:
             raise ValueError("excluded_entity_labels must not be empty. Use None to disable exclusions.")
         deduped = sorted(set(cleaned))
@@ -272,13 +272,15 @@ class Detect(BaseModel):
         builtin_labels = [rule.label for rule in builtin_rules]
         if len(set(builtin_labels)) != len(builtin_labels):
             raise ValueError("regex_rules contains duplicate built-in labels.")
-        regex_only_policies: dict[str, set[bool]] = {}
+        modes_by_label: dict[str, set[RegexMode]] = {}
         for rule in enabled_rules:
-            regex_only_policies.setdefault(rule.label, set()).add(rule.regex_only)
-        conflicting_labels = sorted(label for label, policies in regex_only_policies.items() if len(policies) > 1)
+            modes_by_label.setdefault(rule.label, set()).add(rule.mode)
+        conflicting_labels = sorted(
+            label for label, modes in modes_by_label.items() if RegexMode.regex_only in modes and len(modes) > 1
+        )
         if conflicting_labels:
             raise ValueError(
-                "Enabled regex rules sharing a label must use the same regex_only value. "
+                "Enabled regex rules sharing a label cannot combine regex_only with another mode. "
                 f"Conflicting labels: {conflicting_labels!r}."
             )
         if self.entity_labels is not None:

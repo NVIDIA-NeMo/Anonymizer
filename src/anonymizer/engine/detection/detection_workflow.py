@@ -267,6 +267,7 @@ class EntityDetectionWorkflow:
                     name=COL_SEED_ENTITIES,
                     operation=DetectionTransformOperation.PARSE_DETECTED_ENTITIES,
                     excluded_entity_labels=sorted(regex_only_labels),
+                    propagate_skip=False,
                 ),
                 DetectionTransformConfig(
                     name=COL_SEED_VALIDATION_CANDIDATES,
@@ -294,6 +295,7 @@ class EntityDetectionWorkflow:
                     name=COL_SEED_ENTITIES_JSON,
                     operation=DetectionTransformOperation.APPLY_VALIDATION_TO_SEED_ENTITIES,
                     excluded_entity_labels=list(excluded_entity_labels or []),
+                    regex_only_entity_labels=sorted(regex_only_labels),
                 ),
                 _PrivatePromptLLMStructuredColumnConfig(
                     name=COL_AUGMENTED_ENTITIES,
@@ -318,13 +320,15 @@ class EntityDetectionWorkflow:
                     name=COL_MERGED_ENTITIES,
                     operation=DetectionTransformOperation.MERGE_AND_BUILD_CANDIDATES,
                     excluded_entity_labels=list(excluded_entity_labels or []),
-                    excluded_augmented_entity_labels=sorted(regex_only_labels),
+                    regex_only_entity_labels=sorted(regex_only_labels),
+                    propagate_skip=False,
                 ),
                 DetectionTransformConfig(
                     name=COL_DETECTED_ENTITIES,
                     operation=DetectionTransformOperation.APPLY_VALIDATION_AND_FINALIZE,
                     excluded_entity_labels=list(excluded_entity_labels or []),
                     allowed_entity_labels=labels if label_config.strict_labels else None,
+                    regex_only_entity_labels=sorted(regex_only_labels),
                 ),
             ],
         )
@@ -687,7 +691,7 @@ def _filter_excluded_latent_entities(raw: object, excluded_entity_labels: list[s
         return [
             entity
             for entity in raw
-            if not isinstance(entity, dict) or str(entity.get("label", "")).strip().casefold() not in excluded
+            if not isinstance(entity, dict) or normalize_label(str(entity.get("label", ""))) not in excluded
         ]
 
     return raw

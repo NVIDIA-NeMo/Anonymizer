@@ -18,9 +18,11 @@ from weakref import WeakValueDictionary
 import regex
 from pydantic import BaseModel, ConfigDict, Field
 
+from anonymizer.config.entity_labels import normalize_entity_label
 from anonymizer.config.regex import (
     BuiltinRegex,
     RegexCandidate,
+    RegexMode,
     RegexRule,
     RegexValidationResult,
     RegexValidatorCallable,
@@ -55,7 +57,7 @@ class ResolvedRegexRule(BaseModel):
     pattern: str
     validator_id: str | None = None
     local_validator: RegexValidatorCallable | None = Field(default=None, exclude=True, repr=False)
-    validate_with_llm: bool = True
+    mode: RegexMode = RegexMode.validate_matches
     source: str
 
 
@@ -109,7 +111,7 @@ def resolve_regex_rules(
     rules: list[BuiltinRegex | RegexRule],
 ) -> list[ResolvedRegexRule]:
     """Resolve active built-in and custom rules into a serializable form."""
-    active_labels = set(labels)
+    active_labels = {normalize_entity_label(label) for label in labels}
     regex_only_labels = resolve_regex_only_labels(
         labels=active_labels,
         builtin_regexes=builtin_regexes,
@@ -129,7 +131,7 @@ def resolve_regex_rules(
                 pattern=rule.pattern,
                 validator_id=validator_id,
                 local_validator=rule.validator if callable(rule.validator) else None,
-                validate_with_llm=rule.validate_with_llm and rule.label not in regex_only_labels,
+                mode=RegexMode.regex_only if rule.label in regex_only_labels else rule.mode,
                 source="regex_user",
             )
         )
@@ -144,10 +146,10 @@ def resolve_regex_rules(
             resolved.append(
                 rule.model_copy(
                     update={
-                        "validate_with_llm": (
-                            False
+                        "mode": (
+                            RegexMode.regex_only
                             if rule.label in regex_only_labels
-                            else (override.validate_with_llm if override is not None else True)
+                            else (override.mode if override is not None else RegexMode.validate_matches)
                         )
                     }
                 )
@@ -162,12 +164,12 @@ def resolve_regex_only_labels(
     rules: list[BuiltinRegex | RegexRule],
 ) -> set[str]:
     """Return active labels whose enabled regex configuration is authoritative."""
-    active_labels = set(labels)
+    active_labels = {normalize_entity_label(label) for label in labels}
     return {
         rule.label
         for rule in rules
         if rule.enabled
-        and rule.regex_only
+        and rule.mode is RegexMode.regex_only
         and rule.label in active_labels
         and (builtin_regexes or isinstance(rule, RegexRule))
     }
@@ -208,7 +210,7 @@ def detect_regex_entities(
                         f"Regex rule {rule.rule_id!r} exceeded the maximum of "
                         f"{max_matches_per_rule} matches for one record."
                     )
-                if rule.label == "url":
+                if rule.source == "regex_builtin" and rule.label == "url":
                     trimmed = _trim_url_trailing_punctuation(text[start:end])
                     end = start + len(trimmed)
                     if end <= start:
@@ -246,7 +248,7 @@ def detect_regex_entities(
                     source=f"{rule.source}:{rule.rule_id}",
                     propagate_occurrences=False,
                 )
-                if rule.validate_with_llm:
+                if rule.mode.requires_llm_validation:
                     llm_entities.append(entity)
                 else:
                     accepted_entities.append(entity)
@@ -496,11 +498,12 @@ def _validate_url(candidate: RegexCandidate) -> bool:
     else:
         return True
 
-    if ":" in host or _IPV4_SHAPED_HOST_RE.fullmatch(host) is not None:
+    dns_host = host[:-1] if host.endswith(".") else host
+    if ":" in dns_host or _IPV4_SHAPED_HOST_RE.fullmatch(dns_host) is not None:
         return False
-    if len(host) > 253 or "." not in host:
+    if len(dns_host) > 253 or "." not in dns_host:
         return False
-    return all(_DNS_LABEL_RE.fullmatch(label) is not None for label in host.split("."))
+    return all(_DNS_LABEL_RE.fullmatch(label) is not None for label in dns_host.split("."))
 
 
 _VALIDATORS: dict[str, RegexValidatorCallable] = {

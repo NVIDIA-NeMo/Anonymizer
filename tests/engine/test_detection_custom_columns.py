@@ -393,6 +393,73 @@ def test_user_regex_wins_same_span_during_finalization() -> None:
     assert result[COL_DETECTED_ENTITIES]["entities"] == [user_entity]
 
 
+@pytest.mark.parametrize("reverse_detector_order", [False, True])
+@pytest.mark.parametrize(
+    ("drop_high_confidence", "expected_label"),
+    [
+        (False, "phone_number"),
+        (True, "account_number"),
+    ],
+)
+def test_same_span_detector_confidence_selects_label_after_validation(
+    reverse_detector_order: bool,
+    drop_high_confidence: bool,
+    expected_label: str,
+) -> None:
+    text = "Call 5551234567."
+    detector_entities = [
+        {
+            "text": "5551234567",
+            "label": "phone_number",
+            "start": 5,
+            "end": 15,
+            "score": 0.95,
+        },
+        {
+            "text": "5551234567",
+            "label": "account_number",
+            "start": 5,
+            "end": 15,
+            "score": 0.4,
+        },
+    ]
+    if reverse_detector_order:
+        detector_entities.reverse()
+    row: dict[str, Any] = {
+        COL_TEXT: text,
+        COL_RAW_DETECTED: _raw(detector_entities),
+        COL_REGEX_ENTITIES: {"entities": []},
+        COL_REGEX_ACCEPTED_ENTITIES: {"entities": []},
+        COL_AUGMENTED_ENTITIES: {"entities": []},
+    }
+
+    parse_detected_entities(row)
+    prepare_validation_inputs(row)
+    row[COL_VALIDATED_ENTITIES] = {
+        "decisions": [
+            {
+                "id": "phone_number_5_15",
+                "decision": "drop" if drop_high_confidence else "keep",
+            },
+            {"id": "account_number_5_15", "decision": "keep"},
+        ]
+    }
+    apply_validation_to_seed_entities(row)
+    merge_and_build_candidates(row)
+    result = apply_validation_and_finalize(row)
+
+    entities = result[COL_DETECTED_ENTITIES]["entities"]
+    assert [(entity["label"], entity["score"], entity["source"]) for entity in entities] == [
+        (expected_label, 0.95 if expected_label == "phone_number" else 0.4, "detector")
+    ]
+
+    replaced = apply_local_replace_strategy(
+        pd.DataFrame({COL_TEXT: [text], COL_FINAL_ENTITIES: [result[COL_DETECTED_ENTITIES]]}),
+        strategy=Redact(),
+    )
+    assert replaced[COL_REPLACED_TEXT].iloc[0] == f"Call [REDACTED_{expected_label.upper()}]."
+
+
 def test_merge_and_build_candidates_writes_schema_shaped_payloads() -> None:
     row: dict[str, Any] = {
         COL_TEXT: "Alice works at Acme in Seattle.",
@@ -489,6 +556,66 @@ def test_validation_reclassification_to_excluded_label_is_filtered_before_augmen
     assert result[COL_INITIAL_TAGGED_TEXT] == "San Diego"
 
 
+def test_validation_reclassification_to_regex_only_label_requires_exact_regex_evidence() -> None:
+    row: dict[str, Any] = {
+        COL_TEXT: "OTHER-123",
+        COL_SEED_ENTITIES: {
+            "entities": [
+                {
+                    "id": "identifier_0_9",
+                    "value": "OTHER-123",
+                    "label": "identifier",
+                    "start_position": 0,
+                    "end_position": 9,
+                    "score": 0.9,
+                    "source": "detector",
+                }
+            ]
+        },
+        COL_VALIDATED_ENTITIES: {
+            "decisions": [
+                {
+                    "id": "identifier_0_9",
+                    "decision": "reclass",
+                    "proposed_label": "ticket",
+                    "reason": "looks like a ticket",
+                }
+            ]
+        },
+        COL_REGEX_ACCEPTED_ENTITIES: {"entities": []},
+    }
+
+    result = apply_validation_to_seed_entities(row, regex_only_entity_labels=[" TICKET "])
+
+    assert result[COL_VALIDATED_SEED_ENTITIES]["entities"] == []
+    assert json.loads(result[COL_SEED_ENTITIES_JSON]) == []
+    assert result[COL_INITIAL_TAGGED_TEXT] == "OTHER-123"
+
+
+def test_regex_only_label_survives_with_exact_regex_evidence() -> None:
+    regex_entity = {
+        "id": "ticket_0_7",
+        "value": "TKT-123",
+        "label": "Ticket",
+        "start_position": 0,
+        "end_position": 7,
+        "score": 1.0,
+        "source": "regex_user:user:ticket:v1",
+        "propagate_occurrences": False,
+    }
+    row: dict[str, Any] = {
+        COL_TEXT: "TKT-123",
+        COL_SEED_ENTITIES: {"entities": [regex_entity]},
+        COL_VALIDATED_ENTITIES: {"decisions": []},
+        COL_REGEX_ACCEPTED_ENTITIES: {"entities": [regex_entity]},
+    }
+
+    result = apply_validation_to_seed_entities(row, regex_only_entity_labels=["ticket"])
+
+    assert result[COL_VALIDATED_SEED_ENTITIES]["entities"] == [regex_entity]
+    assert result[COL_INITIAL_TAGGED_TEXT] == "<Ticket>TKT-123</Ticket>"
+
+
 def test_merge_filters_excluded_validated_seed_entities() -> None:
     row: dict[str, Any] = {
         COL_TEXT: "San Diego",
@@ -531,12 +658,12 @@ def test_merge_filters_regex_only_label_from_augmentation_but_preserves_regex_se
         COL_AUGMENTED_ENTITIES: {"entities": [{"value": "TKT-2", "label": "ticket"}]},
     }
 
-    result = merge_and_build_candidates(row, excluded_augmented_entity_labels=["ticket"])
+    result = merge_and_build_candidates(row, regex_only_entity_labels=["ticket"])
 
     assert result[COL_MERGED_ENTITIES]["entities"] == [regex_entity]
 
 
-def test_merge_does_not_split_regex_only_full_name() -> None:
+def test_merge_does_not_expand_parts_from_span_restricted_regex_full_name() -> None:
     regex_entity = {
         "id": "full_name_0_10",
         "value": "John Smith",
@@ -545,6 +672,7 @@ def test_merge_does_not_split_regex_only_full_name() -> None:
         "end_position": 10,
         "score": 1.0,
         "source": "regex_user:user:full_name:v1",
+        "propagate_occurrences": False,
     }
     row: dict[str, Any] = {
         COL_TEXT: "John Smith met John",
@@ -552,9 +680,35 @@ def test_merge_does_not_split_regex_only_full_name() -> None:
         COL_AUGMENTED_ENTITIES: {"entities": []},
     }
 
-    result = merge_and_build_candidates(row, excluded_augmented_entity_labels=["full_name"])
+    result = merge_and_build_candidates(row, regex_only_entity_labels=["full_name"])
 
     assert result[COL_MERGED_ENTITIES]["entities"] == [regex_entity]
+
+
+def test_merge_does_not_derive_regex_only_name_part_without_exact_regex_evidence() -> None:
+    row: dict[str, Any] = {
+        COL_TEXT: "John Smith met John and Smith",
+        COL_VALIDATED_SEED_ENTITIES: {
+            "entities": [
+                {
+                    "id": "full_name_0_10",
+                    "value": "John Smith",
+                    "label": "full_name",
+                    "start_position": 0,
+                    "end_position": 10,
+                    "score": 0.9,
+                    "source": "detector",
+                }
+            ]
+        },
+        COL_AUGMENTED_ENTITIES: {"entities": []},
+    }
+
+    result = merge_and_build_candidates(row, regex_only_entity_labels=["first_name"])
+    entities = result[COL_MERGED_ENTITIES]["entities"]
+
+    assert not any(entity["label"] == "first_name" for entity in entities)
+    assert any(entity["label"] == "last_name" and entity["start_position"] == 24 for entity in entities)
 
 
 def test_finalize_filters_reclassification_to_excluded_label() -> None:
@@ -591,6 +745,41 @@ def test_finalize_filters_reclassification_to_excluded_label() -> None:
 
     assert result[COL_DETECTED_ENTITIES]["entities"] == []
     assert result[COL_TAGGED_TEXT] == "San Diego"
+
+
+def test_finalize_reclassification_to_regex_only_label_requires_exact_regex_evidence() -> None:
+    row: dict[str, Any] = {
+        COL_TEXT: "OTHER-123",
+        COL_MERGED_ENTITIES: {
+            "entities": [
+                {
+                    "id": "identifier_0_9",
+                    "value": "OTHER-123",
+                    "label": "identifier",
+                    "start_position": 0,
+                    "end_position": 9,
+                    "score": 0.9,
+                    "source": "augmenter",
+                }
+            ]
+        },
+        COL_VALIDATED_ENTITIES: {
+            "decisions": [
+                {
+                    "id": "identifier_0_9",
+                    "decision": "reclass",
+                    "proposed_label": "ticket",
+                    "reason": "looks like a ticket",
+                }
+            ]
+        },
+        COL_REGEX_ACCEPTED_ENTITIES: {"entities": []},
+    }
+
+    result = apply_validation_and_finalize(row, regex_only_entity_labels=["ticket"])
+
+    assert result[COL_DETECTED_ENTITIES]["entities"] == []
+    assert result[COL_TAGGED_TEXT] == "OTHER-123"
 
 
 def test_finalize_filters_reclassification_outside_explicit_label_set() -> None:
