@@ -353,3 +353,12 @@ def _jinja(col: str, *, key: str | None = None) -> str:
     """
     expr = col if key is None else f"{col}['{key}']"
     return "{{ " + expr + " }}"
+
+
+COL_REVIEWED_GENERALIZATION_SUGGESTIONS = "_reviewed_generalization_suggestions"
+
+COL_GENERALIZATION_REVIEW_INPUT = "_generalization_review_input"
+
+COL_REWRITE_ACTIONS = "_rewrite_actions"
+
+COL_REWRITE_ACTION_DIAGNOSTICS = "_rewrite_action_diagnostics"

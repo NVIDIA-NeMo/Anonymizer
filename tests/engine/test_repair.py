@@ -77,7 +77,7 @@ class TestLeakedItemsText:
 
 
 class TestRenderRepairPrompt:
-    def test_uses_pre_replaced_baseline_instead_of_original_sensitive_text(self) -> None:
+    def test_uses_only_current_rewrite_not_original_or_baseline(self) -> None:
         row = {
             COL_TEXT: "Alice lives in Seattle.",
             COL_REWRITE_BASELINE_TEXT: "Maria lives in Portland.",
@@ -91,7 +91,8 @@ class TestRenderRepairPrompt:
 
         result = _render_repair_prompt(row, params)
 
-        assert "Maria lives in Portland." in result
+        assert "Maria lives in a city." in result
+        assert "Maria lives in Portland." not in result
         assert "Alice lives in Seattle." not in result
 
     def test_contains_key_sections(self) -> None:
@@ -106,10 +107,12 @@ class TestRenderRepairPrompt:
         params = RepairParams(privacy_goal_str=_STUB_PRIVACY_GOAL.to_prompt_string(), max_privacy_leak=1.0)
         result = _render_repair_prompt(row, params)
         assert "<privacy_goal>" in result
-        assert "<adversarial_goal>" in result
+        assert "<current_text>" in result
+        assert "<reported_leaks>" in result
         assert "Alice" in result
-        assert "WARNING" in result
-        assert "0.85" in result
+        assert "WARNING" not in result
+        assert "0.85" not in result
+        assert "<original_text>" not in result
 
     def test_no_high_warn_when_no_high_leak(self) -> None:
         row = {
