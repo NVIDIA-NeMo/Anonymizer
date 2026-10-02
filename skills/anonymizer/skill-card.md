@@ -1,7 +1,12 @@
+<!-- SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
 ## Description: <br>
 Use when the user wants to anonymize a text dataset, redact PII, de-identify free-text data, or rewrite text to remove sensitive or inferable identifying information. <br>
 
-This skill is ready for commercial/non-commercial use. <br>
+This skill package is prepared for NVSkills publication review. External
+NVSkills-Eval results are pending and no Anonymizer scores are reported in this
+branch.
 
 ## Owner
 NVIDIA <br>

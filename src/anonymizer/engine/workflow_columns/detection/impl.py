@@ -14,6 +14,12 @@ from data_designer.engine.column_generators.generators.base import (
     ColumnGeneratorWithModelRegistry,
 )
 
+from anonymizer.engine.constants import (
+    COL_REGEX_ACCEPTED_ENTITIES,
+    COL_REGEX_ENTITIES,
+    COL_REGEX_VALIDATION_TRACE,
+    COL_TEXT,
+)
 from anonymizer.engine.detection.chunked_validation import (
     ChunkedValidationParams,
     chunked_validate_row,
@@ -27,10 +33,13 @@ from anonymizer.engine.detection.custom_columns import (
     parse_detected_entities,
     prepare_validation_inputs,
 )
+from anonymizer.engine.detection.regex_detection import detect_regex_entities
+from anonymizer.engine.schemas import EntitiesSchema
 from anonymizer.engine.workflow_columns.detection.config import (
     ChunkedValidationConfig,
     DetectionTransformConfig,
     DetectionTransformOperation,
+    RegexDetectionConfig,
 )
 
 _TRANSFORMS: dict[DetectionTransformOperation, Callable[[dict[str, Any]], dict[str, Any]]] = {
@@ -100,21 +109,29 @@ class _AsyncBridgedModelFacade:
 class DetectionTransformGenerator(ColumnGeneratorCellByCell[DetectionTransformConfig]):
     def generate(self, data: dict[str, Any]) -> dict[str, Any]:
         operation = DetectionTransformOperation(self.config.operation)
+        if operation == DetectionTransformOperation.PARSE_DETECTED_ENTITIES:
+            return parse_detected_entities(
+                data,
+                excluded_entity_labels=self.config.excluded_entity_labels,
+            )
         if operation == DetectionTransformOperation.APPLY_VALIDATION_TO_SEED_ENTITIES:
             return apply_validation_to_seed_entities(
                 data,
                 excluded_entity_labels=self.config.excluded_entity_labels,
+                regex_constrained_entity_labels=self.config.regex_constrained_entity_labels,
             )
         if operation == DetectionTransformOperation.MERGE_AND_BUILD_CANDIDATES:
             return merge_and_build_candidates(
                 data,
                 excluded_entity_labels=self.config.excluded_entity_labels,
+                regex_constrained_entity_labels=self.config.regex_constrained_entity_labels,
             )
         if operation == DetectionTransformOperation.APPLY_VALIDATION_AND_FINALIZE:
             return apply_validation_and_finalize(
                 data,
                 excluded_entity_labels=self.config.excluded_entity_labels,
                 allowed_entity_labels=self.config.allowed_entity_labels,
+                regex_constrained_entity_labels=self.config.regex_constrained_entity_labels,
             )
         return _TRANSFORMS[operation](data)
 
@@ -143,6 +160,26 @@ class ChunkedValidationGenerator(ColumnGeneratorWithModelRegistry[ChunkedValidat
     async def agenerate(self, data: dict[str, Any]) -> dict[str, Any]:  # ty: ignore[invalid-method-override]
         models = {alias: self.get_model(alias) for alias in self.config.pool}
         return await chunked_validate_row_async(data, self._params(models), models)
+
+
+class RegexDetectionGenerator(ColumnGeneratorCellByCell[RegexDetectionConfig]):
+    """Run deterministic regex recognition for one input row."""
+
+    def generate(self, data: dict[str, Any]) -> dict[str, Any]:
+        result = detect_regex_entities(
+            str(data.get(COL_TEXT, "")),
+            rules=self.config.rules,
+            timeout_seconds=self.config.timeout_seconds,
+            max_matches_per_rule=self.config.max_matches_per_rule,
+        )
+        data[COL_REGEX_ENTITIES] = EntitiesSchema(
+            entities=[entity.as_dict() for entity in result.llm_entities]
+        ).model_dump(mode="json")
+        data[COL_REGEX_ACCEPTED_ENTITIES] = EntitiesSchema(
+            entities=[entity.as_dict() for entity in result.accepted_entities]
+        ).model_dump(mode="json")
+        data[COL_REGEX_VALIDATION_TRACE] = [entry.as_dict() for entry in result.validation_trace]
+        return data
 
 
 def _derive_max_parallel_chunks(models: dict[str, Any]) -> int:

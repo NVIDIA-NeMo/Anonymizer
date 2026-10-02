@@ -15,6 +15,7 @@ from data_designer.plugins.plugin import PluginType
 from data_designer.plugins.registry import PluginRegistry
 
 from anonymizer.config.models import DetectionModelSelection
+from anonymizer.config.regex import RegexRule
 from anonymizer.config.rewrite import PrivacyGoal
 from anonymizer.engine.constants import (
     COL_AUGMENTED_ENTITIES,
@@ -23,6 +24,8 @@ from anonymizer.engine.constants import (
     COL_FINAL_ENTITIES,
     COL_LATENT_ENTITIES,
     COL_MERGED_ENTITIES,
+    COL_RAW_DETECTED,
+    COL_REGEX_ENTITIES,
     COL_SEED_ENTITIES,
     COL_SEED_ENTITIES_JSON,
     COL_SEED_VALIDATION_CANDIDATES,
@@ -42,6 +45,7 @@ from anonymizer.engine.detection.detection_workflow import (
     _get_latent_prompt,
     _get_validation_prompt,
     _materialize_final_entities,
+    _resolve_detection_labels,
 )
 from anonymizer.engine.detection.entity_label_examples import resolve_entity_label_config
 from anonymizer.engine.ndd.adapter import FailedRecord, WorkflowRunResult
@@ -55,6 +59,7 @@ from anonymizer.engine.workflow_columns.detection.config import (
     ChunkedValidationConfig,
     DetectionTransformConfig,
     DetectionTransformOperation,
+    RegexDetectionConfig,
 )
 
 
@@ -419,6 +424,29 @@ def test_resolve_entity_label_config_does_not_append_defaults_for_explicit_label
     assert label_config.labels == ["non_default_label"]
 
 
+def test_resolve_detection_labels_adds_custom_regex_labels_to_defaults() -> None:
+    merged = _resolve_detection_labels(
+        None,
+        regex_rules=[RegexRule(label="support_case", pattern=r"CASE-\d+")],
+    )
+
+    assert merged == [*DEFAULT_ENTITY_LABELS, "support_case"]
+
+
+def test_resolve_detection_labels_does_not_add_disabled_custom_regex_labels() -> None:
+    merged = _resolve_detection_labels(
+        None,
+        regex_rules=[RegexRule(label="support_case", pattern=r"CASE-\d+", enabled=False)],
+    )
+
+    assert merged == DEFAULT_ENTITY_LABELS
+
+
+def test_resolve_detection_labels_does_not_append_defaults_when_custom_labels_provided() -> None:
+    merged = _resolve_detection_labels(["custom_label"])
+    assert merged == ["custom_label"]
+
+
 def test_resolve_entity_label_config_normalizes_provided_labels() -> None:
     label_config = resolve_entity_label_config(entity_labels=["FIRST_NAME", " email "])
     assert label_config.labels == ["first_name", "email"]
@@ -749,6 +777,21 @@ def test_resolve_entity_label_config_exclusions_normalize_configured_labels() ->
     assert label_config.labels == ["first_name"]
 
 
+def test_resolve_detection_labels_retains_enabled_custom_label_when_all_defaults_are_excluded() -> None:
+    labels = _resolve_detection_labels(
+        None,
+        regex_rules=[RegexRule(label="support_case", pattern=r"CASE-[0-9]+")],
+        excluded_entity_labels=set(DEFAULT_ENTITY_LABELS),
+    )
+
+    assert labels == ["support_case"]
+
+
+def test_resolve_detection_labels_none_exclusions_is_noop() -> None:
+    labels = _resolve_detection_labels(["email", "city"], excluded_entity_labels=None)
+    assert labels == ["email", "city"]
+
+
 def test_resolve_entity_label_config_exclusions_apply_to_defaults() -> None:
     label_config = resolve_entity_label_config(entity_labels=None, excluded_entity_labels={"ssn", "first_name"})
     assert "ssn" not in label_config.labels
@@ -769,7 +812,13 @@ def test_resolve_entity_label_config_empty_result_raises() -> None:
 def test_materialize_final_entities_normalizes_configured_labels() -> None:
     raw = {
         "entities": [
-            {"value": "Alice", "label": "First_Name", "start_position": 0, "end_position": 5},
+            {
+                "value": "Alice",
+                "label": "First_Name",
+                "start_position": 0,
+                "end_position": 5,
+                "propagate_occurrences": False,
+            },
             {"value": "alice@example.com", "label": "Email", "start_position": 7, "end_position": 24},
             {"value": "Houston", "label": "City", "start_position": 28, "end_position": 35},
         ]
@@ -783,6 +832,7 @@ def test_materialize_final_entities_normalizes_configured_labels() -> None:
 
     final = EntitiesSchema.from_raw(result)
     assert [entity.label for entity in final.entities] == ["First_Name"]
+    assert "propagate_occurrences" not in result["entities"][0]
 
 
 def test_excluded_labels_are_removed_from_final_entities(
@@ -926,6 +976,75 @@ def test_excluded_labels_are_removed_from_gliner_labels(
     assert "email" not in gliner_labels
     assert "first_name" in gliner_labels
     assert "city" in gliner_labels
+
+
+def test_regex_constrained_label_is_removed_from_additional_detection_routes(
+    stub_detector_model_configs: list[ModelConfig],
+    stub_detection_model_selection: DetectionModelSelection,
+) -> None:
+    adapter = Mock()
+    adapter.run_workflow.return_value = WorkflowRunResult(
+        dataframe=pd.DataFrame({COL_TEXT: ["TKT-123 alice@example.com"]}), failed_records=[]
+    )
+    workflow = EntityDetectionWorkflow(adapter=adapter)
+
+    workflow.run(
+        pd.DataFrame({COL_TEXT: ["TKT-123 alice@example.com"]}),
+        model_configs=stub_detector_model_configs,
+        selected_models=stub_detection_model_selection,
+        gliner_detection_threshold=0.5,
+        entity_labels=["ticket", "email"],
+        regex_rules=[RegexRule(label="ticket", pattern=r"TKT-\d+", detect_additional_matches=False)],
+        tag_latent_entities=False,
+    )
+
+    injected_configs = adapter.run_workflow.call_args.kwargs["model_configs"]
+    gliner_labels = injected_configs[0].inference_parameters.extra_body["labels"]
+    columns = adapter.run_workflow.call_args.kwargs["columns"]
+    regex_config = _find_column(columns, COL_REGEX_ENTITIES)
+    parse_config = _find_column(columns, COL_SEED_ENTITIES)
+    seed_validation_config = _find_column(columns, COL_SEED_ENTITIES_JSON)
+    merge_config = _find_column(columns, COL_MERGED_ENTITIES)
+    finalize_config = _find_column(columns, COL_DETECTED_ENTITIES)
+    augment_config = _find_column(columns, COL_AUGMENTED_ENTITIES)
+
+    assert gliner_labels == ["email"]
+    assert isinstance(regex_config, RegexDetectionConfig)
+    assert regex_config.rules[0].validate_matches_with_llm is True
+    assert regex_config.rules[0].detect_additional_matches is False
+    assert parse_config.excluded_entity_labels == ["ticket"]
+    assert seed_validation_config.regex_constrained_entity_labels == ["ticket"]
+    assert merge_config.excluded_entity_labels == []
+    assert merge_config.regex_constrained_entity_labels == ["ticket"]
+    assert finalize_config.regex_constrained_entity_labels == ["ticket"]
+    validation_config = _find_column(columns, COL_VALIDATION_DECISIONS)
+    assert "- ticket" in validation_config.prompt_template
+    assert "- ticket" not in augment_config.prompt
+
+
+def test_all_regex_constrained_labels_skip_detector_and_augmenter_calls(
+    stub_detector_model_configs: list[ModelConfig],
+    stub_detection_model_selection: DetectionModelSelection,
+) -> None:
+    adapter = Mock()
+    adapter.run_workflow.return_value = WorkflowRunResult(
+        dataframe=pd.DataFrame({COL_TEXT: ["TKT-123"]}), failed_records=[]
+    )
+    workflow = EntityDetectionWorkflow(adapter=adapter)
+
+    workflow.run(
+        pd.DataFrame({COL_TEXT: ["TKT-123"]}),
+        model_configs=stub_detector_model_configs,
+        selected_models=stub_detection_model_selection,
+        gliner_detection_threshold=0.5,
+        entity_labels=["ticket"],
+        regex_rules=[RegexRule(label="ticket", pattern=r"TKT-\d+", detect_additional_matches=False)],
+        tag_latent_entities=False,
+    )
+
+    columns = adapter.run_workflow.call_args.kwargs["columns"]
+    assert _find_column(columns, COL_RAW_DETECTED).skip is not None
+    assert _find_column(columns, COL_AUGMENTED_ENTITIES).skip is not None
 
 
 # ---------------------------------------------------------------------------

@@ -7,18 +7,27 @@ import json
 import logging
 import re
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum
 from typing import SupportsFloat, SupportsIndex, SupportsInt
+
+from anonymizer.config.entity_labels import normalize_entity_label
 
 logger = logging.getLogger(__name__)
 
 VALIDATION_CONTEXT_WINDOW = 32
+_SOURCE_ORIGIN_SEPARATOR = "|"
 
 
 @dataclass(frozen=True)
 class EntitySpan:
-    """Canonical standoff entity representation."""
+    """Canonical standoff entity representation.
+
+    ``propagate_occurrences`` records whether an independently accepted
+    producer permits the value to expand beyond this exact span. Regex
+    candidates disable it because their pattern or validator may be
+    context-specific; exact duplicates combine the permission with OR.
+    """
 
     entity_id: str
     value: str
@@ -27,8 +36,9 @@ class EntitySpan:
     end_position: int
     score: float
     source: str
+    propagate_occurrences: bool = True
 
-    def as_dict(self) -> dict[str, str | int | float]:
+    def as_dict(self) -> dict[str, str | int | float | bool]:
         return {
             "id": self.entity_id,
             "value": self.value,
@@ -37,12 +47,13 @@ class EntitySpan:
             "end_position": self.end_position,
             "score": self.score,
             "source": self.source,
+            "propagate_occurrences": self.propagate_occurrences,
         }
 
 
 def normalize_label(label: str) -> str:
     """Canonical normalization for entity label comparisons: strip + casefold."""
-    return label.strip().casefold()
+    return normalize_entity_label(label)
 
 
 def normalize_labels(labels: Iterable[str] | None) -> set[str]:
@@ -59,6 +70,49 @@ def filter_excluded_entity_spans(
     if not excluded:
         return list(entities)
     return [entity for entity in entities if normalize_label(entity.label) not in excluded]
+
+
+def enforce_regex_constrained_evidence(
+    entities: list[EntitySpan],
+    *,
+    regex_constrained_entity_labels: Iterable[str] | None,
+    regex_evidence: Iterable[EntitySpan],
+) -> list[EntitySpan]:
+    """Require exact regex evidence when additional detection is disabled for a label.
+
+    Reclassification and derived spans may change or introduce labels after
+    initial detection. A regex-constrained label remains authoritative throughout the
+    pipeline: its normalized label and exact character span must match an
+    accepted user or built-in regex entity.
+    """
+    regex_constrained = normalize_labels(regex_constrained_entity_labels)
+    if not regex_constrained:
+        return list(entities)
+
+    evidence = {
+        (normalize_label(entity.label), entity.start_position, entity.end_position)
+        for entity in regex_evidence
+        if entity_has_source_prefix(entity, "regex_user:") or entity_has_source_prefix(entity, "regex_builtin:")
+    }
+    protected: list[EntitySpan] = []
+    for entity in entities:
+        normalized_label = normalize_label(entity.label)
+        if normalized_label not in regex_constrained:
+            protected.append(entity)
+            continue
+        if (normalized_label, entity.start_position, entity.end_position) in evidence:
+            protected.append(replace(entity, propagate_occurrences=False))
+    return protected
+
+
+@dataclass(frozen=True)
+class ValidationOverlapGroup:
+    """Connected overlapping region referenced by validation candidate IDs."""
+
+    group_id: str
+    start_position: int
+    end_position: int
+    candidate_ids: tuple[str, ...]
 
 
 class TagNotation(str, Enum):
@@ -104,7 +158,61 @@ def parse_raw_entities(raw_response: str, text: str) -> list[EntitySpan]:
                 source="detector",
             )
         )
-    return resolve_overlaps(parsed, prefer_highest_score=True)
+    return coalesce_exact_entity_candidates(parsed, prefer_highest_score=True)
+
+
+def coalesce_exact_entity_candidates(
+    *sources: list[EntitySpan],
+    prefer_highest_score: bool = False,
+) -> list[EntitySpan]:
+    """Coalesce exact label/span duplicates while preserving overlapping alternatives.
+
+    Source argument order defines provenance priority for an exact duplicate.
+    All distinct origins are retained in a deterministic source chain, and
+    occurrence propagation remains allowed when any accepted origin permits
+    it. Partial overlaps and same-span candidates with different labels remain
+    independent so contextual validation can decide which candidates survive.
+    """
+    grouped: dict[tuple[str, int, int], list[tuple[int, EntitySpan]]] = {}
+    for priority, entities in enumerate(sources):
+        for entity in entities:
+            identity = (entity.label, entity.start_position, entity.end_position)
+            grouped.setdefault(identity, []).append((priority, entity))
+
+    coalesced: list[EntitySpan] = []
+    for candidates in grouped.values():
+        ranked = sorted(
+            candidates,
+            key=lambda item: (
+                item[0],
+                -item[1].score if prefer_highest_score else 0.0,
+                item[1].source,
+                item[1].entity_id,
+            ),
+        )
+        winner = ranked[0][1]
+        origins: list[str] = []
+        for _, candidate in ranked:
+            for origin in candidate.source.split(_SOURCE_ORIGIN_SEPARATOR):
+                if origin and origin not in origins:
+                    origins.append(origin)
+        coalesced.append(
+            replace(
+                winner,
+                source=_SOURCE_ORIGIN_SEPARATOR.join(origins),
+                propagate_occurrences=any(candidate.propagate_occurrences for _, candidate in ranked),
+            )
+        )
+
+    return sorted(
+        coalesced,
+        key=lambda entity: (entity.start_position, entity.end_position, entity.label, entity.entity_id),
+    )
+
+
+def entity_has_source_prefix(entity: EntitySpan, prefix: str) -> bool:
+    """Return whether any origin in an entity's provenance chain has ``prefix``."""
+    return any(origin.startswith(prefix) for origin in entity.source.split(_SOURCE_ORIGIN_SEPARATOR))
 
 
 def build_validation_candidates(text: str, entities: list[EntitySpan]) -> list[dict[str, str]]:
@@ -162,17 +270,7 @@ def apply_validation_decisions(entities: list[EntitySpan], validation_output: di
         if entry["decision"] == "drop":
             continue
         if entry["decision"] == "reclass" and entry["proposed_label"]:
-            validated.append(
-                EntitySpan(
-                    entity_id=entity.entity_id,
-                    value=entity.value,
-                    label=entry["proposed_label"],
-                    start_position=entity.start_position,
-                    end_position=entity.end_position,
-                    score=entity.score,
-                    source=entity.source,
-                )
-            )
+            validated.append(replace(entity, label=entry["proposed_label"]))
         else:
             validated.append(entity)
     return validated
@@ -183,6 +281,7 @@ def apply_augmented_entities(
     entities: list[EntitySpan],
     augmented_output: dict | str,
     excluded_entity_labels: set[str] | None = None,
+    regex_constrained_entity_labels: set[str] | None = None,
 ) -> list[EntitySpan]:
     """Add allowed augmented entities, split full names, and resolve overlaps."""
     payload = _safe_json_loads(augmented_output) if isinstance(augmented_output, str) else augmented_output
@@ -190,6 +289,8 @@ def apply_augmented_entities(
     if not isinstance(augmented, list):
         augmented = []
     excluded = normalize_labels(excluded_entity_labels)
+    regex_constrained = normalize_labels(regex_constrained_entity_labels)
+    excluded_from_augmentation = excluded | regex_constrained
 
     merged = filter_excluded_entity_spans(entities, excluded)
     for idx, suggestion in enumerate(augmented):
@@ -197,7 +298,7 @@ def apply_augmented_entities(
             continue
         value = str(suggestion.get("value", "")).strip()
         label = str(suggestion.get("label", "")).strip()
-        if not value or not label or normalize_label(label) in excluded:
+        if not value or not label or normalize_label(label) in excluded_from_augmentation:
             continue
         for start, end in _find_all_occurrences(text=text, needle=value):
             entity_id = _build_entity_id(label=label, start=start, end=end)
@@ -213,23 +314,38 @@ def apply_augmented_entities(
                 )
             )
 
-    merged = _split_full_names(text=text, entities=merged)
+    merged = _split_full_names(
+        text=text,
+        entities=merged,
+        regex_constrained_entity_labels=regex_constrained,
+    )
     return resolve_overlaps(merged)
 
 
-def _split_full_names(text: str, entities: list[EntitySpan]) -> list[EntitySpan]:
+def _split_full_names(
+    text: str,
+    entities: list[EntitySpan],
+    regex_constrained_entity_labels: set[str] | None = None,
+) -> list[EntitySpan]:
     """Split ``full_name`` entities into first/middle/last name parts.
 
     When a ``full_name`` span like "John Smith" is detected, this adds
     separate ``first_name``/``last_name``/``middle_name`` entities for
-    each part so that standalone occurrences elsewhere in the text are
-    also caught.
+    each part. Parts expand to standalone occurrences only when the parent
+    entity permits occurrence propagation; span-restricted parents derive
+    parts only inside their accepted span.
     """
+    regex_constrained = normalize_labels(regex_constrained_entity_labels)
+    regex_evidence = {
+        (normalize_label(entity.label), entity.start_position, entity.end_position)
+        for entity in entities
+        if entity_has_source_prefix(entity, "regex_user:") or entity_has_source_prefix(entity, "regex_builtin:")
+    }
     existing_values: set[str] = {entity.value.lower() for entity in entities}
     extra: list[EntitySpan] = []
 
     for entity in entities:
-        if entity.label != "full_name":
+        if normalize_label(entity.label) != "full_name":
             continue
         parts = entity.value.split()
         if len(parts) < 2:
@@ -243,7 +359,27 @@ def _split_full_names(text: str, entities: list[EntitySpan]) -> list[EntitySpan]
                 part_label = "last_name"
             else:
                 part_label = "middle_name"
-            for start, end in _find_all_occurrences(text=text, needle=part):
+            if entity.propagate_occurrences:
+                occurrences = _find_all_occurrences(text=text, needle=part)
+            else:
+                occurrences = [
+                    (entity.start_position + start, entity.start_position + end)
+                    for start, end in _find_all_occurrences(
+                        text=text[entity.start_position : entity.end_position],
+                        needle=part,
+                    )
+                ]
+            for start, end in occurrences:
+                if (
+                    normalize_label(part_label) in regex_constrained
+                    and (
+                        normalize_label(part_label),
+                        start,
+                        end,
+                    )
+                    not in regex_evidence
+                ):
+                    continue
                 entity_id = _build_entity_id(label=part_label, start=start, end=end)
                 extra.append(
                     EntitySpan(
@@ -254,6 +390,7 @@ def _split_full_names(text: str, entities: list[EntitySpan]) -> list[EntitySpan]
                         end_position=end,
                         score=entity.score,
                         source="name_split",
+                        propagate_occurrences=entity.propagate_occurrences,
                     )
                 )
             existing_values.add(part.lower())
@@ -285,6 +422,76 @@ def resolve_overlaps(entities: list[EntitySpan], *, prefer_highest_score: bool =
             continue
         accepted.append(candidate)
     return sorted(accepted, key=lambda item: (item.start_position, item.end_position, item.label))
+
+
+def merge_entity_sources(*sources: list[EntitySpan]) -> list[EntitySpan]:
+    """Merge detection sources with deterministic provenance-aware tie breaking.
+
+    Source order is priority order. Longer spans still win genuine overlap
+    conflicts; source priority decides cross-source conflicts. When multiple
+    surviving GLiNER candidates from the same source cover identical bounds,
+    their detector confidence breaks the tie. Synthetic scores from regex,
+    augmentation, and propagation are never compared with GLiNER confidence.
+    """
+    ranked: list[tuple[int, EntitySpan]] = []
+    seen: set[tuple[str, int, int]] = set()
+    for priority, entities in enumerate(sources):
+        for entity in entities:
+            identity = (entity.label, entity.start_position, entity.end_position)
+            if identity in seen:
+                continue
+            seen.add(identity)
+            ranked.append((priority, entity))
+
+    ranked = _retain_highest_confidence_detector_candidates(ranked)
+    ordered = sorted(
+        ranked,
+        key=lambda item: (
+            -(item[1].end_position - item[1].start_position),
+            item[1].start_position,
+            item[1].end_position,
+            item[0],
+            item[1].label,
+        ),
+    )
+    accepted: list[EntitySpan] = []
+    for _, candidate in ordered:
+        if any(_spans_overlap(candidate, existing) for existing in accepted):
+            continue
+        accepted.append(candidate)
+    return sorted(accepted, key=lambda item: (item.start_position, item.end_position, item.label))
+
+
+def _retain_highest_confidence_detector_candidates(
+    ranked: list[tuple[int, EntitySpan]],
+) -> list[tuple[int, EntitySpan]]:
+    """Resolve identical-boundary GLiNER alternatives by detector confidence.
+
+    Grouping includes the caller-provided source priority so this comparison
+    cannot override cross-source precedence. Only entities whose complete
+    provenance is the calibrated ``detector`` origin participate; a regex or
+    other synthetic origin is never ranked by its placeholder score.
+    """
+    comparable: dict[tuple[int, int, int], list[int]] = {}
+    for index, (priority, entity) in enumerate(ranked):
+        if entity.source == "detector":
+            comparable.setdefault((priority, entity.start_position, entity.end_position), []).append(index)
+
+    retained = set(range(len(ranked)))
+    for indexes in comparable.values():
+        if len(indexes) < 2:
+            continue
+        winner = min(
+            indexes,
+            key=lambda index: (
+                -ranked[index][1].score,
+                ranked[index][1].label,
+                ranked[index][1].entity_id,
+            ),
+        )
+        retained.difference_update(index for index in indexes if index != winner)
+
+    return [candidate for index, candidate in enumerate(ranked) if index in retained]
 
 
 def build_tagged_text(
@@ -329,22 +536,112 @@ def build_tagged_text(
     return "".join(parts)
 
 
+def build_validation_overlap_groups(
+    entities: list[EntitySpan],
+    candidate_ids: set[str],
+) -> list[ValidationOverlapGroup]:
+    """Group connected overlaps that contain at least one validation candidate."""
+    if not entities or not candidate_ids:
+        return []
+
+    ordered = sorted(entities, key=lambda item: (item.start_position, item.end_position, item.entity_id))
+    components: list[list[EntitySpan]] = []
+    component: list[EntitySpan] = []
+    component_end = -1
+    for entity in ordered:
+        if component and entity.start_position >= component_end:
+            components.append(component)
+            component = []
+            component_end = -1
+        component.append(entity)
+        component_end = max(component_end, entity.end_position)
+    if component:
+        components.append(component)
+
+    groups: list[ValidationOverlapGroup] = []
+    for members in components:
+        if len(members) < 2:
+            continue
+        member_candidate_ids = tuple(
+            sorted({member.entity_id for member in members if member.entity_id in candidate_ids})
+        )
+        if not member_candidate_ids:
+            continue
+        start = min(member.start_position for member in members)
+        end = max(member.end_position for member in members)
+        groups.append(
+            ValidationOverlapGroup(
+                group_id=f"overlap_{start}_{end}",
+                start_position=start,
+                end_position=end,
+                candidate_ids=member_candidate_ids,
+            )
+        )
+    return groups
+
+
+def build_validation_tagged_text(
+    text: str,
+    entities: list[EntitySpan],
+    overlap_groups: list[ValidationOverlapGroup],
+    *,
+    notation: TagNotation | str | None = None,
+) -> str:
+    """Render ordinary tags plus one neutral tag per overlapping region."""
+    if not overlap_groups:
+        return build_tagged_text(text=text, entities=entities, notation=notation)
+    if notation is None:
+        resolved_notation = _choose_tag_notation(text)
+    elif isinstance(notation, TagNotation):
+        resolved_notation = notation
+    else:
+        resolved_notation = TagNotation(notation)
+
+    visible_entities = [
+        entity
+        for entity in entities
+        if not any(
+            entity.start_position < group.end_position and group.start_position < entity.end_position
+            for group in overlap_groups
+        )
+    ]
+    render_items: list[tuple[int, int, EntitySpan | ValidationOverlapGroup]] = [
+        (entity.start_position, entity.end_position, entity) for entity in visible_entities
+    ]
+    render_items.extend((group.start_position, group.end_position, group) for group in overlap_groups)
+
+    cursor = 0
+    parts: list[str] = []
+    for start, end, item in sorted(render_items, key=lambda value: (value[0], value[1])):
+        if start < cursor:
+            continue
+        parts.append(text[cursor:start])
+        value = text[start:end]
+        if isinstance(item, ValidationOverlapGroup):
+            parts.append(_format_overlap_group_tag(value=value, group_id=item.group_id, notation=resolved_notation))
+        else:
+            parts.append(_format_entity_tag(value=value, label=item.label, notation=resolved_notation))
+        cursor = end
+    parts.append(text[cursor:])
+    return "".join(parts)
+
+
 def get_tag_notation(text: str) -> str:
     """Return the tag notation name chosen for *text* (xml, bracket, paren, sentinel)."""
     return _choose_tag_notation(text).value
 
 
 def expand_entity_occurrences(text: str, entities: list[EntitySpan]) -> list[EntitySpan]:
-    """Expand each validated entity to ALL its occurrences in the text.
+    """Expand values whose accepted origins permit document-wide propagation.
 
-    After validation, entities only have the positions where the detector
-    originally found them. This function finds every word-boundary-matched
-    occurrence of each unique entity value in the text, creating new spans
-    for positions not already covered. Overlaps are resolved by preferring
-    longer spans.
+    Regex spans start span-restricted because their pattern or validator may
+    intentionally accept only some occurrences. Coalescing with an accepted
+    detector origin grants propagation permission. Overlaps prefer longer
+    spans after expansion.
     """
     entity_map: dict[str, str] = {}
-    for entity in entities:
+    propagatable_entities = [entity for entity in entities if entity.propagate_occurrences]
+    for entity in propagatable_entities:
         key = entity.value.lower()
         if key not in entity_map:
             entity_map[key] = entity.label
@@ -352,7 +649,7 @@ def expand_entity_occurrences(text: str, entities: list[EntitySpan]) -> list[Ent
     original_positions: set[tuple[int, int]] = {(e.start_position, e.end_position) for e in entities}
     expanded: list[EntitySpan] = []
     for idx, (key, label) in enumerate(entity_map.items()):
-        original_value = next(e.value for e in entities if e.value.lower() == key)
+        original_value = next(e.value for e in propagatable_entities if e.value.lower() == key)
         for start, end in _find_all_occurrences(text=text, needle=original_value):
             if (start, end) in original_positions:
                 continue  # already covered by a detector span; skip to preserve its provenance
@@ -465,3 +762,13 @@ def _format_entity_tag(*, value: str, label: str, notation: TagNotation) -> str:
     if notation == TagNotation.paren:
         return f"((SENSITIVE:{label}|{value}))"
     return f"<<SENSITIVE:{label}>>{value}<</SENSITIVE:{label}>>"
+
+
+def _format_overlap_group_tag(*, value: str, group_id: str, notation: TagNotation) -> str:
+    if notation == TagNotation.xml:
+        return f'<candidate_group id="{group_id}">{value}</candidate_group>'
+    if notation == TagNotation.bracket:
+        return f"[[{value}|CANDIDATE_GROUP:{group_id}]]"
+    if notation == TagNotation.paren:
+        return f"((CANDIDATE_GROUP:{group_id}|{value}))"
+    return f"<<CANDIDATE_GROUP:{group_id}>>{value}<</CANDIDATE_GROUP:{group_id}>>"

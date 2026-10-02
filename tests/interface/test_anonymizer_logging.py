@@ -28,6 +28,7 @@ from anonymizer.engine.constants import (
     COL_REWRITTEN_TEXT,
     COL_TEXT,
     COL_TYPE_FIDELITY_VALID,
+    DEFAULT_ENTITY_LABELS,
 )
 from anonymizer.engine.detection.detection_workflow import EntityDetectionResult, EntityDetectionWorkflow
 from anonymizer.engine.evaluation.entity_coverage_judge import EntityCoverageWorkflow
@@ -180,6 +181,35 @@ def test_run_logs_effective_detection_scope_after_exclusions(
     assert "effective detection scope: 1 label (configured: 2, removed by exclusions: 1):" in scope_messages[-1]
     assert "vendor_api_key" in scope_messages[-1]
     assert "email" not in scope_messages[-1]
+
+
+@pytest.mark.parametrize("operation", ["run", "preview"])
+def test_interface_resolves_custom_rule_only_detection_scope(
+    operation: str,
+    stub_input: AnonymizerInput,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    config = AnonymizerConfig(
+        detect={
+            "excluded_entity_labels": list(DEFAULT_ENTITY_LABELS),
+            "regex_rules": [{"label": "support_case", "pattern": r"CASE-[0-9]+"}],
+        },
+        replace=Redact(),
+    )
+    anonymizer = _make_logging_anonymizer()
+
+    with caplog.at_level(logging.INFO, logger="anonymizer"):
+        if operation == "run":
+            anonymizer.run(config=config, data=stub_input)
+        else:
+            anonymizer.preview(config=config, data=stub_input, num_records=1)
+
+    scope_messages = [
+        record.getMessage() for record in caplog.records if "effective detection scope" in record.getMessage()
+    ]
+    assert scope_messages
+    assert "effective detection scope: 1 label" in scope_messages[-1]
+    assert "support_case" in scope_messages[-1]
 
 
 def test_run_logs_numpy_wrapped_entity_counts(stub_input: AnonymizerInput, caplog: pytest.LogCaptureFixture) -> None:
