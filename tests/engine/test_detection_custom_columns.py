@@ -93,7 +93,7 @@ def test_parse_produces_seed_entities_and_notation() -> None:
     assert result[COL_TAG_NOTATION] in {"xml", "bracket", "paren", "sentinel"}
 
 
-def test_parse_excludes_detector_candidates_for_regex_only_label_but_keeps_regex_candidates() -> None:
+def test_parse_excludes_detector_candidates_for_regex_constrained_label_but_keeps_regex_candidates() -> None:
     text = "allow:TKT-1 deny:TKT-2"
     row: dict[str, Any] = {
         COL_TEXT: text,
@@ -333,7 +333,7 @@ def test_dropped_duplicate_detector_does_not_expand_locally_accepted_regex() -> 
     assert replaced[COL_REPLACED_TEXT].iloc[0] == "allow:[REDACTED_TOKEN] deny:ABC"
 
 
-def test_regex_only_reclassification_cannot_expand_beyond_regex_evidence() -> None:
+def test_regex_constrained_reclassification_cannot_expand_beyond_regex_evidence() -> None:
     text = "allow:ABC deny:ABC"
     accepted = {
         "id": "ticket_6_9",
@@ -365,9 +365,9 @@ def test_regex_only_reclassification_cannot_expand_beyond_regex_evidence() -> No
             }
         ]
     }
-    apply_validation_to_seed_entities(row, regex_only_entity_labels=["ticket"])
-    merge_and_build_candidates(row, regex_only_entity_labels=["ticket"])
-    result = apply_validation_and_finalize(row, regex_only_entity_labels=["ticket"])
+    apply_validation_to_seed_entities(row, regex_constrained_entity_labels=["ticket"])
+    merge_and_build_candidates(row, regex_constrained_entity_labels=["ticket"])
+    result = apply_validation_and_finalize(row, regex_constrained_entity_labels=["ticket"])
 
     entities = result[COL_DETECTED_ENTITIES]["entities"]
     assert [(entity["start_position"], entity["end_position"]) for entity in entities] == [(6, 9)]
@@ -642,7 +642,7 @@ def test_validation_reclassification_to_excluded_label_is_filtered_before_augmen
     assert result[COL_INITIAL_TAGGED_TEXT] == "San Diego"
 
 
-def test_validation_reclassification_to_regex_only_label_requires_exact_regex_evidence() -> None:
+def test_validation_reclassification_to_regex_constrained_label_requires_exact_regex_evidence() -> None:
     row: dict[str, Any] = {
         COL_TEXT: "OTHER-123",
         COL_SEED_ENTITIES: {
@@ -671,14 +671,14 @@ def test_validation_reclassification_to_regex_only_label_requires_exact_regex_ev
         COL_REGEX_ACCEPTED_ENTITIES: {"entities": []},
     }
 
-    result = apply_validation_to_seed_entities(row, regex_only_entity_labels=[" TICKET "])
+    result = apply_validation_to_seed_entities(row, regex_constrained_entity_labels=[" TICKET "])
 
     assert result[COL_VALIDATED_SEED_ENTITIES]["entities"] == []
     assert json.loads(result[COL_SEED_ENTITIES_JSON]) == []
     assert result[COL_INITIAL_TAGGED_TEXT] == "OTHER-123"
 
 
-def test_regex_only_label_survives_with_exact_regex_evidence() -> None:
+def test_regex_constrained_label_survives_with_exact_regex_evidence() -> None:
     regex_entity = {
         "id": "ticket_0_7",
         "value": "TKT-123",
@@ -696,10 +696,44 @@ def test_regex_only_label_survives_with_exact_regex_evidence() -> None:
         COL_REGEX_ACCEPTED_ENTITIES: {"entities": [regex_entity]},
     }
 
-    result = apply_validation_to_seed_entities(row, regex_only_entity_labels=["ticket"])
+    result = apply_validation_to_seed_entities(row, regex_constrained_entity_labels=["ticket"])
 
     assert result[COL_VALIDATED_SEED_ENTITIES]["entities"] == [regex_entity]
     assert result[COL_INITIAL_TAGGED_TEXT] == "<Ticket>TKT-123</Ticket>"
+
+
+def test_llm_validated_regex_constrained_label_survives_with_exact_regex_evidence() -> None:
+    regex_entity = {
+        "id": "ticket_0_7",
+        "value": "TKT-123",
+        "label": "ticket",
+        "start_position": 0,
+        "end_position": 7,
+        "score": 1.0,
+        "source": "regex_user:user:ticket:v1",
+        "propagate_occurrences": False,
+    }
+    row: dict[str, Any] = {
+        COL_TEXT: "TKT-123",
+        COL_SEED_ENTITIES: {"entities": [regex_entity]},
+        COL_VALIDATED_ENTITIES: {
+            "decisions": [
+                {
+                    "id": "ticket_0_7",
+                    "decision": "keep",
+                    "proposed_label": None,
+                    "reason": "valid ticket in context",
+                }
+            ]
+        },
+        COL_REGEX_ENTITIES: {"entities": [regex_entity]},
+        COL_REGEX_ACCEPTED_ENTITIES: {"entities": []},
+    }
+
+    result = apply_validation_to_seed_entities(row, regex_constrained_entity_labels=["ticket"])
+
+    assert result[COL_VALIDATED_SEED_ENTITIES]["entities"] == [regex_entity]
+    assert result[COL_INITIAL_TAGGED_TEXT] == "<ticket>TKT-123</ticket>"
 
 
 def test_merge_filters_excluded_validated_seed_entities() -> None:
@@ -728,7 +762,7 @@ def test_merge_filters_excluded_validated_seed_entities() -> None:
     assert result[COL_MERGED_TAGGED_TEXT] == "San Diego"
 
 
-def test_merge_filters_regex_only_label_from_augmentation_but_preserves_regex_seed() -> None:
+def test_merge_filters_regex_constrained_label_from_augmentation_but_preserves_regex_seed() -> None:
     regex_entity = {
         "id": "ticket_6_11",
         "value": "TKT-1",
@@ -744,7 +778,7 @@ def test_merge_filters_regex_only_label_from_augmentation_but_preserves_regex_se
         COL_AUGMENTED_ENTITIES: {"entities": [{"value": "TKT-2", "label": "ticket"}]},
     }
 
-    result = merge_and_build_candidates(row, regex_only_entity_labels=["ticket"])
+    result = merge_and_build_candidates(row, regex_constrained_entity_labels=["ticket"])
 
     assert result[COL_MERGED_ENTITIES]["entities"] == [regex_entity]
 
@@ -766,12 +800,12 @@ def test_merge_does_not_expand_parts_from_span_restricted_regex_full_name() -> N
         COL_AUGMENTED_ENTITIES: {"entities": []},
     }
 
-    result = merge_and_build_candidates(row, regex_only_entity_labels=["full_name"])
+    result = merge_and_build_candidates(row, regex_constrained_entity_labels=["full_name"])
 
     assert result[COL_MERGED_ENTITIES]["entities"] == [regex_entity]
 
 
-def test_merge_does_not_derive_regex_only_name_part_without_exact_regex_evidence() -> None:
+def test_merge_does_not_derive_regex_constrained_name_part_without_exact_regex_evidence() -> None:
     row: dict[str, Any] = {
         COL_TEXT: "John Smith met John and Smith",
         COL_VALIDATED_SEED_ENTITIES: {
@@ -790,7 +824,7 @@ def test_merge_does_not_derive_regex_only_name_part_without_exact_regex_evidence
         COL_AUGMENTED_ENTITIES: {"entities": []},
     }
 
-    result = merge_and_build_candidates(row, regex_only_entity_labels=["first_name"])
+    result = merge_and_build_candidates(row, regex_constrained_entity_labels=["first_name"])
     entities = result[COL_MERGED_ENTITIES]["entities"]
 
     assert not any(entity["label"] == "first_name" for entity in entities)
@@ -833,7 +867,7 @@ def test_finalize_filters_reclassification_to_excluded_label() -> None:
     assert result[COL_TAGGED_TEXT] == "San Diego"
 
 
-def test_finalize_reclassification_to_regex_only_label_requires_exact_regex_evidence() -> None:
+def test_finalize_reclassification_to_regex_constrained_label_requires_exact_regex_evidence() -> None:
     row: dict[str, Any] = {
         COL_TEXT: "OTHER-123",
         COL_MERGED_ENTITIES: {
@@ -862,7 +896,7 @@ def test_finalize_reclassification_to_regex_only_label_requires_exact_regex_evid
         COL_REGEX_ACCEPTED_ENTITIES: {"entities": []},
     }
 
-    result = apply_validation_and_finalize(row, regex_only_entity_labels=["ticket"])
+    result = apply_validation_and_finalize(row, regex_constrained_entity_labels=["ticket"])
 
     assert result[COL_DETECTED_ENTITIES]["entities"] == []
     assert result[COL_TAGGED_TEXT] == "OTHER-123"

@@ -17,7 +17,7 @@ from anonymizer.config.anonymizer_config import (
     infer_input_source_suffix,
     resolve_effective_detection_labels,
 )
-from anonymizer.config.regex import BuiltinRegex, RegexCandidate, RegexMode, RegexRule
+from anonymizer.config.regex import BuiltinRegex, RegexCandidate, RegexRule
 from anonymizer.config.replace_strategies import (
     Annotate,
     Hash,
@@ -460,7 +460,8 @@ def test_regex_rule_defaults_to_llm_validation() -> None:
     rule = RegexRule(label="CASE_ID", pattern=r"CASE-[0-9]{8}")
 
     assert rule.label == "case_id"
-    assert rule.mode is RegexMode.validate_matches
+    assert rule.validate_matches_with_llm is True
+    assert rule.detect_additional_matches is True
 
 
 def test_regex_rule_uses_canonical_unicode_label_identity() -> None:
@@ -566,12 +567,13 @@ def test_detect_rejects_custom_rule_missing_from_explicit_labels() -> None:
 
 
 def test_detect_accepts_builtin_regex_llm_override() -> None:
-    detect = Detect(regex_rules=[BuiltinRegex(label="credit_debit_card", mode=RegexMode.accept_matches)])
+    detect = Detect(regex_rules=[BuiltinRegex(label="credit_debit_card", validate_matches_with_llm=False)])
 
     rule = detect.regex_rules[0]
     assert isinstance(rule, BuiltinRegex)
     assert rule.enabled is True
-    assert rule.mode is RegexMode.accept_matches
+    assert rule.validate_matches_with_llm is False
+    assert rule.detect_additional_matches is True
 
 
 def test_detect_accepts_builtin_regex_enabled_override() -> None:
@@ -580,39 +582,66 @@ def test_detect_accepts_builtin_regex_enabled_override() -> None:
     rule = detect.regex_rules[0]
     assert isinstance(rule, BuiltinRegex)
     assert rule.enabled is False
-    assert rule.mode is RegexMode.validate_matches
+    assert rule.validate_matches_with_llm is True
+    assert rule.detect_additional_matches is True
 
 
 @pytest.mark.parametrize(
     "rule",
     [
-        BuiltinRegex(label="email", mode=RegexMode.regex_only),
-        RegexRule(label="support_case", pattern=r"CASE-[0-9]+", mode=RegexMode.regex_only),
+        BuiltinRegex(label="email", validate_matches_with_llm=False, detect_additional_matches=False),
+        RegexRule(
+            label="support_case",
+            pattern=r"CASE-[0-9]+",
+            validate_matches_with_llm=False,
+            detect_additional_matches=False,
+        ),
     ],
 )
-def test_regex_only_mode_disables_llm_validation_and_model_detection(rule: BuiltinRegex | RegexRule) -> None:
-    assert rule.mode.requires_llm_validation is False
-    assert rule.mode.allows_model_detection is False
+def test_rule_can_disable_llm_validation_and_additional_detection(rule: BuiltinRegex | RegexRule) -> None:
+    assert rule.validate_matches_with_llm is False
+    assert rule.detect_additional_matches is False
 
 
-def test_enabled_rules_sharing_a_label_cannot_mix_regex_only_with_other_modes() -> None:
-    with pytest.raises(ValidationError, match="cannot combine regex_only with another mode"):
+@pytest.mark.parametrize(
+    ("validate_matches_with_llm", "detect_additional_matches"),
+    [(True, True), (False, True), (True, False), (False, False)],
+)
+def test_regex_rule_supports_all_validation_and_detection_combinations(
+    validate_matches_with_llm: bool,
+    detect_additional_matches: bool,
+) -> None:
+    rule = RegexRule(
+        label="support_case",
+        pattern=r"CASE-[0-9]+",
+        validate_matches_with_llm=validate_matches_with_llm,
+        detect_additional_matches=detect_additional_matches,
+    )
+
+    restored = RegexRule.model_validate_json(rule.model_dump_json())
+
+    assert restored.validate_matches_with_llm is validate_matches_with_llm
+    assert restored.detect_additional_matches is detect_additional_matches
+
+
+def test_enabled_rules_sharing_a_label_must_agree_on_additional_detection() -> None:
+    with pytest.raises(ValidationError, match="must use the same detect_additional_matches value"):
         Detect(
             entity_labels=["support_case"],
             regex_rules=[
-                RegexRule(label="support_case", pattern=r"CASE-[0-9]+", mode=RegexMode.regex_only),
+                RegexRule(label="support_case", pattern=r"CASE-[0-9]+", detect_additional_matches=False),
                 RegexRule(label="support_case", pattern=r"SUP-[0-9]+"),
             ],
         )
 
 
-def test_equivalent_unicode_labels_cannot_mix_regex_only_with_other_modes() -> None:
-    with pytest.raises(ValidationError, match="cannot combine regex_only with another mode"):
+def test_equivalent_unicode_labels_must_agree_on_additional_detection() -> None:
+    with pytest.raises(ValidationError, match="must use the same detect_additional_matches value"):
         Detect(
             entity_labels=["straße"],
             regex_rules=[
-                RegexRule(label="straße", pattern=r"ABC", mode=RegexMode.regex_only),
-                RegexRule(label="STRASSE", pattern=r"DEF", mode=RegexMode.accept_matches),
+                RegexRule(label="straße", pattern=r"ABC", detect_additional_matches=False),
+                RegexRule(label="STRASSE", pattern=r"DEF"),
             ],
         )
 
@@ -656,31 +685,41 @@ def test_equivalent_unicode_exclusion_removes_custom_rule_scope() -> None:
     assert "strasse" not in effective
 
 
-def test_validate_and_accept_modes_can_coexist_for_one_label() -> None:
+def test_llm_validation_settings_can_differ_for_one_label() -> None:
     config = Detect(
         entity_labels=["support_case"],
         regex_rules=[
-            RegexRule(label="support_case", pattern=r"CASE-[0-9]+", mode=RegexMode.accept_matches),
-            RegexRule(label="support_case", pattern=r"SUP-[0-9]+", mode=RegexMode.validate_matches),
+            RegexRule(label="support_case", pattern=r"CASE-[0-9]+", validate_matches_with_llm=False),
+            RegexRule(label="support_case", pattern=r"SUP-[0-9]+", validate_matches_with_llm=True),
         ],
     )
 
-    assert [rule.mode for rule in config.regex_rules] == [
-        RegexMode.accept_matches,
-        RegexMode.validate_matches,
-    ]
+    assert [rule.validate_matches_with_llm for rule in config.regex_rules] == [False, True]
 
 
-def test_disabled_rule_does_not_create_regex_only_mode_conflict() -> None:
+def test_disabled_rule_does_not_create_additional_detection_conflict() -> None:
     config = Detect(
         entity_labels=["support_case"],
         regex_rules=[
-            RegexRule(label="support_case", pattern=r"CASE-[0-9]+", mode=RegexMode.regex_only),
+            RegexRule(label="support_case", pattern=r"CASE-[0-9]+", detect_additional_matches=False),
             RegexRule(label="support_case", pattern=r"SUP-[0-9]+", enabled=False),
         ],
     )
 
-    assert config.regex_rules[0].mode is RegexMode.regex_only
+    assert config.regex_rules[0].detect_additional_matches is False
+
+
+def test_globally_disabled_builtin_does_not_create_additional_detection_conflict() -> None:
+    config = Detect(
+        builtin_regexes=False,
+        entity_labels=["email"],
+        regex_rules=[
+            BuiltinRegex(label="email", detect_additional_matches=False),
+            RegexRule(label="email", pattern=r"internal:[a-z]+"),
+        ],
+    )
+
+    assert config.builtin_regexes is False
 
 
 def test_detect_rejects_duplicate_builtin_regex_entries() -> None:
@@ -688,7 +727,7 @@ def test_detect_rejects_duplicate_builtin_regex_entries() -> None:
         Detect(
             regex_rules=[
                 BuiltinRegex(label="email", enabled=False),
-                BuiltinRegex(label="email", mode=RegexMode.accept_matches),
+                BuiltinRegex(label="email", validate_matches_with_llm=False),
             ]
         )
 

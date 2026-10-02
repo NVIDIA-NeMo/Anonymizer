@@ -63,21 +63,23 @@ Each built-in recognizer performs two local steps:
 1. A regex finds text with the expected shape.
 2. A deterministic validator rejects invalid matches.
 
-Matches that pass these checks use `RegexMode.validate_matches` by default. The contextual LLM validator uses the surrounding text to keep, drop, or reclassify each match.
+Matches that pass these checks receive contextual LLM validation by default. Configure two independent settings on each rule:
 
-Choose the mode that defines how regex and model detection interact:
+- `validate_matches_with_llm` controls whether the contextual LLM validator keeps, drops, or reclassifies regex-produced matches.
+- `detect_additional_matches` controls whether GLiNER and LLM augmentation may find other spans for the same label.
 
-| Mode | Regex matches | GLiNER and LLM augmentation for the label |
+| `validate_matches_with_llm` | `detect_additional_matches` | Behavior |
 | --- | --- | --- |
-| `RegexMode.validate_matches` | Sent to contextual LLM validation. | Enabled. |
-| `RegexMode.accept_matches` | Accepted after local validation. | Enabled and may find additional matches. |
-| `RegexMode.regex_only` | Accepted after local validation. | Disabled; regex recognition is authoritative for the label. |
+| `True` | `True` | Validate regex matches with the LLM, and let the normal detection pipeline find additional matches. This is the default. |
+| `False` | `True` | Accept locally valid regex matches directly, and let the normal detection pipeline find additional matches. |
+| `True` | `False` | Use regex to supply every candidate span for the label, then validate those candidates with the LLM. |
+| `False` | `False` | Accept locally valid regex matches directly, and use regex to supply every span for the label. |
 
 Every directly accepted regex match remains restricted to its exact span. If a detector independently finds the same label and span, that detector route still goes through contextual validation before it can authorize protection of matching occurrences elsewhere in the document.
 
-If every active label uses `RegexMode.regex_only`, the detector and augmenter calls are skipped. Rules for one label may mix `validate_matches` and `accept_matches`, but they cannot combine `regex_only` with another mode because model participation is a label-level policy.
+If every active label sets `detect_additional_matches=False`, the detector and augmenter calls are skipped. Rules for one label may use different `validate_matches_with_llm` values, but all enabled rules for that label must use the same `detect_additional_matches` value because additional detection is a label-level policy.
 
-For a `regex_only` label, every final entity must have accepted regex evidence for that exact label and character span. Model reclassification and derived spans, including name splitting, cannot introduce that label without a matching regex result.
+When `detect_additional_matches=False`, every final entity must have regex evidence for that exact label and character span. Model reclassification and derived spans, including name splitting, cannot introduce that label without a matching regex result.
 
 Skipping those per-row model calls does not remove their model aliases or providers from the Data Designer workflow. Provider health checks are a separate startup concern and may still run unless the corresponding model configuration sets `skip_health_check=True`.
 
@@ -95,11 +97,11 @@ Entity provenance includes the built-in rule ID, for example `regex_builtin:nemo
 To skip LLM validation for one built-in:
 
 ```python
-from anonymizer import BuiltinRegex, Detect, RegexMode
+from anonymizer import BuiltinRegex, Detect
 
 detect = Detect(
     entity_labels=["email", "ipv4"],
-    regex_rules=[BuiltinRegex(label="ipv4", mode=RegexMode.accept_matches)],
+    regex_rules=[BuiltinRegex(label="ipv4", validate_matches_with_llm=False)],
 )
 ```
 
@@ -124,10 +126,10 @@ detect = Detect(
 
 ### Custom regex rules and validators
 
-`regex_rules` accepts both built-in settings and custom rules. Use `BuiltinRegex` to configure a built-in recognizer. Use `RegexRule` to add a regex for any entity label. Both default to `RegexMode.validate_matches`.
+`regex_rules` accepts both built-in settings and custom rules. Use `BuiltinRegex` to configure a built-in recognizer. Use `RegexRule` to add a regex for any entity label. Both settings default to `True`.
 
 ```python
-from anonymizer import Detect, RegexCandidate, RegexMode, RegexRule
+from anonymizer import Detect, RegexCandidate, RegexRule
 
 
 def validate_support_case(candidate: RegexCandidate) -> bool:
@@ -142,7 +144,8 @@ detect = Detect(
             label="support_case",
             pattern=r"CASE-(?P<number>\d{6})",
             validator=validate_support_case,
-            mode=RegexMode.regex_only,
+            validate_matches_with_llm=False,
+            detect_additional_matches=False,
         )
     ],
 )
@@ -158,7 +161,7 @@ Pass a callable directly when using `run()` or `preview()`. For exported configu
 
 If you provide `entity_labels`, include the label of every enabled custom regex rule. Disabled custom rules are ignored. If you leave `entity_labels` unset, Anonymizer adds labels from enabled custom rules automatically.
 
-Entity labels are trimmed and Unicode-casefolded before scope, activation, exclusion, and per-label mode comparisons. Equivalent spellings therefore share one label identity while retaining every distinct configured pattern.
+Entity labels are trimmed and Unicode-casefolded before scope, activation, exclusion, and per-label policy comparisons. Equivalent spellings therefore share one label identity while retaining every distinct configured pattern.
 
 ---
 

@@ -22,7 +22,6 @@ from anonymizer.config.entity_labels import normalize_entity_label
 from anonymizer.config.regex import (
     BuiltinRegex,
     RegexCandidate,
-    RegexMode,
     RegexRule,
     RegexValidationResult,
     RegexValidatorCallable,
@@ -57,7 +56,8 @@ class ResolvedRegexRule(BaseModel):
     pattern: str
     validator_id: str | None = None
     local_validator: RegexValidatorCallable | None = Field(default=None, exclude=True, repr=False)
-    mode: RegexMode = RegexMode.validate_matches
+    validate_matches_with_llm: bool = True
+    detect_additional_matches: bool = True
     source: str
 
 
@@ -112,7 +112,7 @@ def resolve_regex_rules(
 ) -> list[ResolvedRegexRule]:
     """Resolve active built-in and custom rules into a serializable form."""
     active_labels = {normalize_entity_label(label) for label in labels}
-    regex_only_labels = resolve_regex_only_labels(
+    regex_constrained_labels = resolve_regex_constrained_labels(
         labels=active_labels,
         builtin_regexes=builtin_regexes,
         rules=rules,
@@ -131,7 +131,8 @@ def resolve_regex_rules(
                 pattern=rule.pattern,
                 validator_id=validator_id,
                 local_validator=rule.validator if callable(rule.validator) else None,
-                mode=RegexMode.regex_only if rule.label in regex_only_labels else rule.mode,
+                validate_matches_with_llm=rule.validate_matches_with_llm,
+                detect_additional_matches=rule.label not in regex_constrained_labels,
                 source="regex_user",
             )
         )
@@ -146,30 +147,29 @@ def resolve_regex_rules(
             resolved.append(
                 rule.model_copy(
                     update={
-                        "mode": (
-                            RegexMode.regex_only
-                            if rule.label in regex_only_labels
-                            else (override.mode if override is not None else RegexMode.validate_matches)
-                        )
+                        "validate_matches_with_llm": (
+                            override.validate_matches_with_llm if override is not None else True
+                        ),
+                        "detect_additional_matches": rule.label not in regex_constrained_labels,
                     }
                 )
             )
     return resolved
 
 
-def resolve_regex_only_labels(
+def resolve_regex_constrained_labels(
     *,
     labels: Iterable[str],
     builtin_regexes: bool,
     rules: list[BuiltinRegex | RegexRule],
 ) -> set[str]:
-    """Return active labels whose enabled regex configuration is authoritative."""
+    """Return active labels for which regex supplies every candidate span."""
     active_labels = {normalize_entity_label(label) for label in labels}
     return {
         rule.label
         for rule in rules
         if rule.enabled
-        and rule.mode is RegexMode.regex_only
+        and not rule.detect_additional_matches
         and rule.label in active_labels
         and (builtin_regexes or isinstance(rule, RegexRule))
     }
@@ -248,7 +248,7 @@ def detect_regex_entities(
                     source=f"{rule.source}:{rule.rule_id}",
                     propagate_occurrences=False,
                 )
-                if rule.mode.requires_llm_validation:
+                if rule.validate_matches_with_llm:
                     llm_entities.append(entity)
                 else:
                     accepted_entities.append(entity)

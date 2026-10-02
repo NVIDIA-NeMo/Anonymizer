@@ -60,7 +60,7 @@ from anonymizer.engine.detection.postprocess import (
 from anonymizer.engine.detection.regex_detection import (
     DEFAULT_MAX_MATCHES_PER_RULE,
     DEFAULT_REGEX_TIMEOUT_SECONDS,
-    resolve_regex_only_labels,
+    resolve_regex_constrained_labels,
     resolve_regex_rules,
     validate_exportable_regex_rules,
 )
@@ -203,13 +203,13 @@ class EntityDetectionWorkflow:
         label_config.labels = labels
         for label in labels:
             label_config.validator_examples.setdefault(label, [])
-        regex_only_labels = resolve_regex_only_labels(
+        regex_constrained_labels = resolve_regex_constrained_labels(
             labels=labels,
             builtin_regexes=builtin_regexes,
             rules=custom_rules,
         )
-        normalized_regex_only_labels = normalize_labels(regex_only_labels)
-        model_labels = [label for label in labels if normalize_label(label) not in normalized_regex_only_labels]
+        normalized_regex_constrained_labels = normalize_labels(regex_constrained_labels)
+        model_labels = [label for label in labels if normalize_label(label) not in normalized_regex_constrained_labels]
         resolved_regex_rules = resolve_regex_rules(
             labels=labels,
             builtin_regexes=builtin_regexes,
@@ -266,7 +266,7 @@ class EntityDetectionWorkflow:
                 DetectionTransformConfig(
                     name=COL_SEED_ENTITIES,
                     operation=DetectionTransformOperation.PARSE_DETECTED_ENTITIES,
-                    excluded_entity_labels=sorted(regex_only_labels),
+                    excluded_entity_labels=sorted(regex_constrained_labels),
                     propagate_skip=False,
                 ),
                 DetectionTransformConfig(
@@ -281,7 +281,7 @@ class EntityDetectionWorkflow:
                     single_chunk_full_text=validation_single_chunk_full_text,
                     prompt_template=_get_validation_prompt(
                         data_summary=data_summary,
-                        labels=model_labels,
+                        labels=labels,
                         examples_by_label=label_config.validator_examples,
                         configured_examples=label_config.augmenter_examples,
                     ),
@@ -295,7 +295,7 @@ class EntityDetectionWorkflow:
                     name=COL_SEED_ENTITIES_JSON,
                     operation=DetectionTransformOperation.APPLY_VALIDATION_TO_SEED_ENTITIES,
                     excluded_entity_labels=list(excluded_entity_labels or []),
-                    regex_only_entity_labels=sorted(regex_only_labels),
+                    regex_constrained_entity_labels=sorted(regex_constrained_labels),
                 ),
                 _PrivatePromptLLMStructuredColumnConfig(
                     name=COL_AUGMENTED_ENTITIES,
@@ -320,7 +320,7 @@ class EntityDetectionWorkflow:
                     name=COL_MERGED_ENTITIES,
                     operation=DetectionTransformOperation.MERGE_AND_BUILD_CANDIDATES,
                     excluded_entity_labels=list(excluded_entity_labels or []),
-                    regex_only_entity_labels=sorted(regex_only_labels),
+                    regex_constrained_entity_labels=sorted(regex_constrained_labels),
                     propagate_skip=False,
                 ),
                 DetectionTransformConfig(
@@ -328,7 +328,7 @@ class EntityDetectionWorkflow:
                     operation=DetectionTransformOperation.APPLY_VALIDATION_AND_FINALIZE,
                     excluded_entity_labels=list(excluded_entity_labels or []),
                     allowed_entity_labels=labels if label_config.strict_labels else None,
-                    regex_only_entity_labels=sorted(regex_only_labels),
+                    regex_constrained_entity_labels=sorted(regex_constrained_labels),
                 ),
             ],
         )

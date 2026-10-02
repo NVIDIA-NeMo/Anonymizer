@@ -47,8 +47,8 @@ regulatory and business context.
 - **`Detect.entity_label_examples` provides configured positive examples for detection.** For a default label, configured examples are appended to its built-in examples. Every non-default label referenced by `entity_label_examples` must also appear in the explicit `entity_labels` set. To keep every default while adding one, use `entity_labels=[*DEFAULT_ENTITY_LABELS, "clinical_facility"]`. Configured examples are soft detection guidance: they do not limit detection to the listed value formats, and they are not passed to substitution or evaluation. Keep configured examples concise and lists short to limit prompt growth, token cost, latency, and context-window pressure. Use synthetic values because configured examples are included in prompts, exported builders, provider requests, and explicitly enabled raw message traces.
 - **`Detect.excluded_entity_labels`** excludes specific label types from detection entirely — excluded labels are removed before GLiNER runs and are never detected, augmented, or penalised in evaluation scores. Use it when a label type is systematically noisy for your data or should never be anonymized (e.g. `Detect(excluded_entity_labels=["occupation", "gender"])`). Exclusions take precedence over `entity_labels` — a label in both is never detected. If `excluded_entity_labels` entirely overlaps the effective allowlist (`entity_labels` if set, otherwise `DEFAULT_ENTITY_LABELS` plus labels from enabled custom regex rules), `Detect` raises a `ValueError` at config time instead of silently building a config that detects nothing.
 - **GLiNER is zero-shot** — entity labels are natural-language concept names (e.g. `"clinical_facility"`, `"internal_project_codename"`), not codes or enum values. Any concept you can name in English is a label GLiNER can detect.
-- **Built-in regex recognition is on by default** for `credit_debit_card`, `email`, `ipv4`, `ipv6`, `mac_address`, and `url` whenever those labels are in scope. Users normally omit `builtin_regexes=True`; use `builtin_regexes=False` to disable all built-ins. The single `regex_rules` list accepts `BuiltinRegex(label="email", enabled=False)` to configure one built-in and `RegexRule(...)` for custom patterns. Both default to `RegexMode.validate_matches`. Use `RegexMode.accept_matches` to accept locally valid regex matches while keeping GLiNER and augmentation enabled for the label, or `RegexMode.regex_only` to make regex authoritative and disable those model routes for the label.
-- **A `regex_only` entity must match accepted regex evidence at the exact label and character span.** Model reclassification and derived spans cannot create regex-only entities.
+- **Built-in regex recognition is on by default** for `credit_debit_card`, `email`, `ipv4`, `ipv6`, `mac_address`, and `url` whenever those labels are in scope. Users normally omit `builtin_regexes=True`; use `builtin_regexes=False` to disable all built-ins. The single `regex_rules` list accepts `BuiltinRegex(label="email", enabled=False)` to configure one built-in and `RegexRule(...)` for custom patterns. Set `validate_matches_with_llm=False` to accept locally valid regex matches directly. Set `detect_additional_matches=False` to prevent GLiNER and augmentation from finding other spans for the label. Both settings default to `True`.
+- **An entity for a label whose enabled rules set `detect_additional_matches=False` must match regex evidence at the exact label and character span.** Model reclassification and derived spans cannot create entities for that label without matching regex evidence.
 - **`Rewrite.instructions` is a dead field today** — it exists on the model but the rewrite engine never reads it. Do not use it. Put rewriter guidance in `privacy_goal.protect` / `privacy_goal.preserve` instead.
 - **`risk_tolerance` only applies to Rewrite mode**, not Replace.
 - **`PrivacyGoal.protect` and `.preserve` must each be 10–1000 chars and at least 3 words.** Be specific (categories, named identifiers, structural facets); avoid generic phrasing like "preserve meaning".
@@ -108,7 +108,7 @@ from anonymizer import (
     AnonymizerConfig,
     AnonymizerInput,
     Detect,
-    BuiltinRegex, RegexCandidate, RegexMode, RegexRule, RegexValidationResult,
+    BuiltinRegex, RegexCandidate, RegexRule, RegexValidationResult,
     # Pick what you need:
     # Replace mode:
     Substitute, Redact, Annotate, Hash,
@@ -134,7 +134,7 @@ def build_config() -> tuple[AnonymizerInput, AnonymizerConfig]:
         # },
         gliner_threshold=0.3,  # default; lower (0.2) for recall, raise (0.5) for cost savings
         # Built-in regexes are enabled by default for supported labels in scope.
-        # regex_rules=[RegexRule(label="ticket_id", pattern=r"TKT-\d+", mode=RegexMode.validate_matches)],
+        # regex_rules=[RegexRule(label="ticket_id", pattern=r"TKT-\d+")],
     )
 
     # ---- Pick ONE of the two strategies below ----

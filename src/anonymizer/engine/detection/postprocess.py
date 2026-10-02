@@ -72,21 +72,21 @@ def filter_excluded_entity_spans(
     return [entity for entity in entities if normalize_label(entity.label) not in excluded]
 
 
-def enforce_regex_only_evidence(
+def enforce_regex_constrained_evidence(
     entities: list[EntitySpan],
     *,
-    regex_only_entity_labels: Iterable[str] | None,
+    regex_constrained_entity_labels: Iterable[str] | None,
     regex_evidence: Iterable[EntitySpan],
 ) -> list[EntitySpan]:
-    """Require exact regex evidence for every entity with a regex-only label.
+    """Require exact regex evidence when additional detection is disabled for a label.
 
     Reclassification and derived spans may change or introduce labels after
-    initial detection. A regex-only label remains authoritative throughout the
+    initial detection. A regex-constrained label remains authoritative throughout the
     pipeline: its normalized label and exact character span must match an
     accepted user or built-in regex entity.
     """
-    regex_only = normalize_labels(regex_only_entity_labels)
-    if not regex_only:
+    regex_constrained = normalize_labels(regex_constrained_entity_labels)
+    if not regex_constrained:
         return list(entities)
 
     evidence = {
@@ -97,7 +97,7 @@ def enforce_regex_only_evidence(
     protected: list[EntitySpan] = []
     for entity in entities:
         normalized_label = normalize_label(entity.label)
-        if normalized_label not in regex_only:
+        if normalized_label not in regex_constrained:
             protected.append(entity)
             continue
         if (normalized_label, entity.start_position, entity.end_position) in evidence:
@@ -281,7 +281,7 @@ def apply_augmented_entities(
     entities: list[EntitySpan],
     augmented_output: dict | str,
     excluded_entity_labels: set[str] | None = None,
-    regex_only_entity_labels: set[str] | None = None,
+    regex_constrained_entity_labels: set[str] | None = None,
 ) -> list[EntitySpan]:
     """Add allowed augmented entities, split full names, and resolve overlaps."""
     payload = _safe_json_loads(augmented_output) if isinstance(augmented_output, str) else augmented_output
@@ -289,8 +289,8 @@ def apply_augmented_entities(
     if not isinstance(augmented, list):
         augmented = []
     excluded = normalize_labels(excluded_entity_labels)
-    regex_only = normalize_labels(regex_only_entity_labels)
-    excluded_from_augmentation = excluded | regex_only
+    regex_constrained = normalize_labels(regex_constrained_entity_labels)
+    excluded_from_augmentation = excluded | regex_constrained
 
     merged = filter_excluded_entity_spans(entities, excluded)
     for idx, suggestion in enumerate(augmented):
@@ -317,7 +317,7 @@ def apply_augmented_entities(
     merged = _split_full_names(
         text=text,
         entities=merged,
-        regex_only_entity_labels=regex_only,
+        regex_constrained_entity_labels=regex_constrained,
     )
     return resolve_overlaps(merged)
 
@@ -325,7 +325,7 @@ def apply_augmented_entities(
 def _split_full_names(
     text: str,
     entities: list[EntitySpan],
-    regex_only_entity_labels: set[str] | None = None,
+    regex_constrained_entity_labels: set[str] | None = None,
 ) -> list[EntitySpan]:
     """Split ``full_name`` entities into first/middle/last name parts.
 
@@ -335,7 +335,7 @@ def _split_full_names(
     entity permits occurrence propagation; span-restricted parents derive
     parts only inside their accepted span.
     """
-    regex_only = normalize_labels(regex_only_entity_labels)
+    regex_constrained = normalize_labels(regex_constrained_entity_labels)
     regex_evidence = {
         (normalize_label(entity.label), entity.start_position, entity.end_position)
         for entity in entities
@@ -371,7 +371,7 @@ def _split_full_names(
                 ]
             for start, end in occurrences:
                 if (
-                    normalize_label(part_label) in regex_only
+                    normalize_label(part_label) in regex_constrained
                     and (
                         normalize_label(part_label),
                         start,

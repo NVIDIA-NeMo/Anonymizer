@@ -11,7 +11,7 @@ from urllib.parse import urlparse
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from anonymizer.config.entity_labels import normalize_entity_label
-from anonymizer.config.regex import BuiltinRegex, RegexMode, RegexRule
+from anonymizer.config.regex import BuiltinRegex, RegexRule
 from anonymizer.config.replace_strategies import ReplaceMethod
 from anonymizer.config.rewrite import (
     DEFAULT_PRESERVE_TEXT,
@@ -265,22 +265,22 @@ class Detect(BaseModel):
     def validate_regex_rule_scope(self) -> Detect:
         enabled_custom_rules = [rule for rule in self.regex_rules if isinstance(rule, RegexRule) and rule.enabled]
         builtin_rules = [rule for rule in self.regex_rules if isinstance(rule, BuiltinRegex)]
-        enabled_rules = [rule for rule in self.regex_rules if rule.enabled]
+        enabled_rules = [
+            rule for rule in self.regex_rules if rule.enabled and (self.builtin_regexes or isinstance(rule, RegexRule))
+        ]
         identities = [(rule.label, rule.pattern) for rule in enabled_custom_rules]
         if len(set(identities)) != len(identities):
             raise ValueError("regex_rules contains duplicate label and pattern pairs.")
         builtin_labels = [rule.label for rule in builtin_rules]
         if len(set(builtin_labels)) != len(builtin_labels):
             raise ValueError("regex_rules contains duplicate built-in labels.")
-        modes_by_label: dict[str, set[RegexMode]] = {}
+        additional_detection_by_label: dict[str, set[bool]] = {}
         for rule in enabled_rules:
-            modes_by_label.setdefault(rule.label, set()).add(rule.mode)
-        conflicting_labels = sorted(
-            label for label, modes in modes_by_label.items() if RegexMode.regex_only in modes and len(modes) > 1
-        )
+            additional_detection_by_label.setdefault(rule.label, set()).add(rule.detect_additional_matches)
+        conflicting_labels = sorted(label for label, values in additional_detection_by_label.items() if len(values) > 1)
         if conflicting_labels:
             raise ValueError(
-                "Enabled regex rules sharing a label cannot combine regex_only with another mode. "
+                "Enabled regex rules sharing a label must use the same detect_additional_matches value. "
                 f"Conflicting labels: {conflicting_labels!r}."
             )
         if self.entity_labels is not None:
