@@ -11,6 +11,8 @@ from dataclasses import dataclass, replace
 from enum import Enum
 from typing import SupportsFloat, SupportsIndex, SupportsInt
 
+from anonymizer.config.entity_labels import normalize_entity_label
+
 logger = logging.getLogger(__name__)
 
 VALIDATION_CONTEXT_WINDOW = 32
@@ -51,7 +53,7 @@ class EntitySpan:
 
 def normalize_label(label: str) -> str:
     """Canonical normalization for entity label comparisons: strip + casefold."""
-    return label.strip().casefold()
+    return normalize_entity_label(label)
 
 
 def normalize_labels(labels: Iterable[str] | None) -> set[str]:
@@ -68,6 +70,36 @@ def filter_excluded_entity_spans(
     if not excluded:
         return list(entities)
     return [entity for entity in entities if normalize_label(entity.label) not in excluded]
+
+
+def enforce_regex_only_evidence(
+    entities: list[EntitySpan],
+    *,
+    regex_only_entity_labels: Iterable[str] | None,
+    regex_evidence: Iterable[EntitySpan],
+) -> list[EntitySpan]:
+    """Require exact regex evidence for every entity with a regex-only label.
+
+    Reclassification and derived spans may change or introduce labels after
+    initial detection. A regex-only label remains authoritative throughout the
+    pipeline: its normalized label and exact character span must match an
+    accepted user or built-in regex entity.
+    """
+    regex_only = normalize_labels(regex_only_entity_labels)
+    if not regex_only:
+        return list(entities)
+
+    evidence = {
+        (normalize_label(entity.label), entity.start_position, entity.end_position)
+        for entity in regex_evidence
+        if entity_has_source_prefix(entity, "regex_user:") or entity_has_source_prefix(entity, "regex_builtin:")
+    }
+    return [
+        entity
+        for entity in entities
+        if normalize_label(entity.label) not in regex_only
+        or (normalize_label(entity.label), entity.start_position, entity.end_position) in evidence
+    ]
 
 
 @dataclass(frozen=True)
@@ -246,7 +278,7 @@ def apply_augmented_entities(
     entities: list[EntitySpan],
     augmented_output: dict | str,
     excluded_entity_labels: set[str] | None = None,
-    excluded_augmented_entity_labels: set[str] | None = None,
+    regex_only_entity_labels: set[str] | None = None,
 ) -> list[EntitySpan]:
     """Add allowed augmented entities, split full names, and resolve overlaps."""
     payload = _safe_json_loads(augmented_output) if isinstance(augmented_output, str) else augmented_output
@@ -254,7 +286,8 @@ def apply_augmented_entities(
     if not isinstance(augmented, list):
         augmented = []
     excluded = normalize_labels(excluded_entity_labels)
-    excluded_from_augmentation = excluded | normalize_labels(excluded_augmented_entity_labels)
+    regex_only = normalize_labels(regex_only_entity_labels)
+    excluded_from_augmentation = excluded | regex_only
 
     merged = filter_excluded_entity_spans(entities, excluded)
     for idx, suggestion in enumerate(augmented):
@@ -281,7 +314,7 @@ def apply_augmented_entities(
     merged = _split_full_names(
         text=text,
         entities=merged,
-        excluded_entity_labels=excluded_augmented_entity_labels,
+        regex_only_entity_labels=regex_only,
     )
     return resolve_overlaps(merged)
 
@@ -289,7 +322,7 @@ def apply_augmented_entities(
 def _split_full_names(
     text: str,
     entities: list[EntitySpan],
-    excluded_entity_labels: set[str] | None = None,
+    regex_only_entity_labels: set[str] | None = None,
 ) -> list[EntitySpan]:
     """Split ``full_name`` entities into first/middle/last name parts.
 
@@ -299,12 +332,17 @@ def _split_full_names(
     entity permits occurrence propagation; span-restricted parents derive
     parts only inside their accepted span.
     """
-    excluded = normalize_labels(excluded_entity_labels)
+    regex_only = normalize_labels(regex_only_entity_labels)
+    regex_evidence = {
+        (normalize_label(entity.label), entity.start_position, entity.end_position)
+        for entity in entities
+        if entity_has_source_prefix(entity, "regex_user:") or entity_has_source_prefix(entity, "regex_builtin:")
+    }
     existing_values: set[str] = {entity.value.lower() for entity in entities}
     extra: list[EntitySpan] = []
 
     for entity in entities:
-        if entity.label != "full_name" or normalize_label(entity.label) in excluded:
+        if normalize_label(entity.label) != "full_name":
             continue
         parts = entity.value.split()
         if len(parts) < 2:
@@ -329,6 +367,16 @@ def _split_full_names(
                     )
                 ]
             for start, end in occurrences:
+                if (
+                    normalize_label(part_label) in regex_only
+                    and (
+                        normalize_label(part_label),
+                        start,
+                        end,
+                    )
+                    not in regex_evidence
+                ):
+                    continue
                 entity_id = _build_entity_id(label=part_label, start=start, end=end)
                 extra.append(
                     EntitySpan(
@@ -377,7 +425,10 @@ def merge_entity_sources(*sources: list[EntitySpan]) -> list[EntitySpan]:
     """Merge detection sources with deterministic provenance-aware tie breaking.
 
     Source order is priority order. Longer spans still win genuine overlap
-    conflicts; source priority decides otherwise-identical spans.
+    conflicts; source priority decides cross-source conflicts. When multiple
+    surviving GLiNER candidates from the same source cover identical bounds,
+    their detector confidence breaks the tie. Synthetic scores from regex,
+    augmentation, and propagation are never compared with GLiNER confidence.
     """
     ranked: list[tuple[int, EntitySpan]] = []
     seen: set[tuple[str, int, int]] = set()
@@ -389,6 +440,7 @@ def merge_entity_sources(*sources: list[EntitySpan]) -> list[EntitySpan]:
             seen.add(identity)
             ranked.append((priority, entity))
 
+    ranked = _retain_highest_confidence_detector_candidates(ranked)
     ordered = sorted(
         ranked,
         key=lambda item: (
@@ -405,6 +457,38 @@ def merge_entity_sources(*sources: list[EntitySpan]) -> list[EntitySpan]:
             continue
         accepted.append(candidate)
     return sorted(accepted, key=lambda item: (item.start_position, item.end_position, item.label))
+
+
+def _retain_highest_confidence_detector_candidates(
+    ranked: list[tuple[int, EntitySpan]],
+) -> list[tuple[int, EntitySpan]]:
+    """Resolve identical-boundary GLiNER alternatives by detector confidence.
+
+    Grouping includes the caller-provided source priority so this comparison
+    cannot override cross-source precedence. Only entities whose complete
+    provenance is the calibrated ``detector`` origin participate; a regex or
+    other synthetic origin is never ranked by its placeholder score.
+    """
+    comparable: dict[tuple[int, int, int], list[int]] = {}
+    for index, (priority, entity) in enumerate(ranked):
+        if entity.source == "detector":
+            comparable.setdefault((priority, entity.start_position, entity.end_position), []).append(index)
+
+    retained = set(range(len(ranked)))
+    for indexes in comparable.values():
+        if len(indexes) < 2:
+            continue
+        winner = min(
+            indexes,
+            key=lambda index: (
+                -ranked[index][1].score,
+                ranked[index][1].label,
+                ranked[index][1].entity_id,
+            ),
+        )
+        retained.difference_update(index for index in indexes if index != winner)
+
+    return [candidate for index, candidate in enumerate(ranked) if index in retained]
 
 
 def build_tagged_text(

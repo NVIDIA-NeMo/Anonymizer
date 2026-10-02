@@ -47,7 +47,7 @@ class DetectionTransformConfig(SingleColumnConfig):
     operation: DetectionTransformOperation
     excluded_entity_labels: list[str] = Field(default_factory=list)
     allowed_entity_labels: list[str] | None = None
-    excluded_augmented_entity_labels: list[str] = Field(default_factory=list)
+    regex_only_entity_labels: list[str] = Field(default_factory=list)
 
     _REQUIRED_COLUMNS: ClassVar[dict[DetectionTransformOperation, list[str]]] = {
         DetectionTransformOperation.PARSE_DETECTED_ENTITIES: [

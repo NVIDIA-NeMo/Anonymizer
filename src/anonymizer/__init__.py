@@ -19,7 +19,7 @@ from anonymizer.config.anonymizer_config import (
     Rewrite,
     RiskTolerance,
 )
-from anonymizer.config.regex import BuiltinRegex, RegexCandidate, RegexRule, RegexValidationResult
+from anonymizer.config.regex import BuiltinRegex, RegexCandidate, RegexMode, RegexRule, RegexValidationResult
 from anonymizer.config.replace_strategies import Annotate, Hash, Redact, Substitute
 from anonymizer.config.rewrite import PrivacyGoal
 from anonymizer.engine.constants import DEFAULT_ENTITY_LABELS as _DEFAULT_ENTITY_LABELS
@@ -66,6 +66,7 @@ __all__ = [
     "PrivacyGoal",
     "Redact",
     "RegexCandidate",
+    "RegexMode",
     "RegexRule",
     "RegexValidationResult",
     "Rewrite",

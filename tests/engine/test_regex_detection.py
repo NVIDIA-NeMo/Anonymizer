@@ -11,7 +11,7 @@ from weakref import ref
 
 import pytest
 
-from anonymizer import BuiltinRegex, RegexCandidate, RegexRule, RegexValidationResult
+from anonymizer import BuiltinRegex, RegexCandidate, RegexMode, RegexRule, RegexValidationResult
 from anonymizer.engine.detection import regex_detection
 from anonymizer.engine.detection.postprocess import expand_entity_occurrences
 from anonymizer.engine.detection.regex_detection import (
@@ -145,13 +145,14 @@ def test_url_validator_accepts_uppercase_www_prefix() -> None:
         "http://bad_host.com/path",
         "http://999.999.999.999/path",
         "http://example..com/path",
+        "http://example.com../path",
     ],
 )
 def test_url_validator_rejects_malformed_hosts_without_llm_validation(address: str) -> None:
     rules = resolve_regex_rules(
         labels=["url"],
         builtin_regexes=True,
-        rules=[BuiltinRegex(label="url", validate_with_llm=False)],
+        rules=[BuiltinRegex(label="url", mode=RegexMode.accept_matches)],
     )
 
     result = detect_regex_entities(address, rules=rules)
@@ -164,6 +165,7 @@ def test_url_validator_rejects_malformed_hosts_without_llm_validation(address: s
     "address",
     [
         "https://example.com/path",
+        "https://example.com./path",
         "https://例子.公司/路径",
         "http://192.0.2.1/path",
         "http://[2001:db8::1]/docs",
@@ -173,13 +175,40 @@ def test_url_validator_accepts_valid_hosts_without_llm_validation(address: str) 
     rules = resolve_regex_rules(
         labels=["url"],
         builtin_regexes=True,
-        rules=[BuiltinRegex(label="url", validate_with_llm=False)],
+        rules=[BuiltinRegex(label="url", mode=RegexMode.accept_matches)],
     )
 
     result = detect_regex_entities(address, rules=rules)
 
     assert result.llm_entities == []
-    assert [entity.value for entity in result.accepted_entities] == [address]
+    assert [
+        (entity.value, entity.start_position, entity.end_position, address[entity.start_position : entity.end_position])
+        for entity in result.accepted_entities
+    ] == [(address, 0, len(address), address)]
+
+
+def test_custom_url_rule_preserves_its_explicit_match_boundary() -> None:
+    address = "https://example.com/reset?token=abc!"
+    text = f"Reset at {address}"
+    rules = resolve_regex_rules(
+        labels=["url"],
+        builtin_regexes=False,
+        rules=[
+            RegexRule(
+                label="url",
+                pattern=r"https://example\.com/reset\?token=abc!",
+                mode=RegexMode.accept_matches,
+            )
+        ],
+    )
+
+    result = detect_regex_entities(text, rules=rules)
+
+    assert result.llm_entities == []
+    assert [
+        (entity.value, entity.start_position, entity.end_position, text[entity.start_position : entity.end_position])
+        for entity in result.accepted_entities
+    ] == [(address, len("Reset at "), len(text), address)]
 
 
 @pytest.mark.parametrize(
@@ -244,6 +273,42 @@ def test_custom_rules_only_activate_for_requested_labels() -> None:
                 pattern=r"CASE-[0-9]+",
                 validator="not-installed",
             )
+        ],
+    )
+
+    assert rules == []
+
+
+@pytest.mark.parametrize("reverse_rule_order", [False, True])
+def test_equivalent_unicode_labels_activate_every_custom_pattern(reverse_rule_order: bool) -> None:
+    configured_rules = [
+        RegexRule(label="straße", pattern=r"ABC"),
+        RegexRule(label="STRASSE", pattern=r"DEF"),
+    ]
+    if reverse_rule_order:
+        configured_rules.reverse()
+
+    rules = resolve_regex_rules(
+        labels=["Straße"],
+        builtin_regexes=False,
+        rules=configured_rules,
+    )
+    result = detect_regex_entities("ABC DEF", rules=rules)
+
+    assert {rule.pattern for rule in rules} == {"ABC", "DEF"}
+    assert [(entity.value, entity.label) for entity in result.llm_entities] == [
+        ("ABC", "strasse"),
+        ("DEF", "strasse"),
+    ]
+
+
+def test_equivalent_unicode_exclusion_deactivates_every_custom_pattern() -> None:
+    rules = resolve_regex_rules(
+        labels=[],
+        builtin_regexes=False,
+        rules=[
+            RegexRule(label="straße", pattern=r"ABC"),
+            RegexRule(label="STRASSE", pattern=r"DEF"),
         ],
     )
 
@@ -389,7 +454,7 @@ def test_llm_validation_can_be_disabled_per_builtin() -> None:
     rules = resolve_regex_rules(
         labels=["email"],
         builtin_regexes=True,
-        rules=[BuiltinRegex(label="email", validate_with_llm=False)],
+        rules=[BuiltinRegex(label="email", mode=RegexMode.accept_matches)],
     )
 
     result = detect_regex_entities("Email alice@example.com", rules=rules)
@@ -568,11 +633,11 @@ def test_repeated_temporary_validator_closures_do_not_grow_local_registry() -> N
     assert set(regex_detection._LOCAL_VALIDATORS) == initial_validator_ids
 
 
-def test_custom_rule_can_bypass_llm_validation() -> None:
+def test_custom_rule_can_accept_matches_without_llm_validation() -> None:
     rules = resolve_regex_rules(
         labels=["ticket"],
         builtin_regexes=False,
-        rules=[RegexRule(label="ticket", pattern=r"TKT-\d+", validate_with_llm=False)],
+        rules=[RegexRule(label="ticket", pattern=r"TKT-\d+", mode=RegexMode.accept_matches)],
     )
 
     result = detect_regex_entities("TKT-123", rules=rules)
@@ -584,8 +649,8 @@ def test_custom_rule_can_bypass_llm_validation() -> None:
 @pytest.mark.parametrize(
     "rules",
     [
-        [RegexRule(label="ticket", pattern=r"TKT-\d+", regex_only=True)],
-        [BuiltinRegex(label="email", regex_only=True)],
+        [RegexRule(label="ticket", pattern=r"TKT-\d+", mode=RegexMode.regex_only)],
+        [BuiltinRegex(label="email", mode=RegexMode.regex_only)],
     ],
 )
 def test_regex_only_rule_routes_matches_without_llm_validation(
@@ -660,7 +725,7 @@ def test_regex_entities_are_not_propagated_to_unvalidated_occurrences() -> None:
     rules = resolve_regex_rules(
         labels=["token"],
         builtin_regexes=False,
-        rules=[RegexRule(label="token", pattern=r"(?<=allow:)ABC", validate_with_llm=False)],
+        rules=[RegexRule(label="token", pattern=r"(?<=allow:)ABC", mode=RegexMode.accept_matches)],
     )
     result = detect_regex_entities("allow:ABC deny:ABC", rules=rules)
 

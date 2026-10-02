@@ -106,10 +106,12 @@ Detect(entity_labels=["first_name"], builtin_regexes=False)
 
 ### Relationship With GLiNER
 
-The first release keeps regex-covered labels in the GLiNER request. This gives
-model detection a chance to recover valid but unusual formats and provides
-disagreement data for measurement. Exact duplicate candidates are removed
-before validation.
+The first release keeps regex-covered labels in the GLiNER request for
+`RegexMode.validate_matches` and `RegexMode.accept_matches`. This gives model
+detection a chance to recover valid but unusual formats and provides
+disagreement data for measurement. `RegexMode.regex_only` removes its label
+from GLiNER and augmentation. Exact duplicate candidates are removed before
+validation.
 
 ### Validation Layers
 
@@ -118,12 +120,17 @@ The feature has two independent validation layers:
 1. **Local guard:** a deterministic structural, parser, or checksum check for a
    built-in rule or a user-provided validator callable. Invalid candidates are
    rejected before an LLM call.
-2. **Contextual validation:** rules with `validate_with_llm=True` pass surviving
-   candidates to the existing chunked LLM validator for keep/drop/reclass.
+2. **Contextual validation:** rules using `RegexMode.validate_matches` pass
+   surviving candidates to the existing chunked LLM validator for
+   keep/drop/reclass.
 
-`validate_with_llm` defaults to `True` for every rule. When it is `False`, a
-candidate that passes its local validator is accepted directly. With no local
-validator, the regex match itself is authoritative.
+Every rule defaults to `RegexMode.validate_matches`. `RegexMode.accept_matches`
+accepts locally valid regex matches directly while leaving GLiNER and
+augmentation enabled for the label. `RegexMode.regex_only` also accepts locally
+valid matches directly and disables those model routes for the label. Every
+final entity with a regex-only label must match accepted regex evidence at the
+same character span; reclassification and derived spans cannot bypass this
+requirement.
 
 ## Public API
 
@@ -137,13 +144,13 @@ class RegexRule(BaseModel):
     pattern: str
     validator: RegexValidatorCallable | str | None = None
     enabled: bool = True
-    validate_with_llm: bool = True
+    mode: RegexMode = RegexMode.validate_matches
 
 
 class BuiltinRegex(BaseModel):
     label: str
     enabled: bool = True
-    validate_with_llm: bool = True
+    mode: RegexMode = RegexMode.validate_matches
 
 
 class Detect(BaseModel):
@@ -158,7 +165,8 @@ with the same label while the rest of the built-in registry remains active.
 
 `RegexRule` validation must:
 
-- trim and lowercase `label` using the same rules as `entity_labels`;
+- trim and Unicode-casefold `label` using the same canonical identity as
+  `entity_labels`;
 - reject an empty label or pattern;
 - compile the pattern during configuration validation;
 - reject patterns that match an empty string;
@@ -197,7 +205,7 @@ class ResolvedRegexRule(BaseModel):
     pattern: str
     validator_id: str | None = None
     source: Literal["regex_builtin", "regex_user"]
-    validate_with_llm: bool = True
+    mode: RegexMode = RegexMode.validate_matches
 ```
 
 The built-in rule registry should live under `anonymizer.engine.detection`, not
@@ -385,11 +393,11 @@ Merge policy:
 
 Explicit user regexes receive highest post-validation same-span precedence
 because they encode direct user intent. Contextual validation can still drop or
-reclassify rules configured with `validate_with_llm=True`; when that happens,
-an overlapping candidate from another detector remains available as a fallback.
-When an exact same-label/span GLiNER candidate duplicates a rule configured with
-`False`, deterministic acceptance is preserved and provenance records both
-sources.
+reclassify rules using `RegexMode.validate_matches`; when that happens, an
+overlapping candidate from another detector remains available as a fallback.
+When an exact same-label/span GLiNER candidate duplicates a rule using
+`RegexMode.accept_matches` or `RegexMode.regex_only`, deterministic acceptance
+is preserved and provenance records both sources.
 
 ## Error Semantics
 
@@ -426,7 +434,7 @@ Preserve `COL_REGEX_ENTITIES` in the trace DataFrame and record:
 - exact duplicates against GLiNER;
 - overlap losses by source and label;
 - LLM keep/drop/reclass counts for regex candidates;
-- accepted candidate counts by `validate_with_llm` route;
+- accepted candidate counts by `RegexMode` route;
 - final entity counts by source and label;
 - local detection duration;
 - regex timeout and match-limit failures;
@@ -450,7 +458,8 @@ of which producer completes first.
 - Custom labels under `entity_labels=None`.
 - Missing custom labels under explicit `entity_labels`.
 - Public serialization and re-export.
-- `validate_with_llm=True` by default and explicit `False`.
+- default `RegexMode.validate_matches` and explicit `accept_matches` and
+  `regex_only` modes.
 - Direct callable and installed-name validator forms.
 
 ### Matcher and Guard Tests
@@ -535,9 +544,9 @@ Update:
 - security guidance for regex timeouts, match limits, and trusted
   configuration.
 
-Document the distinction between regex-only, locally validated, and
-contextually LLM-validated matches, including the effect of setting
-`validate_with_llm=False`.
+Document the three regex modes, including whether each mode sends regex matches
+to contextual validation and whether GLiNER and augmentation remain enabled for
+the label.
 
 ## Implementation Map
 
@@ -587,8 +596,7 @@ Exit criteria:
 2. Implement safe matching, timeouts, and match limits.
 3. Add direct callable and installed-name custom validator resolution.
 4. Add the serializable DataDesigner regex column.
-5. Merge custom candidates with GLiNER seeds according to each rule's
-   `validate_with_llm` value.
+5. Merge custom candidates with GLiNER seeds according to each rule's mode.
 6. Add local/exported parity and CJK-boundary tests.
 
 Exit criteria:
@@ -618,7 +626,7 @@ Exit criteria:
 | Risk | Mitigation |
 | --- | --- |
 | Catastrophic regex runtime | Timeout-capable engine, pattern validation, and match limits |
-| False confidence from syntax alone | Default `validate_with_llm=True` and document deterministic bypass |
+| False confidence from syntax alone | Default to `RegexMode.validate_matches` and document the two deterministic modes |
 | Numeric false positives | Conservative patterns, checksums, hard-negative datasets, per-rule rollout |
 | Duplicate model and regex candidates | Explicit deduplication and source precedence |
 | Exported workflow divergence | Dedicated serializable plugin and reconstruction tests |
@@ -634,7 +642,9 @@ Exit criteria:
 2. Provide custom `label` + `pattern` with an optional direct validator
    callable or trusted installed validator name.
 3. Keep GLiNER active for regex-covered labels.
-4. Default `validate_with_llm=True` and allow an explicit per-rule `False`.
+4. Default to `RegexMode.validate_matches`; expose `accept_matches` for trusted
+   regex matches with model discovery and `regex_only` for authoritative regex
+   detection.
 5. Use internal named validators for curated built-ins.
 6. Fail a row on regex timeout or match-limit exhaustion.
 7. Preserve the current public final-entity schema.
