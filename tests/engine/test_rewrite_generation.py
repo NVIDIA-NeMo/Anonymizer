@@ -18,6 +18,8 @@ from anonymizer.engine.constants import (
     COL_REPLACEMENT_APPLICATION,
     COL_REPLACEMENT_MAP,
     COL_REPLACEMENT_MAP_FOR_PROMPT,
+    COL_REWRITE_ACTION_DIAGNOSTICS,
+    COL_REWRITE_ACTIONS,
     COL_REWRITE_BASELINE_TEXT,
     COL_REWRITE_DISPOSITION_BLOCK,
     COL_REWRITE_REPLACEMENT_READY,
@@ -561,7 +563,7 @@ def test_get_rewrite_prompt_contains_privacy_goal(privacy_goal: PrivacyGoal) -> 
 
 def test_get_rewrite_prompt_uses_xml_section_headers(privacy_goal: PrivacyGoal) -> None:
     prompt = _get_rewrite_prompt(privacy_goal)
-    for tag in ["privacy_goal", "instructions", "input", "sensitivity_disposition", "output_requirements"]:
+    for tag in ["privacy_goal", "instructions", "input", "generalize", "remove", "suppress_latent_inferences"]:
         assert f"<{tag}>" in prompt
         assert f"</{tag}>" in prompt
 
@@ -581,8 +583,10 @@ def test_get_rewrite_prompt_references_required_columns(privacy_goal: PrivacyGoa
     prompt = _get_rewrite_prompt(privacy_goal)
     assert _jinja(COL_REWRITE_TAGGED_TEXT) in prompt
     assert COL_TAG_NOTATION in prompt
-    assert COL_REWRITE_DISPOSITION_BLOCK in prompt
-    assert _jinja(COL_REPLACEMENT_MAP_FOR_PROMPT) in prompt
+    assert COL_REWRITE_DISPOSITION_BLOCK not in prompt
+    assert COL_REWRITE_ACTIONS in prompt
+    assert COL_REPLACEMENT_MAP_FOR_PROMPT not in prompt
+    assert "<replacement_map>" not in prompt
 
 
 # ---------------------------------------------------------------------------
@@ -596,7 +600,7 @@ def test_columns_includes_generalization_step(
 ) -> None:
     workflow = RewriteGenerationWorkflow()
     cols = workflow.columns(selected_models=stub_rewrite_model_selection, privacy_goal=privacy_goal)
-    assert len(cols) == 8
+    assert len(cols) == 11
 
 
 def test_columns_has_llm_config_with_rewriter_alias(
@@ -606,7 +610,7 @@ def test_columns_has_llm_config_with_rewriter_alias(
     workflow = RewriteGenerationWorkflow()
     cols = workflow.columns(selected_models=stub_rewrite_model_selection, privacy_goal=privacy_goal)
     llm_cols = [c for c in cols if isinstance(c, LLMStructuredColumnConfig)]
-    assert len(llm_cols) == 2
+    assert len(llm_cols) == 3
     assert llm_cols[-1].name == COL_FULL_REWRITE
 
 
@@ -632,3 +636,85 @@ def test_columns_includes_custom_configs_for_disposition_and_text_extraction(
     assert COL_REPLACEMENT_MAP_FOR_PROMPT in custom_names
     assert COL_REWRITE_TAGGED_TEXT in custom_names
     assert COL_REWRITTEN_TEXT in custom_names
+
+
+@pytest.mark.parametrize(
+    "removal_guidance",
+    ["Remove the age clause.", 'Replace with "a veterinary clinic".', 'Delete or replace with "speaks a language".'],
+)
+def test_rewrite_actions_route_removals_and_restore_latent_evidence(removal_guidance: str) -> None:
+    import json
+
+    from anonymizer.engine.constants import COL_DISPOSITION_LATENT_ENTITIES, COL_GENERALIZATION_SUGGESTIONS
+    from anonymizer.engine.rewrite.rewrite_generation import _build_rewrite_actions
+
+    def entity(entity_id: int, method: str, source: str = "tagged") -> dict:
+        return {
+            "id": entity_id,
+            "source": source,
+            "category": "latent_identifier" if source == "latent" else "quasi_identifier",
+            "entity_label": "marital_status" if source == "latent" else "detail",
+            "entity_value": "married" if source == "latent" else str(entity_id),
+            "sensitivity": "low" if method == "leave_as_is" else "medium",
+            "protection_method_suggestion": method,
+            "protection_reason": "Protect this information.",
+        }
+
+    row = {
+        COL_SENSITIVITY_DISPOSITION: {
+            "sensitivity_disposition": [
+                entity(1, "replace"),
+                entity(2, "leave_as_is"),
+                entity(3, "generalize"),
+                entity(4, "generalize"),
+                entity(5, "remove"),
+                entity(6, "suppress_inference", "latent"),
+            ]
+        },
+        COL_GENERALIZATION_SUGGESTIONS: {
+            "generalization_suggestions": [
+                {
+                    "entity_id": 3,
+                    "status": "needs_context_change",
+                    "suggested_value": "a region",
+                    "rewrite_instruction": "Broaden the nearby landmark.",
+                    "privacy_reason": "Conceals location.",
+                    "related_entity_ids": [],
+                },
+                {
+                    "entity_id": 4,
+                    "status": "no_effective_generalization",
+                    "suggested_value": None,
+                    "rewrite_instruction": removal_guidance,
+                    "privacy_reason": "Conflicting birth date.",
+                    "related_entity_ids": [],
+                },
+            ]
+        },
+        COL_DISPOSITION_LATENT_ENTITIES: json.dumps(
+            {
+                "id": 6,
+                "label": "marital_status",
+                "value": "married",
+                "evidence": ["lives with his wife, Alice"],
+                "rationale": "Explicit spouse relationship.",
+            }
+        ),
+    }
+    result = _build_rewrite_actions(row)
+    actions = result[COL_REWRITE_ACTIONS]
+    assert [a["entity_id"] for a in actions["generalize"]] == [3]
+    assert actions["generalize"][0]["rewrite_instruction"] == "Broaden the nearby landmark."
+    assert [a["entity_id"] for a in actions["remove"]] == [4, 5]
+    assert "suggested_value" not in actions["remove"][0]
+    for action in actions["generalize"] + actions["remove"]:
+        assert "protection_reason" not in action
+        assert "privacy_reason" not in action
+    for action in actions["remove"]:
+        assert "Do not substitute" in action["rewrite_instruction"]
+        assert removal_guidance != action["rewrite_instruction"]
+    assert result[COL_REWRITE_ACTION_DIAGNOSTICS][0]["reviewer_instruction"] == removal_guidance
+    assert actions["suppress_latent_inferences"][0]["protection_reason"] == "Protect this information."
+
+    assert actions["suppress_latent_inferences"][0]["evidence"] == ["lives with his wife, Alice"]
+    assert actions["suppress_latent_inferences"][0]["rationale"] == "Explicit spouse relationship."

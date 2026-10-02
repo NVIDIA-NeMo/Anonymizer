@@ -34,3 +34,19 @@ class GeneralizationSuggestions(BaseModel):
     """Structured generalization output, validated against target IDs downstream."""
 
     generalization_suggestions: list[GeneralizationSuggestion]
+
+
+class GeneralizationDefect(BaseModel):
+    """Concrete evidence of a defect in one candidate."""
+
+    entity_id: int = Field(ge=1)
+    evidence: str = Field(min_length=1)
+    problem: str = Field(min_length=1)
+    conflicting_entity_ids: list[int] = Field(default_factory=list)
+
+
+class GeneralizationReview(BaseModel):
+    """Defects are reported before the complete corrected suggestion set."""
+
+    defects: list[GeneralizationDefect]
+    generalization_suggestions: list[GeneralizationSuggestion]

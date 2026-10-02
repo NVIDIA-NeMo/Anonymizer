@@ -71,6 +71,11 @@ Key columns:
 |---|---|
 | `_domain` | Which domain the classifier picked. Wrong domain → wrong supplement → poor rewrite |
 | `_sensitivity_disposition` | Per-entity sensitivity assignments (high/medium/low) |
+| `_raw_generalization_suggestions` | Unverified candidate suggestions |
+| `_rewrite_action_diagnostics` | Reviewer removal guidance overridden by canonical omission instructions; retained for inspection, not sent to rewrite |
+| `_rewrite_actions` | Rewrite-only generalization, removal, and latent-suppression lists, including original latent evidence |
+| `_generalization_review_input` | Candidate IDs and wording only; generator justifications are withheld |
+| `_reviewed_generalization_suggestions` | Concrete defects followed by corrected suggestions, before deterministic validation |
 | `_generalization_suggestions` | Per-target wording, contextual instructions, and unresolved limitations |
 | `_generalization_needs_review` | At least one generalization needs contextual changes or has no effective suggestion |
 | `leakage_mass` | Confidence-weighted sum of leaked entities |
@@ -80,7 +85,7 @@ Key columns:
 | `needs_human_review` | Crossed a review threshold or has an unresolved generalization |
 | `judge_evaluation` | Final-judge qualitative comments |
 
-Generalization runs after sensitivity disposition and replacement-map filtering, using the configured rewriter model. Only entities assigned `generalize` receive suggestions; records without targets skip that LLM call. Rewrite and repair consume the suggestions. When no effective generalization is available, rewrite is instructed to omit the protected detail, and the record is flagged for human review. These flags are conservative planning signals, not proof of leakage or successful protection.
+Generalization runs after sensitivity disposition and replacement-map filtering, using the configured rewriter model. Only entities assigned `generalize` receive suggestions; records without targets skip both generation and review calls. An independent call using the rewriter model reviews the full candidate set before validation; rewrite receives action lists built from the validated reviewed suggestions. Repair receives only the current rewrite, privacy goal, and evaluator leaked-item feedback; it does not receive original/baseline text, aggregate scores, dispositions, or generalization suggestions. When no effective generalization is available, rewrite is instructed to omit the protected detail, and the record is flagged for human review. These flags are conservative planning signals, not proof of leakage or successful protection.
 
 ### Re-run with `Annotate` to see detection output
 
