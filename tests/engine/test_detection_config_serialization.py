@@ -22,7 +22,7 @@ from data_designer.interface.data_designer import DataDesigner
 from data_designer.plugins import Plugin
 
 from anonymizer.config.models import DetectionModelSelection
-from anonymizer.config.regex import RegexMode, RegexRule
+from anonymizer.config.regex import RegexRule
 from anonymizer.config.replace_strategies import Redact
 from anonymizer.engine.constants import (
     COL_AUGMENTED_ENTITIES,
@@ -125,12 +125,12 @@ def test_detection_builder_round_trips_through_native_data_designer_config(tmp_p
         if DetectionTransformOperation(column.operation) == DetectionTransformOperation.PARSE_DETECTED_ENTITIES
     )
     assert seed_validation_transform.excluded_entity_labels == ["email"]
-    assert seed_validation_transform.regex_only_entity_labels == []
+    assert seed_validation_transform.regex_constrained_entity_labels == []
     assert merge_transform.excluded_entity_labels == ["email"]
-    assert merge_transform.regex_only_entity_labels == []
+    assert merge_transform.regex_constrained_entity_labels == []
     assert finalize_transform.excluded_entity_labels == ["email"]
     assert finalize_transform.allowed_entity_labels == ["first_name"]
-    assert finalize_transform.regex_only_entity_labels == []
+    assert finalize_transform.regex_constrained_entity_labels == []
     assert parse_transform.propagate_skip is False
     assert merge_transform.propagate_skip is False
 
@@ -248,7 +248,7 @@ def test_exported_builder_includes_explicit_non_default_example_label(tmp_path: 
     assert finalize.allowed_entity_labels == [*DEFAULT_ENTITY_LABELS, "vendor_api_key"]
 
 
-def test_regex_only_detection_config_round_trips_with_model_columns_skipped(tmp_path: Path) -> None:
+def test_regex_constrained_detection_config_round_trips_with_model_columns_skipped(tmp_path: Path) -> None:
     seed_path = tmp_path / "seed.parquet"
     pd.DataFrame({COL_TEXT: ["TKT-123"]}).to_parquet(seed_path, index=False)
 
@@ -260,7 +260,14 @@ def test_regex_only_detection_config_round_trips_with_model_columns_skipped(tmp_
         selected_models=parsed_models.selected_models.detection,
         gliner_detection_threshold=0.3,
         entity_labels=["ticket"],
-        regex_rules=[RegexRule(label="ticket", pattern=r"TKT-\d+", mode=RegexMode.regex_only)],
+        regex_rules=[
+            RegexRule(
+                label="ticket",
+                pattern=r"TKT-\d+",
+                validate_matches_with_llm=False,
+                detect_additional_matches=False,
+            )
+        ],
     )
 
     payload = builder.get_builder_config().to_json()
@@ -276,7 +283,7 @@ def test_regex_only_detection_config_round_trips_with_model_columns_skipped(tmp_
 
 
 @pytest.mark.parametrize("preview_num_records", [2, None], ids=["preview", "create"])
-def test_regex_only_matches_survive_skipped_model_columns_in_data_designer(
+def test_regex_constrained_matches_survive_skipped_model_columns_in_data_designer(
     tmp_path: Path,
     preview_num_records: int | None,
 ) -> None:
@@ -304,7 +311,14 @@ def test_regex_only_matches_survive_skipped_model_columns_in_data_designer(
         gliner_detection_threshold=0.3,
         entity_labels=["ticket"],
         builtin_regexes=False,
-        regex_rules=[RegexRule(label="ticket", pattern=r"TKT-\d+", mode=RegexMode.regex_only)],
+        regex_rules=[
+            RegexRule(
+                label="ticket",
+                pattern=r"TKT-\d+",
+                validate_matches_with_llm=False,
+                detect_additional_matches=False,
+            )
+        ],
     )
     payload = builder.get_builder_config().to_json()
     assert payload is not None
@@ -330,7 +344,7 @@ def test_regex_only_matches_survive_skipped_model_columns_in_data_designer(
             input_df,
             model_configs=restored.model_configs,
             columns=restored.get_column_configs(),
-            workflow_name=f"regex-only-{'preview' if preview_num_records is not None else 'create'}",
+            workflow_name=f"regex-constrained-{'preview' if preview_num_records is not None else 'create'}",
             preview_num_records=preview_num_records,
         )
 

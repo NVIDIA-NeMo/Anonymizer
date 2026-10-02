@@ -6,7 +6,6 @@ from __future__ import annotations
 import inspect
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from enum import Enum
 from typing import Any, TypeAlias
 
 import regex
@@ -49,24 +48,6 @@ RegexValidatorReturn: TypeAlias = bool | RegexValidationResult
 RegexValidatorCallable: TypeAlias = Callable[[RegexCandidate], RegexValidatorReturn]
 
 
-class RegexMode(str, Enum):
-    """Control how regex matches and model-based detection interact."""
-
-    validate_matches = "validate_matches"
-    accept_matches = "accept_matches"
-    regex_only = "regex_only"
-
-    @property
-    def requires_llm_validation(self) -> bool:
-        """Return whether regex matches require contextual LLM validation."""
-        return self is RegexMode.validate_matches
-
-    @property
-    def allows_model_detection(self) -> bool:
-        """Return whether GLiNER and augmentation remain enabled for the label."""
-        return self is not RegexMode.regex_only
-
-
 class BuiltinRegex(BaseModel):
     """Configuration for one recognizer from the built-in regex registry."""
 
@@ -74,13 +55,13 @@ class BuiltinRegex(BaseModel):
 
     label: str
     enabled: bool = True
-    mode: RegexMode = Field(
-        default=RegexMode.validate_matches,
-        description=(
-            "How matches are routed: validate_matches uses contextual LLM validation; accept_matches accepts "
-            "locally valid matches while retaining model detection; regex_only also disables GLiNER and "
-            "augmentation for the label."
-        ),
+    validate_matches_with_llm: bool = Field(
+        default=True,
+        description="Whether regex-produced matches receive contextual LLM validation.",
+    )
+    detect_additional_matches: bool = Field(
+        default=True,
+        description="Whether GLiNER and LLM augmentation may find additional matches for this label.",
     )
 
     @field_validator("label")
@@ -103,13 +84,13 @@ class RegexRule(BaseModel):
     pattern: str
     validator: RegexValidatorCallable | str | None = None
     enabled: bool = True
-    mode: RegexMode = Field(
-        default=RegexMode.validate_matches,
-        description=(
-            "How matches are routed: validate_matches uses contextual LLM validation; accept_matches accepts "
-            "locally valid matches while retaining model detection; regex_only also disables GLiNER and "
-            "augmentation for the label."
-        ),
+    validate_matches_with_llm: bool = Field(
+        default=True,
+        description="Whether regex-produced matches receive contextual LLM validation.",
+    )
+    detect_additional_matches: bool = Field(
+        default=True,
+        description="Whether GLiNER and LLM augmentation may find additional matches for this label.",
     )
 
     @field_validator("label")

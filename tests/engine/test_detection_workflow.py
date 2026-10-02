@@ -15,7 +15,7 @@ from data_designer.plugins.plugin import PluginType
 from data_designer.plugins.registry import PluginRegistry
 
 from anonymizer.config.models import DetectionModelSelection
-from anonymizer.config.regex import RegexMode, RegexRule
+from anonymizer.config.regex import RegexRule
 from anonymizer.config.rewrite import PrivacyGoal
 from anonymizer.engine.constants import (
     COL_AUGMENTED_ENTITIES,
@@ -978,7 +978,7 @@ def test_excluded_labels_are_removed_from_gliner_labels(
     assert "city" in gliner_labels
 
 
-def test_regex_only_label_is_removed_from_model_detection_routes(
+def test_regex_constrained_label_is_removed_from_additional_detection_routes(
     stub_detector_model_configs: list[ModelConfig],
     stub_detection_model_selection: DetectionModelSelection,
 ) -> None:
@@ -994,7 +994,7 @@ def test_regex_only_label_is_removed_from_model_detection_routes(
         selected_models=stub_detection_model_selection,
         gliner_detection_threshold=0.5,
         entity_labels=["ticket", "email"],
-        regex_rules=[RegexRule(label="ticket", pattern=r"TKT-\d+", mode=RegexMode.regex_only)],
+        regex_rules=[RegexRule(label="ticket", pattern=r"TKT-\d+", detect_additional_matches=False)],
         tag_latent_entities=False,
     )
 
@@ -1010,16 +1010,19 @@ def test_regex_only_label_is_removed_from_model_detection_routes(
 
     assert gliner_labels == ["email"]
     assert isinstance(regex_config, RegexDetectionConfig)
-    assert regex_config.rules[0].mode is RegexMode.regex_only
+    assert regex_config.rules[0].validate_matches_with_llm is True
+    assert regex_config.rules[0].detect_additional_matches is False
     assert parse_config.excluded_entity_labels == ["ticket"]
-    assert seed_validation_config.regex_only_entity_labels == ["ticket"]
+    assert seed_validation_config.regex_constrained_entity_labels == ["ticket"]
     assert merge_config.excluded_entity_labels == []
-    assert merge_config.regex_only_entity_labels == ["ticket"]
-    assert finalize_config.regex_only_entity_labels == ["ticket"]
+    assert merge_config.regex_constrained_entity_labels == ["ticket"]
+    assert finalize_config.regex_constrained_entity_labels == ["ticket"]
+    validation_config = _find_column(columns, COL_VALIDATION_DECISIONS)
+    assert "- ticket" in validation_config.prompt_template
     assert "- ticket" not in augment_config.prompt
 
 
-def test_all_regex_only_labels_skip_detector_and_augmenter_calls(
+def test_all_regex_constrained_labels_skip_detector_and_augmenter_calls(
     stub_detector_model_configs: list[ModelConfig],
     stub_detection_model_selection: DetectionModelSelection,
 ) -> None:
@@ -1035,7 +1038,7 @@ def test_all_regex_only_labels_skip_detector_and_augmenter_calls(
         selected_models=stub_detection_model_selection,
         gliner_detection_threshold=0.5,
         entity_labels=["ticket"],
-        regex_rules=[RegexRule(label="ticket", pattern=r"TKT-\d+", mode=RegexMode.regex_only)],
+        regex_rules=[RegexRule(label="ticket", pattern=r"TKT-\d+", detect_additional_matches=False)],
         tag_latent_entities=False,
     )
 

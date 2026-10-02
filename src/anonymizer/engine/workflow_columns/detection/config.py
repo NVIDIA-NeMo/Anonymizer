@@ -47,7 +47,7 @@ class DetectionTransformConfig(SingleColumnConfig):
     operation: DetectionTransformOperation
     excluded_entity_labels: list[str] = Field(default_factory=list)
     allowed_entity_labels: list[str] | None = None
-    regex_only_entity_labels: list[str] = Field(default_factory=list)
+    regex_constrained_entity_labels: list[str] = Field(default_factory=list)
 
     _REQUIRED_COLUMNS: ClassVar[dict[DetectionTransformOperation, list[str]]] = {
         DetectionTransformOperation.PARSE_DETECTED_ENTITIES: [
@@ -67,6 +67,7 @@ class DetectionTransformConfig(SingleColumnConfig):
             COL_TEXT,
             COL_SEED_ENTITIES,
             COL_VALIDATED_ENTITIES,
+            COL_REGEX_ENTITIES,
             COL_REGEX_ACCEPTED_ENTITIES,
         ],
         DetectionTransformOperation.MERGE_AND_BUILD_CANDIDATES: [
@@ -78,6 +79,7 @@ class DetectionTransformConfig(SingleColumnConfig):
             COL_TEXT,
             COL_MERGED_ENTITIES,
             COL_VALIDATED_ENTITIES,
+            COL_REGEX_ENTITIES,
             COL_REGEX_ACCEPTED_ENTITIES,
         ],
     }
