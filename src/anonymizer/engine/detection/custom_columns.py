@@ -148,7 +148,7 @@ def apply_validation_to_seed_entities(
     )
     accepted_regex = _parse_entity_spans(row.get(COL_REGEX_ACCEPTED_ENTITIES, {}))
     validated_seed = _merge_detection_routes(accepted_regex, llm_validated_seed)
-    regex_evidence = [*_parse_entity_spans(row.get(COL_REGEX_ENTITIES, {})), *accepted_regex]
+    regex_evidence = _validated_regex_evidence(row, accepted_regex=accepted_regex)
     validated_seed = enforce_regex_constrained_evidence(
         validated_seed,
         regex_constrained_entity_labels=regex_constrained_entity_labels,
@@ -246,7 +246,7 @@ def apply_validation_and_finalize(
     )
     accepted_regex = _parse_entity_spans(row.get(COL_REGEX_ACCEPTED_ENTITIES, {}))
     protected = _merge_detection_routes(accepted_regex, validated)
-    regex_evidence = [*_parse_entity_spans(row.get(COL_REGEX_ENTITIES, {})), *accepted_regex]
+    regex_evidence = _validated_regex_evidence(row, accepted_regex=accepted_regex)
     protected = enforce_regex_constrained_evidence(
         protected,
         regex_constrained_entity_labels=regex_constrained_entity_labels,
@@ -279,6 +279,36 @@ def _parse_entity_spans(raw_payload: object) -> list[EntitySpan]:
         )
         for e in parsed.entities
     ]
+
+
+def _validated_regex_evidence(
+    row: dict[str, Any],
+    *,
+    accepted_regex: list[EntitySpan],
+) -> list[EntitySpan]:
+    """Return regex evidence that survived its configured validation route.
+
+    Directly accepted matches are evidence immediately. Matches routed through
+    contextual validation count only if they survive and retain the normalized
+    label and exact span produced by their regex rule. A dropped match cannot
+    authorize another candidate at the same span, and a reclassified regex
+    candidate cannot authorize its newly proposed label.
+    """
+    regex_candidates = _parse_entity_spans(row.get(COL_REGEX_ENTITIES, {}))
+    validated_candidates = apply_validation_decisions(
+        entities=regex_candidates,
+        validation_output=row.get(COL_VALIDATED_ENTITIES, {}),
+    )
+    original_by_id = {entity.entity_id: entity for entity in regex_candidates}
+    surviving_evidence = [
+        entity
+        for entity in validated_candidates
+        if (original := original_by_id.get(entity.entity_id)) is not None
+        and normalize_label(entity.label) == normalize_label(original.label)
+        and entity.start_position == original.start_position
+        and entity.end_position == original.end_position
+    ]
+    return [*accepted_regex, *surviving_evidence]
 
 
 def _merge_detection_routes(*routes: list[EntitySpan]) -> list[EntitySpan]:

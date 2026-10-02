@@ -736,6 +736,90 @@ def test_llm_validated_regex_constrained_label_survives_with_exact_regex_evidenc
     assert result[COL_INITIAL_TAGGED_TEXT] == "<ticket>TKT-123</ticket>"
 
 
+def test_dropped_regex_candidate_cannot_authorize_reclassified_detector_candidate() -> None:
+    regex_entity = {
+        "id": "ticket_0_9",
+        "value": "OTHER-123",
+        "label": "ticket",
+        "start_position": 0,
+        "end_position": 9,
+        "score": 1.0,
+        "source": "regex_user:user:ticket:v1",
+        "propagate_occurrences": False,
+    }
+    detector_entity = {
+        "id": "identifier_0_9",
+        "value": "OTHER-123",
+        "label": "identifier",
+        "start_position": 0,
+        "end_position": 9,
+        "score": 0.9,
+        "source": "detector",
+    }
+    decisions = {
+        "decisions": [
+            {
+                "id": "ticket_0_9",
+                "decision": "drop",
+                "proposed_label": None,
+                "reason": "not a ticket",
+            },
+            {
+                "id": "identifier_0_9",
+                "decision": "reclass",
+                "proposed_label": "ticket",
+                "reason": "looks like a ticket",
+            },
+        ]
+    }
+    row: dict[str, Any] = {
+        COL_TEXT: "OTHER-123",
+        COL_SEED_ENTITIES: {"entities": [regex_entity, detector_entity]},
+        COL_VALIDATED_ENTITIES: decisions,
+        COL_REGEX_ENTITIES: {"entities": [regex_entity]},
+        COL_REGEX_ACCEPTED_ENTITIES: {"entities": []},
+    }
+
+    result = apply_validation_to_seed_entities(row, regex_constrained_entity_labels=["ticket"])
+
+    assert result[COL_VALIDATED_SEED_ENTITIES]["entities"] == []
+    assert result[COL_INITIAL_TAGGED_TEXT] == "OTHER-123"
+
+
+def test_reclassified_regex_candidate_does_not_authorize_constrained_target_label() -> None:
+    regex_entity = {
+        "id": "identifier_0_9",
+        "value": "OTHER-123",
+        "label": "identifier",
+        "start_position": 0,
+        "end_position": 9,
+        "score": 1.0,
+        "source": "regex_user:user:identifier:v1",
+        "propagate_occurrences": False,
+    }
+    row: dict[str, Any] = {
+        COL_TEXT: "OTHER-123",
+        COL_SEED_ENTITIES: {"entities": [regex_entity]},
+        COL_VALIDATED_ENTITIES: {
+            "decisions": [
+                {
+                    "id": "identifier_0_9",
+                    "decision": "reclass",
+                    "proposed_label": "ticket",
+                    "reason": "looks like a ticket",
+                }
+            ]
+        },
+        COL_REGEX_ENTITIES: {"entities": [regex_entity]},
+        COL_REGEX_ACCEPTED_ENTITIES: {"entities": []},
+    }
+
+    result = apply_validation_to_seed_entities(row, regex_constrained_entity_labels=["ticket"])
+
+    assert result[COL_VALIDATED_SEED_ENTITIES]["entities"] == []
+    assert result[COL_INITIAL_TAGGED_TEXT] == "OTHER-123"
+
+
 def test_merge_filters_excluded_validated_seed_entities() -> None:
     row: dict[str, Any] = {
         COL_TEXT: "San Diego",
@@ -893,6 +977,58 @@ def test_finalize_reclassification_to_regex_constrained_label_requires_exact_reg
                 }
             ]
         },
+        COL_REGEX_ACCEPTED_ENTITIES: {"entities": []},
+    }
+
+    result = apply_validation_and_finalize(row, regex_constrained_entity_labels=["ticket"])
+
+    assert result[COL_DETECTED_ENTITIES]["entities"] == []
+    assert result[COL_TAGGED_TEXT] == "OTHER-123"
+
+
+def test_finalize_does_not_reuse_dropped_regex_candidate_as_evidence() -> None:
+    regex_entity = {
+        "id": "ticket_0_9",
+        "value": "OTHER-123",
+        "label": "ticket",
+        "start_position": 0,
+        "end_position": 9,
+        "score": 1.0,
+        "source": "regex_user:user:ticket:v1",
+        "propagate_occurrences": False,
+    }
+    row: dict[str, Any] = {
+        COL_TEXT: "OTHER-123",
+        COL_MERGED_ENTITIES: {
+            "entities": [
+                {
+                    "id": "identifier_0_9",
+                    "value": "OTHER-123",
+                    "label": "identifier",
+                    "start_position": 0,
+                    "end_position": 9,
+                    "score": 0.9,
+                    "source": "detector",
+                }
+            ]
+        },
+        COL_VALIDATED_ENTITIES: {
+            "decisions": [
+                {
+                    "id": "ticket_0_9",
+                    "decision": "drop",
+                    "proposed_label": None,
+                    "reason": "not a ticket",
+                },
+                {
+                    "id": "identifier_0_9",
+                    "decision": "reclass",
+                    "proposed_label": "ticket",
+                    "reason": "looks like a ticket",
+                },
+            ]
+        },
+        COL_REGEX_ENTITIES: {"entities": [regex_entity]},
         COL_REGEX_ACCEPTED_ENTITIES: {"entities": []},
     }
 
