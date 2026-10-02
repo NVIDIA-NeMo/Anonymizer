@@ -132,6 +132,10 @@ final entity with a regex-only label must match accepted regex evidence at the
 same character span; reclassification and derived spans cannot bypass this
 requirement.
 
+Direct regex acceptance authorizes only the matched span. A coincident GLiNER
+candidate remains a separate admission route and must pass contextual
+validation before it can grant document-wide occurrence propagation.
+
 ## Public API
 
 Add a public Pydantic model next to `Detect`:

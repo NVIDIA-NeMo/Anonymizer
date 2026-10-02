@@ -94,12 +94,15 @@ def enforce_regex_only_evidence(
         for entity in regex_evidence
         if entity_has_source_prefix(entity, "regex_user:") or entity_has_source_prefix(entity, "regex_builtin:")
     }
-    return [
-        entity
-        for entity in entities
-        if normalize_label(entity.label) not in regex_only
-        or (normalize_label(entity.label), entity.start_position, entity.end_position) in evidence
-    ]
+    protected: list[EntitySpan] = []
+    for entity in entities:
+        normalized_label = normalize_label(entity.label)
+        if normalized_label not in regex_only:
+            protected.append(entity)
+            continue
+        if (normalized_label, entity.start_position, entity.end_position) in evidence:
+            protected.append(replace(entity, propagate_occurrences=False))
+    return protected
 
 
 @dataclass(frozen=True)

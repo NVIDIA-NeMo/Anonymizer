@@ -199,7 +199,7 @@ def test_overlapping_fallback_survives_when_longer_candidate_is_dropped() -> Non
     ]
 
 
-def test_exact_accepted_duplicate_skips_llm_validation_and_retains_origins() -> None:
+def test_exact_accepted_duplicate_still_validates_detector_and_retains_origins() -> None:
     text = "alice@example.com"
     accepted = {
         "id": "email_0_17",
@@ -230,8 +230,8 @@ def test_exact_accepted_duplicate_skips_llm_validation_and_retains_origins() -> 
     parse_detected_entities(row)
     prepare_validation_inputs(row)
 
-    assert row[COL_SEED_VALIDATION_CANDIDATES] == {"candidates": []}
-    row[COL_VALIDATED_ENTITIES] = {"decisions": []}
+    assert [candidate["id"] for candidate in row[COL_SEED_VALIDATION_CANDIDATES]["candidates"]] == ["email_0_17"]
+    row[COL_VALIDATED_ENTITIES] = {"decisions": [{"id": "email_0_17", "decision": "keep"}]}
     result = apply_validation_to_seed_entities(row)
 
     assert result[COL_VALIDATED_SEED_ENTITIES]["entities"] == [
@@ -275,9 +275,7 @@ def test_mixed_regex_and_detector_origin_preserves_occurrence_propagation(regex_
 
     parse_detected_entities(row)
     prepare_validation_inputs(row)
-    row[COL_VALIDATED_ENTITIES] = {
-        "decisions": ([{"id": "token_6_9", "decision": "keep"}] if regex_route == "llm_validated" else [])
-    }
+    row[COL_VALIDATED_ENTITIES] = {"decisions": [{"id": "token_6_9", "decision": "keep"}]}
     apply_validation_to_seed_entities(row)
     merge_and_build_candidates(row)
     result = apply_validation_and_finalize(row)
@@ -292,6 +290,94 @@ def test_mixed_regex_and_detector_origin_preserves_occurrence_propagation(regex_
         strategy=Redact(),
     )
     assert replaced[COL_REPLACED_TEXT].iloc[0] == "allow:[REDACTED_TOKEN] deny:[REDACTED_TOKEN]"
+
+
+def test_dropped_duplicate_detector_does_not_expand_locally_accepted_regex() -> None:
+    text = "allow:ABC deny:ABC"
+    accepted = {
+        "id": "token_6_9",
+        "value": "ABC",
+        "label": "token",
+        "start_position": 6,
+        "end_position": 9,
+        "score": 1.0,
+        "source": "regex_user:user:token:v1",
+        "propagate_occurrences": False,
+    }
+    row: dict[str, Any] = {
+        COL_TEXT: text,
+        COL_RAW_DETECTED: _raw([{"text": "ABC", "label": "token", "start": 6, "end": 9, "score": 0.9}]),
+        COL_REGEX_ENTITIES: {"entities": []},
+        COL_REGEX_ACCEPTED_ENTITIES: {"entities": [accepted]},
+        COL_AUGMENTED_ENTITIES: {"entities": []},
+    }
+
+    parse_detected_entities(row)
+    prepare_validation_inputs(row)
+    assert [candidate["id"] for candidate in row[COL_SEED_VALIDATION_CANDIDATES]["candidates"]] == ["token_6_9"]
+    row[COL_VALIDATED_ENTITIES] = {
+        "decisions": [{"id": "token_6_9", "decision": "drop", "reason": "not supported by context"}]
+    }
+    apply_validation_to_seed_entities(row)
+    merge_and_build_candidates(row)
+    result = apply_validation_and_finalize(row)
+
+    entities = result[COL_DETECTED_ENTITIES]["entities"]
+    assert [(entity["start_position"], entity["end_position"]) for entity in entities] == [(6, 9)]
+    assert entities[0]["source"] == "regex_user:user:token:v1"
+
+    replaced = apply_local_replace_strategy(
+        pd.DataFrame({COL_TEXT: [text], COL_FINAL_ENTITIES: [result[COL_DETECTED_ENTITIES]]}),
+        strategy=Redact(),
+    )
+    assert replaced[COL_REPLACED_TEXT].iloc[0] == "allow:[REDACTED_TOKEN] deny:ABC"
+
+
+def test_regex_only_reclassification_cannot_expand_beyond_regex_evidence() -> None:
+    text = "allow:ABC deny:ABC"
+    accepted = {
+        "id": "ticket_6_9",
+        "value": "ABC",
+        "label": "ticket",
+        "start_position": 6,
+        "end_position": 9,
+        "score": 1.0,
+        "source": "regex_user:user:ticket:v1",
+        "propagate_occurrences": False,
+    }
+    row: dict[str, Any] = {
+        COL_TEXT: text,
+        COL_RAW_DETECTED: _raw([{"text": "ABC", "label": "identifier", "start": 6, "end": 9, "score": 0.9}]),
+        COL_REGEX_ENTITIES: {"entities": []},
+        COL_REGEX_ACCEPTED_ENTITIES: {"entities": [accepted]},
+        COL_AUGMENTED_ENTITIES: {"entities": []},
+    }
+
+    parse_detected_entities(row, excluded_entity_labels=["ticket"])
+    prepare_validation_inputs(row)
+    row[COL_VALIDATED_ENTITIES] = {
+        "decisions": [
+            {
+                "id": "identifier_6_9",
+                "decision": "reclass",
+                "proposed_label": "ticket",
+                "reason": "ticket in this context",
+            }
+        ]
+    }
+    apply_validation_to_seed_entities(row, regex_only_entity_labels=["ticket"])
+    merge_and_build_candidates(row, regex_only_entity_labels=["ticket"])
+    result = apply_validation_and_finalize(row, regex_only_entity_labels=["ticket"])
+
+    entities = result[COL_DETECTED_ENTITIES]["entities"]
+    assert [(entity["start_position"], entity["end_position"]) for entity in entities] == [(6, 9)]
+    assert entities[0]["propagate_occurrences"] is False
+
+    replaced = apply_local_replace_strategy(
+        pd.DataFrame({COL_TEXT: [text], COL_FINAL_ENTITIES: [result[COL_DETECTED_ENTITIES]]}),
+        strategy=Redact(),
+    )
+    assert replaced[COL_REPLACED_TEXT].iloc[0] == "allow:[REDACTED_TICKET] deny:ABC"
 
 
 def test_regex_candidate_bypassing_llm_survives_a_drop_decision() -> None:
