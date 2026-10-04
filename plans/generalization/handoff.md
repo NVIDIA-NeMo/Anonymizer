@@ -22,7 +22,7 @@ No public model configuration was added; generator and reviewer both use the con
 - Rewrite receives pre-replaced tagged text plus _rewrite_actions: generalize, remove, suppress_latent_inferences. No replacement map or full sensitivity disposition is passed to the writer.
 - Action builder excludes replace/leave_as_is, maps no_effective_generalization to remove, joins original latent evidence/rationale through stable numbered IDs. Explicit suppress_inference is also supported.
 - Generalize/remove entries omit superseded sensitivity reasons and reviewer justifications. Removals use fixed omission wording, never free-form reviewer replacement suggestions. Overridden guidance is retained in _rewrite_action_diagnostics; this records all overrides, not proven contradictions.
-- Protected latent actions retain evidence, rationale, and protection reason. Evidence may contain original identifiers; prompt forbids restoring them.
+- Protected latent actions retain evidence and rationale. Evidence may contain original identifiers; prompt forbids restoring them.
 - Repair now receives ONLY current rewrite, privacy goal, and leaked-item feedback. No original/baseline document, full disposition, generalization/actions, or aggregate scores in its prompt. Scores still drive pipeline decisions.
 - User explicitly preferred leaked-item-focused repair. Do not reintroduce planning metadata or baseline text without discussing it.
 - Repair feedback is a plain-text list for privacy answers marked yes: sensitivity, entity label, original protected value, question, confidence, evaluator reason, optional quoted evidence. Those values remain a possible source of disclosure.
@@ -103,3 +103,7 @@ Hashes identify the exact evaluated files without placing data in Git.
 - rewrite_synth_bio5_sensdisp_branch_eval_run12.csv: 5 records; SHA-256 b60f060765a9819c046e8bad4aacc6defec7931314769a7ed8d725a60b64083f
 
 - rewrite_synth_bio5_sensdisp_branch_eval_run13.csv: 4 records; SHA-256 50469f742ac628999d95193954c6620e5e12e7165898d3a0312e4bd17594f089
+
+## Sensitivity-disposition stack refresh — 2026-10-04
+
+Rebased the three generalization commits onto sensitivity-disposition commit `8f035224`. Dispositions now omit `protection_reason` and require diagnostic `low_sensitivity_reason` for low entries. Writer action lists exclude both reason fields; protected latent actions retain the supplied detection evidence and rationale. The latest sensitivity prompt and its cross-entity consistency check are inherited from the parent branch.

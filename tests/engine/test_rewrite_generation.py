@@ -653,7 +653,7 @@ def test_rewrite_actions_route_removals_and_restore_latent_evidence(removal_guid
             "entity_value": "married" if source == "latent" else str(entity_id),
             "sensitivity": "low" if method == "leave_as_is" else "medium",
             "protection_method_suggestion": method,
-            "protection_reason": "Protect this information.",
+            "low_sensitivity_reason": "No meaningful contextual linkage." if method == "leave_as_is" else None,
         }
 
     row = {
@@ -710,7 +710,7 @@ def test_rewrite_actions_route_removals_and_restore_latent_evidence(removal_guid
         assert "Do not substitute" in action["rewrite_instruction"]
         assert removal_guidance != action["rewrite_instruction"]
     assert result[COL_REWRITE_ACTION_DIAGNOSTICS][0]["reviewer_instruction"] == removal_guidance
-    assert actions["suppress_latent_inferences"][0]["protection_reason"] == "Protect this information."
+    assert "protection_reason" not in actions["suppress_latent_inferences"][0]
 
     assert actions["suppress_latent_inferences"][0]["evidence"] == ["lives with his wife, Alice"]
     assert actions["suppress_latent_inferences"][0]["rationale"] == "Explicit spouse relationship."
