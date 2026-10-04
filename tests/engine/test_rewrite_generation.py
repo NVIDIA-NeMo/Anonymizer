@@ -64,7 +64,6 @@ def stub_sensitivity_disposition() -> dict:
                 "sensitivity": "high",
                 "entity_label": "first_name",
                 "entity_value": "Alice",
-                "protection_reason": "Full name uniquely identifies the subject",
                 "protection_method_suggestion": "replace",
             }
         ],
@@ -99,9 +98,9 @@ def test_format_rewrite_disposition_block_excludes_unprotected_entities() -> Non
                 "source": "tagged",
                 "category": "quasi_identifier",
                 "sensitivity": "low",
+                "low_sensitivity_reason": "The retained detail adds no meaningful linkage in this synthetic context.",
                 "entity_label": "city",
                 "entity_value": "Portland",
-                "protection_reason": "Not identifying alone",
                 "protection_method_suggestion": "leave_as_is",
             }
         ],
@@ -123,7 +122,6 @@ def test_format_rewrite_disposition_block_serializes_required_fields(
         "entity_value",
         "sensitivity",
         "protection_method_suggestion",
-        "protection_reason",
     }
 
 
@@ -135,9 +133,9 @@ def test_format_rewrite_disposition_block_empty_when_no_protected_entities() -> 
                 "source": "tagged",
                 "category": "quasi_identifier",
                 "sensitivity": "low",
+                "low_sensitivity_reason": "The retained detail adds no meaningful linkage in this synthetic context.",
                 "entity_label": "city",
                 "entity_value": "Portland",
-                "protection_reason": "Not identifying alone",
                 "protection_method_suggestion": "leave_as_is",
             }
         ],
@@ -162,7 +160,6 @@ def test_filter_replacement_map_keeps_only_replace_method_entities(
             "entity_value": "Alice",
             "sensitivity": "high",
             "protection_method_suggestion": "replace",
-            "protection_reason": "Direct identifier",
         }
     ]
     row = {
@@ -181,8 +178,8 @@ def test_filter_replacement_map_empty_when_no_replace_method() -> None:
             "entity_label": "city",
             "entity_value": "Portland",
             "sensitivity": "low",
+            "low_sensitivity_reason": "The retained detail adds no meaningful linkage in this synthetic context.",
             "protection_method_suggestion": "generalize",
-            "protection_reason": "Quasi-identifier",
         }
     ]
     row = {
@@ -202,7 +199,6 @@ def test_filter_replacement_map_accepts_schema_instance(
             "entity_value": "Alice",
             "sensitivity": "high",
             "protection_method_suggestion": "replace",
-            "protection_reason": "Direct identifier",
         }
     ]
     schema = EntityReplacementMapSchema.model_validate(stub_replacement_map)

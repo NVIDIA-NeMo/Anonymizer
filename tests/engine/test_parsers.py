@@ -175,7 +175,6 @@ def test_parse_sensitivity_disposition_from_dict() -> None:
                 "sensitivity": "high",
                 "entity_label": "name",
                 "entity_value": "Alice",
-                "protection_reason": "Direct identifier that enables re-identification",
                 "protection_method_suggestion": "replace",
             }
         ],
@@ -199,7 +198,6 @@ def test_parse_sensitivity_disposition_normalizes_numpy_array_payload() -> None:
                     "sensitivity": "high",
                     "entity_label": "name",
                     "entity_value": "Alice",
-                    "protection_reason": "Direct identifier that enables re-identification",
                     "protection_method_suggestion": "replace",
                 }
             ],

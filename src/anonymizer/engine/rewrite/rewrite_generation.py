@@ -95,7 +95,6 @@ Protection decisions for each entity that needs protection:
 - {{ entity.entity_label }}: "{{ entity.entity_value }}"
   Sensitivity: {{ entity.sensitivity }}
   Protection method: {{ entity.protection_method_suggestion }}
-  Reason: {{ entity.protection_reason }}
 {% endfor %}
 
 Entities NOT listed above may be kept as-is.
@@ -122,8 +121,7 @@ Rules:
 3. Entities with protection_method_suggestion="leave_as_is" should be retained verbatim (tags removed only).
 4. The rewritten text must flow naturally and preserve the meaning and narrative structure of the original.
 5. Do not introduce new identifying details not present in the original.
-6. Follow the privacy outcome described in each protection reason, including changes to
-   supporting context needed to suppress latent inferences.
+6. Change supporting context as needed so protected latent entity values cannot be reliably inferred.
 </output_requirements>"""
     return substitute_placeholders(
         prompt,
@@ -159,7 +157,6 @@ def _format_rewrite_disposition_block(row: dict[str, Any]) -> dict[str, Any]:
                 "entity_value": d["entity_value"],
                 "sensitivity": d["sensitivity"],
                 "protection_method_suggestion": d["protection_method_suggestion"],
-                "protection_reason": d["protection_reason"],
             }
         )
     row[COL_REWRITE_DISPOSITION_BLOCK] = block
