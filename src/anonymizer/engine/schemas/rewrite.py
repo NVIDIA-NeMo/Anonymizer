@@ -167,8 +167,11 @@ class EntityDispositionSchema(BaseModel):
     sensitivity: SensitivityLevel
     entity_label: str = Field(min_length=1)
     entity_value: str = Field(min_length=1)
-    protection_reason: str = Field(min_length=10, max_length=500)
     protection_method_suggestion: ProtectionMethod
+    low_sensitivity_reason: str | None = Field(
+        default=None,
+        description="Diagnostic justification for retaining a low-sensitivity entity; null for protected entities.",
+    )
 
     @property
     def needs_protection(self) -> bool:
@@ -192,6 +195,11 @@ class EntityDispositionSchema(BaseModel):
             raise ValueError(
                 f"Entity {self.id}: sensitivity={self.sensitivity!r} cannot have protection_method_suggestion='leave_as_is'"
             )
+        if self.sensitivity == SensitivityLevel.low:
+            if self.low_sensitivity_reason is None or not self.low_sensitivity_reason.strip():
+                raise ValueError(f"Entity {self.id}: low sensitivity requires a non-empty low_sensitivity_reason")
+        else:
+            self.low_sensitivity_reason = None
         return self
 
 
@@ -244,7 +252,7 @@ class SensitivityDispositionSchema(BaseModel):
         lines = []
         for e in entities:
             lines.append(
-                f'- [{e.sensitivity.upper()}] {e.entity_label}: "{e.entity_value}" → {e.protection_method_suggestion} (Reason: {e.protection_reason})'
+                f'- [{e.sensitivity.upper()}] {e.entity_label}: "{e.entity_value}" → {e.protection_method_suggestion}'
             )
         return "\n".join(lines)
 

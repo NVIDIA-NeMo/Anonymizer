@@ -222,10 +222,21 @@ def _make_entity(**kwargs) -> dict:
         "sensitivity": "high",
         "entity_label": "first_name",
         "entity_value": "Alice",
-        "protection_reason": "Direct identifier that uniquely identifies the individual.",
         "protection_method_suggestion": "replace",
     }
+    if kwargs.get("sensitivity") == "low":
+        defaults["low_sensitivity_reason"] = "The retained detail adds no meaningful linkage in this synthetic context."
     return {**defaults, **kwargs}
+
+
+@pytest.mark.parametrize("schema", [EntityDispositionSchema, StrictEntityDispositionSchema])
+def test_disposition_omits_legacy_protection_reason(schema: type[EntityDispositionSchema]) -> None:
+    original = _make_entity()
+    legacy = {**original, "protection_reason": "Replace Alice with Bob and retain identifying context."}
+    assert schema.model_validate(original).model_dump(mode="json") == schema.model_validate(legacy).model_dump(
+        mode="json"
+    )
+    assert "protection_reason" not in schema.model_json_schema()["properties"]
 
 
 @pytest.fixture()
@@ -277,6 +288,32 @@ def test_entity_disposition_accepts_low_leave_as_is() -> None:
         _make_entity(sensitivity="low", protection_method_suggestion="leave_as_is")
     )
     assert entity.needs_protection is False
+    assert entity.model_dump()["low_sensitivity_reason"]
+
+
+@pytest.mark.parametrize("reason", [None, "", "   "])
+def test_low_sensitivity_requires_contextual_reason(reason: str | None) -> None:
+    with pytest.raises(ValidationError, match="low sensitivity requires"):
+        EntityDispositionSchema.model_validate(
+            _make_entity(sensitivity="low", protection_method_suggestion="leave_as_is", low_sensitivity_reason=reason)
+        )
+
+
+def test_low_sensitivity_rejects_missing_reason() -> None:
+    payload = _make_entity(sensitivity="low", protection_method_suggestion="leave_as_is")
+    del payload["low_sensitivity_reason"]
+    with pytest.raises(ValidationError, match="low sensitivity requires"):
+        EntityDispositionSchema.model_validate(payload)
+
+
+@pytest.mark.parametrize("sensitivity", ["low", "medium", "high"])
+def test_protected_entity_clears_low_reason(sensitivity: str) -> None:
+    entity = EntityDispositionSchema.model_validate(
+        _make_entity(
+            sensitivity=sensitivity, protection_method_suggestion="replace", low_sensitivity_reason="Diagnostic"
+        )
+    )
+    assert entity.low_sensitivity_reason is None
 
 
 # SensitivityDispositionSchema — ID identity and plan validation
@@ -366,7 +403,6 @@ def test_sensitivity_disposition_format_for_rewrite_context_promotes_low_when_pr
                     entity_label="city",
                     entity_value="Portland",
                     protection_method_suggestion="generalize",
-                    protection_reason="City combined with other quasi-identifiers enables re-identification",
                 ),
             ],
         }
@@ -563,7 +599,6 @@ def _make_strict_entity(**kwargs) -> dict:
         "sensitivity": "high",
         "entity_label": "first_name",
         "entity_value": "Alice",
-        "protection_reason": "Direct identifier that uniquely identifies the individual.",
         "protection_method_suggestion": "replace",
     }
     return {**defaults, **kwargs}

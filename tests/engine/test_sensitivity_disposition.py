@@ -130,10 +130,11 @@ def test_strict_block_only_present_in_strict_mode() -> None:
     assert "<strict_entity_protection>" not in _get_sensitivity_disposition_prompt(_STUB_PRIVACY_GOAL)
     strict = _get_sensitivity_disposition_prompt(_STUB_PRIVACY_GOAL, strict_entity_protection=True)
     assert "<strict_entity_protection>" in strict
-    assert "The low exception is disabled" in strict
+    assert "Override the low eligibility rules: every supplied entity must be protected." in strict
 
 
 def test_prompt_does_not_mention_combined_risk_level() -> None:
+    assert "protection_reason" not in _get_sensitivity_disposition_prompt(_STUB_PRIVACY_GOAL)
     assert "combined_risk" not in _get_sensitivity_disposition_prompt(_STUB_PRIVACY_GOAL)
 
 
@@ -207,9 +208,9 @@ def _disposition(*entries: tuple[int, str, str]) -> SensitivityDispositionSchema
                     "source": "tagged",
                     "category": _CLASSIFICATIONS[label],
                     "sensitivity": "high" if label == "first_name" else "low",
+                    "low_sensitivity_reason": None if label == "first_name" else "No meaningful contextual linkage.",
                     "entity_label": label,
                     "entity_value": value,
-                    "protection_reason": "Safe to retain in the complete document.",
                     "protection_method_suggestion": "replace" if label == "first_name" else "leave_as_is",
                 }
                 for entry_id, label, value in entries
@@ -293,7 +294,7 @@ def test_verify_disposition_upgrades_retained_direct_identifier(caplog: pytest.L
     entry = disposition.sensitivity_disposition[0]
     assert entry.sensitivity == "high"
     assert entry.protection_method_suggestion == "replace"
-    assert "replace its original value" in entry.protection_reason
+    assert "protection_reason" not in entry.model_dump()
     assert "Normalizing disposition entity 1" in caplog.text
 
 
@@ -328,7 +329,6 @@ def _generate_misclassified_disposition(row: dict[str, Any]) -> dict[str, Any]:
                 "entity_value": supplied["value"],
                 "sensitivity": "medium",
                 "protection_method_suggestion": "generalize",
-                "protection_reason": "Generalize the supplied personal identifier.",
             }
         ]
     }

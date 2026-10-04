@@ -62,7 +62,6 @@ def _format_disposition_block(row: dict[str, Any]) -> dict[str, Any]:
             "does_need_protection": e.needs_protection,
             "protection_method_suggestion": e.protection_method_suggestion,
             "category": e.category,
-            "protection_reason": e.protection_reason,
         }
         for e in disposition.sensitivity_disposition
     ]
@@ -96,7 +95,6 @@ You are given a SENSITIVITY DISPOSITION BLOCK, which contains entries like:
 - does_need_protection (True/False)
 - protection_method_suggestion (replace/remove/generalize/suppress_inference/leave_as_is)
 - category (direct_identifier/quasi_identifier/latent_identifier/etc.)
-- protection_reason (the privacy outcome the selected method must achieve)
 
 Use it as follows:
 
@@ -128,8 +126,8 @@ This may include:
 
 The generalized phrasing must prevent recovery or lookup of the original entity_value while
 still preserving the meaning needed for usefulness.
-For protected entries, follow the privacy outcome described in protection_reason. Do not
-retain identifying details or supporting evidence that the protection must eliminate.
+For protected entries, do not retain identifying details or supporting evidence
+that would reveal the entity value the selected method must protect.
 
 C) SAFE / LEFT-AS-IS (no special avoidance required)
 If an entry has:

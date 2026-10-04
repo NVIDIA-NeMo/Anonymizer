@@ -52,7 +52,6 @@ _STUB_DISPOSITION = SensitivityDispositionSchema(
             sensitivity=SensitivityLevel.high,
             entity_label="first_name",
             entity_value="Alice",
-            protection_reason="Full name directly identifies the individual.",
             protection_method_suggestion=ProtectionMethod.replace,
         ),
         EntityDispositionSchema(
@@ -60,9 +59,9 @@ _STUB_DISPOSITION = SensitivityDispositionSchema(
             source=EntitySource.tagged,
             category=EntityCategory.quasi_identifier,
             sensitivity=SensitivityLevel.low,
+            low_sensitivity_reason="The retained detail adds no meaningful linkage in this synthetic context.",
             entity_label="city",
             entity_value="Portland",
-            protection_reason="City alone does not create meaningful re-identification risk here.",
             protection_method_suggestion=ProtectionMethod.leave_as_is,
         ),
     ],
@@ -194,9 +193,9 @@ def test_generate_privacy_qa_column_no_protected_entities() -> None:
                 source=EntitySource.tagged,
                 category=EntityCategory.quasi_identifier,
                 sensitivity=SensitivityLevel.low,
+                low_sensitivity_reason="The retained detail adds no meaningful linkage in this synthetic context.",
                 entity_label="city",
                 entity_value="Portland",
-                protection_reason="City alone does not create meaningful re-identification risk.",
                 protection_method_suggestion=ProtectionMethod.leave_as_is,
             )
         ],
@@ -223,9 +222,9 @@ def test_generate_privacy_qa_from_disposition_empty_when_nothing_to_protect() ->
                 source=EntitySource.tagged,
                 category=EntityCategory.quasi_identifier,
                 sensitivity=SensitivityLevel.low,
+                low_sensitivity_reason="The retained detail adds no meaningful linkage in this synthetic context.",
                 entity_label="city",
                 entity_value="Portland",
-                protection_reason="City alone does not create meaningful re-identification risk.",
                 protection_method_suggestion=ProtectionMethod.leave_as_is,
             )
         ],
@@ -243,7 +242,6 @@ def test_generate_privacy_qa_from_disposition_ids_are_sequential() -> None:
                 sensitivity=SensitivityLevel.high,
                 entity_label="first_name",
                 entity_value="Alice",
-                protection_reason="Direct identifier.",
                 protection_method_suggestion=ProtectionMethod.replace,
             ),
             EntityDispositionSchema(
@@ -253,7 +251,6 @@ def test_generate_privacy_qa_from_disposition_ids_are_sequential() -> None:
                 sensitivity=SensitivityLevel.high,
                 entity_label="last_name",
                 entity_value="Smith",
-                protection_reason="Direct identifier.",
                 protection_method_suggestion=ProtectionMethod.replace,
             ),
         ],
@@ -280,6 +277,7 @@ def test_meaning_unit_prompt_preserves_gitlab_protection_branches() -> None:
 
 def test_meaning_unit_prompt_keeps_xml_style_blocks() -> None:
     prompt = _get_meaning_unit_extraction_prompt()
+    assert "protection_reason" not in prompt
     assert "<entity_protection_rules>" in prompt
     assert "<importance_criteria>" in prompt
     assert "<segmentation_rules>" in prompt
@@ -292,9 +290,12 @@ def test_quality_qa_prompt_references_meaning_units_serialized() -> None:
     assert _jinja(COL_MEANING_UNITS_SERIALIZED) in prompt
 
 
-def test_format_disposition_block_preserves_protection_guidance() -> None:
+def test_format_disposition_block_preserves_protection_decisions() -> None:
     row = _format_disposition_block({COL_SENSITIVITY_DISPOSITION: _STUB_DISPOSITION})
     block = json.loads(row[COL_SENSITIVITY_DISPOSITION_BLOCK])
-    assert [entry["protection_reason"] for entry in block] == [
-        entry.protection_reason for entry in _STUB_DISPOSITION.sensitivity_disposition
+    assert [entry["protection_method_suggestion"] for entry in block] == [
+        entry.protection_method_suggestion for entry in _STUB_DISPOSITION.sensitivity_disposition
     ]
+    assert all("protection_reason" not in entry for entry in block)
+    assert all("low_sensitivity_reason" not in entry for entry in block)
+    assert "low_sensitivity_reason" not in _get_meaning_unit_extraction_prompt()
