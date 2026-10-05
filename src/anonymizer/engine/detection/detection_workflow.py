@@ -8,7 +8,7 @@ import logging
 from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
-from typing import cast
+from typing import ClassVar, cast
 
 import pandas as pd
 from data_designer.config.column_configs import LLMStructuredColumnConfig, LLMTextColumnConfig
@@ -71,6 +71,7 @@ logger = logging.getLogger("anonymizer.detection")
 class _PrivatePromptLLMStructuredColumnConfig(LLMStructuredColumnConfig):
     """Structured column config whose prompt is omitted from repr-based setup logs."""
 
+    _normalize_for_data_designer: ClassVar[bool] = True
     prompt: str = Field(repr=False)
 
 
