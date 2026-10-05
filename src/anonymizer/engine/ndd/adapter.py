@@ -512,7 +512,7 @@ class NddAdapter:
         config_builder = DataDesignerConfigBuilder(model_configs=model_configs)
         config_builder.with_seed_dataset(seed_source, sampling_strategy=SamplingStrategy.ORDERED)
         for column in columns:
-            config_builder.add_column(column)
+            config_builder.add_column(_normalize_column_for_data_designer(column))
         return config_builder
 
     def build_config_for_seed(
@@ -548,7 +548,7 @@ class NddAdapter:
             selection_strategy=selection,
         )
         for column in columns:
-            config_builder.add_column(column)
+            config_builder.add_column(_normalize_column_for_data_designer(column))
         return config_builder
 
     def _attach_record_ids(self, df: pd.DataFrame) -> pd.DataFrame:

@@ -82,6 +82,9 @@ def test_private_structured_config_normalizes_to_registered_type() -> None:
 
     assert type(normalized) is LLMStructuredColumnConfig
     assert normalized.prompt == prompt
+    assert normalized.output_format == private_config.output_format
+    assert isinstance(normalized.output_format, dict)
+    assert normalized.output_format["title"] == "AugmentedEntitiesSchema"
     assert prompt not in repr(private_config)
 
 
