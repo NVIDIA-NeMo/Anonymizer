@@ -107,3 +107,11 @@ Hashes identify the exact evaluated files without placing data in Git.
 ## Sensitivity-disposition stack refresh — 2026-10-04
 
 Rebased the three generalization commits onto sensitivity-disposition commit `8f035224`. Dispositions now omit `protection_reason` and require diagnostic `low_sensitivity_reason` for low entries. Writer action lists exclude both reason fields; protected latent actions retain the supplied detection evidence and rationale. The latest sensitivity prompt and its cross-entity consistency check are inherited from the parent branch.
+
+## Generator/reviewer responsibility split — 2026-10-04
+
+Implemented the two user-approved prompts. Generator sees the original document and compact generalization targets only; it returns entity_id and suggested_value, with null allowed. Reviewer sees those candidates, privacy goal, compact non-generalize decisions, and planned replacements; it supplies defects, corrected values, statuses, privacy reasons, and integration/context instructions. Removed related_entity_ids from reviewed schema, validators, and writer actions; defect conflicting_entity_ids still receive ID validation. Candidate IDs must match targets in order. Existing ineffective-value normalization and no-target skip behavior remain. Original prompts are saved in prompt-checkpoint-before-role-split.md. These changes are local pending validation and user-directed commit/push.
+
+## Prompt and output refinements — 2026-10-06
+
+Initial generalization prompt now explicitly rejects synonyms, shortened names, punctuation changes, and repeated identifying wording, with separate acceptable/unacceptable examples. Reviewer prompt is reorganized around review, correction, and output; corrections change broader wording or return null. Reviewer no longer receives synthetic replacements. Removed rewrite_instruction from reviewed output/schema and downstream generalization actions; deterministic removal guidance remains in writer actions. Reviewer retains privacy_reason and needs_context_change for unresolved supporting-context conflicts. Writer and repair changes also strengthen omission of underlying facts, natural grammatical integration, and neutral subject pronouns when gender suppression is assigned. Global prose cleanup in repair remains deferred at the user's request.

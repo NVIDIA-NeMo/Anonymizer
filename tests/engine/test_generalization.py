@@ -63,8 +63,6 @@ def _suggestion(entity_id: int = 2, status: str = "ready") -> dict[str, Any]:
         "suggested_value": None if status == "no_effective_generalization" else "a professional",
         "status": status,
         "privacy_reason": "Conceals the exact occupation.",
-        "rewrite_instruction": "" if status == "ready" else "Omit identifying supporting details.",
-        "related_entity_ids": [],
     }
 
 
@@ -122,15 +120,18 @@ def test_rejects_unknown_dependencies(value: str) -> None:
     row = _row()
     suggestion = row[COL_REVIEWED_GENERALIZATION_SUGGESTIONS]["generalization_suggestions"][0]
     suggestion["suggested_value"] = value
-    suggestion["related_entity_ids"] = [99]
-    with pytest.raises(ValueError, match="unknown entity"):
+    row[COL_REVIEWED_GENERALIZATION_SUGGESTIONS]["defects"] = [
+        {"entity_id": 2, "evidence": value or "empty wording", "problem": "Conflict", "conflicting_entity_ids": [99]}
+    ]
+    with pytest.raises(ValueError, match="unknown conflicting entity"):
         validate_generalization_suggestions(row)
 
 
+@pytest.mark.parametrize("status", ["ready", "needs_context_change"])
 @pytest.mark.parametrize("value", [None, "", "   "])
-def test_context_change_without_wording_becomes_removal(value: str | None) -> None:
+def test_suggestion_without_wording_becomes_removal(value: str | None, status: str) -> None:
     row = _row()
-    suggestion = {**_suggestion(status="needs_context_change"), "suggested_value": value, "rewrite_instruction": ""}
+    suggestion = {**_suggestion(status=status), "suggested_value": value}
     row[COL_REVIEWED_GENERALIZATION_SUGGESTIONS]["generalization_suggestions"] = [suggestion]
     result = validate_generalization_suggestions(row)
     canonical = result[COL_GENERALIZATION_SUGGESTIONS]["generalization_suggestions"][0]
@@ -138,24 +139,24 @@ def test_context_change_without_wording_becomes_removal(value: str | None) -> No
     assert canonical["suggested_value"] is None
     GeneralizationSuggestion.model_validate(canonical)
     assert result[COL_GENERALIZATION_NEEDS_REVIEW] is True
-    assert suggestion["status"] == "needs_context_change"
+    assert suggestion["status"] == status
     assert suggestion["suggested_value"] == value
     result[COL_DISPOSITION_LATENT_ENTITIES] = ""
     actions = _build_rewrite_actions(result)[COL_REWRITE_ACTIONS]
     assert actions["generalize"] == []
     assert [action["entity_id"] for action in actions["remove"]] == [2]
-    suggestion["related_entity_ids"] = [99]
-    with pytest.raises(ValueError, match="unknown entity"):
+    row[COL_REVIEWED_GENERALIZATION_SUGGESTIONS]["defects"] = [
+        {"entity_id": 2, "evidence": value or "empty wording", "problem": "Conflict", "conflicting_entity_ids": [99]}
+    ]
+    with pytest.raises(ValueError, match="unknown conflicting entity"):
         validate_generalization_suggestions(row)
 
 
 def test_status_schema_requires_actionable_wording_or_limitation() -> None:
     with pytest.raises(ValueError):
         GeneralizationSuggestion.model_validate({**_suggestion(), "suggested_value": None})
-    with pytest.raises(ValueError):
-        GeneralizationSuggestion.model_validate(
-            {**_suggestion(status="no_effective_generalization"), "rewrite_instruction": ""}
-        )
+    omission = GeneralizationSuggestion.model_validate(_suggestion(status="no_effective_generalization"))
+    assert "rewrite_instruction" not in omission.model_dump()
 
 
 @custom_column_generator(required_columns=[COL_GENERALIZATION_TARGETS, COL_REPLACEMENT_MAP_FOR_PROMPT])
@@ -163,7 +164,9 @@ def _generate_suggestions(row: dict[str, Any]) -> dict[str, Any]:
     assert normalize_payload(row[COL_GENERALIZATION_TARGETS]), "Empty targets must skip generation"
     replacements = normalize_payload(row[COL_REPLACEMENT_MAP_FOR_PROMPT])
     assert "patent attorney" not in str(replacements)
-    row[COL_RAW_GENERALIZATION_SUGGESTIONS] = {"defects": [], "generalization_suggestions": [_suggestion()]}
+    row[COL_RAW_GENERALIZATION_SUGGESTIONS] = {
+        "generalization_suggestions": [{"entity_id": 2, "suggested_value": "a professional"}]
+    }
     return row
 
 
@@ -247,10 +250,9 @@ def test_scheduler_filters_map_and_skips_empty_targets(
         if targets:
             assert suggestions[0]["status"] == "no_effective_generalization"
             assert suggestions[0]["suggested_value"] is None
-            assert (
-                normalize_payload(row[COL_RAW_GENERALIZATION_SUGGESTIONS])["generalization_suggestions"][0]["status"]
-                == "ready"
-            )
+            assert normalize_payload(row[COL_RAW_GENERALIZATION_SUGGESTIONS])["generalization_suggestions"] == [
+                {"entity_id": 2, "suggested_value": "a professional"}
+            ]
         filtered = normalize_payload(row[COL_REPLACEMENT_MAP_FOR_PROMPT])
         assert "Maria" in str(filtered)
         assert "teacher" not in str(filtered)
@@ -269,3 +271,38 @@ def test_rejects_defects_with_unknown_ids(target: int, conflicts: list[int]) -> 
     ]
     with pytest.raises(ValueError, match="defect"):
         validate_generalization_suggestions(row)
+
+
+@pytest.mark.parametrize("value", [None, "a professional"])
+def test_minimal_candidates_and_compact_other_decisions(value: str | None) -> None:
+    from anonymizer.engine.constants import COL_GENERALIZATION_OTHER_DECISIONS
+    from anonymizer.engine.rewrite.generalization import prepare_generalization_review
+
+    row = _row()
+    assert row[COL_GENERALIZATION_TARGETS] == [
+        {"id": 2, "entity_label": "occupation", "entity_value": "patent attorney"}
+    ]
+    assert row[COL_GENERALIZATION_OTHER_DECISIONS] == [
+        {"id": 1, "entity_label": "name", "entity_value": "Alice", "protection_method_suggestion": "replace"}
+    ]
+    row[COL_RAW_GENERALIZATION_SUGGESTIONS] = {
+        "generalization_suggestions": [{"entity_id": 2, "suggested_value": value}]
+    }
+    assert prepare_generalization_review(row)[COL_GENERALIZATION_REVIEW_INPUT] == [
+        {"entity_id": 2, "suggested_value": value}
+    ]
+    row[COL_RAW_GENERALIZATION_SUGGESTIONS]["generalization_suggestions"][0]["entity_id"] = 99
+    with pytest.raises(ValueError, match="Candidate generalization IDs"):
+        prepare_generalization_review(row)
+
+
+def test_generator_and_reviewer_output_contracts() -> None:
+    from anonymizer.engine.rewrite.generalization import _get_generalization_prompt, _get_generalization_review_prompt
+    from anonymizer.engine.schemas.generalization import GeneralizationCandidate
+
+    assert set(GeneralizationCandidate.model_fields) == {"entity_id", "suggested_value"}
+    assert "related_entity_ids" not in GeneralizationSuggestion.model_fields
+    assert "privacy_goal" not in _get_generalization_prompt()
+    assert "Other protection decisions:" in _get_generalization_review_prompt(
+        PrivacyGoal(protect="Protect personal identity", preserve="Preserve document meaning")
+    )

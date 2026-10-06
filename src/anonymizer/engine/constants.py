@@ -362,3 +362,5 @@ COL_GENERALIZATION_REVIEW_INPUT = "_generalization_review_input"
 COL_REWRITE_ACTIONS = "_rewrite_actions"
 
 COL_REWRITE_ACTION_DIAGNOSTICS = "_rewrite_action_diagnostics"
+
+COL_GENERALIZATION_OTHER_DECISIONS = "_generalization_other_decisions"

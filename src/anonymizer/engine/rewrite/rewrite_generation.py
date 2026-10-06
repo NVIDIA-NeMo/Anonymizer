@@ -102,15 +102,35 @@ Apply all three action lists together across the complete document.
 These are the final actions: do not reconsider a removal as a generalization.
 
 GENERALIZE
-Use the supplied wording at the specified level of abstraction. Adapt articles,
-prepositions, inflection, and sentence structure naturally; do not mechanically
-substitute phrases into incompatible sentences. Follow supporting-context instructions.
+Treat supplied wording as guidance for the information to retain, not as
+a string to paste into the original sentence. Rewrite the surrounding
+sentence as needed while keeping the same level of abstraction.
+
+Adjust articles, prepositions, agreement, and word forms. Remove duplicated
+words and combine redundant references. For example:
+- "works the night shift" with "working evenings" → "works evenings",
+  not "works working evenings".
+- "a practicing Protestant" with "a Christian denomination" →
+  "belongs to a Christian denomination",
+  not "a practicing a Christian denomination".
+- "Denver, Colorado" with regional descriptions →
+  "a city in the western United States",
+  not two overlapping location descriptions.
+
+Follow supporting-context instructions.
 Do not restore original specificity through descriptions or repeated references.
 
 REMOVE
-Omit the specified information at every occurrence. Do not substitute a synonym,
-broader description, or indirect statement of the same fact. Repair or remove the
-surrounding clause as needed. Omission takes precedence over preserving that detail.
+Remove the fact expressed by each removal target, not just its exact wording
+or specificity. Do not preserve that fact through a broader description,
+synonym, or implication.
+
+For example, when a degree is assigned removal, "earned a BA" must not become
+"earned a degree" or "completed university studies". Remove the educational
+attainment statement. Other independently supported facts may remain.
+
+Delete or restructure the surrounding clause so the result reads naturally.
+Preserving useful meaning does not justify retaining a fact assigned removal.
 
 SUPPRESS LATENT INFERENCES
 Modify enough supporting evidence that the attribute is no longer reasonably
@@ -119,6 +139,17 @@ check other narrative details and relationships supporting the inference.
 Generalizations must not reintroduce an inference this list requires suppressed.
 Evidence quotes may contain original values already replaced in the input.
 Locate the corresponding facts; never copy original identifiers back from evidence.
+
+When gender is assigned suppression, use gender-neutral language consistently
+for the subject throughout the document:
+- he/she → they
+- him/her → them
+- his/her/hers → their/theirs, as grammatically appropriate
+- himself/herself → themselves
+
+Adjust verb agreement, such as "she is" → "they are" and "he has" → "they have".
+Also neutralize gendered descriptions of the subject, such as "grandpa" →
+"grandparent". Keep references to different people clear.
 
 COMBINED ACTIONS
 Required omissions and inference suppression take precedence over a generalization
@@ -141,10 +172,19 @@ Remove all entity-tag wrappers. Do not add privacy explanations, placeholders, o
 </writing_requirements>
 
 <final_check>
+For each removal target, verify that the revised document no longer states
+or implies the fact assigned removal, even at a broader level.
+
 Verify that required removals are absent, including indirect restatements;
 latent attributes are not revealed by remaining evidence; generalizations do not
 disclose protected values; retained synthetic values remain consistent; and every
 edited sentence is grammatical and meaningful.
+
+Read each edited sentence as standalone prose. Fix duplicated wording,
+incompatible articles or prepositions, and inconsistent pronouns without
+adding facts or restoring protected specificity.
+If the subject's gender is assigned suppression, verify that no gendered
+pronouns or descriptions of the subject remain.
 Return only the rewritten text.
 </final_check>"""
     return substitute_placeholders(
@@ -234,21 +274,17 @@ def _build_rewrite_actions(row: dict[str, Any]) -> dict[str, Any]:
             suggestion = suggestions[entity.id]
             if suggestion["status"] == "no_effective_generalization":
                 action["rewrite_instruction"] = _REMOVAL_INSTRUCTION
-                action["related_entity_ids"] = suggestion["related_entity_ids"]
                 actions["remove"].append(action)
                 diagnostics.append(
                     {
                         "entity_id": entity.id,
-                        "kind": "removal_guidance_overridden",
-                        "reviewer_instruction": suggestion["rewrite_instruction"],
+                        "kind": "no_effective_generalization",
                         "reviewer_reason": suggestion["privacy_reason"],
                     }
                 )
             else:
                 action.update(
                     suggested_value=suggestion["suggested_value"],
-                    rewrite_instruction=suggestion["rewrite_instruction"],
-                    related_entity_ids=suggestion["related_entity_ids"],
                 )
                 actions["generalize"].append(action)
         elif method == "remove":

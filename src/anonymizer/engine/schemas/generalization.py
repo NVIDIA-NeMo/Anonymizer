@@ -8,15 +8,26 @@ from typing import Literal
 from pydantic import BaseModel, Field, model_validator
 
 
+class GeneralizationCandidate(BaseModel):
+    """Initial broader wording before document-wide review."""
+
+    entity_id: int = Field(ge=1)
+    suggested_value: str | None = Field(min_length=1)
+
+
+class GeneralizationCandidates(BaseModel):
+    """Minimal generator output; protection decisions belong to review."""
+
+    generalization_suggestions: list[GeneralizationCandidate]
+
+
 class GeneralizationSuggestion(BaseModel):
-    """Wording and contextual instructions for one supplied generalization target."""
+    """Reviewed wording for one supplied generalization target."""
 
     entity_id: int = Field(ge=1)
     suggested_value: str | None = Field(min_length=1)
     status: Literal["ready", "needs_context_change", "no_effective_generalization"]
     privacy_reason: str = Field(min_length=1)
-    rewrite_instruction: str
-    related_entity_ids: list[int] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def validate_status(self) -> GeneralizationSuggestion:
@@ -25,8 +36,6 @@ class GeneralizationSuggestion(BaseModel):
                 raise ValueError("no_effective_generalization requires suggested_value=None")
         elif self.suggested_value is None or not self.suggested_value.strip():
             raise ValueError(f"{self.status!r} requires non-empty suggested_value")
-        if self.status != "ready" and not self.rewrite_instruction.strip():
-            raise ValueError(f"{self.status!r} requires a rewrite_instruction explaining the unresolved protection")
         return self
 
 

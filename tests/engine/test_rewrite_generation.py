@@ -675,7 +675,6 @@ def test_rewrite_actions_route_removals_and_restore_latent_evidence(removal_guid
                     "suggested_value": "a region",
                     "rewrite_instruction": "Broaden the nearby landmark.",
                     "privacy_reason": "Conceals location.",
-                    "related_entity_ids": [],
                 },
                 {
                     "entity_id": 4,
@@ -683,7 +682,6 @@ def test_rewrite_actions_route_removals_and_restore_latent_evidence(removal_guid
                     "suggested_value": None,
                     "rewrite_instruction": removal_guidance,
                     "privacy_reason": "Conflicting birth date.",
-                    "related_entity_ids": [],
                 },
             ]
         },
@@ -700,7 +698,7 @@ def test_rewrite_actions_route_removals_and_restore_latent_evidence(removal_guid
     result = _build_rewrite_actions(row)
     actions = result[COL_REWRITE_ACTIONS]
     assert [a["entity_id"] for a in actions["generalize"]] == [3]
-    assert actions["generalize"][0]["rewrite_instruction"] == "Broaden the nearby landmark."
+    assert "rewrite_instruction" not in actions["generalize"][0]
     assert [a["entity_id"] for a in actions["remove"]] == [4, 5]
     assert "suggested_value" not in actions["remove"][0]
     for action in actions["generalize"] + actions["remove"]:
@@ -709,7 +707,7 @@ def test_rewrite_actions_route_removals_and_restore_latent_evidence(removal_guid
     for action in actions["remove"]:
         assert "Do not substitute" in action["rewrite_instruction"]
         assert removal_guidance != action["rewrite_instruction"]
-    assert result[COL_REWRITE_ACTION_DIAGNOSTICS][0]["reviewer_instruction"] == removal_guidance
+    assert "reviewer_instruction" not in result[COL_REWRITE_ACTION_DIAGNOSTICS][0]
     assert "protection_reason" not in actions["suppress_latent_inferences"][0]
 
     assert actions["suppress_latent_inferences"][0]["evidence"] == ["lives with his wife, Alice"]

@@ -110,6 +110,10 @@ For each reported leak:
 
 A synonym or indirect description of the same protected information is not
 a sufficient fix.
+
+When a reported leak concerns the subject's gender, use neutral pronouns and
+gender-neutral descriptions consistently throughout the text, with correct
+verb agreement.
 </task>
 
 <editing_rules>
@@ -130,6 +134,13 @@ If faithful generalization cannot resolve a leak, omit the affected detail
 and repair the surrounding sentence.
 Avoid empty wording such as "speaks a language" or "has an affiliation".
 Omit clauses that retain no useful meaning after protection.
+
+Rewrite edited sentences as natural prose rather than mechanically replacing
+words. Adjust articles, prepositions, word forms, verb agreement, and pronouns.
+Combine redundant phrases and remove duplicated wording.
+
+Read each edited sentence in context. It must be grammatical, clear, and
+natural sounding without adding facts or restoring protected information.
 </editing_rules>
 
 <final_check>
@@ -137,7 +148,8 @@ Verify that:
 - Reported leaks are addressed across the complete revised text.
 - No new facts or more specific details have been introduced.
 - Unaffected information remains consistent.
-- The text is grammatical and coherent.
+- Every edited sentence reads naturally, with correct grammar, consistent
+  pronouns, and no duplicated or awkwardly joined phrases.
 
 Return only the complete revised text, without commentary, annotations,
 or explanations of the edits.
