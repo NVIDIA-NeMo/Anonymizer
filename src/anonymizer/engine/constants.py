@@ -247,7 +247,6 @@ DEFAULT_ENTITY_LABEL_CATEGORY: dict[str, str] = {
     "first_name": "direct_identifier",
     "last_name": "direct_identifier",
     "ssn": "direct_identifier",
-    "date_of_birth": "direct_identifier",
     "email": "direct_identifier",
     "phone_number": "direct_identifier",
     "fax_number": "direct_identifier",
@@ -277,6 +276,7 @@ DEFAULT_ENTITY_LABEL_CATEGORY: dict[str, str] = {
     "user_name": "direct_identifier",
     "coordinate": "direct_identifier",
     # Quasi-identifiers: narrow identity only in combination with other facts.
+    "date_of_birth": "quasi_identifier",
     "occupation": "quasi_identifier",
     "swift_bic": "quasi_identifier",
     "company_name": "quasi_identifier",
