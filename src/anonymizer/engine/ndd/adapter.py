@@ -44,6 +44,13 @@ _MODEL_TRACE_COLUMN: ContextVar[str | None] = ContextVar("anonymizer_dd_model_tr
 _MODEL_TRACE_PURPOSE: ContextVar[str | None] = ContextVar("anonymizer_dd_model_trace_purpose", default=None)
 
 
+def _normalize_column_for_data_designer(column: ColumnConfigT) -> ColumnConfigT:
+    """Convert marked private config subclasses to DataDesigner's registered types."""
+    if getattr(type(column), "_normalize_for_data_designer", False):
+        return LLMStructuredColumnConfig.model_validate(column.model_dump())
+    return column
+
+
 @dataclass(frozen=True)
 class FailedRecord:
     """A record that did not appear in workflow output."""
@@ -372,7 +379,11 @@ class NddAdapter:
             config_builder = DataDesignerConfigBuilder(model_configs=model_configs)
             config_builder.with_seed_dataset(seed_source, sampling_strategy=SamplingStrategy.ORDERED)
             for column in columns:
-                config_builder.add_column(column)
+                # DataDesigner resolves built-in generators by exact config
+                # type. A private subclass can keep sensitive prompt fields
+                # out of reprs in our workflow specs, then become the
+                # registered built-in config at the execution boundary.
+                config_builder.add_column(_normalize_column_for_data_designer(column))
 
             task_traces: list[_TaskTrace] = []
             try:
@@ -501,7 +512,7 @@ class NddAdapter:
         config_builder = DataDesignerConfigBuilder(model_configs=model_configs)
         config_builder.with_seed_dataset(seed_source, sampling_strategy=SamplingStrategy.ORDERED)
         for column in columns:
-            config_builder.add_column(column)
+            config_builder.add_column(_normalize_column_for_data_designer(column))
         return config_builder
 
     def build_config_for_seed(
@@ -537,7 +548,7 @@ class NddAdapter:
             selection_strategy=selection,
         )
         for column in columns:
-            config_builder.add_column(column)
+            config_builder.add_column(_normalize_column_for_data_designer(column))
         return config_builder
 
     def _attach_record_ids(self, df: pd.DataFrame) -> pd.DataFrame:

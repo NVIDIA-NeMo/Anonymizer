@@ -69,6 +69,9 @@ def test_detection_builder_round_trips_through_native_data_designer_config(tmp_p
         num_jobs=3,
     )
 
+    direct_augmenter = next(column for column in builder.get_column_configs() if column.name == COL_AUGMENTED_ENTITIES)
+    assert type(direct_augmenter) is LLMStructuredColumnConfig
+
     payload = builder.get_builder_config().to_json()
     assert payload is not None
     restored = DataDesignerConfigBuilder.from_config(payload)
@@ -179,6 +182,8 @@ def test_build_detection_config_respects_excluded_entity_labels(tmp_path: Path) 
         excluded_entity_labels=["email"],
     )
 
+    augmenter = next(column for column in builder.get_column_configs() if column.name == COL_AUGMENTED_ENTITIES)
+    assert type(augmenter) is LLMStructuredColumnConfig
     labels = _get_gliner_labels_from_builder(builder)
     assert "email" not in labels
     assert "first_name" in labels
