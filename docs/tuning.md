@@ -45,6 +45,8 @@ Replace and Rewrite share a core detection sequence: the GLiNER detector propose
 Choose the detection taxonomy, data context, anonymization mode, and model assignments before tuning performance:
 
 - With `entity_labels=None` (permissive mode), the augmenter may infer labels beyond the defaults. An explicit list enables strict mode and limits standard detected entities to those labels. Rewrite's separate latent-entity detector is not constrained by this label list. Strict mode controls the standard detection taxonomy, not individual values or fields.
+- `excluded_entity_labels` overrides default or explicit labels and filters matching labels from both standard and latent detection results. It excludes label types, not particular values or fields, and does not guarantee that Rewrite leaves the corresponding text unchanged.
+- `entity_label_examples` provides positive guidance for recognizing value formats, not guaranteed matches or negative examples. Examples do not activate labels: declare non-default labels in `entity_labels`, which also selects strict augmentation. Use synthetic examples because they are included in model prompts and exported detection builders. See [Detect](concepts/detection.md) for configuration and scope rules.
 - `AnonymizerInput.data_summary` supplies context to detection prompts and, in Rewrite mode, rewrite prompts. It does not change local Replace strategies or Substitute replacement-map prompts, and it is not a deterministic exclusion rule.
 - Assign models by measured quality, latency, and cost. Keep aliases in one validator pool behaviorally equivalent in quality, context limits, and safety settings.
 
@@ -95,10 +97,14 @@ Run every candidate against the same quality set. Each experiment should answer 
 | Variable | Question | Hold fixed |
 | --- | --- | --- |
 | `entity_labels` | Does this taxonomy match the deployment policy? | Models, threshold, validator settings, and prompts |
+| `excluded_entity_labels` | Which label types should be outside the detection scope? | Selected labels, examples, models, threshold, and validator settings |
+| `entity_label_examples` | Do representative positive examples improve detection of domain-specific value formats? | Label scope, models, threshold, and validator settings |
 | `gliner_threshold` | Does a higher or lower proposal threshold improve the accepted precision-recall trade-off? | Labels, validator settings, and models |
 | `validation_max_entities_per_call` | Does validator chunk size affect accuracy or failures on dense records? | Threshold, excerpt size, and validator models |
-| `validation_excerpt_window_chars` | Does more or less surrounding context improve disambiguation? | Threshold, chunk size, and validator models |
+| `validation_excerpt_window_chars` | Does more or less surrounding context improve disambiguation on rows split across multiple validation chunks? | Threshold, chunk size, and validator models |
 | Model assignment | Does a different model meet the quality gate for this role? | Detection controls and all other role assignments |
+
+Under standard execution, single-chunk rows receive the full tagged document, so changing `validation_excerpt_window_chars` does not change their context. Include rows that span multiple chunks when testing this control.
 
 After each change, inspect the retained output and rerun the acceptance checks. Reject changes that improve averages while failing a required label or edge case.
 
@@ -167,6 +173,8 @@ Compare each candidate with the current accepted setting, then keep or reject it
 | DataDesigner buffering | Vary `buffer_size` | Half, current, and twice the accepted buffer size | Selected per-alias limits and `max_in_flight_tasks` |
 
 These sweeps are illustrative experiments, not recommended production settings or required ranges. Use positive integers for chunk and buffer sizes. Omit candidates that exceed provider quotas, model context limits, or the benchmark's resource budget. Stop at the first quality or stability failure rather than completing the sweep; if useful, test intermediate values between the last accepted setting and that failure. When moving beyond `8`, continue doubling only while the measured gains and stop conditions below justify it.
+
+Changing chunk size can move a row between full-document and excerpted validation context. Each chunk also repeats the full resolved label/example section, so smaller chunks can increase total input tokens and cost. Keep examples fixed during this sweep and recheck quality when the number of chunks changes. See [Chunked validation](concepts/detection.md#chunked-validation).
 
 `max_parallel_requests` applies per model alias. A validator pool's client-side admission limit is bounded by the sum of its alias limits, but provider quotas, routing, and shared backends may cap actual concurrency. Treat the sum as offered load, not guaranteed model capacity. Multiple aliases that point to the same backend do not create capacity, although they may expose capacity that was previously idle. See [Validator pools](concepts/models.md#validator-pools).
 
