@@ -62,6 +62,7 @@ from anonymizer.engine.schemas import (
     ValidatedDecisionSchema,
     ValidatedDecisionsSchema,
     ValidationCandidatesSchema,
+    ValidationChoice,
 )
 
 
@@ -150,6 +151,11 @@ def apply_validation_to_seed_entities(
         validation_output=row.get(COL_VALIDATED_ENTITIES, {}),
     )
     accepted_regex = _parse_entity_spans(row.get(COL_REGEX_ACCEPTED_ENTITIES, {}))
+    llm_validated_seed = _require_explicit_detector_acceptance_for_regex_duplicates(
+        llm_validated_seed,
+        accepted_regex=accepted_regex,
+        validation_output=row.get(COL_VALIDATED_ENTITIES, {}),
+    )
     regex_evidence = _validated_regex_evidence(row, accepted_regex=accepted_regex)
     accepted_regex = _admit_detection_candidates(
         accepted_regex,
@@ -256,6 +262,11 @@ def apply_validation_and_finalize(
         validation_output=row.get(COL_VALIDATED_ENTITIES, {}),
     )
     accepted_regex = _parse_entity_spans(row.get(COL_REGEX_ACCEPTED_ENTITIES, {}))
+    validated = _require_explicit_detector_acceptance_for_regex_duplicates(
+        validated,
+        accepted_regex=accepted_regex,
+        validation_output=row.get(COL_VALIDATED_ENTITIES, {}),
+    )
     regex_evidence = _validated_regex_evidence(row, accepted_regex=accepted_regex)
     accepted_regex = _admit_detection_candidates(
         accepted_regex,
@@ -325,6 +336,51 @@ def _validated_regex_evidence(
         and entity.end_position == original.end_position
     ]
     return [*accepted_regex, *surviving_evidence]
+
+
+def _require_explicit_detector_acceptance_for_regex_duplicates(
+    entities: list[EntitySpan],
+    *,
+    accepted_regex: list[EntitySpan],
+    validation_output: object,
+) -> list[EntitySpan]:
+    """Do not let an implicit detector keep broaden a directly accepted regex match.
+
+    Missing validation decisions retain their legacy implicit-keep behavior in
+    general. At this mixed-route boundary, however, a coincident detector
+    origin may grant document-wide occurrence propagation only after an
+    explicit ``keep`` or valid ``reclass`` decision. The directly accepted
+    regex route continues to protect its exact span when that decision is
+    omitted, null, malformed, or ``drop``.
+    """
+    if not accepted_regex:
+        return list(entities)
+
+    accepted_regex_identities = {
+        (normalize_label(entity.label), entity.start_position, entity.end_position) for entity in accepted_regex
+    }
+    decisions = ValidatedDecisionsSchema.from_raw(validation_output)
+    explicit_decisions: dict[str, ValidatedDecisionSchema] = {}
+    for decision in decisions.decisions:
+        if decision.id and decision.decision is not None:
+            explicit_decisions[decision.id] = decision
+    explicitly_accepted_ids: set[str] = set()
+    for entity_id, decision in explicit_decisions.items():
+        choice = decision.decision
+        if choice is ValidationChoice.keep or (
+            choice is ValidationChoice.reclass and bool(decision.proposed_label.strip())
+        ):
+            explicitly_accepted_ids.add(entity_id)
+
+    return [
+        entity
+        for entity in entities
+        if not (
+            entity_has_source_prefix(entity, "detector")
+            and (normalize_label(entity.label), entity.start_position, entity.end_position) in accepted_regex_identities
+            and entity.entity_id not in explicitly_accepted_ids
+        )
+    ]
 
 
 def _admit_detection_candidates(

@@ -292,7 +292,33 @@ def test_mixed_regex_and_detector_origin_preserves_occurrence_propagation(regex_
     assert replaced[COL_REPLACED_TEXT].iloc[0] == "allow:[REDACTED_TOKEN] deny:[REDACTED_TOKEN]"
 
 
-def test_dropped_duplicate_detector_does_not_expand_locally_accepted_regex() -> None:
+@pytest.mark.parametrize(
+    ("decisions", "expected_positions", "expected_text"),
+    [
+        (
+            [{"id": "token_6_9", "decision": "keep", "reason": "supported by context"}],
+            [(6, 9), (15, 18)],
+            "allow:[REDACTED_TOKEN] deny:[REDACTED_TOKEN]",
+        ),
+        (
+            [{"id": "token_6_9", "decision": "drop", "reason": "not supported by context"}],
+            [(6, 9)],
+            "allow:[REDACTED_TOKEN] deny:ABC",
+        ),
+        ([], [(6, 9)], "allow:[REDACTED_TOKEN] deny:ABC"),
+        (
+            [{"id": "token_6_9", "decision": None, "reason": "no answer"}],
+            [(6, 9)],
+            "allow:[REDACTED_TOKEN] deny:ABC",
+        ),
+    ],
+    ids=["keep", "drop", "omitted", "null"],
+)
+def test_direct_regex_duplicate_requires_explicit_detector_acceptance(
+    decisions: list[dict[str, Any]],
+    expected_positions: list[tuple[int, int]],
+    expected_text: str,
+) -> None:
     text = "allow:ABC deny:ABC"
     accepted = {
         "id": "token_6_9",
@@ -315,22 +341,45 @@ def test_dropped_duplicate_detector_does_not_expand_locally_accepted_regex() -> 
     parse_detected_entities(row)
     prepare_validation_inputs(row)
     assert [candidate["id"] for candidate in row[COL_SEED_VALIDATION_CANDIDATES]["candidates"]] == ["token_6_9"]
-    row[COL_VALIDATED_ENTITIES] = {
-        "decisions": [{"id": "token_6_9", "decision": "drop", "reason": "not supported by context"}]
-    }
+    row[COL_VALIDATED_ENTITIES] = {"decisions": decisions}
     apply_validation_to_seed_entities(row)
     merge_and_build_candidates(row)
     result = apply_validation_and_finalize(row)
 
     entities = result[COL_DETECTED_ENTITIES]["entities"]
-    assert [(entity["start_position"], entity["end_position"]) for entity in entities] == [(6, 9)]
-    assert entities[0]["source"] == "regex_user:user:token:v1"
+    assert [(entity["start_position"], entity["end_position"]) for entity in entities] == expected_positions
+    if decisions and decisions[0]["decision"] == "keep":
+        assert entities[0]["source"] == "regex_user:user:token:v1|detector"
+    else:
+        assert entities[0]["source"] == "regex_user:user:token:v1"
 
     replaced = apply_local_replace_strategy(
         pd.DataFrame({COL_TEXT: [text], COL_FINAL_ENTITIES: [result[COL_DETECTED_ENTITIES]]}),
         strategy=Redact(),
     )
-    assert replaced[COL_REPLACED_TEXT].iloc[0] == "allow:[REDACTED_TOKEN] deny:ABC"
+    assert replaced[COL_REPLACED_TEXT].iloc[0] == expected_text
+
+
+def test_missing_detector_decision_retains_legacy_propagation_without_direct_regex() -> None:
+    text = "allow:ABC deny:ABC"
+    row: dict[str, Any] = {
+        COL_TEXT: text,
+        COL_RAW_DETECTED: _raw([{"text": "ABC", "label": "token", "start": 6, "end": 9, "score": 0.9}]),
+        COL_REGEX_ENTITIES: {"entities": []},
+        COL_REGEX_ACCEPTED_ENTITIES: {"entities": []},
+        COL_AUGMENTED_ENTITIES: {"entities": []},
+    }
+
+    parse_detected_entities(row)
+    prepare_validation_inputs(row)
+    row[COL_VALIDATED_ENTITIES] = {"decisions": []}
+    apply_validation_to_seed_entities(row)
+    merge_and_build_candidates(row)
+    result = apply_validation_and_finalize(row)
+
+    assert [
+        (entity["start_position"], entity["end_position"]) for entity in result[COL_DETECTED_ENTITIES]["entities"]
+    ] == [(6, 9), (15, 18)]
 
 
 def test_regex_constrained_reclassification_cannot_expand_beyond_regex_evidence() -> None:
