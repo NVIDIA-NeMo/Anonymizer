@@ -462,6 +462,33 @@ def test_narrow_substitutions_and_rename_traces_retain_target_operation() -> Non
         assert renamed_substituted["body"] == renamed_replacement
 
 
+def test_ordinary_subgraph_accepts_component_wise_narrower_body() -> None:
+    body = reference._one(reference._p())
+    for operation in (
+        _object(body["interface"]),
+        _object(_object(_array(body["nodes"])[0])["operation"]),
+    ):
+        ok = next(_object(outcome) for outcome in _array(operation["outcomes"]) if _object(outcome)["name"] == "ok")
+        _object(ok["ceiling"])["max_activations"] = 0
+
+    wrapper = reference._wrap(reference._one(reference._p()))
+    wrapper_node = _object(_array(wrapper["nodes"])[0])
+    wrapper_node["body"] = reference._reowner_workflow(body, "W1")
+
+    wrapper_operation = _object(wrapper_node["operation"])
+    body_interface = _object(_object(wrapper_node["body"])["interface"])
+    wrapper_ok = next(
+        _object(outcome) for outcome in _array(wrapper_operation["outcomes"]) if _object(outcome)["name"] == "ok"
+    )
+    body_ok = next(
+        _object(outcome) for outcome in _array(body_interface["outcomes"]) if _object(outcome)["name"] == "ok"
+    )
+    assert _object(wrapper_ok["ceiling"])["max_activations"] == 1
+    assert _object(body_ok["ceiling"])["max_activations"] == 0
+    assert _object(reference.judge(body))["status"] == "accepted"
+    assert _object(reference.judge(wrapper))["status"] == "accepted"
+
+
 def _assert_symmetric(left: Object, right: Object, expected: bool) -> None:
     assert reference.independent(left, right) is expected
     assert reference.independent(right, left) is expected

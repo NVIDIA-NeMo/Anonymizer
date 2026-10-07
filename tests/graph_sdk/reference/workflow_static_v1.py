@@ -763,7 +763,7 @@ def _semantic_endpoint_code(declaration: Object) -> ValidationCode | None:
     return None
 
 
-def _contradictory(declaration: Object, *, narrow_subgraph: Object | None = None) -> bool:
+def _contradictory(declaration: Object) -> bool:
     nodes = {_id_label(node["id"]): node for node in _nodes(declaration)}
     interface = _obj(declaration["interface"])
     for binding in map(_obj, _list(declaration["input_bindings"])):
@@ -821,7 +821,7 @@ def _contradictory(declaration: Object, *, narrow_subgraph: Object | None = None
         if node["kind"] == "subgraph" and _incompatible_operation(
             _obj(node["operation"]),
             _obj(_obj(node["body"])["interface"]),
-            allow_narrow=node["id"] == narrow_subgraph,
+            allow_narrow=True,
         ):
             return True
     return False
@@ -868,7 +868,7 @@ def _protection(declaration: Object) -> tuple[list[str], list[Json]]:
     return sorted(eligible), _sorted(unmet)
 
 
-def _admission_code(declaration: Object, *, narrow_subgraph: Object | None = None) -> ValidationCode | None:
+def _admission_code(declaration: Object) -> ValidationCode | None:
     metrics = _metrics(declaration)
     limits = _obj(declaration["limits"])
     metric_map = {
@@ -895,7 +895,7 @@ def _admission_code(declaration: Object, *, narrow_subgraph: Object | None = Non
     cyclic, _ = _cycle_and_sinks(declaration)
     if cyclic:
         return "cycle"
-    if _contradictory(declaration, narrow_subgraph=narrow_subgraph):
+    if _contradictory(declaration):
         return "contradictory"
     return _semantic_endpoint_code(declaration)
 
@@ -934,7 +934,7 @@ def judge(declaration: Object, replacement: Object | None = None) -> Object:
                 code = "contradictory"
             else:
                 admitted = _substituted(declaration, target_node, replacement)
-                code = _admission_code(admitted, narrow_subgraph=target)
+                code = _admission_code(admitted)
     topology: Json = None
     if declaration.get("family_marker") == "topology":
         cyclic, sinks = _cycle_and_sinks(declaration)
