@@ -193,13 +193,103 @@ def test_membership_join_loop_subgraph_and_completion_are_derived() -> None:
     assert sub_entries["A0"]["status"] == "success"
 
 
+def test_subgraph_waits_for_every_body_root_and_nested_dynamic_obligation() -> None:
+    multi_root = reference._decl(
+        (
+            reference._seed("A0", role="subgraph"),
+            reference._seed("A1", "N1", parent="A0"),
+            reference._seed("A2", "N2", parent="A0"),
+        ),
+        required=("A0",),
+        subgraphs=({"parent": "A0", "roots": ["A1", "A2"], "sink": "A2"},),
+    )
+    sink_first = [
+        reference._event("initialize"),
+        reference._select("A0"),
+        reference._event("start", key="A0"),
+        reference._event("start", key="A2"),
+        reference._terminal("A2", "success", "ok"),
+    ]
+    partial = reference.reduce_trace(multi_root, sink_first)
+    partial_entries = {_object(value)["activation"]: _object(value) for value in _array(_state(partial)["entries"])}
+    assert partial_entries["A0"]["status"] == "running"
+    assert partial_entries["A1"]["status"] == "ready"
+    closed = reference.reduce_trace(
+        multi_root,
+        sink_first + [reference._event("start", key="A1"), reference._terminal("A1", "success", "ok")],
+    )
+    assert {_object(value)["activation"]: _object(value) for value in _array(_state(closed)["entries"])}["A0"][
+        "status"
+    ] == "success"
+
+    nested_dynamic = reference._decl(
+        (
+            reference._seed("A0", role="subgraph"),
+            reference._seed("A1", parent="A0", role="map_expander"),
+            reference._seed("A2", "N1", parent="A1", role="map_member"),
+            reference._seed("A3", "N2", parent="A0", role="join"),
+            reference._seed("A4", "N2", parent="A0"),
+        ),
+        required=("A0",),
+        subgraphs=({"parent": "A0", "roots": ["A1", "A3", "A4"], "sink": "A4"},),
+        aggregates=(
+            {
+                "accepted_categories": ["success"],
+                "bound": 1,
+                "expansion_outcomes": ["ok"],
+                "join": "A3",
+                "kind": "map",
+                "members": ["A2"],
+                "parent": "A1",
+            },
+        ),
+    )
+    nested_events = [
+        reference._event("initialize"),
+        reference._select("A0"),
+        reference._event("start", key="A0"),
+        reference._event("start", key="A1"),
+        reference._terminal("A1", "success", "ok"),
+        reference._event("membership_open", parent="A1", members=["A2"]),
+        reference._event("start", key="A2"),
+        reference._event("start", key="A4"),
+        reference._terminal("A4", "success", "ok"),
+    ]
+    nested = reference.reduce_trace(reference._spare(nested_dynamic, 3), nested_events)
+    nested_entries = {_object(value)["activation"]: _object(value) for value in _array(_state(nested)["entries"])}
+    assert nested_entries["A0"]["status"] == "running"
+    assert nested_entries["A2"]["status"] == "running"
+    nested_closed = reference.reduce_trace(
+        reference._spare(nested_dynamic, 3),
+        nested_events
+        + [
+            reference._terminal("A2", "success", "ok"),
+            reference._event("membership_close", parent="A1", members=["A2"]),
+            reference._event("start", key="A3"),
+            reference._terminal("A3", "success", "ok"),
+        ],
+    )
+    assert {_object(value)["activation"]: _object(value) for value in _array(_state(nested_closed)["entries"])}["A0"][
+        "status"
+    ] == "success"
+
+
 def test_loop_admission_uses_starter_initial_carry_and_iteration_order() -> None:
     positive = _case("loop/006/bound_2_executed_2_stop")
     events = [_object(value) for value in _array(positive["events"])]
     assert [event["key"] for event in events if event["kind"] == "start"] == ["A0", "A1", "A2"]
     assert _object(positive["expected"])["status"] == "accepted"
+    wrong_iteration = _case("loop/010/wrong_iteration")
+    wrong_events = cast(list[Object], wrong_iteration["events"])
+    assert reference.reduce_trace(_object(wrong_iteration["declaration"]), wrong_events[:-1])["status"] == "accepted"
+    positive_next = wrong_events[:-1] + [reference._event("start", key="A1")]
+    next_result = reference.reduce_trace(_object(wrong_iteration["declaration"]), positive_next)
+    assert next_result["status"] == "accepted"
+    assert {_object(value)["activation"]: _object(value) for value in _array(_state(next_result)["entries"])}["A1"][
+        "status"
+    ] == "running"
     for case_id, code in (
-        ("loop/010/wrong_iteration", "contradictory"),
+        ("loop/010/wrong_iteration", "missing"),
         ("loop/011/duplicate_iteration", "duplicate"),
         ("loop/012/foreign_iteration", "foreign_owner"),
         ("loop/014/terminal_gap", "missing"),
@@ -241,6 +331,34 @@ def test_membership_is_owned_bounded_monotone_duplicate_sensitive_and_conjunctiv
         for value in _array(_state(_object(open_case["expected"]))["entries"])
     }
     assert entries["A11"]["status"] == "unstarted"
+    overflow_with_ready_child = [
+        reference._event("initialize"),
+        reference._select("A0", "A11"),
+        reference._event("membership_open", parent="A0", members=["A1"]),
+        reference._event("start", key="A0"),
+        reference._terminal("A0", "success", "ok"),
+        reference._event("membership_overflow", parent="A0", observed_count=2),
+    ]
+    ready_overflow = reference.reduce_trace(reference._spare(declaration, 3), overflow_with_ready_child)
+    ready_entries = {
+        _object(value)["activation"]: _object(value) for value in _array(_state(ready_overflow)["entries"])
+    }
+    assert ready_entries["A1"]["status"] == "ready"
+    assert _state(ready_overflow)["complete"] is False
+    overflow_with_running_child = (
+        overflow_with_ready_child[:3] + [reference._event("start", key="A1")] + overflow_with_ready_child[3:]
+    )
+    overflow = reference.reduce_trace(reference._spare(declaration, 3), overflow_with_running_child)
+    overflow_state = _state(overflow)
+    assert _object(_array(overflow_state["expansions"])[0])["members"] == ["A1"]
+    assert overflow_state["complete"] is False
+    overflow_entries = {_object(value)["activation"]: _object(value) for value in _array(overflow_state["entries"])}
+    assert overflow_entries["A1"]["status"] == "running"
+    completed = reference.reduce_trace(
+        reference._spare(declaration, 3),
+        overflow_with_running_child + [reference._terminal("A1", "success", "ok")],
+    )
+    assert _state(completed)["complete"] is True
 
 
 def test_duplicate_sensitive_declaration_inputs_reject_before_canonicalization() -> None:
@@ -287,6 +405,11 @@ def test_initialization_precedence_and_event_parsing_are_boundary_local() -> Non
         {"kind": "start", "key": 7, "invocation": "I0"},
     ]
     assert reference.reduce_trace(_object(ordinary["declaration"]), events)["code"] == "missing"
+    exhausted = cast(list[Object], ordinary["events"])
+    malformed = exhausted + [{"kind": "start", "key": 7, "invocation": "I0"}]
+    assert reference.reduce_trace(_object(ordinary["declaration"]), malformed)["code"] == "invalid_type"
+    foreign = exhausted + [reference._event("start", key="A11", invocation="I1")]
+    assert reference.reduce_trace(_object(ordinary["declaration"]), foreign)["code"] == "limit_exceeded"
 
 
 def test_exact_depth_required_occurrences_and_prospective_capacity() -> None:
@@ -383,7 +506,7 @@ def test_manifest_counts_sources_and_provenance_are_actual() -> None:
     counts = _object(MANIFEST["counts"])
     assert counts == {
         "case_count": 206,
-        "event_count": 1941,
+        "event_count": 1944,
         "max_activations": 12,
         "max_dynamic_depth": 2,
         "max_loop_iterations": 3,

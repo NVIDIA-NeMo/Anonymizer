@@ -35,8 +35,8 @@ Code: TypeAlias = Literal[
 
 CONTRACT_SHA256 = "9f58d60ad4ecc25065cc6c74d784cd05ad6fb2a72f183a615122eb981c7b265b"
 CORPUS_PATH = "tests/graph_sdk/reference/activation_v1_cases.json"
-GENERATOR_VERSION = "workflow-activation-v1-generator-3"
-SELF_TEST_VERSION = "workflow-activation-v1-self-test-3"
+GENERATOR_VERSION = "workflow-activation-v1-generator-4"
+SELF_TEST_VERSION = "workflow-activation-v1-self-test-4"
 TEMPLATES = ("N0", "N1", "N2")
 INVOCATIONS = ("I0", "I1")
 ACTIVATIONS = tuple(f"A{i}" for i in range(12))
@@ -708,7 +708,13 @@ def _normalize(
                 changed = True
         for subgraph in declaration.subgraphs:
             parent, sink = entries.get(subgraph.parent), entries.get(subgraph.sink)
-            if parent and sink and parent.status == "running" and sink.status in TERMINAL:
+            if (
+                parent
+                and sink
+                and parent.status == "running"
+                and sink.status in TERMINAL
+                and _subgraph_body_closed(subgraph, entries, expansions, declaration)
+            ):
                 projected = next(
                     (
                         outcome
@@ -761,6 +767,57 @@ def _normalize(
                     entries[aggregate.join] = replace(
                         join, status="ready" if accepted else "blocked", category=None if accepted else "blocked"
                     )
+
+
+def _subgraph_body_closed(
+    subgraph: Subgraph,
+    entries: Mapping[str, Entry],
+    expansions: Mapping[str, Expansion],
+    declaration: Declaration,
+) -> bool:
+    seeds = {seed.key: seed for seed in declaration.seeds}
+
+    def belongs_to_body(key: str) -> bool:
+        current = seeds[key].parent
+        while current is not None:
+            if current == subgraph.parent:
+                return True
+            current = seeds[current].parent
+        return False
+
+    def selected_choice_member(key: str) -> bool:
+        memberships = [
+            (choice.selector, outcome)
+            for choice in declaration.choices
+            for outcome, members in choice.branches
+            if key in members
+        ]
+        return not memberships or any(
+            selector in entries and entries[selector].outcome == outcome for selector, outcome in memberships
+        )
+
+    required = {
+        seed.key
+        for seed in declaration.seeds
+        if belongs_to_body(seed.key)
+        and selected_choice_member(seed.key)
+        and (seed.role not in ("map_member", "loop_member") or seed.key in entries)
+    }
+    required.update((subgraph.sink, *subgraph.roots))
+    if not required <= entries.keys() or any(entries[key].status not in TERMINAL for key in required):
+        return False
+    for aggregate in declaration.aggregates:
+        parent = aggregate.parent if isinstance(aggregate, MapAggregate) else aggregate.starter
+        if parent not in entries or not belongs_to_body(parent):
+            continue
+        expansion = expansions.get(parent)
+        if expansion is None or expansion.status == "pending":
+            return False
+        if any(member not in entries or entries[member].status not in TERMINAL for member in expansion.members):
+            return False
+        if aggregate.join not in entries or entries[aggregate.join].status not in TERMINAL:
+            return False
+    return True
 
 
 def _materialize(key: str, entries: dict[str, Entry], declaration: Declaration) -> None:
@@ -941,7 +998,7 @@ def _apply(
         prior = expansions.get(event.parent)
         if prior and prior.status != "pending":
             raise Rejected("contradictory")
-        expansions[event.parent] = Expansion(event.parent, "overflow", frozenset())
+        expansions[event.parent] = Expansion(event.parent, "overflow", prior.members if prior else frozenset())
     _normalize(entries, expansions, outputs, declaration)
 
 
@@ -1056,9 +1113,16 @@ def reduce_trace(declaration: Mapping[str, Json], events: Sequence[Mapping[str, 
         outputs: set[str] = set()
         applied = 0
         for raw_event in events[1:]:
+            try:
+                event = parse_event(raw_event)
+            except Rejected as error:
+                if error.code in ("invalid_type", "invalid_value"):
+                    raise
+                if applied + 1 > facts.limits.max_events:
+                    raise Rejected("limit_exceeded") from None
+                raise
             if applied + 1 > facts.limits.max_events:
                 raise Rejected("limit_exceeded")
-            event = parse_event(raw_event)
             next_entries, next_expansions, next_outputs = dict(entries), dict(expansions), set(outputs)
             _apply(event, next_entries, next_expansions, next_outputs, facts)
             next_applied = applied + 1
@@ -1706,7 +1770,17 @@ def _loop_cases() -> Iterable[Object]:
                 _terminal("A1", "success", "again"),
             ],
         ),
-        ("wrong_iteration", declaration, [_event("initialize"), _select("A2")]),
+        (
+            "wrong_iteration",
+            declaration,
+            [
+                _event("initialize"),
+                _select("A0", "A11"),
+                _event("start", key="A0"),
+                _terminal("A0", "success", "again"),
+                _event("start", key="A2"),
+            ],
+        ),
         ("duplicate_iteration", declaration, [_event("initialize"), _select("A1", "A1")]),
         (
             "foreign_iteration",
