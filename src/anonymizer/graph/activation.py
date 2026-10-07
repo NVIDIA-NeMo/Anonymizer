@@ -94,8 +94,10 @@ class ExpansionEntry(_PrivateValue):
     status: ExpansionStatus
 
     def __post_init__(self) -> None:
-        if not isinstance(self.parent, ActivationKey) or not isinstance(self.members, frozenset) or any(
-            not isinstance(member, ActivationKey) for member in self.members
+        if (
+            not isinstance(self.parent, ActivationKey)
+            or not isinstance(self.members, frozenset)
+            or any(not isinstance(member, ActivationKey) for member in self.members)
         ):
             _reject(ValidationCode.INVALID_TYPE)
         if not isinstance(self.status, str):
@@ -129,7 +131,9 @@ class ActivationState(_PrivateValue):
     def __post_init__(self) -> None:
         if not isinstance(self.workflow, AdmittedActivationWorkflow) or not isinstance(self.invocation, InvocationId):
             _reject(ValidationCode.INVALID_TYPE)
-        if not isinstance(self.entries, frozenset) or any(not isinstance(item, ActivationEntry) for item in self.entries):
+        if not isinstance(self.entries, frozenset) or any(
+            not isinstance(item, ActivationEntry) for item in self.entries
+        ):
             _reject(ValidationCode.INVALID_TYPE)
         if not isinstance(self.expansions, frozenset) or any(
             not isinstance(item, ExpansionEntry) for item in self.expansions
@@ -151,9 +155,7 @@ class ActivationState(_PrivateValue):
             or len(reservation_keys) != len(set(reservation_keys))
         ):
             _reject(ValidationCode.DUPLICATE)
-        if any(
-            key.invocation != self.invocation for key in (*entry_keys, *expansion_keys, *reservation_keys)
-        ):
+        if any(key.invocation != self.invocation for key in (*entry_keys, *expansion_keys, *reservation_keys)):
             _reject(ValidationCode.FOREIGN_OWNER)
         reservations = _seed_map(self.reservations)
         if any(
@@ -184,8 +186,10 @@ class ActivationState(_PrivateValue):
             dynamic_member = any(seed.template == item.member for item in (*scope.maps, *scope.loops))
             if key.parent is None and not choice_member and not dynamic_member:
                 required.add(key)
-            if key.parent is not None and key.parent in entries and isinstance(
-                _node(self.workflow, entries[key.parent].template), SubgraphNode
+            if (
+                key.parent is not None
+                and key.parent in entries
+                and isinstance(_node(self.workflow, entries[key.parent].template), SubgraphNode)
             ):
                 if not choice_member and not dynamic_member:
                     required.add(key)
@@ -241,11 +245,17 @@ class ObserveTerminal(_PrivateValue):
     category: OutcomeClass
 
     def __post_init__(self) -> None:
-        if not isinstance(self.activation, ActivationKey) or (self.outcome is not None and not isinstance(self.outcome, str)):
+        if not isinstance(self.activation, ActivationKey) or (
+            self.outcome is not None and not isinstance(self.outcome, str)
+        ):
             _reject(ValidationCode.INVALID_TYPE)
         if not isinstance(self.category, str):
             _reject(ValidationCode.INVALID_TYPE)
-        if self.category not in _CATEGORIES or self.outcome == "" or (self.outcome is None and self.category == "success"):
+        if (
+            self.category not in _CATEGORIES
+            or self.outcome == ""
+            or (self.outcome is None and self.category == "success")
+        ):
             _reject(ValidationCode.INVALID_VALUE)
 
 
@@ -268,9 +278,12 @@ class ObserveMembership(_PrivateValue):
     closed: bool
 
     def __post_init__(self) -> None:
-        if not isinstance(self.parent, ActivationKey) or not isinstance(self.members, frozenset) or any(
-            not isinstance(item, ActivationKey) for item in self.members
-        ) or not isinstance(self.closed, bool):
+        if (
+            not isinstance(self.parent, ActivationKey)
+            or not isinstance(self.members, frozenset)
+            or any(not isinstance(item, ActivationKey) for item in self.members)
+            or not isinstance(self.closed, bool)
+        ):
             _reject(ValidationCode.INVALID_TYPE)
 
 
@@ -420,7 +433,9 @@ def initialize_activation(
         _reject(ValidationCode.LIMIT_EXCEEDED)
     if len(reservations) > limits.max_entries:
         _reject(ValidationCode.LIMIT_EXCEEDED)
-    map_expanders = sum(_map_for(_scope_for(workflow, seed.template), seed.template) is not None for seed in reservations)
+    map_expanders = sum(
+        _map_for(_scope_for(workflow, seed.template), seed.template) is not None for seed in reservations
+    )
     if limits.max_events < 3 * len(reservations) + map_expanders:
         _reject(ValidationCode.LIMIT_EXCEEDED)
     return ActivationState(
@@ -436,11 +451,18 @@ def initialize_activation(
 
 def _context(seed: ActivationSeed, scope: DynamicScope) -> ActivationKey | None:
     dynamic_member = any(seed.template == item.member for item in (*scope.maps, *scope.loops))
-    return seed.activation.parent.parent if dynamic_member and seed.activation.parent is not None else seed.activation.parent
+    return (
+        seed.activation.parent.parent
+        if dynamic_member and seed.activation.parent is not None
+        else seed.activation.parent
+    )
 
 
 def _reservation_for(
-    reservations: dict[ActivationKey, ActivationSeed], template: NodeId, context: ActivationKey | None, iteration: int | None = None
+    reservations: dict[ActivationKey, ActivationSeed],
+    template: NodeId,
+    context: ActivationKey | None,
+    iteration: int | None = None,
 ) -> ActivationSeed | None:
     candidates = [
         seed
@@ -464,9 +486,7 @@ def _produces(workflow: AdmittedActivationWorkflow, entry: ActivationEntry, port
     return any(outcome.name == entry.outcome and port in outcome.produced_ports for outcome in node.operation.outcomes)
 
 
-def _initial_values_available(
-    workflow: AdmittedActivationWorkflow, entry: ActivationEntry, loop: LoopDecl
-) -> bool:
+def _initial_values_available(workflow: AdmittedActivationWorkflow, entry: ActivationEntry, loop: LoopDecl) -> bool:
     return all(
         not isinstance(binding.source, NodeOutputRef)
         or binding.source.node != entry.template
@@ -535,7 +555,9 @@ def _normalize(
                 expansions[entry.activation] = ExpansionEntry(
                     parent=entry.activation,
                     members=frozenset(
-                        key for key, seed in reservations.items() if seed.template == loop.member and key in entries and key.parent == entry.activation
+                        key
+                        for key, seed in reservations.items()
+                        if seed.template == loop.member and key in entries and key.parent == entry.activation
                     ),
                     status=status,
                 )
@@ -643,7 +665,9 @@ def _normalize(
                         missing_prior = True
                     else:
                         prior_entries.append(prior)
-                bindings = [binding for binding in scope.workflow.input_bindings if binding.destination.node == entry.template]
+                bindings = [
+                    binding for binding in scope.workflow.input_bindings if binding.destination.node == entry.template
+                ]
                 impossible = False
                 inputs_ready = True
                 for binding in bindings:
@@ -684,7 +708,11 @@ def _normalize(
             outcome = sink.outcome
             if outcome is not None:
                 binding = next(
-                    (binding for binding in node.body.outcome_bindings if binding.source.node == sink.template and binding.source.outcome == outcome),
+                    (
+                        binding
+                        for binding in node.body.outcome_bindings
+                        if binding.source.node == sink.template and binding.source.outcome == outcome
+                    ),
                     None,
                 )
                 outcome = binding.destination.outcome if binding is not None else outcome
@@ -693,7 +721,9 @@ def _normalize(
 
 
 def _completion_reserve(
-    state: ActivationState, entries: dict[ActivationKey, ActivationEntry], expansions: dict[ActivationKey, ExpansionEntry]
+    state: ActivationState,
+    entries: dict[ActivationKey, ActivationEntry],
+    expansions: dict[ActivationKey, ExpansionEntry],
 ) -> int:
     reservations = _seed_map(state.reservations)
     reserve = 3 * len(set(reservations) - set(entries))

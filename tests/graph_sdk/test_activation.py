@@ -272,13 +272,42 @@ def test_closed_map_join_is_conjunctive_over_every_child() -> None:
             *(ActivationSeed(template=member, activation=key) for key in child_keys),
         }
     )
-    state = initialize_activation(
-        workflow=dynamic,
-        invocation=invocation,
-        reservations=seeds,
-        limits=ActivationLimits(max_events=13, max_entries=4, max_parent_depth=2),
-    )
     fixed = frozenset(seed for seed in seeds if seed.template in {expander, join})
+
+    def initialized():
+        return initialize_activation(
+            workflow=dynamic,
+            invocation=invocation,
+            reservations=seeds,
+            limits=ActivationLimits(max_events=13, max_entries=4, max_parent_depth=2),
+        )
+
+    failed_empty = advance_activation(state=initialized(), event=Select(seeds=fixed))
+    failed_empty = advance_activation(state=failed_empty, event=Start(activation=expander_key))
+    failed_empty = advance_activation(
+        state=failed_empty,
+        event=ObserveTerminal(activation=expander_key, outcome="fail", category="failure"),
+    )
+    assert next(iter(failed_empty.expansions)) == next(
+        expansion for expansion in failed_empty.expansions if expansion.status == "failed" and not expansion.members
+    )
+    assert next(entry for entry in failed_empty.entries if entry.activation == join_key).status == "blocked"
+
+    failed_partial = advance_activation(state=initialized(), event=Select(seeds=fixed))
+    failed_partial = advance_activation(
+        state=failed_partial,
+        event=ObserveMembership(parent=expander_key, members=frozenset({child_keys[0]}), closed=False),
+    )
+    failed_partial = advance_activation(state=failed_partial, event=Start(activation=expander_key))
+    failed_partial = advance_activation(
+        state=failed_partial,
+        event=ObserveTerminal(activation=expander_key, outcome=None, category="lost"),
+    )
+    partial_expansion = next(iter(failed_partial.expansions))
+    assert (partial_expansion.status, partial_expansion.members) == ("failed", frozenset({child_keys[0]}))
+    assert next(entry for entry in failed_partial.entries if entry.activation == join_key).status == "blocked"
+
+    state = initialized()
     state = advance_activation(state=state, event=Select(seeds=fixed))
     state = advance_activation(state=state, event=Start(activation=expander_key))
     state = advance_activation(
@@ -698,3 +727,11 @@ def test_nested_two_by_two_map_loop_reserves_twelve_distinct_keys() -> None:
         limits=ActivationLimits(max_events=37, max_entries=12, max_parent_depth=4),
     )
     assert len(state.reservations) == 12
+    with pytest.raises(ContractViolation) as raised:
+        initialize_activation(
+            workflow=workflow,
+            invocation=invocation,
+            reservations=frozenset(seeds),
+            limits=ActivationLimits(max_events=37, max_entries=12, max_parent_depth=3),
+        )
+    assert raised.value.code is ValidationCode.LIMIT_EXCEEDED
