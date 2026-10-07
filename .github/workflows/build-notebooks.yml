@@ -22,7 +22,7 @@ jobs:
       - name: Set up Python
         run: uv python install 3.11
       - name: Cache pinned GLiNER2 model
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ~/.cache/huggingface/hub
