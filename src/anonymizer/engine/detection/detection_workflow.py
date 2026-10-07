@@ -295,6 +295,7 @@ class EntityDetectionWorkflow:
                     name=COL_SEED_ENTITIES_JSON,
                     operation=DetectionTransformOperation.APPLY_VALIDATION_TO_SEED_ENTITIES,
                     excluded_entity_labels=list(excluded_entity_labels or []),
+                    allowed_entity_labels=labels if label_config.strict_labels else None,
                     regex_constrained_entity_labels=sorted(regex_constrained_labels),
                 ),
                 _PrivatePromptLLMStructuredColumnConfig(
@@ -320,6 +321,7 @@ class EntityDetectionWorkflow:
                     name=COL_MERGED_ENTITIES,
                     operation=DetectionTransformOperation.MERGE_AND_BUILD_CANDIDATES,
                     excluded_entity_labels=list(excluded_entity_labels or []),
+                    allowed_entity_labels=labels if label_config.strict_labels else None,
                     regex_constrained_entity_labels=sorted(regex_constrained_labels),
                     propagate_skip=False,
                 ),

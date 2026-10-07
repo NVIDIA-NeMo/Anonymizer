@@ -49,11 +49,11 @@ from anonymizer.engine.detection.postprocess import (
     enforce_regex_constrained_evidence,
     entity_has_source_prefix,
     expand_entity_occurrences,
+    filter_allowed_entity_spans,
     filter_excluded_entity_spans,
     get_tag_notation,
     merge_entity_sources,
     normalize_label,
-    normalize_labels,
     parse_raw_entities,
 )
 from anonymizer.engine.schemas import (
@@ -97,6 +97,7 @@ def merge_and_build_candidates(
     row: dict[str, Any],
     *,
     excluded_entity_labels: list[str] | None = None,
+    allowed_entity_labels: list[str] | None = None,
     regex_constrained_entity_labels: list[str] | None = None,
 ) -> dict[str, Any]:
     """Merge validated seed + augmented entities, then build tagged text and validation candidates.
@@ -112,6 +113,7 @@ def merge_and_build_candidates(
         entities=seed_spans,
         augmented_output=row.get(COL_AUGMENTED_ENTITIES, {}),
         excluded_entity_labels=set(excluded_entity_labels or []),
+        allowed_entity_labels=None if allowed_entity_labels is None else set(allowed_entity_labels),
         regex_constrained_entity_labels=set(regex_constrained_entity_labels or []),
     )
     merged_entities = [entity.as_dict() for entity in merged]
@@ -137,9 +139,10 @@ def apply_validation_to_seed_entities(
     row: dict[str, Any],
     *,
     excluded_entity_labels: list[str] | None = None,
+    allowed_entity_labels: list[str] | None = None,
     regex_constrained_entity_labels: list[str] | None = None,
 ) -> dict[str, Any]:
-    """Apply validation decisions to detector entities before augmentation."""
+    """Apply validation decisions and admit eligible entities before overlap resolution."""
     text = str(row.get(COL_TEXT, ""))
     seed_spans = _parse_entity_spans(row.get(COL_SEED_ENTITIES, {}))
     llm_validated_seed = apply_validation_decisions(
@@ -147,14 +150,22 @@ def apply_validation_to_seed_entities(
         validation_output=row.get(COL_VALIDATED_ENTITIES, {}),
     )
     accepted_regex = _parse_entity_spans(row.get(COL_REGEX_ACCEPTED_ENTITIES, {}))
-    validated_seed = _merge_detection_routes(accepted_regex, llm_validated_seed)
     regex_evidence = _validated_regex_evidence(row, accepted_regex=accepted_regex)
-    validated_seed = enforce_regex_constrained_evidence(
-        validated_seed,
+    accepted_regex = _admit_detection_candidates(
+        accepted_regex,
+        excluded_entity_labels=excluded_entity_labels,
+        allowed_entity_labels=allowed_entity_labels,
         regex_constrained_entity_labels=regex_constrained_entity_labels,
         regex_evidence=regex_evidence,
     )
-    validated_seed = filter_excluded_entity_spans(validated_seed, excluded_entity_labels)
+    llm_validated_seed = _admit_detection_candidates(
+        llm_validated_seed,
+        excluded_entity_labels=excluded_entity_labels,
+        allowed_entity_labels=allowed_entity_labels,
+        regex_constrained_entity_labels=regex_constrained_entity_labels,
+        regex_evidence=regex_evidence,
+    )
+    validated_seed = _merge_detection_routes(accepted_regex, llm_validated_seed)
     seed_entities = [entity.as_dict() for entity in validated_seed]
     row[COL_VALIDATED_SEED_ENTITIES] = EntitiesSchema(entities=seed_entities).model_dump(mode="json")
     row[COL_SEED_ENTITIES_JSON] = json.dumps(seed_entities)
@@ -245,17 +256,22 @@ def apply_validation_and_finalize(
         validation_output=row.get(COL_VALIDATED_ENTITIES, {}),
     )
     accepted_regex = _parse_entity_spans(row.get(COL_REGEX_ACCEPTED_ENTITIES, {}))
-    protected = _merge_detection_routes(accepted_regex, validated)
     regex_evidence = _validated_regex_evidence(row, accepted_regex=accepted_regex)
-    protected = enforce_regex_constrained_evidence(
-        protected,
+    accepted_regex = _admit_detection_candidates(
+        accepted_regex,
+        excluded_entity_labels=excluded_entity_labels,
+        allowed_entity_labels=allowed_entity_labels,
         regex_constrained_entity_labels=regex_constrained_entity_labels,
         regex_evidence=regex_evidence,
     )
-    if allowed_entity_labels is not None:
-        allowed = normalize_labels(allowed_entity_labels)
-        protected = [entity for entity in protected if normalize_label(entity.label) in allowed]
-    protected = filter_excluded_entity_spans(protected, excluded_entity_labels)
+    validated = _admit_detection_candidates(
+        validated,
+        excluded_entity_labels=excluded_entity_labels,
+        allowed_entity_labels=allowed_entity_labels,
+        regex_constrained_entity_labels=regex_constrained_entity_labels,
+        regex_evidence=regex_evidence,
+    )
+    protected = _merge_detection_routes(accepted_regex, validated)
     expanded = expand_entity_occurrences(text=text, entities=protected)
     row[COL_DETECTED_ENTITIES] = EntitiesSchema(entities=[entity.as_dict() for entity in expanded]).model_dump(
         mode="json"
@@ -309,6 +325,24 @@ def _validated_regex_evidence(
         and entity.end_position == original.end_position
     ]
     return [*accepted_regex, *surviving_evidence]
+
+
+def _admit_detection_candidates(
+    entities: list[EntitySpan],
+    *,
+    excluded_entity_labels: list[str] | None,
+    allowed_entity_labels: list[str] | None,
+    regex_constrained_entity_labels: list[str] | None,
+    regex_evidence: list[EntitySpan],
+) -> list[EntitySpan]:
+    """Apply every eligibility gate before destructive overlap resolution."""
+    admitted = enforce_regex_constrained_evidence(
+        entities,
+        regex_constrained_entity_labels=regex_constrained_entity_labels,
+        regex_evidence=regex_evidence,
+    )
+    admitted = filter_allowed_entity_spans(admitted, allowed_entity_labels)
+    return filter_excluded_entity_spans(admitted, excluded_entity_labels)
 
 
 def _merge_detection_routes(*routes: list[EntitySpan]) -> list[EntitySpan]:

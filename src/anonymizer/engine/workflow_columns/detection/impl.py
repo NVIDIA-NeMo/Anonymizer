@@ -118,12 +118,14 @@ class DetectionTransformGenerator(ColumnGeneratorCellByCell[DetectionTransformCo
             return apply_validation_to_seed_entities(
                 data,
                 excluded_entity_labels=self.config.excluded_entity_labels,
+                allowed_entity_labels=self.config.allowed_entity_labels,
                 regex_constrained_entity_labels=self.config.regex_constrained_entity_labels,
             )
         if operation == DetectionTransformOperation.MERGE_AND_BUILD_CANDIDATES:
             return merge_and_build_candidates(
                 data,
                 excluded_entity_labels=self.config.excluded_entity_labels,
+                allowed_entity_labels=self.config.allowed_entity_labels,
                 regex_constrained_entity_labels=self.config.regex_constrained_entity_labels,
             )
         if operation == DetectionTransformOperation.APPLY_VALIDATION_AND_FINALIZE:

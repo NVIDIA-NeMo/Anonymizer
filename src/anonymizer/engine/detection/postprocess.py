@@ -72,6 +72,21 @@ def filter_excluded_entity_spans(
     return [entity for entity in entities if normalize_label(entity.label) not in excluded]
 
 
+def filter_allowed_entity_spans(
+    entities: list[EntitySpan],
+    allowed_entity_labels: Iterable[str] | None,
+) -> list[EntitySpan]:
+    """Keep only spans in an explicit normalized label set.
+
+    ``None`` means that label scope is not strict. An explicitly empty
+    collection permits no entities.
+    """
+    if allowed_entity_labels is None:
+        return list(entities)
+    allowed = normalize_labels(allowed_entity_labels)
+    return [entity for entity in entities if normalize_label(entity.label) in allowed]
+
+
 def enforce_regex_constrained_evidence(
     entities: list[EntitySpan],
     *,
@@ -281,24 +296,33 @@ def apply_augmented_entities(
     entities: list[EntitySpan],
     augmented_output: dict | str,
     excluded_entity_labels: set[str] | None = None,
+    allowed_entity_labels: set[str] | None = None,
     regex_constrained_entity_labels: set[str] | None = None,
 ) -> list[EntitySpan]:
-    """Add allowed augmented entities, split full names, and resolve overlaps."""
+    """Add admissible augmented entities, split full names, and resolve overlaps."""
     payload = _safe_json_loads(augmented_output) if isinstance(augmented_output, str) else augmented_output
     augmented = payload.get("entities", []) if isinstance(payload, dict) else []
     if not isinstance(augmented, list):
         augmented = []
     excluded = normalize_labels(excluded_entity_labels)
+    allowed = None if allowed_entity_labels is None else normalize_labels(allowed_entity_labels)
     regex_constrained = normalize_labels(regex_constrained_entity_labels)
     excluded_from_augmentation = excluded | regex_constrained
 
-    merged = filter_excluded_entity_spans(entities, excluded)
+    merged = filter_allowed_entity_spans(entities, allowed)
+    merged = filter_excluded_entity_spans(merged, excluded)
     for idx, suggestion in enumerate(augmented):
         if not isinstance(suggestion, dict):
             continue
         value = str(suggestion.get("value", "")).strip()
         label = str(suggestion.get("label", "")).strip()
-        if not value or not label or normalize_label(label) in excluded_from_augmentation:
+        normalized_label = normalize_label(label)
+        if (
+            not value
+            or not label
+            or normalized_label in excluded_from_augmentation
+            or (allowed is not None and normalized_label not in allowed)
+        ):
             continue
         for start, end in _find_all_occurrences(text=text, needle=value):
             entity_id = _build_entity_id(label=label, start=start, end=end)
@@ -319,6 +343,7 @@ def apply_augmented_entities(
         entities=merged,
         regex_constrained_entity_labels=regex_constrained,
     )
+    merged = filter_allowed_entity_spans(merged, allowed)
     return resolve_overlaps(merged)
 
 

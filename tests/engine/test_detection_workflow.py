@@ -1013,8 +1013,10 @@ def test_regex_constrained_label_is_removed_from_additional_detection_routes(
     assert regex_config.rules[0].validate_matches_with_llm is True
     assert regex_config.rules[0].detect_additional_matches is False
     assert parse_config.excluded_entity_labels == ["ticket"]
+    assert seed_validation_config.allowed_entity_labels == ["ticket", "email"]
     assert seed_validation_config.regex_constrained_entity_labels == ["ticket"]
     assert merge_config.excluded_entity_labels == []
+    assert merge_config.allowed_entity_labels == ["ticket", "email"]
     assert merge_config.regex_constrained_entity_labels == ["ticket"]
     assert finalize_config.regex_constrained_entity_labels == ["ticket"]
     validation_config = _find_column(columns, COL_VALIDATION_DECISIONS)

@@ -380,6 +380,164 @@ def test_regex_constrained_reclassification_cannot_expand_beyond_regex_evidence(
     assert replaced[COL_REPLACED_TEXT].iloc[0] == "allow:[REDACTED_TICKET] deny:ABC"
 
 
+def test_ineligible_longer_reclassification_cannot_suppress_valid_regex_match() -> None:
+    text = "ABC-123"
+    accepted = {
+        "id": "ticket_4_7",
+        "value": "123",
+        "label": "ticket",
+        "start_position": 4,
+        "end_position": 7,
+        "score": 1.0,
+        "source": "regex_user:user:ticket:v1",
+        "propagate_occurrences": False,
+    }
+    row: dict[str, Any] = {
+        COL_TEXT: text,
+        COL_RAW_DETECTED: _raw([{"text": text, "label": "identifier", "start": 0, "end": 7, "score": 0.9}]),
+        COL_REGEX_ENTITIES: {"entities": []},
+        COL_REGEX_ACCEPTED_ENTITIES: {"entities": [accepted]},
+        COL_AUGMENTED_ENTITIES: {"entities": []},
+    }
+
+    parse_detected_entities(row, excluded_entity_labels=["ticket"])
+    prepare_validation_inputs(row)
+    row[COL_VALIDATED_ENTITIES] = {
+        "decisions": [
+            {
+                "id": "identifier_0_7",
+                "decision": "reclass",
+                "proposed_label": "ticket",
+                "reason": "looks like a ticket",
+            }
+        ]
+    }
+    apply_validation_to_seed_entities(row, regex_constrained_entity_labels=["ticket"])
+    merge_and_build_candidates(row, regex_constrained_entity_labels=["ticket"])
+    result = apply_validation_and_finalize(row, regex_constrained_entity_labels=["ticket"])
+
+    assert result[COL_DETECTED_ENTITIES]["entities"] == [accepted]
+    replaced = apply_local_replace_strategy(
+        pd.DataFrame({COL_TEXT: [text], COL_FINAL_ENTITIES: [result[COL_DETECTED_ENTITIES]]}),
+        strategy=Redact(),
+    )
+    assert replaced[COL_REPLACED_TEXT].iloc[0] == "ABC-[REDACTED_TICKET]"
+
+
+def test_excluded_longer_reclassification_cannot_suppress_valid_regex_match() -> None:
+    text = "ABC-123"
+    accepted = {
+        "id": "ticket_4_7",
+        "value": "123",
+        "label": "ticket",
+        "start_position": 4,
+        "end_position": 7,
+        "score": 1.0,
+        "source": "regex_user:user:ticket:v1",
+        "propagate_occurrences": False,
+    }
+    row: dict[str, Any] = {
+        COL_TEXT: text,
+        COL_SEED_ENTITIES: {
+            "entities": [
+                {
+                    "id": "identifier_0_7",
+                    "value": text,
+                    "label": "identifier",
+                    "start_position": 0,
+                    "end_position": 7,
+                    "score": 0.9,
+                    "source": "detector",
+                }
+            ]
+        },
+        COL_VALIDATED_ENTITIES: {
+            "decisions": [
+                {
+                    "id": "identifier_0_7",
+                    "decision": "reclass",
+                    "proposed_label": "city",
+                    "reason": "model output",
+                }
+            ]
+        },
+        COL_REGEX_ENTITIES: {"entities": []},
+        COL_REGEX_ACCEPTED_ENTITIES: {"entities": [accepted]},
+    }
+
+    result = apply_validation_to_seed_entities(row, excluded_entity_labels=["city"])
+
+    assert result[COL_VALIDATED_SEED_ENTITIES]["entities"] == [accepted]
+
+
+def test_disallowed_longer_reclassification_cannot_suppress_allowed_regex_match() -> None:
+    text = "ABC-123"
+    accepted = {
+        "id": "ticket_4_7",
+        "value": "123",
+        "label": "ticket",
+        "start_position": 4,
+        "end_position": 7,
+        "score": 1.0,
+        "source": "regex_user:user:ticket:v1",
+        "propagate_occurrences": False,
+    }
+    row: dict[str, Any] = {
+        COL_TEXT: text,
+        COL_SEED_ENTITIES: {
+            "entities": [
+                {
+                    "id": "identifier_0_7",
+                    "value": text,
+                    "label": "identifier",
+                    "start_position": 0,
+                    "end_position": 7,
+                    "score": 0.9,
+                    "source": "detector",
+                }
+            ]
+        },
+        COL_VALIDATED_ENTITIES: {
+            "decisions": [
+                {
+                    "id": "identifier_0_7",
+                    "decision": "reclass",
+                    "proposed_label": "city",
+                    "reason": "model output",
+                }
+            ]
+        },
+        COL_REGEX_ENTITIES: {"entities": []},
+        COL_REGEX_ACCEPTED_ENTITIES: {"entities": [accepted]},
+    }
+
+    result = apply_validation_to_seed_entities(row, allowed_entity_labels=["ticket"])
+
+    assert result[COL_VALIDATED_SEED_ENTITIES]["entities"] == [accepted]
+
+
+def test_disallowed_longer_augmentation_cannot_suppress_allowed_seed_match() -> None:
+    accepted = {
+        "id": "ticket_4_7",
+        "value": "123",
+        "label": "ticket",
+        "start_position": 4,
+        "end_position": 7,
+        "score": 1.0,
+        "source": "regex_user:user:ticket:v1",
+        "propagate_occurrences": False,
+    }
+    row: dict[str, Any] = {
+        COL_TEXT: "ABC-123",
+        COL_VALIDATED_SEED_ENTITIES: {"entities": [accepted]},
+        COL_AUGMENTED_ENTITIES: {"entities": [{"value": "ABC-123", "label": "city"}]},
+    }
+
+    result = merge_and_build_candidates(row, allowed_entity_labels=["ticket"])
+
+    assert result[COL_MERGED_ENTITIES]["entities"] == [accepted]
+
+
 def test_regex_candidate_bypassing_llm_survives_a_drop_decision() -> None:
     entity = {
         "id": "email_6_23",

@@ -125,8 +125,10 @@ def test_detection_builder_round_trips_through_native_data_designer_config(tmp_p
         if DetectionTransformOperation(column.operation) == DetectionTransformOperation.PARSE_DETECTED_ENTITIES
     )
     assert seed_validation_transform.excluded_entity_labels == ["email"]
+    assert seed_validation_transform.allowed_entity_labels == ["first_name"]
     assert seed_validation_transform.regex_constrained_entity_labels == []
     assert merge_transform.excluded_entity_labels == ["email"]
+    assert merge_transform.allowed_entity_labels == ["first_name"]
     assert merge_transform.regex_constrained_entity_labels == []
     assert finalize_transform.excluded_entity_labels == ["email"]
     assert finalize_transform.allowed_entity_labels == ["first_name"]
