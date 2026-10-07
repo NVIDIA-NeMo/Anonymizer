@@ -93,6 +93,150 @@ def test_decoded_fixture_structure_is_runtime_validated() -> None:
         data_v1._parse_cases([malformed])
 
 
+def test_loader_rejects_unknown_operation() -> None:
+    malformed = _mutable_case_with_event("declare_datum(id,text)")
+    _mutable_trace(malformed)[0]["op"] = "bogus_operation"
+    _assert_loader_rejects(malformed)
+
+
+def test_loader_rejects_datum_event_missing_value() -> None:
+    malformed = _mutable_case_with_event("declare_datum(id,text)")
+    del _mutable_trace(malformed)[0]["value"]
+    _assert_loader_rejects(malformed)
+
+
+def test_loader_rejects_datum_event_with_unrelated_kind() -> None:
+    malformed = _mutable_case_with_event("declare_datum(id,text)")
+    _mutable_trace(malformed)[0]["kind"] = "contexts"
+    _assert_loader_rejects(malformed)
+
+
+def test_loader_rejects_unknown_relation_kind() -> None:
+    malformed = _mutable_case_with_event("add_relation(kind,value)")
+    event = next(event for event in _mutable_trace(malformed) if event["op"] == "add_relation(kind,value)")
+    event["kind"] = "unknown_relation"
+    _assert_loader_rejects(malformed)
+
+
+@pytest.mark.parametrize("operation", ["close_declaration", "validate"])
+def test_loader_rejects_payload_on_control_event(operation: str) -> None:
+    malformed = _mutable_case_with_event("declare_datum(id,text)")
+    event = next(event for event in _mutable_trace(malformed) if event["op"] == operation)
+    event["value"] = None
+    _assert_loader_rejects(malformed)
+
+
+def test_loader_rejects_mixed_data_and_record_alphabets() -> None:
+    data_case = _mutable_case_with_event("declare_datum(id,text)")
+    data_trace = data_v1._as_list(data_case["trace"])
+    data_trace[0] = {
+        "op": "declare_record_fact(kind,value)",
+        "kind": "invocation",
+        "value": "I",
+    }
+    _assert_loader_rejects(data_case)
+
+    record_case = _mutable_case_with_event("declare_record_fact(kind,value)")
+    record_trace = data_v1._as_list(record_case["trace"])
+    record_trace[0] = {
+        "op": "declare_datum(id,text)",
+        "value": {"id": ["local", 0], "text": "x"},
+    }
+    _assert_loader_rejects(record_case)
+
+
+@pytest.mark.parametrize(
+    "order",
+    [
+        ("validate", "close_declaration"),
+        ("close_declaration", "close_declaration"),
+    ],
+)
+def test_loader_rejects_invalid_close_validate_order(order: tuple[str, str]) -> None:
+    malformed = _mutable_case_with_event("declare_datum(id,text)")
+    trace = data_v1._as_list(malformed["trace"])
+    trace[-2:] = [{"op": operation} for operation in order]
+    _assert_loader_rejects(malformed)
+
+
+def test_loader_rejects_malformed_operation_specific_envelope() -> None:
+    malformed = _mutable_case_with_event("add_relation(kind,value)")
+    event = next(event for event in _mutable_trace(malformed) if event["op"] == "add_relation(kind,value)")
+    event["value"] = {"target": ["local", 0]}
+    _assert_loader_rejects(malformed)
+
+
+def test_loader_rejects_malformed_nested_datum_declaration() -> None:
+    malformed = _mutable_case_with_event("declare_datum(id,text)")
+    declaration = _mutable_declaration(malformed)
+    datum = data_v1._as_object(data_v1._as_list(declaration["datums"])[0])
+    del datum["text"]
+    _assert_loader_rejects(malformed)
+
+
+def test_loader_rejects_malformed_nested_relation_declaration() -> None:
+    malformed = _mutable_case_with_event("add_relation(kind,value)")
+    declaration = _mutable_declaration(malformed)
+    relation_kind = next(key for key in data_v1.RELATION_KEYS if data_v1._as_list(declaration[key]))
+    relation = data_v1._as_object(data_v1._as_list(declaration[relation_kind])[0])
+    del relation[next(iter(data_v1.RELATION_FIELDS[relation_kind]))]
+    _assert_loader_rejects(malformed)
+
+
+def test_loader_rejects_unknown_result_code() -> None:
+    malformed = json.loads(json.dumps(next(case for case in FROZEN_CASES if case["expected"]["verdict"] == "reject")))
+    data_v1._as_object(malformed["expected"])["code"] = "unknown_code"
+    _assert_loader_rejects(malformed)
+
+
+def test_loader_rejects_unknown_family_and_record_dispatch_tag() -> None:
+    unknown_family = _mutable_case_with_event("declare_datum(id,text)")
+    unknown_family["family"] = "unknown_family"
+    _assert_loader_rejects(unknown_family)
+
+    unknown_boundary = _mutable_case_with_event("declare_record_fact(kind,value)")
+    _mutable_declaration(unknown_boundary)["boundary"] = "unknown_boundary"
+    _assert_loader_rejects(unknown_boundary)
+
+
+def test_loader_rejects_record_fact_outside_constructor_boundary() -> None:
+    malformed = _mutable_case_with_event("declare_record_fact(kind,value)")
+    _mutable_trace(malformed)[0]["kind"] = "statuses"
+    _assert_loader_rejects(malformed)
+
+
+def test_loader_accepts_every_event_variant_and_semantic_invalid_values() -> None:
+    operations = {event["op"] for case in FROZEN_CASES for event in case["trace"]}
+    assert operations == {
+        "declare_datum(id,text)",
+        "select_target(id)",
+        "add_relation(kind,value)",
+        "declare_record_fact(kind,value)",
+        "close_declaration",
+        "validate",
+    }
+    relation_kinds = {
+        event["kind"] for case in FROZEN_CASES for event in case["trace"] if event["op"] == "add_relation(kind,value)"
+    }
+    assert relation_kinds == set(data_v1.RELATION_KEYS)
+    record_boundaries = {
+        case["declaration"]["boundary"] for case in FROZEN_CASES if case["declaration"]["kind"] == "record"
+    }
+    assert record_boundaries == set(data_v1.RECORD_FACT_KEYS)
+    semantic_invalid_labels = (
+        "unknown-terminal-category",
+        "unknown-reason",
+        "unknown-completion",
+        "unknown-qualification",
+        "activation-bool-occurrence",
+        "explicit-zero",
+        "foreign_invocation",
+    )
+    for label in semantic_invalid_labels:
+        case = _find(label, verdict="reject")
+        assert data_v1._parse_cases(json.loads(json.dumps([case]))) == (case,)
+
+
 def test_alphabet_is_exact_and_traces_close_before_validation() -> None:
     static = set(data_v1.STATIC_ALPHABET)
     record = set(data_v1.RECORD_ALPHABET)
@@ -138,29 +282,29 @@ def test_independence_classification_is_symmetric_and_contract_derived() -> None
     limits["max_declarations"] = 10
     limits["max_group_members"] = 10
     datum_0, datum_1, target_0, target_1, coherence, atomic = data_v1._make_trace(declaration)[:6]
-    context_0: data_v1.TraceEvent = {
+    context_0: data_v1.RelationAdditionEvent = {
         "op": "add_relation(kind,value)",
         "kind": "contexts",
         "value": data_v1._context_json((("local", 0), ("local", 1), 0, 1)),
     }
-    context_1: data_v1.TraceEvent = {
+    context_1: data_v1.RelationAdditionEvent = {
         "op": "add_relation(kind,value)",
         "kind": "contexts",
         "value": data_v1._context_json((("local", 1), ("local", 0), 0, 1)),
     }
-    source_0: data_v1.TraceEvent = {
+    source_0: data_v1.RelationAdditionEvent = {
         "op": "add_relation(kind,value)",
         "kind": "source_relations",
         "value": data_v1._source_json((("local", 0), ("local", 1), 0, 1)),
     }
     source_1 = deepcopy(source_0)
     source_1["value"] = data_v1._source_json((("local", 0), ("local", 0), 0, 1))
-    region_0: data_v1.TraceEvent = {
+    region_0: data_v1.RelationAdditionEvent = {
         "op": "add_relation(kind,value)",
         "kind": "output_regions",
         "value": data_v1._region_json((("local", 0), ("local", 0), 0, 1)),
     }
-    region_1: data_v1.TraceEvent = {
+    region_1: data_v1.RelationAdditionEvent = {
         "op": "add_relation(kind,value)",
         "kind": "output_regions",
         "value": data_v1._region_json((("local", 1), ("local", 0), 0, 1)),
@@ -542,6 +686,24 @@ def _rejected_result(case: data_v1.FixtureCase) -> data_v1.RejectResult:
     if expected["verdict"] != "reject":
         raise AssertionError(f"expected rejected fixture: {case['case_id']}")
     return expected
+
+
+def _mutable_case_with_event(operation: str) -> data_v1.JsonObject:
+    case = next(item for item in FROZEN_CASES if any(event["op"] == operation for event in item["trace"]))
+    return data_v1._as_object(json.loads(json.dumps(case)))
+
+
+def _mutable_trace(case: data_v1.JsonObject) -> list[data_v1.JsonObject]:
+    return [data_v1._as_object(event) for event in data_v1._as_list(case["trace"])]
+
+
+def _mutable_declaration(case: data_v1.JsonObject) -> data_v1.JsonObject:
+    return data_v1._as_object(case["declaration"])
+
+
+def _assert_loader_rejects(case: data_v1.JsonObject) -> None:
+    with pytest.raises(ValueError, match="invalid JSON fixture structure"):
+        data_v1._parse_cases([case])
 
 
 def _has_context_cycle(case: data_v1.FixtureCase) -> bool:

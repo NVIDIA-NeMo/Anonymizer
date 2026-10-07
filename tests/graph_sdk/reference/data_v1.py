@@ -8,34 +8,183 @@ import itertools
 import json
 from collections.abc import Iterable, Iterator, Mapping, Sequence
 from copy import deepcopy
-from typing import Literal, NotRequired, TypeAlias, TypedDict, cast
+from typing import Literal, TypeAlias, TypedDict, cast
 
 JsonScalar: TypeAlias = str | int | bool | None
 JsonValue: TypeAlias = JsonScalar | list["JsonValue"] | dict[str, "JsonValue"]
 JsonObject: TypeAlias = dict[str, JsonValue]
 Ref: TypeAlias = tuple[str, int]
+ValidationCode: TypeAlias = Literal[
+    "invalid_type",
+    "invalid_value",
+    "limit_exceeded",
+    "foreign_owner",
+    "duplicate",
+    "missing",
+    "invalid_range",
+    "overlap",
+    "cycle",
+    "contradictory",
+]
+Family: TypeAlias = Literal[
+    "identity",
+    "context",
+    "dependency",
+    "groups",
+    "ranges",
+    "relation-separation",
+    "ownership-negatives",
+    "encoding-bounds",
+    "precedence",
+    "record",
+    "record-precedence",
+]
+RelationKind: TypeAlias = Literal[
+    "source_relations",
+    "contexts",
+    "dependencies",
+    "coherence",
+    "atomic",
+    "output_regions",
+]
+RecordBoundary: TypeAlias = Literal[
+    "activation",
+    "artifact",
+    "absence",
+    "evidence",
+    "membership",
+    "terminal",
+    "status",
+    "canonical",
+]
+RecordFactKind: TypeAlias = Literal[
+    "invocation",
+    "occurrence",
+    "parent",
+    "iteration",
+    "key",
+    "version",
+    "query",
+    "scope_revision",
+    "artifact",
+    "consumed",
+    "members",
+    "closed",
+    "activation",
+    "attempt",
+    "category",
+    "reasons",
+    "target",
+    "completion",
+    "qualification",
+    "artifact_available",
+    "protection_available",
+    "plan",
+    "invocation_plan",
+    "graph",
+    "targets",
+    "memberships",
+    "terminals",
+    "artifacts",
+    "evidence",
+    "statuses",
+]
 
 
-class TraceEvent(TypedDict):
-    """One JSON-compatible declaration-trace event."""
+class DatumEnvelope(TypedDict):
+    """Syntactic datum declaration; field values remain semantic inputs."""
 
-    op: str
-    kind: NotRequired[str]
-    value: NotRequired[JsonValue]
+    id: JsonValue
+    text: JsonValue
+
+
+class SourceRelationEnvelope(TypedDict):
+    derived: JsonValue
+    source: JsonValue
+    start: JsonValue
+    end: JsonValue
+
+
+class ContextEnvelope(TypedDict):
+    target: JsonValue
+    source: JsonValue
+    start: JsonValue
+    end: JsonValue
+
+
+class DependencyEnvelope(TypedDict):
+    prerequisite: JsonValue
+    dependent: JsonValue
+
+
+class GroupEnvelope(TypedDict):
+    members: JsonValue
+
+
+class OutputRegionEnvelope(TypedDict):
+    target: JsonValue
+    source: JsonValue
+    start: JsonValue
+    end: JsonValue
+
+
+RelationEnvelope: TypeAlias = (
+    SourceRelationEnvelope | ContextEnvelope | DependencyEnvelope | GroupEnvelope | OutputRegionEnvelope
+)
+
+
+class DatumDeclarationEvent(TypedDict):
+    op: Literal["declare_datum(id,text)"]
+    value: DatumEnvelope
+
+
+class TargetSelectionEvent(TypedDict):
+    op: Literal["select_target(id)"]
+    value: JsonValue
+
+
+class RelationAdditionEvent(TypedDict):
+    op: Literal["add_relation(kind,value)"]
+    kind: RelationKind
+    value: RelationEnvelope
+
+
+class RecordFactDeclarationEvent(TypedDict):
+    op: Literal["declare_record_fact(kind,value)"]
+    kind: RecordFactKind
+    value: JsonValue
+
+
+class CloseDeclarationEvent(TypedDict):
+    op: Literal["close_declaration"]
+
+
+class ValidateEvent(TypedDict):
+    op: Literal["validate"]
+
+
+TraceEvent: TypeAlias = (
+    DatumDeclarationEvent
+    | TargetSelectionEvent
+    | RelationAdditionEvent
+    | RecordFactDeclarationEvent
+    | CloseDeclarationEvent
+    | ValidateEvent
+)
 
 
 class DataDeclaration(TypedDict):
     """Neutral static data-graph declaration fixture."""
 
     kind: Literal["data"]
-    datums: list[JsonValue]
+    datums: list[DatumEnvelope]
     targets: list[JsonValue]
-    source_relations: list[JsonValue]
-    contexts: list[JsonValue]
-    dependencies: list[JsonValue]
-    coherence: list[JsonValue]
-    atomic: list[JsonValue]
-    output_regions: list[JsonValue]
+    source_relations: list[SourceRelationEnvelope]
+    contexts: list[ContextEnvelope]
+    dependencies: list[DependencyEnvelope]
+    coherence: list[GroupEnvelope]
+    atomic: list[GroupEnvelope]
+    output_regions: list[OutputRegionEnvelope]
     limits: JsonObject
 
 
@@ -43,7 +192,7 @@ class RecordDeclaration(TypedDict):
     """Neutral canonical-record constructor fixture."""
 
     kind: Literal["record"]
-    boundary: str
+    boundary: RecordBoundary
     facts: JsonObject
 
 
@@ -57,7 +206,7 @@ class AcceptResult(TypedDict):
 
 class RejectResult(TypedDict):
     verdict: Literal["reject"]
-    code: str
+    code: ValidationCode
 
 
 ValidationResult: TypeAlias = AcceptResult | RejectResult
@@ -71,7 +220,7 @@ class FixtureCase(TypedDict):
     """One fully described finite reference fixture."""
 
     case_id: str
-    family: str
+    family: Family
     declaration: Declaration
     expected: ValidationResult
     trace: list[TraceEvent]
@@ -89,7 +238,7 @@ RECORD_ALPHABET = (
     "close_declaration",
     "validate",
 )
-RELATION_KEYS = (
+RELATION_KEYS: tuple[RelationKind, ...] = (
     "source_relations",
     "contexts",
     "dependencies",
@@ -105,10 +254,64 @@ LIMIT_KEYS = (
     "max_group_members",
 )
 RENAME = {0: 7, 1: 5, 2: 9, 3: 11}
+FAMILIES: tuple[Family, ...] = (
+    "identity",
+    "context",
+    "dependency",
+    "groups",
+    "ranges",
+    "relation-separation",
+    "ownership-negatives",
+    "encoding-bounds",
+    "precedence",
+    "record",
+    "record-precedence",
+)
+VALIDATION_CODES: tuple[ValidationCode, ...] = (
+    "invalid_type",
+    "invalid_value",
+    "limit_exceeded",
+    "foreign_owner",
+    "duplicate",
+    "missing",
+    "invalid_range",
+    "overlap",
+    "cycle",
+    "contradictory",
+)
+RECORD_FACT_KEYS: dict[RecordBoundary, tuple[RecordFactKind, ...]] = {
+    "activation": ("invocation", "occurrence", "parent", "iteration"),
+    "artifact": ("invocation", "key", "version"),
+    "absence": ("invocation", "query", "scope_revision"),
+    "evidence": ("artifact", "consumed"),
+    "membership": ("invocation", "parent", "members", "closed"),
+    "terminal": ("activation", "attempt", "category", "reasons"),
+    "status": ("target", "completion", "qualification", "artifact_available", "protection_available"),
+    "canonical": (
+        "plan",
+        "invocation",
+        "invocation_plan",
+        "graph",
+        "targets",
+        "memberships",
+        "terminals",
+        "artifacts",
+        "evidence",
+        "statuses",
+    ),
+}
+RELATION_FIELDS: dict[RelationKind, tuple[str, ...]] = {
+    "source_relations": ("derived", "source", "start", "end"),
+    "contexts": ("target", "source", "start", "end"),
+    "dependencies": ("prerequisite", "dependent"),
+    "coherence": ("members",),
+    "atomic": ("members",),
+    "output_regions": ("target", "source", "start", "end"),
+}
 
 
 class _Reject(Exception):
-    def __init__(self, code: str) -> None:
+    def __init__(self, code: ValidationCode) -> None:
         self.code = code
 
 
@@ -138,6 +341,7 @@ def generate_cases() -> tuple[FixtureCase, ...]:
     """Enumerate the complete finite v1 domain in stable order."""
     cases: list[FixtureCase] = []
     for family, declaration, label in _base_cases():
+        typed_family = _family(family)
         declarations = _limit_cases(declaration) if declaration.get("kind") == "data" else [(declaration, label)]
         for limited, suffix in declarations:
             variants = _data_variants(limited) if limited.get("kind") == "data" else [limited]
@@ -150,7 +354,7 @@ def generate_cases() -> tuple[FixtureCase, ...]:
                 cases.append(
                     {
                         "case_id": case_id,
-                        "family": family,
+                        "family": typed_family,
                         "declaration": typed_declaration,
                         "expected": expected,
                         "trace": _make_trace(variant),
@@ -168,11 +372,12 @@ def _parse_cases(value: object) -> tuple[FixtureCase, ...]:
         for raw_case in value:
             _require_json_value(raw_case)
             case = _as_object(raw_case)
+            _require_fields(case, ("case_id", "family", "declaration", "expected", "trace"))
             case_id = _string(case.get("case_id"))
-            family = _string(case.get("family"))
+            family = _family(case.get("family"))
             declaration = _parse_declaration(case.get("declaration"))
             expected = _parse_validation_result(case.get("expected"))
-            trace = _parse_trace(case.get("trace"))
+            trace = _parse_trace(case.get("trace"), declaration)
             cases.append(
                 {
                     "case_id": case_id,
@@ -205,13 +410,25 @@ def _parse_declaration(value: JsonValue | object) -> Declaration:
     declaration = _as_object(value)
     kind = declaration.get("kind")
     if kind == "data":
-        for key in ("datums", "targets", *RELATION_KEYS):
-            _as_list(declaration.get(key))
-        _as_object(declaration.get("limits"))
+        _require_fields(declaration, ("kind", "datums", "targets", *RELATION_KEYS, "limits"))
+        for raw_datum in _as_list(declaration.get("datums")):
+            _parse_datum_envelope(raw_datum)
+        for raw_target in _as_list(declaration.get("targets")):
+            _parse_ref_envelope(raw_target)
+        for relation_kind in RELATION_KEYS:
+            for raw_relation in _as_list(declaration.get(relation_kind)):
+                _parse_relation_envelope(relation_kind, raw_relation)
+        limits = _as_object(declaration.get("limits"))
+        _require_fields(limits, LIMIT_KEYS)
+        # The cast is safe after the complete envelope grammar above. Scalar
+        # values intentionally remain unvalidated for the semantic oracle.
         return cast(DataDeclaration, declaration)
     if kind == "record":
-        _string(declaration.get("boundary"))
-        _as_object(declaration.get("facts"))
+        _require_fields(declaration, ("kind", "boundary", "facts"))
+        boundary = _record_boundary(declaration.get("boundary"))
+        facts = _as_object(declaration.get("facts"))
+        _require_fields(facts, RECORD_FACT_KEYS[boundary])
+        # The boundary tag selects and validates the exact fact envelope.
         return cast(RecordDeclaration, declaration)
     raise _Reject("invalid_value")
 
@@ -223,23 +440,138 @@ def _case_input(declaration: JsonObject | Declaration) -> CaseInput:
 def _parse_validation_result(value: JsonValue | object) -> ValidationResult:
     result = _as_object(value)
     if result.get("verdict") == "accept":
+        _require_fields(result, ("verdict", "normalized"))
         _as_object(result.get("normalized"))
         return cast(AcceptResult, result)
     if result.get("verdict") == "reject":
-        _string(result.get("code"))
+        _require_fields(result, ("verdict", "code"))
+        _validation_code(result.get("code"))
         return cast(RejectResult, result)
     raise _Reject("invalid_value")
 
 
-def _parse_trace(value: JsonValue | object) -> list[TraceEvent]:
+def _parse_trace(value: JsonValue | object, declaration: Declaration) -> list[TraceEvent]:
+    raw_trace = _as_list(value)
+    if len(raw_trace) < 2:
+        raise _Reject("invalid_value")
     trace: list[TraceEvent] = []
-    for raw_event in _as_list(value):
+    for index, raw_event in enumerate(raw_trace):
         event = _as_object(raw_event)
-        _string(event.get("op"))
-        if "kind" in event:
-            _string(event["kind"])
-        trace.append(cast(TraceEvent, event))
+        operation = _string(event.get("op"))
+        if index == len(raw_trace) - 2:
+            if operation != "close_declaration":
+                raise _Reject("invalid_value")
+            _require_fields(event, ("op",))
+            trace.append(cast(CloseDeclarationEvent, event))
+            continue
+        if index == len(raw_trace) - 1:
+            if operation != "validate":
+                raise _Reject("invalid_value")
+            _require_fields(event, ("op",))
+            trace.append(cast(ValidateEvent, event))
+            continue
+        if declaration["kind"] == "data":
+            trace.append(_parse_data_event(event, operation))
+        else:
+            trace.append(_parse_record_event(event, operation, declaration["boundary"]))
+    replayed = _replay_trace_parts(declaration, trace)
+    if replayed != declaration:
+        raise _Reject("invalid_value")
+    if declaration["kind"] == "record":
+        fact_kinds = [event["kind"] for event in trace[:-2] if event["op"] == "declare_record_fact(kind,value)"]
+        if len(fact_kinds) != len(set(fact_kinds)):
+            raise _Reject("invalid_value")
     return trace
+
+
+def _parse_data_event(event: JsonObject, operation: str) -> TraceEvent:
+    if operation == "declare_datum(id,text)":
+        _require_fields(event, ("op", "value"))
+        _parse_datum_envelope(event["value"])
+        return cast(DatumDeclarationEvent, event)
+    if operation == "select_target(id)":
+        _require_fields(event, ("op", "value"))
+        _parse_ref_envelope(event["value"])
+        return cast(TargetSelectionEvent, event)
+    if operation == "add_relation(kind,value)":
+        _require_fields(event, ("op", "kind", "value"))
+        relation_kind = _relation_kind(event["kind"])
+        _parse_relation_envelope(relation_kind, event["value"])
+        return cast(RelationAdditionEvent, event)
+    raise _Reject("invalid_value")
+
+
+def _parse_record_event(event: JsonObject, operation: str, boundary: RecordBoundary) -> TraceEvent:
+    if operation != "declare_record_fact(kind,value)":
+        raise _Reject("invalid_value")
+    _require_fields(event, ("op", "kind", "value"))
+    fact_kind = _record_fact_kind(event["kind"])
+    if fact_kind not in RECORD_FACT_KEYS[boundary]:
+        raise _Reject("invalid_value")
+    return cast(RecordFactDeclarationEvent, event)
+
+
+def _parse_datum_envelope(value: JsonValue | object) -> DatumEnvelope:
+    datum = _as_object(value)
+    _require_fields(datum, ("id", "text"))
+    _parse_ref_envelope(datum["id"])
+    return cast(DatumEnvelope, datum)
+
+
+def _parse_relation_envelope(kind: RelationKind, value: JsonValue | object) -> RelationEnvelope:
+    relation = _as_object(value)
+    _require_fields(relation, RELATION_FIELDS[kind])
+    ref_fields = {
+        "source_relations": ("derived", "source"),
+        "contexts": ("target", "source"),
+        "dependencies": ("prerequisite", "dependent"),
+        "output_regions": ("target", "source"),
+    }
+    if kind in ("coherence", "atomic"):
+        for member in _as_list(relation["members"]):
+            _parse_ref_envelope(member)
+    else:
+        for field in ref_fields[kind]:
+            _parse_ref_envelope(relation[field])
+    return cast(RelationEnvelope, relation)
+
+
+def _parse_ref_envelope(value: JsonValue | object) -> None:
+    if len(_as_list(value)) != 2:
+        raise _Reject("invalid_value")
+
+
+def _require_fields(value: JsonObject, required: Sequence[str]) -> None:
+    if set(value) != set(required):
+        raise _Reject("invalid_value")
+
+
+def _closed_string(value: JsonValue | object, allowed: tuple[str, ...]) -> str:
+    parsed = _string(value)
+    if parsed not in allowed:
+        raise _Reject("invalid_value")
+    return parsed
+
+
+def _family(value: JsonValue | object) -> Family:
+    return cast(Family, _closed_string(value, FAMILIES))
+
+
+def _relation_kind(value: JsonValue | object) -> RelationKind:
+    return cast(RelationKind, _closed_string(value, RELATION_KEYS))
+
+
+def _record_boundary(value: JsonValue | object) -> RecordBoundary:
+    return cast(RecordBoundary, _closed_string(value, tuple(RECORD_FACT_KEYS)))
+
+
+def _record_fact_kind(value: JsonValue | object) -> RecordFactKind:
+    allowed = tuple(dict.fromkeys(key for keys in RECORD_FACT_KEYS.values() for key in keys))
+    return cast(RecordFactKind, _closed_string(value, allowed))
+
+
+def _validation_code(value: JsonValue | object) -> ValidationCode:
+    return cast(ValidationCode, _closed_string(value, VALIDATION_CODES))
 
 
 def _as_object(value: object) -> JsonObject:
@@ -385,27 +717,27 @@ def _validate_data(declaration: JsonObject) -> JsonObject:
     }
 
 
-def _parse_source(value: JsonValue) -> tuple[Ref, Ref, int, int]:
+def _parse_source(value: object) -> tuple[Ref, Ref, int, int]:
     item = _as_object(value)
     return _ref(item.get("derived")), _ref(item.get("source")), _offset(item.get("start")), _offset(item.get("end"))
 
 
-def _parse_context(value: JsonValue) -> tuple[Ref, Ref, int, int]:
+def _parse_context(value: object) -> tuple[Ref, Ref, int, int]:
     item = _as_object(value)
     return _ref(item.get("target")), _ref(item.get("source")), _offset(item.get("start")), _offset(item.get("end"))
 
 
-def _parse_dependency(value: JsonValue) -> tuple[Ref, Ref]:
+def _parse_dependency(value: object) -> tuple[Ref, Ref]:
     item = _as_object(value)
     return _ref(item.get("prerequisite")), _ref(item.get("dependent"))
 
 
-def _parse_group(value: JsonValue) -> tuple[Ref, ...]:
+def _parse_group(value: object) -> tuple[Ref, ...]:
     item = _as_object(value)
     return tuple(_ref(member) for member in _as_list(item.get("members")))
 
 
-def _parse_region(value: JsonValue) -> tuple[Ref, Ref, int, int]:
+def _parse_region(value: object) -> tuple[Ref, Ref, int, int]:
     item = _as_object(value)
     return _ref(item.get("target")), _ref(item.get("source")), _offset(item.get("start")), _offset(item.get("end"))
 
@@ -553,23 +885,23 @@ def _normalize_groups(targets: set[Ref], groups: Sequence[tuple[Ref, ...]]) -> s
     return normalized
 
 
-def _datum_json(identifier: Ref, text: str) -> JsonObject:
+def _datum_json(identifier: Ref, text: str) -> DatumEnvelope:
     return {"id": _json_ref(identifier), "text": text}
 
 
-def _source_json(value: tuple[Ref, Ref, int, int]) -> JsonObject:
+def _source_json(value: tuple[Ref, Ref, int, int]) -> SourceRelationEnvelope:
     return {"derived": _json_ref(value[0]), "source": _json_ref(value[1]), "start": value[2], "end": value[3]}
 
 
-def _context_json(value: tuple[Ref, Ref, int, int]) -> JsonObject:
+def _context_json(value: tuple[Ref, Ref, int, int]) -> ContextEnvelope:
     return {"target": _json_ref(value[0]), "source": _json_ref(value[1]), "start": value[2], "end": value[3]}
 
 
-def _dependency_json(value: tuple[Ref, Ref]) -> JsonObject:
+def _dependency_json(value: tuple[Ref, Ref]) -> DependencyEnvelope:
     return {"prerequisite": _json_ref(value[0]), "dependent": _json_ref(value[1])}
 
 
-def _region_json(value: tuple[Ref, Ref, int, int]) -> JsonObject:
+def _region_json(value: tuple[Ref, Ref, int, int]) -> OutputRegionEnvelope:
     return {"target": _json_ref(value[0]), "source": _json_ref(value[1]), "start": value[2], "end": value[3]}
 
 
@@ -902,7 +1234,7 @@ def _partitions(items: tuple[Ref, ...]) -> tuple[tuple[tuple[Ref, ...], ...], ..
     return tuple(sorted(unique))
 
 
-def _group_json(members: Iterable[Ref]) -> JsonObject:
+def _group_json(members: Iterable[Ref]) -> GroupEnvelope:
     return {"members": [_json_ref(member) for member in members]}
 
 
@@ -1027,7 +1359,7 @@ def _separation_cases() -> Iterator[tuple[str, JsonObject, str]]:
     declaration["dependencies"] = [_dependency_json((targets[0], targets[1]))]
     yield "relation-separation", declaration, "dependency"
     declaration = deepcopy(declaration)
-    cast(list[JsonValue], declaration["dependencies"]).append(_dependency_json((targets[1], targets[0])))
+    cast(list[DependencyEnvelope], declaration["dependencies"]).append(_dependency_json((targets[1], targets[0])))
     yield "relation-separation", declaration, "dependency-cycle"
 
 
@@ -1546,24 +1878,35 @@ def _rename_declaration(declaration: JsonObject) -> JsonObject:
 
 def _make_trace(declaration: JsonObject | Declaration) -> list[TraceEvent]:
     raw_declaration = _as_object(declaration)
-    trace: list[TraceEvent]
+    trace: list[TraceEvent] = []
     if raw_declaration.get("kind") == "record":
         facts = _as_object(raw_declaration["facts"])
-        trace = [
-            {"op": "declare_record_fact(kind,value)", "kind": key, "value": deepcopy(value)}
-            for key, value in facts.items()
-        ]
+        for key, value in facts.items():
+            trace.append(
+                RecordFactDeclarationEvent(
+                    op="declare_record_fact(kind,value)",
+                    kind=_record_fact_kind(key),
+                    value=deepcopy(value),
+                )
+            )
     else:
-        trace = []
         for datum in _as_list(raw_declaration["datums"]):
-            trace.append({"op": "declare_datum(id,text)", "value": deepcopy(datum)})
+            trace.append(
+                DatumDeclarationEvent(op="declare_datum(id,text)", value=_parse_datum_envelope(deepcopy(datum)))
+            )
         for target in _as_list(raw_declaration["targets"]):
-            trace.append({"op": "select_target(id)", "value": deepcopy(target)})
+            trace.append(TargetSelectionEvent(op="select_target(id)", value=deepcopy(target)))
         for key in RELATION_KEYS:
             for relation in _as_list(raw_declaration[key]):
-                trace.append({"op": "add_relation(kind,value)", "kind": key, "value": deepcopy(relation)})
-    trace.append({"op": "close_declaration"})
-    trace.append({"op": "validate"})
+                trace.append(
+                    RelationAdditionEvent(
+                        op="add_relation(kind,value)",
+                        kind=key,
+                        value=_parse_relation_envelope(key, deepcopy(relation)),
+                    )
+                )
+    trace.append(CloseDeclarationEvent(op="close_declaration"))
+    trace.append(ValidateEvent(op="validate"))
     return trace
 
 
@@ -1734,8 +2077,13 @@ def _independence_witnesses(cases: Sequence[FixtureCase]) -> Iterator[tuple[Fixt
 
 
 def _replay_trace(case: FixtureCase, trace: Sequence[TraceEvent]) -> JsonObject:
-    original = _as_object(case["declaration"])
-    if original.get("kind") == "record":
+    return _replay_trace_parts(case["declaration"], trace)
+
+
+def _replay_trace_parts(declaration: Declaration, trace: Sequence[TraceEvent]) -> JsonObject:
+    """Rebuild a declaration from an already grammar-checked trace."""
+    original = _as_object(declaration)
+    if declaration["kind"] == "record":
         facts: JsonObject = {}
         for raw_event in trace[:-2]:
             event = _as_object(raw_event)

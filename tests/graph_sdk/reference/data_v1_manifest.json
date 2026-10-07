@@ -6,8 +6,8 @@
   "normative_semantics_sha256": "60c30d29a80251505c884a3faffc3dfd02ca3f2c2dc55c478cbc5a4dc0600ee1",
   "reference_spec_sha256": "f98ab1ca38328b9b3a25b03843e4f34eadc840a71d78c0c797ae85279f56720f",
   "corpus_sha256": "ddb99182c635000ef36df1ee4def274214636d32ba8e9ec02c7a078737b39374",
-  "generator_sha256": "c97c888947e099b73eac0f6ac3ad8c32a140540c9b72b84f6f1bca758523b7bc",
-  "self_test_sha256": "9313f76ed6f21bb5644c1e6a7f16004456c908e548e1c3017e1fb9ff7b40da54",
+  "generator_sha256": "d6a69f6ec16c4bfa8a522811fe7639e1f49752e16c65291aeb447d14ed36ca5c",
+  "self_test_sha256": "3ed5391d97eda505a448a7ad60a1e518822c576920725c3c765cb10a2726f2e1",
   "python": {
     "implementation": "CPython",
     "version": "3.11.14"
