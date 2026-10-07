@@ -95,6 +95,7 @@ class Vllm(FrozenModel):
 
     python_executable: str = Field(default=".venv/bin/python", min_length=1)
     served_model_name: str | None = Field(default=None, min_length=1)
+    reasoning_parser: str | None = Field(default=None, min_length=1)
     api_key_env: str | None = Field(default=None, min_length=1)
     tensor_parallel_size: int | None = Field(default=None, ge=1)
     gpu_memory_utilization: float | None = Field(default=None, gt=0, le=1)

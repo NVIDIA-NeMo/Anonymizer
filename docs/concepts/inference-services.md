@@ -38,6 +38,20 @@ vLLM. The two detector profiles use the pinned external
 [vLLM Factory](https://github.com/latenceainew/vllm-factory) integration and
 Anonymizer's OpenAI-compatible detector adapter.
 
+The generation profiles select vLLM reasoning parsers through
+`[vllm].reasoning_parser`: `openai_gptoss` for GPT-OSS, `nemotron_v3` for
+Nemotron, and `gemma4` for Gemma. These parsers separate reasoning from the
+answer and allow JSON-schema constraints to apply to the answer after
+reasoning ends. The Qwen3 Instruct profile supports only non-thinking mode
+and does not set a reasoning parser.
+Recompile saved plans after updating the tool or changing a profile.
+
+GPT-OSS clients set `reasoning_effort` at the top level of each chat-completion
+request, for example `reasoning_effort="low"` in the OpenAI client. Putting
+this field inside `chat_template_kwargs` does not control GPT-OSS effort.
+The readiness probe requests low effort; this does not set a default for
+subsequent client requests.
+
 The Gemma profile uses the instruction-tuned
 [`google/gemma-4-12B-it`](https://huggingface.co/google/gemma-4-12B-it)
 checkpoint and bounds its larger native context window to 8,192 tokens. The
@@ -83,7 +97,7 @@ The v2 profile schema has four sections:
 
 - `[task]` selects generation or entity detection and its required capabilities.
 - `[model]` pins the Hugging Face model and optional LoRA adapter.
-- `[vllm]` sets the served name, memory limits, parallelism, caching, Mamba controls, authentication source, and optional Factory plugin.
+- `[vllm]` sets the served name, reasoning parser, memory limits, parallelism, caching, Mamba controls, authentication source, and optional Factory plugin.
 - `[local]` sets the bind address, port, startup timeout, and shutdown timeout.
 
 ## Deploy on the GPU host

@@ -8,6 +8,7 @@ model_id = "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4"
 revision = "cc84af2fe71647d87f4486c064f320e1e7535243"
 
 [vllm]
+reasoning_parser = "nemotron_v3"
 python_executable = ".venv/bin/python"
 served_model_name = "nemotron-3.5-lightning-nvfp4-local"
 gpu_memory_utilization = 0.88

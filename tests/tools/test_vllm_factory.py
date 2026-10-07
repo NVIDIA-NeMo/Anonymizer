@@ -88,7 +88,8 @@ def test_parse_server_parameters_accepts_only_the_compiler_contract() -> None:
     assert parameters.vllm_factory_plugin == "deberta_gliner"
 
 
-def test_factory_constructs_vllm_frontend_and_async_engine_arguments() -> None:
+@pytest.mark.parametrize("reasoning_parser", [None, "openai_gptoss", "nemotron_v3", "gemma4"])
+def test_factory_constructs_vllm_frontend_and_async_engine_arguments(reasoning_parser: str | None) -> None:
     """The local service is built from vLLM Python config objects."""
     pytest.importorskip("vllm")
     parameters = factory.VllmServerParameters(
@@ -98,6 +99,7 @@ def test_factory_constructs_vllm_frontend_and_async_engine_arguments() -> None:
         revision="fe8a4ea1",
         tokenizer_revision="fe8a4ea1",
         served_model_name="tiny",
+        reasoning_parser=reasoning_parser,
         tensor_parallel_size=2,
         gpu_memory_utilization=0.8,
         max_model_len=2048,
@@ -120,6 +122,7 @@ def test_factory_constructs_vllm_frontend_and_async_engine_arguments() -> None:
     assert arguments.revision == "fe8a4ea1"
     assert arguments.tokenizer_revision == "fe8a4ea1"
     assert arguments.served_model_name == ["tiny"]
+    assert arguments.reasoning_parser == (reasoning_parser or "")
     assert arguments.tensor_parallel_size == 2
     assert arguments.gpu_memory_utilization == 0.8
     assert arguments.max_model_len == 2048

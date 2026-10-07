@@ -414,9 +414,9 @@ def _probe_task(plan: RunPlan, client: httpx.Client, headers: Mapping[str, str])
                     "model": plan.served_model_name,
                     "messages": [{"role": "user", "content": "Reply with the word ready."}],
                     "max_tokens": 128,
+                    "reasoning_effort": "low",
                     "chat_template_kwargs": {
                         "enable_thinking": False,
-                        "reasoning_effort": "low",
                     },
                 },
                 headers=headers,

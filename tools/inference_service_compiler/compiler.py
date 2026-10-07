@@ -258,6 +258,7 @@ def _vllm_engine_arguments(spec: LocalInferenceServiceSpec, engine: Vllm) -> tup
 def _optional_vllm_arguments(engine: Vllm) -> tuple[LiteralArgument, ...]:
     values = (
         ("--served-model-name", engine.served_model_name),
+        ("--reasoning-parser", engine.reasoning_parser),
         ("--tensor-parallel-size", engine.tensor_parallel_size),
         ("--gpu-memory-utilization", engine.gpu_memory_utilization),
         ("--max-model-len", engine.max_model_len),

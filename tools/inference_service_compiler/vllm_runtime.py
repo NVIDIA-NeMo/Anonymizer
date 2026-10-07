@@ -37,6 +37,7 @@ class VllmServerParameters:
     revision: str | None = None
     tokenizer_revision: str | None = None
     served_model_name: str | None = None
+    reasoning_parser: str | None = None
     tensor_parallel_size: int | None = None
     gpu_memory_utilization: float | None = None
     max_model_len: int | None = None
@@ -62,6 +63,7 @@ def parse_server_parameters(argv: Sequence[str]) -> VllmServerParameters:
     parser.add_argument("--revision")
     parser.add_argument("--tokenizer-revision")
     parser.add_argument("--served-model-name")
+    parser.add_argument("--reasoning-parser")
     parser.add_argument("--tensor-parallel-size", type=int)
     parser.add_argument("--gpu-memory-utilization", type=float)
     parser.add_argument("--max-model-len", type=int)
@@ -94,6 +96,7 @@ def parse_server_parameters(argv: Sequence[str]) -> VllmServerParameters:
         revision=parsed.revision,
         tokenizer_revision=parsed.tokenizer_revision,
         served_model_name=parsed.served_model_name,
+        reasoning_parser=parsed.reasoning_parser,
         tensor_parallel_size=parsed.tensor_parallel_size,
         gpu_memory_utilization=parsed.gpu_memory_utilization,
         max_model_len=parsed.max_model_len,
@@ -133,6 +136,7 @@ def build_server_arguments(parameters: VllmServerParameters) -> Namespace:
         revision=parameters.revision,
         tokenizer_revision=parameters.tokenizer_revision,
         served_model_name=[parameters.served_model_name] if parameters.served_model_name is not None else None,
+        reasoning_parser=parameters.reasoning_parser or "",
         tensor_parallel_size=parameters.tensor_parallel_size or 1,
         gpu_memory_utilization=parameters.gpu_memory_utilization or 0.9,
         max_num_seqs=parameters.max_num_seqs,

@@ -8,6 +8,7 @@ model_id = "openai/gpt-oss-120b"
 revision = "b5c939de8f754692c1647ca79fbf85e8c1e70f8a"
 
 [vllm]
+reasoning_parser = "openai_gptoss"
 python_executable = ".venv/bin/python"
 served_model_name = "gpt-oss-120b-local"
 gpu_memory_utilization = 0.95

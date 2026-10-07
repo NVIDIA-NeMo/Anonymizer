@@ -15,7 +15,7 @@ import httpx
 import pytest
 from pydantic import ValidationError
 
-from inference_service_compiler import cli, compiler, lifecycle, models, runtime
+from inference_service_compiler import cli, compiler, lifecycle, models, runtime, vllm_runtime
 from inference_service_compiler.profiles import load_profile
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -86,6 +86,29 @@ def test_all_shipped_profiles_compile() -> None:
     assert all(plan.schema_version == "inference-service.run-plan/v2" for plan in plans)
     assert all(plan.readiness.path == "/models" for plan in plans)
     assert all(plan.served_model_name for plan in plans)
+
+
+@pytest.mark.parametrize(
+    ("filename", "reasoning_parser"),
+    [
+        ("gpt-oss-20b.toml", "openai_gptoss"),
+        ("gpt-oss-120b.toml", "openai_gptoss"),
+        ("nemotron-3.5-lightning.toml", "nemotron_v3"),
+        ("nemotron-3.5-lightning-nvfp4.toml", "nemotron_v3"),
+        ("gemma-4-12b-it.toml", "gemma4"),
+        ("qwen3-30b-a3b-instruct.toml", None),
+        ("vllm-local.toml", None),
+        ("nvidia-gliner.toml", None),
+        ("gliner2.toml", None),
+    ],
+)
+def test_profile_reasoning_parser_reaches_server(filename: str, reasoning_parser: str | None) -> None:
+    plan = compiler.compile_profile(load_profile(PROFILES / filename), source_revision="test")
+    argv = plan.command.render_argv()
+
+    assert ("--reasoning-parser" in argv) == (reasoning_parser is not None)
+    parameters = vllm_runtime.parse_server_parameters(argv[2:])
+    assert parameters.reasoning_parser == reasoning_parser
 
 
 @pytest.mark.parametrize(
@@ -332,7 +355,8 @@ def test_probe_payload_is_task_aware_and_reasoning_safe() -> None:
     assert receipt.passed and receipt.observed_capabilities == ("chat-completions",)
     payload = json.loads(requests[-1].content)
     assert payload["max_tokens"] == 128
-    assert payload["chat_template_kwargs"] == {"enable_thinking": False, "reasoning_effort": "low"}
+    assert payload.get("reasoning_effort") == "low"
+    assert payload["chat_template_kwargs"] == {"enable_thinking": False}
 
 
 def test_probe_uses_bearer_secret_without_serializing_it() -> None:
