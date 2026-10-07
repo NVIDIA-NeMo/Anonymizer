@@ -12,11 +12,11 @@ expected error or fabricate an admitted workflow after admission rejects.
 
 ## Identity and common declarations
 
-A template identity is `(scope, template)`. `scope` is the ordered activation
-key path serialized on every seed. The empty path is the top-level workflow.
-A subgraph body's path is its parent's scope followed by the parent activation
-key. Renaming rewrites every key in the path as well as every template and
-activation field. Equal labels in different scopes create distinct D03
+A template identity is `(scope, template)`. `scope` is the ordered
+`SubgraphNode` template-label path serialized on every seed. The empty path is
+the top-level workflow. A subgraph body's path is its parent's declaration
+scope followed by the parent template label. Renaming rewrites every template
+component independently from activation keys. Equal labels in different scopes create distinct D03
 `WorkflowId` and `NodeId` values. Distinct ordinary nodes in one scope always
 have distinct labels. Repeated map or loop member reservations refer to one
 declared member node in their scope.
@@ -34,8 +34,9 @@ state effects, model requirements, protection requirements, choices not named
 by the case, and unused interface ports are empty.
 
 An occurrence edge in `edges` becomes a D03 `SequenceEdge` between the two
-scoped template identities. An edge also gets `before.result -> after.input`
-only when the occurrence pair appears in `input_dependencies`. Thus the common
+scoped template identities. Each `input_dependencies` record explicitly names
+the source and destination activation plus `source_port` and `destination_port`;
+it becomes that exact D03 `InputBinding`. Thus the common
 sink in the independent-sibling family has two ordering edges and no data
 dependency. Outcome bindings cover every reachable sink outcome exactly once.
 Limits are the exact structural counts produced by this expansion.
@@ -53,7 +54,7 @@ The exact support selection for negatives is:
 | --- | --- |
 | `sequence_mutations/*` | single top-level N0 workflow |
 | choice coordinates 004-007 | selector N0 with N1/N2 branches |
-| subgraph coordinates 004-007 and 009 | top-level N0 subgraph with one-node `[A0]`/N1 body |
+| subgraph coordinates 004-007 and 009 | top-level N0 subgraph with one-node `[N0]`/N1 body |
 | map coordinates 012-024 | bound-two N0/N1/N2 map support |
 | join coordinates 021-025 | bound-two N0/N1/N2 map-and-join support |
 | loop coordinates 008-016 | bound-two N0/N1/N2 loop support; coordinates 008 and 009 then omit only the named D04 binding |
@@ -70,8 +71,12 @@ to static admission.
 
 ## Family expansion
 
-- `sequence_single` and `sequence_mutations` declare top-level N0. Linked pairs
-  declare N0 -> N1 and the matching result-to-input binding. Independent
+- `sequence_single` and ordinary `sequence_mutations` declare top-level N0.
+  Linked pairs declare N0 -> N1 and the matching result-to-input binding. N0
+  declares only named `ok`, which produces `result`; every non-success N0 trace
+  uses abnormal `outcome=None`. `sequence_mutations/010/named_missing_result`
+  instead declares named `fail` without `result` and rejects `missing` at static
+  admission. Independent
   siblings declare N0 -> N2 and N1 -> N2, with no input bindings; N2 is the
   sole sink. Mutation cases use the single-node support even when their
   reservation or event names an absent key.
@@ -79,8 +84,10 @@ to static admission.
   recorded choice branches, and selector-before-member sequence edges. The
   foreign, unknown, select-both, and abnormal cases reuse this valid support.
 - `subgraph` declares top-level N0 as a `SubgraphNode`. Its body scope is
-  `[A0]`. A one-node body declares N1. A two-node body declares N1 -> N2 with
-  N2 as sole sink. Nested bodies repeat this rule at `[A0,A1]`. The parent's
+  `[N0]`. A one-node body declares N1. A two-node body declares N1 -> N2 with
+  a result-to-input binding, gives N1 only `ok/result`, and keeps N2's exercised
+  success/failure outcomes. N2 is the sole sink. Nested bodies repeat this rule
+  at `[N0,N1]`. The parent's
   black-box operation matches the admitted body interface. Reservation
   negatives reuse the corresponding valid one-node support.
 - `map` and `join` declare top-level N0 -> N1 -> N2. N0 is the expander, N1 the
@@ -96,10 +103,12 @@ to static admission.
   In `missing_carried_output`, both bindings are present, `again` does not
   produce `carry`, and `stop` does; the failure therefore occurs at runtime.
 - `nested_map_loop` uses top-level N0/N1/N2 for the map support. Each observed
-  N1 map member is a distinct subgraph occurrence but refers to the top-level
-  N1 template. Its body scope `[child]` independently declares loop support
-  N0 -> N1 -> N2 with the explicit initial and carried bindings. No node or edge
-  is shared across those body workflows. The `(2,2)` case consequently has 12
+  N1 map member is a distinct occurrence of one top-level N1 `SubgraphNode`.
+  Both occurrences reuse that node's one admitted body workflow, its one
+  `DynamicScope`, and its body declaration scope `[N1]`; their parent
+  ActivationKeys distinguish occurrence contexts. That shared body declares
+  loop support N0 -> N1 -> N2 with the explicit initial and carried bindings.
+  The `(2,2)` case consequently has 12
   activation occurrences while using three labels per scope.
 - `precedence` cases 000 through 004 use valid support as described above and
   reach event construction, transition, or initialization according to their

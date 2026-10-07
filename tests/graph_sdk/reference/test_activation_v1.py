@@ -57,6 +57,8 @@ def _reduce(case: Object, *, events: list[Object] | None = None) -> Object:
     declaration = cast(Object, case["declaration"])
     if case["boundary"] == "dynamic_admission":
         return reference.admit_dynamic_workflow(declaration)
+    if case["boundary"] == "static_admission":
+        return reference.admit_static_support(declaration)
     supplied = events if events is not None else cast(list[Object], case["events"])
     return reference.reduce_trace(declaration, supplied)
 
@@ -82,6 +84,8 @@ def test_every_result_is_reduced_from_events_and_traces_preserve_full_state() ->
             actual = (
                 reference.admit_dynamic_workflow(_object(trace["declaration"]))
                 if trace["boundary"] == "dynamic_admission"
+                else reference.admit_static_support(_object(trace["declaration"]))
+                if trace["boundary"] == "static_admission"
                 else reference.reduce_trace(_object(trace["declaration"]), cast(list[Object], trace["events"]))
             )
             assert actual == trace["expected"], case["case_id"]
@@ -100,7 +104,7 @@ def test_family_enumeration_coordinates_and_nested_witness_are_exact() -> None:
         "sequence_single": 6,
         "sequence_linked_pair": 36,
         "sequence_independent_siblings": 36,
-        "sequence_mutations": 10,
+        "sequence_mutations": 11,
         "choice": 8,
         "subgraph": 10,
         "map": 25,
@@ -152,11 +156,59 @@ def test_two_node_subgraphs_use_distinct_scoped_templates() -> None:
         seeds = [_object(seed) for seed in _array(_object(_case(case_id)["declaration"])["seeds"])]
         assert [(seed["template"], seed["scope"]) for seed in seeds] == [
             ("N0", []),
-            ("N1", ["A0"]),
-            ("N2", ["A0"]),
+            ("N1", ["N0"]),
+            ("N2", ["N0"]),
         ]
         subgraph = _object(_array(_object(_case(case_id)["declaration"])["subgraphs"])[0])
         assert subgraph == {"parent": "A0", "roots": ["A1"], "sink": "A2"}
+        first_outcomes = [
+            _object(outcome)
+            for outcome in _array(_object(_case(case_id)["declaration"])["outcomes"])
+            if _object(outcome)["template"] == "N1"
+        ]
+        assert [(outcome["name"], outcome["produced_ports"]) for outcome in first_outcomes] == [("ok", ["result"])]
+
+
+def test_value_dependencies_require_the_named_source_port() -> None:
+    linked = _cases("sequence_linked_pair")
+    assert len(linked) == 36
+    for case in linked:
+        declaration = _object(case["declaration"])
+        producer_outcomes = [
+            _object(outcome) for outcome in _array(declaration["outcomes"]) if _object(outcome)["template"] == "N0"
+        ]
+        assert [(outcome["name"], outcome["produced_ports"]) for outcome in producer_outcomes] == [("ok", ["result"])]
+        dependency = _object(_array(declaration["input_dependencies"])[0])
+        assert dependency == {
+            "destination": "A1",
+            "destination_port": "input",
+            "source": "A0",
+            "source_port": "result",
+        }
+        left_category = cast(str, case["case_id"]).split("/")[1].split("-")[0]
+        left_terminal = _object(_array(case["events"])[3])
+        if left_category != "000":
+            assert left_terminal["outcome"] is None
+
+    negative = _case("sequence_mutations/010/named_missing_result")
+    assert negative["boundary"] == "static_admission"
+    assert _object(negative["expected"])["code"] == "missing"
+    carry_only = reference._decl(
+        (reference._seed("A0", "N0"), reference._seed("A1", "N1")),
+        required=("A0", "A1"),
+        edges=(("A0", "A1"),),
+    )
+    result = reference.reduce_trace(
+        carry_only,
+        [
+            reference._event("initialize"),
+            reference._select("A0", "A1"),
+            reference._event("start", key="A0"),
+            reference._terminal("A0", "success", "again"),
+        ],
+    )
+    entries = {_object(entry)["activation"]: _object(entry) for entry in _array(_state(result)["entries"])}
+    assert entries["A1"]["status"] == "blocked"
 
 
 def test_named_transition_perturbations_change_the_verdict_or_state() -> None:
@@ -628,14 +680,17 @@ def test_case_boundaries_and_scoped_identity_are_explicit() -> None:
     ]
     nested = _case("nested_map_loop/008/map_2_loop_2")
     seeds = [_object(seed) for seed in _array(_object(nested["declaration"])["seeds"])]
-    identities = {(tuple(cast(list[str], seed["scope"])), cast(str, seed["template"])) for seed in seeds}
-    assert (("A1",), "N0") in identities
-    assert (("A6",), "N0") in identities
+    identities = [(tuple(cast(list[str], seed["scope"])), cast(str, seed["template"])) for seed in seeds]
+    assert identities.count((("N1",), "N0")) == 2
     assert ((), "N0") in identities
     renamed = _object(reference._rename(nested["declaration"]))
     renamed_scopes = {tuple(cast(list[str], _object(seed)["scope"])) for seed in _array(renamed["seeds"])}
-    assert ("A10",) in renamed_scopes
-    assert ("A5",) in renamed_scopes
+    assert renamed_scopes == {(), ("N0",)}
+    assert _case("choice/004/foreign_selector")["boundary"] == "initialization"
+    for case in CASES:
+        if case["boundary"] == "transition" and case["mode"] == "rejected":
+            initialized = reference.reduce_trace(_object(case["declaration"]), [reference._event("initialize")])
+            assert initialized["status"] == "accepted", case["case_id"]
 
 
 def test_manifest_counts_sources_and_provenance_are_actual() -> None:
@@ -647,14 +702,14 @@ def test_manifest_counts_sources_and_provenance_are_actual() -> None:
     assert MANIFEST["support_sha256"] == hashlib.sha256(SUPPORT.read_bytes()).hexdigest()
     counts = _object(MANIFEST["counts"])
     assert counts == {
-        "case_count": 207,
+        "case_count": 208,
         "event_count": 2156,
         "max_activations": 12,
         "max_dynamic_depth": 2,
         "max_loop_iterations": 3,
         "max_map_children": 3,
         "max_templates": 3,
-        "trace_count": 321,
+        "trace_count": 322,
     }
     assert _object(MANIFEST["generation_provenance"])["generations"] == 2
 
