@@ -28,17 +28,24 @@ def _reject(code: ValidationCode) -> Never:
     raise ContractViolation(code) from None
 
 
-def _string(value: object) -> None:
-    if not isinstance(value, str):
+def _validate_scalars(
+    *,
+    strings: tuple[object, ...] = (),
+    nonnegative_integers: tuple[object, ...] = (),
+    positive_integers: tuple[object, ...] = (),
+) -> None:
+    integers = nonnegative_integers + positive_integers
+    if any(not isinstance(value, str) for value in strings) or any(
+        isinstance(value, bool) or not isinstance(value, int) for value in integers
+    ):
         _reject(ValidationCode.INVALID_TYPE)
-    if not value:
-        _reject(ValidationCode.INVALID_VALUE)
-
-
-def _integer(value: object, *, positive: bool = False) -> None:
-    if isinstance(value, bool) or not isinstance(value, int):
-        _reject(ValidationCode.INVALID_TYPE)
-    if value < (1 if positive else 0):
+    nonnegative_values = tuple(value for value in nonnegative_integers if isinstance(value, int))
+    positive_values = tuple(value for value in positive_integers if isinstance(value, int))
+    if (
+        any(not value for value in strings)
+        or any(value < 0 for value in nonnegative_values)
+        or any(value < 1 for value in positive_values)
+    ):
         _reject(ValidationCode.INVALID_VALUE)
 
 
@@ -130,8 +137,7 @@ class ArtifactType(_PrivateValue):
     revision: int
 
     def __post_init__(self) -> None:
-        _string(self.name)
-        _integer(self.revision, positive=True)
+        _validate_scalars(strings=(self.name,), positive_integers=(self.revision,))
 
 
 @dataclass(frozen=True, slots=True, kw_only=True, repr=False)
@@ -142,7 +148,7 @@ class InputPort(_PrivateValue):
     def __post_init__(self) -> None:
         if not isinstance(self.artifact_type, ArtifactType):
             _reject(ValidationCode.INVALID_TYPE)
-        _string(self.name)
+        _validate_scalars(strings=(self.name,))
 
 
 @dataclass(frozen=True, slots=True, kw_only=True, repr=False)
@@ -153,7 +159,7 @@ class OutputPort(_PrivateValue):
     def __post_init__(self) -> None:
         if not isinstance(self.artifact_type, ArtifactType):
             _reject(ValidationCode.INVALID_TYPE)
-        _string(self.name)
+        _validate_scalars(strings=(self.name,))
 
 
 @dataclass(frozen=True, slots=True, kw_only=True, repr=False)
@@ -164,11 +170,11 @@ class OutputDependency(_PrivateValue):
 
     def __post_init__(self) -> None:
         _frozenset_of(self.inputs, str)
-        _string(self.output)
-        for value in self.inputs:
-            _string(value)
-        if self.identity_input is not None:
-            _string(self.identity_input)
+        if self.identity_input is not None and not isinstance(self.identity_input, str):
+            _reject(ValidationCode.INVALID_TYPE)
+        _validate_scalars(
+            strings=(self.output, *self.inputs, *((self.identity_input,) if self.identity_input is not None else ()))
+        )
 
 
 @dataclass(frozen=True, slots=True, kw_only=True, repr=False)
@@ -178,10 +184,7 @@ class ContextUse(_PrivateValue):
     capture: CaptureMode
 
     def __post_init__(self) -> None:
-        _string(self.port)
-        _string(self.meaning)
-        if not isinstance(self.capture, str):
-            _reject(ValidationCode.INVALID_TYPE)
+        _validate_scalars(strings=(self.port, self.meaning, self.capture))
         if self.capture not in _CAPTURE_MODES:
             _reject(ValidationCode.INVALID_VALUE)
 
@@ -192,9 +195,7 @@ class CoverageAtom(_PrivateValue):
     name: str
 
     def __post_init__(self) -> None:
-        _string(self.name)
-        if not isinstance(self.kind, str):
-            _reject(ValidationCode.INVALID_TYPE)
+        _validate_scalars(strings=(self.kind, self.name))
         if self.kind not in _COVERAGE_KINDS:
             _reject(ValidationCode.INVALID_VALUE)
 
@@ -210,8 +211,7 @@ class EvidencePromise(_PrivateValue):
     def __post_init__(self) -> None:
         _frozenset_of(self.consumed_ports, str)
         _frozenset_of(self.coverage, CoverageAtom)
-        for value in (self.name, self.meaning, self.subject_port, *self.consumed_ports):
-            _string(value)
+        _validate_scalars(strings=(self.name, self.meaning, self.subject_port, *self.consumed_ports))
 
 
 @dataclass(frozen=True, slots=True, kw_only=True, repr=False)
@@ -220,9 +220,7 @@ class StateEffect(_PrivateValue):
     name: str
 
     def __post_init__(self) -> None:
-        _string(self.name)
-        if not isinstance(self.kind, str):
-            _reject(ValidationCode.INVALID_TYPE)
+        _validate_scalars(strings=(self.kind, self.name))
         if self.kind not in _STATE_EFFECT_KINDS:
             _reject(ValidationCode.INVALID_VALUE)
 
@@ -233,8 +231,7 @@ class ModelRequirement(_PrivateValue):
     revision: int
 
     def __post_init__(self) -> None:
-        _string(self.capability)
-        _integer(self.revision, positive=True)
+        _validate_scalars(strings=(self.capability,), positive_integers=(self.revision,))
 
 
 @dataclass(frozen=True, slots=True, kw_only=True, repr=False)
@@ -245,8 +242,14 @@ class ResourceCeiling(_PrivateValue):
     max_output_bytes: int
 
     def __post_init__(self) -> None:
-        for value in (self.max_activations, self.max_model_requests, self.max_input_bytes, self.max_output_bytes):
-            _integer(value)
+        _validate_scalars(
+            nonnegative_integers=(
+                self.max_activations,
+                self.max_model_requests,
+                self.max_input_bytes,
+                self.max_output_bytes,
+            )
+        )
 
 
 @dataclass(frozen=True, slots=True, kw_only=True, repr=False)
@@ -268,11 +271,7 @@ class OutcomeSpec(_PrivateValue):
         _frozenset_of(self.model_requirements, ModelRequirement)
         if not isinstance(self.ceiling, ResourceCeiling):
             _reject(ValidationCode.INVALID_TYPE)
-        _string(self.name)
-        for port in self.produced_ports:
-            _string(port)
-        if not isinstance(self.category, str):
-            _reject(ValidationCode.INVALID_TYPE)
+        _validate_scalars(strings=(self.name, self.category, *self.produced_ports))
         if self.category not in _OUTCOME_CLASSES:
             _reject(ValidationCode.INVALID_VALUE)
 
@@ -290,7 +289,7 @@ class OperationSpec(_PrivateValue):
         _tuple_of(self.outputs, OutputPort)
         _tuple_of(self.output_dependencies, OutputDependency)
         _tuple_of(self.outcomes, OutcomeSpec)
-        _string(self.name)
+        _validate_scalars(strings=(self.name,))
         input_names = [port.name for port in self.inputs]
         output_names = [port.name for port in self.outputs]
         outcome_names = [outcome.name for outcome in self.outcomes]
@@ -366,7 +365,7 @@ class WorkflowInputRef(_PrivateValue):
     port: str
 
     def __post_init__(self) -> None:
-        _string(self.port)
+        _validate_scalars(strings=(self.port,))
 
 
 @dataclass(frozen=True, slots=True, kw_only=True, repr=False)
@@ -377,7 +376,7 @@ class NodeOutputRef(_PrivateValue):
     def __post_init__(self) -> None:
         if not isinstance(self.node, NodeId):
             _reject(ValidationCode.INVALID_TYPE)
-        _string(self.port)
+        _validate_scalars(strings=(self.port,))
 
 
 @dataclass(frozen=True, slots=True, kw_only=True, repr=False)
@@ -388,7 +387,7 @@ class NodeInputRef(_PrivateValue):
     def __post_init__(self) -> None:
         if not isinstance(self.node, NodeId):
             _reject(ValidationCode.INVALID_TYPE)
-        _string(self.port)
+        _validate_scalars(strings=(self.port,))
 
 
 @dataclass(frozen=True, slots=True, kw_only=True, repr=False)
@@ -396,7 +395,7 @@ class WorkflowOutputRef(_PrivateValue):
     port: str
 
     def __post_init__(self) -> None:
-        _string(self.port)
+        _validate_scalars(strings=(self.port,))
 
 
 @dataclass(frozen=True, slots=True, kw_only=True, repr=False)
@@ -407,7 +406,7 @@ class NodeOutcomeRef(_PrivateValue):
     def __post_init__(self) -> None:
         if not isinstance(self.node, NodeId):
             _reject(ValidationCode.INVALID_TYPE)
-        _string(self.outcome)
+        _validate_scalars(strings=(self.outcome,))
 
 
 @dataclass(frozen=True, slots=True, kw_only=True, repr=False)
@@ -415,7 +414,7 @@ class WorkflowOutcomeRef(_PrivateValue):
     outcome: str
 
     def __post_init__(self) -> None:
-        _string(self.outcome)
+        _validate_scalars(strings=(self.outcome,))
 
 
 @dataclass(frozen=True, slots=True, kw_only=True, repr=False)
@@ -470,13 +469,12 @@ class ChoiceBranch(_PrivateValue):
     def __post_init__(self) -> None:
         _frozenset_of(self.outcomes, str)
         _frozenset_of(self.members, NodeId)
-        for outcome in self.outcomes:
-            _string(outcome)
+        _validate_scalars(strings=tuple(self.outcomes))
         if not self.outcomes or not self.members:
             _reject(ValidationCode.INVALID_VALUE)
 
 
-@dataclass(frozen=True, slots=True, kw_only=True, repr=False)
+@dataclass(frozen=True, slots=True, kw_only=True, repr=False, eq=False)
 class ChoiceDecl(_PrivateValue):
     selector: NodeId
     branches: tuple[ChoiceBranch, ...]
@@ -485,6 +483,16 @@ class ChoiceDecl(_PrivateValue):
         if not isinstance(self.selector, NodeId):
             _reject(ValidationCode.INVALID_TYPE)
         _tuple_of(self.branches, ChoiceBranch)
+
+    def __eq__(self, other: object) -> bool:
+        return (
+            isinstance(other, ChoiceDecl)
+            and self.selector == other.selector
+            and frozenset(self.branches) == frozenset(other.branches)
+        )
+
+    def __hash__(self) -> int:
+        return hash((self.selector, frozenset(self.branches)))
 
 
 @dataclass(frozen=True, slots=True, kw_only=True, repr=False)
@@ -498,8 +506,7 @@ class ProtectionRequirement(_PrivateValue):
     def __post_init__(self) -> None:
         _frozenset_of(self.consumed_ports, str)
         _frozenset_of(self.coverage, CoverageAtom)
-        for value in (self.outcome, self.meaning, self.subject_port, *self.consumed_ports):
-            _string(value)
+        _validate_scalars(strings=(self.outcome, self.meaning, self.subject_port, *self.consumed_ports))
 
 
 @dataclass(frozen=True, slots=True, kw_only=True, repr=False)
@@ -513,16 +520,18 @@ class WorkflowLimits(_PrivateValue):
     max_choice_states: int
 
     def __post_init__(self) -> None:
-        _integer(self.max_nodes, positive=True)
-        _integer(self.max_bindings)
-        _integer(self.max_sequence_edges)
-        _integer(self.max_choices)
-        _integer(self.max_branch_members)
-        _integer(self.max_subgraph_depth, positive=True)
-        _integer(self.max_choice_states, positive=True)
+        _validate_scalars(
+            nonnegative_integers=(
+                self.max_bindings,
+                self.max_sequence_edges,
+                self.max_choices,
+                self.max_branch_members,
+            ),
+            positive_integers=(self.max_nodes, self.max_subgraph_depth, self.max_choice_states),
+        )
 
 
-@dataclass(frozen=True, slots=True, kw_only=True, repr=False, init=False)
+@dataclass(frozen=True, slots=True, kw_only=True, repr=False, init=False, eq=False)
 class AdmittedWorkflow(_PrivateValue):
     """Immutable static workflow produced only by successful admission."""
 
@@ -563,6 +572,73 @@ class AdmittedWorkflow(_PrivateValue):
         for name, value in locals().copy().items():
             if name not in {"self", "_key"}:
                 object.__setattr__(self, name, value)
+
+    def __eq__(self, other: object) -> bool:
+        if self is other:
+            return True
+        if not isinstance(other, AdmittedWorkflow):
+            return False
+        pending: list[tuple[AdmittedWorkflow, AdmittedWorkflow]] = [(self, other)]
+        seen: set[tuple[int, int]] = set()
+        while pending:
+            left, right = pending.pop()
+            pair = (id(left), id(right))
+            if pair in seen:
+                continue
+            seen.add(pair)
+            if _workflow_local_state(left) != _workflow_local_state(right):
+                return False
+            left_nodes = {node.id: node for node in left.nodes}
+            right_nodes = {node.id: node for node in right.nodes}
+            if left_nodes.keys() != right_nodes.keys():
+                return False
+            for node_id, left_node in left_nodes.items():
+                right_node = right_nodes[node_id]
+                if type(left_node) is not type(right_node) or left_node.operation != right_node.operation:
+                    return False
+                if isinstance(left_node, SubgraphNode):
+                    assert isinstance(right_node, SubgraphNode)
+                    pending.append((left_node.body, right_node.body))
+        return True
+
+    def __hash__(self) -> int:
+        pending: list[tuple[AdmittedWorkflow, bool]] = [(self, False)]
+        hashes: dict[int, int] = {}
+        while pending:
+            workflow, children_visited = pending.pop()
+            key = id(workflow)
+            if key in hashes:
+                continue
+            children = [node.body for node in workflow.nodes if isinstance(node, SubgraphNode)]
+            if not children_visited:
+                pending.append((workflow, True))
+                pending.extend((child, False) for child in children if id(child) not in hashes)
+                continue
+            node_hashes = frozenset(
+                hash((type(node), node.id, node.operation, hashes[id(node.body)]))
+                if isinstance(node, SubgraphNode)
+                else hash((type(node), node.id, node.operation))
+                for node in workflow.nodes
+            )
+            hashes[key] = hash((_workflow_local_state(workflow), node_hashes))
+        return hashes[id(self)]
+
+
+def _workflow_local_state(workflow: AdmittedWorkflow) -> tuple[object, ...]:
+    return (
+        workflow.workflow,
+        workflow.interface,
+        workflow.input_bindings,
+        workflow.output_bindings,
+        workflow.outcome_bindings,
+        workflow.sequence,
+        workflow.choices,
+        workflow.protection_requirements,
+        workflow.protection_eligible_outcomes,
+        workflow.unmet_protection,
+        workflow.limits,
+        workflow.expanded_node_count,
+    )
 
 
 def admit_static_workflow(
@@ -615,17 +691,21 @@ def admit_static_workflow(
         _reject(ValidationCode.LIMIT_EXCEEDED)
     _validate_owners(workflow, nodes, input_bindings, output_bindings, outcome_bindings, sequence, choices)
     _validate_duplicates(nodes, input_bindings, output_bindings, outcome_bindings, sequence, choices, protection)
-    _validate_references(
+    incompatible_binding = _validate_references(
         interface, nodes, input_bindings, output_bindings, outcome_bindings, sequence, choices, protection
     )
-    _validate_choices(nodes, sequence, choices)
+    _validate_choice_overlaps(choices)
+    _validate_cycles(nodes, sequence)
+    _validate_choice_reachability(sequence, choices)
     for node in nodes:
         if isinstance(node, SubgraphNode):
-            if node.body.workflow == workflow:
-                _reject(ValidationCode.FOREIGN_OWNER)
             if not _compatible(node.operation, node.body.interface, allow_narrower=True):
                 _reject(ValidationCode.CONTRADICTORY)
-    _validate_paths(interface, nodes, input_bindings, output_bindings, outcome_bindings, sequence, choices)
+    if incompatible_binding:
+        _reject(ValidationCode.CONTRADICTORY)
+    _validate_paths(
+        interface, nodes, input_bindings, output_bindings, outcome_bindings, sequence, choices, check_cycles=False
+    )
     eligible, unmet = _protection(interface, protection)
     return AdmittedWorkflow(
         _key=_ADMISSION_KEY,
@@ -655,11 +735,11 @@ def substitute(*, workflow: AdmittedWorkflow, target: NodeId, replacement: Admit
         _reject(ValidationCode.INVALID_TYPE)
     if target.workflow != workflow.workflow:
         _reject(ValidationCode.FOREIGN_OWNER)
+    if replacement.workflow == workflow.workflow:
+        _reject(ValidationCode.FOREIGN_OWNER)
     target_node = next((node for node in workflow.nodes if node.id == target), None)
     if target_node is None:
         _reject(ValidationCode.MISSING)
-    if replacement.workflow == workflow.workflow:
-        _reject(ValidationCode.FOREIGN_OWNER)
     if not _compatible(target_node.operation, replacement.interface, allow_narrower=True):
         _reject(ValidationCode.CONTRADICTORY)
     nodes = tuple(
@@ -708,9 +788,13 @@ def _validate_admission_types(
 
 
 def _workflow_depth(workflow: AdmittedWorkflow) -> int:
-    return max(
-        (1 + _workflow_depth(node.body) if isinstance(node, SubgraphNode) else 1 for node in workflow.nodes), default=1
-    )
+    maximum = 1
+    pending = [(workflow, 1)]
+    while pending:
+        current, depth = pending.pop()
+        maximum = max(maximum, depth)
+        pending.extend((node.body, depth + 1) for node in current.nodes if isinstance(node, SubgraphNode))
+    return maximum
 
 
 def _node_references(
@@ -802,7 +886,7 @@ def _validate_references(
     sequence: tuple[SequenceEdge, ...],
     choices: tuple[ChoiceDecl, ...],
     protection: tuple[ProtectionRequirement, ...],
-) -> None:
+) -> bool:
     operations = {node.id: node.operation for node in nodes}
     interface_outputs = {port.name for port in interface.outputs}
     interface_outcomes = {outcome.name for outcome in interface.outcomes}
@@ -854,8 +938,7 @@ def _validate_references(
         _reject(ValidationCode.MISSING)
     if {binding.destination.port for binding in output_bindings} != interface_outputs:
         _reject(ValidationCode.MISSING)
-    if incompatible_binding:
-        _reject(ValidationCode.CONTRADICTORY)
+    return incompatible_binding
 
 
 def _closure(start: NodeId, edges: frozenset[SequenceEdge]) -> frozenset[NodeId]:
@@ -870,11 +953,8 @@ def _closure(start: NodeId, edges: frozenset[SequenceEdge]) -> frozenset[NodeId]
     return frozenset(reached)
 
 
-def _validate_choices(
-    nodes: tuple[Node, ...], sequence: tuple[SequenceEdge, ...], choices: tuple[ChoiceDecl, ...]
-) -> None:
+def _validate_choice_overlaps(choices: tuple[ChoiceDecl, ...]) -> None:
     all_members: set[NodeId] = set()
-    edges = frozenset(sequence)
     for choice in choices:
         branch_members: set[NodeId] = set()
         branch_outcomes: set[str] = set()
@@ -886,11 +966,14 @@ def _validate_choices(
         if all_members & branch_members:
             _reject(ValidationCode.OVERLAP)
         all_members.update(branch_members)
+
+
+def _validate_choice_reachability(sequence: tuple[SequenceEdge, ...], choices: tuple[ChoiceDecl, ...]) -> None:
+    edges = frozenset(sequence)
     for choice in choices:
         reached = _closure(choice.selector, edges)
         if any(member not in reached for branch in choice.branches for member in branch.members):
             _reject(ValidationCode.CONTRADICTORY)
-    del nodes
 
 
 Vertex: TypeAlias = tuple[str, NodeId | None, str]
@@ -937,6 +1020,11 @@ def _has_cycle(selected: frozenset[NodeId], edges: frozenset[SequenceEdge]) -> b
     return False
 
 
+def _validate_cycles(nodes: tuple[Node, ...], sequence: tuple[SequenceEdge, ...]) -> None:
+    if _has_cycle(frozenset(node.id for node in nodes), frozenset(sequence)):
+        _reject(ValidationCode.CYCLE)
+
+
 def _selected_nodes(
     node_ids: frozenset[NodeId], choices: tuple[ChoiceDecl, ...], assignment: dict[NodeId, OutcomeSpec]
 ) -> frozenset[NodeId]:
@@ -965,11 +1053,13 @@ def _validate_paths(
     outcome_bindings: tuple[OutcomeBinding, ...],
     sequence: tuple[SequenceEdge, ...],
     choices: tuple[ChoiceDecl, ...],
+    *,
+    check_cycles: bool = True,
 ) -> None:
     operations = {node.id: node.operation for node in nodes}
     node_ids = frozenset(operations)
     edges = frozenset(sequence)
-    if _has_cycle(node_ids, edges):
+    if check_cycles and _has_cycle(node_ids, edges):
         _reject(ValidationCode.CYCLE)
     outcome_options = [operation.outcomes for operation in operations.values()]
     ids = tuple(operations)
@@ -978,7 +1068,7 @@ def _validate_paths(
         assignment = dict(zip(ids, outcomes, strict=True))
         selected = _selected_nodes(node_ids, choices, assignment)
         selected_edges = frozenset(edge for edge in edges if edge.before in selected and edge.after in selected)
-        if _has_cycle(selected, selected_edges):
+        if check_cycles and _has_cycle(selected, selected_edges):
             _reject(ValidationCode.CYCLE)
         reachable: set[NodeId] = set()
         changed = True
@@ -1218,7 +1308,7 @@ def _protection(
     interface: OperationSpec, protection: tuple[ProtectionRequirement, ...]
 ) -> tuple[frozenset[str], frozenset[ProtectionRequirement]]:
     outcomes = {outcome.name: outcome for outcome in interface.outcomes}
-    eligible: set[str] = set()
+    affected = {requirement.outcome for requirement in protection}
     unmet: set[ProtectionRequirement] = set()
     for requirement in protection:
         matched = any(
@@ -1228,8 +1318,8 @@ def _protection(
             and requirement.coverage <= promise.coverage
             for promise in outcomes[requirement.outcome].evidence
         )
-        if matched:
-            eligible.add(requirement.outcome)
-        else:
+        if not matched:
             unmet.add(requirement)
+    ineligible = {requirement.outcome for requirement in unmet}
+    eligible = affected - ineligible
     return frozenset(eligible), frozenset(unmet)
