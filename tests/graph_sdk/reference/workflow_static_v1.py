@@ -1,6 +1,13 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Independent finite reference for static workflow composition semantics."""
+"""Independent finite reference for static workflow composition semantics.
+
+This module owns the neutral expected behavior used by later conformance tests.
+Its exhaustive claims are bounded to the eight declared families: it does not
+cover arbitrary labels or artifact types, graphs above three expanded nodes,
+all semantic cross-products, dynamic activation, maps, joins, loops, provider
+behavior, or runtime evidence.
+"""
 
 from __future__ import annotations
 
@@ -12,7 +19,7 @@ import sys
 from collections.abc import Iterable, Iterator, Mapping, Sequence
 from copy import deepcopy
 from pathlib import Path
-from typing import Any, Literal, TypeAlias, cast
+from typing import Literal, TypeAlias, cast
 
 Json: TypeAlias = str | int | bool | None | list["Json"] | dict[str, "Json"]
 Object: TypeAlias = dict[str, Json]
@@ -29,8 +36,10 @@ ValidationCode: TypeAlias = Literal[
     "contradictory",
 ]
 
-CONTRACT_SHA256 = "d03554e8dfad38ac880ee667642d15e6418c190e307ddfd5832e38c957a296b6"
+CONTRACT_SHA256 = "5b66dbedad875b95d93d79372dae2ee25e045403b794d40001fdb3bbc6471fa6"
 CORPUS_PATH = "tests/graph_sdk/reference/workflow_static_v1_cases.json"
+GENERATOR_VERSION = "workflow-static-v1-generator-1"
+SELF_TEST_VERSION = "workflow-static-v1-self-test-1"
 ALPHABET = (
     "new_workflow",
     "declare_interface",
@@ -87,8 +96,10 @@ LIMIT_FIELDS = (
     "max_choice_states",
 )
 SEMANTIC_ORDERS = {
-    "port": ("i0", "i1", "o0", "o1"),
-    "meaning": ("context", "context_alt", "assessment", "assessment_alt"),
+    "input_port": ("i0", "i1"),
+    "output_port": ("o0", "o1"),
+    "context": ("context", "context_alt"),
+    "evidence": ("assessment", "assessment_alt"),
     "state": ("state", "state_alt"),
     "model": ("model", "model_alt"),
     "coverage": ("field", "field_alt", "source", "absence"),
@@ -190,8 +201,8 @@ def _p(*, two_inputs: bool = False) -> Object:
     if two_inputs:
         inputs.append(("i1", "A0@1"))
         contexts.append(_context("i1", "context_alt"))
-    state = [{"kind": "read", "name": "state"}]
-    models = [{"capability": "model", "revision": 1}]
+    state: list[Object] = [{"kind": "read", "name": "state"}]
+    models: list[Object] = [{"capability": "model", "revision": 1}]
     return _operation(
         "P2I" if two_inputs else "P",
         inputs,
@@ -257,7 +268,16 @@ def _l01() -> Object:
     return result
 
 
-def _limits(*, nodes: int = 3, bindings: int = 16, edges: int = 8, choices: int = 2, members: int = 4, depth: int = 2, states: int = 2) -> Object:
+def _limits(
+    *,
+    nodes: int = 3,
+    bindings: int = 16,
+    edges: int = 8,
+    choices: int = 2,
+    members: int = 4,
+    depth: int = 2,
+    states: int = 4,
+) -> Object:
     return {
         "max_bindings": bindings,
         "max_branch_members": members,
@@ -270,7 +290,11 @@ def _limits(*, nodes: int = 3, bindings: int = 16, edges: int = 8, choices: int 
 
 
 def _node(label: str, operation: Object, *, owner: str = "W0", body: Object | None = None) -> Object:
-    value: Object = {"id": _ref(label, owner), "kind": "subgraph" if body is not None else "operation", "operation": deepcopy(operation)}
+    value: Object = {
+        "id": _ref(label, owner),
+        "kind": "subgraph" if body is not None else "operation",
+        "operation": deepcopy(operation),
+    }
     if body is not None:
         value["body"] = deepcopy(body)
     return value
@@ -314,7 +338,9 @@ def _one(operation: Object) -> Object:
     inputs = cast(list[Object], operation["inputs"])
     outputs = cast(list[Object], operation["outputs"])
     declaration["input_bindings"] = [_input(cast(str, port["name"]), "N0", cast(str, port["name"])) for port in inputs]
-    declaration["output_bindings"] = [_output("N0", cast(str, port["name"]), cast(str, port["name"])) for port in outputs]
+    declaration["output_bindings"] = [
+        _output("N0", cast(str, port["name"]), cast(str, port["name"])) for port in outputs
+    ]
     declaration["outcome_bindings"] = [_outcome_binding("N0", "ok", "ok"), _outcome_binding("N0", "fail", "fail")]
     return declaration
 
@@ -357,8 +383,27 @@ def _choice() -> Object:
 def _wrap(body: Object) -> Object:
     interface = deepcopy(_obj(body["interface"]))
     declaration = _one(interface)
-    cast(list[Object], declaration["nodes"])[0] = _node("N0", interface, body=body)
+    cast(list[Object], declaration["nodes"])[0] = _node("N0", interface, body=_reowner_workflow(body, "W1"))
     return declaration
+
+
+def _reowner_workflow(declaration: Object, owner: str) -> Object:
+    result = deepcopy(declaration)
+    old_owner = cast(str, result["workflow"])
+    result["workflow"] = owner
+
+    def replace_owner(value: Json) -> None:
+        if isinstance(value, list):
+            for item in value:
+                replace_owner(item)
+        elif isinstance(value, dict):
+            if value.get("owner") == old_owner and "label" in value:
+                value["owner"] = owner
+            for item in value.values():
+                replace_owner(item)
+
+    replace_owner(result)
+    return result
 
 
 def _obj(value: Json) -> Object:
@@ -381,10 +426,6 @@ def _id_label(value: Json) -> str:
     return cast(str, _obj(value)["label"])
 
 
-def _id_owner(value: Json) -> str:
-    return cast(str, _obj(value)["owner"])
-
-
 def _operation_ports(operation: Object, key: str) -> dict[str, str]:
     return {cast(str, _obj(item)["name"]): cast(str, _obj(item)["artifact_type"]) for item in _list(operation[key])}
 
@@ -403,7 +444,9 @@ def _metrics(declaration: Object) -> dict[str, int]:
             expanded += child["nodes"]
             depth = max(depth, child["subgraph_depth"] + 1)
     choices = [_obj(value) for value in _list(declaration["choices"])]
-    branch_members = sum(len(_list(branch["members"])) for choice in choices for branch in map(_obj, _list(choice["branches"])))
+    branch_members = sum(
+        len(_list(branch["members"])) for choice in choices for branch in map(_obj, _list(choice["branches"]))
+    )
     choice_states = 1
     node_map = {_id_label(node["id"]): node for node in nodes}
     for choice in choices:
@@ -424,7 +467,9 @@ def _metrics(declaration: Object) -> dict[str, int]:
 
 def _cycle_and_sinks(declaration: Object) -> tuple[bool, int | None]:
     labels = {_id_label(node["id"]) for node in _nodes(declaration)}
-    edges = [(_id_label(_obj(edge)["before"]), _id_label(_obj(edge)["after"])) for edge in _list(declaration["sequence"])]
+    edges = [
+        (_id_label(_obj(edge)["before"]), _id_label(_obj(edge)["after"])) for edge in _list(declaration["sequence"])
+    ]
     incoming = {label: 0 for label in labels}
     outgoing = {label: 0 for label in labels}
     for before, after in edges:
@@ -501,7 +546,11 @@ def _missing(declaration: Object) -> bool:
         for dependency in dependencies:
             if dependency["output"] not in outputs or not set(cast(list[str], dependency["inputs"])) <= set(inputs):
                 return True
-        produced = {port for outcome in _operation_outcomes(operation).values() for port in cast(list[str], outcome["produced_ports"])}
+        produced = {
+            port
+            for outcome in _operation_outcomes(operation).values()
+            for port in cast(list[str], outcome["produced_ports"])
+        }
         if not set(outputs) <= produced:
             return True
     input_destinations: set[tuple[str, str]] = set()
@@ -519,7 +568,9 @@ def _missing(declaration: Object) -> bool:
             source_node = nodes.get(_id_label(source["node"]))
             if source_node is None or source["port"] not in _operation_ports(_obj(source_node["operation"]), "outputs"):
                 return True
-    required_inputs = {(label, port) for label, node in nodes.items() for port in _operation_ports(_obj(node["operation"]), "inputs")}
+    required_inputs = {
+        (label, port) for label, node in nodes.items() for port in _operation_ports(_obj(node["operation"]), "inputs")
+    }
     if input_destinations != required_inputs:
         return True
     output_destinations: set[str] = set()
@@ -527,7 +578,11 @@ def _missing(declaration: Object) -> bool:
         destination = cast(str, _obj(binding["destination"])["port"])
         source = _obj(binding["source"])
         node = nodes.get(_id_label(source["node"]))
-        if destination not in workflow_outputs or node is None or source["port"] not in _operation_ports(_obj(node["operation"]), "outputs"):
+        if (
+            destination not in workflow_outputs
+            or node is None
+            or source["port"] not in _operation_ports(_obj(node["operation"]), "outputs")
+        ):
             return True
         output_destinations.add(destination)
     if output_destinations != set(workflow_outputs):
@@ -536,7 +591,11 @@ def _missing(declaration: Object) -> bool:
         source = _obj(binding["source"])
         destination = cast(str, _obj(binding["destination"])["outcome"])
         node = nodes.get(_id_label(source["node"]))
-        if node is None or source["outcome"] not in _operation_outcomes(_obj(node["operation"])) or destination not in _operation_outcomes(interface):
+        if (
+            node is None
+            or source["outcome"] not in _operation_outcomes(_obj(node["operation"]))
+            or destination not in _operation_outcomes(interface)
+        ):
             return True
     for choice in map(_obj, _list(declaration["choices"])):
         selector = nodes.get(_id_label(choice["selector"]))
@@ -549,7 +608,8 @@ def _missing(declaration: Object) -> bool:
             if any(_id_label(member) not in nodes for member in _list(branch["members"])):
                 return True
     cyclic, sinks = _cycle_and_sinks(declaration)
-    if not cyclic and sinks != 1:
+    choices = _list(declaration["choices"])
+    if not cyclic and not choices and sinks != 1:
         return True
     if not cyclic:
         sink_labels = {
@@ -557,9 +617,17 @@ def _missing(declaration: Object) -> bool:
             for label in nodes
             if not any(_id_label(_obj(edge)["before"]) == label for edge in _list(declaration["sequence"]))
         }
-        choice_members = {_id_label(member) for choice in map(_obj, _list(declaration["choices"])) for branch in map(_obj, _list(choice["branches"])) for member in _list(branch["members"])}
+        choice_members = {
+            _id_label(member)
+            for choice in map(_obj, _list(declaration["choices"]))
+            for branch in map(_obj, _list(choice["branches"]))
+            for member in _list(branch["members"])
+        }
         candidates = sink_labels | choice_members
-        bound = {(_id_label(_obj(_obj(value)["source"])["node"]), cast(str, _obj(_obj(value)["source"])["outcome"])) for value in _list(declaration["outcome_bindings"])}
+        bound = {
+            (_id_label(_obj(_obj(value)["source"])["node"]), cast(str, _obj(_obj(value)["source"])["outcome"]))
+            for value in _list(declaration["outcome_bindings"])
+        }
         for label in candidates:
             if label in sink_labels or label in choice_members:
                 for outcome in _operation_outcomes(_obj(nodes[label]["operation"])):
@@ -590,7 +658,11 @@ def _invalid_choice(declaration: Object) -> bool:
     for choice in map(_obj, _list(declaration["choices"])):
         selector = _id_label(choice["selector"])
         for branch in map(_obj, _list(choice["branches"])):
-            if not _list(branch["outcomes"]) or not _list(branch["members"]) or selector in {_id_label(item) for item in _list(branch["members"])}:
+            if (
+                not _list(branch["outcomes"])
+                or not _list(branch["members"])
+                or selector in {_id_label(item) for item in _list(branch["members"])}
+            ):
                 return True
     return False
 
@@ -624,7 +696,11 @@ def _identity_endpoints(declaration: Object, node_label: str, port: str, *, forw
         destination = _obj(binding["destination"])
         dst = (_id_label(destination["node"]), cast(str, destination["port"]))
         source = _obj(binding["source"])
-        src = ("W_IN", cast(str, source["port"])) if source["kind"] == "workflow_input" else (_id_label(source["node"]), cast(str, source["port"]))
+        src = (
+            ("W_IN", cast(str, source["port"]))
+            if source["kind"] == "workflow_input"
+            else (_id_label(source["node"]), cast(str, source["port"]))
+        )
         edges.setdefault(src, set()).add(dst)
     for binding in map(_obj, _list(declaration["output_bindings"])):
         source = _obj(binding["source"])
@@ -692,23 +768,39 @@ def _contradictory(declaration: Object) -> bool:
     interface = _obj(declaration["interface"])
     for binding in map(_obj, _list(declaration["input_bindings"])):
         destination = _obj(binding["destination"])
-        destination_type = _operation_ports(_obj(nodes[_id_label(destination["node"])]["operation"]), "inputs")[cast(str, destination["port"])]
+        destination_type = _operation_ports(_obj(nodes[_id_label(destination["node"])]["operation"]), "inputs")[
+            cast(str, destination["port"])
+        ]
         source = _obj(binding["source"])
-        source_type = _operation_ports(interface, "inputs")[cast(str, source["port"])] if source["kind"] == "workflow_input" else _operation_ports(_obj(nodes[_id_label(source["node"])]["operation"]), "outputs")[cast(str, source["port"])]
+        source_type = (
+            _operation_ports(interface, "inputs")[cast(str, source["port"])]
+            if source["kind"] == "workflow_input"
+            else _operation_ports(_obj(nodes[_id_label(source["node"])]["operation"]), "outputs")[
+                cast(str, source["port"])
+            ]
+        )
         if source_type != destination_type:
             return True
     for binding in map(_obj, _list(declaration["output_bindings"])):
         source = _obj(binding["source"])
         destination = _obj(binding["destination"])
-        if _operation_ports(_obj(nodes[_id_label(source["node"])]["operation"]), "outputs")[cast(str, source["port"])] != _operation_ports(interface, "outputs")[cast(str, destination["port"])]:
+        if (
+            _operation_ports(_obj(nodes[_id_label(source["node"])]["operation"]), "outputs")[cast(str, source["port"])]
+            != _operation_ports(interface, "outputs")[cast(str, destination["port"])]
+        ):
             return True
     for operation in [interface, *[_obj(node["operation"]) for node in nodes.values()]]:
         inputs, outputs = _operation_ports(operation, "inputs"), _operation_ports(operation, "outputs")
         for dependency in map(_obj, _list(operation["output_dependencies"])):
             identity = dependency["identity_input"]
-            if identity is not None and (identity not in cast(list[str], dependency["inputs"]) or inputs[cast(str, identity)] != outputs[cast(str, dependency["output"])]):
+            if identity is not None and (
+                identity not in cast(list[str], dependency["inputs"])
+                or inputs[cast(str, identity)] != outputs[cast(str, dependency["output"])]
+            ):
                 return True
-    closure = {( _id_label(_obj(edge)["before"]), _id_label(_obj(edge)["after"])) for edge in _list(declaration["sequence"])}
+    closure = {
+        (_id_label(_obj(edge)["before"]), _id_label(_obj(edge)["after"])) for edge in _list(declaration["sequence"])
+    }
     changed = True
     while changed:
         changed = False
@@ -719,10 +811,16 @@ def _contradictory(declaration: Object) -> bool:
                     changed = True
     for choice in map(_obj, _list(declaration["choices"])):
         selector = _id_label(choice["selector"])
-        if any((selector, _id_label(member)) not in closure for branch in map(_obj, _list(choice["branches"])) for member in _list(branch["members"])):
+        if any(
+            (selector, _id_label(member)) not in closure
+            for branch in map(_obj, _list(choice["branches"]))
+            for member in _list(branch["members"])
+        ):
             return True
     for node in nodes.values():
-        if node["kind"] == "subgraph" and _incompatible_operation(_obj(node["operation"]), _obj(_obj(node["body"])["interface"]), allow_narrow=False):
+        if node["kind"] == "subgraph" and _incompatible_operation(
+            _obj(node["operation"]), _obj(_obj(node["body"])["interface"]), allow_narrow=False
+        ):
             return True
     return False
 
@@ -737,6 +835,7 @@ def _normalized(declaration: Object) -> Object:
         "nodes": _sorted(deepcopy(_list(declaration["nodes"]))),
         "outcome_bindings": _sorted(deepcopy(_list(declaration["outcome_bindings"]))),
         "output_bindings": _sorted(deepcopy(_list(declaration["output_bindings"]))),
+        "protection_requirements": _sorted(deepcopy(_list(declaration["protection"]))),
         "sequence": _sorted(deepcopy(_list(declaration["sequence"]))),
     }
 
@@ -754,8 +853,10 @@ def _protection(declaration: Object) -> tuple[list[str], list[Json]]:
                 if (
                     promise["meaning"] == requirement["meaning"]
                     and promise["subject_port"] == requirement["subject_port"]
-                    and set(cast(list[str], requirement["consumed_ports"])) <= set(cast(list[str], promise["consumed_ports"]))
-                    and {_canonical(value) for value in _list(requirement["coverage"])} <= {_canonical(value) for value in _list(promise["coverage"])}
+                    and set(cast(list[str], requirement["consumed_ports"]))
+                    <= set(cast(list[str], promise["consumed_ports"]))
+                    and {_canonical(value) for value in _list(requirement["coverage"])}
+                    <= {_canonical(value) for value in _list(promise["coverage"])}
                 ):
                     matched = True
         if matched:
@@ -807,7 +908,9 @@ def judge(declaration: Object, replacement: Object | None = None) -> Object:
             target_node = next((node for node in _nodes(declaration) if node["id"] == target), None)
             if target_node is None:
                 code = "missing"
-            elif _incompatible_operation(_obj(target_node["operation"]), _obj(replacement["interface"]), allow_narrow=True):
+            elif _incompatible_operation(
+                _obj(target_node["operation"]), _obj(replacement["interface"]), allow_narrow=True
+            ):
                 code = "contradictory"
     topology: Json = None
     if declaration.get("family_marker") == "topology":
@@ -841,6 +944,8 @@ def _events(declaration: Object, *, substitution: bool) -> list[Json]:
         events.append({"destination": _obj(binding)["destination"], "op": "bind_input"})
     for binding in _list(declaration["output_bindings"]):
         events.append({"destination": _obj(binding)["destination"], "op": "bind_output"})
+    for binding in _list(declaration["outcome_bindings"]):
+        events.append({"destination": _obj(binding)["destination"], "op": "bind_output"})
     for edge in _list(declaration["sequence"]):
         events.append({"edge": edge, "op": "add_sequence"})
     for choice in _list(declaration["choices"]):
@@ -864,17 +969,30 @@ def independent(left: Object, right: Object) -> bool:
         return left.get("edge") != right.get("edge")
     if left_op == right_op == "add_choice":
         left_choice, right_choice = _obj(cast(Json, left["choice"])), _obj(cast(Json, right["choice"]))
-        left_members = {_canonical(member) for branch in map(_obj, _list(left_choice["branches"])) for member in _list(branch["members"])}
-        right_members = {_canonical(member) for branch in map(_obj, _list(right_choice["branches"])) for member in _list(branch["members"])}
-        return left_choice["selector"] != right_choice["selector"] and not left_members & right_members
+        left_members = {
+            _canonical(member)
+            for branch in map(_obj, _list(left_choice["branches"]))
+            for member in _list(branch["members"])
+        }
+        right_members = {
+            _canonical(member)
+            for branch in map(_obj, _list(right_choice["branches"]))
+            for member in _list(branch["members"])
+        }
+        left_nodes = left_members | {_canonical(left_choice["selector"])}
+        right_nodes = right_members | {_canonical(right_choice["selector"])}
+        return not left_nodes & right_nodes
     if left_op == right_op == "declare_protection":
         keys = ("outcome", "meaning", "subject_port")
-        left_requirement, right_requirement = _obj(cast(Json, left["requirement"])), _obj(cast(Json, right["requirement"]))
+        left_requirement, right_requirement = (
+            _obj(cast(Json, left["requirement"])),
+            _obj(cast(Json, right["requirement"])),
+        )
         return tuple(left_requirement[key] for key in keys) != tuple(right_requirement[key] for key in keys)
     return False
 
 
-def _rename_map(declaration: Object) -> dict[str, str]:
+def _rename_map(declaration: Object, replacement: Object | None) -> dict[str, str]:
     labels = [_id_label(node["id"]) for node in _nodes(declaration)]
     if len(labels) == 1:
         nodes = {labels[0]: labels[0]}
@@ -883,7 +1001,7 @@ def _rename_map(declaration: Object) -> dict[str, str]:
     else:
         ordered = sorted(labels)
         nodes = {label: ordered[(index + 1) % len(ordered)] for index, label in enumerate(ordered)}
-    text = json.dumps(declaration, sort_keys=True)
+    text = json.dumps((declaration, replacement), sort_keys=True)
     mapping = dict(nodes)
     for order in SEMANTIC_ORDERS.values():
         present = [item for item in order if f'"{item}"' in text]
@@ -903,7 +1021,7 @@ def _rewrite(value: Json, mapping: Mapping[str, str]) -> Json:
 
 
 def _traces(declaration: Object, replacement: Object | None, expected: Object) -> list[Json]:
-    mapping = _rename_map(declaration)
+    mapping = _rename_map(declaration, replacement)
     renamed = cast(Object, _rewrite(declaration, mapping))
     renamed_replacement = cast(Object | None, _rewrite(replacement, mapping)) if replacement is not None else None
     traces: list[Json] = [
@@ -928,12 +1046,16 @@ def _traces(declaration: Object, replacement: Object | None, expected: Object) -
             }
         )
     invariant_keys = ("status", "code", "topology")
-    if any(any(_obj(trace["expected"])[key] != expected[key] for key in invariant_keys) for trace in traces):
-        raise ValueError("metamorphic invariant failed")
+    for trace_value in traces:
+        trace = _obj(trace_value)
+        if any(_obj(trace["expected"])[key] != expected[key] for key in invariant_keys):
+            raise ValueError("metamorphic invariant failed")
     return traces
 
 
-def _case(family: str, coordinates: Sequence[int], mutation: str, declaration: Object, replacement: Object | None = None) -> Object:
+def _case(
+    family: str, coordinates: Sequence[int], mutation: str, declaration: Object, replacement: Object | None = None
+) -> Object:
     mode = "substitution" if replacement is not None else "admission"
     expected = judge(declaration, replacement)
     coordinate_text = "/".join(f"{value:03d}" for value in coordinates)
@@ -968,21 +1090,31 @@ def _topology_cases() -> Iterator[Object]:
                 else:
                     sink = ""
                 if sink:
-                    declaration["outcome_bindings"] = [_outcome_binding(sink, "ok", "ok"), _outcome_binding(sink, "fail", "fail")]
+                    declaration["outcome_bindings"] = [
+                        _outcome_binding(sink, "ok", "ok"),
+                        _outcome_binding(sink, "fail", "fail"),
+                    ]
                 yield _case("topology", (n_ordinal, subset_ordinal, permutation_ordinal), "edges", declaration)
-
-
-def _mutate_operation(declaration: Object, node_index: int, callback: Any) -> None:
-    operation = _obj(_nodes(declaration)[node_index]["operation"])
-    callback(operation)
 
 
 def _ports_cases() -> Iterator[Object]:
     mutations = (
-        "base", "input_type_A1", "output_type_A1", "remove_input_binding", "remove_output_binding",
-        "duplicate_input_destination", "duplicate_output_destination", "remove_output_dependency",
-        "duplicate_output_dependency", "missing_dependency_output", "missing_dependency_input", "missing_source_node",
-        "missing_source_port", "missing_destination_node", "missing_destination_port", "internal_type_A1",
+        "base",
+        "input_type_A1",
+        "output_type_A1",
+        "remove_input_binding",
+        "remove_output_binding",
+        "duplicate_input_destination",
+        "duplicate_output_destination",
+        "remove_output_dependency",
+        "duplicate_output_dependency",
+        "missing_dependency_output",
+        "missing_dependency_input",
+        "missing_source_node",
+        "missing_source_port",
+        "missing_destination_node",
+        "missing_destination_port",
+        "internal_type_A1",
     )
     for base_ordinal, factory in enumerate((_one_q, _pipe_q)):
         for mutation_ordinal, mutation in enumerate(mutations):
@@ -1032,15 +1164,27 @@ def _pipe_q() -> Object:
 
 
 def _choice_cases() -> Iterator[Object]:
-    mutations = ("base", "unmap_fail", "overlap_outcome", "overlap_member", "unknown_outcome", "selector_member", "remove_selector_edge", "second_choice_membership")
+    mutations = (
+        "CHOICE_Z",
+        "unmap_fail",
+        "overlap_outcome",
+        "overlap_member",
+        "unknown_outcome",
+        "selector_member",
+        "remove_selector_edge",
+        "second_choice_membership",
+    )
     for ordinal, mutation in enumerate(mutations):
         declaration = _choice()
-        branches = [_obj(value) for value in _list(_obj(_list(declaration["choices"])[0])["branches"])]
+        branch_values = _list(_obj(_list(declaration["choices"])[0])["branches"])
+        branches = [_obj(value) for value in branch_values]
         if mutation == "unmap_fail":
-            branches.pop()
+            branch_values.pop()
             declaration["nodes"] = _list(declaration["nodes"])[:2]
             declaration["sequence"] = _list(declaration["sequence"])[:1]
-            declaration["outcome_bindings"] = _list(declaration["outcome_bindings"])[:2] + [_outcome_binding("N0", "fail", "fail")]
+            declaration["outcome_bindings"] = _list(declaration["outcome_bindings"])[:2] + [
+                _outcome_binding("N0", "fail", "fail")
+            ]
         elif mutation == "overlap_outcome":
             _list(branches[1]["outcomes"]).append("ok")
         elif mutation == "overlap_member":
@@ -1052,7 +1196,9 @@ def _choice_cases() -> Iterator[Object]:
         elif mutation == "remove_selector_edge":
             _list(declaration["sequence"]).pop(0)
         elif mutation == "second_choice_membership":
-            _list(declaration["choices"]).append({"branches": [{"members": [_ref("N1")], "outcomes": ["ok"]}], "selector": _ref("N2")})
+            _list(declaration["choices"]).append(
+                {"branches": [{"members": [_ref("N1")], "outcomes": ["ok"]}], "selector": _ref("N2")}
+            )
         yield _case("choice", (ordinal,), mutation, declaration)
 
 
@@ -1062,20 +1208,27 @@ def _change_semantic(operation: Object, mutation: str) -> None:
     elif mutation == "output_type_A1":
         _obj(_list(operation["outputs"])[0])["artifact_type"] = "A1@1"
     elif mutation == "dependency_empty":
-        dependency = _obj(_list(operation["output_dependencies"])[0]); dependency["inputs"] = []; dependency["identity_input"] = None
+        dependency = _obj(_list(operation["output_dependencies"])[0])
+        dependency["inputs"] = []
+        dependency["identity_input"] = None
     elif mutation == "remove_fail_outcome":
         operation["outcomes"] = [value for value in _list(operation["outcomes"]) if _obj(value)["name"] != "fail"]
     elif mutation == "context_alt":
         for outcome in map(_obj, _list(operation["outcomes"])):
-            if _list(outcome["context"]): _obj(_list(outcome["context"])[0])["meaning"] = "context_alt"
+            if _list(outcome["context"]):
+                _obj(_list(outcome["context"])[0])["meaning"] = "context_alt"
     elif mutation == "evidence_meaning_alt":
-        evidence = _list(_obj(_list(operation["outcomes"])[0])["evidence"]); _obj(evidence[0])["meaning"] = "assessment_alt"
+        evidence = _list(_obj(_list(operation["outcomes"])[0])["evidence"])
+        _obj(evidence[0])["meaning"] = "assessment_alt"
     elif mutation == "remove_field_coverage":
-        evidence = _obj(_list(_obj(_list(operation["outcomes"])[0])["evidence"])[0]); evidence["coverage"] = [value for value in _list(evidence["coverage"]) if _obj(value)["name"] != "field"]
+        evidence = _obj(_list(_obj(_list(operation["outcomes"])[0])["evidence"])[0])
+        evidence["coverage"] = [value for value in _list(evidence["coverage"]) if _obj(value)["name"] != "field"]
     elif mutation == "state_alt":
-        for outcome in map(_obj, _list(operation["outcomes"])): _obj(_list(outcome["state_effects"])[0])["name"] = "state_alt"
+        for outcome in map(_obj, _list(operation["outcomes"])):
+            _obj(_list(outcome["state_effects"])[0])["name"] = "state_alt"
     elif mutation == "model_revision_2":
-        for outcome in map(_obj, _list(operation["outcomes"])): _obj(_list(outcome["model_requirements"])[0])["revision"] = 2
+        for outcome in map(_obj, _list(operation["outcomes"])):
+            _obj(_list(outcome["model_requirements"])[0])["revision"] = 2
 
 
 def _consistent_body_mutation(body: Object, mutation: str) -> None:
@@ -1084,17 +1237,39 @@ def _consistent_body_mutation(body: Object, mutation: str) -> None:
     if mutation in {"input_type_A1", "output_type_A1", "dependency_empty"}:
         _change_semantic(interface, mutation)
         target = affected_nodes[0] if mutation != "output_type_A1" or len(affected_nodes) == 1 else affected_nodes[-1]
-        _change_semantic(_obj(target["operation"]), mutation)
+        target_operation = _obj(target["operation"])
+        _change_semantic(target_operation, mutation)
+        if len(affected_nodes) > 1 and mutation in {"input_type_A1", "output_type_A1"}:
+            _obj(_list(interface["output_dependencies"])[0])["identity_input"] = None
+            _obj(_list(target_operation["output_dependencies"])[0])["identity_input"] = None
     else:
         _change_semantic(interface, mutation)
         target = affected_nodes[-1] if mutation == "remove_fail_outcome" else affected_nodes[0]
         _change_semantic(_obj(target["operation"]), mutation)
         if mutation == "remove_fail_outcome":
-            body["outcome_bindings"] = [value for value in _list(body["outcome_bindings"]) if _obj(_obj(value)["source"])["outcome"] != "fail"]
+            body["outcome_bindings"] = [
+                value for value in _list(body["outcome_bindings"]) if _obj(_obj(value)["source"])["outcome"] != "fail"
+            ]
 
 
 def _subgraph_cases() -> Iterator[Object]:
-    bodies = ((_one(_z()), ()), (_one(_p()), ("input_type_A1", "output_type_A1", "dependency_empty", "context_alt", "evidence_meaning_alt", "remove_field_coverage", "state_alt", "model_revision_2")), (_pipe(), ("input_type_A1", "output_type_A1", "dependency_empty")))
+    bodies = (
+        (_one(_z()), ()),
+        (
+            _one(_p()),
+            (
+                "input_type_A1",
+                "output_type_A1",
+                "dependency_empty",
+                "context_alt",
+                "evidence_meaning_alt",
+                "remove_field_coverage",
+                "state_alt",
+                "model_revision_2",
+            ),
+        ),
+        (_pipe(), ("input_type_A1", "output_type_A1", "dependency_empty")),
+    )
     resources = tuple(f"widen_{field}_by_1" for field in RESOURCE_FIELDS)
     for body_ordinal, (base_body, extras) in enumerate(bodies):
         mutations = ("equal", "remove_fail_outcome", *resources, *extras)
@@ -1103,41 +1278,64 @@ def _subgraph_cases() -> Iterator[Object]:
             declaration = _wrap(base_body)
             if mutation.startswith("widen_"):
                 field = mutation.removeprefix("widen_").removesuffix("_by_1")
-                for operation in (_obj(body["interface"]), *[_obj(node["operation"]) for node in _nodes(body)]):
+                for operation in (_obj(body["interface"]), _obj(_nodes(body)[0]["operation"])):
                     for outcome in map(_obj, _list(operation["outcomes"])):
-                        ceiling = _obj(outcome["ceiling"]); ceiling[field] = cast(int, ceiling[field]) + 1
+                        ceiling = _obj(outcome["ceiling"])
+                        ceiling[field] = cast(int, ceiling[field]) + 1
             elif mutation != "equal":
                 _consistent_body_mutation(body, mutation)
-            cast(list[Object], declaration["nodes"])[0]["body"] = body
+            cast(list[Object], declaration["nodes"])[0]["body"] = _reowner_workflow(body, "W1")
             yield _case("subgraph", (body_ordinal, mutation_ordinal), mutation, declaration)
 
 
 def _replacement_mutation(replacement: Object, mutation: str) -> None:
-    interface = _obj(replacement["interface"]); operation = _obj(_nodes(replacement)[0]["operation"])
+    interface = _obj(replacement["interface"])
+    operation = _obj(_nodes(replacement)[0]["operation"])
     if mutation.startswith(("narrow_", "widen_")):
         direction = -1 if mutation.startswith("narrow_") else 1
         rest = mutation.split("_", 1)[1].removesuffix("_by_1")
         outcome_name, field = rest.split("_", 1)
         for current in (interface, operation):
-            outcome = _operation_outcomes(current)[outcome_name]; ceiling = _obj(outcome["ceiling"]); ceiling[field] = cast(int, ceiling[field]) + direction
+            outcome = _operation_outcomes(current)[outcome_name]
+            ceiling = _obj(outcome["ceiling"])
+            ceiling[field] = cast(int, ceiling[field]) + direction
     else:
-        _change_semantic(interface, mutation); _change_semantic(operation, mutation)
+        _change_semantic(interface, mutation)
+        _change_semantic(operation, mutation)
         if mutation == "remove_fail_outcome":
-            replacement["outcome_bindings"] = [value for value in _list(replacement["outcome_bindings"]) if _obj(_obj(value)["source"])["outcome"] != "fail"]
+            replacement["outcome_bindings"] = [
+                value
+                for value in _list(replacement["outcome_bindings"])
+                if _obj(_obj(value)["source"])["outcome"] != "fail"
+            ]
 
 
 def _substitution_cases() -> Iterator[Object]:
-    base = _one(_p()); base["substitution_target"] = _ref("N0")
+    base = _one(_p())
+    base["substitution_target"] = _ref("N0")
     ceiling_mutations: list[str] = []
     for outcome, ceiling in (("ok", _ceiling(1, 1, 8, 8)), ("fail", _ceiling(1, 1, 8, 0))):
         for field in RESOURCE_FIELDS:
             if cast(int, ceiling[field]) > 0:
                 ceiling_mutations.append(f"narrow_{outcome}_{field}_by_1")
             ceiling_mutations.append(f"widen_{outcome}_{field}_by_1")
-    mutations = ("equal", *ceiling_mutations, "input_type_A1", "output_type_A1", "dependency_empty", "remove_fail_outcome", "context_alt", "evidence_meaning_alt", "remove_field_coverage", "state_alt", "model_revision_2")
+    mutations = (
+        "equal",
+        *ceiling_mutations,
+        "input_type_A1",
+        "output_type_A1",
+        "dependency_empty",
+        "remove_fail_outcome",
+        "context_alt",
+        "evidence_meaning_alt",
+        "remove_field_coverage",
+        "state_alt",
+        "model_revision_2",
+    )
     for ordinal, mutation in enumerate(mutations):
-        replacement = _one(_p())
-        if mutation != "equal": _replacement_mutation(replacement, mutation)
+        replacement = _reowner_workflow(_one(_p()), "W1")
+        if mutation != "equal":
+            _replacement_mutation(replacement, mutation)
         yield _case("substitution", (ordinal,), mutation, deepcopy(base), replacement)
 
 
@@ -1145,12 +1343,25 @@ def _protection_cases() -> Iterator[Object]:
     mutations = ("exact", "meaning_alt", "subject_i0", "add_consumed_i1", "add_field_alt", "add_absence")
     for ordinal, mutation in enumerate(mutations):
         declaration = _one(_p(two_inputs=True))
-        requirement: Object = {"consumed_ports": ["i0"], "coverage": _sorted(({"kind": "field", "name": "field"}, {"kind": "source_view", "name": "source"})), "meaning": "assessment", "outcome": "ok", "subject_port": "o0"}
-        if mutation == "meaning_alt": requirement["meaning"] = "assessment_alt"
-        elif mutation == "subject_i0": requirement["subject_port"] = "i0"
-        elif mutation == "add_consumed_i1": _list(requirement["consumed_ports"]).append("i1")
-        elif mutation == "add_field_alt": _list(requirement["coverage"]).append({"kind": "field", "name": "field_alt"}); requirement["coverage"] = _sorted(_list(requirement["coverage"]))
-        elif mutation == "add_absence": _list(requirement["coverage"]).append({"kind": "absence", "name": "absence"}); requirement["coverage"] = _sorted(_list(requirement["coverage"]))
+        requirement: Object = {
+            "consumed_ports": ["i0"],
+            "coverage": _sorted(({"kind": "field", "name": "field"}, {"kind": "source_view", "name": "source"})),
+            "meaning": "assessment",
+            "outcome": "ok",
+            "subject_port": "o0",
+        }
+        if mutation == "meaning_alt":
+            requirement["meaning"] = "assessment_alt"
+        elif mutation == "subject_i0":
+            requirement["subject_port"] = "i0"
+        elif mutation == "add_consumed_i1":
+            _list(requirement["consumed_ports"]).append("i1")
+        elif mutation == "add_field_alt":
+            _list(requirement["coverage"]).append({"kind": "field", "name": "field_alt"})
+            requirement["coverage"] = _sorted(_list(requirement["coverage"]))
+        elif mutation == "add_absence":
+            _list(requirement["coverage"]).append({"kind": "absence", "name": "absence"})
+            requirement["coverage"] = _sorted(_list(requirement["coverage"]))
         declaration["protection"] = [requirement]
         yield _case("protection", (ordinal,), mutation, declaration)
 
@@ -1173,7 +1384,8 @@ def _lineage_cases() -> Iterator[Object]:
             interface = _obj(declaration["interface"])
             _list(interface["outputs"]).append({"artifact_type": "A0@1", "name": "o1"})
             _list(interface["output_dependencies"]).append(_dependency("o1", ("i0",), "i0"))
-            for outcome in map(_obj, _list(interface["outcomes"])): _list(outcome["produced_ports"]).append("o1")
+            for outcome in map(_obj, _list(interface["outcomes"])):
+                _list(outcome["produced_ports"]).append("o1")
             _list(declaration["output_bindings"]).append(_output("N1", "o0", "o1"))
         yield _case("lineage", (ordinal,), mutation, declaration)
 
@@ -1181,23 +1393,34 @@ def _lineage_cases() -> Iterator[Object]:
 def _exact_limits(declaration: Object) -> None:
     metrics = _metrics(declaration)
     declaration["limits"] = {
-        "max_bindings": metrics["bindings"], "max_branch_members": metrics["branch_members"],
-        "max_choice_states": metrics["choice_states"], "max_choices": metrics["choices"],
-        "max_nodes": metrics["nodes"], "max_sequence_edges": metrics["sequence_edges"],
+        "max_bindings": metrics["bindings"],
+        "max_branch_members": metrics["branch_members"],
+        "max_choice_states": metrics["choice_states"],
+        "max_choices": metrics["choices"],
+        "max_nodes": metrics["nodes"],
+        "max_sequence_edges": metrics["sequence_edges"],
         "max_subgraph_depth": metrics["subgraph_depth"],
     }
 
 
 def _limits_cases() -> Iterator[Object]:
     bases = (_one(_p()), _pipe(), _choice())
-    metric_for_limit = dict(zip(LIMIT_FIELDS, ("nodes", "bindings", "sequence_edges", "choices", "branch_members", "subgraph_depth", "choice_states"), strict=True))
+    metric_for_limit = dict(
+        zip(
+            LIMIT_FIELDS,
+            ("nodes", "bindings", "sequence_edges", "choices", "branch_members", "subgraph_depth", "choice_states"),
+            strict=True,
+        )
+    )
     for base_ordinal, base in enumerate(bases):
         mutations = ["exact_all"]
         metrics = _metrics(base)
         for limit, metric in metric_for_limit.items():
-            if metrics[metric] > (1 if limit in {"max_nodes", "max_subgraph_depth", "max_choice_states"} else 0): mutations.append(f"one_under_{metric}")
+            if metrics[metric] > (1 if limit in {"max_nodes", "max_subgraph_depth", "max_choice_states"} else 0):
+                mutations.append(f"one_under_{metric}")
         for mutation_ordinal, mutation in enumerate(mutations):
-            declaration = deepcopy(base); _exact_limits(declaration)
+            declaration = deepcopy(base)
+            _exact_limits(declaration)
             if mutation != "exact_all":
                 metric = mutation.removeprefix("one_under_")
                 limit = next(key for key, value in metric_for_limit.items() if value == metric)
@@ -1206,41 +1429,71 @@ def _limits_cases() -> Iterator[Object]:
     for wrapper_ordinal, body in enumerate((_one(_z()), _pipe())):
         base = _wrap(body)
         for mutation_ordinal, mutation in enumerate(("exact_all", "one_under_nodes", "one_under_subgraph_depth")):
-            declaration = deepcopy(base); _exact_limits(declaration)
-            if mutation == "one_under_nodes": _obj(declaration["limits"])["max_nodes"] = cast(int, _obj(declaration["limits"])["max_nodes"]) - 1
-            elif mutation == "one_under_subgraph_depth": _obj(declaration["limits"])["max_subgraph_depth"] = 1
+            declaration = deepcopy(base)
+            _exact_limits(declaration)
+            if mutation == "one_under_nodes":
+                _obj(declaration["limits"])["max_nodes"] = cast(int, _obj(declaration["limits"])["max_nodes"]) - 1
+            elif mutation == "one_under_subgraph_depth":
+                _obj(declaration["limits"])["max_subgraph_depth"] = 1
             yield _case("limits_ownership", (1, wrapper_ordinal, mutation_ordinal), mutation, declaration)
     foreign_specs = (
-        ("operation_node_id", _one(_p())), ("subgraph_node_id", _wrap(_one(_z()))),
-        ("output_ref", _one(_p())), ("input_ref", _one(_p())), ("outcome_ref", _one(_p())),
-        ("sequence_before", _pipe()), ("sequence_after", _pipe()), ("choice_selector", _choice()),
-        ("choice_member", _choice()), ("substitution_target", _one(_p())),
+        ("operation_node_id", _one(_p())),
+        ("subgraph_node_id", _wrap(_one(_z()))),
+        ("output_ref", _one(_p())),
+        ("input_ref", _one(_p())),
+        ("outcome_ref", _one(_p())),
+        ("sequence_before", _pipe()),
+        ("sequence_after", _pipe()),
+        ("choice_selector", _choice()),
+        ("choice_member", _choice()),
+        ("substitution_target", _one(_p())),
     )
     for ordinal, (location, declaration) in enumerate(foreign_specs):
         replacement: Object | None = None
-        if location in {"operation_node_id", "subgraph_node_id"}: _nodes(declaration)[0]["id"] = _ref("N0", "W1")
-        elif location == "output_ref": _obj(_obj(_list(declaration["output_bindings"])[0])["source"])["node"] = _ref("N0", "W1")
-        elif location == "input_ref": _obj(_obj(_list(declaration["input_bindings"])[0])["destination"])["node"] = _ref("N0", "W1")
-        elif location == "outcome_ref": _obj(_obj(_list(declaration["outcome_bindings"])[0])["source"])["node"] = _ref("N0", "W1")
-        elif location.startswith("sequence_"): _obj(_list(declaration["sequence"])[0])[location.split("_")[1]] = _ref("N0", "W1")
-        elif location == "choice_selector": _obj(_list(declaration["choices"])[0])["selector"] = _ref("N0", "W1")
-        elif location == "choice_member": _list(_obj(_list(_obj(_list(declaration["choices"])[0])["branches"])[0])["members"])[0] = _ref("N1", "W1")
+        if location in {"operation_node_id", "subgraph_node_id"}:
+            foreign_label = "N2" if location == "subgraph_node_id" else "N0"
+            _nodes(declaration)[0]["id"] = _ref(foreign_label, "W1")
+        elif location == "output_ref":
+            _obj(_obj(_list(declaration["output_bindings"])[0])["source"])["node"] = _ref("N0", "W1")
+        elif location == "input_ref":
+            _obj(_obj(_list(declaration["input_bindings"])[0])["destination"])["node"] = _ref("N0", "W1")
+        elif location == "outcome_ref":
+            _obj(_obj(_list(declaration["outcome_bindings"])[0])["source"])["node"] = _ref("N0", "W1")
+        elif location.startswith("sequence_"):
+            _obj(_list(declaration["sequence"])[0])[location.split("_")[1]] = _ref("N0", "W1")
+        elif location == "choice_selector":
+            _obj(_list(declaration["choices"])[0])["selector"] = _ref("N0", "W1")
+        elif location == "choice_member":
+            _list(_obj(_list(_obj(_list(declaration["choices"])[0])["branches"])[0])["members"])[0] = _ref("N1", "W1")
         else:
-            declaration["substitution_target"] = _ref("N0", "W1"); replacement = _one(_p())
+            declaration["substitution_target"] = _ref("N2", "W1")
+            replacement = _reowner_workflow(_one(_p()), "W1")
         yield _case("limits_ownership", (2, ordinal), f"foreign_owner_{location}", declaration, replacement)
 
 
 def generate_cases() -> tuple[Object, ...]:
     """Enumerate the eight exact finite families and reject collisions."""
-    generators = (_topology_cases, _ports_cases, _choice_cases, _subgraph_cases, _substitution_cases, _protection_cases, _lineage_cases, _limits_cases)
+    generators = (
+        _topology_cases,
+        _ports_cases,
+        _choice_cases,
+        _subgraph_cases,
+        _substitution_cases,
+        _protection_cases,
+        _lineage_cases,
+        _limits_cases,
+    )
     cases = [case for generator in generators for case in generator()]
-    ids: set[str] = set(); payloads: dict[bytes, str] = {}
+    ids: set[str] = set()
+    payloads: dict[bytes, str] = {}
     for case in cases:
         case_id = cast(str, case["case_id"])
-        if case_id in ids: raise ValueError("duplicate case id")
+        if case_id in ids:
+            raise ValueError("duplicate case id")
         ids.add(case_id)
         payload = _canonical({key: case[key] for key in ("family", "mode", "declaration", "replacement", "expected")})
-        if payload in payloads: raise ValueError("duplicate canonical payload")
+        if payload in payloads:
+            raise ValueError("duplicate canonical payload")
         payloads[payload] = case_id
     return tuple(sorted(cases, key=lambda case: cast(str, case["case_id"]).encode()))
 
@@ -1258,6 +1511,46 @@ def counts(cases: Sequence[Object]) -> Object:
         "max_nodes": max(item["nodes"] for item in metrics),
         "max_subgraph_depth": max(item["subgraph_depth"] for item in metrics),
         "trace_count": sum(len(_list(case["traces"])) for case in cases),
+    }
+
+
+def build_manifest(
+    cases: Sequence[Object],
+    corpus: bytes,
+    *,
+    generator_sha256: str,
+    self_test_sha256: str,
+) -> Object:
+    """Build the exact manifest for already generated canonical corpus bytes."""
+    return {
+        "alphabet": list(ALPHABET),
+        "capability": "workflow_static_v1",
+        "contract_sha256": CONTRACT_SHA256,
+        "corpus_path": CORPUS_PATH,
+        "corpus_sha256": hashlib.sha256(corpus).hexdigest(),
+        "counts": counts(cases),
+        "family_bounds": {
+            "choice_state_max": 4,
+            "expanded_node_count_max": 3,
+            "family_ids": list(FAMILY_IDS),
+            "subgraph_depth_max": 2,
+            "topology_node_counts": [1, 2, 3],
+        },
+        "generation_provenance": {
+            "byte_identical": True,
+            "generations": 2,
+            "tools": {
+                "generator": GENERATOR_VERSION,
+                "python": producer_python(),
+                "self_test": SELF_TEST_VERSION,
+            },
+        },
+        "generator_sha256": generator_sha256,
+        "independence": {"kind": "conditional-symmetric-v1", "rule_ids": list(RULE_IDS)},
+        "manifest_version": "workflow-static-reference-v1",
+        "packet_id": "R1a",
+        "schema_version": 1,
+        "self_test_sha256": self_test_sha256,
     }
 
 
@@ -1279,7 +1572,14 @@ def load_cases(value: Json) -> tuple[Object, ...]:
         if set(case) != required or case["family"] not in FAMILIES or case["mode"] not in {"admission", "substitution"}:
             raise ValueError("invalid workflow fixture structure")
         expected = _obj(case["expected"])
-        if set(expected) != {"status", "code", "topology", "normalized", "protection_eligible_outcomes", "unmet_protection"}:
+        if set(expected) != {
+            "status",
+            "code",
+            "topology",
+            "normalized",
+            "protection_eligible_outcomes",
+            "unmet_protection",
+        }:
             raise ValueError("invalid workflow fixture structure")
         for trace in map(_obj, _list(case["traces"])):
             if set(trace) != {"transformation", "events", "declaration", "replacement", "expected"}:
