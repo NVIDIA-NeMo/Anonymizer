@@ -368,6 +368,12 @@ def initialize_activation(
     if not isinstance(limits, ActivationLimits):
         _reject(ValidationCode.INVALID_TYPE)
     keys = [seed.activation for seed in reservations]
+    if (
+        len(reservations) > limits.max_entries
+        or (reservations and limits.max_parent_depth == 0)
+        or limits.max_events < 3 * len(reservations)
+    ):
+        _reject(ValidationCode.LIMIT_EXCEEDED)
     if any(key.invocation != invocation for key in keys):
         _reject(ValidationCode.FOREIGN_OWNER)
     if len(keys) != len(set(keys)):
@@ -396,12 +402,11 @@ def initialize_activation(
     if any(observed_templates.get(template, 0) < count for template, count in expected_templates.items()):
         _reject(ValidationCode.MISSING)
     reservation_map = _seed_map(reservations)
-    body_parents = {
-        id(node.body): node.id
-        for scope in workflow.scopes
-        for node in scope.workflow.nodes
-        if isinstance(node, SubgraphNode)
-    }
+    body_parents: dict[int, set[NodeId]] = {}
+    for scope in workflow.scopes:
+        for node in scope.workflow.nodes:
+            if isinstance(node, SubgraphNode):
+                body_parents.setdefault(id(node.body), set()).add(node.id)
     for seed in reservations:
         scope = _scope_for(workflow, seed.template)
         map_decl = next((item for item in scope.maps if item.member == seed.template), None)
@@ -426,8 +431,12 @@ def initialize_activation(
             if seed.activation.parent is not None or seed.activation.iteration is not None:
                 _reject(ValidationCode.CONTRADICTORY)
         else:
-            expected_parent = body_parents[id(scope.workflow)]
-            if parent_seed is None or parent_seed.template != expected_parent or seed.activation.iteration is not None:
+            expected_parents = body_parents[id(scope.workflow)]
+            if (
+                parent_seed is None
+                or parent_seed.template not in expected_parents
+                or seed.activation.iteration is not None
+            ):
                 _reject(ValidationCode.CONTRADICTORY)
     if any(_depth(key) > limits.max_parent_depth for key in keys):
         _reject(ValidationCode.LIMIT_EXCEEDED)
@@ -631,6 +640,8 @@ def _normalize(
                 continue
             _materialize(join_seed, entries)
             join_entry = entries[join_seed.activation]
+            if join_entry.status in {"running", *_TERMINAL}:
+                continue
             terminal_members = [entries.get(member) for member in expansion.members]
             map_decl = _map_for(scope, source_seed.template)
             source_entry = entries.get(source)

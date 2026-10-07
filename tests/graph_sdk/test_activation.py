@@ -157,6 +157,21 @@ def test_initialization_rejects_insufficient_settlement_capacity(max_events: int
     assert raised.value.code is ValidationCode.LIMIT_EXCEEDED
 
 
+def test_unconditional_initialization_limit_precedes_foreign_owner() -> None:
+    workflow, node = _single()
+    invocation = InvocationId.new(plan=PlanId.new())
+    foreign = InvocationId.new(plan=PlanId.new())
+    key = ActivationKey(invocation=foreign, occurrence=0, parent=None, iteration=None)
+    with pytest.raises(ContractViolation) as raised:
+        initialize_activation(
+            workflow=workflow,
+            invocation=invocation,
+            reservations=frozenset({ActivationSeed(template=node, activation=key)}),
+            limits=ActivationLimits(max_events=0, max_entries=0, max_parent_depth=0),
+        )
+    assert raised.value.code is ValidationCode.LIMIT_EXCEEDED
+
+
 def test_abnormal_terminal_has_no_semantic_outcome() -> None:
     state, seed = _initialized()
     state = advance_activation(state=state, event=Select(seeds=frozenset({seed})))
@@ -342,6 +357,31 @@ def test_closed_map_join_is_conjunctive_over_every_child() -> None:
             event=ObserveTerminal(activation=key, outcome=outcome, category=category),  # type: ignore[arg-type]
         )
     assert next(entry for entry in state.entries if entry.activation == join_key).status == "blocked"
+
+    successful = initialized()
+    successful = advance_activation(state=successful, event=Select(seeds=fixed))
+    successful = advance_activation(state=successful, event=Start(activation=expander_key))
+    successful = advance_activation(
+        state=successful,
+        event=ObserveTerminal(activation=expander_key, outcome="ok", category="success"),
+    )
+    successful = advance_activation(
+        state=successful,
+        event=ObserveMembership(parent=expander_key, members=frozenset(child_keys), closed=True),
+    )
+    for key in child_keys:
+        successful = advance_activation(state=successful, event=Start(activation=key))
+        successful = advance_activation(
+            state=successful,
+            event=ObserveTerminal(activation=key, outcome="ok", category="success"),
+        )
+    successful = advance_activation(state=successful, event=Start(activation=join_key))
+    assert next(entry for entry in successful.entries if entry.activation == join_key).status == "running"
+    successful = advance_activation(
+        state=successful,
+        event=ObserveTerminal(activation=join_key, outcome="ok", category="success"),
+    )
+    assert next(entry for entry in successful.entries if entry.activation == join_key).status == "success"
 
 
 def _loop_workflow(bound: int):
@@ -622,6 +662,85 @@ def test_subgraph_start_materializes_body_and_derives_parent_terminal() -> None:
     )
     parent = next(entry for entry in state.entries if entry.activation == parent_key)
     assert (parent.status, parent.outcome, state.complete) == ("success", "ok", True)
+
+
+def test_initialization_allows_shared_body_under_distinct_parent_templates() -> None:
+    body_workflow, child = _single()
+    body = body_workflow.workflow
+    owner = WorkflowId.new()
+    first_parent, second_parent = (NodeId.new(workflow=owner) for _ in range(2))
+    interface = OperationSpec(
+        name="shared-body-root",
+        inputs=(),
+        outputs=(),
+        output_dependencies=(),
+        outcomes=tuple(_interface_outcome(outcome, 4) for outcome in body.interface.outcomes),
+    )
+    root = admit_static_workflow(
+        workflow=owner,
+        interface=interface,
+        nodes=(
+            SubgraphNode(id=first_parent, operation=body.interface, body=body),
+            SubgraphNode(id=second_parent, operation=body.interface, body=body),
+        ),
+        input_bindings=(),
+        output_bindings=(),
+        outcome_bindings=tuple(
+            OutcomeBinding(
+                source=NodeOutcomeRef(node=second_parent, outcome=outcome.name),
+                destination=WorkflowOutcomeRef(outcome=outcome.name),
+            )
+            for outcome in body.interface.outcomes
+        ),
+        sequence=(SequenceEdge(before=first_parent, after=second_parent),),
+        choices=(),
+        protection=(),
+        limits=WorkflowLimits(
+            max_nodes=4,
+            max_bindings=2,
+            max_sequence_edges=1,
+            max_choices=0,
+            max_branch_members=0,
+            max_subgraph_depth=2,
+            max_choice_states=1,
+        ),
+    )
+    workflow = admit_activation_workflow(
+        workflow=root,
+        scopes=(
+            DynamicScope(workflow=root, maps=(), joins=(), loops=()),
+            DynamicScope(workflow=body, maps=(), joins=(), loops=()),
+        ),
+        limits=DynamicLimits(
+            max_maps=0,
+            max_joins=0,
+            max_loops=0,
+            max_children_per_map=0,
+            max_iterations_per_loop=0,
+            max_dynamic_depth=2,
+            max_activation_occurrences=4,
+        ),
+    )
+    invocation = InvocationId.new(plan=PlanId.new())
+    first_key = ActivationKey(invocation=invocation, occurrence=0, parent=None, iteration=None)
+    second_key = ActivationKey(invocation=invocation, occurrence=1, parent=None, iteration=None)
+    first_child = ActivationKey(invocation=invocation, occurrence=2, parent=first_key, iteration=None)
+    second_child = ActivationKey(invocation=invocation, occurrence=3, parent=second_key, iteration=None)
+    reservations = frozenset(
+        {
+            ActivationSeed(template=first_parent, activation=first_key),
+            ActivationSeed(template=second_parent, activation=second_key),
+            ActivationSeed(template=child, activation=first_child),
+            ActivationSeed(template=child, activation=second_child),
+        }
+    )
+    state = initialize_activation(
+        workflow=workflow,
+        invocation=invocation,
+        reservations=reservations,
+        limits=ActivationLimits(max_events=12, max_entries=4, max_parent_depth=2),
+    )
+    assert not state.entries
 
 
 def test_nested_two_by_two_map_loop_reserves_twelve_distinct_keys() -> None:
