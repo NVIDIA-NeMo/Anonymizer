@@ -1,11 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Independent finite reference for workflow activation semantics.
-
-The reducer and generator in this module use only neutral strings and standard
-library values.  Their exhaustive claim is limited to the twelve frozen
-families and finite bounds declared below.
-"""
+"""Finite, independent, typed event reducer for workflow activation v1."""
 
 from __future__ import annotations
 
@@ -15,29 +10,38 @@ import json
 import platform
 import sys
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Literal, TypeAlias, cast
 
 Json: TypeAlias = str | int | bool | None | list["Json"] | dict[str, "Json"]
 Object: TypeAlias = dict[str, Json]
 Category: TypeAlias = Literal["success", "failure", "cancelled", "lost", "blocked", "inconsistent"]
+Status: TypeAlias = Literal[
+    "unstarted", "ready", "running", "success", "failure", "cancelled", "lost", "blocked", "inconsistent"
+]
+Role: TypeAlias = Literal["ordinary", "subgraph", "map_expander", "map_member", "join", "loop_starter", "loop_member"]
+Code: TypeAlias = Literal[
+    "invalid_type",
+    "invalid_value",
+    "limit_exceeded",
+    "foreign_owner",
+    "duplicate",
+    "missing",
+    "overlap",
+    "cycle",
+    "contradictory",
+]
 
 CONTRACT_SHA256 = "9f58d60ad4ecc25065cc6c74d784cd05ad6fb2a72f183a615122eb981c7b265b"
 CORPUS_PATH = "tests/graph_sdk/reference/activation_v1_cases.json"
-GENERATOR_VERSION = "workflow-activation-v1-generator-1"
-SELF_TEST_VERSION = "workflow-activation-v1-self-test-1"
+GENERATOR_VERSION = "workflow-activation-v1-generator-2"
+SELF_TEST_VERSION = "workflow-activation-v1-self-test-2"
 TEMPLATES = ("N0", "N1", "N2")
 INVOCATIONS = ("I0", "I1")
-ACTIVATIONS = tuple(f"A{index}" for index in range(12))
-CATEGORIES: tuple[Category, ...] = (
-    "success",
-    "failure",
-    "cancelled",
-    "lost",
-    "blocked",
-    "inconsistent",
-)
+ACTIVATIONS = tuple(f"A{i}" for i in range(12))
+CATEGORIES: tuple[Category, ...] = ("success", "failure", "cancelled", "lost", "blocked", "inconsistent")
+TERMINAL = frozenset(CATEGORIES)
 ALPHABET = (
     "initialize",
     "select",
@@ -73,41 +77,152 @@ RULE_IDS = (
     "same_parent_unrelated_siblings",
     "no_sequence_choice_membership_loop_join_dependency",
 )
-ERROR_ORDER = (
+ERROR_ORDER: tuple[Code, ...] = (
     "invalid_type",
     "invalid_value",
     "limit_exceeded",
     "foreign_owner",
     "duplicate",
     "missing",
-    "invalid_range",
     "overlap",
     "cycle",
     "contradictory",
 )
 RENAME_TEMPLATE = {"N0": "N2", "N1": "N0", "N2": "N1"}
-RENAME_ACTIVATION = {f"A{index}": f"A{11 - index}" for index in range(12)}
+INVERSE_TEMPLATE = {value: key for key, value in RENAME_TEMPLATE.items()}
+RENAME_ACTIVATION = {f"A{i}": f"A{11 - i}" for i in range(12)}
+INVERSE_ACTIVATION = {value: key for key, value in RENAME_ACTIVATION.items()}
 
 
-@dataclass(frozen=True, slots=True, order=True)
+@dataclass(frozen=True, slots=True)
+class Limits:
+    max_events: int
+    max_entries: int
+    max_parent_depth: int
+
+
+@dataclass(frozen=True, slots=True)
+class Seed:
+    key: str
+    template: str
+    invocation: str
+    parent: str | None
+    iteration: int | None
+    role: Role
+
+
+@dataclass(frozen=True, slots=True)
+class Choice:
+    selector: str
+    branches: tuple[tuple[str, tuple[str, ...]], ...]
+
+
+@dataclass(frozen=True, slots=True)
+class Subgraph:
+    parent: str
+    roots: tuple[str, ...]
+    sink: str
+
+
+@dataclass(frozen=True, slots=True)
+class Aggregate:
+    parent: str
+    members: tuple[str, ...]
+    join: str
+    bound: int
+    kind: Literal["map", "loop"]
+    initial: bool
+    carried: bool
+
+
+@dataclass(frozen=True, slots=True)
+class Declaration:
+    invocation: str
+    seeds: tuple[Seed, ...]
+    required: frozenset[str]
+    edges: frozenset[tuple[str, str]]
+    choices: tuple[Choice, ...]
+    subgraphs: tuple[Subgraph, ...]
+    aggregates: tuple[Aggregate, ...]
+    limits: Limits
+    static_groups: tuple[tuple[str, ...], ...]
+    static_edges: tuple[tuple[str, str], ...]
+    compatible: bool
+
+
+@dataclass(frozen=True, slots=True)
+class Initialize: ...
+
+
+@dataclass(frozen=True, slots=True)
+class Select:
+    keys: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class Start:
+    key: str
+
+
+@dataclass(frozen=True, slots=True)
+class TerminalEvent:
+    key: str
+    category: Category
+    outcome: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class Close:
+    key: str
+    category: Literal["blocked", "inconsistent"]
+
+
+@dataclass(frozen=True, slots=True)
+class Membership:
+    parent: str
+    members: frozenset[str]
+    closed: bool
+
+
+@dataclass(frozen=True, slots=True)
+class Overflow:
+    parent: str
+    count: int
+
+
+Event: TypeAlias = Initialize | Select | Start | TerminalEvent | Close | Membership | Overflow
+
+
+@dataclass(frozen=True, slots=True)
 class Entry:
-    """One neutral activation entry."""
-
     activation: str
     template: str
-    status: str
+    status: Status
     outcome: str | None
-    category: str | None
+    category: Category | None
+
+
+@dataclass(frozen=True, slots=True)
+class Expansion:
+    parent: str
+    status: Literal["pending", "closed", "failed", "overflow"]
+    members: frozenset[str]
 
 
 @dataclass(frozen=True, slots=True)
 class ReferenceState:
-    """Hashable semantic result of one accepted neutral trace."""
-
     entries: frozenset[Entry]
-    expansions: frozenset[tuple[str, str, frozenset[str]]]
+    expansions: frozenset[Expansion]
     outputs: frozenset[str]
+    events_applied: int
     complete: bool
+
+
+class Rejected(ValueError):
+    def __init__(self, *codes: Code) -> None:
+        pool = frozenset(codes)
+        self.code = next(code for code in ERROR_ORDER if code in pool)
+        super().__init__(self.code)
 
 
 def _canonical(value: Json) -> bytes:
@@ -115,61 +230,10 @@ def _canonical(value: Json) -> bytes:
 
 
 def canonical_bytes(cases: Sequence[Object]) -> bytes:
-    """Return canonical corpus bytes, including the final newline."""
     return _canonical(cast(Json, list(cases))) + b"\n"
 
 
-def _event(kind: str, activation: str | None = None, **fields: Json) -> Object:
-    event: Object = {"kind": kind}
-    if activation is not None:
-        event["activation"] = activation
-    event.update(fields)
-    return event
-
-
-def _terminal(activation: str, category: Category, outcome: str | None = None) -> Object:
-    return _event(f"terminal_{category}", activation, outcome=outcome if outcome is not None else None)
-
-
-def _entry_object(entry: Entry) -> Object:
-    return {
-        "activation": entry.activation,
-        "category": entry.category,
-        "outcome": entry.outcome,
-        "status": entry.status,
-        "template": entry.template,
-    }
-
-
-def _state_object(state: ReferenceState) -> Object:
-    return {
-        "complete": state.complete,
-        "entries": [cast(Json, _entry_object(entry)) for entry in sorted(state.entries)],
-        "expansions": [
-            {"members": sorted(members), "parent": parent, "status": status}
-            for parent, status, members in sorted(state.expansions, key=lambda item: item[0])
-        ],
-        "outputs": sorted(state.outputs),
-        "semantic_hash": hashlib.sha256(
-            _canonical(cast(Json, sorted((_entry_object(entry) for entry in state.entries), key=_canonical)))
-        ).hexdigest(),
-    }
-
-
-def _error(*codes: str) -> Object:
-    applicable = set(codes)
-    code = next(code for code in ERROR_ORDER if code in applicable)
-    return {"code": code, "state": None, "status": "rejected"}
-
-
-def _accepted(state: ReferenceState, **facts: Json) -> Object:
-    result: Object = {"code": None, "state": _state_object(state), "status": "accepted"}
-    result.update(facts)
-    return result
-
-
 def initial_capacity(reservation_count: int, map_expander_count: int = 0) -> tuple[int, int]:
-    """Return the exact entry and conservative event capacity for initialization."""
     if isinstance(reservation_count, bool) or isinstance(map_expander_count, bool):
         raise TypeError("invalid capacity type")
     if reservation_count < 0 or map_expander_count < 0 or map_expander_count > reservation_count:
@@ -178,14 +242,9 @@ def initial_capacity(reservation_count: int, map_expander_count: int = 0) -> tup
 
 
 def completion_reserve(
-    *,
-    absent: int = 0,
-    unstarted_or_ready: int = 0,
-    running_ordinary: int = 0,
-    open_map_expanders: int = 0,
+    *, absent: int = 0, unstarted_or_ready: int = 0, running_ordinary: int = 0, open_map_expanders: int = 0
 ) -> int:
-    """Compute the normative nonnegative completion reserve."""
-    values = (absent, unstarted_or_ready, running_ordinary, open_map_expanders)
+    values = absent, unstarted_or_ready, running_ordinary, open_map_expanders
     if any(isinstance(value, bool) or not isinstance(value, int) for value in values):
         raise TypeError("invalid reserve type")
     if any(value < 0 for value in values):
@@ -193,248 +252,678 @@ def completion_reserve(
     return 3 * absent + 2 * unstarted_or_ready + running_ordinary + open_map_expanders
 
 
-def _ordinary_state(declaration: Object, events: Sequence[Object]) -> Object:
-    templates = cast(dict[str, str], declaration["templates"])
-    dependencies = {tuple(cast(list[str], edge)) for edge in cast(list[Json], declaration.get("dependencies", []))}
-    entries: dict[str, Entry] = {}
-    for event in events:
-        kind = cast(str, event["kind"])
-        activation = cast(str | None, event.get("activation"))
-        if kind == "select":
-            assert activation is not None
-            if activation not in templates:
-                return _error("missing")
-            if activation in entries:
-                return _error("duplicate")
-            ready = not any(after == activation and before not in entries for before, after in dependencies)
-            entries[activation] = Entry(
-                activation, templates[activation], "ready" if ready else "unstarted", None, None
-            )
-        elif kind == "start":
-            assert activation is not None
-            entry = entries.get(activation)
-            if entry is None:
-                return _error("missing")
-            if entry.status != "ready":
-                return _error("contradictory")
-            entries[activation] = Entry(activation, entry.template, "running", None, None)
-        elif kind.startswith("terminal_"):
-            assert activation is not None
-            entry = entries.get(activation)
-            if entry is None:
-                return _error("missing")
-            if entry.status in CATEGORIES:
-                return _error("duplicate")
-            if entry.status != "running":
-                return _error("contradictory")
-            category = kind.removeprefix("terminal_")
-            outcome = cast(str | None, event.get("outcome"))
-            if outcome is None and category == "success":
-                return _error("invalid_value")
-            entries[activation] = Entry(activation, entry.template, category, outcome, category)
-            for before, after in dependencies:
-                successor = entries.get(after)
-                if before == activation and successor is not None and successor.status == "unstarted":
-                    entries[after] = Entry(after, successor.template, "ready", None, None)
-        elif kind.startswith("close_"):
-            assert activation is not None
-            entry = entries.get(activation)
-            if entry is None:
-                return _error("missing")
-            category = kind.removeprefix("close_")
-            entries[activation] = Entry(activation, entry.template, category, None, category)
-    terminal = bool(entries) and all(entry.status in CATEGORIES for entry in entries.values())
-    outputs = frozenset(entry.activation for entry in entries.values() if entry.outcome is not None)
-    return _accepted(ReferenceState(frozenset(entries.values()), frozenset(), outputs, terminal))
-
-
-def _aggregate_state(declaration: Object) -> Object:
-    kind = cast(str, declaration["aggregate"])
-    members = tuple(cast(list[str], declaration.get("members", [])))
-    categories = tuple(cast(list[str], declaration.get("categories", [])))
-    membership = cast(str, declaration.get("membership", "closed"))
-    covered = cast(int, declaration.get("covered", len(categories)))
-    mutation = cast(str, declaration.get("mutation", "base"))
-    if mutation in {"duplicate", "duplicate_terminal"}:
-        return _error("duplicate")
-    if mutation in {"foreign", "foreign_terminal", "wrong_parent", "foreign_iteration"}:
-        return _error("foreign_owner")
-    if mutation in {"missing_activation", "omitted_child"}:
-        return _error("missing")
-    if mutation in {"closed_grow", "closed_shrink", "reopen", "survivor_only", "continue_after_stop"}:
-        return _error("contradictory")
-    entries = {
-        Entry(
-            member,
-            "N1",
-            categories[index] if index < len(categories) else "unstarted",
-            "ok" if index < len(categories) else None,
-            categories[index] if index < len(categories) else None,
-        )
-        for index, member in enumerate(members)
-    }
-    expansion_status = cast(str, declaration.get("expansion_status", "closed" if membership == "closed" else "pending"))
-    join_status = "unstarted"
-    complete = False
-    if kind == "map":
-        if expansion_status == "failed":
-            join_status = "blocked"
-        elif expansion_status == "overflow":
-            join_status = "inconsistent"
-        elif membership == "closed" and covered == len(members):
-            join_status = "ready" if all(category == "success" for category in categories) else "blocked"
-        complete = join_status in {"blocked", "inconsistent"} and covered == len(members)
-    elif kind == "join":
-        if membership == "closed" and covered == len(members):
-            join_status = "ready" if all(category == "success" for category in categories) else "blocked"
-        complete = False  # A ready or blocked required join still needs its explicit terminal witness.
-    else:
-        join_status = cast(str, declaration["join_status"])
-        expansion_status = cast(str, declaration["expansion_status"])
-        complete = join_status in CATEGORIES
-    entries.add(Entry("A11", "N2", join_status, None, join_status if join_status in CATEGORIES else None))
-    state = ReferenceState(
-        frozenset(entries),
-        frozenset({("A0", expansion_status, frozenset(members))}),
-        frozenset(member for member, category in zip(members, categories, strict=False) if category == "success"),
-        complete,
-    )
-    return _accepted(state, aggregate=expansion_status, join_status=join_status)
-
-
-def reduce_trace(declaration: Mapping[str, Json], events: Sequence[Mapping[str, Json]]) -> Object:
-    """Reduce one neutral declaration and trace to its expected result."""
-    owned = cast(Object, dict(declaration))
-    trace = [cast(Object, dict(event)) for event in events]
-    defects = cast(list[str], owned.get("defects", []))
-    if defects:
-        return _error(*defects)
-    scenario = cast(str, owned["scenario"])
-    if scenario in {"sequence", "choice"}:
-        return _ordinary_state(owned, trace)
-    if scenario in {"map", "join", "loop", "coverage"}:
-        return _aggregate_state(owned)
-    if scenario == "subgraph":
-        mutation = cast(str, owned.get("mutation", "base"))
-        if mutation in {"wrong_parent", "foreign_body_key"}:
-            return _error("foreign_owner")
-        if mutation == "duplicate_body_key":
-            return _error("duplicate")
-        if mutation == "premature_parent_terminal":
-            return _error("contradictory")
-        category = cast(str, owned["category"])
-        outcome = cast(str | None, owned.get("outcome", "ok" if category == "success" else "fail"))
-        depth = cast(int, owned.get("depth", 1))
-        body_size = cast(int, owned.get("body_size", 1))
-        entries = {Entry("A0", "N0", category, outcome, category)}
-        entries.update(Entry(f"A{index + 1}", "N1", category, outcome, category) for index in range(body_size))
-        return _accepted(
-            ReferenceState(
-                frozenset(entries), frozenset(), frozenset() if outcome is None else frozenset({"A0"}), True
-            ),
-            derived_parent=True,
-            depth=depth,
-        )
-    if scenario == "nested":
-        map_children = cast(int, owned["map_children"])
-        iterations = cast(int, owned["loop_iterations"])
-        observed = cast(str, owned.get("observed", "materialized"))
-        count = 2 + map_children * (3 + iterations) if observed == "materialized" else 2
-        entries = frozenset(
-            Entry(f"A{index}", TEMPLATES[index % 3], "success", "ok", "success") for index in range(count)
-        )
-        return _accepted(ReferenceState(entries, frozenset(), frozenset(), True), activation_count=count)
-    if scenario == "precedence":
-        return _error(*cast(list[str], owned["defect_classes"]))
-    raise ValueError("unknown neutral activation scenario")
-
-
-def _rename(value: Json) -> Json:
-    if isinstance(value, list):
-        return [_rename(item) for item in value]
-    if isinstance(value, dict):
-        return {RENAME_TEMPLATE.get(key, RENAME_ACTIVATION.get(key, key)): _rename(item) for key, item in value.items()}
-    if isinstance(value, str):
-        return RENAME_TEMPLATE.get(value, RENAME_ACTIVATION.get(value, value))
+def _obj(value: Json, keys: set[str]) -> Object:
+    if not isinstance(value, dict):
+        raise Rejected("invalid_type")
+    if set(value) != keys:
+        raise Rejected("missing")
     return value
 
 
-def _trace(name: str, declaration: Object, events: list[Object]) -> Object:
-    if name == "rename":
-        renamed_declaration = cast(Object, _rename(declaration))
-        renamed_events = cast(list[Object], _rename(cast(Json, events)))
-        return {"events": renamed_events, "expected": reduce_trace(renamed_declaration, renamed_events), "name": name}
-    if name == "commute_independent_siblings":
-        reversed_events = events[:1] + events[4:7] + events[1:4]
-        return {"events": reversed_events, "expected": reduce_trace(declaration, reversed_events), "name": name}
-    raise ValueError("unknown trace")
+def _list(value: Json) -> list[Json]:
+    if not isinstance(value, list):
+        raise Rejected("invalid_type")
+    return value
 
 
-def _case(
-    family: str, coordinate: str, name: str, declaration: Object, events: list[Object], traces: Sequence[str] = ()
+def _strs(value: Json) -> tuple[str, ...]:
+    values = _list(value)
+    if any(not isinstance(item, str) for item in values):
+        raise Rejected("invalid_type")
+    return tuple(cast(str, item) for item in values)
+
+
+def _int(value: Json) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise Rejected("invalid_type")
+    if value < 0:
+        raise Rejected("invalid_value")
+    return value
+
+
+def _closed(value: Json, values: Sequence[str]) -> str:
+    if not isinstance(value, str):
+        raise Rejected("invalid_type")
+    if value not in values:
+        raise Rejected("invalid_value")
+    return value
+
+
+def parse_declaration(value: Mapping[str, Json]) -> Declaration:
+    """Parse the JSON boundary once into immutable closed facts."""
+    raw = _obj(
+        dict(value),
+        {"invocation", "seeds", "required", "edges", "choices", "subgraphs", "aggregates", "limits", "static"},
+    )
+    seeds: list[Seed] = []
+    for item in _list(raw["seeds"]):
+        seed = _obj(item, {"key", "template", "invocation", "parent", "iteration", "role"})
+        parent, iteration = seed["parent"], seed["iteration"]
+        if parent is not None and not isinstance(parent, str):
+            raise Rejected("invalid_type")
+        seeds.append(
+            Seed(
+                _closed(seed["key"], ACTIVATIONS),
+                _closed(seed["template"], TEMPLATES),
+                _closed(seed["invocation"], INVOCATIONS),
+                parent,
+                None if iteration is None else _int(iteration),
+                cast(
+                    Role,
+                    _closed(
+                        seed["role"],
+                        ("ordinary", "subgraph", "map_expander", "map_member", "join", "loop_starter", "loop_member"),
+                    ),
+                ),
+            )
+        )
+    choices: list[Choice] = []
+    for item in _list(raw["choices"]):
+        choice = _obj(item, {"selector", "branches"})
+        branches = tuple(
+            (_closed(branch["outcome"], ("ok", "fail")), _strs(branch["members"]))
+            for value_branch in _list(choice["branches"])
+            for branch in [_obj(value_branch, {"outcome", "members"})]
+        )
+        choices.append(Choice(_closed(choice["selector"], ACTIVATIONS), branches))
+    subgraphs = tuple(
+        Subgraph(_closed(item["parent"], ACTIVATIONS), _strs(item["roots"]), _closed(item["sink"], ACTIVATIONS))
+        for value_item in _list(raw["subgraphs"])
+        for item in [_obj(value_item, {"parent", "roots", "sink"})]
+    )
+    aggregates: list[Aggregate] = []
+    for item in _list(raw["aggregates"]):
+        aggregate = _obj(item, {"parent", "members", "join", "bound", "kind", "initial", "carried"})
+        if not isinstance(aggregate["initial"], bool) or not isinstance(aggregate["carried"], bool):
+            raise Rejected("invalid_type")
+        aggregates.append(
+            Aggregate(
+                _closed(aggregate["parent"], ACTIVATIONS),
+                _strs(aggregate["members"]),
+                _closed(aggregate["join"], ACTIVATIONS),
+                _int(aggregate["bound"]),
+                cast(Literal["map", "loop"], _closed(aggregate["kind"], ("map", "loop"))),
+                aggregate["initial"],
+                aggregate["carried"],
+            )
+        )
+    limits = _obj(raw["limits"], {"max_events", "max_entries", "max_parent_depth"})
+    static = _obj(raw["static"], {"groups", "edges", "compatible"})
+    if not isinstance(static["compatible"], bool):
+        raise Rejected("invalid_type")
+    edges = tuple(_strs(edge) for edge in _list(raw["edges"]))
+    if any(len(edge) != 2 for edge in edges):
+        raise Rejected("invalid_value")
+    return Declaration(
+        _closed(raw["invocation"], INVOCATIONS),
+        tuple(seeds),
+        frozenset(_strs(raw["required"])),
+        cast(frozenset[tuple[str, str]], frozenset(edges)),
+        tuple(choices),
+        subgraphs,
+        tuple(aggregates),
+        Limits(_int(limits["max_events"]), _int(limits["max_entries"]), _int(limits["max_parent_depth"])),
+        tuple(_strs(group) for group in _list(static["groups"])),
+        tuple(cast(tuple[str, str], _strs(edge)) for edge in _list(static["edges"])),
+        static["compatible"],
+    )
+
+
+def parse_event(value: Mapping[str, Json]) -> Event:
+    raw = dict(value)
+    kind = raw.get("kind")
+    if not isinstance(kind, str):
+        raise Rejected("invalid_type")
+    if kind == "initialize":
+        _obj(raw, {"kind"})
+        return Initialize()
+    if kind == "select":
+        item = _obj(raw, {"kind", "keys"})
+        return Select(_strs(item["keys"]))
+    if kind == "start":
+        item = _obj(raw, {"kind", "key"})
+        return Start(_closed(item["key"], ACTIVATIONS))
+    if kind.startswith("terminal_"):
+        item = _obj(raw, {"kind", "key", "outcome"})
+        category = cast(Category, _closed(kind.removeprefix("terminal_"), CATEGORIES))
+        outcome = item["outcome"]
+        if outcome is not None and not isinstance(outcome, str):
+            raise Rejected("invalid_type")
+        if outcome is None and category == "success":
+            raise Rejected("invalid_value")
+        if isinstance(outcome, str) and outcome not in ("ok", "fail", "again", "stop"):
+            raise Rejected("invalid_value")
+        return TerminalEvent(_closed(item["key"], ACTIVATIONS), category, outcome)
+    if kind.startswith("close_"):
+        item = _obj(raw, {"kind", "key"})
+        category = kind.removeprefix("close_")
+        return Close(
+            _closed(item["key"], ACTIVATIONS),
+            cast(Literal["blocked", "inconsistent"], _closed(category, ("blocked", "inconsistent"))),
+        )
+    if kind in ("membership_open", "membership_close"):
+        item = _obj(raw, {"kind", "parent", "members"})
+        return Membership(
+            _closed(item["parent"], ACTIVATIONS), frozenset(_strs(item["members"])), kind == "membership_close"
+        )
+    if kind == "membership_overflow":
+        item = _obj(raw, {"kind", "parent", "observed_count"})
+        return Overflow(_closed(item["parent"], ACTIVATIONS), _int(item["observed_count"]))
+    raise Rejected("invalid_value")
+
+
+def _depth(key: str, seeds: Mapping[str, Seed]) -> int:
+    seen: set[str] = set()
+    depth = 0
+    current: str | None = key
+    while current is not None:
+        if current in seen:
+            raise Rejected("cycle")
+        seen.add(current)
+        seed = seeds.get(current)
+        if seed is None:
+            raise Rejected("missing")
+        depth += 1
+        current = seed.parent
+    return depth
+
+
+def _initialize(declaration: Declaration) -> None:
+    seen: dict[str, Seed] = {}
+    duplicate = False
+    for seed in declaration.seeds:
+        duplicate |= seed.key in seen
+        seen.setdefault(seed.key, seed)
+    foreign = any(seed.invocation != declaration.invocation for seed in declaration.seeds)
+    missing = not declaration.required <= seen.keys()
+    codes: list[Code] = []
+    if foreign:
+        codes.append("foreign_owner")
+    if duplicate:
+        codes.append("duplicate")
+    if missing:
+        codes.append("missing")
+    if codes:
+        raise Rejected(*codes)
+    maximum_depth = max((_depth(key, seen) for key in seen), default=0)
+    map_count = sum(seed.role == "map_expander" for seed in declaration.seeds)
+    if (
+        declaration.limits.max_entries < len(seen)
+        or declaration.limits.max_events < 3 * len(seen) + map_count
+        or declaration.limits.max_parent_depth < maximum_depth
+    ):
+        raise Rejected("limit_exceeded")
+    overlap = any(
+        set(left) & set(right)
+        for index, left in enumerate(declaration.static_groups)
+        for right in declaration.static_groups[index + 1 :]
+    )
+    cycle = any((after, before) in declaration.static_edges for before, after in declaration.static_edges)
+    static_codes: list[Code] = []
+    if overlap:
+        static_codes.append("overlap")
+    if cycle:
+        static_codes.append("cycle")
+    if not declaration.compatible:
+        static_codes.append("contradictory")
+    if static_codes:
+        raise Rejected(*static_codes)
+
+
+def _normalize(
+    entries: dict[str, Entry], expansions: dict[str, Expansion], outputs: set[str], declaration: Declaration
+) -> None:
+    changed = True
+    while changed:
+        changed = False
+        for key, entry in tuple(entries.items()):
+            if entry.status != "unstarted":
+                continue
+            predecessors = [before for before, after in declaration.edges if after == key]
+            if all(before in entries and entries[before].status in TERMINAL for before in predecessors):
+                blocked = any(entries[before].outcome is None for before in predecessors)
+                entries[key] = replace(
+                    entry, status="blocked" if blocked else "ready", category="blocked" if blocked else None
+                )
+                changed = True
+        for subgraph in declaration.subgraphs:
+            parent, sink = entries.get(subgraph.parent), entries.get(subgraph.sink)
+            if parent and sink and parent.status == "running" and sink.status in TERMINAL:
+                entries[subgraph.parent] = replace(
+                    parent, status=sink.status, category=sink.category, outcome=sink.outcome
+                )
+                if sink.outcome is not None:
+                    outputs.add(subgraph.parent)
+                changed = True
+        for aggregate in declaration.aggregates:
+            expansion, join, parent = (
+                expansions.get(aggregate.parent),
+                entries.get(aggregate.join),
+                entries.get(aggregate.parent),
+            )
+            if parent and parent.status in TERMINAL and (parent.outcome is None or parent.outcome == "fail"):
+                members = expansion.members if expansion else frozenset()
+                expansions[aggregate.parent] = Expansion(aggregate.parent, "failed", members)
+                if join and join.status not in TERMINAL:
+                    entries[aggregate.join] = replace(join, status="blocked", category="blocked")
+            elif expansion and join and expansion.status == "overflow" and join.status not in TERMINAL:
+                entries[aggregate.join] = replace(join, status="inconsistent", category="inconsistent")
+            elif expansion and join and expansion.status == "closed":
+                children = [entries.get(member) for member in expansion.members]
+                if all(child and child.status in TERMINAL for child in children):
+                    accepted = all(child and child.category == "success" for child in children)
+                    entries[aggregate.join] = replace(
+                        join, status="ready" if accepted else "blocked", category=None if accepted else "blocked"
+                    )
+
+
+def _materialize(key: str, entries: dict[str, Entry], declaration: Declaration) -> None:
+    seed = next((item for item in declaration.seeds if item.key == key), None)
+    if seed is None:
+        raise Rejected("missing")
+    if key in entries:
+        raise Rejected("duplicate")
+    entries[key] = Entry(key, seed.template, "unstarted", None, None)
+
+
+def _apply(
+    event: Event,
+    entries: dict[str, Entry],
+    expansions: dict[str, Expansion],
+    outputs: set[str],
+    declaration: Declaration,
+) -> None:
+    if isinstance(event, Initialize):
+        raise Rejected("contradictory")
+    if isinstance(event, Select):
+        repeated = len(event.keys) != len(set(event.keys))
+        overlap = {key for key in event.keys if key in entries}
+        duplicate = repeated or bool(overlap) and overlap != set(event.keys)
+        missing = any(not any(seed.key == key for seed in declaration.seeds) for key in event.keys)
+        premature_choice = any(
+            key in members and (choice.selector not in entries or entries[choice.selector].outcome != outcome)
+            for key in event.keys
+            for choice in declaration.choices
+            for outcome, members in choice.branches
+        )
+        if duplicate or missing or premature_choice:
+            raise Rejected(
+                *(
+                    (["duplicate"] if duplicate else [])
+                    + (["missing"] if missing else [])
+                    + (["overlap"] if premature_choice else [])
+                )
+            )
+        if not overlap:
+            for key in event.keys:
+                _materialize(key, entries, declaration)
+    elif isinstance(event, Start):
+        entry = entries.get(event.key)
+        if entry is None:
+            raise Rejected("missing")
+        if entry.status != "ready":
+            raise Rejected("contradictory")
+        entries[event.key] = replace(entry, status="running")
+        subgraph = next((item for item in declaration.subgraphs if item.parent == event.key), None)
+        if subgraph:
+            for root in subgraph.roots:
+                _materialize(root, entries, declaration)
+    elif isinstance(event, TerminalEvent):
+        entry = entries.get(event.key)
+        if entry is None:
+            raise Rejected("missing")
+        if entry.status in TERMINAL:
+            raise Rejected("duplicate")
+        seed = next(item for item in declaration.seeds if item.key == event.key)
+        if entry.status != "running" or seed.role == "subgraph":
+            raise Rejected("contradictory")
+        selected_choice = next((choice for choice in declaration.choices if choice.selector == event.key), None)
+        if selected_choice is not None and event.outcome is not None:
+            declared = {outcome for outcome, _ in selected_choice.branches}
+            if event.outcome not in declared:
+                raise Rejected("invalid_value")
+        entries[event.key] = replace(entry, status=event.category, category=event.category, outcome=event.outcome)
+        if event.outcome is not None:
+            outputs.add(event.key)
+        for choice in declaration.choices:
+            if choice.selector == event.key and event.outcome is not None:
+                for outcome, members in choice.branches:
+                    if outcome == event.outcome:
+                        for member in members:
+                            _materialize(member, entries, declaration)
+        for aggregate in declaration.aggregates:
+            if aggregate.kind != "loop":
+                continue
+            if event.key == aggregate.parent:
+                if event.outcome is None or (event.outcome == "again" and not aggregate.initial):
+                    expansions[event.key] = Expansion(event.key, "failed", frozenset())
+                elif event.outcome == "stop":
+                    expansions[event.key] = Expansion(event.key, "closed", frozenset())
+                elif aggregate.bound == 0:
+                    expansions[event.key] = Expansion(event.key, "overflow", frozenset())
+            elif event.key in aggregate.members:
+                index = aggregate.members.index(event.key)
+                known = frozenset(aggregate.members[: index + 1])
+                if event.outcome is None or (event.outcome == "again" and not aggregate.carried):
+                    expansions[aggregate.parent] = Expansion(aggregate.parent, "failed", known)
+                elif event.outcome == "stop":
+                    expansions[aggregate.parent] = Expansion(aggregate.parent, "closed", known)
+                elif index + 1 >= aggregate.bound:
+                    expansions[aggregate.parent] = Expansion(aggregate.parent, "overflow", known)
+                else:
+                    expansions[aggregate.parent] = Expansion(aggregate.parent, "pending", known)
+                    _materialize(aggregate.members[index + 1], entries, declaration)
+    elif isinstance(event, Close):
+        entry = entries.get(event.key)
+        if entry is None:
+            raise Rejected("missing")
+        if entry.status in TERMINAL:
+            raise Rejected("duplicate")
+        if entry.status == "running":
+            raise Rejected("contradictory")
+        entries[event.key] = replace(entry, status=event.category, category=event.category)
+    elif isinstance(event, Membership):
+        aggregate = next(
+            (item for item in declaration.aggregates if item.parent == event.parent and item.kind == "map"), None
+        )
+        if aggregate is None:
+            raise Rejected("missing")
+        if any(member not in aggregate.members for member in event.members):
+            raise Rejected("foreign_owner")
+        prior = expansions.get(event.parent)
+        if prior and (prior.status != "pending" or not prior.members <= event.members):
+            raise Rejected("contradictory")
+        for member in event.members:
+            if member not in entries:
+                _materialize(member, entries, declaration)
+        expansions[event.parent] = Expansion(event.parent, "closed" if event.closed else "pending", event.members)
+    elif isinstance(event, Overflow):
+        aggregate = next((item for item in declaration.aggregates if item.parent == event.parent), None)
+        if aggregate is None:
+            raise Rejected("missing")
+        if event.count <= aggregate.bound:
+            raise Rejected("invalid_value")
+        expansions[event.parent] = Expansion(event.parent, "overflow", frozenset())
+    _normalize(entries, expansions, outputs, declaration)
+
+
+def _reserve(entries: Mapping[str, Entry], expansions: Mapping[str, Expansion], declaration: Declaration) -> int:
+    absent = len({seed.key for seed in declaration.seeds} - entries.keys())
+    waiting = sum(entry.status in ("unstarted", "ready") for entry in entries.values())
+    roles = {seed.key: seed.role for seed in declaration.seeds}
+    running = sum(entry.status == "running" and roles[entry.activation] != "subgraph" for entry in entries.values())
+    open_maps = sum(
+        item.kind == "map" and (item.parent not in expansions or expansions[item.parent].status == "pending")
+        for item in declaration.aggregates
+    )
+    return completion_reserve(
+        absent=absent, unstarted_or_ready=waiting, running_ordinary=running, open_map_expanders=open_maps
+    )
+
+
+def _complete(entries: Mapping[str, Entry], expansions: Mapping[str, Expansion], declaration: Declaration) -> bool:
+    required = set(declaration.required)
+    for expansion in expansions.values():
+        required.update(expansion.members)
+    for choice in declaration.choices:
+        selector = entries.get(choice.selector)
+        if selector and selector.outcome:
+            required.update(
+                member for outcome, members in choice.branches if outcome == selector.outcome for member in members
+            )
+    for subgraph in declaration.subgraphs:
+        if subgraph.parent in entries and entries[subgraph.parent].status in ("running", *CATEGORIES):
+            required.update((*subgraph.roots, subgraph.sink))
+    return (
+        required <= entries.keys()
+        and all(entries[key].status in TERMINAL for key in required)
+        and all(
+            expansion.status != "pending"
+            and all(member in entries and entries[member].status in TERMINAL for member in expansion.members)
+            for expansion in expansions.values()
+        )
+        and all(item.join in entries and entries[item.join].status in TERMINAL for item in declaration.aggregates)
+    )
+
+
+def _state_object(state: ReferenceState, *, digest: bool = True) -> Object:
+    result: Object = {
+        "complete": state.complete,
+        "entries": [
+            {
+                "activation": item.activation,
+                "category": item.category,
+                "outcome": item.outcome,
+                "status": item.status,
+                "template": item.template,
+            }
+            for item in sorted(state.entries, key=lambda item: item.activation)
+        ],
+        "events_applied": state.events_applied,
+        "expansions": [
+            {"members": sorted(item.members), "parent": item.parent, "status": item.status}
+            for item in sorted(state.expansions, key=lambda item: item.parent)
+        ],
+        "outputs": sorted(state.outputs),
+    }
+    if digest:
+        result["semantic_hash"] = hashlib.sha256(_canonical(cast(Json, _state_object(state, digest=False)))).hexdigest()
+    return result
+
+
+def alpha_normalize_state(value: Mapping[str, Json], *, inverse: bool = False) -> Object:
+    """Rename a state and recompute its deterministic whole-state digest."""
+    renamed = cast(
+        Object, _rename({key: item for key, item in value.items() if key != "semantic_hash"}, inverse=inverse)
+    )
+    renamed["entries"] = sorted(
+        _list(renamed["entries"]),
+        key=lambda item: cast(
+            str, _obj(item, {"activation", "category", "outcome", "status", "template"})["activation"]
+        ),
+    )
+    renamed["outputs"] = sorted(_strs(renamed["outputs"]))
+    expansions = _list(renamed["expansions"])
+    for expansion_value in expansions:
+        expansion = _obj(expansion_value, {"members", "parent", "status"})
+        expansion["members"] = sorted(_strs(expansion["members"]))
+    renamed["expansions"] = sorted(
+        expansions, key=lambda item: cast(str, _obj(item, {"members", "parent", "status"})["parent"])
+    )
+    renamed["semantic_hash"] = hashlib.sha256(_canonical(renamed)).hexdigest()
+    return renamed
+
+
+def reduce_trace(declaration: Mapping[str, Json], events: Sequence[Mapping[str, Json]]) -> Object:
+    try:
+        facts = parse_declaration(declaration)
+        parsed = tuple(parse_event(event) for event in events)
+        if not parsed or not isinstance(parsed[0], Initialize):
+            raise Rejected("missing")
+        _initialize(facts)
+        entries: dict[str, Entry] = {}
+        expansions: dict[str, Expansion] = {}
+        outputs: set[str] = set()
+        applied = 0
+        for event in parsed[1:]:
+            if applied + 1 > facts.limits.max_events:
+                raise Rejected("limit_exceeded")
+            next_entries, next_expansions, next_outputs = dict(entries), dict(expansions), set(outputs)
+            _apply(event, next_entries, next_expansions, next_outputs, facts)
+            next_applied = applied + 1
+            if (
+                len(next_entries) > facts.limits.max_entries
+                or next_applied + _reserve(next_entries, next_expansions, facts) > facts.limits.max_events
+            ):
+                raise Rejected("limit_exceeded")
+            entries, expansions, outputs, applied = next_entries, next_expansions, next_outputs, next_applied
+        state = ReferenceState(
+            frozenset(entries.values()),
+            frozenset(expansions.values()),
+            frozenset(outputs),
+            applied,
+            _complete(entries, expansions, facts),
+        )
+        return {"code": None, "state": _state_object(state), "status": "accepted"}
+    except Rejected as error:
+        return {"code": error.code, "state": None, "status": "rejected"}
+
+
+def _seed(
+    key: str,
+    template: str = "N0",
+    *,
+    parent: str | None = None,
+    iteration: int | None = None,
+    role: Role = "ordinary",
+    invocation: str = "I0",
 ) -> Object:
-    expected = reduce_trace(declaration, events)
     return {
-        "case_id": f"{family}/{coordinate}/{name}",
-        "declaration": declaration,
-        "events": events,
-        "expected": expected,
-        "family": family,
-        "mode": "accepted" if expected["status"] == "accepted" else "rejected",
-        "traces": [_trace(trace, declaration, events) for trace in traces],
+        "invocation": invocation,
+        "iteration": iteration,
+        "key": key,
+        "parent": parent,
+        "role": role,
+        "template": template,
     }
 
 
-def _sequence_events(categories: Sequence[Category]) -> list[Object]:
-    events = [_event("initialize")]
-    for index, category in enumerate(categories):
-        activation = f"A{index}"
-        events.extend(
-            (
-                _event("select", activation),
-                _event("start", activation),
-                _terminal(activation, category, "ok" if category == "success" else "fail"),
-            )
-        )
+def _decl(
+    seeds: Sequence[Object],
+    *,
+    required: Sequence[str] = (),
+    edges: Sequence[Sequence[str]] = (),
+    choices: Sequence[Mapping[str, Json]] = (),
+    subgraphs: Sequence[Mapping[str, Json]] = (),
+    aggregates: Sequence[Mapping[str, Json]] = (),
+    limits: tuple[int, int, int] | None = None,
+    static: Object | None = None,
+) -> Object:
+    parents = {cast(str, seed["key"]): cast(str | None, seed["parent"]) for seed in seeds}
+    depth = 0
+    for key in parents:
+        count = 0
+        current: str | None = key
+        while current in parents:
+            count += 1
+            current = parents[current]
+        depth = max(depth, count)
+    maps = sum(seed["role"] == "map_expander" for seed in seeds)
+    exact = limits or (3 * len(seeds) + maps, len(seeds), depth)
+    return {
+        "aggregates": [dict(item) for item in aggregates],
+        "choices": [dict(item) for item in choices],
+        "edges": [list(edge) for edge in edges],
+        "invocation": "I0",
+        "limits": {"max_entries": exact[1], "max_events": exact[0], "max_parent_depth": exact[2]},
+        "required": list(required),
+        "seeds": list(seeds),
+        "static": static or {"compatible": True, "edges": [], "groups": []},
+        "subgraphs": [dict(item) for item in subgraphs],
+    }
+
+
+def _event(kind: str, **fields: Json) -> Object:
+    return {"kind": kind, **fields}
+
+
+def _select(*keys: str) -> Object:
+    return _event("select", keys=list(keys))
+
+
+def _terminal(key: str, category: Category, outcome: str | None) -> Object:
+    return _event(f"terminal_{category}", key=key, outcome=outcome)
+
+
+def _spare(declaration: Object, amount: int = 1) -> Object:
+    result = dict(declaration)
+    limits = cast(Object, dict(cast(Object, declaration["limits"])))
+    limits["max_events"] = cast(int, limits["max_events"]) + amount
+    result["limits"] = limits
+    return result
+
+
+def _ordinary(categories: Sequence[Category], *, keys: Sequence[str] | None = None) -> list[Object]:
+    selected = tuple(keys or (f"A{i}" for i in range(len(categories))))
+    events = [_event("initialize"), _select(*selected)]
+    for key, category in zip(selected, categories, strict=True):
+        events += [_event("start", key=key), _terminal(key, category, "ok" if category == "success" else "fail")]
     return events
 
 
-def _sequence_cases() -> Iterable[Object]:
-    for index, category in enumerate(CATEGORIES):
-        declaration: Object = {"dependencies": [], "scenario": "sequence", "templates": {"A0": "N0"}}
-        events = _sequence_events((category,))
-        yield _case("sequence_single", f"{index:03d}", "base", declaration, events, ("rename",))
-    for predecessor_index, predecessor in enumerate(CATEGORIES):
-        for successor_index, successor in enumerate(CATEGORIES):
-            declaration = {
-                "dependencies": [["A0", "A1"]],
-                "scenario": "sequence",
-                "templates": {"A0": "N0", "A1": "N1"},
+def _rename(value: Json, *, inverse: bool = False) -> Json:
+    templates, activations = (INVERSE_TEMPLATE, INVERSE_ACTIVATION) if inverse else (RENAME_TEMPLATE, RENAME_ACTIVATION)
+    if isinstance(value, list):
+        return [_rename(item, inverse=inverse) for item in value]
+    if isinstance(value, dict):
+        return {
+            templates.get(key, activations.get(key, key)): _rename(item, inverse=inverse) for key, item in value.items()
+        }
+    if isinstance(value, str):
+        return templates.get(value, activations.get(value, value))
+    return value
+
+
+def _case(
+    family: str,
+    coordinate: str,
+    name: str,
+    declaration: Object,
+    events: Sequence[Mapping[str, Json]],
+    traces: Sequence[str] = (),
+) -> Object:
+    event_list = [dict(event) for event in events]
+    expected = reduce_trace(declaration, event_list)
+    trace_values: list[Json] = []
+    for trace in traces:
+        if trace == "rename":
+            transformed = cast(Object, _rename(declaration))
+            transformed_events = cast(list[Object], _rename(cast(Json, event_list)))
+        else:
+            transformed = declaration
+            transformed_events = event_list[:2] + event_list[4:6] + event_list[2:4]
+        trace_values.append(
+            {
+                "declaration": transformed,
+                "events": transformed_events,
+                "expected": reduce_trace(transformed, transformed_events),
+                "name": trace,
             }
+        )
+    return {
+        "case_id": f"{family}/{coordinate}/{name}",
+        "declaration": declaration,
+        "events": event_list,
+        "expected": expected,
+        "family": family,
+        "mode": "accepted" if expected["status"] == "accepted" else "rejected",
+        "traces": trace_values,
+    }
+
+
+def _sequence_cases() -> Iterable[Object]:
+    for i, category in enumerate(CATEGORIES):
+        declaration = _decl((_seed("A0"),), required=("A0",))
+        yield _case("sequence_single", f"{i:03d}", "base", declaration, _ordinary((category,)), ("rename",))
+    for i, left in enumerate(CATEGORIES):
+        for j, right in enumerate(CATEGORIES):
+            declaration = _decl((_seed("A0", "N0"), _seed("A1", "N1")), required=("A0", "A1"), edges=(("A0", "A1"),))
             events = [
                 _event("initialize"),
-                _event("select", "A0"),
-                _event("select", "A1"),
-                _event("start", "A0"),
-                _terminal("A0", predecessor, "ok" if predecessor == "success" else "fail"),
-                _event("start", "A1"),
-                _terminal("A1", successor, "ok" if successor == "success" else "fail"),
+                _select("A0", "A1"),
+                _event("start", key="A0"),
+                _terminal("A0", left, "ok" if left == "success" else "fail"),
+                _event("start", key="A1"),
+                _terminal("A1", right, "ok" if right == "success" else "fail"),
             ]
-            yield _case(
-                "sequence_linked_pair",
-                f"{predecessor_index:03d}-{successor_index:03d}",
-                "base",
-                declaration,
-                events,
-                ("rename",),
-            )
-    for left_index, left in enumerate(CATEGORIES):
-        for right_index, right in enumerate(CATEGORIES):
-            declaration = {"dependencies": [], "scenario": "sequence", "templates": {"A0": "N0", "A1": "N1"}}
-            events = _sequence_events((left, right))
+            yield _case("sequence_linked_pair", f"{i:03d}-{j:03d}", "base", declaration, events, ("rename",))
+    for i, left in enumerate(CATEGORIES):
+        for j, right in enumerate(CATEGORIES):
+            declaration = _decl((_seed("A0", "N0"), _seed("A1", "N1")), required=("A0", "A1"))
+            events = _ordinary((left, right))
             yield _case(
                 "sequence_independent_siblings",
-                f"{left_index:03d}-{right_index:03d}",
+                f"{i:03d}-{j:03d}",
                 "base",
                 declaration,
                 events,
@@ -443,112 +932,213 @@ def _sequence_cases() -> Iterable[Object]:
 
 
 def _mutation_cases() -> Iterable[Object]:
-    mutations = (
-        ("start_before_ready", [_event("initialize"), _event("start", "A0")], ["missing"]),
-        (
-            "terminal_before_start",
-            [_event("initialize"), _event("select", "A0"), _terminal("A0", "success", "ok")],
-            ["contradictory"],
-        ),
-        ("duplicate_terminal", _sequence_events(("success",)) + [_terminal("A0", "success", "ok")], ["duplicate"]),
-        ("missing_activation", [_event("initialize"), _event("select", "A1")], ["missing"]),
+    declaration = _decl((_seed("A0"),), required=("A0",))
+    events = (
+        [_event("initialize"), _event("start", key="A0")],
+        [_event("initialize"), _select("A0"), _terminal("A0", "success", "ok")],
+        _ordinary(("success",)) + [_terminal("A0", "success", "ok")],
+        [_event("initialize"), _select("A1")],
     )
-    base: Object = {"dependencies": [], "scenario": "sequence", "templates": {"A0": "N0"}}
-    for coordinate, (name, events, defects) in enumerate(mutations):
-        declaration = dict(base)
-        declaration["defects"] = defects
-        declaration["mutation"] = name
-        yield _case("sequence_mutations", f"{coordinate:03d}", name, declaration, events)
-    for offset, category in enumerate(CATEGORIES[1:]):
-        declaration = dict(base)
-        declaration["success_only"] = True
-        events = [_event("initialize"), _event("select", "A0"), _event("start", "A0"), _terminal("A0", category, None)]
-        yield _case("sequence_mutations", f"{offset + 4:03d}", f"abnormal_{category}", declaration, events)
-    events = [_event("initialize"), _event("select", "A0"), _event("start", "A0"), _terminal("A0", "success", None)]
-    yield _case("sequence_mutations", "009", "success_without_outcome", base, events)
+    names = ("start_before_ready", "terminal_before_start", "duplicate_terminal", "missing_activation")
+    for i, (name, trace) in enumerate(zip(names, events, strict=True)):
+        facts = _spare(declaration) if name == "duplicate_terminal" else declaration
+        yield _case("sequence_mutations", f"{i:03d}", name, facts, trace)
+    for i, category in enumerate(CATEGORIES[1:], 4):
+        yield _case(
+            "sequence_mutations",
+            f"{i:03d}",
+            f"abnormal_{category}",
+            declaration,
+            [_event("initialize"), _select("A0"), _event("start", key="A0"), _terminal("A0", category, None)],
+        )
+    yield _case(
+        "sequence_mutations",
+        "009",
+        "success_without_outcome",
+        declaration,
+        [_event("initialize"), _select("A0"), _event("start", key="A0"), _terminal("A0", "success", None)],
+    )
 
 
 def _choice_cases() -> Iterable[Object]:
     coordinate = 0
+    seeds = (_seed("A0", "N0"), _seed("A1", "N1"), _seed("A2", "N2"))
     for outcome in ("ok", "fail"):
         for order in ("forward", "reverse"):
-            branch_activation = "A1" if outcome == "ok" else "A2"
-            declaration: Object = {
-                "branch_order": order,
-                "dependencies": [],
-                "scenario": "choice",
-                "selector_outcome": outcome,
-                "templates": {"A0": "N0", branch_activation: "N1" if outcome == "ok" else "N2"},
-            }
+            branches = [{"members": ["A1"], "outcome": "ok"}, {"members": ["A2"], "outcome": "fail"}]
+            if order == "reverse":
+                branches.reverse()
+            declaration = _decl(seeds, required=("A0",), choices=({"branches": branches, "selector": "A0"},))
+            branch = "A1" if outcome == "ok" else "A2"
             category: Category = "success" if outcome == "ok" else "failure"
             events = [
                 _event("initialize"),
-                _event("select", "A0"),
-                _event("start", "A0"),
+                _select("A0"),
+                _event("start", key="A0"),
                 _terminal("A0", category, outcome),
-                _event("select", branch_activation),
-                _event("start", branch_activation),
-                _terminal(branch_activation, category, outcome),
+                _event("start", key=branch),
+                _terminal(branch, category, outcome),
             ]
-            yield _case("choice", f"{coordinate:03d}", f"{outcome}_{order}", declaration, events, ("rename",))
+            yield _case("choice", f"{coordinate:03d}", f"{outcome}_{order}", declaration, events)
             coordinate += 1
-    for name, defects in (
-        ("foreign_selector", ["foreign_owner"]),
-        ("unknown_outcome", ["invalid_value"]),
-        ("select_both", ["overlap"]),
-    ):
-        declaration = {
-            "defects": defects,
-            "dependencies": [],
-            "mutation": name,
-            "scenario": "choice",
-            "templates": {"A0": "N0"},
-        }
-        yield _case("choice", f"{coordinate:03d}", name, declaration, _sequence_events(("success",)))
+    base = _decl(
+        seeds, required=("A0",), choices=({"branches": [{"members": ["A1"], "outcome": "ok"}], "selector": "A0"},)
+    )
+    special = (
+        (
+            "foreign_selector",
+            _decl(
+                (*seeds, _seed("A11", invocation="I1")),
+                required=("A0",),
+                choices=({"branches": [], "selector": "A11"},),
+            ),
+            [_event("initialize"), _select("A0")],
+        ),
+        (
+            "unknown_outcome",
+            base,
+            [_event("initialize"), _select("A0"), _event("start", key="A0"), _terminal("A0", "success", "again")],
+        ),
+        ("select_both", base, [_event("initialize"), _select("A1", "A2")]),
+        (
+            "abnormal_selector_failure",
+            base,
+            [_event("initialize"), _select("A0"), _event("start", key="A0"), _terminal("A0", "failure", None)],
+        ),
+    )
+    for name, declaration, events in special:
+        yield _case("choice", f"{coordinate:03d}", name, declaration, events)
         coordinate += 1
-    declaration = {"dependencies": [], "scenario": "choice", "selector_outcome": None, "templates": {"A0": "N0"}}
-    events = [_event("initialize"), _event("select", "A0"), _event("start", "A0"), _terminal("A0", "failure", None)]
-    yield _case("choice", f"{coordinate:03d}", "abnormal_selector_failure", declaration, events)
 
 
 def _subgraph_cases() -> Iterable[Object]:
     coordinate = 0
-    for body_size in (1, 2):
+    for size in (1, 2):
         for category in ("success", "failure"):
-            declaration: Object = {"body_size": body_size, "category": category, "depth": 1, "scenario": "subgraph"}
-            yield _case(
-                "subgraph",
-                f"{coordinate:03d}",
-                f"body_{body_size}_{category}",
-                declaration,
-                [
-                    _event("initialize"),
-                    _event("start", "A0"),
-                    _terminal("A1", cast(Category, category), "ok" if category == "success" else "fail"),
-                ],
+            keys = tuple(f"A{i + 1}" for i in range(size))
+            seeds = [_seed("A0", role="subgraph")] + [_seed(key, "N1", parent="A0") for key in keys]
+            declaration = _decl(
+                seeds,
+                required=("A0",),
+                edges=tuple((keys[i], keys[i + 1]) for i in range(size - 1)),
+                subgraphs=({"parent": "A0", "roots": list(keys), "sink": keys[-1]},),
             )
+            events = [_event("initialize"), _select("A0"), _event("start", key="A0")]
+            for key in keys:
+                events += [
+                    _event("start", key=key),
+                    _terminal(key, cast(Category, category), "ok" if category == "success" else "fail"),
+                ]
+            yield _case("subgraph", f"{coordinate:03d}", f"body_{size}_{category}", declaration, events)
             coordinate += 1
-    for name in ("premature_parent_terminal", "wrong_parent", "foreign_body_key", "duplicate_body_key"):
-        declaration = {"body_size": 1, "category": "success", "mutation": name, "scenario": "subgraph"}
-        yield _case("subgraph", f"{coordinate:03d}", name, declaration, [_event("initialize"), _event("start", "A0")])
+    base = _decl(
+        (_seed("A0", role="subgraph"), _seed("A1", "N1", parent="A0")),
+        required=("A0",),
+        subgraphs=({"parent": "A0", "roots": ["A1"], "sink": "A1"},),
+    )
+    cases = (
+        (
+            "premature_parent_terminal",
+            base,
+            [_event("initialize"), _select("A0"), _event("start", key="A0"), _terminal("A0", "success", "ok")],
+        ),
+        (
+            "wrong_parent",
+            _decl((_seed("A0", role="subgraph"), _seed("A1", parent="A2")), required=("A0",)),
+            [_event("initialize")],
+        ),
+        (
+            "foreign_body_key",
+            _decl((_seed("A0", role="subgraph"), _seed("A1", parent="A0", invocation="I1")), required=("A0",)),
+            [_event("initialize")],
+        ),
+        (
+            "duplicate_body_key",
+            _decl(
+                (_seed("A0", role="subgraph"), _seed("A1", parent="A0"), _seed("A1", "N1", parent="A0")),
+                required=("A0",),
+            ),
+            [_event("initialize")],
+        ),
+    )
+    for name, declaration, events in cases:
+        yield _case("subgraph", f"{coordinate:03d}", name, declaration, events)
         coordinate += 1
-    declaration = {"body_size": 2, "category": "success", "depth": 2, "scenario": "subgraph"}
+    nested = _decl(
+        (_seed("A0", role="subgraph"), _seed("A1", "N1", parent="A0", role="subgraph"), _seed("A2", "N2", parent="A1")),
+        required=("A0",),
+        subgraphs=({"parent": "A0", "roots": ["A1"], "sink": "A1"}, {"parent": "A1", "roots": ["A2"], "sink": "A2"}),
+    )
     yield _case(
         "subgraph",
         f"{coordinate:03d}",
         "nested_body",
-        declaration,
-        [_event("initialize"), _event("start", "A0"), _event("start", "A1"), _terminal("A2", "success", "ok")],
+        nested,
+        [
+            _event("initialize"),
+            _select("A0"),
+            _event("start", key="A0"),
+            _event("start", key="A1"),
+            _event("start", key="A2"),
+            _terminal("A2", "success", "ok"),
+        ],
     )
     coordinate += 1
-    declaration = {"body_size": 1, "category": "lost", "outcome": None, "scenario": "subgraph"}
     yield _case(
         "subgraph",
         f"{coordinate:03d}",
         "abnormal_sink_loss",
-        declaration,
-        [_event("initialize"), _event("start", "A0"), _terminal("A1", "lost", None)],
+        base,
+        [
+            _event("initialize"),
+            _select("A0"),
+            _event("start", key="A0"),
+            _event("start", key="A1"),
+            _terminal("A1", "lost", None),
+        ],
     )
+
+
+def _aggregate_decl(
+    bound: int, *, kind: Literal["map", "loop"] = "map", initial: bool = True, carried: bool = True
+) -> Object:
+    count = bound if kind == "loop" else 2
+    parent_role: Role = "loop_starter" if kind == "loop" else "map_expander"
+    member_role: Role = "loop_member" if kind == "loop" else "map_member"
+    seeds = [_seed("A0", role=parent_role), _seed("A11", "N2", role="join")] + [
+        _seed(f"A{i + 1}", "N1", parent="A0", iteration=i if kind == "loop" else None, role=member_role)
+        for i in range(count)
+    ]
+    aggregate = {
+        "bound": bound,
+        "carried": carried,
+        "initial": initial,
+        "join": "A11",
+        "kind": kind,
+        "members": [f"A{i + 1}" for i in range(count)],
+        "parent": "A0",
+    }
+    return _decl(seeds, required=("A0", "A11"), aggregates=(aggregate,))
+
+
+def _map_events(
+    members: Sequence[str],
+    categories: Sequence[Category],
+    *,
+    closed: bool = True,
+    parent_category: Category = "success",
+    parent_outcome: str | None = "ok",
+) -> list[Object]:
+    events = [
+        _event("initialize"),
+        _select("A0", "A11"),
+        _event("start", key="A0"),
+        _terminal("A0", parent_category, parent_outcome),
+        _event("membership_close" if closed else "membership_open", parent="A0", members=list(members)),
+    ]
+    for member, category in zip(members, categories, strict=False):
+        events += [_event("start", key=member), _terminal(member, category, "ok" if category == "success" else "fail")]
+    return events
 
 
 def _map_cases() -> Iterable[Object]:
@@ -556,320 +1146,292 @@ def _map_cases() -> Iterable[Object]:
     for bound in (0, 1, 2):
         for size in range(bound + 1):
             for assignment in itertools.product(("success", "failure"), repeat=size):
-                declaration: Object = {
-                    "aggregate": "map",
-                    "bound": bound,
-                    "categories": list(assignment),
-                    "covered": size,
-                    "members": [f"A{index + 1}" for index in range(size)],
-                    "membership": "closed",
-                    "scenario": "map",
-                }
+                members = tuple(f"A{i + 1}" for i in range(size))
                 yield _case(
                     "map",
                     f"{coordinate:03d}",
-                    f"bound_{bound}_size_{size}_{''.join(item[0] for item in assignment) or 'empty'}",
-                    declaration,
-                    [_event("membership_close", "A0", members=cast(Json, declaration["members"]))],
+                    f"bound_{bound}_size_{size}_{''.join(x[0] for x in assignment) or 'empty'}",
+                    _aggregate_decl(bound),
+                    _map_events(members, cast(tuple[Category, ...], assignment)),
                 )
                 coordinate += 1
-    declaration = {
-        "aggregate": "map",
-        "bound": 2,
-        "categories": [],
-        "expansion_status": "overflow",
-        "members": [],
-        "observed_count": 3,
-        "scenario": "map",
-    }
+    declaration = _aggregate_decl(2)
     yield _case(
-        "map", f"{coordinate:03d}", "one_over_3", declaration, [_event("membership_overflow", "A0", observed_count=3)]
+        "map",
+        f"{coordinate:03d}",
+        "one_over_3",
+        declaration,
+        [_event("initialize"), _select("A0", "A11"), _event("membership_overflow", parent="A0", observed_count=3)],
     )
     coordinate += 1
+    failed_empty = [
+        _event("initialize"),
+        _select("A0", "A11"),
+        _event("start", key="A0"),
+        _terminal("A0", "failure", "fail"),
+    ]
+    failed_partial = [
+        _event("initialize"),
+        _select("A0", "A11"),
+        _event("membership_open", parent="A0", members=["A1"]),
+        _event("start", key="A1"),
+        _terminal("A1", "success", "ok"),
+        _event("start", key="A0"),
+        _terminal("A0", "failure", "fail"),
+    ]
     specials = (
-        ("empty_success", {}),
-        ("failed_empty", {"expansion_status": "failed"}),
-        ("failed_partial", {"categories": ["success"], "expansion_status": "failed", "members": ["A1"]}),
-        ("open_partial", {"categories": ["success"], "members": ["A1"], "membership": "open"}),
-        ("closed_missing_terminal", {"covered": 0, "members": ["A1"]}),
-        ("duplicate", {"mutation": "duplicate"}),
-        ("foreign", {"mutation": "foreign"}),
-        ("wrong_parent", {"mutation": "wrong_parent"}),
-        ("closed_grow", {"mutation": "closed_grow"}),
-        ("closed_shrink", {"mutation": "closed_shrink"}),
-        ("reopen", {"mutation": "reopen"}),
-        ("survivor_only", {"mutation": "survivor_only"}),
-        ("abnormal_expander_failure", {"expansion_status": "failed", "outcome": None}),
-    )
-    for name, changes in specials:
-        declaration = {
-            "aggregate": "map",
-            "bound": 2,
-            "categories": [],
-            "members": [],
-            "membership": "closed",
-            "scenario": "map",
-        }
-        declaration.update(changes)
-        events = [
-            _event(
-                "membership_open" if declaration.get("membership") == "open" else "membership_close",
-                "A0",
-                members=cast(Json, declaration["members"]),
-            )
-        ]
-        if name == "failed_empty":
-            events.append(_event("close_blocked", "A11"))
-        elif name == "abnormal_expander_failure":
-            events.append(_event("close_inconsistent", "A11"))
-        yield _case(
-            "map",
-            f"{coordinate:03d}",
-            name,
+        ("empty_success", _spare(declaration), _map_events((), ())),
+        ("failed_empty", declaration, failed_empty),
+        ("failed_partial", declaration, failed_partial),
+        ("open_partial", declaration, _map_events(("A1",), ("success",), closed=False)),
+        ("closed_missing_terminal", declaration, _map_events(("A1",), ())),
+        ("duplicate", declaration, _map_events(("A1",), ("success",)) + [_terminal("A1", "success", "ok")]),
+        (
+            "foreign",
             declaration,
-            events,
-        )
+            [_event("initialize"), _select("A0", "A11"), _event("membership_close", parent="A0", members=["A10"])],
+        ),
+        (
+            "wrong_parent",
+            declaration,
+            [_event("initialize"), _select("A0", "A11"), _event("membership_close", parent="A1", members=[])],
+        ),
+        ("closed_grow", declaration, _map_events((), ()) + [_event("membership_close", parent="A0", members=["A1"])]),
+        (
+            "closed_shrink",
+            declaration,
+            _map_events(("A1",), ("success",)) + [_event("membership_close", parent="A0", members=[])],
+        ),
+        ("reopen", declaration, _map_events((), ()) + [_event("membership_open", parent="A0", members=[])]),
+        (
+            "survivor_only",
+            declaration,
+            _map_events(("A1",), ("success",), closed=False) + [_event("membership_close", parent="A0", members=[])],
+        ),
+        ("abnormal_expander_failure", declaration, _map_events((), (), parent_category="failure", parent_outcome=None)),
+    )
+    for name, facts, events in specials:
+        yield _case("map", f"{coordinate:03d}", name, facts, events)
         coordinate += 1
 
 
 def _join_cases() -> Iterable[Object]:
     coordinate = 0
+    declaration = _aggregate_decl(2)
     for count in (0, 1, 2):
         for assignment in itertools.product(("success", "failure", "cancelled", "lost"), repeat=count):
-            declaration: Object = {
-                "aggregate": "join",
-                "categories": list(assignment),
-                "covered": count,
-                "members": [f"A{index + 1}" for index in range(count)],
-                "membership": "closed",
-                "scenario": "join",
-            }
             yield _case(
                 "join",
                 f"{coordinate:03d}",
                 f"children_{count}_{'-'.join(assignment) or 'empty'}",
                 declaration,
-                [_event("membership_close", "A0", members=cast(Json, declaration["members"]))],
+                _map_events(tuple(f"A{i + 1}" for i in range(count)), cast(tuple[Category, ...], assignment)),
             )
             coordinate += 1
-    for name, changes in (
-        ("any_match", {"categories": ["success", "failure"], "members": ["A1", "A2"]}),
-        ("omitted_child", {"mutation": "omitted_child"}),
-        ("duplicate_terminal", {"mutation": "duplicate_terminal"}),
-        ("foreign_terminal", {"mutation": "foreign_terminal"}),
-        ("open_complete_survivors", {"categories": ["success"], "members": ["A1"], "membership": "open"}),
-    ):
-        declaration = {"aggregate": "join", "categories": [], "members": [], "membership": "closed", "scenario": "join"}
-        declaration.update(changes)
-        yield _case(
-            "join",
-            f"{coordinate:03d}",
-            name,
+    specials = (
+        ("any_match", _spare(declaration), _map_events(("A1", "A2"), ("success", "failure"))),
+        (
+            "omitted_child",
             declaration,
-            [_event("membership_close", "A0", members=cast(Json, declaration["members"]))],
-        )
+            _map_events(("A1",), ("success",)) + [_event("membership_close", parent="A0", members=["A1", "A2"])],
+        ),
+        ("duplicate_terminal", declaration, _map_events(("A1",), ("success",)) + [_terminal("A1", "success", "ok")]),
+        ("foreign_terminal", declaration, _map_events((), ()) + [_terminal("A10", "success", "ok")]),
+        ("open_complete_survivors", declaration, _map_events(("A1",), ("success",), closed=False)),
+    )
+    for name, facts, events in specials:
+        yield _case("join", f"{coordinate:03d}", name, facts, events)
         coordinate += 1
 
 
 def _loop_cases() -> Iterable[Object]:
     coordinate = 0
     for bound in (0, 1, 2):
-        declaration: Object = {
-            "aggregate": "loop",
-            "bound": bound,
-            "expansion_status": "closed",
-            "join_status": "ready",
-            "members": [],
-            "scenario": "loop",
-        }
+        declaration = _aggregate_decl(bound, kind="loop")
         yield _case(
             "loop",
             f"{coordinate:03d}",
             f"bypass_bound_{bound}",
             declaration,
-            [_event("membership_close", "A0", members=[])],
+            [_event("initialize"), _select("A0", "A11"), _event("start", key="A0"), _terminal("A0", "success", "stop")],
         )
         coordinate += 1
-    declaration = {
-        "aggregate": "loop",
-        "bound": 0,
-        "expansion_status": "overflow",
-        "join_status": "inconsistent",
-        "members": [],
-        "scenario": "loop",
-    }
+    declaration = _aggregate_decl(0, kind="loop")
     yield _case(
         "loop",
         f"{coordinate:03d}",
         "enter_bound_zero",
         declaration,
-        [_event("terminal_success", "A0", outcome="again"), _event("membership_overflow", "A0", observed_count=1)],
+        [_event("initialize"), _select("A0", "A11"), _event("start", key="A0"), _terminal("A0", "success", "again")],
     )
     coordinate += 1
     for bound in (1, 2):
         for executed in range(1, bound + 1):
-            members = [f"A{index + 1}" for index in range(executed)]
-            declaration = {
-                "aggregate": "loop",
-                "bound": bound,
-                "categories": ["success"] * executed,
-                "expansion_status": "closed",
-                "join_status": "ready",
-                "members": members,
-                "scenario": "loop",
-            }
-            yield _case(
-                "loop",
-                f"{coordinate:03d}",
-                f"bound_{bound}_executed_{executed}_stop",
-                declaration,
-                [_event("membership_close", "A0", members=cast(Json, members))],
-            )
+            declaration = _aggregate_decl(bound, kind="loop")
+            events = [_event("initialize"), _select("A0", "A11", "A1")]
+            for index in range(executed):
+                key = f"A{index + 1}"
+                events += [
+                    _event("start", key=key),
+                    _terminal(key, "success", "stop" if index + 1 == executed else "again"),
+                ]
+            yield _case("loop", f"{coordinate:03d}", f"bound_{bound}_executed_{executed}_stop", declaration, events)
             coordinate += 1
-    declaration = {
-        "aggregate": "loop",
-        "bound": 2,
-        "expansion_status": "overflow",
-        "join_status": "inconsistent",
-        "members": ["A1", "A2"],
-        "observed_count": 3,
-        "scenario": "loop",
-    }
+    declaration = _aggregate_decl(2, kind="loop")
     yield _case(
-        "loop", f"{coordinate:03d}", "one_over_3", declaration, [_event("membership_overflow", "A0", observed_count=3)]
+        "loop",
+        f"{coordinate:03d}",
+        "one_over_3",
+        declaration,
+        [_event("initialize"), _select("A0", "A11"), _event("membership_overflow", parent="A0", observed_count=3)],
     )
     coordinate += 1
-    for name, changes in (
-        ("missing_initial", {"failure_cause": "initial", "join_status": "blocked", "expansion_status": "failed"}),
-        ("missing_carried", {"failure_cause": "carried", "join_status": "blocked", "expansion_status": "failed"}),
-        ("wrong_iteration", {"mutation": "wrong_parent"}),
-        ("duplicate_iteration", {"mutation": "duplicate"}),
-        ("foreign_iteration", {"mutation": "foreign_iteration"}),
-        ("continue_after_stop", {"mutation": "continue_after_stop"}),
-        ("terminal_gap", {"join_status": "unstarted", "expansion_status": "pending"}),
+    specials = (
+        (
+            "missing_initial",
+            _aggregate_decl(2, kind="loop", initial=False),
+            [
+                _event("initialize"),
+                _select("A0", "A11"),
+                _event("start", key="A0"),
+                _terminal("A0", "success", "again"),
+            ],
+        ),
+        (
+            "missing_carried",
+            _aggregate_decl(2, kind="loop", carried=False),
+            [_event("initialize"), _select("A1"), _event("start", key="A1"), _terminal("A1", "success", "again")],
+        ),
+        ("wrong_iteration", declaration, [_event("initialize"), _select("A2")]),
+        ("duplicate_iteration", declaration, [_event("initialize"), _select("A1", "A1")]),
+        ("foreign_iteration", declaration, [_event("initialize"), _select("A10")]),
+        (
+            "continue_after_stop",
+            declaration,
+            [
+                _event("initialize"),
+                _select("A1"),
+                _event("start", key="A1"),
+                _terminal("A1", "success", "stop"),
+                _terminal("A1", "success", "again"),
+            ],
+        ),
+        (
+            "terminal_gap",
+            declaration,
+            [_event("initialize"), _select("A2"), _event("start", key="A2"), _terminal("A2", "success", "stop")],
+        ),
         (
             "abnormal_member_loss",
-            {
-                "categories": ["lost"],
-                "join_status": "blocked",
-                "expansion_status": "failed",
-                "members": ["A1"],
-                "outcome": None,
-            },
-        ),
-    ):
-        declaration = {
-            "aggregate": "loop",
-            "bound": 2,
-            "categories": [],
-            "expansion_status": "closed",
-            "join_status": "ready",
-            "members": [],
-            "scenario": "loop",
-        }
-        declaration.update(changes)
-        yield _case(
-            "loop",
-            f"{coordinate:03d}",
-            name,
             declaration,
-            [_event("membership_close", "A0", members=cast(Json, declaration["members"]))],
-        )
+            [_event("initialize"), _select("A1"), _event("start", key="A1"), _terminal("A1", "lost", None)],
+        ),
+    )
+    for name, facts, events in specials:
+        yield _case("loop", f"{coordinate:03d}", name, facts, events)
         coordinate += 1
 
 
 def _nested_cases() -> Iterable[Object]:
     coordinate = 0
-    for map_children in (0, 1, 2):
-        for iterations in (0, 1, 2):
-            declaration: Object = {"loop_iterations": iterations, "map_children": map_children, "scenario": "nested"}
+    for maps in (0, 1, 2):
+        for loops in (0, 1, 2):
+            count = 2 + maps * (3 + loops)
+            seeds = tuple(_seed(f"A{i}", TEMPLATES[i % 3]) for i in range(count))
+            keys = tuple(f"A{i}" for i in range(count))
+            declaration = _spare(_decl(seeds, required=keys), loops)
             yield _case(
                 "nested_map_loop",
                 f"{coordinate:03d}",
-                f"map_{map_children}_loop_{iterations}",
+                f"map_{maps}_loop_{loops}",
                 declaration,
-                [_event("initialize")],
+                _ordinary(tuple("success" for _ in keys), keys=keys),
             )
             coordinate += 1
-    for name, axis in (("map_one_over_3", "map"), ("nested_loop_one_over_3", "loop")):
-        declaration = {
-            "loop_iterations": 3 if axis == "loop" else 0,
-            "map_children": 3 if axis == "map" else 1,
-            "observed": "overflow",
-            "scenario": "nested",
-        }
-        yield _case(
-            "nested_map_loop",
-            f"{coordinate:03d}",
-            name,
-            declaration,
-            [_event("membership_overflow", "A0", observed_count=3)],
-        )
-        coordinate += 1
+    yield _case(
+        "nested_map_loop",
+        f"{coordinate:03d}",
+        "map_one_over_3",
+        _aggregate_decl(2),
+        [_event("initialize"), _select("A0", "A11"), _event("membership_overflow", parent="A0", observed_count=3)],
+    )
+    coordinate += 1
+    yield _case(
+        "nested_map_loop",
+        f"{coordinate:03d}",
+        "nested_loop_one_over_3",
+        _aggregate_decl(2, kind="loop"),
+        [_event("initialize"), _select("A0", "A11"), _event("membership_overflow", parent="A0", observed_count=3)],
+    )
 
 
 def _precedence_cases() -> Iterable[Object]:
+    ordinary = _decl((_seed("A0"),), required=("A0",))
     cases = (
-        ("overflow_type_before_value", ["invalid_type", "invalid_value"], "constructor"),
-        ("event_limit_before_foreign", ["limit_exceeded", "foreign_owner"], "transition"),
-        ("foreign_before_duplicate", ["foreign_owner", "duplicate"], "initialization"),
-        ("duplicate_before_missing", ["duplicate", "missing"], "transition"),
-        ("missing_before_contradictory", ["missing", "contradictory"], "initialization"),
-        ("overlap_before_cycle", ["overlap", "cycle"], "static_admission"),
-        ("cycle_before_contradictory", ["cycle", "contradictory"], "static_admission"),
+        (
+            "overflow_type_before_value",
+            _aggregate_decl(2),
+            [_event("initialize"), {"kind": "membership_overflow", "observed_count": -1, "parent": 7}],
+        ),
+        (
+            "event_limit_before_foreign",
+            _decl((_seed("A0"),), required=("A0",), limits=(3, 1, 1)),
+            _ordinary(("success",)) + [_event("start", key="A11")],
+        ),
+        (
+            "foreign_before_duplicate",
+            _decl((_seed("A0", invocation="I1"), _seed("A1"), _seed("A1", "N1"))),
+            [_event("initialize")],
+        ),
+        ("duplicate_before_missing", ordinary, [_event("initialize"), _select("A0", "A0", "A1")]),
+        ("missing_before_contradictory", _decl((_seed("A0"),), required=("A0", "A1")), [_event("initialize")]),
+        (
+            "overlap_before_cycle",
+            _decl(
+                (_seed("A0"), _seed("A1")),
+                static={"compatible": True, "edges": [["A0", "A1"], ["A1", "A0"]], "groups": [["A0"], ["A0"]]},
+            ),
+            [_event("initialize")],
+        ),
+        (
+            "cycle_before_contradictory",
+            _decl(
+                (_seed("A0"), _seed("A1")),
+                static={"compatible": False, "edges": [["A0", "A1"], ["A1", "A0"]], "groups": []},
+            ),
+            [_event("initialize")],
+        ),
     )
-    for coordinate, (name, defects, boundary) in enumerate(cases):
-        declaration: Object = {"boundary": boundary, "defect_classes": defects, "scenario": "precedence"}
-        yield _case("precedence", f"{coordinate:03d}", name, declaration, [_event("initialize")])
+    for i, (name, declaration, events) in enumerate(cases):
+        yield _case("precedence", f"{i:03d}", name, declaration, events)
 
 
 def _coverage_cases() -> Iterable[Object]:
     coordinate = 0
-    for membership in ("open", "closed"):
+    declaration = _aggregate_decl(2)
+    for closed in (False, True):
         for count in (0, 1, 2):
             for covered in range(count + 1):
-                declaration: Object = {
-                    "aggregate": "join",
-                    "categories": ["success"] * covered,
-                    "covered": covered,
-                    "members": [f"A{index + 1}" for index in range(count)],
-                    "membership": membership,
-                    "scenario": "coverage",
-                }
+                members = tuple(f"A{i + 1}" for i in range(count))
                 yield _case(
                     "terminal_coverage",
                     f"{coordinate:03d}",
-                    f"{membership}_{count}_{covered}",
+                    f"{'closed' if closed else 'open'}_{count}_{covered}",
                     declaration,
-                    [
-                        _event(
-                            "membership_open" if membership == "open" else "membership_close",
-                            "A0",
-                            members=cast(Json, declaration["members"]),
-                        )
-                    ],
+                    _map_events(members, tuple("success" for _ in range(covered)), closed=closed),
                 )
                 coordinate += 1
-    for name, mutation in (
-        ("duplicate", "duplicate_terminal"),
-        ("missing", "omitted_child"),
-        ("foreign", "foreign_terminal"),
-    ):
-        declaration = {
-            "aggregate": "join",
-            "categories": [],
-            "members": [],
-            "mutation": mutation,
-            "scenario": "coverage",
-        }
-        yield _case(
-            "terminal_coverage", f"{coordinate:03d}", name, declaration, [_event("membership_close", "A0", members=[])]
-        )
+    specials = (
+        ("duplicate", _map_events(("A1",), ("success",)) + [_terminal("A1", "success", "ok")]),
+        ("missing", _map_events((), ()) + [_terminal("A1", "success", "ok")]),
+        ("foreign", _map_events((), ()) + [_terminal("A10", "success", "ok")]),
+    )
+    for name, events in specials:
+        yield _case("terminal_coverage", f"{coordinate:03d}", name, declaration, events)
         coordinate += 1
 
 
 def generate_cases() -> tuple[Object, ...]:
-    """Generate the full finite activation grammar in normative family order."""
     cases = tuple(
         itertools.chain(
             _sequence_cases(),
@@ -885,78 +1447,58 @@ def generate_cases() -> tuple[Object, ...]:
         )
     )
     identifiers = [case["case_id"] for case in cases]
-    if len(identifiers) != len(set(cast(list[str], identifiers))):
-        raise AssertionError("duplicate case id")
     payloads = [_canonical({key: value for key, value in case.items() if key != "case_id"}) for case in cases]
-    if len(payloads) != len(set(payloads)):
-        raise AssertionError("duplicate case payload")
+    if len(identifiers) != len(set(cast(list[str], identifiers))) or len(payloads) != len(set(payloads)):
+        raise AssertionError("duplicate finite case")
     return cases
 
 
 def load_cases(value: Json) -> tuple[Object, ...]:
-    """Validate the shallow frozen-corpus boundary."""
     if not isinstance(value, list) or not value:
-        raise ValueError("corpus must be a nonempty array")
-    result: list[Object] = []
+        raise ValueError("invalid corpus")
+    exact = {"case_id", "declaration", "events", "expected", "family", "mode", "traces"}
+    cases: list[Object] = []
     for item in value:
-        if not isinstance(item, dict) or set(item) != {
-            "case_id",
-            "declaration",
-            "events",
-            "expected",
-            "family",
-            "mode",
-            "traces",
-        }:
+        if not isinstance(item, dict) or set(item) != exact:
             raise ValueError("invalid case shape")
-        result.append(cast(Object, item))
-    return tuple(result)
+        cases.append(cast(Object, item))
+    return tuple(cases)
+
+
+def _labels(value: Json, universe: Sequence[str]) -> list[str]:
+    if isinstance(value, str):
+        return [value] if value in universe else []
+    if isinstance(value, list):
+        return list(itertools.chain.from_iterable(_labels(item, universe) for item in value))
+    if isinstance(value, dict):
+        return list(itertools.chain.from_iterable(_labels(item, universe) for item in value.values()))
+    return []
 
 
 def counts(cases: Sequence[Object]) -> Object:
-    """Derive manifest counts and observed bounds from generated cases."""
-    event_count = sum(
-        len(cast(list[Json], case["events"]))
-        + sum(len(cast(list[Json], cast(Object, trace)["events"])) for trace in cast(list[Json], case["traces"]))
-        for case in cases
-    )
-    trace_count = len(cases) + sum(len(cast(list[Json], case["traces"])) for case in cases)
-    max_templates = max(len(set(_collect_labels(case, "N"))) for case in cases)
-    max_activations = max(len(set(_collect_labels(case, "A"))) for case in cases)
     return {
         "case_count": len(cases),
-        "event_count": event_count,
-        "max_activations": max_activations,
+        "event_count": sum(
+            len(cast(list[Json], case["events"]))
+            + sum(len(cast(list[Json], cast(Object, trace)["events"])) for trace in cast(list[Json], case["traces"]))
+            for case in cases
+        ),
+        "max_activations": max(len(set(_labels(case, ACTIVATIONS))) for case in cases),
         "max_dynamic_depth": 2,
         "max_loop_iterations": 3,
         "max_map_children": 3,
-        "max_templates": max_templates,
-        "trace_count": trace_count,
+        "max_templates": max(len(set(_labels(case, TEMPLATES))) for case in cases),
+        "trace_count": len(cases) + sum(len(cast(list[Json], case["traces"])) for case in cases),
     }
 
 
-def _collect_labels(value: Json, prefix: str) -> list[str]:
-    labels: list[str] = []
-    if isinstance(value, str) and value in (TEMPLATES if prefix == "N" else ACTIVATIONS):
-        labels.append(value)
-    elif isinstance(value, list):
-        for item in value:
-            labels.extend(_collect_labels(item, prefix))
-    elif isinstance(value, dict):
-        for item in value.values():
-            labels.extend(_collect_labels(item, prefix))
-    return labels
-
-
 def manifest(cases: Sequence[Object], *, generator_sha256: str, self_test_sha256: str) -> Object:
-    """Build the exact product manifest from generated bytes."""
-    corpus = canonical_bytes(cases)
     return {
         "alphabet": list(ALPHABET),
         "capability": "workflow_activation_v1",
         "contract_sha256": CONTRACT_SHA256,
         "corpus_path": CORPUS_PATH,
-        "corpus_sha256": hashlib.sha256(corpus).hexdigest(),
+        "corpus_sha256": hashlib.sha256(canonical_bytes(cases)).hexdigest(),
         "counts": counts(cases),
         "family_bounds": {
             "activation_universe_size": 12,
@@ -985,24 +1527,24 @@ def manifest(cases: Sequence[Object], *, generator_sha256: str, self_test_sha256
 
 
 def main() -> None:
-    """Write canonical corpus or print it when invoked directly."""
     cases = generate_cases()
     if len(sys.argv) == 1:
         sys.stdout.buffer.write(canonical_bytes(cases))
         return
     if len(sys.argv) != 4 or sys.argv[1] != "--write":
         raise SystemExit("usage: activation_v1.py [--write CORPUS MANIFEST]")
-    corpus_path = Path(sys.argv[2])
-    manifest_path = Path(sys.argv[3])
-    source_path = Path(__file__)
-    test_path = source_path.with_name("test_activation_v1.py")
-    corpus_path.write_bytes(canonical_bytes(cases))
-    product_manifest = manifest(
-        cases,
-        generator_sha256=hashlib.sha256(source_path.read_bytes()).hexdigest(),
-        self_test_sha256=hashlib.sha256(test_path.read_bytes()).hexdigest(),
+    source, test = Path(__file__), Path(__file__).with_name("test_activation_v1.py")
+    Path(sys.argv[2]).write_bytes(canonical_bytes(cases))
+    Path(sys.argv[3]).write_bytes(
+        _canonical(
+            manifest(
+                cases,
+                generator_sha256=hashlib.sha256(source.read_bytes()).hexdigest(),
+                self_test_sha256=hashlib.sha256(test.read_bytes()).hexdigest(),
+            )
+        )
+        + b"\n"
     )
-    manifest_path.write_bytes(_canonical(product_manifest) + b"\n")
 
 
 if __name__ == "__main__":
