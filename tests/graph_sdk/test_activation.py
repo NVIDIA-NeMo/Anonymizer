@@ -274,6 +274,22 @@ def test_closed_map_join_is_conjunctive_over_every_child() -> None:
     )
     fixed = frozenset(seed for seed in seeds if seed.template in {expander, join})
 
+    duplicate_reservations = frozenset(
+        {
+            ActivationSeed(template=expander, activation=expander_key),
+            ActivationSeed(template=join, activation=expander_key),
+            *(ActivationSeed(template=member, activation=key) for key in child_keys),
+        }
+    )
+    with pytest.raises(ContractViolation) as raised:
+        initialize_activation(
+            workflow=dynamic,
+            invocation=invocation,
+            reservations=duplicate_reservations,
+            limits=ActivationLimits(max_events=13, max_entries=4, max_parent_depth=2),
+        )
+    assert raised.value.code is ValidationCode.DUPLICATE
+
     def initialized():
         return initialize_activation(
             workflow=dynamic,

@@ -486,13 +486,27 @@ def _produces(workflow: AdmittedActivationWorkflow, entry: ActivationEntry, port
     return any(outcome.name == entry.outcome and port in outcome.produced_ports for outcome in node.operation.outcomes)
 
 
-def _initial_values_available(workflow: AdmittedActivationWorkflow, entry: ActivationEntry, loop: LoopDecl) -> bool:
-    return all(
-        not isinstance(binding.source, NodeOutputRef)
-        or binding.source.node != entry.template
-        or _produces(workflow, entry, binding.source.port)
-        for binding in loop.initial
-    )
+def _initial_values_available(
+    workflow: AdmittedActivationWorkflow,
+    entry: ActivationEntry,
+    loop: LoopDecl,
+    entries: dict[ActivationKey, ActivationEntry],
+    reservations: dict[ActivationKey, ActivationSeed],
+) -> bool:
+    scope = _scope_for(workflow, entry.template)
+    context = _context(reservations[entry.activation], scope)
+    for binding in loop.initial:
+        if not isinstance(binding.source, NodeOutputRef):
+            continue
+        source_seed = _reservation_for(reservations, binding.source.node, context)
+        source_entry = entries.get(source_seed.activation) if source_seed is not None else None
+        if (
+            source_entry is None
+            or source_entry.status not in _TERMINAL
+            or not _produces(workflow, source_entry, binding.source.port)
+        ):
+            return False
+    return True
 
 
 def _normalize(
@@ -544,7 +558,7 @@ def _normalize(
                     status = "overflow"
                 elif entry.outcome in loop.enter_outcomes:
                     seed = _reservation_for(reservations, loop.member, entry.activation, 0)
-                    if seed is None or not _initial_values_available(workflow, entry, loop):
+                    if seed is None or not _initial_values_available(workflow, entry, loop, entries, reservations):
                         status = "failed"
                     else:
                         _materialize(seed, entries)
@@ -650,12 +664,16 @@ def _normalize(
             scope = _scope_for(workflow, entry.template)
             if any(item.join == entry.template for item in scope.joins):
                 continue
-            if any(item.member == entry.template for item in (*scope.maps, *scope.loops)):
+            loop_member = next((item for item in scope.loops if item.member == entry.template), None)
+            map_member = next((item for item in scope.maps if item.member == entry.template), None)
+            if loop_member is not None:
                 ready = True
                 blocked = False
             else:
                 context = _context(reservations[key], scope)
                 predecessors = [edge.before for edge in scope.workflow.sequence if edge.after == entry.template]
+                if map_member is not None:
+                    predecessors = [template for template in predecessors if template != map_member.expander]
                 prior_entries: list[ActivationEntry] = []
                 missing_prior = False
                 for template in predecessors:
@@ -796,7 +814,10 @@ def advance_activation(*, state: ActivationState, event: ActivationEvent) -> Act
         entries[event.activation] = replace(entry, status="running")
         node = _node(state.workflow, entry.template)
         if isinstance(node, SubgraphNode):
-            roots = {node.id for node in node.body.nodes}
+            choice_members = {
+                member for choice in node.body.choices for branch in choice.branches for member in branch.members
+            }
+            roots = {body_node.id for body_node in node.body.nodes} - choice_members
             for seed in reservations.values():
                 if seed.activation.parent == event.activation and seed.template in roots:
                     _materialize(seed, entries)
