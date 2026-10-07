@@ -509,7 +509,20 @@ def test_regex_rule_rejects_invalid_and_zero_width_patterns() -> None:
             RegexRule(label="case_id", pattern=pattern)
 
 
-@pytest.mark.parametrize("pattern", [r"CASE\K", r"CASE(?:\K)", r"(?:CASE(?:\K))"])
+@pytest.mark.parametrize(
+    "pattern",
+    [
+        r"CASE\K",
+        r"CASE(?:\K)",
+        r"(?:CASE(?:\K))",
+        r"(?=A\K)A",
+        r"(?=AB\K)A",
+        r"(?<=A\K)B",
+        r"(?!A\K)B",
+        r"(?<!A\K)B",
+        r"(?(?=A\K)A|B)",
+    ],
+)
 def test_regex_rule_rejects_match_reset_anywhere(pattern: str) -> None:
     with pytest.raises(ValidationError, match=r"unsupported match reset \\K"):
         RegexRule(label="case_id", pattern=pattern)

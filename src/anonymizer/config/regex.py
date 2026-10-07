@@ -170,9 +170,30 @@ def _minimum_match_width(pattern: str) -> int:
         source.ignore_space = bool(info.flags & _regex_core.VERBOSE)
         try:
             parsed = _regex_core._parse_pattern(source, info)
+            _reject_match_reset(parsed, _regex_core)
             return _minimum_node_width(parsed, _regex_core)
         except _regex_core._UnscopedFlagSet:
             global_flags = info.global_flags
+
+
+def _reject_match_reset(node: Any, core: Any) -> None:
+    """Reject ``\\K`` anywhere in the parsed regex tree.
+
+    Width analysis intentionally treats assertions as zero-width and does not
+    otherwise need to descend into them. Keep this validation separate so a
+    match reset hidden inside a lookaround or conditional assertion cannot
+    bypass configuration validation.
+    """
+    if isinstance(node, core.Keep):
+        raise ValueError("Regex patterns must not use unsupported match reset \\K.")
+
+    for attribute in ("items", "branches", "subpattern", "yes_item", "no_item"):
+        child = getattr(node, attribute, None)
+        if isinstance(child, (list, tuple)):
+            for item in child:
+                _reject_match_reset(item, core)
+        elif isinstance(child, core.RegexBase):
+            _reject_match_reset(child, core)
 
 
 def _minimum_node_width(node: Any, core: Any) -> int:
