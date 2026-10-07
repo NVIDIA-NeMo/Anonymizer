@@ -258,23 +258,7 @@ def apply_validation_decisions(entities: list[EntitySpan], validation_output: di
 
     Entities without a matching decision are kept unchanged.
     """
-    payload = _safe_json_loads(validation_output) if isinstance(validation_output, str) else validation_output
-    decisions = payload.get("decisions", []) if isinstance(payload, dict) else []
-    if not isinstance(decisions, list):
-        return entities
-
-    decision_map: dict[str, dict[str, str]] = {}
-    for decision in decisions:
-        if not isinstance(decision, dict):
-            continue
-        entity_id = str(decision.get("id", "")).strip()
-        result = str(decision.get("decision", "")).strip().lower()
-        if not entity_id or result not in {"keep", "reclass", "drop"}:
-            continue
-        decision_map[entity_id] = {
-            "decision": result,
-            "proposed_label": str(decision.get("proposed_label", "")).strip(),
-        }
+    decision_map = parse_validation_decision_map(validation_output)
 
     validated: list[EntitySpan] = []
     for entity in entities:
@@ -289,6 +273,29 @@ def apply_validation_decisions(entities: list[EntitySpan], validation_output: di
         else:
             validated.append(entity)
     return validated
+
+
+def parse_validation_decision_map(validation_output: object) -> dict[str, dict[str, str]]:
+    """Parse valid decisions independently so one malformed entry cannot erase its siblings."""
+    payload = _safe_json_loads(validation_output) if isinstance(validation_output, str) else validation_output
+    decisions = payload.get("decisions", []) if isinstance(payload, dict) else []
+    if not isinstance(decisions, list):
+        return {}
+
+    decision_map: dict[str, dict[str, str]] = {}
+    for decision in decisions:
+        if not isinstance(decision, dict):
+            continue
+        entity_id = str(decision.get("id", "")).strip()
+        result = str(decision.get("decision", "")).strip().lower()
+        if not entity_id or result not in {"keep", "reclass", "drop"}:
+            continue
+        raw_proposed_label = decision.get("proposed_label", "")
+        decision_map[entity_id] = {
+            "decision": result,
+            "proposed_label": "" if raw_proposed_label is None else str(raw_proposed_label).strip(),
+        }
+    return decision_map
 
 
 def apply_augmented_entities(

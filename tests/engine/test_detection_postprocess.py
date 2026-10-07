@@ -611,6 +611,24 @@ def test_validation_decisions_skips_non_dict_decision_items() -> None:
     assert len(result) == 1
 
 
+def test_validation_decisions_preserve_valid_entries_beside_malformed_siblings() -> None:
+    entities = [
+        EntitySpan("id1", "Alice", "first_name", 0, 5, 1.0, "detector"),
+        EntitySpan("id2", "Seattle", "city", 10, 17, 1.0, "detector"),
+    ]
+    result = apply_validation_decisions(
+        entities=entities,
+        validation_output={
+            "decisions": [
+                {"id": "id1", "decision": "drop"},
+                {"id": "broken", "decision": "not-a-choice"},
+            ]
+        },
+    )
+
+    assert [entity.entity_id for entity in result] == ["id2"]
+
+
 def test_augmented_entities_from_json_string() -> None:
     text = "Alice works here"
     result = apply_augmented_entities(

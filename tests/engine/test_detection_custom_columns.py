@@ -311,8 +311,29 @@ def test_mixed_regex_and_detector_origin_preserves_occurrence_propagation(regex_
             [(6, 9)],
             "allow:[REDACTED_TOKEN] deny:ABC",
         ),
+        (
+            [
+                {"id": "token_6_9", "decision": "keep", "reason": "supported by context"},
+                {"id": "broken", "decision": "not-a-choice"},
+            ],
+            [(6, 9), (15, 18)],
+            "allow:[REDACTED_TOKEN] deny:[REDACTED_TOKEN]",
+        ),
+        (
+            [
+                {
+                    "id": "token_6_9",
+                    "decision": "reclass",
+                    "proposed_label": "token",
+                    "reason": "supported by context",
+                },
+                {"id": "broken", "decision": "not-a-choice"},
+            ],
+            [(6, 9), (15, 18)],
+            "allow:[REDACTED_TOKEN] deny:[REDACTED_TOKEN]",
+        ),
     ],
-    ids=["keep", "drop", "omitted", "null"],
+    ids=["keep", "drop", "omitted", "null", "keep-with-malformed-sibling", "reclass-with-malformed-sibling"],
 )
 def test_direct_regex_duplicate_requires_explicit_detector_acceptance(
     decisions: list[dict[str, Any]],
@@ -348,7 +369,7 @@ def test_direct_regex_duplicate_requires_explicit_detector_acceptance(
 
     entities = result[COL_DETECTED_ENTITIES]["entities"]
     assert [(entity["start_position"], entity["end_position"]) for entity in entities] == expected_positions
-    if decisions and decisions[0]["decision"] == "keep":
+    if len(expected_positions) > 1:
         assert entities[0]["source"] == "regex_user:user:token:v1|detector"
     else:
         assert entities[0]["source"] == "regex_user:user:token:v1"

@@ -55,6 +55,7 @@ from anonymizer.engine.detection.postprocess import (
     merge_entity_sources,
     normalize_label,
     parse_raw_entities,
+    parse_validation_decision_map,
 )
 from anonymizer.engine.schemas import (
     EntitiesSchema,
@@ -62,7 +63,6 @@ from anonymizer.engine.schemas import (
     ValidatedDecisionSchema,
     ValidatedDecisionsSchema,
     ValidationCandidatesSchema,
-    ValidationChoice,
 )
 
 
@@ -359,18 +359,12 @@ def _require_explicit_detector_acceptance_for_regex_duplicates(
     accepted_regex_identities = {
         (normalize_label(entity.label), entity.start_position, entity.end_position) for entity in accepted_regex
     }
-    decisions = ValidatedDecisionsSchema.from_raw(validation_output)
-    explicit_decisions: dict[str, ValidatedDecisionSchema] = {}
-    for decision in decisions.decisions:
-        if decision.id and decision.decision is not None:
-            explicit_decisions[decision.id] = decision
-    explicitly_accepted_ids: set[str] = set()
-    for entity_id, decision in explicit_decisions.items():
-        choice = decision.decision
-        if choice is ValidationChoice.keep or (
-            choice is ValidationChoice.reclass and bool(decision.proposed_label.strip())
-        ):
-            explicitly_accepted_ids.add(entity_id)
+    decisions = parse_validation_decision_map(validation_output)
+    explicitly_accepted_ids = {
+        entity_id
+        for entity_id, decision in decisions.items()
+        if decision["decision"] == "keep" or (decision["decision"] == "reclass" and bool(decision["proposed_label"]))
+    }
 
     return [
         entity
