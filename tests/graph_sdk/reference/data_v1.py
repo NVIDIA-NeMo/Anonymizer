@@ -6,14 +6,76 @@ from __future__ import annotations
 
 import itertools
 import json
-from collections.abc import Iterable, Iterator, Sequence
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 from copy import deepcopy
-from typing import TypeAlias, cast
+from typing import Literal, NotRequired, TypeAlias, TypedDict, cast
 
 JsonScalar: TypeAlias = str | int | bool | None
 JsonValue: TypeAlias = JsonScalar | list["JsonValue"] | dict[str, "JsonValue"]
 JsonObject: TypeAlias = dict[str, JsonValue]
 Ref: TypeAlias = tuple[str, int]
+
+
+class TraceEvent(TypedDict):
+    """One JSON-compatible declaration-trace event."""
+
+    op: str
+    kind: NotRequired[str]
+    value: NotRequired[JsonValue]
+
+
+class DataDeclaration(TypedDict):
+    """Neutral static data-graph declaration fixture."""
+
+    kind: Literal["data"]
+    datums: list[JsonValue]
+    targets: list[JsonValue]
+    source_relations: list[JsonValue]
+    contexts: list[JsonValue]
+    dependencies: list[JsonValue]
+    coherence: list[JsonValue]
+    atomic: list[JsonValue]
+    output_regions: list[JsonValue]
+    limits: JsonObject
+
+
+class RecordDeclaration(TypedDict):
+    """Neutral canonical-record constructor fixture."""
+
+    kind: Literal["record"]
+    boundary: str
+    facts: JsonObject
+
+
+Declaration: TypeAlias = DataDeclaration | RecordDeclaration
+
+
+class AcceptResult(TypedDict):
+    verdict: Literal["accept"]
+    normalized: JsonObject
+
+
+class RejectResult(TypedDict):
+    verdict: Literal["reject"]
+    code: str
+
+
+ValidationResult: TypeAlias = AcceptResult | RejectResult
+
+
+class CaseInput(TypedDict):
+    declaration: Declaration
+
+
+class FixtureCase(TypedDict):
+    """One fully described finite reference fixture."""
+
+    case_id: str
+    family: str
+    declaration: Declaration
+    expected: ValidationResult
+    trace: list[TraceEvent]
+
 
 STATIC_ALPHABET = (
     "declare_datum(id,text)",
@@ -50,14 +112,14 @@ class _Reject(Exception):
         self.code = code
 
 
-def canonical_bytes(cases: tuple[dict, ...]) -> bytes:
+def canonical_bytes(cases: tuple[FixtureCase, ...]) -> bytes:
     """Encode cases in the frozen JSON representation."""
     return (
         json.dumps(cases, sort_keys=True, ensure_ascii=True, separators=(",", ":"), allow_nan=False) + "\n"
     ).encode()
 
 
-def validate_case(case: dict) -> dict:
+def validate_case(case: CaseInput | FixtureCase) -> ValidationResult:
     """Validate one neutral data or record declaration."""
     declaration = _as_object(case.get("declaration"))
     try:
@@ -72,15 +134,16 @@ def validate_case(case: dict) -> dict:
     return {"verdict": "accept", "normalized": normalized}
 
 
-def generate_cases() -> tuple[dict, ...]:
+def generate_cases() -> tuple[FixtureCase, ...]:
     """Enumerate the complete finite v1 domain in stable order."""
-    cases: list[dict] = []
+    cases: list[FixtureCase] = []
     for family, declaration, label in _base_cases():
         declarations = _limit_cases(declaration) if declaration.get("kind") == "data" else [(declaration, label)]
         for limited, suffix in declarations:
             variants = _data_variants(limited) if limited.get("kind") == "data" else [limited]
             for variant in variants:
-                expected = validate_case({"declaration": variant})
+                typed_declaration = _parse_declaration(variant)
+                expected = validate_case({"declaration": typed_declaration})
                 case_id = f"{family}-{len(cases):06d}"
                 if label or suffix:
                     case_id += f"-{label}{suffix}"
@@ -88,12 +151,95 @@ def generate_cases() -> tuple[dict, ...]:
                     {
                         "case_id": case_id,
                         "family": family,
-                        "declaration": variant,
+                        "declaration": typed_declaration,
                         "expected": expected,
                         "trace": _make_trace(variant),
                     }
                 )
     return tuple(cases)
+
+
+def _parse_cases(value: object) -> tuple[FixtureCase, ...]:
+    """Validate untrusted decoded JSON before exposing typed frozen fixtures."""
+    if not isinstance(value, list):
+        raise ValueError("reference corpus must be a JSON array")
+    cases: list[FixtureCase] = []
+    try:
+        for raw_case in value:
+            _require_json_value(raw_case)
+            case = _as_object(raw_case)
+            case_id = _string(case.get("case_id"))
+            family = _string(case.get("family"))
+            declaration = _parse_declaration(case.get("declaration"))
+            expected = _parse_validation_result(case.get("expected"))
+            trace = _parse_trace(case.get("trace"))
+            cases.append(
+                {
+                    "case_id": case_id,
+                    "family": family,
+                    "declaration": declaration,
+                    "expected": expected,
+                    "trace": trace,
+                }
+            )
+    except _Reject as rejection:
+        raise ValueError("reference corpus has invalid JSON fixture structure") from rejection
+    return tuple(cases)
+
+
+def _require_json_value(value: object) -> None:
+    if value is None or isinstance(value, (str, int, bool)):
+        return
+    if isinstance(value, list):
+        for item in value:
+            _require_json_value(item)
+        return
+    if isinstance(value, dict) and all(isinstance(key, str) for key in value):
+        for item in value.values():
+            _require_json_value(item)
+        return
+    raise _Reject("invalid_type")
+
+
+def _parse_declaration(value: JsonValue | object) -> Declaration:
+    declaration = _as_object(value)
+    kind = declaration.get("kind")
+    if kind == "data":
+        for key in ("datums", "targets", *RELATION_KEYS):
+            _as_list(declaration.get(key))
+        _as_object(declaration.get("limits"))
+        return cast(DataDeclaration, declaration)
+    if kind == "record":
+        _string(declaration.get("boundary"))
+        _as_object(declaration.get("facts"))
+        return cast(RecordDeclaration, declaration)
+    raise _Reject("invalid_value")
+
+
+def _case_input(declaration: JsonObject | Declaration) -> CaseInput:
+    return {"declaration": _parse_declaration(declaration)}
+
+
+def _parse_validation_result(value: JsonValue | object) -> ValidationResult:
+    result = _as_object(value)
+    if result.get("verdict") == "accept":
+        _as_object(result.get("normalized"))
+        return cast(AcceptResult, result)
+    if result.get("verdict") == "reject":
+        _string(result.get("code"))
+        return cast(RejectResult, result)
+    raise _Reject("invalid_value")
+
+
+def _parse_trace(value: JsonValue | object) -> list[TraceEvent]:
+    trace: list[TraceEvent] = []
+    for raw_event in _as_list(value):
+        event = _as_object(raw_event)
+        _string(event.get("op"))
+        if "kind" in event:
+            _string(event["kind"])
+        trace.append(cast(TraceEvent, event))
+    return trace
 
 
 def _as_object(value: object) -> JsonObject:
@@ -144,7 +290,7 @@ def _datum_map(declaration: JsonObject) -> tuple[list[tuple[Ref, str]], dict[Ref
     return datums, dict(datums)
 
 
-def _raw_counts(declaration: JsonObject) -> dict[str, int]:
+def _raw_counts(declaration: Mapping[str, JsonValue]) -> dict[str, int]:
     datums = _as_list(declaration.get("datums"))
     targets = _as_list(declaration.get("targets"))
     declarations = sum(len(_as_list(declaration.get(key))) for key in RELATION_KEYS)
@@ -217,13 +363,12 @@ def _validate_data(declaration: JsonObject) -> JsonObject:
     _check_group_overlap(atomic)
     if _has_cycles([(derived, source) for derived, source, _, _ in sources]):
         raise _Reject("cycle")
-    if _has_cycles(dependencies):
-        raise _Reject("cycle")
-    _check_slices(texts, sources, regions)
-
     source_by_derived = {derived: (source, start, end) for derived, source, start, end in sources}
     effective = [_effective_range(target, texts, source_by_derived, regions) for target in targets]
     _check_ownership_overlap(effective)
+    if _has_cycles(dependencies):
+        raise _Reject("cycle")
+    _check_slices(texts, sources, regions)
     normalized_coherence = _normalize_groups(targets, coherence)
     normalized_atomic = _normalize_groups(targets, atomic)
     return {
@@ -1345,7 +1490,7 @@ def _limit_cases(declaration: JsonObject) -> list[tuple[JsonObject, str]]:
         counts = _raw_counts(exact)
     except _Reject:
         return [(exact, "")]
-    expected_with_generous_limits = validate_case({"declaration": exact})
+    expected_with_generous_limits = validate_case(_case_input(exact))
     limits = _as_object(exact["limits"])
     if expected_with_generous_limits.get("verdict") == "accept":
         limits.update(counts)
@@ -1399,57 +1544,196 @@ def _rename_declaration(declaration: JsonObject) -> JsonObject:
     return cast(JsonObject, visit(renamed))
 
 
-def _make_trace(declaration: JsonObject) -> list[JsonValue]:
-    if declaration.get("kind") == "record":
-        facts = _as_object(declaration["facts"])
-        trace: list[JsonValue] = [
+def _make_trace(declaration: JsonObject | Declaration) -> list[TraceEvent]:
+    raw_declaration = _as_object(declaration)
+    trace: list[TraceEvent]
+    if raw_declaration.get("kind") == "record":
+        facts = _as_object(raw_declaration["facts"])
+        trace = [
             {"op": "declare_record_fact(kind,value)", "kind": key, "value": deepcopy(value)}
             for key, value in facts.items()
         ]
     else:
         trace = []
-        for datum in _as_list(declaration["datums"]):
+        for datum in _as_list(raw_declaration["datums"]):
             trace.append({"op": "declare_datum(id,text)", "value": deepcopy(datum)})
-        for target in _as_list(declaration["targets"]):
+        for target in _as_list(raw_declaration["targets"]):
             trace.append({"op": "select_target(id)", "value": deepcopy(target)})
         for key in RELATION_KEYS:
-            for relation in _as_list(declaration[key]):
+            for relation in _as_list(raw_declaration[key]):
                 trace.append({"op": "add_relation(kind,value)", "kind": key, "value": deepcopy(relation)})
-    trace.extend(({"op": "close_declaration"}, {"op": "validate"}))
+    trace.append({"op": "close_declaration"})
+    trace.append({"op": "validate"})
     return trace
 
 
-def _independent(left: JsonObject, right: JsonObject) -> bool:
-    left_op = left.get("op")
-    right_op = right.get("op")
-    if left_op in ("close_declaration", "validate") or right_op in ("close_declaration", "validate"):
-        return False
-    if left_op == right_op == "declare_datum(id,text)":
-        left_id = _ref(_as_object(left.get("value")).get("id"))
-        right_id = _ref(_as_object(right.get("value")).get("id"))
-        return left_id != right_id
-    if left_op == right_op == "add_relation(kind,value)" and left.get("kind") == right.get("kind"):
-        if left.get("kind") not in ("coherence", "atomic"):
+def _independent(left: TraceEvent, right: TraceEvent, declaration: DataDeclaration) -> bool:
+    """Classify independent static additions from their declared effects."""
+    try:
+        left_key = _addition_key(left)
+        right_key = _addition_key(right)
+        if left_key is None or right_key is None or left_key == right_key:
             return False
-        left_members = set(_parse_group(cast(JsonValue, left.get("value"))))
-        right_members = set(_parse_group(cast(JsonValue, right.get("value"))))
-        return not left_members & right_members
-    return False
+        limit_keys = tuple(sorted(_addition_limit_keys(left) | _addition_limit_keys(right)))
+        if not _limits_permit(declaration, limit_keys):
+            return False
+
+        left_created = _created_datum(left)
+        right_created = _created_datum(right)
+        if left_created in _event_refs(right) or right_created in _event_refs(left):
+            return False
+
+        left_target = _selected_target(left)
+        right_target = _selected_target(right)
+        if left_target in _event_refs(right) or right_target in _event_refs(left):
+            return False
+
+        if _groups_overlap(left, right) or _source_keys_conflict(left, right):
+            return False
+        if _ownership_conflicts(left, right, declaration):
+            return False
+    except _Reject:
+        return False
+    return True
 
 
-def _independence_witnesses(cases: Sequence[dict]) -> Iterator[tuple[dict, int]]:
+def _addition_key(event: TraceEvent) -> tuple[str, object] | None:
+    operation = event["op"]
+    if operation == "declare_datum(id,text)":
+        return operation, _ref(_as_object(event.get("value")).get("id"))
+    if operation == "select_target(id)":
+        return operation, _ref(event.get("value"))
+    if operation == "add_relation(kind,value)":
+        kind = event.get("kind")
+        if kind not in RELATION_KEYS:
+            raise _Reject("invalid_value")
+        value = cast(JsonValue, event.get("value"))
+        canonical = json.dumps(value, sort_keys=True, ensure_ascii=True, separators=(",", ":"))
+        return kind, canonical
+    return None
+
+
+def _addition_limit_keys(event: TraceEvent) -> set[str]:
+    if event["op"] == "declare_datum(id,text)":
+        return {"max_datums", "max_text_bytes"}
+    if event["op"] == "select_target(id)":
+        return {"max_targets"}
+    if event["op"] == "add_relation(kind,value)":
+        keys = {"max_declarations"}
+        if event.get("kind") in ("coherence", "atomic"):
+            keys.add("max_group_members")
+        return keys
+    return set()
+
+
+def _created_datum(event: TraceEvent) -> Ref | None:
+    if event["op"] != "declare_datum(id,text)":
+        return None
+    return _ref(_as_object(event.get("value")).get("id"))
+
+
+def _selected_target(event: TraceEvent) -> Ref | None:
+    if event["op"] != "select_target(id)":
+        return None
+    return _ref(event.get("value"))
+
+
+def _event_refs(event: TraceEvent) -> set[Ref]:
+    if event["op"] == "select_target(id)":
+        return {_ref(event.get("value"))}
+    if event["op"] != "add_relation(kind,value)":
+        return set()
+    value = cast(JsonValue, event.get("value"))
+    kind = event.get("kind")
+    if kind == "source_relations":
+        derived, source, _, _ = _parse_source(value)
+        return {derived, source}
+    if kind == "contexts":
+        target, source, _, _ = _parse_context(value)
+        return {target, source}
+    if kind == "dependencies":
+        return set(_parse_dependency(value))
+    if kind in ("coherence", "atomic"):
+        return set(_parse_group(value))
+    if kind == "output_regions":
+        target, source, _, _ = _parse_region(value)
+        return {target, source}
+    raise _Reject("invalid_value")
+
+
+def _groups_overlap(left: TraceEvent, right: TraceEvent) -> bool:
+    if left.get("kind") not in ("coherence", "atomic") or right.get("kind") not in ("coherence", "atomic"):
+        return False
+    left_members = set(_parse_group(cast(JsonValue, left.get("value"))))
+    right_members = set(_parse_group(cast(JsonValue, right.get("value"))))
+    return bool(left_members & right_members)
+
+
+def _source_keys_conflict(left: TraceEvent, right: TraceEvent) -> bool:
+    if left.get("kind") != "source_relations" or right.get("kind") != "source_relations":
+        return False
+    left_derived, _, _, _ = _parse_source(cast(JsonValue, left.get("value")))
+    right_derived, _, _, _ = _parse_source(cast(JsonValue, right.get("value")))
+    return left_derived == right_derived
+
+
+def _ownership_conflicts(left: TraceEvent, right: TraceEvent, declaration: DataDeclaration) -> bool:
+    left_root = _ownership_root(left, declaration)
+    right_root = _ownership_root(right, declaration)
+    return left_root is not None and left_root == right_root
+
+
+def _ownership_root(event: TraceEvent, declaration: DataDeclaration) -> Ref | None:
+    kind = event.get("kind")
+    if kind == "source_relations":
+        derived, source, _, _ = _parse_source(cast(JsonValue, event.get("value")))
+        targets = {_ref(value) for value in declaration["targets"]}
+        if derived not in targets:
+            return None
+    elif kind == "output_regions":
+        _, source, _, _ = _parse_region(cast(JsonValue, event.get("value")))
+    else:
+        return None
+    source_by_derived = {
+        derived: source
+        for value in declaration["source_relations"]
+        for derived, source, _, _ in (_parse_source(value),)
+    }
+    return _root_source(source, source_by_derived)
+
+
+def _root_source(source: Ref, source_by_derived: Mapping[Ref, Ref]) -> Ref:
+    visited: set[Ref] = set()
+    while source in source_by_derived:
+        if source in visited:
+            raise _Reject("cycle")
+        visited.add(source)
+        source = source_by_derived[source]
+    return source
+
+
+def _limits_permit(declaration: DataDeclaration, keys: tuple[str, ...]) -> bool:
+    """Return whether shared finite counters admit both additions."""
+    try:
+        counts = _raw_counts(cast(JsonObject, declaration))
+        limits = _as_object(declaration["limits"])
+        return all(counts[key] <= _as_int(limits.get(key)) for key in keys)
+    except _Reject:
+        return False
+
+
+def _independence_witnesses(cases: Sequence[FixtureCase]) -> Iterator[tuple[FixtureCase, int]]:
     for case in cases:
-        if _as_object(case["expected"]).get("verdict") != "accept":
+        declaration = case["declaration"]
+        if declaration["kind"] != "data":
             continue
-        trace = _as_list(case["trace"])
+        trace = case["trace"]
         for index in range(len(trace) - 1):
-            left = _as_object(trace[index])
-            right = _as_object(trace[index + 1])
-            if _independent(left, right):
+            if _independent(trace[index], trace[index + 1], declaration):
                 yield case, index
 
 
-def _replay_trace(case: dict, trace: Sequence[JsonValue]) -> JsonObject:
+def _replay_trace(case: FixtureCase, trace: Sequence[TraceEvent]) -> JsonObject:
     original = _as_object(case["declaration"])
     if original.get("kind") == "record":
         facts: JsonObject = {}

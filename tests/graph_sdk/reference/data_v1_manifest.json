@@ -6,8 +6,8 @@
   "normative_semantics_sha256": "60c30d29a80251505c884a3faffc3dfd02ca3f2c2dc55c478cbc5a4dc0600ee1",
   "reference_spec_sha256": "f98ab1ca38328b9b3a25b03843e4f34eadc840a71d78c0c797ae85279f56720f",
   "corpus_sha256": "ddb99182c635000ef36df1ee4def274214636d32ba8e9ec02c7a078737b39374",
-  "generator_sha256": "5fbf5abeca2ed414163012f90c26cb08d337afb9242589fd3ec5ff27b4947663",
-  "self_test_sha256": "0d7425a6bf72cc3b1b4f05d9610724ad4c65e9b676151031a93a13c223143780",
+  "generator_sha256": "c97c888947e099b73eac0f6ac3ad8c32a140540c9b72b84f6f1bca758523b7bc",
+  "self_test_sha256": "9313f76ed6f21bb5644c1e6a7f16004456c908e548e1c3017e1fb9ff7b40da54",
   "python": {
     "implementation": "CPython",
     "version": "3.11.14"
@@ -66,9 +66,9 @@
     "trace_length": 16
   },
   "independence": {
-    "pair_count": 15684,
-    "swapped_trace_count": 15684,
-    "assertion_count": 47052
+    "pair_count": 148078,
+    "swapped_trace_count": 148078,
+    "assertion_count": 444234
   },
   "independence_probe": {
     "clean_subprocess": true,
