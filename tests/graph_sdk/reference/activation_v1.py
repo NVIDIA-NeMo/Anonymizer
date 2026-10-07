@@ -21,6 +21,9 @@ Status: TypeAlias = Literal[
     "unstarted", "ready", "running", "success", "failure", "cancelled", "lost", "blocked", "inconsistent"
 ]
 Role: TypeAlias = Literal["ordinary", "subgraph", "map_expander", "map_member", "join", "loop_starter", "loop_member"]
+Boundary: TypeAlias = Literal[
+    "event_construction", "static_admission", "dynamic_admission", "initialization", "transition"
+]
 Code: TypeAlias = Literal[
     "invalid_type",
     "invalid_value",
@@ -34,9 +37,11 @@ Code: TypeAlias = Literal[
 ]
 
 CONTRACT_SHA256 = "9f58d60ad4ecc25065cc6c74d784cd05ad6fb2a72f183a615122eb981c7b265b"
+CONSUMPTION_ADDENDUM_SHA256 = "bd5dbb1f9ef3e4e667827fbcaed3703a6e5cfcd2d5461928f20adccc1b4b6f3c"
 CORPUS_PATH = "tests/graph_sdk/reference/activation_v1_cases.json"
-GENERATOR_VERSION = "workflow-activation-v1-generator-4"
-SELF_TEST_VERSION = "workflow-activation-v1-self-test-4"
+GENERATOR_VERSION = "workflow-activation-v1-generator-5"
+SELF_TEST_VERSION = "workflow-activation-v1-self-test-5"
+SUPPORT_PATH = "tests/graph_sdk/reference/activation_v1_support.md"
 TEMPLATES = ("N0", "N1", "N2")
 INVOCATIONS = ("I0", "I1")
 ACTIVATIONS = tuple(f"A{i}" for i in range(12))
@@ -109,6 +114,7 @@ class Seed:
     parent: str | None
     iteration: int | None
     role: Role
+    scope: tuple[str, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -152,8 +158,8 @@ class LoopAggregate:
     bypass_outcomes: tuple[str, ...]
     continue_outcomes: tuple[str, ...]
     exit_outcomes: tuple[str, ...]
-    initial: bool
-    carried: bool
+    initial_binding: tuple[str, str, str] | None
+    carried_binding: tuple[str, str, str] | None
 
 
 Aggregate: TypeAlias = MapAggregate | LoopAggregate
@@ -165,6 +171,7 @@ class Declaration:
     seeds: tuple[Seed, ...]
     required: tuple[str, ...]
     edges: tuple[tuple[str, str], ...]
+    input_dependencies: tuple[tuple[str, str], ...]
     outcomes: tuple[Outcome, ...]
     choices: tuple[Choice, ...]
     subgraphs: tuple[Subgraph, ...]
@@ -330,6 +337,7 @@ def parse_declaration(value: Mapping[str, Json]) -> Declaration:
             "seeds",
             "required",
             "edges",
+            "input_dependencies",
             "outcomes",
             "choices",
             "subgraphs",
@@ -340,7 +348,7 @@ def parse_declaration(value: Mapping[str, Json]) -> Declaration:
     )
     seeds: list[Seed] = []
     for item in _list(raw["seeds"]):
-        seed = _obj(item, {"key", "template", "invocation", "parent", "iteration", "role"})
+        seed = _obj(item, {"key", "template", "invocation", "parent", "iteration", "role", "scope"})
         parent, iteration = seed["parent"], seed["iteration"]
         if parent is not None and not isinstance(parent, str):
             raise Rejected("invalid_type")
@@ -358,6 +366,7 @@ def parse_declaration(value: Mapping[str, Json]) -> Declaration:
                         ("ordinary", "subgraph", "map_expander", "map_member", "join", "loop_starter", "loop_member"),
                     ),
                 ),
+                tuple(_closed(part, ACTIVATIONS) for part in _strs(seed["scope"])),
             )
         )
     choices: list[Choice] = []
@@ -427,12 +436,25 @@ def parse_declaration(value: Mapping[str, Json]) -> Declaration:
                     "bypass_outcomes",
                     "continue_outcomes",
                     "exit_outcomes",
-                    "initial",
-                    "carried",
+                    "initial_binding",
+                    "carried_binding",
                 },
             )
-            if not isinstance(aggregate["initial"], bool) or not isinstance(aggregate["carried"], bool):
-                raise Rejected("invalid_type")
+
+            def binding(value: Json, source_kind: str) -> tuple[str, str, str] | None:
+                if value is None:
+                    return None
+                item_binding = _obj(value, {"source_kind", "source_port", "destination_port"})
+                if item_binding["source_kind"] != source_kind:
+                    raise Rejected("contradictory")
+                source_port = item_binding["source_port"]
+                destination_port = item_binding["destination_port"]
+                if not isinstance(source_port, str) or not isinstance(destination_port, str):
+                    raise Rejected("invalid_type")
+                if not source_port or not destination_port:
+                    raise Rejected("invalid_value")
+                return source_kind, source_port, destination_port
+
             aggregates.append(
                 LoopAggregate(
                     _closed(aggregate["starter"], ACTIVATIONS),
@@ -443,8 +465,8 @@ def parse_declaration(value: Mapping[str, Json]) -> Declaration:
                     _strs(aggregate["bypass_outcomes"]),
                     _strs(aggregate["continue_outcomes"]),
                     _strs(aggregate["exit_outcomes"]),
-                    aggregate["initial"],
-                    aggregate["carried"],
+                    binding(aggregate["initial_binding"], "workflow_input"),
+                    binding(aggregate["carried_binding"], "member_output"),
                 )
             )
     limits = _obj(raw["limits"], {"max_events", "max_entries", "max_parent_depth"})
@@ -452,13 +474,15 @@ def parse_declaration(value: Mapping[str, Json]) -> Declaration:
     if not isinstance(static["compatible"], bool):
         raise Rejected("invalid_type")
     edges = tuple(_strs(edge) for edge in _list(raw["edges"]))
-    if any(len(edge) != 2 for edge in edges):
+    input_dependencies = tuple(_strs(edge) for edge in _list(raw["input_dependencies"]))
+    if any(len(edge) != 2 for edge in (*edges, *input_dependencies)):
         raise Rejected("invalid_value")
     return Declaration(
         _closed(raw["invocation"], INVOCATIONS),
         tuple(seeds),
         _strs(raw["required"]),
         cast(tuple[tuple[str, str], ...], edges),
+        cast(tuple[tuple[str, str], ...], input_dependencies),
         tuple(outcomes),
         tuple(choices),
         subgraphs,
@@ -563,6 +587,7 @@ def _initialize(declaration: Declaration) -> None:
     missing = not set(declaration.required) <= seen.keys()
     duplicate |= len(declaration.required) != len(set(declaration.required))
     duplicate |= len(declaration.edges) != len(set(declaration.edges))
+    duplicate |= len(declaration.input_dependencies) != len(set(declaration.input_dependencies))
     duplicate |= len(declaration.outcomes) != len(
         {(outcome.template, outcome.name) for outcome in declaration.outcomes}
     )
@@ -583,8 +608,12 @@ def _initialize(declaration: Declaration) -> None:
     contradictory = False
     dynamic_overlap = False
     outcome_names = {(outcome.template, outcome.name) for outcome in declaration.outcomes}
-    missing |= any(before not in seen or after not in seen for before, after in declaration.edges)
+    missing |= any(
+        before not in seen or after not in seen
+        for before, after in (*declaration.edges, *declaration.input_dependencies)
+    )
     duplicate |= any(before == after for before, after in declaration.edges)
+    contradictory |= not set(declaration.input_dependencies) <= set(declaration.edges)
     for choice in declaration.choices:
         selector = seen.get(choice.selector)
         missing |= selector is None
@@ -712,7 +741,8 @@ def _normalize(
                 continue
             predecessors = [before for before, after in declaration.edges if after == key]
             if all(before in entries and entries[before].status in TERMINAL for before in predecessors):
-                blocked = any(before not in outputs for before in predecessors)
+                required_outputs = [before for before, after in declaration.input_dependencies if after == key]
+                blocked = any(before not in outputs for before in required_outputs)
                 entries[key] = replace(
                     entry, status="blocked" if blocked else "ready", category="blocked" if blocked else None
                 )
@@ -890,8 +920,9 @@ def _apply(
         entries[event.key] = replace(entry, status="running")
         subgraph = next((item for item in declaration.subgraphs if item.parent == event.key), None)
         if subgraph:
-            for root in subgraph.roots:
-                _materialize(root, entries, declaration)
+            for seed in declaration.seeds:
+                if seed.parent == subgraph.parent:
+                    _materialize(seed.key, entries, declaration)
     elif isinstance(event, TerminalEvent):
         entry = entries.get(event.key)
         if entry is None:
@@ -939,8 +970,6 @@ def _apply(
                     expansions[event.key] = Expansion(event.key, "closed", frozenset())
                 elif event.outcome in aggregate.enter_outcomes and aggregate.bound == 0:
                     expansions[event.key] = Expansion(event.key, "overflow", frozenset())
-                elif event.outcome in aggregate.enter_outcomes and not aggregate.initial:
-                    expansions[event.key] = Expansion(event.key, "failed", frozenset())
                 elif event.outcome in aggregate.enter_outcomes:
                     first = aggregate.members[0]
                     expansions[event.key] = Expansion(event.key, "pending", frozenset({first}))
@@ -952,7 +981,11 @@ def _apply(
                     expansions[aggregate.starter] = Expansion(aggregate.starter, "failed", known)
                 elif event.outcome in aggregate.exit_outcomes:
                     expansions[aggregate.starter] = Expansion(aggregate.starter, "closed", known)
-                elif event.outcome in aggregate.continue_outcomes and not aggregate.carried:
+                elif (
+                    event.outcome in aggregate.continue_outcomes
+                    and aggregate.carried_binding is not None
+                    and aggregate.carried_binding[1] not in produced_ports
+                ):
                     expansions[aggregate.starter] = Expansion(aggregate.starter, "failed", known)
                 elif event.outcome in aggregate.continue_outcomes and index + 1 >= aggregate.bound:
                     expansions[aggregate.starter] = Expansion(aggregate.starter, "overflow", known)
@@ -1115,9 +1148,26 @@ def alpha_normalize_state(value: Mapping[str, Json], *, inverse: bool = False) -
     return renamed
 
 
+def admit_dynamic_workflow(declaration: Mapping[str, Json]) -> Object:
+    try:
+        facts = parse_declaration(declaration)
+        if any(
+            isinstance(aggregate, LoopAggregate)
+            and (aggregate.initial_binding is None or aggregate.carried_binding is None)
+            for aggregate in facts.aggregates
+        ):
+            raise Rejected("missing")
+        return {"code": None, "state": None, "status": "accepted"}
+    except Rejected as error:
+        return {"code": error.code, "state": None, "status": "rejected"}
+
+
 def reduce_trace(declaration: Mapping[str, Json], events: Sequence[Mapping[str, Json]]) -> Object:
     try:
         facts = parse_declaration(declaration)
+        admission = admit_dynamic_workflow(declaration)
+        if admission["status"] == "rejected":
+            raise Rejected(cast(Code, admission["code"]))
         if not events:
             raise Rejected("missing")
         first = parse_event(events[0])
@@ -1168,6 +1218,7 @@ def _seed(
     iteration: int | None = None,
     role: Role = "ordinary",
     invocation: str = "I0",
+    scope: Sequence[str] = (),
 ) -> Object:
     return {
         "invocation": invocation,
@@ -1175,6 +1226,7 @@ def _seed(
         "key": key,
         "parent": parent,
         "role": role,
+        "scope": list(scope),
         "template": template,
     }
 
@@ -1184,6 +1236,7 @@ def _decl(
     *,
     required: Sequence[str] = (),
     edges: Sequence[Sequence[str]] = (),
+    input_dependencies: Sequence[Sequence[str]] | None = None,
     choices: Sequence[Mapping[str, Json]] = (),
     subgraphs: Sequence[Mapping[str, Json]] = (),
     aggregates: Sequence[Mapping[str, Json]] = (),
@@ -1221,6 +1274,7 @@ def _decl(
         "aggregates": [dict(item) for item in aggregates],
         "choices": [dict(item) for item in choices],
         "edges": [list(edge) for edge in edges],
+        "input_dependencies": [list(edge) for edge in (edges if input_dependencies is None else input_dependencies)],
         "invocation": "I0",
         "limits": {"max_entries": exact[1], "max_events": exact[0], "max_parent_depth": exact[2]},
         "outcomes": list(outcomes if outcomes is not None else default_outcomes),
@@ -1282,9 +1336,17 @@ def _case(
     declaration: Object,
     events: Sequence[Mapping[str, Json]],
     traces: Sequence[str] = (),
+    boundary: Boundary = "transition",
 ) -> Object:
     event_list = [dict(event) for event in events]
-    expected = reduce_trace(declaration, event_list)
+    actual_boundary: Boundary = (
+        "initialization" if boundary == "transition" and event_list == [_event("initialize")] else boundary
+    )
+    expected = (
+        admit_dynamic_workflow(declaration)
+        if actual_boundary == "dynamic_admission"
+        else reduce_trace(declaration, event_list)
+    )
     trace_values: list[Json] = []
     for trace in traces:
         if trace == "rename":
@@ -1292,9 +1354,10 @@ def _case(
             transformed_events = cast(list[Object], _rename(cast(Json, event_list)))
         else:
             transformed = declaration
-            transformed_events = event_list[:2] + event_list[4:6] + event_list[2:4]
+            transformed_events = event_list[:2] + event_list[4:6] + event_list[2:4] + event_list[6:]
         trace_values.append(
             {
+                "boundary": actual_boundary,
                 "declaration": transformed,
                 "events": transformed_events,
                 "expected": reduce_trace(transformed, transformed_events),
@@ -1302,6 +1365,7 @@ def _case(
             }
         )
     return {
+        "boundary": actual_boundary,
         "case_id": f"{family}/{coordinate}/{name}",
         "declaration": declaration,
         "events": event_list,
@@ -1330,8 +1394,18 @@ def _sequence_cases() -> Iterable[Object]:
             yield _case("sequence_linked_pair", f"{i:03d}-{j:03d}", "base", declaration, events, ("rename",))
     for i, left in enumerate(CATEGORIES):
         for j, right in enumerate(CATEGORIES):
-            declaration = _decl((_seed("A0", "N0"), _seed("A1", "N1")), required=("A0", "A1"))
+            declaration = _decl(
+                (_seed("A0", "N0"), _seed("A1", "N1"), _seed("A2", "N2")),
+                required=("A0", "A1", "A2"),
+                edges=(("A0", "A2"), ("A1", "A2")),
+                input_dependencies=(),
+            )
             events = _ordinary((left, right))
+            events[1] = _select("A0", "A1", "A2")
+            events += [
+                _event("start", key="A2"),
+                _terminal("A2", "success", "ok"),
+            ]
             yield _case(
                 "sequence_independent_siblings",
                 f"{i:03d}-{j:03d}",
@@ -1431,12 +1505,14 @@ def _subgraph_cases() -> Iterable[Object]:
     for size in (1, 2):
         for category in ("success", "failure"):
             keys = tuple(f"A{i + 1}" for i in range(size))
-            seeds = [_seed("A0", role="subgraph")] + [_seed(key, "N1", parent="A0") for key in keys]
+            seeds = [_seed("A0", role="subgraph")] + [
+                _seed(key, f"N{index + 1}", parent="A0", scope=("A0",)) for index, key in enumerate(keys)
+            ]
             declaration = _decl(
                 seeds,
                 required=("A0",),
                 edges=tuple((keys[i], keys[i + 1]) for i in range(size - 1)),
-                subgraphs=({"parent": "A0", "roots": list(keys), "sink": keys[-1]},),
+                subgraphs=({"parent": "A0", "roots": [keys[0]], "sink": keys[-1]},),
             )
             events = [_event("initialize"), _select("A0"), _event("start", key="A0")]
             for index, key in enumerate(keys):
@@ -1448,7 +1524,7 @@ def _subgraph_cases() -> Iterable[Object]:
             yield _case("subgraph", f"{coordinate:03d}", f"body_{size}_{category}", declaration, events)
             coordinate += 1
     base = _decl(
-        (_seed("A0", role="subgraph"), _seed("A1", "N1", parent="A0")),
+        (_seed("A0", role="subgraph"), _seed("A1", "N1", parent="A0", scope=("A0",))),
         required=("A0",),
         subgraphs=({"parent": "A0", "roots": ["A1"], "sink": "A1"},),
     )
@@ -1460,18 +1536,31 @@ def _subgraph_cases() -> Iterable[Object]:
         ),
         (
             "wrong_parent",
-            _decl((_seed("A0", role="subgraph"), _seed("A1", parent="A2")), required=("A0",)),
+            _decl(
+                (_seed("A0", role="subgraph"), _seed("A1", parent="A2", scope=("A0",))),
+                required=("A0",),
+            ),
             [_event("initialize")],
         ),
         (
             "foreign_body_key",
-            _decl((_seed("A0", role="subgraph"), _seed("A1", parent="A0", invocation="I1")), required=("A0",)),
+            _decl(
+                (
+                    _seed("A0", role="subgraph"),
+                    _seed("A1", parent="A0", invocation="I1", scope=("A0",)),
+                ),
+                required=("A0",),
+            ),
             [_event("initialize")],
         ),
         (
             "duplicate_body_key",
             _decl(
-                (_seed("A0", role="subgraph"), _seed("A1", parent="A0"), _seed("A1", "N1", parent="A0")),
+                (
+                    _seed("A0", role="subgraph"),
+                    _seed("A1", parent="A0", scope=("A0",)),
+                    _seed("A1", "N1", parent="A0", scope=("A0",)),
+                ),
                 required=("A0",),
             ),
             [_event("initialize")],
@@ -1481,7 +1570,11 @@ def _subgraph_cases() -> Iterable[Object]:
         yield _case("subgraph", f"{coordinate:03d}", name, declaration, events)
         coordinate += 1
     nested = _decl(
-        (_seed("A0", role="subgraph"), _seed("A1", "N1", parent="A0", role="subgraph"), _seed("A2", "N2", parent="A1")),
+        (
+            _seed("A0", role="subgraph"),
+            _seed("A1", "N1", parent="A0", role="subgraph", scope=("A0",)),
+            _seed("A2", "N2", parent="A1", scope=("A0", "A1")),
+        ),
         required=("A0",),
         subgraphs=({"parent": "A0", "roots": ["A1"], "sink": "A1"}, {"parent": "A1", "roots": ["A2"], "sink": "A2"}),
     )
@@ -1539,11 +1632,19 @@ def _aggregate_decl(
         aggregate = {
             "bound": bound,
             "bypass_outcomes": ["stop"],
-            "carried": carried,
+            "carried_binding": (
+                {"destination_port": "input", "source_kind": "member_output", "source_port": "carry"}
+                if carried
+                else None
+            ),
             "continue_outcomes": ["again"],
             "enter_outcomes": ["again"],
             "exit_outcomes": ["stop"],
-            "initial": initial,
+            "initial_binding": (
+                {"destination_port": "input", "source_kind": "workflow_input", "source_port": "input"}
+                if initial
+                else None
+            ),
             "join": "A11",
             "kind": "loop",
             "members": [f"A{i + 1}" for i in range(count)],
@@ -1763,29 +1864,13 @@ def _loop_cases() -> Iterable[Object]:
         ],
     )
     coordinate += 1
+    for name, facts in (
+        ("missing_initial", _aggregate_decl(2, kind="loop", initial=False)),
+        ("missing_carried", _aggregate_decl(2, kind="loop", carried=False)),
+    ):
+        yield _case("loop", f"{coordinate:03d}", name, facts, (), boundary="dynamic_admission")
+        coordinate += 1
     specials = (
-        (
-            "missing_initial",
-            _aggregate_decl(2, kind="loop", initial=False),
-            [
-                _event("initialize"),
-                _select("A0", "A11"),
-                _event("start", key="A0"),
-                _terminal("A0", "success", "again"),
-            ],
-        ),
-        (
-            "missing_carried",
-            _aggregate_decl(2, kind="loop", carried=False),
-            [
-                _event("initialize"),
-                _select("A0", "A11"),
-                _event("start", key="A0"),
-                _terminal("A0", "success", "again"),
-                _event("start", key="A1"),
-                _terminal("A1", "success", "again"),
-            ],
-        ),
         (
             "wrong_iteration",
             declaration,
@@ -1844,6 +1929,28 @@ def _loop_cases() -> Iterable[Object]:
     for name, facts, events in specials:
         yield _case("loop", f"{coordinate:03d}", name, facts, events)
         coordinate += 1
+    missing_output = _aggregate_decl(2, kind="loop")
+    output_specs = [dict(cast(Object, outcome)) for outcome in cast(list[Json], missing_output["outcomes"])]
+    for outcome in output_specs:
+        if outcome["template"] == "N1" and outcome["name"] == "again":
+            outcome["produced_ports"] = []
+        elif outcome["template"] == "N1" and outcome["name"] == "stop":
+            outcome["produced_ports"] = ["carry", "result"]
+    missing_output["outcomes"] = cast(Json, output_specs)
+    yield _case(
+        "loop",
+        f"{coordinate:03d}",
+        "missing_carried_output",
+        missing_output,
+        [
+            _event("initialize"),
+            _select("A0", "A11"),
+            _event("start", key="A0"),
+            _terminal("A0", "success", "again"),
+            _event("start", key="A1"),
+            _terminal("A1", "success", "again"),
+        ],
+    )
 
 
 def _nested_cases() -> Iterable[Object]:
@@ -1861,12 +1968,19 @@ def _nested_cases() -> Iterable[Object]:
                 seeds.extend(
                     (
                         _seed(child, "N1", parent="A0", role="map_member"),
-                        _seed(starter, "N0", parent=child, role="loop_starter"),
+                        _seed(starter, "N0", parent=child, role="loop_starter", scope=(child,)),
                         *(
-                            _seed(member, "N1", parent=starter, iteration=index, role="loop_member")
+                            _seed(
+                                member,
+                                "N1",
+                                parent=starter,
+                                iteration=index,
+                                role="loop_member",
+                                scope=(child,),
+                            )
                             for index, member in enumerate(members)
                         ),
-                        _seed(loop_join, "N2", parent=child, role="join"),
+                        _seed(loop_join, "N2", parent=child, role="join", scope=(child,)),
                     )
                 )
                 subgraphs.append({"parent": child, "roots": [starter, loop_join], "sink": loop_join})
@@ -1874,11 +1988,19 @@ def _nested_cases() -> Iterable[Object]:
                     {
                         "bound": loops,
                         "bypass_outcomes": ["stop"],
-                        "carried": True,
+                        "carried_binding": {
+                            "destination_port": "input",
+                            "source_kind": "member_output",
+                            "source_port": "carry",
+                        },
                         "continue_outcomes": ["again"],
                         "enter_outcomes": ["again"],
                         "exit_outcomes": ["stop"],
-                        "initial": True,
+                        "initial_binding": {
+                            "destination_port": "input",
+                            "source_kind": "workflow_input",
+                            "source_port": "input",
+                        },
                         "join": loop_join,
                         "kind": "loop",
                         "members": list(members),
@@ -2011,7 +2133,14 @@ def _precedence_cases() -> Iterable[Object]:
         ),
     )
     for i, (name, declaration, events) in enumerate(cases):
-        yield _case("precedence", f"{i:03d}", name, declaration, events)
+        boundary: Boundary = (
+            "event_construction"
+            if name == "overflow_type_before_value"
+            else "static_admission"
+            if name in ("overlap_before_cycle", "cycle_before_contradictory")
+            else "transition"
+        )
+        yield _case("precedence", f"{i:03d}", name, declaration, events, boundary=boundary)
 
 
 def _coverage_cases() -> Iterable[Object]:
@@ -2067,7 +2196,7 @@ def generate_cases() -> tuple[Object, ...]:
 def load_cases(value: Json) -> tuple[Object, ...]:
     if not isinstance(value, list) or not value:
         raise ValueError("invalid corpus")
-    exact = {"case_id", "declaration", "events", "expected", "family", "mode", "traces"}
+    exact = {"boundary", "case_id", "declaration", "events", "expected", "family", "mode", "traces"}
     cases: list[Object] = []
     for item in value:
         if not isinstance(item, dict) or set(item) != exact:
@@ -2103,11 +2232,12 @@ def counts(cases: Sequence[Object]) -> Object:
     }
 
 
-def manifest(cases: Sequence[Object], *, generator_sha256: str, self_test_sha256: str) -> Object:
+def manifest(cases: Sequence[Object], *, generator_sha256: str, self_test_sha256: str, support_sha256: str) -> Object:
     return {
         "alphabet": list(ALPHABET),
         "capability": "workflow_activation_v1",
         "contract_sha256": CONTRACT_SHA256,
+        "consumption_addendum_sha256": CONSUMPTION_ADDENDUM_SHA256,
         "corpus_path": CORPUS_PATH,
         "corpus_sha256": hashlib.sha256(canonical_bytes(cases)).hexdigest(),
         "counts": counts(cases),
@@ -2130,10 +2260,12 @@ def manifest(cases: Sequence[Object], *, generator_sha256: str, self_test_sha256
         },
         "generator_sha256": generator_sha256,
         "independence": {"kind": "conditional-symmetric-v1", "rule_ids": list(RULE_IDS)},
-        "manifest_version": "workflow-activation-reference-v1",
+        "manifest_version": "workflow-activation-reference-v2",
         "packet_id": "R1b",
-        "schema_version": 1,
+        "schema_version": 2,
         "self_test_sha256": self_test_sha256,
+        "support_path": SUPPORT_PATH,
+        "support_sha256": support_sha256,
     }
 
 
@@ -2145,6 +2277,7 @@ def main() -> None:
     if len(sys.argv) != 4 or sys.argv[1] != "--write":
         raise SystemExit("usage: activation_v1.py [--write CORPUS MANIFEST]")
     source, test = Path(__file__), Path(__file__).with_name("test_activation_v1.py")
+    support = Path(__file__).with_name("activation_v1_support.md")
     Path(sys.argv[2]).write_bytes(canonical_bytes(cases))
     Path(sys.argv[3]).write_bytes(
         _canonical(
@@ -2152,6 +2285,7 @@ def main() -> None:
                 cases,
                 generator_sha256=hashlib.sha256(source.read_bytes()).hexdigest(),
                 self_test_sha256=hashlib.sha256(test.read_bytes()).hexdigest(),
+                support_sha256=hashlib.sha256(support.read_bytes()).hexdigest(),
             )
         )
         + b"\n"

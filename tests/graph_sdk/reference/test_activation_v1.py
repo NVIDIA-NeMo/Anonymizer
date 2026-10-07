@@ -24,6 +24,7 @@ HERE = Path(__file__).parent
 GENERATOR = HERE / "activation_v1.py"
 CORPUS = HERE / "activation_v1_cases.json"
 MANIFEST_PATH = HERE / "activation_v1_manifest.json"
+SUPPORT = HERE / "activation_v1_support.md"
 FROZEN_BYTES = CORPUS.read_bytes()
 CASES = reference.load_cases(json.loads(FROZEN_BYTES))
 MANIFEST = cast(Object, json.loads(MANIFEST_PATH.read_bytes()))
@@ -54,6 +55,8 @@ def _case(suffix: str) -> Object:
 
 def _reduce(case: Object, *, events: list[Object] | None = None) -> Object:
     declaration = cast(Object, case["declaration"])
+    if case["boundary"] == "dynamic_admission":
+        return reference.admit_dynamic_workflow(declaration)
     supplied = events if events is not None else cast(list[Object], case["events"])
     return reference.reduce_trace(declaration, supplied)
 
@@ -76,7 +79,11 @@ def test_every_result_is_reduced_from_events_and_traces_preserve_full_state() ->
         base = _object(case["expected"])
         for trace_value in _array(case["traces"]):
             trace = _object(trace_value)
-            actual = reference.reduce_trace(_object(trace["declaration"]), cast(list[Object], trace["events"]))
+            actual = (
+                reference.admit_dynamic_workflow(_object(trace["declaration"]))
+                if trace["boundary"] == "dynamic_admission"
+                else reference.reduce_trace(_object(trace["declaration"]), cast(list[Object], trace["events"]))
+            )
             assert actual == trace["expected"], case["case_id"]
             if actual["status"] != "accepted" or base["status"] != "accepted":
                 continue
@@ -98,7 +105,7 @@ def test_family_enumeration_coordinates_and_nested_witness_are_exact() -> None:
         "subgraph": 10,
         "map": 25,
         "join": 26,
-        "loop": 16,
+        "loop": 17,
         "nested_map_loop": 11,
         "precedence": 7,
         "terminal_coverage": 15,
@@ -117,6 +124,39 @@ def test_family_enumeration_coordinates_and_nested_witness_are_exact() -> None:
         assert len(_array(declaration["subgraphs"])) == int(maps)
     assert table == {(m, i): 2 + m * (3 + i) for m in (0, 1, 2) for i in (0, 1, 2)}
     assert table[2, 2] == 12
+
+
+def test_sibling_cases_have_explicit_common_sink_and_preserve_commuted_suffix() -> None:
+    cases = _cases("sequence_independent_siblings")
+    assert len(cases) == 36
+    for case in cases:
+        declaration = _object(case["declaration"])
+        assert [cast(str, _object(seed)["template"]) for seed in _array(declaration["seeds"])] == ["N0", "N1", "N2"]
+        assert declaration["edges"] == [["A0", "A2"], ["A1", "A2"]]
+        assert declaration["input_dependencies"] == []
+        events = [_object(event) for event in _array(case["events"])]
+        assert [(event["kind"], event.get("key")) for event in events[-2:]] == [
+            ("start", "A2"),
+            ("terminal_success", "A2"),
+        ]
+        commute = next(
+            _object(trace)
+            for trace in _array(case["traces"])
+            if _object(trace)["name"] == "commute_independent_siblings"
+        )
+        assert _array(commute["events"])[-2:] == _array(case["events"])[-2:]
+
+
+def test_two_node_subgraphs_use_distinct_scoped_templates() -> None:
+    for case_id in ("subgraph/002/body_2_success", "subgraph/003/body_2_failure"):
+        seeds = [_object(seed) for seed in _array(_object(_case(case_id)["declaration"])["seeds"])]
+        assert [(seed["template"], seed["scope"]) for seed in seeds] == [
+            ("N0", []),
+            ("N1", ["A0"]),
+            ("N2", ["A0"]),
+        ]
+        subgraph = _object(_array(_object(_case(case_id)["declaration"])["subgraphs"])[0])
+        assert subgraph == {"parent": "A0", "roots": ["A1"], "sink": "A2"}
 
 
 def test_named_transition_perturbations_change_the_verdict_or_state() -> None:
@@ -295,12 +335,28 @@ def test_loop_admission_uses_starter_initial_carry_and_iteration_order() -> None
         ("loop/014/terminal_gap", "missing"),
     ):
         assert _object(_case(case_id)["expected"])["code"] == code
-    for case_id in ("loop/008/missing_initial", "loop/009/missing_carried", "loop/015/abnormal_member_loss"):
+    for case_id in ("loop/008/missing_initial", "loop/009/missing_carried"):
+        case = _case(case_id)
+        assert case["boundary"] == "dynamic_admission"
+        assert case["events"] == []
+        assert _object(case["expected"])["code"] == "missing"
+    for case_id in ("loop/015/abnormal_member_loss", "loop/016/missing_carried_output"):
         state = _state(_object(_case(case_id)["expected"]))
         expansion = _object(_array(state["expansions"])[0])
         entries = {_object(value)["activation"]: _object(value) for value in _array(state["entries"])}
         assert expansion["status"] == "failed"
         assert entries["A11"]["status"] == "blocked"
+    carried_output = _case("loop/016/missing_carried_output")
+    carried_aggregate = _object(_array(_object(carried_output["declaration"])["aggregates"])[0])
+    assert carried_aggregate["carried_binding"] == {
+        "destination_port": "input",
+        "source_kind": "member_output",
+        "source_port": "carry",
+    }
+    assert "A2" not in {
+        cast(str, _object(entry)["activation"])
+        for entry in _array(_state(_object(carried_output["expected"]))["entries"])
+    }
 
 
 def test_membership_is_owned_bounded_monotone_duplicate_sensitive_and_conjunctive() -> None:
@@ -553,21 +609,52 @@ def test_semantic_sets_are_order_independent_and_siblings_commute() -> None:
     assert reference.reduce_trace(permuted, cast(list[Object], case["events"])) == case["expected"]
 
 
+def test_case_boundaries_and_scoped_identity_are_explicit() -> None:
+    assert {cast(str, case["boundary"]) for case in CASES} <= {
+        "event_construction",
+        "static_admission",
+        "dynamic_admission",
+        "initialization",
+        "transition",
+    }
+    assert [case["boundary"] for case in _cases("precedence")] == [
+        "event_construction",
+        "transition",
+        "initialization",
+        "transition",
+        "initialization",
+        "static_admission",
+        "static_admission",
+    ]
+    nested = _case("nested_map_loop/008/map_2_loop_2")
+    seeds = [_object(seed) for seed in _array(_object(nested["declaration"])["seeds"])]
+    identities = {(tuple(cast(list[str], seed["scope"])), cast(str, seed["template"])) for seed in seeds}
+    assert (("A1",), "N0") in identities
+    assert (("A6",), "N0") in identities
+    assert ((), "N0") in identities
+    renamed = _object(reference._rename(nested["declaration"]))
+    renamed_scopes = {tuple(cast(list[str], _object(seed)["scope"])) for seed in _array(renamed["seeds"])}
+    assert ("A10",) in renamed_scopes
+    assert ("A5",) in renamed_scopes
+
+
 def test_manifest_counts_sources_and_provenance_are_actual() -> None:
+    assert MANIFEST["consumption_addendum_sha256"] == reference.CONSUMPTION_ADDENDUM_SHA256
     assert MANIFEST["counts"] == reference.counts(CASES)
     assert MANIFEST["corpus_sha256"] == hashlib.sha256(FROZEN_BYTES).hexdigest()
     assert MANIFEST["generator_sha256"] == hashlib.sha256(GENERATOR.read_bytes()).hexdigest()
     assert MANIFEST["self_test_sha256"] == hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
+    assert MANIFEST["support_sha256"] == hashlib.sha256(SUPPORT.read_bytes()).hexdigest()
     counts = _object(MANIFEST["counts"])
     assert counts == {
-        "case_count": 206,
-        "event_count": 1944,
+        "case_count": 207,
+        "event_count": 2156,
         "max_activations": 12,
         "max_dynamic_depth": 2,
         "max_loop_iterations": 3,
         "max_map_children": 3,
         "max_templates": 3,
-        "trace_count": 320,
+        "trace_count": 321,
     }
     assert _object(MANIFEST["generation_provenance"])["generations"] == 2
 
