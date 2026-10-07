@@ -866,8 +866,7 @@ def _protection(declaration: Object) -> tuple[list[str], list[Json]]:
     return sorted(eligible), _sorted(unmet)
 
 
-def judge(declaration: Object, replacement: Object | None = None) -> Object:
-    """Evaluate a neutral declaration without importing product implementation."""
+def _admission_code(declaration: Object) -> ValidationCode | None:
     metrics = _metrics(declaration)
     limits = _obj(declaration["limits"])
     metric_map = {
@@ -879,27 +878,45 @@ def judge(declaration: Object, replacement: Object | None = None) -> Object:
         "max_subgraph_depth": "subgraph_depth",
         "max_choice_states": "choice_states",
     }
-    code: ValidationCode | None = None
     if _invalid_choice(declaration):
-        code = "invalid_value"
-    elif any(metrics[metric] > cast(int, limits[limit]) for limit, metric in metric_map.items()):
-        code = "limit_exceeded"
-    elif _foreign(declaration):
-        code = "foreign_owner"
-    elif _duplicates(declaration):
-        code = "duplicate"
-    elif _missing(declaration):
-        code = "missing"
-    elif _overlap(declaration):
-        code = "overlap"
-    else:
-        cyclic, _ = _cycle_and_sinks(declaration)
-        if cyclic:
-            code = "cycle"
-        elif _contradictory(declaration):
-            code = "contradictory"
-        else:
-            code = _semantic_endpoint_code(declaration)
+        return "invalid_value"
+    if any(metrics[metric] > cast(int, limits[limit]) for limit, metric in metric_map.items()):
+        return "limit_exceeded"
+    if _foreign(declaration):
+        return "foreign_owner"
+    if _duplicates(declaration):
+        return "duplicate"
+    if _missing(declaration):
+        return "missing"
+    if _overlap(declaration):
+        return "overlap"
+    cyclic, _ = _cycle_and_sinks(declaration)
+    if cyclic:
+        return "cycle"
+    if _contradictory(declaration):
+        return "contradictory"
+    return _semantic_endpoint_code(declaration)
+
+
+def _substituted(declaration: Object, target_node: Object, replacement: Object) -> Object:
+    result = deepcopy(declaration)
+    replacement_interface = _obj(replacement["interface"])
+    replacement_node = _node(
+        _id_label(target_node["id"]),
+        replacement_interface,
+        owner=cast(str, _obj(target_node["id"])["owner"]),
+        body=replacement,
+    )
+    result["nodes"] = [
+        replacement_node if _obj(node)["id"] == target_node["id"] else node for node in _list(result["nodes"])
+    ]
+    return result
+
+
+def judge(declaration: Object, replacement: Object | None = None) -> Object:
+    """Evaluate a neutral declaration without importing product implementation."""
+    admitted = declaration
+    code = _admission_code(declaration)
     if code is None and replacement is not None:
         target = _obj(declaration["substitution_target"])
         if target["owner"] != declaration["workflow"]:
@@ -912,6 +929,11 @@ def judge(declaration: Object, replacement: Object | None = None) -> Object:
                 _obj(target_node["operation"]), _obj(replacement["interface"]), allow_narrow=True
             ):
                 code = "contradictory"
+            elif _admission_code(replacement) is not None:
+                code = "contradictory"
+            else:
+                admitted = _substituted(declaration, target_node, replacement)
+                code = _admission_code(admitted)
     topology: Json = None
     if declaration.get("family_marker") == "topology":
         cyclic, sinks = _cycle_and_sinks(declaration)
@@ -925,10 +947,10 @@ def judge(declaration: Object, replacement: Object | None = None) -> Object:
             "topology": topology,
             "unmet_protection": [],
         }
-    eligible, unmet = _protection(declaration)
+    eligible, unmet = _protection(admitted)
     return {
         "code": None,
-        "normalized": _normalized(declaration),
+        "normalized": _normalized(admitted),
         "protection_eligible_outcomes": eligible,
         "status": "accepted",
         "topology": topology,
@@ -992,7 +1014,7 @@ def independent(left: Object, right: Object) -> bool:
     return False
 
 
-def _rename_map(declaration: Object, replacement: Object | None) -> dict[str, str]:
+def _rename_maps(declaration: Object, replacement: Object | None) -> dict[str, dict[str, str]]:
     labels = [_id_label(node["id"]) for node in _nodes(declaration)]
     if len(labels) == 1:
         nodes = {labels[0]: labels[0]}
@@ -1002,28 +1024,65 @@ def _rename_map(declaration: Object, replacement: Object | None) -> dict[str, st
         ordered = sorted(labels)
         nodes = {label: ordered[(index + 1) % len(ordered)] for index, label in enumerate(ordered)}
     text = json.dumps((declaration, replacement), sort_keys=True)
-    mapping = dict(nodes)
-    for order in SEMANTIC_ORDERS.values():
+    mappings = {"node": nodes}
+    for role, order in SEMANTIC_ORDERS.items():
         present = [item for item in order if f'"{item}"' in text]
-        if len(present) > 1:
-            mapping.update({item: present[(index + 1) % len(present)] for index, item in enumerate(present)})
-    return mapping
+        mappings[role] = (
+            {item: present[(index + 1) % len(present)] for index, item in enumerate(present)}
+            if len(present) > 1
+            else {item: item for item in present}
+        )
+    return mappings
 
 
-def _rewrite(value: Json, mapping: Mapping[str, str]) -> Json:
+def _rewrite_role(value: str, role: str, mappings: Mapping[str, Mapping[str, str]]) -> str:
+    return mappings.get(role, {}).get(value, value)
+
+
+def _rewrite(value: Json, mappings: Mapping[str, Mapping[str, str]], *, parent_key: str = "") -> Json:
     if isinstance(value, str):
-        return mapping.get(value, value)
+        if parent_key == "label":
+            return _rewrite_role(value, "node", mappings)
+        if parent_key in {
+            "port",
+            "subject_port",
+            "identity_input",
+            "output",
+            "inputs",
+            "produced_ports",
+            "consumed_ports",
+        }:
+            rewritten = _rewrite_role(value, "input_port", mappings)
+            return _rewrite_role(rewritten, "output_port", mappings)
+        if parent_key == "meaning":
+            rewritten = _rewrite_role(value, "context", mappings)
+            return _rewrite_role(rewritten, "evidence", mappings)
+        if parent_key == "capability":
+            return _rewrite_role(value, "model", mappings)
+        return value
     if isinstance(value, list):
-        return [_rewrite(item, mapping) for item in value]
+        return [_rewrite(item, mappings, parent_key=parent_key) for item in value]
     if isinstance(value, dict):
-        return {key: _rewrite(item, mapping) for key, item in value.items()}
+        rewritten = {key: _rewrite(item, mappings, parent_key=key) for key, item in value.items()}
+        name = value.get("name")
+        if isinstance(name, str):
+            if "artifact_type" in value:
+                port = _rewrite_role(name, "input_port", mappings)
+                rewritten["name"] = _rewrite_role(port, "output_port", mappings)
+            elif value.get("kind") in {"field", "source_view", "evaluation", "absence"}:
+                rewritten["name"] = _rewrite_role(name, "coverage", mappings)
+            elif value.get("kind") in {"read", "write"}:
+                rewritten["name"] = _rewrite_role(name, "state", mappings)
+            elif "consumed_ports" in value and "subject_port" in value:
+                rewritten["name"] = _rewrite_role(name, "evidence", mappings)
+        return rewritten
     return value
 
 
 def _traces(declaration: Object, replacement: Object | None, expected: Object) -> list[Json]:
-    mapping = _rename_map(declaration, replacement)
-    renamed = cast(Object, _rewrite(declaration, mapping))
-    renamed_replacement = cast(Object | None, _rewrite(replacement, mapping)) if replacement is not None else None
+    mappings = _rename_maps(declaration, replacement)
+    renamed = cast(Object, _rewrite(declaration, mappings))
+    renamed_replacement = cast(Object | None, _rewrite(replacement, mappings)) if replacement is not None else None
     traces: list[Json] = [
         {
             "declaration": renamed,
@@ -1562,6 +1621,44 @@ def producer_python() -> str:
     return f"{platform.python_implementation()} {platform.python_version()}"
 
 
+def _has_closed_vocabularies(declaration: Object) -> bool:
+    operations = [_obj(declaration["interface"])]
+    for node in _nodes(declaration):
+        if node.get("kind") not in {"operation", "subgraph"}:
+            return False
+        operations.append(_obj(node["operation"]))
+        if node["kind"] == "subgraph" and not _has_closed_vocabularies(_obj(node["body"])):
+            return False
+    for operation in operations:
+        for outcome in map(_obj, _list(operation["outcomes"])):
+            if outcome.get("category") not in {"success", "failure", "cancelled", "lost", "blocked", "inconsistent"}:
+                return False
+            if any(_obj(context).get("capture") != "whole_artifact" for context in _list(outcome["context"])):
+                return False
+            if any(
+                _obj(coverage).get("kind") not in {"field", "source_view", "evaluation", "absence"}
+                for evidence in map(_obj, _list(outcome["evidence"]))
+                for coverage in _list(evidence["coverage"])
+            ):
+                return False
+            if any(_obj(effect).get("kind") not in {"read", "write"} for effect in _list(outcome["state_effects"])):
+                return False
+    if any(
+        _obj(_obj(binding)["source"]).get("kind") not in {"workflow_input", "node_output"}
+        for binding in _list(declaration["input_bindings"])
+    ):
+        return False
+    if any(
+        _obj(_obj(binding)["source"]).get("kind") != "node_output" for binding in _list(declaration["output_bindings"])
+    ):
+        return False
+    return all(
+        _obj(coverage).get("kind") in {"field", "source_view", "evaluation", "absence"}
+        for requirement in map(_obj, _list(declaration["protection"]))
+        for coverage in _list(requirement["coverage"])
+    )
+
+
 def load_cases(value: Json) -> tuple[Object, ...]:
     root = _obj(value)
     if set(root) != {"cases", "schema_version"} or root["schema_version"] != 1:
@@ -1570,6 +1667,11 @@ def load_cases(value: Json) -> tuple[Object, ...]:
     required = {"case_id", "family", "mode", "declaration", "replacement", "expected", "traces"}
     for case in cases:
         if set(case) != required or case["family"] not in FAMILIES or case["mode"] not in {"admission", "substitution"}:
+            raise ValueError("invalid workflow fixture structure")
+        replacement = _obj(case["replacement"]) if case["replacement"] is not None else None
+        if not _has_closed_vocabularies(_obj(case["declaration"])) or (
+            replacement is not None and not _has_closed_vocabularies(replacement)
+        ):
             raise ValueError("invalid workflow fixture structure")
         expected = _obj(case["expected"])
         if set(expected) != {
@@ -1583,6 +1685,11 @@ def load_cases(value: Json) -> tuple[Object, ...]:
             raise ValueError("invalid workflow fixture structure")
         for trace in map(_obj, _list(case["traces"])):
             if set(trace) != {"transformation", "events", "declaration", "replacement", "expected"}:
+                raise ValueError("invalid workflow fixture structure")
+            trace_replacement = _obj(trace["replacement"]) if trace["replacement"] is not None else None
+            if not _has_closed_vocabularies(_obj(trace["declaration"])) or (
+                trace_replacement is not None and not _has_closed_vocabularies(trace_replacement)
+            ):
                 raise ValueError("invalid workflow fixture structure")
             if any(_obj(event).get("op") not in ALPHABET for event in _list(trace["events"])):
                 raise ValueError("invalid workflow fixture structure")
