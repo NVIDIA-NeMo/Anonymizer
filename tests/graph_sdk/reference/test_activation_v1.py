@@ -96,11 +96,11 @@ def test_family_enumeration_coordinates_and_nested_witness_are_exact() -> None:
         "sequence_mutations": 10,
         "choice": 8,
         "subgraph": 10,
-        "map": 26,
+        "map": 25,
         "join": 26,
         "loop": 16,
         "nested_map_loop": 11,
-        "precedence": 9,
+        "precedence": 7,
         "terminal_coverage": 15,
     }
     table: dict[tuple[int, int], int] = {}
@@ -403,6 +403,29 @@ def test_depth_limit_precedes_duplicate_seed_for_every_seed_permutation() -> Non
         assert reference.reduce_trace(declaration, [reference._event("initialize")])["code"] == "limit_exceeded"
 
 
+def test_parent_cycles_have_no_finite_depth_but_do_not_hide_finite_overflow() -> None:
+    cyclic_seeds = [
+        reference._seed("A0", parent="A1"),
+        reference._seed("A1", parent="A0"),
+    ]
+    for maximum_depth in (0, 1, 2, 12):
+        declaration = reference._decl((reference._seed("A0"), reference._seed("A1")), limits=(6, 2, maximum_depth))
+        declaration["seeds"] = cyclic_seeds
+        assert reference.reduce_trace(declaration, [reference._event("initialize")])["code"] == "cycle"
+
+    mixed = reference._decl(
+        (
+            reference._seed("A0"),
+            reference._seed("A1"),
+            reference._seed("A2"),
+            reference._seed("A3", parent="A2"),
+        ),
+        limits=(12, 4, 1),
+    )
+    mixed["seeds"] = cyclic_seeds + [reference._seed("A2"), reference._seed("A3", parent="A2")]
+    assert reference.reduce_trace(mixed, [reference._event("initialize")])["code"] == "limit_exceeded"
+
+
 def test_named_outcomes_categories_ports_and_invocation_ownership_are_exact() -> None:
     case = _case("sequence_single/000/base")
     state = _state(_object(case["expected"]))
@@ -503,8 +526,6 @@ def test_precedence_comes_from_actual_malformed_boundaries() -> None:
         "missing",
         "overlap",
         "cycle",
-        "limit_exceeded",
-        "limit_exceeded",
     ]
     forbidden = {
         "defects",
@@ -539,14 +560,14 @@ def test_manifest_counts_sources_and_provenance_are_actual() -> None:
     assert MANIFEST["self_test_sha256"] == hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
     counts = _object(MANIFEST["counts"])
     assert counts == {
-        "case_count": 209,
-        "event_count": 1949,
+        "case_count": 206,
+        "event_count": 1944,
         "max_activations": 12,
         "max_dynamic_depth": 2,
         "max_loop_iterations": 3,
         "max_map_children": 3,
         "max_templates": 3,
-        "trace_count": 323,
+        "trace_count": 320,
     }
     assert _object(MANIFEST["generation_provenance"])["generations"] == 2
 

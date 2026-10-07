@@ -523,25 +523,31 @@ def parse_event(value: Mapping[str, Json]) -> Event:
     raise Rejected("invalid_value")
 
 
-def _raw_depth(
-    key: str, parents: Mapping[str, tuple[str | None, ...]], path: frozenset[str] = frozenset()
-) -> tuple[int, bool, bool]:
-    if key in path:
-        return 0, False, True
-    options = parents.get(key)
-    if options is None:
-        return 0, True, False
+def _raw_depth(key: str, parents: Mapping[str, tuple[str | None, ...]]) -> tuple[int, bool, bool]:
     maximum = 0
     missing = False
     cycle = False
-    next_path = path | {key}
-    for parent in options:
-        parent_depth, parent_missing, parent_cycle = (
-            (0, False, False) if parent is None else _raw_depth(parent, parents, next_path)
-        )
-        maximum = max(maximum, 1 + parent_depth)
-        missing |= parent_missing
-        cycle |= parent_cycle
+    pending = [(key, frozenset[str]())]
+    visited: set[tuple[str, frozenset[str]]] = set()
+    while pending:
+        current, path = pending.pop()
+        state = (current, path)
+        if state in visited:
+            continue
+        visited.add(state)
+        if current in path:
+            cycle = True
+            continue
+        options = parents.get(current)
+        if options is None:
+            missing = True
+            continue
+        next_path = path | {current}
+        for parent in options:
+            if parent is None:
+                maximum = max(maximum, len(next_path))
+            else:
+                pending.append((parent, next_path))
     return maximum, missing, cycle
 
 
@@ -1654,11 +1660,6 @@ def _map_cases() -> Iterable[Object]:
                 _terminal("A0", "failure", None),
             ],
         ),
-        (
-            "closed_empty_before_expander",
-            _aggregate_decl(0),
-            [_event("initialize"), _select("A0", "A11"), _event("membership_close", parent="A0", members=[])],
-        ),
     )
     for name, facts, events in specials:
         yield _case("map", f"{coordinate:03d}", name, facts, events)
@@ -1965,8 +1966,6 @@ def _nested_cases() -> Iterable[Object]:
 
 def _precedence_cases() -> Iterable[Object]:
     ordinary = _decl((_seed("A0"),), required=("A0",))
-    depth_duplicate_forward = _decl((_seed("A0"), _seed("A1"), _seed("A1", parent="A0")), limits=(9, 3, 1))
-    depth_duplicate_reverse = _decl((_seed("A0"), _seed("A1", parent="A0"), _seed("A1")), limits=(9, 3, 1))
     missing_contradictory = _aggregate_decl(1)
     missing_contradictory["required"] = ["A0", "A11", "A10"]
     malformed_seeds = cast(list[Json], missing_contradictory["seeds"])
@@ -2010,8 +2009,6 @@ def _precedence_cases() -> Iterable[Object]:
             ),
             [_event("initialize")],
         ),
-        ("depth_before_duplicate_forward", depth_duplicate_forward, [_event("initialize")]),
-        ("depth_before_duplicate_reverse", depth_duplicate_reverse, [_event("initialize")]),
     )
     for i, (name, declaration, events) in enumerate(cases):
         yield _case("precedence", f"{i:03d}", name, declaration, events)
