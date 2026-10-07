@@ -229,9 +229,7 @@ class _Adapter:
                 OutcomeSpec(
                     name=cast(str, record["name"]),
                     category=cast(OutcomeClass, record["category"]),
-                    produced_ports=frozenset(
-                        cast(str, port) for port in _array(record["produced_ports"])
-                    )
+                    produced_ports=frozenset(cast(str, port) for port in _array(record["produced_ports"]))
                     if expose_outputs
                     else frozenset(),
                     context=frozenset(),
@@ -256,9 +254,7 @@ class _Adapter:
 
     def _scope_templates(self, scope: Scope) -> set[str]:
         templates = {
-            identity[1]
-            for seed in self.support_seeds
-            if (identity := self._target_identity(seed))[0] == scope
+            identity[1] for seed in self.support_seeds if (identity := self._target_identity(seed))[0] == scope
         }
         for value in _array(self.support["aggregates"]):
             aggregate = _object(value)
@@ -266,9 +262,7 @@ class _Adapter:
                 templates.add(cast(str, aggregate["member_template"]))
             elif aggregate["kind"] == "map" and self._aggregate_scope(aggregate) == scope:
                 members = _array(aggregate["members"])
-                templates.add(
-                    self._support_identity(cast(str, members[0]))[1] if members else "N1"
-                )
+                templates.add(self._support_identity(cast(str, members[0]))[1] if members else "N1")
         return templates
 
     def _node_for_seed(self, seed: Object) -> NodeId:
@@ -292,9 +286,10 @@ class _Adapter:
                 names.add(cast(str, dependency["destination_port"]))
         for value in _array(self.support["aggregates"]):
             aggregate = _object(value)
-            if aggregate["kind"] == "loop" and (
-                _scope(aggregate["member_scope"]), cast(str, aggregate["member_template"])
-            ) == identity:
+            if (
+                aggregate["kind"] == "loop"
+                and (_scope(aggregate["member_scope"]), cast(str, aggregate["member_template"])) == identity
+            ):
                 binding = aggregate["initial_binding"] or aggregate["carried_binding"]
                 if isinstance(binding, dict):
                     names.add(cast(str, binding["destination_port"]))
@@ -356,9 +351,7 @@ class _Adapter:
                 name="precedence-source",
                 inputs=(),
                 outputs=(OutputPort(name="result", artifact_type=ARTIFACT),),
-                output_dependencies=(
-                    OutputDependency(output="result", inputs=frozenset(), identity_input=None),
-                ),
+                output_dependencies=(OutputDependency(output="result", inputs=frozenset(), identity_input=None),),
                 outcomes=(
                     OutcomeSpec(
                         name="ok",
@@ -475,7 +468,14 @@ class _Adapter:
                 if aggregate["kind"] == "map":
                     source = self._support_identity(cast(str, aggregate["parent"]))
                     join = self._support_identity(cast(str, aggregate["join"]))
-                    member = (scope, cast(str, self.support_seed_by_key[cast(str, _array(aggregate["members"])[0])]["template"])) if _array(aggregate["members"]) else (scope, "N1")
+                    member = (
+                        (
+                            scope,
+                            cast(str, self.support_seed_by_key[cast(str, _array(aggregate["members"])[0])]["template"]),
+                        )
+                        if _array(aggregate["members"])
+                        else (scope, "N1")
+                    )
                 else:
                     source = self._support_identity(cast(str, aggregate["starter"]))
                     join = self._support_identity(cast(str, aggregate["join"]))
@@ -539,15 +539,28 @@ class _Adapter:
 
             local_pairs = {(left, right) for left, right in sequence_pairs if left[0] == scope and right[0] == scope}
             outgoing = {left for left, _ in local_pairs}
-            sinks = [(scope, template) for template in self._scope_templates(scope) if (scope, template) not in outgoing]
+            sinks = [
+                (scope, template) for template in self._scope_templates(scope) if (scope, template) not in outgoing
+            ]
             if not sinks:
                 sinks = [(scope, sorted(self._scope_templates(scope))[-1])]
             parent_identity = (scope[:-1], scope[-1]) if scope else None
-            interface_records = self._records(parent_identity) if parent_identity is not None else [
-                record for sink in sinks for record in self._records(sink)
-            ]
+            interface_records = (
+                self._records(parent_identity)
+                if parent_identity is not None
+                else [record for sink in sinks for record in self._records(sink)]
+            )
             unique_interface_records = {cast(str, record["name"]): record for record in interface_records}
-            interface_inputs = tuple(sorted({port.name for binding in input_bindings if isinstance(binding.source, WorkflowInputRef) for port in (InputPort(name=binding.source.port, artifact_type=ARTIFACT),)}))
+            interface_inputs = tuple(
+                sorted(
+                    {
+                        port.name
+                        for binding in input_bindings
+                        if isinstance(binding.source, WorkflowInputRef)
+                        for port in (InputPort(name=binding.source.port, artifact_type=ARTIFACT),)
+                    }
+                )
+            )
             interface_identity = parent_identity if parent_identity is not None else sinks[0]
             interface = self._operation(
                 interface_identity,
@@ -564,7 +577,13 @@ class _Adapter:
                 )
                 for sink in sinks
                 for port in sink_outputs
-                if port in {item.name for item in cast(Any, next(node for node in nodes if node.id == self.node_ids[sink])).operation.outputs}
+                if port
+                in {
+                    item.name
+                    for item in cast(
+                        Any, next(node for node in nodes if node.id == self.node_ids[sink])
+                    ).operation.outputs
+                }
             )
             outcome_bindings = tuple(
                 OutcomeBinding(
@@ -573,7 +592,13 @@ class _Adapter:
                 )
                 for sink in sinks
                 for name in unique_interface_records
-                if name in {item.name for item in cast(Any, next(node for node in nodes if node.id == self.node_ids[sink])).operation.outcomes}
+                if name
+                in {
+                    item.name
+                    for item in cast(
+                        Any, next(node for node in nodes if node.id == self.node_ids[sink])
+                    ).operation.outcomes
+                }
             )
             branch_outcomes = {
                 cast(str, _object(branch)["outcome"])
@@ -590,8 +615,12 @@ class _Adapter:
                 if outcome.name not in branch_outcomes
             )
             outcome_bindings += selector_fallthrough
-            expanded = sum(1 + (node.body.expanded_node_count if isinstance(node, SubgraphNode) else 0) for node in nodes)
-            depth = max((1 + self._depth(node.body) if isinstance(node, SubgraphNode) else 1 for node in nodes), default=1)
+            expanded = sum(
+                1 + (node.body.expanded_node_count if isinstance(node, SubgraphNode) else 0) for node in nodes
+            )
+            depth = max(
+                (1 + self._depth(node.body) if isinstance(node, SubgraphNode) else 1 for node in nodes), default=1
+            )
             workflow = admit_static_workflow(
                 workflow=owner,
                 interface=interface,
@@ -614,7 +643,10 @@ class _Adapter:
                     max_choice_states=max(1, 4 ** len(choices)),
                 ),
             )
-            self.scopes[scope] = _BuiltScope(workflow=workflow, nodes={template: self.node_ids[scope, template] for template in self._scope_templates(scope)})
+            self.scopes[scope] = _BuiltScope(
+                workflow=workflow,
+                nodes={template: self.node_ids[scope, template] for template in self._scope_templates(scope)},
+            )
         return self.scopes[()].workflow
 
     def _depth(self, workflow: AdmittedWorkflow) -> int:
@@ -628,9 +660,7 @@ class _Adapter:
 
     def build_dynamic(self) -> AdmittedActivationWorkflow:
         root = self.build_static()
-        dynamic_declaration = (
-            self.declaration if self.case["boundary"] == "dynamic_admission" else self.support
-        )
+        dynamic_declaration = self.declaration if self.case["boundary"] == "dynamic_admission" else self.support
         dynamic_scopes: list[DynamicScope] = []
         maps_count = joins_count = loops_count = 0
         max_children = max_iterations = 0
@@ -650,13 +680,17 @@ class _Adapter:
                     maps[source_identity] = MapDecl(
                         expander=self.node_ids[source_identity],
                         member=self.node_ids[member_identity],
-                        expansion_outcomes=frozenset(cast(str, item) for item in _array(aggregate["expansion_outcomes"])),
+                        expansion_outcomes=frozenset(
+                            cast(str, item) for item in _array(aggregate["expansion_outcomes"])
+                        ),
                         max_children=cast(int, aggregate["bound"]),
                     )
                     joins[source_identity] = KeyedJoinDecl(
                         source=self.node_ids[source_identity],
                         join=self.node_ids[join_identity],
-                        accepted_categories=frozenset(cast(OutcomeClass, item) for item in _array(aggregate["accepted_categories"])),
+                        accepted_categories=frozenset(
+                            cast(OutcomeClass, item) for item in _array(aggregate["accepted_categories"])
+                        ),
                         reduction="all_by_key",
                     )
                     max_children = max(max_children, cast(int, aggregate["bound"]))
@@ -834,7 +868,9 @@ class _Adapter:
             produced: list[str] = []
             if entry.outcome is not None:
                 operation = next(
-                    node.operation for node in _scope_for_state(state, entry.template).workflow.nodes if node.id == entry.template
+                    node.operation
+                    for node in _scope_for_state(state, entry.template).workflow.nodes
+                    if node.id == entry.template
                 )
                 outcome = next(item for item in operation.outcomes if item.name == entry.outcome)
                 produced = sorted(outcome.produced_ports)
@@ -846,7 +882,9 @@ class _Adapter:
                     "scope": list(scope),
                     "template": template,
                     "status": entry.status,
-                    "category": entry.status if entry.status in {"success", "failure", "cancelled", "lost", "blocked", "inconsistent"} else None,
+                    "category": entry.status
+                    if entry.status in {"success", "failure", "cancelled", "lost", "blocked", "inconsistent"}
+                    else None,
                     "outcome": entry.outcome,
                     "produced_ports": produced,
                 }
@@ -927,9 +965,7 @@ def _transition_state(adapter: _Adapter, events: list[Json]) -> ActivationState:
 @pytest.mark.parametrize("case", COMMUTED_CASES, ids=lambda case: cast(str, case["case_id"]))
 def test_commuted_trace_uses_same_product_identity_mapping(case: Object) -> None:
     trace = next(
-        _object(value)
-        for value in _array(case["traces"])
-        if _object(value)["name"] == "commute_independent_siblings"
+        _object(value) for value in _array(case["traces"]) if _object(value)["name"] == "commute_independent_siblings"
     )
     assert trace["declaration"] == case["declaration"]
     adapter = _Adapter(case)
