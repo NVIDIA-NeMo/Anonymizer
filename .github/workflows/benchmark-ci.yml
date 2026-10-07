@@ -64,7 +64,7 @@ jobs:
 
     steps:
       - name: Checkout benchmark target
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: ${{ env.BENCHMARK_REF }}
           fetch-depth: "0"
