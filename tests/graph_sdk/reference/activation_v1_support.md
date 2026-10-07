@@ -71,7 +71,7 @@ The exact support selection for negatives is:
 | precedence 001 | single N0 support |
 | precedence 003 | independent top-level N0/N1 support; initialization declares both under A0 and omits required A1 |
 | precedence 002 | valid N0 -> N1 support; only reservation ownership/key facts are mutated |
-| precedence 004 | valid bound-one map support; only required reservation and parent-role facts are mutated |
+| precedence 004 | valid bound-one map support; initialization omits A0 and parents retained member A1 under retained join A11 |
 | terminal coverage coordinates 012-014 | bound-two N0/N1/N2 map support |
 
 Precedence coordinates 005 and 006 intentionally have no admitted support;
@@ -133,7 +133,12 @@ to static admission.
   reach event construction, transition, or initialization according to their
   `boundary`. Case 003 initializes two distinct reservations that share A0 but
   name N0 and N1, while required A1 is absent, so duplicate precedes missing
-  without relying on repeated list elements. Case 005 constructs two overlapping D03 choice branches plus the
+  without relying on repeated list elements. Case 004 retains the admitted
+  bound-one support and its three-entry, ten-event limits, but reserves only
+  join A11 and member A1. Required expander A0 is absent, and A1 names present
+  A11 as its parent even though A11 has the join role. The real initialization
+  boundary therefore observes missing and contradictory together and returns
+  missing by the fixed precedence. Case 005 constructs two overlapping D03 choice branches plus the
   recorded sequence cycle and calls `admit_static_workflow`. Case 006 constructs
   the recorded sequence cycle plus one result-to-input binding whose source and
   destination use different artifact revisions, then calls

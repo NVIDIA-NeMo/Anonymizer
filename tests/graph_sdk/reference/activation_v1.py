@@ -39,8 +39,8 @@ Code: TypeAlias = Literal[
 CONTRACT_SHA256 = "9f58d60ad4ecc25065cc6c74d784cd05ad6fb2a72f183a615122eb981c7b265b"
 CONSUMPTION_ADDENDUM_SHA256 = "359ef3adf7986685463e6eb80c0d96f893a39dcefead16ba2f76919f148b94d9"
 CORPUS_PATH = "tests/graph_sdk/reference/activation_v1_cases.json"
-GENERATOR_VERSION = "workflow-activation-v1-generator-7"
-SELF_TEST_VERSION = "workflow-activation-v1-self-test-7"
+GENERATOR_VERSION = "workflow-activation-v1-generator-8"
+SELF_TEST_VERSION = "workflow-activation-v1-self-test-8"
 SUPPORT_PATH = "tests/graph_sdk/reference/activation_v1_support.md"
 TEMPLATES = ("N0", "N1", "N2")
 INVOCATIONS = ("I0", "I1")
@@ -2280,11 +2280,11 @@ def _precedence_cases() -> Iterable[Object]:
         required=("A0", "A1"),
     )
     missing_contradictory = _aggregate_decl(1)
-    missing_contradictory["required"] = ["A0", "A11", "A10"]
+    missing_contradictory["required"] = ["A0", "A11"]
     malformed_seeds = cast(list[Json], missing_contradictory["seeds"])
     malformed_member = dict(cast(Object, malformed_seeds[2]))
-    malformed_member["parent"] = None
-    malformed_seeds[2] = malformed_member
+    malformed_member["parent"] = "A11"
+    malformed_seeds[:] = [malformed_seeds[1], malformed_member]
     cases = (
         (
             "overflow_type_before_value",
@@ -2451,7 +2451,7 @@ def manifest(cases: Sequence[Object], *, generator_sha256: str, self_test_sha256
         },
         "generator_sha256": generator_sha256,
         "independence": {"kind": "conditional-symmetric-v1", "rule_ids": list(RULE_IDS)},
-        "manifest_version": "workflow-activation-reference-v4",
+        "manifest_version": "workflow-activation-reference-v5",
         "packet_id": "R1b",
         "schema_version": 4,
         "self_test_sha256": self_test_sha256,

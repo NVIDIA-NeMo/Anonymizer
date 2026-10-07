@@ -712,6 +712,24 @@ def test_precedence_comes_from_actual_malformed_boundaries() -> None:
     for case in CASES:
         assert forbidden.isdisjoint(_object(case["declaration"]))
 
+    case = _case("precedence/004/missing_before_contradictory")
+    declaration = _object(case["declaration"])
+    assert declaration["required"] == ["A0", "A11"]
+    assert declaration["limits"] == {"max_entries": 3, "max_events": 10, "max_parent_depth": 2}
+    seeds = [_object(seed) for seed in _array(declaration["seeds"])]
+    assert [(seed["key"], seed["template"], seed["parent"]) for seed in seeds] == [
+        ("A11", "N2", None),
+        ("A1", "N1", "A11"),
+    ]
+    assert (
+        _object(reference.reduce_trace(declaration, [_object(event) for event in _array(case["events"])]))["code"]
+        == "missing"
+    )
+
+    contradictory_only = dict(declaration)
+    contradictory_only["seeds"] = [reference._seed("A0", "N0", role="map_expander"), *seeds]
+    assert reference.reduce_trace(contradictory_only, [reference._event("initialize")])["code"] == "contradictory"
+
 
 def test_semantic_sets_are_order_independent_and_siblings_commute() -> None:
     case = _case("sequence_independent_siblings/000-001/base")
