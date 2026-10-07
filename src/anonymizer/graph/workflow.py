@@ -14,6 +14,7 @@ OutcomeClass: TypeAlias = Literal["success", "failure", "cancelled", "lost", "bl
 StateEffectKind: TypeAlias = Literal["read", "write"]
 CoverageKind: TypeAlias = Literal["field", "source_view", "evaluation", "absence"]
 CaptureMode: TypeAlias = Literal["whole_artifact"]
+DynamicReduction: TypeAlias = Literal["all_by_key"]
 
 _OUTCOME_CLASSES = frozenset(("success", "failure", "cancelled", "lost", "blocked", "inconsistent"))
 _STATE_EFFECT_KINDS = frozenset(("read", "write"))
@@ -496,6 +497,145 @@ class ChoiceDecl(_PrivateValue):
 
 
 @dataclass(frozen=True, slots=True, kw_only=True, repr=False)
+class MapDecl(_PrivateValue):
+    expander: NodeId
+    member: NodeId
+    expansion_outcomes: frozenset[str]
+    max_children: int
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.expander, NodeId) or not isinstance(self.member, NodeId):
+            _reject(ValidationCode.INVALID_TYPE)
+        _frozenset_of(self.expansion_outcomes, str)
+        _validate_scalars(strings=tuple(self.expansion_outcomes), nonnegative_integers=(self.max_children,))
+        if not self.expansion_outcomes:
+            _reject(ValidationCode.INVALID_VALUE)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True, repr=False)
+class KeyedJoinDecl(_PrivateValue):
+    source: NodeId
+    join: NodeId
+    accepted_categories: frozenset[OutcomeClass]
+    reduction: DynamicReduction
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.source, NodeId) or not isinstance(self.join, NodeId):
+            _reject(ValidationCode.INVALID_TYPE)
+        _frozenset_of(self.accepted_categories, str)
+        _validate_scalars(strings=(*self.accepted_categories, self.reduction))
+        if not self.accepted_categories:
+            _reject(ValidationCode.INVALID_VALUE)
+        if not self.accepted_categories <= _OUTCOME_CLASSES or self.reduction != "all_by_key":
+            _reject(ValidationCode.INVALID_VALUE)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True, repr=False)
+class LoopInitialBinding(_PrivateValue):
+    source: WorkflowInputRef | NodeOutputRef
+    destination: NodeInputRef
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.source, (WorkflowInputRef, NodeOutputRef)) or not isinstance(
+            self.destination, NodeInputRef
+        ):
+            _reject(ValidationCode.INVALID_TYPE)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True, repr=False)
+class LoopCarriedBinding(_PrivateValue):
+    source: NodeOutputRef
+    destination: NodeInputRef
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.source, NodeOutputRef) or not isinstance(self.destination, NodeInputRef):
+            _reject(ValidationCode.INVALID_TYPE)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True, repr=False)
+class LoopDecl(_PrivateValue):
+    starter: NodeId
+    member: NodeId
+    join: NodeId
+    enter_outcomes: frozenset[str]
+    bypass_outcomes: frozenset[str]
+    continue_outcomes: frozenset[str]
+    exit_outcomes: frozenset[str]
+    initial: tuple[LoopInitialBinding, ...]
+    carried: tuple[LoopCarriedBinding, ...]
+    max_iterations: int
+
+    def __post_init__(self) -> None:
+        if not all(isinstance(node, NodeId) for node in (self.starter, self.member, self.join)):
+            _reject(ValidationCode.INVALID_TYPE)
+        for outcomes in (
+            self.enter_outcomes,
+            self.bypass_outcomes,
+            self.continue_outcomes,
+            self.exit_outcomes,
+        ):
+            _frozenset_of(outcomes, str)
+            _validate_scalars(strings=tuple(outcomes))
+            if not outcomes:
+                _reject(ValidationCode.INVALID_VALUE)
+        _tuple_of(self.initial, LoopInitialBinding)
+        _tuple_of(self.carried, LoopCarriedBinding)
+        _validate_scalars(nonnegative_integers=(self.max_iterations,))
+        if self.enter_outcomes & self.bypass_outcomes or self.continue_outcomes & self.exit_outcomes:
+            _reject(ValidationCode.OVERLAP)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True, repr=False, eq=False)
+class DynamicScope(_PrivateValue):
+    workflow: AdmittedWorkflow
+    maps: tuple[MapDecl, ...]
+    joins: tuple[KeyedJoinDecl, ...]
+    loops: tuple[LoopDecl, ...]
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.workflow, AdmittedWorkflow):
+            _reject(ValidationCode.INVALID_TYPE)
+        _tuple_of(self.maps, MapDecl)
+        _tuple_of(self.joins, KeyedJoinDecl)
+        _tuple_of(self.loops, LoopDecl)
+
+    def __eq__(self, other: object) -> bool:
+        return (
+            isinstance(other, DynamicScope)
+            and self.workflow == other.workflow
+            and frozenset(self.maps) == frozenset(other.maps)
+            and frozenset(self.joins) == frozenset(other.joins)
+            and frozenset(self.loops) == frozenset(other.loops)
+        )
+
+    def __hash__(self) -> int:
+        return hash((self.workflow, frozenset(self.maps), frozenset(self.joins), frozenset(self.loops)))
+
+
+@dataclass(frozen=True, slots=True, kw_only=True, repr=False)
+class DynamicLimits(_PrivateValue):
+    max_maps: int
+    max_joins: int
+    max_loops: int
+    max_children_per_map: int
+    max_iterations_per_loop: int
+    max_dynamic_depth: int
+    max_activation_occurrences: int
+
+    def __post_init__(self) -> None:
+        _validate_scalars(
+            nonnegative_integers=(
+                self.max_maps,
+                self.max_joins,
+                self.max_loops,
+                self.max_children_per_map,
+                self.max_iterations_per_loop,
+            ),
+            positive_integers=(self.max_dynamic_depth, self.max_activation_occurrences),
+        )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True, repr=False)
 class ProtectionRequirement(_PrivateValue):
     outcome: str
     meaning: str
@@ -638,6 +778,241 @@ def _workflow_local_state(workflow: AdmittedWorkflow) -> tuple[object, ...]:
         workflow.unmet_protection,
         workflow.limits,
         workflow.expanded_node_count,
+    )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True, repr=False, init=False)
+class AdmittedActivationWorkflow(_PrivateValue):
+    """A statically admitted workflow with finite dynamic declarations."""
+
+    workflow: AdmittedWorkflow
+    scopes: tuple[DynamicScope, ...]
+    limits: DynamicLimits
+    activation_upper_bound: int
+    dynamic_depth: int
+
+    def __init__(
+        self,
+        *,
+        _key: object,
+        workflow: AdmittedWorkflow,
+        scopes: tuple[DynamicScope, ...],
+        limits: DynamicLimits,
+        activation_upper_bound: int,
+        dynamic_depth: int,
+    ) -> None:
+        if _key is not _ADMISSION_KEY:
+            raise TypeError("admitted activation workflows must be created by admission")
+        object.__setattr__(self, "workflow", workflow)
+        object.__setattr__(self, "scopes", scopes)
+        object.__setattr__(self, "limits", limits)
+        object.__setattr__(self, "activation_upper_bound", activation_upper_bound)
+        object.__setattr__(self, "dynamic_depth", dynamic_depth)
+
+
+def admit_activation_workflow(
+    *, workflow: AdmittedWorkflow, scopes: tuple[DynamicScope, ...], limits: DynamicLimits
+) -> AdmittedActivationWorkflow:
+    """Validate dynamic roles and compute a finite occurrence bound."""
+    if not isinstance(workflow, AdmittedWorkflow) or not isinstance(limits, DynamicLimits):
+        _reject(ValidationCode.INVALID_TYPE)
+    _tuple_of(scopes, DynamicScope)
+
+    reachable: list[AdmittedWorkflow] = []
+    pending = [workflow]
+    seen: set[int] = set()
+    while pending:
+        current = pending.pop()
+        if id(current) in seen:
+            continue
+        seen.add(id(current))
+        reachable.append(current)
+        pending.extend(node.body for node in current.nodes if isinstance(node, SubgraphNode))
+    by_workflow = {id(scope.workflow): scope for scope in scopes}
+    if len(by_workflow) != len(scopes):
+        _reject(ValidationCode.DUPLICATE)
+    if len(scopes) != len(reachable) or set(by_workflow) != {id(item) for item in reachable}:
+        _reject(ValidationCode.MISSING)
+
+    total_maps = sum(len(scope.maps) for scope in scopes)
+    total_joins = sum(len(scope.joins) for scope in scopes)
+    total_loops = sum(len(scope.loops) for scope in scopes)
+    if (
+        total_maps > limits.max_maps
+        or total_joins > limits.max_joins
+        or total_loops > limits.max_loops
+        or any(item.max_children > limits.max_children_per_map for scope in scopes for item in scope.maps)
+        or any(item.max_iterations > limits.max_iterations_per_loop for scope in scopes for item in scope.loops)
+    ):
+        _reject(ValidationCode.LIMIT_EXCEEDED)
+
+    for scope in scopes:
+        nodes = {node.id: node for node in scope.workflow.nodes}
+        owned = set(nodes)
+        declared_joins = [join.join for join in scope.joins]
+        sources = {item.expander for item in scope.maps} | {item.starter for item in scope.loops}
+        members = [item.member for item in scope.maps] + [item.member for item in scope.loops]
+        aggregate_joins = declared_joins
+        referenced = (
+            {node for item in scope.maps for node in (item.expander, item.member)}
+            | {node for item in scope.joins for node in (item.source, item.join)}
+            | {node for item in scope.loops for node in (item.starter, item.member, item.join)}
+        )
+        if any(node.workflow != scope.workflow.workflow for node in referenced):
+            _reject(ValidationCode.FOREIGN_OWNER)
+        if not referenced <= owned:
+            _reject(ValidationCode.MISSING)
+        if len(members) != len(set(members)) or len(aggregate_joins) != len(set(aggregate_joins)):
+            _reject(ValidationCode.DUPLICATE)
+        join_sources = {item.source for item in scope.joins}
+        if join_sources != sources or len(join_sources) != len(scope.joins):
+            _reject(ValidationCode.MISSING)
+        choice_members = {
+            member for choice in scope.workflow.choices for branch in choice.branches for member in branch.members
+        }
+        if choice_members & (set(members) | set(aggregate_joins)):
+            _reject(ValidationCode.OVERLAP)
+        outcomes = {node_id: {outcome.name for outcome in node.operation.outcomes} for node_id, node in nodes.items()}
+        if any(not item.expansion_outcomes <= outcomes[item.expander] for item in scope.maps):
+            _reject(ValidationCode.MISSING)
+        for item in scope.loops:
+            if item.enter_outcomes | item.bypass_outcomes != outcomes[item.starter]:
+                _reject(ValidationCode.MISSING)
+            if item.continue_outcomes | item.exit_outcomes != outcomes[item.member]:
+                _reject(ValidationCode.MISSING)
+            member_operation = nodes[item.member].operation
+            input_names = {port.name for port in member_operation.inputs}
+            initial_destinations = [binding.destination.port for binding in item.initial]
+            carried_destinations = [binding.destination.port for binding in item.carried]
+            if any(binding.destination.node != item.member for binding in (*item.initial, *item.carried)):
+                _reject(ValidationCode.FOREIGN_OWNER)
+            if len(initial_destinations) != len(set(initial_destinations)) or len(carried_destinations) != len(
+                set(carried_destinations)
+            ):
+                _reject(ValidationCode.DUPLICATE)
+            if set(initial_destinations) != input_names or set(carried_destinations) != input_names:
+                _reject(ValidationCode.MISSING)
+            static_bindings = {
+                (binding.source, binding.destination)
+                for binding in scope.workflow.input_bindings
+                if binding.destination.node == item.member
+            }
+            if {(binding.source, binding.destination) for binding in item.initial} != static_bindings:
+                _reject(ValidationCode.CONTRADICTORY)
+            output_types = {port.name: port.artifact_type for port in member_operation.outputs}
+            input_types = {port.name: port.artifact_type for port in member_operation.inputs}
+            if any(
+                binding.source.node != item.member
+                or binding.source.port not in output_types
+                or output_types[binding.source.port] != input_types[binding.destination.port]
+                for binding in item.carried
+            ):
+                _reject(ValidationCode.CONTRADICTORY)
+        edges = {(edge.before, edge.after) for edge in scope.workflow.sequence}
+        reachable_pairs = set(edges)
+        changed = True
+        while changed:
+            changed = False
+            additions = {
+                (left, right)
+                for left, middle in reachable_pairs
+                for candidate, right in reachable_pairs
+                if middle == candidate and left != right
+            } - reachable_pairs
+            if additions:
+                reachable_pairs.update(additions)
+                changed = True
+        if any(
+            (item.expander, item.member) not in reachable_pairs
+            or (item.member, next(join.join for join in scope.joins if join.source == item.expander))
+            not in reachable_pairs
+            for item in scope.maps
+        ) or any(
+            (item.starter, item.member) not in reachable_pairs or (item.member, item.join) not in reachable_pairs
+            for item in scope.loops
+        ):
+            _reject(ValidationCode.CONTRADICTORY)
+
+    scope_depth: dict[int, int] = {id(workflow): 1}
+    pending_depth = [workflow]
+    while pending_depth:
+        current = pending_depth.pop()
+        depth = scope_depth[id(current)]
+        for node in current.nodes:
+            if isinstance(node, SubgraphNode):
+                scope_depth[id(node.body)] = depth + 1
+                pending_depth.append(node.body)
+    dynamic_depth = max(scope_depth.values(), default=1)
+    if dynamic_depth > limits.max_dynamic_depth:
+        _reject(ValidationCode.LIMIT_EXCEEDED)
+
+    bounds: dict[int, int] = {}
+    stack: list[tuple[AdmittedWorkflow, bool]] = [(workflow, False)]
+    while stack:
+        current, visited = stack.pop()
+        if id(current) in bounds:
+            continue
+        children = [node.body for node in current.nodes if isinstance(node, SubgraphNode)]
+        if not visited:
+            stack.append((current, True))
+            stack.extend((child, False) for child in children)
+            continue
+        scope = by_workflow[id(current)]
+        factors = {item.member: item.max_children for item in scope.maps}
+        factors.update({item.member: item.max_iterations for item in scope.loops})
+        bound = 0
+        for node in current.nodes:
+            node_bound = 1 + (bounds[id(node.body)] if isinstance(node, SubgraphNode) else 0)
+            bound += factors.get(node.id, 1) * node_bound
+            if bound > limits.max_activation_occurrences:
+                _reject(ValidationCode.LIMIT_EXCEEDED)
+        bounds[id(current)] = bound
+    upper_bound = bounds[id(workflow)]
+    if upper_bound > limits.max_activation_occurrences:
+        _reject(ValidationCode.LIMIT_EXCEEDED)
+    if any(
+        outcome.ceiling.max_activations < bounds[id(item)] for item in reachable for outcome in item.interface.outcomes
+    ):
+        _reject(ValidationCode.CONTRADICTORY)
+    ordered = tuple(by_workflow[id(item)] for item in reachable)
+    return AdmittedActivationWorkflow(
+        _key=_ADMISSION_KEY,
+        workflow=workflow,
+        scopes=ordered,
+        limits=limits,
+        activation_upper_bound=upper_bound,
+        dynamic_depth=dynamic_depth,
+    )
+
+
+def substitute_activation_workflow(
+    *, workflow: AdmittedActivationWorkflow, target: NodeId, replacement: AdmittedWorkflow
+) -> AdmittedActivationWorkflow:
+    """Substitute a static body and readmit the dynamic wrapper."""
+    if not isinstance(workflow, AdmittedActivationWorkflow):
+        _reject(ValidationCode.INVALID_TYPE)
+    updated = substitute(workflow=workflow.workflow, target=target, replacement=replacement)
+    root_scope = next(scope for scope in workflow.scopes if scope.workflow is workflow.workflow)
+    admitted_scopes = [
+        DynamicScope(workflow=updated, maps=root_scope.maps, joins=root_scope.joins, loops=root_scope.loops)
+    ]
+    existing = {id(scope.workflow): scope for scope in workflow.scopes}
+    pending = [node.body for node in updated.nodes if isinstance(node, SubgraphNode)]
+    seen: set[int] = set()
+    while pending:
+        current = pending.pop()
+        if id(current) in seen:
+            continue
+        seen.add(id(current))
+        prior = existing.get(id(current))
+        admitted_scopes.append(
+            prior if prior is not None else DynamicScope(workflow=current, maps=(), joins=(), loops=())
+        )
+        pending.extend(node.body for node in current.nodes if isinstance(node, SubgraphNode))
+    return admit_activation_workflow(
+        workflow=updated,
+        scopes=tuple(admitted_scopes),
+        limits=workflow.limits,
     )
 
 
