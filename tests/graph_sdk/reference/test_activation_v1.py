@@ -164,7 +164,7 @@ def test_two_node_subgraphs_use_distinct_scoped_templates() -> None:
         first_outcomes = [
             _object(outcome)
             for outcome in _array(_object(_case(case_id)["declaration"])["outcomes"])
-            if _object(outcome)["template"] == "N1"
+            if (_object(outcome)["scope"], _object(outcome)["template"]) == (["N0"], "N1")
         ]
         assert [(outcome["name"], outcome["produced_ports"]) for outcome in first_outcomes] == [("ok", ["result"])]
 
@@ -175,7 +175,9 @@ def test_value_dependencies_require_the_named_source_port() -> None:
     for case in linked:
         declaration = _object(case["declaration"])
         producer_outcomes = [
-            _object(outcome) for outcome in _array(declaration["outcomes"]) if _object(outcome)["template"] == "N0"
+            _object(outcome)
+            for outcome in _array(declaration["outcomes"])
+            if (_object(outcome)["scope"], _object(outcome)["template"]) == ([], "N0")
         ]
         assert [(outcome["name"], outcome["produced_ports"]) for outcome in producer_outcomes] == [("ok", ["result"])]
         dependency = _object(_array(declaration["input_dependencies"])[0])
@@ -387,6 +389,14 @@ def test_loop_admission_uses_starter_initial_carry_and_iteration_order() -> None
         ("loop/014/terminal_gap", "missing"),
     ):
         assert _object(_case(case_id)["expected"])["code"] == code
+    duplicate = _case("loop/011/duplicate_iteration")
+    duplicate_seeds = [_object(value) for value in _array(_object(duplicate["declaration"])["seeds"])]
+    assert [(seed["key"], seed["template"]) for seed in duplicate_seeds if seed["key"] == "A1"] == [
+        ("A1", "N1"),
+        ("A1", "N2"),
+    ]
+    assert duplicate["boundary"] == "initialization"
+    assert duplicate["events"] == [{"kind": "initialize"}]
     for case_id in ("loop/008/missing_initial", "loop/009/missing_carried"):
         case = _case(case_id)
         assert case["boundary"] == "dynamic_admission"
@@ -409,6 +419,59 @@ def test_loop_admission_uses_starter_initial_carry_and_iteration_order() -> None
         cast(str, _object(entry)["activation"])
         for entry in _array(_state(_object(carried_output["expected"]))["entries"])
     }
+
+
+def test_loop_outcome_partitions_are_exact_and_scoped() -> None:
+    for case in (*_cases("loop"), *_cases("nested_map_loop")):
+        declaration = _object(case["declaration"])
+        seeds = {cast(str, _object(seed)["key"]): _object(seed) for seed in _array(declaration["seeds"])}
+        outcomes: dict[tuple[tuple[str, ...], str], set[str]] = {}
+        for value in _array(declaration["outcomes"]):
+            outcome = _object(value)
+            identity = (tuple(cast(list[str], outcome["scope"])), cast(str, outcome["template"]))
+            outcomes.setdefault(identity, set()).add(cast(str, outcome["name"]))
+        for value in _array(declaration["aggregates"]):
+            aggregate = _object(value)
+            if aggregate["kind"] != "loop":
+                continue
+            starter = seeds[cast(str, aggregate["starter"])]
+            starter_identity = (tuple(cast(list[str], starter["scope"])), cast(str, starter["template"]))
+            member_identity = (
+                tuple(cast(list[str], aggregate["member_scope"])),
+                cast(str, aggregate["member_template"]),
+            )
+            assert outcomes[starter_identity] == set(
+                (*cast(list[str], aggregate["enter_outcomes"]), *cast(list[str], aggregate["bypass_outcomes"]))
+            )
+            assert outcomes[member_identity] == set(
+                (*cast(list[str], aggregate["continue_outcomes"]), *cast(list[str], aggregate["exit_outcomes"]))
+            )
+            if case["boundary"] not in ("dynamic_admission", "initialization"):
+                assert reference.admit_dynamic_workflow(declaration)["status"] == "accepted"
+
+    nested = _object(_case("nested_map_loop/008/map_2_loop_2")["declaration"])
+    names_by_identity: dict[tuple[tuple[str, ...], str], set[str]] = {}
+    for value in _array(nested["outcomes"]):
+        outcome = _object(value)
+        identity = (tuple(cast(list[str], outcome["scope"])), cast(str, outcome["template"]))
+        names_by_identity.setdefault(identity, set()).add(cast(str, outcome["name"]))
+    assert names_by_identity[((), "N0")] == {"ok", "fail", "again", "stop"}
+    assert names_by_identity[((), "N1")] == {"ok", "fail", "again", "stop"}
+    assert names_by_identity[(("N1",), "N0")] == {"again", "stop"}
+    assert names_by_identity[(("N1",), "N1")] == {"again", "stop"}
+
+    malformed = dict(nested)
+    malformed["outcomes"] = [
+        *cast(list[Json], nested["outcomes"]),
+        {
+            "category": "success",
+            "name": "extra",
+            "produced_ports": [],
+            "scope": ["N1"],
+            "template": "N0",
+        },
+    ]
+    assert reference.admit_dynamic_workflow(malformed)["code"] == "missing"
 
 
 def test_membership_is_owned_bounded_monotone_duplicate_sensitive_and_conjunctive() -> None:
@@ -540,6 +603,7 @@ def test_named_outcomes_categories_ports_and_invocation_ownership_are_exact() ->
     entry = _object(_array(state["entries"])[0])
     assert entry["outcome"] == "ok"
     assert entry["produced_ports"] == ["result"]
+    assert entry["scope"] == []
     wrong_category = [
         reference._event("initialize"),
         reference._select("A0"),
@@ -673,7 +737,7 @@ def test_case_boundaries_and_scoped_identity_are_explicit() -> None:
         "event_construction",
         "transition",
         "initialization",
-        "transition",
+        "initialization",
         "initialization",
         "static_admission",
         "static_admission",
@@ -686,7 +750,25 @@ def test_case_boundaries_and_scoped_identity_are_explicit() -> None:
     renamed = _object(reference._rename(nested["declaration"]))
     renamed_scopes = {tuple(cast(list[str], _object(seed)["scope"])) for seed in _array(renamed["seeds"])}
     assert renamed_scopes == {(), ("N0",)}
+    renamed_result = reference.reduce_trace(
+        renamed,
+        cast(list[Object], reference._rename(nested["events"])),
+    )
+    assert reference.alpha_normalize_state(_state(renamed_result), inverse=True) == _state(_object(nested["expected"]))
+    expected_scopes = {
+        tuple(cast(list[str], _object(entry)["scope"]))
+        for entry in _array(_state(_object(nested["expected"]))["entries"])
+    }
+    assert expected_scopes == {(), ("N1",)}
     assert _case("choice/004/foreign_selector")["boundary"] == "initialization"
+    duplicate_missing = _case("precedence/003/duplicate_before_missing")
+    assert duplicate_missing["events"] == [{"kind": "initialize"}]
+    duplicate_missing_seeds = [_object(seed) for seed in _array(_object(duplicate_missing["declaration"])["seeds"])]
+    assert [(seed["key"], seed["template"]) for seed in duplicate_missing_seeds] == [
+        ("A0", "N0"),
+        ("A0", "N1"),
+    ]
+    assert _object(duplicate_missing["declaration"])["required"] == ["A0", "A1"]
     for case in CASES:
         if case["boundary"] == "transition" and case["mode"] == "rejected":
             initialized = reference.reduce_trace(_object(case["declaration"]), [reference._event("initialize")])
@@ -703,7 +785,7 @@ def test_manifest_counts_sources_and_provenance_are_actual() -> None:
     counts = _object(MANIFEST["counts"])
     assert counts == {
         "case_count": 208,
-        "event_count": 2156,
+        "event_count": 2154,
         "max_activations": 12,
         "max_dynamic_depth": 2,
         "max_loop_iterations": 3,

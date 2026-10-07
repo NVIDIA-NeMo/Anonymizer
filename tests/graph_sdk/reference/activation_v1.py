@@ -37,10 +37,10 @@ Code: TypeAlias = Literal[
 ]
 
 CONTRACT_SHA256 = "9f58d60ad4ecc25065cc6c74d784cd05ad6fb2a72f183a615122eb981c7b265b"
-CONSUMPTION_ADDENDUM_SHA256 = "0e16f3fc67488e9d73a3726de7e10905f6a27a3de3d396a33867a9fae9421e4b"
+CONSUMPTION_ADDENDUM_SHA256 = "359ef3adf7986685463e6eb80c0d96f893a39dcefead16ba2f76919f148b94d9"
 CORPUS_PATH = "tests/graph_sdk/reference/activation_v1_cases.json"
-GENERATOR_VERSION = "workflow-activation-v1-generator-6"
-SELF_TEST_VERSION = "workflow-activation-v1-self-test-6"
+GENERATOR_VERSION = "workflow-activation-v1-generator-7"
+SELF_TEST_VERSION = "workflow-activation-v1-self-test-7"
 SUPPORT_PATH = "tests/graph_sdk/reference/activation_v1_support.md"
 TEMPLATES = ("N0", "N1", "N2")
 INVOCATIONS = ("I0", "I1")
@@ -119,6 +119,7 @@ class Seed:
 
 @dataclass(frozen=True, slots=True)
 class Outcome:
+    scope: tuple[str, ...]
     template: str
     name: str
     category: Category
@@ -168,6 +169,8 @@ class LoopAggregate:
     exit_outcomes: tuple[str, ...]
     initial_binding: tuple[str, str, str] | None
     carried_binding: tuple[str, str, str] | None
+    member_scope: tuple[str, ...]
+    member_template: str
 
 
 Aggregate: TypeAlias = MapAggregate | LoopAggregate
@@ -242,6 +245,7 @@ Event: TypeAlias = Initialize | Select | Start | TerminalEvent | Close | Members
 @dataclass(frozen=True, slots=True)
 class Entry:
     activation: str
+    scope: tuple[str, ...]
     template: str
     status: Status
     outcome: str | None
@@ -408,7 +412,7 @@ def parse_declaration(value: Mapping[str, Json]) -> Declaration:
     )
     outcomes: list[Outcome] = []
     for item in _list(raw["outcomes"]):
-        outcome = _obj(item, {"template", "name", "category", "produced_ports"})
+        outcome = _obj(item, {"scope", "template", "name", "category", "produced_ports"})
         name = outcome["name"]
         if not isinstance(name, str):
             raise Rejected("invalid_type")
@@ -417,6 +421,7 @@ def parse_declaration(value: Mapping[str, Json]) -> Declaration:
         ports = _strs(outcome["produced_ports"])
         outcomes.append(
             Outcome(
+                tuple(_closed(part, TEMPLATES) for part in _strs(outcome["scope"])),
                 _closed(outcome["template"], TEMPLATES),
                 name,
                 cast(Category, _closed(outcome["category"], CATEGORIES)),
@@ -461,6 +466,8 @@ def parse_declaration(value: Mapping[str, Json]) -> Declaration:
                     "exit_outcomes",
                     "initial_binding",
                     "carried_binding",
+                    "member_scope",
+                    "member_template",
                 },
             )
 
@@ -476,6 +483,8 @@ def parse_declaration(value: Mapping[str, Json]) -> Declaration:
                     _strs(aggregate["exit_outcomes"]),
                     _parse_loop_binding(aggregate["initial_binding"], "workflow_input"),
                     _parse_loop_binding(aggregate["carried_binding"], "member_output"),
+                    tuple(_closed(part, TEMPLATES) for part in _strs(aggregate["member_scope"])),
+                    _closed(aggregate["member_template"], TEMPLATES),
                 )
             )
     limits = _obj(raw["limits"], {"max_events", "max_entries", "max_parent_depth"})
@@ -612,7 +621,7 @@ def _initialize(declaration: Declaration) -> None:
     duplicate |= len(declaration.edges) != len(set(declaration.edges))
     duplicate |= len(declaration.input_dependencies) != len(set(declaration.input_dependencies))
     duplicate |= len(declaration.outcomes) != len(
-        {(outcome.template, outcome.name) for outcome in declaration.outcomes}
+        {(outcome.scope, outcome.template, outcome.name) for outcome in declaration.outcomes}
     )
     duplicate |= any(
         len(outcome.produced_ports) != len(set(outcome.produced_ports)) for outcome in declaration.outcomes
@@ -630,7 +639,7 @@ def _initialize(declaration: Declaration) -> None:
     cycle_from_parents = any(parent_cycle for _, _, parent_cycle in depth_facts)
     contradictory = False
     dynamic_overlap = False
-    outcome_names = {(outcome.template, outcome.name) for outcome in declaration.outcomes}
+    outcome_names = {(outcome.scope, outcome.template, outcome.name) for outcome in declaration.outcomes}
     missing |= any(before not in seen or after not in seen for before, after in declaration.edges)
     missing |= any(
         dependency.source not in seen or dependency.destination not in seen
@@ -653,7 +662,8 @@ def _initialize(declaration: Declaration) -> None:
         )
         missing |= any(member not in seen for member in branch_members)
         missing |= bool(
-            selector and any((selector.template, outcome) not in outcome_names for outcome, _ in choice.branches)
+            selector
+            and any((selector.scope, selector.template, outcome) not in outcome_names for outcome, _ in choice.branches)
         )
     for subgraph in declaration.subgraphs:
         parent_seed = seen.get(subgraph.parent)
@@ -685,7 +695,8 @@ def _initialize(declaration: Declaration) -> None:
             missing |= bool(
                 parent_seed
                 and any(
-                    (parent_seed.template, outcome) not in outcome_names for outcome in aggregate.expansion_outcomes
+                    (parent_seed.scope, parent_seed.template, outcome) not in outcome_names
+                    for outcome in aggregate.expansion_outcomes
                 )
             )
             duplicate |= len(aggregate.expansion_outcomes) != len(set(aggregate.expansion_outcomes))
@@ -713,7 +724,7 @@ def _initialize(declaration: Declaration) -> None:
             missing |= bool(
                 parent_seed
                 and any(
-                    (parent_seed.template, outcome) not in outcome_names
+                    (parent_seed.scope, parent_seed.template, outcome) not in outcome_names
                     for outcome in (*aggregate.enter_outcomes, *aggregate.bypass_outcomes)
                 )
             )
@@ -722,7 +733,7 @@ def _initialize(declaration: Declaration) -> None:
                 missing |= bool(
                     member_seed
                     and any(
-                        (member_seed.template, outcome) not in outcome_names
+                        (member_seed.scope, member_seed.template, outcome) not in outcome_names
                         for outcome in (*aggregate.continue_outcomes, *aggregate.exit_outcomes)
                     )
                 )
@@ -793,7 +804,10 @@ def _normalize(
                     (
                         outcome
                         for outcome in declaration.outcomes
-                        if outcome.template == parent.template and outcome.name == sink.outcome
+                        if outcome.scope
+                        == next(seed.scope for seed in declaration.seeds if seed.key == subgraph.parent)
+                        and outcome.template == parent.template
+                        and outcome.name == sink.outcome
                     ),
                     None,
                 )
@@ -905,7 +919,7 @@ def _materialize(key: str, entries: dict[str, Entry], declaration: Declaration) 
         raise Rejected("missing")
     if key in entries:
         raise Rejected("duplicate")
-    entries[key] = Entry(key, seed.template, "unstarted", None, None, ())
+    entries[key] = Entry(key, seed.scope, seed.template, "unstarted", None, None, ())
 
 
 def _apply(
@@ -969,7 +983,7 @@ def _apply(
             (
                 outcome
                 for outcome in declaration.outcomes
-                if outcome.template == seed.template and outcome.name == event.outcome
+                if outcome.scope == seed.scope and outcome.template == seed.template and outcome.name == event.outcome
             ),
             None,
         )
@@ -1140,6 +1154,7 @@ def _state_object(state: ReferenceState, *, digest: bool = True) -> Object:
                 "category": item.category,
                 "outcome": item.outcome,
                 "produced_ports": list(item.produced_ports),
+                "scope": list(item.scope),
                 "status": item.status,
                 "template": item.template,
             }
@@ -1166,7 +1181,9 @@ def alpha_normalize_state(value: Mapping[str, Json], *, inverse: bool = False) -
         _list(renamed["entries"]),
         key=lambda item: cast(
             str,
-            _obj(item, {"activation", "category", "outcome", "produced_ports", "status", "template"})["activation"],
+            _obj(item, {"activation", "category", "outcome", "produced_ports", "scope", "status", "template"})[
+                "activation"
+            ],
         ),
     )
     renamed["outputs"] = sorted(_strs(renamed["outputs"]))
@@ -1184,12 +1201,28 @@ def alpha_normalize_state(value: Mapping[str, Json], *, inverse: bool = False) -
 def admit_dynamic_workflow(declaration: Mapping[str, Json]) -> Object:
     try:
         facts = parse_declaration(declaration)
-        if any(
-            isinstance(aggregate, LoopAggregate)
-            and (aggregate.initial_binding is None or aggregate.carried_binding is None)
-            for aggregate in facts.aggregates
-        ):
-            raise Rejected("missing")
+        _initialize(facts)
+        seeds = {seed.key: seed for seed in facts.seeds}
+        for aggregate in facts.aggregates:
+            if not isinstance(aggregate, LoopAggregate):
+                continue
+            starter = seeds.get(aggregate.starter)
+            if starter is None or aggregate.initial_binding is None or aggregate.carried_binding is None:
+                raise Rejected("missing")
+            starter_outcomes = {
+                outcome.name
+                for outcome in facts.outcomes
+                if (outcome.scope, outcome.template) == (starter.scope, starter.template)
+            }
+            member_outcomes = {
+                outcome.name
+                for outcome in facts.outcomes
+                if (outcome.scope, outcome.template) == (aggregate.member_scope, aggregate.member_template)
+            }
+            if starter_outcomes != set((*aggregate.enter_outcomes, *aggregate.bypass_outcomes)):
+                raise Rejected("missing")
+            if member_outcomes != set((*aggregate.continue_outcomes, *aggregate.exit_outcomes)):
+                raise Rejected("missing")
         return {"code": None, "state": None, "status": "accepted"}
     except Rejected as error:
         return {"code": error.code, "state": None, "status": "rejected"}
@@ -1204,7 +1237,11 @@ def admit_static_support(declaration: Mapping[str, Json]) -> Object:
             producer = seeds.get(dependency.source)
             if producer is None:
                 raise Rejected("missing")
-            named_outcomes = [outcome for outcome in facts.outcomes if outcome.template == producer.template]
+            named_outcomes = [
+                outcome
+                for outcome in facts.outcomes
+                if (outcome.scope, outcome.template) == (producer.scope, producer.template)
+            ]
             if not named_outcomes or any(
                 dependency.source_port not in outcome.produced_ports for outcome in named_outcomes
             ):
@@ -1307,13 +1344,18 @@ def _decl(
         depth = max(depth, count)
     maps = sum(seed["role"] == "map_expander" for seed in seeds)
     exact = limits or (3 * len(seeds) + maps, len(seeds), depth)
+    declared_scopes = tuple(dict.fromkeys(tuple(cast(list[str], cast(Object, seed)["scope"])) for seed in seeds)) or (
+        (),
+    )
     default_outcomes: tuple[Object, ...] = tuple(
         {
             "category": category,
             "name": name,
             "produced_ports": list(ports),
+            "scope": list(scope),
             "template": template,
         }
+        for scope in declared_scopes
         for template in TEMPLATES
         for name, category, ports in (
             ("ok", "success", ("result",)),
@@ -1367,6 +1409,39 @@ def _spare(declaration: Object, amount: int = 1) -> Object:
     limits = cast(Object, dict(cast(Object, declaration["limits"])))
     limits["max_events"] = cast(int, limits["max_events"]) + amount
     result["limits"] = limits
+    return result
+
+
+def _restrict_loop_outcomes(declaration: Object) -> Object:
+    result = dict(declaration)
+    seeds = {
+        cast(str, seed["key"]): seed for value in cast(list[Json], result["seeds"]) for seed in [cast(Object, value)]
+    }
+    allowed: dict[tuple[tuple[str, ...], str], set[str]] = {}
+    for value in cast(list[Json], result["aggregates"]):
+        aggregate = cast(Object, value)
+        if aggregate["kind"] != "loop":
+            continue
+        starter = cast(Object, seeds[cast(str, aggregate["starter"])])
+        starter_identity = (tuple(cast(list[str], starter["scope"])), cast(str, starter["template"]))
+        member_identity = (
+            tuple(cast(list[str], aggregate["member_scope"])),
+            cast(str, aggregate["member_template"]),
+        )
+        allowed[starter_identity] = set(
+            (*cast(list[str], aggregate["enter_outcomes"]), *cast(list[str], aggregate["bypass_outcomes"]))
+        )
+        allowed[member_identity] = set(
+            (*cast(list[str], aggregate["continue_outcomes"]), *cast(list[str], aggregate["exit_outcomes"]))
+        )
+    result["outcomes"] = [
+        outcome
+        for value in cast(list[Json], result["outcomes"])
+        for outcome in [cast(Object, value)]
+        if (tuple(cast(list[str], outcome["scope"])), cast(str, outcome["template"])) not in allowed
+        or cast(str, outcome["name"])
+        in allowed[(tuple(cast(list[str], outcome["scope"])), cast(str, outcome["template"]))]
+    ]
     return result
 
 
@@ -1450,7 +1525,8 @@ def _sequence_cases() -> Iterable[Object]:
             declaration["outcomes"] = [
                 outcome
                 for outcome in cast(list[Json], declaration["outcomes"])
-                if cast(Object, outcome)["template"] != "N0" or cast(Object, outcome)["name"] == "ok"
+                if (cast(Object, outcome)["scope"], cast(Object, outcome)["template"]) != ([], "N0")
+                or cast(Object, outcome)["name"] == "ok"
             ]
             events = [
                 _event("initialize"),
@@ -1489,7 +1565,7 @@ def _mutation_cases() -> Iterable[Object]:
     declaration = _decl(
         (_seed("A0"),),
         required=("A0",),
-        outcomes=({"category": "success", "name": "ok", "produced_ports": ["result"], "template": "N0"},),
+        outcomes=({"category": "success", "name": "ok", "produced_ports": ["result"], "scope": [], "template": "N0"},),
     )
     events = (
         [_event("initialize"), _event("start", key="A0")],
@@ -1520,7 +1596,8 @@ def _mutation_cases() -> Iterable[Object]:
     missing_result["outcomes"] = [
         outcome
         for outcome in cast(list[Json], missing_result["outcomes"])
-        if cast(Object, outcome)["template"] != "N0" or cast(Object, outcome)["name"] in ("ok", "fail")
+        if (cast(Object, outcome)["scope"], cast(Object, outcome)["template"]) != ([], "N0")
+        or cast(Object, outcome)["name"] in ("ok", "fail")
     ]
     yield _case(
         "sequence_mutations",
@@ -1608,7 +1685,8 @@ def _subgraph_cases() -> Iterable[Object]:
                 declaration["outcomes"] = [
                     outcome
                     for outcome in cast(list[Json], declaration["outcomes"])
-                    if cast(Object, outcome)["template"] != "N1" or cast(Object, outcome)["name"] == "ok"
+                    if (cast(Object, outcome)["scope"], cast(Object, outcome)["template"]) != (["N0"], "N1")
+                    or cast(Object, outcome)["name"] == "ok"
                 ]
             events = [_event("initialize"), _select("A0"), _event("start", key="A0")]
             for index, key in enumerate(keys):
@@ -1743,10 +1821,13 @@ def _aggregate_decl(
             ),
             "join": "A11",
             "kind": "loop",
+            "member_scope": [],
+            "member_template": "N1",
             "members": [f"A{i + 1}" for i in range(count)],
             "starter": "A0",
         }
-    return _decl(seeds, required=("A0", "A11"), aggregates=(aggregate,))
+    declaration = _decl(seeds, required=("A0", "A11"), aggregates=(aggregate,))
+    return _restrict_loop_outcomes(declaration) if kind == "loop" else declaration
 
 
 def _map_events(
@@ -1966,6 +2047,14 @@ def _loop_cases() -> Iterable[Object]:
     ):
         yield _case("loop", f"{coordinate:03d}", name, facts, (), boundary="dynamic_admission")
         coordinate += 1
+    duplicate_iteration = dict(declaration)
+    duplicate_seeds = list(cast(list[Json], duplicate_iteration["seeds"]))
+    duplicate_seeds.append(_seed("A1", "N2", parent="A0", iteration=0, role="loop_member"))
+    duplicate_iteration["seeds"] = duplicate_seeds
+    duplicate_limits = dict(cast(Object, duplicate_iteration["limits"]))
+    duplicate_limits["max_entries"] = cast(int, duplicate_limits["max_entries"]) + 1
+    duplicate_limits["max_events"] = cast(int, duplicate_limits["max_events"]) + 3
+    duplicate_iteration["limits"] = duplicate_limits
     specials = (
         (
             "wrong_iteration",
@@ -1978,7 +2067,7 @@ def _loop_cases() -> Iterable[Object]:
                 _event("start", key="A2"),
             ],
         ),
-        ("duplicate_iteration", declaration, [_event("initialize"), _select("A1", "A1")]),
+        ("duplicate_iteration", duplicate_iteration, [_event("initialize")]),
         (
             "foreign_iteration",
             declaration,
@@ -2028,9 +2117,9 @@ def _loop_cases() -> Iterable[Object]:
     missing_output = _aggregate_decl(2, kind="loop")
     output_specs = [dict(cast(Object, outcome)) for outcome in cast(list[Json], missing_output["outcomes"])]
     for outcome in output_specs:
-        if outcome["template"] == "N1" and outcome["name"] == "again":
+        if (outcome["scope"], outcome["template"], outcome["name"]) == ([], "N1", "again"):
             outcome["produced_ports"] = []
-        elif outcome["template"] == "N1" and outcome["name"] == "stop":
+        elif (outcome["scope"], outcome["template"], outcome["name"]) == ([], "N1", "stop"):
             outcome["produced_ports"] = ["carry", "result"]
     missing_output["outcomes"] = cast(Json, output_specs)
     yield _case(
@@ -2099,6 +2188,8 @@ def _nested_cases() -> Iterable[Object]:
                         },
                         "join": loop_join,
                         "kind": "loop",
+                        "member_scope": ["N1"],
+                        "member_template": "N1",
                         "members": list(members),
                         "starter": starter,
                     }
@@ -2121,6 +2212,7 @@ def _nested_cases() -> Iterable[Object]:
                 subgraphs=subgraphs,
                 aggregates=aggregates,
             )
+            declaration = _restrict_loop_outcomes(declaration)
             declaration = _spare(declaration, loops)
             events = [
                 _event("initialize"),
@@ -2183,7 +2275,10 @@ def _nested_cases() -> Iterable[Object]:
 
 
 def _precedence_cases() -> Iterable[Object]:
-    ordinary = _decl((_seed("A0"),), required=("A0",))
+    duplicate_missing = _decl(
+        (_seed("A0", "N0"), _seed("A0", "N1")),
+        required=("A0", "A1"),
+    )
     missing_contradictory = _aggregate_decl(1)
     missing_contradictory["required"] = ["A0", "A11", "A10"]
     malformed_seeds = cast(list[Json], missing_contradictory["seeds"])
@@ -2209,7 +2304,7 @@ def _precedence_cases() -> Iterable[Object]:
             _decl((_seed("A0", invocation="I1"), _seed("A1"), _seed("A1", "N1"))),
             [_event("initialize")],
         ),
-        ("duplicate_before_missing", ordinary, [_event("initialize"), _select("A0", "A0", "A1")]),
+        ("duplicate_before_missing", duplicate_missing, [_event("initialize")]),
         ("missing_before_contradictory", missing_contradictory, [_event("initialize")]),
         (
             "overlap_before_cycle",
@@ -2356,9 +2451,9 @@ def manifest(cases: Sequence[Object], *, generator_sha256: str, self_test_sha256
         },
         "generator_sha256": generator_sha256,
         "independence": {"kind": "conditional-symmetric-v1", "rule_ids": list(RULE_IDS)},
-        "manifest_version": "workflow-activation-reference-v3",
+        "manifest_version": "workflow-activation-reference-v4",
         "packet_id": "R1b",
-        "schema_version": 3,
+        "schema_version": 4,
         "self_test_sha256": self_test_sha256,
         "support_path": SUPPORT_PATH,
         "support_sha256": support_sha256,

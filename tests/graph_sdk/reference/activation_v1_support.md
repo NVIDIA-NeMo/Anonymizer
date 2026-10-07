@@ -21,14 +21,22 @@ component independently from activation keys. Equal labels in different scopes c
 have distinct labels. Repeated map or loop member reservations refer to one
 declared member node in their scope.
 
-Each scope has an interface outcome named `ok` and, where exercised, `fail`,
-`again`, and `stop`, with the category and `produced_ports` stated by the
-neutral outcome records. The artifact type is `reference-artifact` revision 1.
-An operation declares output `result` when any outcome can produce `result`,
-output `carry` when any outcome can produce `carry`, and input `input` when it
-is the destination of an `input_dependencies`, initial, or carried binding.
-Every output has an `OutputDependency` on `input` when that input exists and an
-empty dependency otherwise; identity input is always null. Ceilings are the
+Every neutral outcome record names its full `(scope, template)` owner. Outcome
+lookup, duplicate detection, static bindings, dynamic partitions, normalized
+entries, renaming, and semantic hashes preserve that full identity. Each
+ordinary identity has `ok` and, where exercised, `fail`, with the category and
+`produced_ports` stated by the record. Loop starter and member identities have
+exactly `again` and `stop`; they do not acquire the same-labelled outcomes of
+an enclosing scope. The artifact type is `reference-artifact` revision 1.
+A node operation declares output `result` when any outcome can produce
+`result`, output `carry` when any outcome can produce `carry`, and input
+`input` when it is the destination of an `input_dependencies`, initial, or
+carried binding. A node output has an `OutputDependency` on `input` when that
+node has the input and an empty dependency otherwise; identity input is always
+null. Workflow-interface output dependencies reproduce the dependency
+projected from the sink. In the loop and nested-loop support, no static value
+binding connects the member input to the join outputs, so those interface
+dependencies are empty even though the interface has `input`. Ceilings are the
 smallest nonnegative values that admit the declaration. Context, evidence,
 state effects, model requirements, protection requirements, choices not named
 by the case, and unused interface ports are empty.
@@ -60,7 +68,8 @@ The exact support selection for negatives is:
 | loop coordinates 008-016 | bound-two N0/N1/N2 loop support; coordinates 008 and 009 then omit only the named D04 binding |
 | nested coordinates 009-010 | the ordinary bound-two map or loop support named by the case |
 | precedence 000 | bound-two map support before constructing the malformed event |
-| precedence 001 and 003 | single N0 support |
+| precedence 001 | single N0 support |
+| precedence 003 | independent top-level N0/N1 support; initialization declares both under A0 and omits required A1 |
 | precedence 002 | valid N0 -> N1 support; only reservation ownership/key facts are mutated |
 | precedence 004 | valid bound-one map support; only required reservation and parent-role facts are mutated |
 | terminal coverage coordinates 012-014 | bound-two N0/N1/N2 map support |
@@ -100,6 +109,13 @@ to static admission.
   `initial_binding` maps that workflow input to N1.input. A present
   `carried_binding` maps N1.carry to N1.input for the next iteration. Null means
   that exact D04 declaration is omitted and must reject at `dynamic_admission`.
+  N0 declares exactly `again`/`stop`, matching the union of enter and bypass;
+  N1 declares exactly `again`/`stop`, matching the union of continue and exit.
+  `member_scope` and `member_template` identify N1 even at bound zero. Dynamic
+  admission rejects a missing or additional name in either partition. Case 011
+  reaches initialization with two distinct reservations for A1, one for N1 and
+  one for N2; both survive the public frozenset boundary and reject as a
+  duplicate key.
   In `missing_carried_output`, both bindings are present, `again` does not
   produce `carry`, and `stop` does; the failure therefore occurs at runtime.
 - `nested_map_loop` uses top-level N0/N1/N2 for the map support. Each observed
@@ -108,11 +124,16 @@ to static admission.
   `DynamicScope`, and its body declaration scope `[N1]`; their parent
   ActivationKeys distinguish occurrence contexts. That shared body declares
   loop support N0 -> N1 -> N2 with the explicit initial and carried bindings.
+  Its `[N1]`/N0 and `[N1]`/N1 outcome sets are exactly `again`/`stop`. The
+  enclosing `[]`/N0 map expander and `[]`/N1 subgraph keep their own complete
+  outcomes; trimming an inner loop identity never changes either outer node.
   The `(2,2)` case consequently has 12
   activation occurrences while using three labels per scope.
 - `precedence` cases 000 through 004 use valid support as described above and
   reach event construction, transition, or initialization according to their
-  `boundary`. Case 005 constructs two overlapping D03 choice branches plus the
+  `boundary`. Case 003 initializes two distinct reservations that share A0 but
+  name N0 and N1, while required A1 is absent, so duplicate precedes missing
+  without relying on repeated list elements. Case 005 constructs two overlapping D03 choice branches plus the
   recorded sequence cycle and calls `admit_static_workflow`. Case 006 constructs
   the recorded sequence cycle plus one result-to-input binding whose source and
   destination use different artifact revisions, then calls
@@ -122,7 +143,8 @@ to static admission.
   observations differ.
 
 The adapter may allocate opaque identities and translate neutral names, but
-must preserve scope, declaration topology, ports, bindings, outcomes, case
+must preserve scope in declarations and normalized entries, declaration
+topology, ports, bindings, outcomes, case
 boundary, event order, and every expected state field. Support nodes are static
 declarations. They are never silently added to activation selection, capacity,
 event counts, or completion.
