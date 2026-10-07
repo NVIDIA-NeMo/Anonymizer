@@ -7,7 +7,7 @@
   "reference_spec_sha256": "f98ab1ca38328b9b3a25b03843e4f34eadc840a71d78c0c797ae85279f56720f",
   "corpus_sha256": "ddb99182c635000ef36df1ee4def274214636d32ba8e9ec02c7a078737b39374",
   "generator_sha256": "d6a69f6ec16c4bfa8a522811fe7639e1f49752e16c65291aeb447d14ed36ca5c",
-  "self_test_sha256": "3ed5391d97eda505a448a7ad60a1e518822c576920725c3c765cb10a2726f2e1",
+  "self_test_sha256": "648c7451c03ac7802d0b4ae2bfd16bde229464b3702c34434bf3eaf3ceecde21",
   "python": {
     "implementation": "CPython",
     "version": "3.11.14"

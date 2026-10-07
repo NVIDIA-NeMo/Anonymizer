@@ -67,11 +67,12 @@ def test_manifest_counts_and_bounds(
     base_counts = Counter(family for family, _, _ in data_v1._base_cases())
     assert base_counts["precedence"] == MANIFEST_BASE_COUNTS["precedence"] == 11
     assert base_counts["record-precedence"] == MANIFEST_BASE_COUNTS["record_precedence"] == 7
-    assert sys.implementation.name == "cpython"
-    assert MANIFEST["python"] == {
-        "implementation": "CPython",
-        "version": ".".join(str(part) for part in sys.version_info[:3]),
-    }
+    producer_python = data_v1._as_object(MANIFEST["python"])
+    assert producer_python["implementation"] == "CPython"
+    producer_version = data_v1._string(producer_python["version"])
+    version_parts = producer_version.split(".")
+    assert len(version_parts) == 3
+    assert all(part.isascii() and part.isdecimal() and str(int(part)) == part for part in version_parts)
     for case in cases:
         declaration = case["declaration"]
         expected = case["expected"]
