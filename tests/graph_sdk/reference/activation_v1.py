@@ -523,28 +523,36 @@ def parse_event(value: Mapping[str, Json]) -> Event:
     raise Rejected("invalid_value")
 
 
-def _depth(key: str, seeds: Mapping[str, Seed]) -> int:
-    seen: set[str] = set()
-    depth = 0
-    current: str | None = key
-    while current is not None:
-        if current in seen:
-            raise Rejected("cycle")
-        seen.add(current)
-        seed = seeds.get(current)
-        if seed is None:
-            raise Rejected("missing")
-        depth += 1
-        current = seed.parent
-    return depth
+def _raw_depth(
+    key: str, parents: Mapping[str, tuple[str | None, ...]], path: frozenset[str] = frozenset()
+) -> tuple[int, bool, bool]:
+    if key in path:
+        return 0, False, True
+    options = parents.get(key)
+    if options is None:
+        return 0, True, False
+    maximum = 0
+    missing = False
+    cycle = False
+    next_path = path | {key}
+    for parent in options:
+        parent_depth, parent_missing, parent_cycle = (
+            (0, False, False) if parent is None else _raw_depth(parent, parents, next_path)
+        )
+        maximum = max(maximum, 1 + parent_depth)
+        missing |= parent_missing
+        cycle |= parent_cycle
+    return maximum, missing, cycle
 
 
 def _initialize(declaration: Declaration) -> None:
     seen: dict[str, Seed] = {}
+    raw_parents: dict[str, list[str | None]] = {}
     duplicate = False
     for seed in declaration.seeds:
         duplicate |= seed.key in seen
         seen.setdefault(seed.key, seed)
+        raw_parents.setdefault(seed.key, []).append(seed.parent)
     foreign = any(seed.invocation != declaration.invocation for seed in declaration.seeds)
     missing = not set(declaration.required) <= seen.keys()
     duplicate |= len(declaration.required) != len(set(declaration.required))
@@ -560,15 +568,12 @@ def _initialize(declaration: Declaration) -> None:
         declaration.limits.max_entries < len(declaration.seeds)
         or declaration.limits.max_events < 3 * len(declaration.seeds) + map_count
     )
-    maximum_depth = 0
-    depth_code: Code | None = None
-    try:
-        maximum_depth = max((_depth(key, seen) for key in seen), default=0)
-    except Rejected as error:
-        depth_code = error.code
+    parent_facts = {key: tuple(dict.fromkeys(parents)) for key, parents in raw_parents.items()}
+    depth_facts = tuple(_raw_depth(key, parent_facts) for key in parent_facts)
+    maximum_depth = max((depth for depth, _, _ in depth_facts), default=0)
     limit |= declaration.limits.max_parent_depth < maximum_depth
-    missing |= depth_code == "missing"
-    cycle_from_parents = depth_code == "cycle"
+    missing |= any(parent_missing for _, parent_missing, _ in depth_facts)
+    cycle_from_parents = any(parent_cycle for _, _, parent_cycle in depth_facts)
     contradictory = False
     dynamic_overlap = False
     outcome_names = {(outcome.template, outcome.name) for outcome in declaration.outcomes}
@@ -757,8 +762,13 @@ def _normalize(
                 entries[aggregate.join] = replace(join, status="inconsistent", category="inconsistent")
             elif expansion and join and expansion.status == "closed":
                 children = [entries.get(member) for member in expansion.members]
-                if join.status in ("unstarted", "ready") and all(
-                    child and child.status in TERMINAL for child in children
+                parent_admitted = not isinstance(aggregate, MapAggregate) or bool(
+                    parent and parent.status in TERMINAL and parent.outcome in aggregate.expansion_outcomes
+                )
+                if (
+                    parent_admitted
+                    and join.status in ("unstarted", "ready")
+                    and all(child and child.status in TERMINAL for child in children)
                 ):
                     accepted_categories = (
                         aggregate.accepted_categories if isinstance(aggregate, MapAggregate) else ("success",)
@@ -1644,6 +1654,11 @@ def _map_cases() -> Iterable[Object]:
                 _terminal("A0", "failure", None),
             ],
         ),
+        (
+            "closed_empty_before_expander",
+            _aggregate_decl(0),
+            [_event("initialize"), _select("A0", "A11"), _event("membership_close", parent="A0", members=[])],
+        ),
     )
     for name, facts, events in specials:
         yield _case("map", f"{coordinate:03d}", name, facts, events)
@@ -1950,6 +1965,8 @@ def _nested_cases() -> Iterable[Object]:
 
 def _precedence_cases() -> Iterable[Object]:
     ordinary = _decl((_seed("A0"),), required=("A0",))
+    depth_duplicate_forward = _decl((_seed("A0"), _seed("A1"), _seed("A1", parent="A0")), limits=(9, 3, 1))
+    depth_duplicate_reverse = _decl((_seed("A0"), _seed("A1", parent="A0"), _seed("A1")), limits=(9, 3, 1))
     missing_contradictory = _aggregate_decl(1)
     missing_contradictory["required"] = ["A0", "A11", "A10"]
     malformed_seeds = cast(list[Json], missing_contradictory["seeds"])
@@ -1993,6 +2010,8 @@ def _precedence_cases() -> Iterable[Object]:
             ),
             [_event("initialize")],
         ),
+        ("depth_before_duplicate_forward", depth_duplicate_forward, [_event("initialize")]),
+        ("depth_before_duplicate_reverse", depth_duplicate_reverse, [_event("initialize")]),
     )
     for i, (name, declaration, events) in enumerate(cases):
         yield _case("precedence", f"{i:03d}", name, declaration, events)

@@ -96,11 +96,11 @@ def test_family_enumeration_coordinates_and_nested_witness_are_exact() -> None:
         "sequence_mutations": 10,
         "choice": 8,
         "subgraph": 10,
-        "map": 25,
+        "map": 26,
         "join": 26,
         "loop": 16,
         "nested_map_loop": 11,
-        "precedence": 7,
+        "precedence": 9,
         "terminal_coverage": 15,
     }
     table: dict[tuple[int, int], int] = {}
@@ -361,6 +361,29 @@ def test_membership_is_owned_bounded_monotone_duplicate_sensitive_and_conjunctiv
     assert _state(completed)["complete"] is True
 
 
+def test_closed_empty_membership_waits_for_admitted_expander_outcome() -> None:
+    declaration = reference._aggregate_decl(0)
+    closed_empty = [
+        reference._event("initialize"),
+        reference._select("A0", "A11"),
+        reference._event("membership_close", parent="A0", members=[]),
+    ]
+    before_terminal = reference.reduce_trace(declaration, closed_empty)
+    before_entries = {
+        _object(value)["activation"]: _object(value) for value in _array(_state(before_terminal)["entries"])
+    }
+    assert before_entries["A11"]["status"] == "unstarted"
+
+    after_terminal = reference.reduce_trace(
+        declaration,
+        closed_empty + [reference._event("start", key="A0"), reference._terminal("A0", "success", "ok")],
+    )
+    after_entries = {
+        _object(value)["activation"]: _object(value) for value in _array(_state(after_terminal)["entries"])
+    }
+    assert after_entries["A11"]["status"] == "ready"
+
+
 def test_duplicate_sensitive_declaration_inputs_reject_before_canonicalization() -> None:
     repeated_required = reference._decl((reference._seed("A0"),), required=("A0", "A0"))
     assert reference.reduce_trace(repeated_required, [reference._event("initialize")])["code"] == "duplicate"
@@ -369,6 +392,15 @@ def test_duplicate_sensitive_declaration_inputs_reject_before_canonicalization()
         edges=(("A0", "A1"), ("A0", "A1")),
     )
     assert reference.reduce_trace(repeated_edge, [reference._event("initialize")])["code"] == "duplicate"
+
+
+def test_depth_limit_precedes_duplicate_seed_for_every_seed_permutation() -> None:
+    root = reference._seed("A0")
+    unparented = reference._seed("A1")
+    parented = reference._seed("A1", parent="A0")
+    for seeds in ((root, unparented, parented), (root, parented, unparented)):
+        declaration = reference._decl(seeds, limits=(9, 3, 1))
+        assert reference.reduce_trace(declaration, [reference._event("initialize")])["code"] == "limit_exceeded"
 
 
 def test_named_outcomes_categories_ports_and_invocation_ownership_are_exact() -> None:
@@ -471,6 +503,8 @@ def test_precedence_comes_from_actual_malformed_boundaries() -> None:
         "missing",
         "overlap",
         "cycle",
+        "limit_exceeded",
+        "limit_exceeded",
     ]
     forbidden = {
         "defects",
@@ -505,14 +539,14 @@ def test_manifest_counts_sources_and_provenance_are_actual() -> None:
     assert MANIFEST["self_test_sha256"] == hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
     counts = _object(MANIFEST["counts"])
     assert counts == {
-        "case_count": 206,
-        "event_count": 1944,
+        "case_count": 209,
+        "event_count": 1949,
         "max_activations": 12,
         "max_dynamic_depth": 2,
         "max_loop_iterations": 3,
         "max_map_children": 3,
         "max_templates": 3,
-        "trace_count": 320,
+        "trace_count": 323,
     }
     assert _object(MANIFEST["generation_provenance"])["generations"] == 2
 
