@@ -110,6 +110,11 @@ def test_family_enumeration_coordinates_and_nested_witness_are_exact() -> None:
         entries = _array(_state(_object(case["expected"]))["entries"])
         table[int(maps), int(loops)] = len(entries)
         assert len({cast(str, _object(entry)["activation"]) for entry in entries}) == len(entries)
+        declaration = _object(case["declaration"])
+        aggregates = [_object(value) for value in _array(declaration["aggregates"])]
+        assert aggregates[0]["kind"] == "map"
+        assert len([item for item in aggregates if item["kind"] == "loop"]) == int(maps)
+        assert len(_array(declaration["subgraphs"])) == int(maps)
     assert table == {(m, i): 2 + m * (3 + i) for m in (0, 1, 2) for i in (0, 1, 2)}
     assert table[2, 2] == 12
 
@@ -176,12 +181,151 @@ def test_membership_join_loop_subgraph_and_completion_are_derived() -> None:
     assert entries["A11"]["status"] == "blocked"
     ready = _case("join/000/children_0_empty")
     assert _state(_object(ready["expected"]))["complete"] is False
+    ready_entries = {
+        _object(entry)["activation"]: _object(entry) for entry in _array(_state(_object(ready["expected"]))["entries"])
+    }
+    assert ready_entries["A11"]["status"] == "ready"
     subgraph = _case("subgraph/000/body_1_success")
     sub_entries = {
         _object(entry)["activation"]: _object(entry)
         for entry in _array(_state(_object(subgraph["expected"]))["entries"])
     }
     assert sub_entries["A0"]["status"] == "success"
+
+
+def test_loop_admission_uses_starter_initial_carry_and_iteration_order() -> None:
+    positive = _case("loop/006/bound_2_executed_2_stop")
+    events = [_object(value) for value in _array(positive["events"])]
+    assert [event["key"] for event in events if event["kind"] == "start"] == ["A0", "A1", "A2"]
+    assert _object(positive["expected"])["status"] == "accepted"
+    for case_id, code in (
+        ("loop/010/wrong_iteration", "contradictory"),
+        ("loop/011/duplicate_iteration", "duplicate"),
+        ("loop/012/foreign_iteration", "foreign_owner"),
+        ("loop/014/terminal_gap", "missing"),
+    ):
+        assert _object(_case(case_id)["expected"])["code"] == code
+    for case_id in ("loop/008/missing_initial", "loop/009/missing_carried", "loop/015/abnormal_member_loss"):
+        state = _state(_object(_case(case_id)["expected"]))
+        expansion = _object(_array(state["expansions"])[0])
+        entries = {_object(value)["activation"]: _object(value) for value in _array(state["entries"])}
+        assert expansion["status"] == "failed"
+        assert entries["A11"]["status"] == "blocked"
+
+
+def test_membership_is_owned_bounded_monotone_duplicate_sensitive_and_conjunctive() -> None:
+    declaration = reference._aggregate_decl(1)
+    seed_keys = [cast(str, _object(value)["key"]) for value in _array(declaration["seeds"])]
+    assert seed_keys == ["A0", "A11", "A1"]
+    unselected = [reference._event("initialize"), reference._event("membership_close", parent="A0", members=[])]
+    assert reference.reduce_trace(declaration, unselected)["code"] == "missing"
+    over_bound = [
+        reference._event("initialize"),
+        reference._select("A0", "A11"),
+        reference._event("membership_close", parent="A0", members=["A1", "A2"]),
+    ]
+    assert reference.reduce_trace(declaration, over_bound)["code"] == "limit_exceeded"
+    duplicate = [
+        reference._event("initialize"),
+        reference._select("A0", "A11"),
+        reference._event("membership_open", parent="A0", members=["A1", "A1"]),
+    ]
+    assert reference.reduce_trace(declaration, duplicate)["code"] == "duplicate"
+    closed = reference._map_events(("A1",), ("success",))
+    repeated = closed + [reference._event("membership_close", parent="A0", members=["A1"])]
+    accepted = reference.reduce_trace(reference._spare(declaration), repeated)
+    assert accepted["status"] == "accepted"
+    open_case = _case("join/025/open_complete_survivors")
+    entries = {
+        _object(value)["activation"]: _object(value)
+        for value in _array(_state(_object(open_case["expected"]))["entries"])
+    }
+    assert entries["A11"]["status"] == "unstarted"
+
+
+def test_duplicate_sensitive_declaration_inputs_reject_before_canonicalization() -> None:
+    repeated_required = reference._decl((reference._seed("A0"),), required=("A0", "A0"))
+    assert reference.reduce_trace(repeated_required, [reference._event("initialize")])["code"] == "duplicate"
+    repeated_edge = reference._decl(
+        (reference._seed("A0"), reference._seed("A1")),
+        edges=(("A0", "A1"), ("A0", "A1")),
+    )
+    assert reference.reduce_trace(repeated_edge, [reference._event("initialize")])["code"] == "duplicate"
+
+
+def test_named_outcomes_categories_ports_and_invocation_ownership_are_exact() -> None:
+    case = _case("sequence_single/000/base")
+    state = _state(_object(case["expected"]))
+    entry = _object(_array(state["entries"])[0])
+    assert entry["outcome"] == "ok"
+    assert entry["produced_ports"] == ["result"]
+    wrong_category = [
+        reference._event("initialize"),
+        reference._select("A0"),
+        reference._event("start", key="A0"),
+        reference._terminal("A0", "failure", "ok"),
+    ]
+    assert reference.reduce_trace(_object(case["declaration"]), wrong_category)["code"] == "contradictory"
+    unknown = [
+        reference._event("initialize"),
+        reference._select("A0"),
+        reference._event("start", key="A0"),
+        reference._terminal("A0", "success", "unknown"),
+    ]
+    assert reference.reduce_trace(_object(case["declaration"]), unknown)["code"] == "invalid_value"
+    foreign = [reference._event("initialize"), reference._event("select", keys=["A0"], invocation="I1")]
+    assert reference.reduce_trace(_object(case["declaration"]), foreign)["code"] == "foreign_owner"
+
+
+def test_initialization_precedence_and_event_parsing_are_boundary_local() -> None:
+    declaration = reference._decl((reference._seed("A0", invocation="I1"),), required=("A0",), limits=(0, 0, 0))
+    assert reference.reduce_trace(declaration, [reference._event("initialize")])["code"] == "limit_exceeded"
+    ordinary = _case("sequence_single/000/base")
+    events = [
+        reference._event("initialize"),
+        reference._event("start", key="A0"),
+        {"kind": "start", "key": 7, "invocation": "I0"},
+    ]
+    assert reference.reduce_trace(_object(ordinary["declaration"]), events)["code"] == "missing"
+
+
+def test_exact_depth_required_occurrences_and_prospective_capacity() -> None:
+    chain = reference._decl((reference._seed("A0"), reference._seed("A1", parent="A0")), limits=(6, 2, 2))
+    assert reference.reduce_trace(chain, [reference._event("initialize")])["status"] == "accepted"
+    shallow = dict(chain)
+    shallow["limits"] = {"max_entries": 2, "max_events": 6, "max_parent_depth": 1}
+    assert reference.reduce_trace(shallow, [reference._event("initialize")])["code"] == "limit_exceeded"
+    for case_id in ("choice/000/ok_forward", "map/002/bound_1_size_1_s", "subgraph/000/body_1_success"):
+        case = _case(case_id)
+        declaration = dict(_object(case["declaration"]))
+        limits = dict(_object(declaration["limits"]))
+        limits["max_entries"] = cast(int, limits["max_entries"]) - 1
+        declaration["limits"] = cast(Json, limits)
+        assert reference.reduce_trace(declaration, cast(list[Object], case["events"]))["code"] == "limit_exceeded"
+    running = _case("map/016/closed_missing_terminal")
+    assert _state(_object(running["expected"]))["complete"] is False
+    declaration = reference._aggregate_decl(1)
+    membership_first = [
+        reference._event("initialize"),
+        reference._select("A0", "A11"),
+        reference._event("membership_close", parent="A0", members=["A1"]),
+        reference._event("start", key="A1"),
+        reference._terminal("A1", "success", "ok"),
+        reference._event("start", key="A0"),
+        reference._terminal("A0", "success", "ok"),
+    ]
+    assert reference.reduce_trace(declaration, membership_first)["status"] == "accepted"
+    running_failed = [
+        reference._event("initialize"),
+        reference._select("A0", "A11"),
+        reference._event("membership_open", parent="A0", members=["A1"]),
+        reference._event("start", key="A1"),
+        reference._event("start", key="A0"),
+        reference._terminal("A0", "failure", "fail"),
+    ]
+    result = reference.reduce_trace(reference._spare(declaration), running_failed)
+    assert result["status"] == "accepted"
+    assert _state(result)["complete"] is False
 
 
 def test_all_five_abnormal_outcomes_are_none_and_produce_no_output() -> None:
@@ -239,7 +383,7 @@ def test_manifest_counts_sources_and_provenance_are_actual() -> None:
     counts = _object(MANIFEST["counts"])
     assert counts == {
         "case_count": 206,
-        "event_count": 1915,
+        "event_count": 1941,
         "max_activations": 12,
         "max_dynamic_depth": 2,
         "max_loop_iterations": 3,
