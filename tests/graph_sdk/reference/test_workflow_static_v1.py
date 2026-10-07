@@ -183,7 +183,7 @@ def _independent_substitution(declaration: Object, replacement: Object) -> Objec
                 "body": deepcopy(replacement),
                 "id": deepcopy(node["id"]),
                 "kind": "subgraph",
-                "operation": deepcopy(_object(replacement["interface"])),
+                "operation": deepcopy(_object(node["operation"])),
             }
             break
     else:
@@ -430,6 +430,36 @@ def test_subgraphs_and_substitutions_keep_separate_owners() -> None:
                 assert substituted["kind"] == "subgraph"
                 assert substituted["body"] == replacement
                 assert normalized["expanded_node_count"] == 2
+
+
+def test_narrow_substitutions_and_rename_traces_retain_target_operation() -> None:
+    narrow_cases = [
+        case for case in FROZEN_CASES if case["family"] == "substitution" and _mutation(case).startswith("narrow_")
+    ]
+    assert len(narrow_cases) == 7
+    for case in narrow_cases:
+        declaration = _object(case["declaration"])
+        target = _object(declaration["substitution_target"])
+        target_node = next(_object(node) for node in _array(declaration["nodes"]) if _object(node)["id"] == target)
+        replacement = _object(case["replacement"])
+        substituted = _object(_array(_object(_object(case["expected"])["normalized"])["nodes"])[0])
+        assert substituted["operation"] == target_node["operation"]
+        assert substituted["operation"] != replacement["interface"]
+        assert substituted["body"] == replacement
+
+        rename = next(
+            _object(trace) for trace in _array(case["traces"]) if _object(trace)["transformation"] == "rename"
+        )
+        renamed_declaration = _object(rename["declaration"])
+        renamed_target = _object(renamed_declaration["substitution_target"])
+        renamed_target_node = next(
+            _object(node) for node in _array(renamed_declaration["nodes"]) if _object(node)["id"] == renamed_target
+        )
+        renamed_replacement = _object(rename["replacement"])
+        renamed_substituted = _object(_array(_object(_object(rename["expected"])["normalized"])["nodes"])[0])
+        assert renamed_substituted["operation"] == renamed_target_node["operation"]
+        assert renamed_substituted["operation"] != renamed_replacement["interface"]
+        assert renamed_substituted["body"] == renamed_replacement
 
 
 def _assert_symmetric(left: Object, right: Object, expected: bool) -> None:
