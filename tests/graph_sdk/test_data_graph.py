@@ -252,6 +252,112 @@ def test_limits_use_raw_counts_and_strict_utf8_bytes() -> None:
             ),
         )
     assert unencodable.value.code is ValidationCode.INVALID_VALUE
+    assert unencodable.value.__cause__ is None
+    assert unencodable.value.__context__ is None
+
+
+def test_graph_validation_uses_global_error_code_precedence() -> None:
+    graph, (first, second, mismatched, source) = _graph_with_texts("a", "b", "wrong", "x")
+    foreign = DatumId.new(graph=GraphId.new())
+    missing = DatumId.new(graph=graph.graph)
+    generous = DataLimits(
+        max_datums=10,
+        max_targets=10,
+        max_text_bytes=100,
+        max_declarations=20,
+        max_group_members=20,
+    )
+
+    def reject(
+        expected: ValidationCode,
+        *,
+        targets: tuple[DatumId, ...] = (first,),
+        source_relations: tuple[SourceRelation, ...] = (),
+        contexts: tuple[ContextView, ...] = (),
+        dependencies: tuple[DatumDependency, ...] = (),
+        coherence: tuple[CoherenceScope, ...] = (),
+        atomic: tuple[AtomicGroup, ...] = (),
+        output_regions: tuple[OutputRegion, ...] = (),
+        limits: DataLimits = generous,
+    ) -> None:
+        with pytest.raises(ContractViolation) as rejected:
+            graph.validate(
+                targets=targets,
+                source_relations=source_relations,
+                contexts=contexts,
+                dependencies=dependencies,
+                coherence=coherence,
+                atomic=atomic,
+                output_regions=output_regions,
+                limits=limits,
+            )
+        assert rejected.value.code is expected
+
+    empty_group = CoherenceScope(members=())
+    restrictive = DataLimits(
+        max_datums=0,
+        max_targets=0,
+        max_text_bytes=0,
+        max_declarations=0,
+        max_group_members=0,
+    )
+
+    # Adjacent pairs witness the complete global order.
+    reject(ValidationCode.INVALID_TYPE, targets=cast(Any, []), coherence=(empty_group,))
+    reject(ValidationCode.INVALID_VALUE, coherence=(empty_group,), limits=restrictive)
+    reject(ValidationCode.LIMIT_EXCEEDED, targets=(foreign,), limits=restrictive)
+    reject(ValidationCode.FOREIGN_OWNER, targets=(foreign, foreign))
+    reject(ValidationCode.DUPLICATE, targets=(missing, missing))
+    reject(
+        ValidationCode.MISSING,
+        contexts=(ContextView(target=first, view=SourceView(source=missing, start=-1, end=0)),),
+    )
+    reject(
+        ValidationCode.INVALID_RANGE,
+        targets=(first, second),
+        contexts=(ContextView(target=first, view=SourceView(source=second, start=-1, end=0)),),
+        coherence=(CoherenceScope(members=(first, second)), CoherenceScope(members=(second,))),
+    )
+    dependency_cycle = (
+        DatumDependency(prerequisite=first, dependent=second),
+        DatumDependency(prerequisite=second, dependent=first),
+    )
+    reject(
+        ValidationCode.OVERLAP,
+        targets=(first, second),
+        dependencies=dependency_cycle,
+        coherence=(CoherenceScope(members=(first, second)), CoherenceScope(members=(second,))),
+    )
+    reject(
+        ValidationCode.OVERLAP,
+        targets=(first, second),
+        source_relations=(
+            SourceRelation(derived=second, view=SourceView(source=first, start=0, end=1)),
+            SourceRelation(derived=mismatched, view=SourceView(source=source, start=0, end=1)),
+            SourceRelation(derived=source, view=SourceView(source=mismatched, start=0, end=1)),
+        ),
+    )
+    reject(
+        ValidationCode.CYCLE,
+        targets=(first, second),
+        dependencies=dependency_cycle,
+        source_relations=(SourceRelation(derived=mismatched, view=SourceView(source=source, start=0, end=1)),),
+    )
+
+    # Cross-class combinations guard the precedence inversions that motivated
+    # the classification order above.
+    reject(
+        ValidationCode.INVALID_VALUE,
+        contexts=(ContextView(target=second, view=SourceView(source=foreign, start=0, end=1)),),
+    )
+    reject(ValidationCode.INVALID_VALUE, targets=(first, first), coherence=(empty_group,))
+    reject(
+        ValidationCode.DUPLICATE,
+        source_relations=(
+            SourceRelation(derived=second, view=SourceView(source=first, start=0, end=1)),
+            SourceRelation(derived=second, view=SourceView(source=missing, start=0, end=1)),
+        ),
+    )
 
 
 def test_validated_boundary_is_immutable_copy_stable_and_not_replaceable() -> None:

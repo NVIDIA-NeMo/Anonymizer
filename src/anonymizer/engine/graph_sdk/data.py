@@ -7,7 +7,7 @@ from __future__ import annotations
 import itertools
 from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, NoReturn
 
 from anonymizer.graph._values import ContractViolation, DatumId, GraphId, ValidationCode
 
@@ -19,7 +19,7 @@ class _PrivateRepr:
         return f"<{type(self).__name__}>"
 
 
-def _reject(code: ValidationCode) -> None:
+def _reject(code: ValidationCode) -> NoReturn:
     raise ContractViolation(code)
 
 
@@ -284,23 +284,34 @@ class DataGraph(_PrivateRepr):
             limits,
         )
         texts = {datum.id: datum.text for datum in self.datums}
+        target_set = frozenset(targets)
+        required_targets = _required_targets(contexts, dependencies, coherence, atomic, output_regions)
+        text_bytes = _text_bytes(self.datums)
+        if any(not group.members for group in (*coherence, *atomic)) or any(
+            identifier in texts and identifier not in target_set for identifier in required_targets
+        ):
+            _reject(ValidationCode.INVALID_VALUE)
         _check_limits(
-            self.datums, targets, source_relations, contexts, dependencies, coherence, atomic, output_regions, limits
+            self.datums,
+            targets,
+            source_relations,
+            contexts,
+            dependencies,
+            coherence,
+            atomic,
+            output_regions,
+            limits,
+            text_bytes,
         )
         relation_ids = _relation_ids(source_relations, contexts, dependencies, coherence, atomic, output_regions)
         all_ids = (*targets, *relation_ids)
         if any(identifier.graph != self.graph for identifier in all_ids):
             _reject(ValidationCode.FOREIGN_OWNER)
-        target_set = frozenset(targets)
         if len(targets) != len(target_set):
             _reject(ValidationCode.DUPLICATE)
+        _check_declaration_duplicates(source_relations, coherence, atomic, output_regions)
         if any(identifier not in texts for identifier in all_ids):
             _reject(ValidationCode.MISSING)
-
-        required_targets = _required_targets(contexts, dependencies, coherence, atomic, output_regions)
-        if any(identifier not in target_set for identifier in required_targets):
-            _reject(ValidationCode.INVALID_VALUE)
-        _check_declaration_duplicates(source_relations, coherence, atomic, output_regions)
         _check_ranges(texts, source_relations, contexts, output_regions)
 
         source_by_derived = {relation.derived: relation.view for relation in source_relations}
@@ -314,16 +325,16 @@ class DataGraph(_PrivateRepr):
             _reject(ValidationCode.INVALID_RANGE)
         _check_group_overlap(coherence)
         _check_group_overlap(atomic)
-        if _has_cycle((relation.derived, relation.view.source) for relation in source_relations):
-            _reject(ValidationCode.CYCLE)
-
-        ownership = frozenset(
-            _resolve_ownership(target, texts, source_by_derived, output_regions) for target in target_set
+        ownership_candidates = tuple(
+            _resolve_ownership_if_acyclic(target, texts, source_by_derived, output_regions) for target in target_set
         )
-        _check_ownership_overlap(ownership)
-        if _has_cycle((dependency.prerequisite, dependency.dependent) for dependency in dependencies):
+        _check_ownership_overlap(frozenset(item for item in ownership_candidates if item is not None))
+        source_cycle = _has_cycle((relation.derived, relation.view.source) for relation in source_relations)
+        dependency_cycle = _has_cycle((dependency.prerequisite, dependency.dependent) for dependency in dependencies)
+        if source_cycle or dependency_cycle:
             _reject(ValidationCode.CYCLE)
         _check_slices(texts, source_relations, output_regions)
+        ownership = frozenset(item for item in ownership_candidates if item is not None)
 
         return ValidatedDataGraph(
             _VALIDATED_KEY,
@@ -380,13 +391,8 @@ def _check_limits(
     atomic: tuple[AtomicGroup, ...],
     output_regions: tuple[OutputRegion, ...],
     limits: DataLimits,
+    text_bytes: int,
 ) -> None:
-    text_bytes = 0
-    for datum in datums:
-        try:
-            text_bytes += len(datum.text.encode("utf-8", "strict"))
-        except UnicodeEncodeError:
-            _reject(ValidationCode.INVALID_VALUE)
     declarations = (
         len(source_relations) + len(contexts) + len(dependencies) + len(coherence) + len(atomic) + len(output_regions)
     )
@@ -401,6 +407,19 @@ def _check_limits(
     )
     if any(count > maximum for count, maximum in zip(counts, maxima, strict=True)):
         _reject(ValidationCode.LIMIT_EXCEEDED)
+
+
+def _text_bytes(datums: tuple[Datum, ...]) -> int:
+    total = 0
+    for datum in datums:
+        try:
+            size = len(datum.text.encode("utf-8", "strict"))
+        except UnicodeEncodeError:
+            size = None
+        if size is None:
+            _reject(ValidationCode.INVALID_VALUE)
+        total += size
+    return total
 
 
 def _relation_ids(
@@ -476,8 +495,6 @@ def _check_ranges(
 
 def _check_group_overlap(groups: tuple[CoherenceScope, ...] | tuple[AtomicGroup, ...]) -> None:
     unique = {frozenset(group.members) for group in groups}
-    if frozenset() in unique:
-        _reject(ValidationCode.INVALID_VALUE)
     for left, right in itertools.combinations(unique, 2):
         if left & right:
             _reject(ValidationCode.OVERLAP)
@@ -509,12 +526,12 @@ def _has_cycle(edges: Iterable[tuple[DatumId, DatumId]]) -> bool:
     return False
 
 
-def _resolve_ownership(
+def _resolve_ownership_if_acyclic(
     target: DatumId,
     texts: dict[DatumId, str],
     source_by_derived: dict[DatumId, SourceView],
     output_regions: tuple[OutputRegion, ...],
-) -> OwnershipRange:
+) -> OwnershipRange | None:
     explicit = next((region for region in output_regions if region.target == target), None)
     if explicit is None:
         view = source_by_derived.get(target)
@@ -524,7 +541,11 @@ def _resolve_ownership(
             source, start, end = view.source, view.start, view.end
     else:
         source, start, end = explicit.source, explicit.start, explicit.end
+    visited: set[DatumId] = set()
     while source in source_by_derived:
+        if source in visited:
+            return None
+        visited.add(source)
         view = source_by_derived[source]
         start += view.start
         end += view.start
