@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from dataclasses import replace
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, cast
 
@@ -955,6 +955,49 @@ class _CaseProvider:
         return StopConfirmed(usage=ExactUsage(input_units=0, output_units=0))
 
 
+@dataclass
+class _LateAdaptiveProvider:
+    source: ContextSourceRef
+    association_names: dict[object, str]
+    request_names: dict[PhysicalRequestId, str]
+    acknowledge_stop: bool
+    started: asyncio.Event = field(default_factory=asyncio.Event)
+    returned_after_cancel: bool = False
+
+    async def retrieve(
+        self,
+        *,
+        request: PhysicalRequestId,
+        association: SemanticAssociation,
+        selector: ContextSelector,
+        bounds: RetrievalBounds,
+    ) -> SourceResponse:
+        del selector, bounds
+        self.association_names[association] = "A0"
+        self.request_names[request] = "R0"
+        self.started.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            self.returned_after_cancel = True
+        return SourceResponse(
+            source=self.source,
+            items=(SourceItem(association=association, key=0, version=1, text="late"),),
+            settlement=ExternalSettlement(
+                request=request,
+                disposition="completed",
+                usage=ExactUsage(input_units=0, output_units=0),
+                remote_stopped=True,
+            ),
+        )
+
+    async def cancel(self, request: PhysicalRequestId) -> StopConfirmed:
+        del request
+        if not self.acknowledge_stop:
+            raise RuntimeError("transport did not acknowledge cancellation")
+        return StopConfirmed(usage=UnknownUsage())
+
+
 @pytest.mark.parametrize("case", REAL_BINDING_CASES, ids=lambda case: cast(str, case["case_id"]))
 def test_binding_corpus_case_through_real_provider(case: dict[str, Any]) -> None:
     asyncio.run(_assert_binding_corpus_case(case))
@@ -1380,7 +1423,17 @@ def test_late_adaptive_result_stays_request_terminal_at_authority_boundary(case:
     assert all(not item["identity"].startswith("OperationOutputKey:") for item in expected["artifacts"])
 
 
-async def _assert_adaptive_materialization_case(case: dict[str, Any]) -> None:
+@pytest.mark.parametrize("case", LATE_ADAPTIVE_CASES, ids=lambda case: cast(str, case["case_id"]))
+def test_late_adaptive_provider_result_is_suppressed_by_real_executor(case: dict[str, Any]) -> None:
+    asyncio.run(
+        _assert_adaptive_materialization_case(
+            case,
+            late_mode="lost" if case["case_id"] == "materialization/adaptive_late_lost" else "cancelled",
+        )
+    )
+
+
+async def _assert_adaptive_materialization_case(case: dict[str, Any], *, late_mode: str | None = None) -> None:
     raw = cast(dict[str, Any], case["declaration"])
     materialization = cast(list[dict[str, Any]], raw["materializations"])[0]
     retrieval_requests = cast(int, raw["retrieval_bounds"]["max_requests"])
@@ -1511,52 +1564,66 @@ async def _assert_adaptive_materialization_case(case: dict[str, Any]) -> None:
     events = [event for event in cast(list[dict[str, Any]], case["events"]) if event["kind"] == "materialize_result"]
     association_names: dict[object, str] = {}
     request_names: dict[PhysicalRequestId, str] = {}
-    provider = _CaseProvider(
-        events=events,
-        sources={"S0": source},
-        association_names=association_names,
-        request_names=request_names,
-        fallback_associations=["A0"],
-        default_source=source,
-    )
-    transport = _UnusedTransport()
-    result = await (
-        await start_execution(
-            admitted=admitted,
-            capabilities=(capability,),
-            services=ExecutionServices(
-                handles=(
-                    ImplementationHandle(
-                        implementation=capability.implementation,
-                        operation=capability.operation,
-                        configuration=capability.configuration,
-                        local=None,
-                        transport=transport,
-                        resource=ResourceLease.create(owner="sdk", safe_detachment="forbidden", handle=transport),
-                    ),
-                ),
-                context_resources=(
-                    ContextResource(
-                        source=source,
-                        capability=source_capability,
-                        lease=ResourceLease.create(owner="caller", safe_detachment="forbidden", handle=provider),
-                        factory=None,
-                    ),
-                ),
-                limits=ExecutionLimits(
-                    max_local_in_flight=0,
-                    max_remote_outstanding=1,
-                    max_runtime_artifacts=materialization_limits["max_artifacts"],
-                    max_runtime_artifact_bytes=materialization_limits["max_artifact_bytes"],
-                    max_collection_items=materialization_limits["max_collection_items"],
-                ),
-                decision_limits=DecisionLimits(max_pending=0, max_lifetime_ns=0),
-                clock=_Clock(),
-            ),
+    provider: _CaseProvider | _LateAdaptiveProvider
+    if late_mode is None:
+        provider = _CaseProvider(
+            events=events,
+            sources={"S0": source},
+            association_names=association_names,
+            request_names=request_names,
+            fallback_associations=["A0"],
+            default_source=source,
         )
-    ).wait()
+    else:
+        provider = _LateAdaptiveProvider(
+            source=source,
+            association_names=association_names,
+            request_names=request_names,
+            acknowledge_stop=late_mode == "cancelled",
+        )
+    transport = _UnusedTransport()
+    running = await start_execution(
+        admitted=admitted,
+        capabilities=(capability,),
+        services=ExecutionServices(
+            handles=(
+                ImplementationHandle(
+                    implementation=capability.implementation,
+                    operation=capability.operation,
+                    configuration=capability.configuration,
+                    local=None,
+                    transport=transport,
+                    resource=ResourceLease.create(owner="sdk", safe_detachment="forbidden", handle=transport),
+                ),
+            ),
+            context_resources=(
+                ContextResource(
+                    source=source,
+                    capability=source_capability,
+                    lease=ResourceLease.create(owner="caller", safe_detachment="forbidden", handle=provider),
+                    factory=None,
+                ),
+            ),
+            limits=ExecutionLimits(
+                max_local_in_flight=0,
+                max_remote_outstanding=1,
+                max_runtime_artifacts=materialization_limits["max_artifacts"],
+                max_runtime_artifact_bytes=materialization_limits["max_artifact_bytes"],
+                max_collection_items=materialization_limits["max_collection_items"],
+            ),
+            decision_limits=DecisionLimits(max_pending=0, max_lifetime_ns=0),
+            clock=_Clock(),
+        ),
+    )
+    if isinstance(provider, _LateAdaptiveProvider):
+        await provider.started.wait()
+        running.request_cancel()
+    result = await running.wait()
+    if isinstance(provider, _LateAdaptiveProvider):
+        assert provider.returned_after_cancel
     expected = cast(dict[str, Any], case["expected"])["state"]
-    assert result.record.terminals[0].category == expected["tasks"]["A0"], (
+    expected_task = expected["tasks"].get("A0", late_mode)
+    assert result.record.terminals[0].category == expected_task, (
         [(entry.status, entry.outcome) for entry in result.states[0].entries],
         [(item.category, item.failure) for item in result.requests.terminals],
     )
@@ -1612,8 +1679,18 @@ async def _assert_adaptive_materialization_case(case: dict[str, Any]) -> None:
         "defects",
         "attempts",
     ):
-        assert request_actual[key] == expected[key]
+        if late_mode == "lost" and key == "cancel_requested":
+            assert request_actual[key] == ["R0"]
+            continue
+        if late_mode is not None and key == "defects":
+            assert request_actual[key] == []
+            continue
+        assert request_actual[key] == expected[key], (case["case_id"], key)
     values = dict(result.artifacts)
+    if late_mode is not None:
+        assert not any(isinstance(item.key, OperationOutputKey) for item in result.provenance)
+        assert not any(item.port == "context" and item.node == node for item in result.ports)
+        assert not result.final_outputs
     identities: dict[object, str] = {}
     actual_artifacts: list[dict[str, Any]] = []
     for fact in result.provenance:

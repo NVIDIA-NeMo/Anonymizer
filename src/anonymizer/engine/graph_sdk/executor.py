@@ -2894,13 +2894,21 @@ async def _run_adaptive(
             except Exception:
                 stopped = None
             retrieval.cancel()
-            with suppress(asyncio.CancelledError):
-                await retrieval
+            late_result: SourceResponse | SourceFailure | SourceLost | None = None
+            try:
+                late_result = await retrieval
+            except asyncio.CancelledError:
+                pass
             if isinstance(stopped, StopConfirmed):
                 authority.apply(StopAcknowledged(request=request, usage=stopped.usage))
-                return _mapping(policy, "cancel_after_dispatch", None, None), (), ()
-            authority.apply(MarkLost(request=request))
-            return _mapping(policy, "lost", None, None), (), ()
+                mapping = _mapping(policy, "cancel_after_dispatch", None, None)
+            else:
+                authority.apply(MarkLost(request=request))
+                mapping = _mapping(policy, "lost", None, None)
+            late_settlement = late_result.settlement if late_result is not None else None
+            if late_settlement is not None and late_settlement.request == request:
+                authority.apply(ObserveSettlement(settlement=late_settlement))
+            return mapping, (), ()
         try:
             result = retrieval.result()
         except Exception:
