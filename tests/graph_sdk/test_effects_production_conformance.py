@@ -195,6 +195,13 @@ ADAPTIVE_MATERIALIZATION_CASE_IDS = {
     "materialization/adaptive_duplicate",
     "materialization/adaptive_outer_count_precedence",
     "materialization/adaptive_single_zero_collection_limit",
+    "materialization/adaptive_foreign_association",
+    "materialization/adaptive_unmaterialized_result",
+    "materialization/adaptive_missing_parent",
+    "materialization/adaptive_foreign_parent",
+    "materialization/adaptive_invented_parent",
+    "materialization/adaptive_missing_source_fact",
+    "materialization/adaptive_result_bridge",
 }
 ADAPTIVE_MATERIALIZATION_CASES = tuple(
     case for case in json.loads(CORPUS.read_bytes()) if case["case_id"] in ADAPTIVE_MATERIALIZATION_CASE_IDS
@@ -1367,6 +1374,7 @@ async def _assert_adaptive_materialization_case(case: dict[str, Any]) -> None:
         capability=capability,
         request=request_policy,
     )
+    runtime_mappings = cast(list[dict[str, Any]], raw["runtime_mappings"])
     policy = OperationExecutionPolicy(
         node=node,
         kind="external",
@@ -1382,8 +1390,10 @@ async def _assert_adaptive_materialization_case(case: dict[str, Any]) -> None:
                 outcome=cast(str | None, row["outcome"]),
                 category=row["category"],
             )
-            for row in cast(list[dict[str, Any]], raw["runtime_mappings"])
-        ),
+            for row in runtime_mappings
+        )
+        if len(runtime_mappings) > 1
+        else _valid_runtime_rows("external", frozenset({"ok"})),
     )
     materialization_limits = cast(dict[str, int], raw["materialization_limits"])
     admitted = admit_execution_plan(
@@ -1471,6 +1481,11 @@ async def _assert_adaptive_materialization_case(case: dict[str, Any]) -> None:
         if terminal.request in dispatch_by_request
         for returned in terminal.results
     } | cast(dict[str, object], request_actual["association_terminals"])
+    request_actual["task_requests"] = (
+        request_actual["association_requests"]
+        if any(event["kind"] == "bridge_start" for event in cast(list[dict[str, Any]], case["events"]))
+        else {}
+    )
     for key in (
         "bindings",
         "dispatched",
@@ -1482,6 +1497,7 @@ async def _assert_adaptive_materialization_case(case: dict[str, Any]) -> None:
         "settlements",
         "association_terminals",
         "association_requests",
+        "task_requests",
         "request_associations",
         "request_policies",
         "reservations",
