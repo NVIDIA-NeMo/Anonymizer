@@ -695,7 +695,14 @@ def _normalize(
                     else:
                         prior_entries.append(prior)
                 bindings = [
-                    binding for binding in scope.workflow.input_bindings if binding.destination.node == entry.template
+                    binding
+                    for binding in scope.workflow.input_bindings
+                    if binding.destination.node == entry.template
+                    and not (
+                        map_member is not None
+                        and map_member.item_input is not None
+                        and binding.destination.port == map_member.item_input
+                    )
                 ]
                 impossible = False
                 inputs_ready = True
