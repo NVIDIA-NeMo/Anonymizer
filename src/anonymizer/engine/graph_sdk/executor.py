@@ -3133,8 +3133,6 @@ def _accept_outputs(
                     if decision_output
                     else "candidate"
                     if output.port in subject_ports
-                    else "evidence"
-                    if output.port in evidence_ports
                     else "candidate"
                     if any(
                         isinstance(item.source, NodeOutputRef)
@@ -3142,6 +3140,8 @@ def _accept_outputs(
                         and item.source.port == output.port
                         for item in admitted.context.prepared.workflow.workflow.output_bindings
                     )
+                    else "evidence"
+                    if output.port in evidence_ports
                     else "artifact"
                 ),
             )

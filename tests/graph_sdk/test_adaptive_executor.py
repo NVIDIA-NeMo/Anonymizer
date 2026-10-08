@@ -561,11 +561,19 @@ class _AssessingLocal:
         )
 
 
-@pytest.mark.parametrize(("distinct_subject", "alias_evidence"), [(False, False), (True, False), (True, True)])
+@pytest.mark.parametrize(
+    ("distinct_subject", "alias_evidence"),
+    [(False, False), (True, False), (True, True)],
+)
 def test_local_assessment_retains_actual_callback_fact_and_environment(
     distinct_subject: bool, alias_evidence: bool
 ) -> None:
-    asyncio.run(_assert_local_assessment(distinct_subject=distinct_subject, alias_evidence=alias_evidence))
+    asyncio.run(
+        _assert_local_assessment(
+            distinct_subject=distinct_subject,
+            alias_evidence=alias_evidence,
+        )
+    )
 
 
 async def _assert_local_assessment(*, distinct_subject: bool, alias_evidence: bool) -> None:
@@ -685,15 +693,16 @@ async def _assert_local_assessment(*, distinct_subject: bool, alias_evidence: bo
     fact = result.assessments[0]
     assert fact.finding == finding
     assert fact.environment.configuration == capability.configuration
-    assert fact.evidence_artifact == result.final_outputs[0].candidate.artifact
     if distinct_subject:
         subject = next(item for item in result.ports if item.port == "input")
         evidence = next(item for item in result.ports if item.port == evidence_port)
         assert subject.role == "candidate"
-        assert evidence.role == "evidence"
+        assert evidence.role == "candidate"
+        assert fact.evidence_artifact == result.final_outputs[0].candidate.artifact
         assert (subject.artifact == result.final_outputs[0].candidate.artifact) is alias_evidence
     else:
         assert any(item.role == "candidate" and item.port == "context" for item in result.ports)
+        assert fact.evidence_artifact == result.final_outputs[0].candidate.artifact
 
 
 def test_nested_assessment_marks_exact_inner_subject_occurrence() -> None:
