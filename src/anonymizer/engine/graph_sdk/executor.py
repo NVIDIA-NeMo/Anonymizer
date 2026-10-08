@@ -689,6 +689,7 @@ _RESULT_KEY = object()
 
 @dataclass(frozen=True, slots=True, kw_only=True, repr=False, init=False)
 class ExecutionResult(PrivateValue):
+    _execution: AdmittedExecutionPlan
     record: CanonicalRecord
     states: tuple[ActivationState, ...]
     requests: RequestReceipt
@@ -1948,6 +1949,7 @@ class _InvocationRuntime:
         final_outputs = _final_outputs(self.prepared, tuple(self.states), self.facts.produced, self.facts.provenance)
         return ExecutionResult(
             _key=_RESULT_KEY,
+            _execution=self.admitted,
             record=record,
             states=tuple(self.states),
             requests=request_receipt(self.request_authority.state),
@@ -3818,7 +3820,8 @@ def _canonical_record(
     ]
     for state in states:
         child_parents = {entry.activation.parent for entry in state.entries if entry.activation.parent is not None}
-        for parent in child_parents:
+        child_parents.update(expansion.parent for expansion in state.expansions)
+        for parent in sorted(child_parents, key=lambda item: item.occurrence):
             assert parent is not None
             expansion = next((item for item in state.expansions if item.parent == parent), None)
             parent_entry = next((item for item in state.entries if item.activation == parent), None)
@@ -3841,8 +3844,7 @@ def _canonical_record(
         for entry in state.entries:
             if entry.status not in {"success", "failure", "cancelled", "lost", "blocked", "inconsistent"}:
                 continue
-            if _is_subgraph_node(prepared.workflow.workflow, entry.template):
-                continue
+            structural = _is_subgraph_node(prepared.workflow.workflow, entry.template)
             reasons = {
                 "failure": frozenset({"execution_failed"}),
                 "cancelled": frozenset({"cancel_requested"}),
@@ -3858,6 +3860,7 @@ def _canonical_record(
                     attempt=attempts.get(entry.activation),
                     category=entry.status,
                     reasons=reasons,
+                    structural=structural,
                 )
             )
     statuses = tuple(

@@ -563,6 +563,14 @@ async def _assert_shared_nested_body() -> None:
         for item in result.states[0].entries
     ]
     assert result.states[0].complete
+    terminals = {item.activation: item for item in result.record.terminals}
+    members = {member for membership in result.record.memberships for member in membership.members}
+    assert set(terminals) == members
+    for entry in result.states[0].entries:
+        terminal = terminals[entry.activation]
+        assert terminal.category == entry.status
+        assert terminal.structural == (entry.template in {first, second})
+        assert (terminal.attempt is None) == terminal.structural
     child_entries = [item for item in result.states[0].entries if item.template == child]
     assert len(child_entries) == 2
     assert len({item.activation.parent for item in child_entries}) == 2

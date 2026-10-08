@@ -124,7 +124,9 @@ def admit_qualification(
     require_instance(execution, AdmittedExecutionPlan)
     require_instance(limits, QualificationLimits)
     require_instance(productions, tuple)
-    if len(productions) > limits.max_productions:
+    if len(productions) > limits.max_productions or limits.max_fixed_point_steps < len(
+        execution.context.prepared.data.targets
+    ):
         reject(EffectCode.LIMIT_EXCEEDED)
     if any(not isinstance(item, EvidenceProductionDecl) for item in productions):
         reject(EffectCode.INVALID_TYPE)
@@ -149,8 +151,6 @@ def admit_qualification(
             if frozenset(productions) < frozenset(execution.assessment_productions)
             else EffectCode.UNSUPPORTED
         )
-    if limits.max_fixed_point_steps < len(prepared.data.targets):
-        reject(EffectCode.LIMIT_EXCEEDED)
     resolved = tuple(_resolve_production(item, operations[item.node], limits) for item in productions)
     node_order = {slot.template: slot.index for slot in reversed(prepared.reservation_recipe)}
     resolved = tuple(
@@ -175,7 +175,7 @@ def _resolve_production(
     if promise is None or declaration.evidence_port not in outcome.produced_ports:
         reject(EffectCode.UNSUPPORTED)
     if (
-        len(promise.consumed_ports) + len(declaration.absence_queries) > limits.max_consumed_per_assessment
+        len(promise.consumed_ports) > limits.max_consumed_per_assessment
         or len(promise.coverage) > limits.max_coverage_atoms
     ):
         reject(EffectCode.LIMIT_EXCEEDED)
@@ -205,7 +205,8 @@ class _EvidenceFacts:
             reject(EffectCode.LIMIT_EXCEEDED)
         record = result.record
         if (
-            record.plan != prepared.plan
+            result._execution is not execution
+            or record.plan != prepared.plan
             or record.graph != prepared.data.graph
             or record.targets != prepared.data.targets
         ):
@@ -320,6 +321,7 @@ class _EvidenceFacts:
             or entry.outcome != fact.outcome
             or terminal.category != "success"
             or terminal.attempt is None
+            or terminal.structural
         ):
             reject(EffectCode.CONTRADICTORY)
         return target
@@ -327,12 +329,6 @@ class _EvidenceFacts:
     def _verify_environment(self, fact: ExecutionAssessmentFact, production: _Production) -> None:
         execution = self.admitted.execution
         policy = next(item for item in execution.policies if item.node == fact.node)
-        if fact.environment.configuration not in {item.configuration for item in policy.implementations}:
-            reject(EffectCode.CONTRADICTORY)
-        reads = frozenset(item for item in production.outcome.state_effects if item.kind == "read")
-        expected = frozenset(item for item in execution.context.prepared.state.revisions if item.effect in reads)
-        if fact.environment.state.revisions != expected:
-            reject(EffectCode.CONTRADICTORY)
         if any(item.invocation != self.result.record.invocation for item in fact.environment.absences):
             reject(EffectCode.FOREIGN_OWNER)
         queries = [item.query for item in fact.environment.absences]
@@ -340,6 +336,12 @@ class _EvidenceFacts:
             reject(EffectCode.DUPLICATE)
         if frozenset(queries) != production.declaration.absence_queries:
             reject(EffectCode.MISSING)
+        if fact.environment.configuration not in {item.configuration for item in policy.implementations}:
+            reject(EffectCode.CONTRADICTORY)
+        reads = frozenset(item for item in production.outcome.state_effects if item.kind == "read")
+        expected = frozenset(item for item in execution.context.prepared.state.revisions if item.effect in reads)
+        if fact.environment.state.revisions != expected:
+            reject(EffectCode.CONTRADICTORY)
 
 
 def verify_evidence(
@@ -415,10 +417,8 @@ def evidence_revision_view(
         for item in configurations
     ):
         reject(EffectCode.INVALID_TYPE)
-    facts = _EvidenceFacts.from_result(admitted, result)
+    _EvidenceFacts.from_result(admitted, result)
     _validate_current_revisions(admitted, result, artifacts, absences, configurations, state)
-    if any(item not in facts.artifacts for item in artifacts):
-        reject(EffectCode.MISSING)
     selected = frozenset(artifacts)
     candidates = frozenset(item.candidate for item in result.final_outputs if item.candidate.artifact in selected)
     if len({item.target for item in candidates}) != len(candidates):
@@ -472,7 +472,9 @@ def _validate_current_revisions(
     )
     if any(len(group) != len(set(group)) for group in keys):
         reject(EffectCode.DUPLICATE)
-    if any(node not in nodes for node, _ in configurations):
+    if any(node not in nodes for node, _ in configurations) or any(
+        item not in result.record.artifacts for item in artifacts
+    ):
         reject(EffectCode.MISSING)
     if any(item.query not in queries for item in absences) or any(item.effect not in reads for item in state.revisions):
         reject(EffectCode.UNSUPPORTED)

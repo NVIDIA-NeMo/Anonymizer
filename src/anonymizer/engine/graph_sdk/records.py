@@ -150,11 +150,14 @@ class TerminalFact(_PrivateRepr):
     attempt: TaskAttemptId | None
     category: TerminalCategory
     reasons: frozenset[ReasonCode]
+    structural: bool = False
 
     def __post_init__(self) -> None:
         if not isinstance(self.activation, ActivationKey):
             raise ContractViolation(ValidationCode.INVALID_TYPE)
         if self.attempt is not None and not isinstance(self.attempt, TaskAttemptId):
+            raise ContractViolation(ValidationCode.INVALID_TYPE)
+        if not isinstance(self.structural, bool):
             raise ContractViolation(ValidationCode.INVALID_TYPE)
         if not isinstance(self.category, str):
             raise ContractViolation(ValidationCode.INVALID_TYPE)
@@ -166,7 +169,9 @@ class TerminalFact(_PrivateRepr):
             raise ContractViolation(ValidationCode.FOREIGN_OWNER)
         if (self.category == "success" and self.reasons) or (self.category != "success" and not self.reasons):
             raise ContractViolation(ValidationCode.CONTRADICTORY)
-        if self.attempt is None and self.category not in ("blocked", "inconsistent"):
+        if self.structural and self.attempt is not None:
+            raise ContractViolation(ValidationCode.CONTRADICTORY)
+        if not self.structural and self.attempt is None and self.category not in ("blocked", "inconsistent"):
             raise ContractViolation(ValidationCode.CONTRADICTORY)
 
 

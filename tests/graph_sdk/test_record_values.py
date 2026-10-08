@@ -391,3 +391,31 @@ def test_terminal_category_and_target_status_are_separate_axes() -> None:
     assert terminal.category == "success"
     assert status.qualification == "not_assessed"
     assert not status.protection_available
+
+
+@pytest.mark.parametrize(
+    ("category", "reasons"),
+    [
+        ("success", frozenset()),
+        ("failure", frozenset({"execution_failed"})),
+        ("cancelled", frozenset({"cancel_requested"})),
+        ("lost", frozenset({"transport_lost"})),
+    ],
+)
+def test_structural_terminals_do_not_invent_operation_attempts(
+    category: TerminalCategory, reasons: frozenset[ReasonCode]
+) -> None:
+    activation = ActivationKey(
+        invocation=InvocationId.new(plan=PlanId.new()), occurrence=0, parent=None, iteration=None
+    )
+    terminal = TerminalFact(activation=activation, attempt=None, category=category, reasons=reasons, structural=True)
+    assert terminal.structural and terminal.attempt is None
+    with pytest.raises(ContractViolation) as error:
+        replace(terminal, structural=False)
+    assert error.value.code is ValidationCode.CONTRADICTORY
+    with pytest.raises(ContractViolation) as error:
+        replace(terminal, attempt=TaskAttemptId.new(activation=activation))
+    assert error.value.code is ValidationCode.CONTRADICTORY
+    with pytest.raises(ContractViolation) as error:
+        replace(terminal, structural=cast(bool, 1))
+    assert error.value.code is ValidationCode.INVALID_TYPE

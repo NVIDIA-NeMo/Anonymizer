@@ -2125,3 +2125,23 @@ def _assert_only_setup_baseline(
     parent = next(entry.activation for entry in result.states[0].entries if entry.template == fixture.expander)
     assert expansion.parent == parent
     assert not callbacks[fixture.member].calls
+
+
+@pytest.mark.parametrize(
+    ("count", "mode", "status"), [(0, "valid", "closed"), (2, "valid", "overflow"), (1, "missing", "failed")]
+)
+def test_canonical_membership_retains_expansions_without_instantiated_children(
+    count: int, mode: str, status: str
+) -> None:
+    _, result, _ = asyncio.run(_execute_membership(count, response_mode=mode, max_children=1, outward_scalar="join"))
+    expansion = next(iter(result.states[0].expansions))
+    assert expansion.status == status
+    assert not expansion.members
+    memberships = [item for item in result.record.memberships if item.parent == expansion.parent]
+    assert len(memberships) == 1
+    assert memberships[0].closed
+    assert not memberships[0].members
+    assert not any(entry.activation.parent == expansion.parent for entry in result.states[0].entries)
+    assert {item.activation for item in result.record.terminals} == {
+        member for membership in result.record.memberships for member in membership.members
+    }

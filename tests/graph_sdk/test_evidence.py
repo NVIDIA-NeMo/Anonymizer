@@ -38,11 +38,20 @@ from anonymizer.engine.graph_sdk.executor import (
     admit_execution_plan,
     start_execution,
 )
-from anonymizer.engine.graph_sdk.preparation import BoundInput, PreparationConfiguration, StateRevisionView
-from anonymizer.engine.graph_sdk.records import CandidateRef
+from anonymizer.engine.graph_sdk.preparation import (
+    BoundInput,
+    PreparationConfiguration,
+    StateRevision,
+    StateRevisionView,
+)
+from anonymizer.engine.graph_sdk.records import AbsenceRef, CandidateRef
+from anonymizer.graph._values import ArtifactRef, InvocationId
 from anonymizer.graph.workflow import (
+    CoverageAtom,
     DynamicScope,
+    OperationNode,
     ProtectionRequirement,
+    StateEffect,
     admit_activation_workflow,
     admit_static_workflow,
 )
@@ -55,13 +64,34 @@ def _qualification_limits(**changes: int) -> QualificationLimits:
     return QualificationLimits(**{item.name: changes.get(item.name, 16) for item in fields(QualificationLimits)})
 
 
-async def _execute_assessment() -> tuple[AdmittedExecutionPlan, ExecutionResult]:
-    base, node, artifact = _adaptive_workflow(assessment=True, requests=0)
+async def _execute_assessment(
+    *,
+    environment: bool = False,
+    candidate_input: bool = False,
+    coverage: frozenset[CoverageAtom] = frozenset(),
+    target_count: int = 1,
+) -> tuple[AdmittedExecutionPlan, ExecutionResult]:
+    evidence_port = "assessment" if candidate_input else "context"
+    base, node, artifact = _adaptive_workflow(
+        assessment=True, requests=0, distinct_subject=candidate_input, alias_evidence=candidate_input
+    )
     raw = base.workflow
+    read = StateEffect(kind="read", name="assessment-policy")
+    operation = replace(
+        raw.interface,
+        outcomes=tuple(
+            replace(
+                outcome,
+                state_effects=frozenset({read}) if environment else frozenset(),
+                evidence=frozenset(replace(promise, coverage=coverage) for promise in outcome.evidence),
+            )
+            for outcome in raw.interface.outcomes
+        ),
+    )
     static = admit_static_workflow(
         workflow=raw.workflow,
-        interface=raw.interface,
-        nodes=tuple(raw.nodes),
+        interface=operation,
+        nodes=(OperationNode(id=node, operation=operation),),
         input_bindings=tuple(raw.input_bindings),
         output_bindings=tuple(raw.output_bindings),
         outcome_bindings=tuple(raw.outcome_bindings),
@@ -71,9 +101,9 @@ async def _execute_assessment() -> tuple[AdmittedExecutionPlan, ExecutionResult]
             ProtectionRequirement(
                 outcome="ok",
                 meaning="test assessment",
-                subject_port="context",
+                subject_port="input" if candidate_input else evidence_port,
                 consumed_ports=frozenset({"input"}),
-                coverage=frozenset(),
+                coverage=coverage,
             ),
         ),
         limits=raw.limits,
@@ -83,8 +113,7 @@ async def _execute_assessment() -> tuple[AdmittedExecutionPlan, ExecutionResult]
         scopes=(DynamicScope(workflow=static, maps=(), loops=(), joins=()),),
         limits=base.limits,
     )
-    data = _data(1)
-    target = next(iter(data.targets))
+    data = _data(target_count)
     capability = _capability(workflow)
     prepared = _prepare(
         data=data,
@@ -93,15 +122,20 @@ async def _execute_assessment() -> tuple[AdmittedExecutionPlan, ExecutionResult]
         configuration=PreparationConfiguration(
             purpose="protection", required_protection_outcomes=frozenset({"ok"}), hard_request_limit=None
         ),
-        bound_inputs=(BoundInput(target=target, source=target, port="input", artifact_type=artifact),),
+        bound_inputs=tuple(
+            BoundInput(target=target, source=target, port="input", artifact_type=artifact) for target in data.targets
+        ),
+        state=StateRevisionView(
+            revisions=frozenset({StateRevision(effect=read, revision=3)}) if environment else frozenset()
+        ),
     )
     finding = AssessmentFinding(status="satisfied", code="observed")
     declaration = EvidenceProductionDecl(
         node=node,
         outcome="ok",
         promise="checked",
-        evidence_port="context",
-        absence_queries=frozenset(),
+        evidence_port=evidence_port,
+        absence_queries=frozenset({7}) if environment else frozenset(),
         supported_findings=frozenset({finding}),
     )
     admitted = admit_execution_plan(
@@ -133,10 +167,10 @@ async def _execute_assessment() -> tuple[AdmittedExecutionPlan, ExecutionResult]
             max_productions=1,
             max_findings_per_production=1,
             max_finding_code_bytes=20,
-            max_absence_queries=0,
-            max_assessment_facts=1,
-            max_port_facts=3,
-            max_provenance_edges=2,
+            max_absence_queries=1 if environment else 0,
+            max_assessment_facts=target_count,
+            max_port_facts=3 * target_count,
+            max_provenance_edges=2 * target_count,
         ),
     )
     services = ExecutionServices(
@@ -145,7 +179,7 @@ async def _execute_assessment() -> tuple[AdmittedExecutionPlan, ExecutionResult]
                 implementation=capability.implementation,
                 operation=capability.operation,
                 configuration=capability.configuration,
-                local=_AssessingLocal(finding=finding, evidence_port="context", alias_evidence=False),
+                local=_AssessingLocal(finding=finding, evidence_port=evidence_port, alias_evidence=candidate_input),
                 transport=None,
                 resource=None,
             ),
@@ -154,12 +188,13 @@ async def _execute_assessment() -> tuple[AdmittedExecutionPlan, ExecutionResult]
         limits=ExecutionLimits(
             max_local_in_flight=1,
             max_remote_outstanding=0,
-            max_runtime_artifacts=2,
+            max_runtime_artifacts=2 * target_count,
             max_runtime_artifact_bytes=100,
             max_collection_items=0,
         ),
         decision_limits=DecisionLimits(max_pending=0, max_lifetime_ns=0),
         clock=_Clock(),
+        absence_revisions=((7, 4),) if environment else (),
     )
     running = await start_execution(admitted=admitted, capabilities=(capability,), services=services)
     return admitted, await running.wait()
@@ -346,4 +381,232 @@ def test_revision_aggregate_limit_is_checked_before_members(
             configurations=(),
             state=StateRevisionView(revisions=frozenset()),
         )
+    assert error.value.code is EffectCode.LIMIT_EXCEEDED
+
+
+@pytest.mark.parametrize("factory", ["verify", "view"])
+def test_same_prepared_plan_does_not_authenticate_a_different_execution(
+    factory: str, assessment_execution: tuple[AdmittedExecutionPlan, ExecutionResult]
+) -> None:
+    execution, result = assessment_execution
+    other = admit_execution_plan(
+        context=execution.context,
+        capabilities=execution.capabilities,
+        policies=tuple(execution.policies),
+        decisions=tuple(execution.decisions),
+        assessment_productions=execution.assessment_productions,
+        assessment_limits=execution.assessment_limits,
+        map_expansions=execution.map_expansions,
+    )
+    assert other is not execution and other.context.prepared is execution.context.prepared
+    admitted = admit_qualification(
+        execution=other, productions=other.assessment_productions, limits=_qualification_limits()
+    )
+    with pytest.raises(EffectRejected) as error:
+        if factory == "verify":
+            verify_evidence(
+                admitted=admitted, result=result, submissions=(AssessmentSubmission(fact=result.assessments[0]),)
+            )
+        else:
+            evidence_revision_view(
+                admitted=admitted,
+                result=result,
+                artifacts=(),
+                absences=(),
+                configurations=(),
+                state=StateRevisionView(revisions=frozenset()),
+            )
+    assert error.value.code is EffectCode.FOREIGN_OWNER
+
+
+def test_absence_capture_does_not_consume_a_port_dependency_slot() -> None:
+    execution, result = asyncio.run(_execute_assessment(environment=True))
+    admitted = admit_qualification(
+        execution=execution,
+        productions=execution.assessment_productions,
+        limits=_qualification_limits(max_consumed_per_assessment=1),
+    )
+    fact = result.assessments[0]
+    (verified,) = verify_evidence(admitted=admitted, result=result, submissions=(AssessmentSubmission(fact=fact),))
+    assert len(verified.consumed_by_port) == 1
+    assert {(item.query, item.scope_revision) for item in verified.environment.absences} == {(7, 4)}
+    assert {(item.effect.name, item.revision) for item in verified.environment.state.revisions} == {
+        ("assessment-policy", 3)
+    }
+    with pytest.raises(EffectRejected) as error:
+        admit_qualification(
+            execution=execution,
+            productions=execution.assessment_productions,
+            limits=_qualification_limits(max_consumed_per_assessment=0),
+        )
+    assert error.value.code is EffectCode.LIMIT_EXCEEDED
+
+
+@pytest.mark.parametrize(
+    ("dependency", "expected"),
+    [
+        ("none", "current"),
+        ("absence-missing", "unknown"),
+        ("absence-changed", "stale"),
+        ("state-missing", "unknown"),
+        ("state-changed", "stale"),
+        ("input-missing", "unknown"),
+        ("candidate-missing", "unknown"),
+        ("changed-and-missing", "stale"),
+    ],
+)
+def test_validity_selectively_tracks_real_environment(dependency: str, expected: str) -> None:
+    execution, result = asyncio.run(_execute_assessment(environment=True))
+    admitted = admit_qualification(
+        execution=execution, productions=execution.assessment_productions, limits=_qualification_limits()
+    )
+    fact = result.assessments[0]
+    (verified,) = verify_evidence(admitted=admitted, result=result, submissions=(AssessmentSubmission(fact=fact),))
+    artifacts = tuple(reference for reference, _ in result.artifacts)
+    absences = tuple(fact.environment.absences)
+    state = fact.environment.state
+    if dependency == "absence-missing":
+        absences = ()
+    if dependency in {"absence-changed", "changed-and-missing"}:
+        absences = tuple(replace(item, scope_revision=item.scope_revision + 1) for item in absences)
+    if dependency in {"state-missing", "changed-and-missing"}:
+        state = StateRevisionView(revisions=frozenset())
+    if dependency == "state-changed":
+        state = StateRevisionView(
+            revisions=frozenset(replace(item, revision=item.revision + 1) for item in state.revisions)
+        )
+    if dependency == "input-missing":
+        consumed = next(item.artifact for item in result.ports if item.port == "input")
+        artifacts = tuple(item for item in artifacts if item != consumed)
+    if dependency == "candidate-missing":
+        artifacts = tuple(item for item in artifacts if item != verified.subject.artifact)
+    current = evidence_revision_view(
+        admitted=admitted,
+        result=result,
+        artifacts=artifacts,
+        absences=absences,
+        configurations=((fact.node, fact.environment.configuration),),
+        state=state,
+    )
+    assert evidence_validity(evidence=verified, current=current) == expected
+
+
+def test_missing_current_artifact_precedes_unsupported_absence(
+    assessment_execution: tuple[AdmittedExecutionPlan, ExecutionResult],
+) -> None:
+    execution, result = assessment_execution
+    admitted = admit_qualification(
+        execution=execution, productions=execution.assessment_productions, limits=_qualification_limits()
+    )
+    missing = ArtifactRef(invocation=result.record.invocation, key=999, version=1)
+    unsupported = AbsenceRef(invocation=result.record.invocation, query=999, scope_revision=1)
+    with pytest.raises(EffectRejected) as error:
+        evidence_revision_view(
+            admitted=admitted,
+            result=result,
+            artifacts=(missing,),
+            absences=(unsupported,),
+            configurations=(),
+            state=StateRevisionView(revisions=frozenset()),
+        )
+    assert error.value.code is EffectCode.MISSING
+
+
+@pytest.mark.parametrize(
+    ("defect", "code"),
+    [("foreign", EffectCode.FOREIGN_OWNER), ("duplicate", EffectCode.DUPLICATE), ("missing", EffectCode.MISSING)],
+)
+def test_environment_identity_errors_precede_configuration_contradiction(defect: str, code: EffectCode) -> None:
+    execution, result = asyncio.run(_execute_assessment(environment=True))
+    admitted = admit_qualification(
+        execution=execution, productions=execution.assessment_productions, limits=_qualification_limits()
+    )
+    fact = result.assessments[0]
+    original = fact.environment
+    absence = next(iter(original.absences))
+    absences = frozenset()
+    if defect == "foreign":
+        absences = frozenset({replace(absence, invocation=InvocationId.new(plan=result.record.plan))})
+    if defect == "duplicate":
+        absences = frozenset({absence, replace(absence, scope_revision=absence.scope_revision + 1)})
+    # Corrupt the retained fact solely to exercise validation of simultaneous defects.
+    object.__setattr__(fact, "environment", replace(original, configuration=FrozenConfig(fields=()), absences=absences))
+    try:
+        with pytest.raises(EffectRejected) as error:
+            verify_evidence(admitted=admitted, result=result, submissions=(AssessmentSubmission(fact=fact),))
+        assert error.value.code is code
+    finally:
+        object.__setattr__(fact, "environment", original)
+
+
+@pytest.mark.parametrize("bound", ["max_port_facts", "max_provenance_edges"])
+def test_result_bounds_are_exact_and_count_actual_edges(
+    bound: str, assessment_execution: tuple[AdmittedExecutionPlan, ExecutionResult]
+) -> None:
+    execution, result = assessment_execution
+    count = len(result.ports) if bound == "max_port_facts" else sum(len(item.parents) for item in result.provenance)
+    assert count > 0
+    for limit in (count, count - 1):
+        admitted = admit_qualification(
+            execution=execution,
+            productions=execution.assessment_productions,
+            limits=_qualification_limits(**{bound: limit}),
+        )
+        if limit == count:
+            assert verify_evidence(
+                admitted=admitted, result=result, submissions=(AssessmentSubmission(fact=result.assessments[0]),)
+            )
+        else:
+            with pytest.raises(EffectRejected) as error:
+                verify_evidence(
+                    admitted=admitted, result=result, submissions=(AssessmentSubmission(fact=result.assessments[0]),)
+                )
+            assert error.value.code is EffectCode.LIMIT_EXCEEDED
+
+
+def test_consumed_candidate_retains_target_and_alias_identity() -> None:
+    execution, result = asyncio.run(_execute_assessment(candidate_input=True))
+    admitted = admit_qualification(
+        execution=execution, productions=execution.assessment_productions, limits=_qualification_limits()
+    )
+    fact = result.assessments[0]
+    (verified,) = verify_evidence(admitted=admitted, result=result, submissions=(AssessmentSubmission(fact=fact),))
+    assert verified.consumed_by_port == (("input", verified.subject),)
+    assert verified.subject == result.final_outputs[0].candidate
+    current = evidence_revision_view(
+        admitted=admitted,
+        result=result,
+        artifacts=tuple(ref for ref, _ in result.artifacts),
+        absences=(),
+        configurations=((fact.node, fact.environment.configuration),),
+        state=fact.environment.state,
+    )
+    assert evidence_validity(evidence=verified, current=current) == "current"
+
+
+def test_coverage_capacity_accepts_exact_and_rejects_one_over() -> None:
+    coverage = frozenset({CoverageAtom(kind="field", name="person")})
+    execution, result = asyncio.run(_execute_assessment(coverage=coverage))
+    admitted = admit_qualification(
+        execution=execution,
+        productions=execution.assessment_productions,
+        limits=_qualification_limits(max_coverage_atoms=1),
+    )
+    (verified,) = verify_evidence(
+        admitted=admitted, result=result, submissions=(AssessmentSubmission(fact=result.assessments[0]),)
+    )
+    assert verified.coverage == coverage
+    with pytest.raises(EffectRejected) as error:
+        admit_qualification(
+            execution=execution,
+            productions=execution.assessment_productions,
+            limits=_qualification_limits(max_coverage_atoms=0),
+        )
+    assert error.value.code is EffectCode.LIMIT_EXCEEDED
+
+
+def test_fixed_point_outer_bound_precedes_missing_production() -> None:
+    execution, _ = asyncio.run(_execute_assessment(target_count=2))
+    with pytest.raises(EffectRejected) as error:
+        admit_qualification(execution=execution, productions=(), limits=_qualification_limits(max_fixed_point_steps=1))
     assert error.value.code is EffectCode.LIMIT_EXCEEDED
