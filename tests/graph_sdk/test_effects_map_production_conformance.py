@@ -92,7 +92,7 @@ class _MapFixture:
     capabilities: tuple[Any, ...]
 
 
-def _map_fixture(*, max_children: int = 2) -> _MapFixture:
+def _map_fixture(*, max_children: int = 2, control_only: bool = False) -> _MapFixture:
     owner = WorkflowId.new()
     expander, member, join = (NodeId.new(workflow=owner) for _ in range(3))
     text_type = ArtifactType(name="text", revision=1)
@@ -126,7 +126,7 @@ def _map_fixture(*, max_children: int = 2) -> _MapFixture:
     )
     member_operation = OperationSpec(
         name="member",
-        inputs=(InputPort(name="item", artifact_type=text_type),),
+        inputs=() if control_only else (InputPort(name="item", artifact_type=text_type),),
         outputs=(),
         output_dependencies=(),
         outcomes=(_outcome("ok"),),
@@ -168,9 +168,15 @@ def _map_fixture(*, max_children: int = 2) -> _MapFixture:
             OperationNode(id=join, operation=join_operation),
         ),
         input_bindings=(
-            InputBinding(
-                source=WorkflowInputRef(port="default"),
-                destination=NodeInputRef(node=member, port="item"),
+            *(
+                ()
+                if control_only
+                else (
+                    InputBinding(
+                        source=WorkflowInputRef(port="default"),
+                        destination=NodeInputRef(node=member, port="item"),
+                    ),
+                )
             ),
             InputBinding(
                 source=WorkflowInputRef(port="default"),
@@ -213,7 +219,7 @@ def _map_fixture(*, max_children: int = 2) -> _MapFixture:
                         member=member,
                         expansion_outcomes=frozenset({"expand"}),
                         max_children=max_children,
-                        item_input="item",
+                        item_input=None if control_only else "item",
                     ),
                 ),
                 joins=(
@@ -398,8 +404,9 @@ async def _execute_membership(
     artifact_headroom: int = 8,
     artifact_byte_headroom: int = 32,
     max_collection_items: int = 4,
+    control_only: bool = False,
 ):
-    fixture = _map_fixture()
+    fixture = _map_fixture(control_only=control_only)
     admitted = _admit_fixture(fixture)
     by_node = dict(zip((fixture.expander, fixture.member, fixture.join), fixture.capabilities, strict=True))
     callbacks = {
@@ -563,6 +570,23 @@ async def _assert_map_overflow() -> None:
     assert not any(isinstance(fact.key, MapItemKey) for fact in result.provenance)
     assert len(result.artifacts) == 2  # one captured root plus the accepted collection
     assert len(result.assessments) == 1
+
+
+def test_control_only_map_activates_members_without_item_facts() -> None:
+    asyncio.run(_assert_control_only_map())
+
+
+async def _assert_control_only_map() -> None:
+    case = MAP_CASES["map/control_only_members"]
+    fixture, result, callbacks = await _execute_membership(2, control_only=True)
+    expansion = next(iter(result.states[0].expansions))
+    assert expansion.status == "closed"
+    assert len(expansion.members) == 2
+    assert len(callbacks[fixture.member].calls) == 2
+    assert all(not call[0].inputs for call in callbacks[fixture.member].calls)
+    assert not any(isinstance(fact.key, MapItemKey) for fact in result.provenance)
+    expected = case["expected"]["state"]["publication"]
+    assert len(result.artifacts) - 1 == len(expected["artifacts"]) == 1
 
 
 @pytest.mark.parametrize(
