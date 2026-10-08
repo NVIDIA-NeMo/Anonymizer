@@ -1233,7 +1233,8 @@ def _validate_services(admitted: AdmittedExecutionPlan, services: ExecutionServi
     if any(item.max_lifetime_ns > services.decision_limits.max_lifetime_ns for item in admitted.decisions):
         reject(EffectCode.LIMIT_EXCEEDED)
     if any(
-        item.bounds.max_items > services.limits.max_collection_items for item in admitted.context.adaptive_retrievals
+        item.materialization.kind == "collection" and item.bounds.max_items > services.limits.max_collection_items
+        for item in admitted.context.adaptive_retrievals
     ):
         reject(EffectCode.LIMIT_EXCEEDED)
     bound_context = admitted.context.bound_context

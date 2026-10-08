@@ -16,6 +16,7 @@ from anonymizer.engine.graph_sdk._effect_values import EffectRejected
 from anonymizer.engine.graph_sdk.binding import start_initial_binding
 from anonymizer.engine.graph_sdk.capabilities import ImplementationRef, PreparationRejected
 from anonymizer.engine.graph_sdk.context import (
+    AdaptiveRetrievalDecl,
     BindingLimits,
     ContextMaterialization,
     ContextResource,
@@ -29,6 +30,7 @@ from anonymizer.engine.graph_sdk.context import (
     SourceResponse,
     admit_context_plan,
 )
+from anonymizer.engine.graph_sdk.data import DataGraph, DataLimits
 from anonymizer.engine.graph_sdk.executor import (
     AssessmentLimits,
     DecisionDeclaration,
@@ -42,11 +44,13 @@ from anonymizer.engine.graph_sdk.executor import (
     ImplementationHandle,
     LocalDecisionWait,
     OperationExecutionPolicy,
+    OperationOutputKey,
+    RootInputKey,
     RuntimeOutcome,
     admit_execution_plan,
     start_execution,
 )
-from anonymizer.engine.graph_sdk.preparation import BoundInput
+from anonymizer.engine.graph_sdk.preparation import BoundInput, PreparationConfiguration
 from anonymizer.engine.graph_sdk.requests import (
     AcceptFailure,
     AcceptResult,
@@ -88,10 +92,12 @@ from anonymizer.graph.workflow import (
     InputPort,
     NodeId,
     OperationNode,
+    OutputPort,
     WorkflowId,
     admit_activation_workflow,
     admit_static_workflow,
 )
+from tests.graph_sdk.test_adaptive_executor import _adaptive_workflow, _Clock, _UnusedTransport
 from tests.graph_sdk.test_binding import _context_workflow
 from tests.graph_sdk.test_preparation import _capability, _data, _limits, _prepare, _workflow
 
@@ -177,6 +183,43 @@ REAL_BINDING_CASE_IDS = {
     "materialization/initial_single_zero_collection_limit",
 }
 REAL_BINDING_CASES = tuple(case for case in json.loads(CORPUS.read_bytes()) if case["case_id"] in REAL_BINDING_CASE_IDS)
+ADAPTIVE_MATERIALIZATION_CASE_IDS = {
+    "materialization/adaptive_single_exact",
+    "materialization/adaptive_single_multiple",
+    "materialization/adaptive_collection_1",
+    "materialization/adaptive_collection_2",
+    "materialization/adaptive_collection_3",
+    "materialization/adaptive_collection_one_over",
+    "materialization/adaptive_collection_0",
+    "materialization/adaptive_canonical_reorder",
+    "materialization/adaptive_duplicate",
+    "materialization/adaptive_outer_count_precedence",
+    "materialization/adaptive_single_zero_collection_limit",
+}
+ADAPTIVE_MATERIALIZATION_CASES = tuple(
+    case for case in json.loads(CORPUS.read_bytes()) if case["case_id"] in ADAPTIVE_MATERIALIZATION_CASE_IDS
+)
+
+
+def _selector_data():
+    graph = DataGraph.new()
+    graph, target = graph.add_text("selector")
+    return graph.validate(
+        targets=(target,),
+        source_relations=(),
+        contexts=(),
+        dependencies=(),
+        coherence=(),
+        atomic=(),
+        output_regions=(),
+        limits=DataLimits(
+            max_datums=1,
+            max_targets=1,
+            max_text_bytes=8,
+            max_declarations=0,
+            max_group_members=0,
+        ),
+    )
 
 
 def _assessment_limits() -> AssessmentLimits:
@@ -1223,6 +1266,292 @@ async def _reject_foreign_binding_target() -> str | None:
     except EffectRejected as exc:
         return exc.code.value
     return None
+
+
+@pytest.mark.parametrize(
+    "case",
+    ADAPTIVE_MATERIALIZATION_CASES,
+    ids=lambda case: cast(str, case["case_id"]),
+)
+def test_adaptive_materialization_corpus_through_real_execution(case: dict[str, Any]) -> None:
+    asyncio.run(_assert_adaptive_materialization_case(case))
+
+
+async def _assert_adaptive_materialization_case(case: dict[str, Any]) -> None:
+    raw = cast(dict[str, Any], case["declaration"])
+    materialization = cast(list[dict[str, Any]], raw["materializations"])[0]
+    retrieval_requests = cast(int, raw["retrieval_bounds"]["max_requests"])
+    workflow, node, item_type = _adaptive_workflow(requests=retrieval_requests)
+    output_type = item_type
+    if materialization["kind"] == "collection":
+        output_type = ArtifactType(name="text_collection", revision=1)
+        static = workflow.workflow
+        operation_node = next(item for item in static.nodes if isinstance(item, OperationNode))
+        operation = replace(
+            operation_node.operation,
+            outputs=(OutputPort(name="context", artifact_type=output_type),),
+        )
+        rebuilt = admit_static_workflow(
+            workflow=static.workflow,
+            interface=operation,
+            nodes=(OperationNode(id=node, operation=operation),),
+            input_bindings=tuple(static.input_bindings),
+            output_bindings=tuple(static.output_bindings),
+            outcome_bindings=tuple(static.outcome_bindings),
+            sequence=tuple(static.sequence),
+            choices=tuple(static.choices),
+            protection=(),
+            limits=static.limits,
+        )
+        workflow = admit_activation_workflow(
+            workflow=rebuilt,
+            scopes=(DynamicScope(workflow=rebuilt, maps=(), joins=(), loops=()),),
+            limits=workflow.limits,
+        )
+    data = _selector_data()
+    target = next(iter(data.targets))
+    request_policy = _policy(cast(dict[str, Any], raw["policies"])["P0"])
+    capability = replace(
+        _capability(workflow, external=True),
+        max_physical_requests_per_activation=request_policy.max_attempts,
+    )
+    prepared = _prepare(
+        data=data,
+        workflow=workflow,
+        capability=capability,
+        configuration=PreparationConfiguration(
+            purpose="execution_only",
+            required_protection_outcomes=frozenset(),
+            hard_request_limit=cast(int, raw["hard_limit"]),
+        ),
+        bound_inputs=(BoundInput(target=target, source=target, port="input", artifact_type=item_type),),
+        limits=_limits(capabilities=1),
+    )
+    source = ContextSourceRef(name="S0", revision=1)
+    source_capability = ContextSourceCapability(
+        source=source,
+        artifact_type=item_type,
+        uses=frozenset({"adaptive_retrieval"}),
+        execution="async",
+        resource_owner="caller",
+        cancellation="cooperative_ack",
+        settlement="explicit_ack",
+        usage="exact",
+        request=request_policy,
+        safe_detachment="forbidden",
+    )
+    retrieval = AdaptiveRetrievalDecl(
+        node=node,
+        source=source,
+        selector_ports=("input",),
+        output_port="context",
+        bounds=RetrievalBounds(
+            max_items=cast(int, materialization["max_items"]),
+            max_bytes=cast(int, materialization["max_bytes"]),
+            max_requests=retrieval_requests,
+        ),
+        materialization=ContextMaterialization(
+            kind=materialization["kind"],
+            item_type=item_type,
+        ),
+    )
+    context = admit_context_plan(
+        prepared=prepared,
+        bound_context=None,
+        adaptive_retrievals=(retrieval,),
+        context_capabilities=(source_capability,),
+    )
+    implementation = ExecutionImplementation(
+        implementation=capability.implementation,
+        configuration=capability.configuration,
+        capability=capability,
+        request=request_policy,
+    )
+    policy = OperationExecutionPolicy(
+        node=node,
+        kind="external",
+        request=request_policy,
+        safe_detachment="forbidden",
+        implementations=(implementation,),
+        result_outcomes=frozenset({"ok"}),
+        runtime_outcomes=tuple(
+            RuntimeOutcome(
+                condition=row["condition"],
+                reported_outcome=cast(str | None, row["reported_outcome"]),
+                failure=row["failure"],
+                outcome=cast(str | None, row["outcome"]),
+                category=row["category"],
+            )
+            for row in cast(list[dict[str, Any]], raw["runtime_mappings"])
+        ),
+    )
+    materialization_limits = cast(dict[str, int], raw["materialization_limits"])
+    admitted = admit_execution_plan(
+        context=context,
+        capabilities=(capability,),
+        policies=(policy,),
+        decisions=(),
+        assessment_productions=(),
+        assessment_limits=AssessmentLimits(
+            max_productions=0,
+            max_findings_per_production=0,
+            max_finding_code_bytes=0,
+            max_absence_queries=0,
+            max_assessment_facts=0,
+            max_port_facts=2,
+            max_provenance_edges=materialization_limits["max_provenance_edges"],
+        ),
+    )
+    events = [event for event in cast(list[dict[str, Any]], case["events"]) if event["kind"] == "materialize_result"]
+    association_names: dict[object, str] = {}
+    request_names: dict[PhysicalRequestId, str] = {}
+    provider = _CaseProvider(
+        events=events,
+        sources={"S0": source},
+        association_names=association_names,
+        request_names=request_names,
+        fallback_associations=["A0"],
+        default_source=source,
+    )
+    transport = _UnusedTransport()
+    result = await (
+        await start_execution(
+            admitted=admitted,
+            capabilities=(capability,),
+            services=ExecutionServices(
+                handles=(
+                    ImplementationHandle(
+                        implementation=capability.implementation,
+                        operation=capability.operation,
+                        configuration=capability.configuration,
+                        local=None,
+                        transport=transport,
+                        resource=ResourceLease.create(owner="sdk", safe_detachment="forbidden", handle=transport),
+                    ),
+                ),
+                context_resources=(
+                    ContextResource(
+                        source=source,
+                        capability=source_capability,
+                        lease=ResourceLease.create(owner="caller", safe_detachment="forbidden", handle=provider),
+                        factory=None,
+                    ),
+                ),
+                limits=ExecutionLimits(
+                    max_local_in_flight=0,
+                    max_remote_outstanding=1,
+                    max_runtime_artifacts=materialization_limits["max_artifacts"],
+                    max_runtime_artifact_bytes=materialization_limits["max_artifact_bytes"],
+                    max_collection_items=materialization_limits["max_collection_items"],
+                ),
+                decision_limits=DecisionLimits(max_pending=0, max_lifetime_ns=0),
+                clock=_Clock(),
+            ),
+        )
+    ).wait()
+    expected = cast(dict[str, Any], case["expected"])["state"]
+    assert result.record.terminals[0].category == expected["tasks"]["A0"], (
+        [(entry.status, entry.outcome) for entry in result.states[0].entries],
+        [(item.category, item.failure) for item in result.requests.terminals],
+    )
+    request_actual = _normalize(
+        result.requests,
+        cast(Any, {name: association for association, name in association_names.items()}),
+        {name: request for request, name in request_names.items()},
+        {"P0": request_policy},
+    )
+    dispatch_by_request = {item.request: item for item in result.requests.dispatches}
+    request_actual["association_terminals"] = {
+        association_names[returned.association]: {
+            "request": request_names[terminal.request],
+            "outcome": returned.outcome,
+            "policy": "P0",
+        }
+        for terminal in result.requests.terminals
+        if terminal.request in dispatch_by_request
+        for returned in terminal.results
+    } | cast(dict[str, object], request_actual["association_terminals"])
+    for key in (
+        "bindings",
+        "dispatched",
+        "dispatched_count",
+        "denials",
+        "terminals",
+        "request_facts",
+        "request_failures",
+        "settlements",
+        "association_terminals",
+        "association_requests",
+        "request_associations",
+        "request_policies",
+        "reservations",
+        "reservation_policies",
+        "local_in_flight",
+        "remote_outstanding",
+        "cancel_requested",
+        "defects",
+        "attempts",
+    ):
+        assert request_actual[key] == expected[key]
+    values = dict(result.artifacts)
+    identities: dict[object, str] = {}
+    actual_artifacts: list[dict[str, Any]] = []
+    for fact in result.provenance:
+        if isinstance(fact.key, RootInputKey):
+            identity = f"RootInputKey:T0:{fact.key.port}"
+            artifact_name = item_type.name
+        elif isinstance(fact.key, OperationOutputKey):
+            identity = f"OperationOutputKey:A0:T0:{fact.key.port}"
+            artifact_name = output_type.name
+        else:
+            continue
+        identities[fact.key] = identity
+        value = values[fact.artifact]
+        actual_artifacts.append(
+            {
+                "identity": identity,
+                "artifact_type": artifact_name,
+                "value": (
+                    value.text
+                    if isinstance(value, TextArtifactValue)
+                    else [{"key": item.key, "version": item.version, "value": item.value.text} for item in value.items]
+                ),
+            }
+        )
+    assert sorted(actual_artifacts, key=lambda item: item["identity"]) == sorted(
+        expected["artifacts"], key=lambda item: item["identity"]
+    )
+    materialization_ports: dict[str, object] = {}
+    for fact in result.provenance:
+        if not isinstance(fact.key, OperationOutputKey):
+            continue
+        value = values[fact.artifact]
+        materialization_ports[f"adaptive:T0:N0:{fact.key.port}:None"] = {
+            "artifact_type": output_type.name,
+            "key": identities[fact.key],
+            "value": (
+                value.text
+                if isinstance(value, TextArtifactValue)
+                else [{"key": item.key, "version": item.version, "value": item.value.text} for item in value.items]
+            ),
+        }
+    materialization_actual = {
+        "artifact_bytes": sum(
+            len(value.text.encode())
+            if isinstance(value, TextArtifactValue)
+            else sum(len(item.value.text.encode()) for item in value.items)
+            for value in values.values()
+        ),
+        "artifact_count": len(values),
+        "ports": materialization_ports,
+        "provenance": {
+            identities[fact.key]: sorted(identities[parent] for parent in fact.parents)
+            for fact in result.provenance
+            if fact.key in identities
+        },
+        "provenance_edges": sum(len(fact.parents) for fact in result.provenance),
+    }
+    assert materialization_actual == expected["materialization"]
 
 
 class _Closable:

@@ -765,6 +765,11 @@ def can_reserve_followup(
     ):
         reject(EffectCode.INVALID_TYPE)
     require_instance(policy, PhysicalRequestPolicy)
+    if any(
+        sum(association in reservation.associations for reservation in state.dispatches) >= policy.max_attempts
+        for association in associations
+    ):
+        return False
     return _followup_rejection(state, purpose, associations, policy) is None
 
 

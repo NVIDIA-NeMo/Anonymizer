@@ -188,6 +188,32 @@ def test_followup_eligibility_uses_the_request_authority_replay_rule(
     )
 
 
+def test_followup_eligibility_stops_at_the_policy_attempt_limit() -> None:
+    invocation = InvocationId.new(plan=PlanId.new())
+    scope = InvocationRequestScope(invocation=invocation)
+    policy = _policy(attempts=1)
+    association = _association(invocation, 0)
+    state = initialize_requests(scope=scope, hard_limit=None, policies=frozenset({policy}))
+    state = bind_request_policies(
+        state=state,
+        binding=RequestPolicyBinding.create(association=association, policies=frozenset({policy})),
+    )
+    request = PhysicalRequestId.new(scope=scope)
+    state = advance_requests(
+        state=state,
+        event=Reserve(request=request, purpose="initial", associations=frozenset({association}), policy=policy),
+    )
+    state = advance_requests(state=state, event=Dispatch(request=request))
+    state = advance_requests(state=state, event=AcceptFailure(request=request, failure="malformed_response"))
+
+    assert not can_reserve_followup(
+        state=state,
+        purpose="correction",
+        associations=frozenset({association}),
+        policy=policy,
+    )
+
+
 def test_dispatched_cancel_intent_is_retained_through_stop_and_receipt() -> None:
     invocation = InvocationId.new(plan=PlanId.new())
     scope = InvocationRequestScope(invocation=invocation)
