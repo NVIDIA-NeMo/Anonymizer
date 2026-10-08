@@ -71,6 +71,9 @@ from anonymizer.graph.workflow import (
     InputBinding,
     InputPort,
     KeyedJoinDecl,
+    LoopCarriedBinding,
+    LoopDecl,
+    LoopInitialBinding,
     MapDecl,
     NodeId,
     NodeInputRef,
@@ -92,8 +95,9 @@ from anonymizer.graph.workflow import (
     admit_activation_workflow,
     admit_static_workflow,
 )
+from tests.graph_sdk.test_activation import _loop_workflow
 from tests.graph_sdk.test_context_source_execution import SOURCE, _ContextProvider
-from tests.graph_sdk.test_dynamic_executor import _capability, _outcome, _rows
+from tests.graph_sdk.test_dynamic_executor import _capability, _operation, _outcome, _rows
 from tests.graph_sdk.test_local_executor import _Clock
 from tests.graph_sdk.test_preparation import _data, _limits
 
@@ -112,6 +116,7 @@ class _MapFixture:
     text_type: ArtifactType
     collection_type: ArtifactType
     other_type: ArtifactType
+    implementation_nodes: tuple[NodeId, ...]
     capabilities: tuple[Any, ...]
 
 
@@ -123,6 +128,10 @@ def _map_fixture(
     default_override: bool = False,
     outward_scalar: str | None = None,
     member_subgraph: bool = False,
+    context_membership_schema: bool = False,
+    outward_identity: bool = True,
+    outward_value_depends_on_default: bool = True,
+    context_item_override: bool = False,
 ) -> _MapFixture:
     owner = WorkflowId.new()
     expander, member, join = (NodeId.new(workflow=owner) for _ in range(3))
@@ -131,12 +140,13 @@ def _map_fixture(
     text_type = ArtifactType(name="text", revision=1)
     collection_type = ArtifactType(name="members_t", revision=1)
     other_type = ArtifactType(name="other_t", revision=1)
+    context_type = collection_type if context_membership_schema else other_type
     other_ports = tuple(OutputPort(name=f"other{index}", artifact_type=other_type) for index in range(other_count))
     expander_operation = OperationSpec(
         name="expander",
         inputs=(
             InputPort(name="default", artifact_type=text_type),
-            *((InputPort(name="schema", artifact_type=other_type),) if other_count else ()),
+            *((InputPort(name="schema", artifact_type=context_type),) if other_count else ()),
         ),
         outputs=(OutputPort(name="members", artifact_type=collection_type), *other_ports),
         output_dependencies=(
@@ -177,14 +187,27 @@ def _map_fixture(
         name="member",
         inputs=() if control_only else (InputPort(name="item", artifact_type=text_type),),
         outputs=(OutputPort(name="value", artifact_type=text_type),) if outward_scalar else (),
-        output_dependencies=(OutputDependency(output="value", inputs=frozenset({"item"}), identity_input="item"),)
+        output_dependencies=(
+            OutputDependency(
+                output="value",
+                inputs=frozenset({"item"}),
+                identity_input="item" if outward_identity else None,
+            ),
+        )
         if outward_scalar
         else (),
         outcomes=(
-            _outcome(
-                "ok",
-                produced=frozenset({"value"}) if outward_scalar else frozenset(),
-                max_output_bytes=32 if outward_scalar else 0,
+            replace(
+                _outcome(
+                    "ok",
+                    produced=frozenset({"value"}) if outward_scalar else frozenset(),
+                    max_output_bytes=32 if outward_scalar else 0,
+                ),
+                context=(
+                    frozenset({ContextUse(port="item", meaning="retrieved", capture="whole_artifact")})
+                    if context_item_override
+                    else frozenset()
+                ),
             ),
         ),
     )
@@ -250,7 +273,8 @@ def _map_fixture(
         name="map-root",
         inputs=(
             InputPort(name="default", artifact_type=text_type),
-            *((InputPort(name="schema", artifact_type=other_type),) if other_count else ()),
+            *((InputPort(name="member_context", artifact_type=text_type),) if context_item_override else ()),
+            *((InputPort(name="schema", artifact_type=context_type),) if other_count else ()),
         ),
         outputs=(
             OutputPort(name="members", artifact_type=collection_type),
@@ -259,7 +283,13 @@ def _map_fixture(
         output_dependencies=(
             OutputDependency(output="members", inputs=frozenset({"default"}), identity_input=None),
             *(
-                (OutputDependency(output="value", inputs=frozenset({"default"}), identity_input="default"),)
+                (
+                    OutputDependency(
+                        output="value",
+                        inputs=frozenset({"default"}) if outward_value_depends_on_default else frozenset(),
+                        identity_input="default" if outward_identity else None,
+                    ),
+                )
                 if outward_scalar == "workflow_output"
                 else ()
             ),
@@ -284,9 +314,20 @@ def _map_fixture(
                     }
                 ),
                 context=(
-                    frozenset({ContextUse(port="schema", meaning="retrieved", capture="whole_artifact")})
-                    if other_count
-                    else frozenset()
+                    frozenset(
+                        {
+                            *(
+                                (ContextUse(port="schema", meaning="retrieved", capture="whole_artifact"),)
+                                if other_count
+                                else ()
+                            ),
+                            *(
+                                (ContextUse(port="member_context", meaning="retrieved", capture="whole_artifact"),)
+                                if context_item_override
+                                else ()
+                            ),
+                        }
+                    )
                 ),
             ),
         ),
@@ -308,7 +349,9 @@ def _map_fixture(
                 else (
                     InputBinding(
                         source=(
-                            NodeOutputRef(node=default_source, port="default")
+                            ContextInputRef(port="member_context")
+                            if context_item_override
+                            else NodeOutputRef(node=default_source, port="default")
                             if default_source is not None
                             else WorkflowInputRef(port="default")
                         ),
@@ -438,6 +481,13 @@ def _map_fixture(
         *((default_operation,) if default_source is not None else ()),
         *((ordinary_operation,) if ordinary is not None else ()),
     )
+    implementation_nodes = (
+        expander,
+        member_implementation,
+        join,
+        *((default_source,) if default_source is not None else ()),
+        *((ordinary,) if ordinary is not None else ()),
+    )
     capabilities = tuple(_capability(operation, index) for index, operation in enumerate(operations))
     return _MapFixture(
         workflow,
@@ -449,6 +499,7 @@ def _map_fixture(
         text_type,
         collection_type,
         other_type,
+        implementation_nodes,
         capabilities,
     )
 
@@ -468,6 +519,7 @@ class _MapCallback:
     calls: list[tuple[AssociationInput, ...]] = field(default_factory=list)
     cross_associations: list[SemanticAssociation] = field(default_factory=list)
     cross_ready: asyncio.Event | None = None
+    passthrough: bool = False
 
     async def run(self, request: tuple[AssociationInput, ...]) -> LocalCompleted | LocalFailure:
         self.calls.append(request)
@@ -524,6 +576,16 @@ class _MapCallback:
                 outputs = (membership, membership, *other_outputs)
             else:
                 outputs = (membership, *other_outputs)
+        elif self.passthrough:
+            value = request[0].inputs[0]
+            outputs = (
+                PortArtifact(
+                    port="value",
+                    artifact_type=self.text_type,
+                    artifact=None,
+                    value=value.value,
+                ),
+            )
         return LocalCompleted(
             results=(
                 AssociationResult(
@@ -546,6 +608,51 @@ class _MapCallback:
         )
 
 
+@dataclass
+class _LoopCallback:
+    role: str
+    mode: str
+    text_type: ArtifactType
+    calls: list[tuple[AssociationInput, ...]] = field(default_factory=list)
+
+    async def run(self, request: tuple[AssociationInput, ...]) -> LocalCompleted:
+        self.calls.append(request)
+        association = request[0].association
+        assert isinstance(association, SemanticAssociation)
+        outputs: tuple[PortArtifact, ...] = ()
+        outcome = "ok"
+        if self.role == "starter":
+            outcome = "bypass" if self.mode == "bypass" else "enter"
+            value = request[0].inputs[0]
+            outputs = (PortArtifact(port="value", artifact_type=self.text_type, artifact=None, value=value.value),)
+        elif self.role == "member":
+            iteration = association.task.activation.iteration
+            assert iteration is not None
+            outcome = (
+                "failure" if self.mode == "failure" else "exit" if self.mode == "exit" and iteration == 1 else "again"
+            )
+            value = request[0].inputs[0]
+            assert isinstance(value.value, TextArtifactValue)
+            outputs = (
+                PortArtifact(
+                    port="value",
+                    artifact_type=self.text_type,
+                    artifact=None,
+                    value=TextArtifactValue(text=f"{value.value.text}:{iteration}"),
+                ),
+            )
+        return LocalCompleted(
+            results=(
+                AssociationResult(
+                    association=association,
+                    outcome=outcome,
+                    outputs=outputs,
+                    consumed_context_ports=frozenset(),
+                ),
+            ),
+        )
+
+
 def _admit_fixture(
     fixture: _MapFixture,
     *,
@@ -557,10 +664,7 @@ def _admit_fixture(
     port_fact_headroom: int = 8,
     provenance_edge_headroom: int = 8,
 ):
-    nodes = (fixture.expander, fixture.member_implementation, fixture.join) + (
-        (fixture.default_source,) if fixture.default_source is not None else ()
-    )
-    by_node = dict(zip(nodes, fixture.capabilities, strict=True))
+    by_node = dict(zip(fixture.implementation_nodes, fixture.capabilities, strict=True))
     data = _data(1) if data is None else data
     prepared = prepare(
         data=data,
@@ -669,12 +773,21 @@ async def _execute_membership(
     default_override: bool = False,
     member_subgraph: bool = False,
     target_count: int = 1,
+    context_membership_schema: bool = False,
+    context_schema_item_mismatch: bool = False,
+    max_children: int = 2,
+    outward_scalar: str | None = None,
+    outward_identity: bool = True,
 ):
     fixture = _map_fixture(
         control_only=control_only,
         other_count=other_count,
         default_override=default_override,
         member_subgraph=member_subgraph,
+        context_membership_schema=context_membership_schema,
+        max_children=max_children,
+        outward_scalar=outward_scalar,
+        outward_identity=outward_identity,
     )
     data = _data(target_count)
     bound_context = None
@@ -687,9 +800,10 @@ async def _execute_membership(
             replay="idempotent",
             max_attempts=1,
         )
+        context_item_type = fixture.other_type if context_schema_item_mismatch else fixture.text_type
         capability = ContextSourceCapability(
             source=SOURCE,
-            artifact_type=fixture.text_type,
+            artifact_type=context_item_type,
             uses=frozenset({"initial_binding"}),
             execution="async",
             resource_owner="caller",
@@ -709,12 +823,12 @@ async def _execute_membership(
                         target=target,
                         node=fixture.expander,
                         port="schema",
-                        artifact_type=fixture.other_type,
+                        artifact_type=fixture.collection_type if context_membership_schema else fixture.other_type,
                         source=SOURCE,
                         selector=ContextSelector(fields=()),
                         requirement="required",
                         bounds=RetrievalBounds(max_items=1, max_bytes=6, max_requests=1),
-                        materialization=ContextMaterialization(kind="collection", item_type=fixture.text_type),
+                        materialization=ContextMaterialization(kind="collection", item_type=context_item_type),
                     ),
                 ),
                 capabilities=(capability,),
@@ -761,10 +875,7 @@ async def _execute_membership(
         + context_item_bytes
         + (context_item_bytes if bound_context is not None else 0)
     )
-    nodes = (fixture.expander, fixture.member_implementation, fixture.join) + (
-        (fixture.default_source,) if fixture.default_source is not None else ()
-    )
-    by_node = dict(zip(nodes, fixture.capabilities, strict=True))
+    by_node = dict(zip(fixture.implementation_nodes, fixture.capabilities, strict=True))
     started = asyncio.Event() if cancel_before_result else None
     release = asyncio.Event() if cancel_before_result else None
     callbacks = {
@@ -786,6 +897,7 @@ async def _execute_membership(
             started=started if node == fixture.expander else None,
             release=release if node == fixture.expander else None,
             cross_ready=asyncio.Event() if node == fixture.expander and response_mode == "cross_association" else None,
+            passthrough=node == fixture.member_implementation and outward_scalar is not None,
         )
         for node in by_node
     }
@@ -827,6 +939,343 @@ async def _execute_membership(
     else:
         result = await running.wait()
     return fixture, result, callbacks
+
+
+async def _execute_loop_resolution(mode: str):
+    loop_bound = 1 if mode == "prior_continue" else 2
+    owner = WorkflowId.new()
+    starter, member, ordinary, join = (NodeId.new(workflow=owner) for _ in range(4))
+    text_type = ArtifactType(name="text", revision=1)
+    starter_operation = OperationSpec(
+        name="starter",
+        inputs=(InputPort(name="initial", artifact_type=text_type),),
+        outputs=(OutputPort(name="value", artifact_type=text_type),),
+        output_dependencies=(
+            OutputDependency(output="value", inputs=frozenset({"initial"}), identity_input="initial"),
+        ),
+        outcomes=(
+            _outcome("enter", produced=frozenset({"value"}), max_output_bytes=32),
+            _outcome("bypass", produced=frozenset({"value"}), max_output_bytes=32),
+        ),
+    )
+    member_operation = OperationSpec(
+        name="member",
+        inputs=(InputPort(name="previous", artifact_type=text_type),),
+        outputs=(OutputPort(name="value", artifact_type=text_type),),
+        output_dependencies=(OutputDependency(output="value", inputs=frozenset({"previous"}), identity_input=None),),
+        outcomes=(
+            _outcome("again", produced=frozenset({"value"}), max_output_bytes=32),
+            _outcome("exit", produced=frozenset({"value"}), max_output_bytes=32),
+            replace(
+                _outcome("failure", produced=frozenset({"value"}), max_output_bytes=32),
+                category="failure",
+            ),
+        ),
+    )
+    ordinary_operation = OperationSpec(
+        name="ordinary",
+        inputs=(InputPort(name="value", artifact_type=text_type),),
+        outputs=(),
+        output_dependencies=(),
+        outcomes=(_outcome("ok"),),
+    )
+    join_operation = _operation("join", (_outcome("ok"),))
+    interface = OperationSpec(
+        name="loop-root",
+        inputs=(InputPort(name="initial", artifact_type=text_type),),
+        outputs=(),
+        output_dependencies=(),
+        outcomes=(_outcome("ok", max_activations=12, max_output_bytes=128),),
+    )
+    static = admit_static_workflow(
+        workflow=owner,
+        interface=interface,
+        nodes=(
+            OperationNode(id=starter, operation=starter_operation),
+            OperationNode(id=member, operation=member_operation),
+            OperationNode(id=ordinary, operation=ordinary_operation),
+            OperationNode(id=join, operation=join_operation),
+        ),
+        input_bindings=(
+            InputBinding(
+                source=WorkflowInputRef(port="initial"),
+                destination=NodeInputRef(node=starter, port="initial"),
+            ),
+            InputBinding(
+                source=NodeOutputRef(node=starter, port="value"),
+                destination=NodeInputRef(node=member, port="previous"),
+            ),
+            InputBinding(
+                source=NodeOutputRef(node=member, port="value"),
+                destination=NodeInputRef(node=ordinary, port="value"),
+            ),
+        ),
+        output_bindings=(),
+        outcome_bindings=(
+            OutcomeBinding(
+                source=NodeOutcomeRef(node=join, outcome="ok"),
+                destination=WorkflowOutcomeRef(outcome="ok"),
+            ),
+        ),
+        sequence=(
+            SequenceEdge(before=starter, after=member),
+            SequenceEdge(before=member, after=ordinary),
+            SequenceEdge(before=ordinary, after=join),
+        ),
+        choices=(),
+        protection=(),
+        limits=WorkflowLimits(
+            max_nodes=4,
+            max_bindings=4,
+            max_sequence_edges=3,
+            max_choices=0,
+            max_branch_members=0,
+            max_subgraph_depth=1,
+            max_choice_states=1,
+        ),
+    )
+    workflow = admit_activation_workflow(
+        workflow=static,
+        scopes=(
+            DynamicScope(
+                workflow=static,
+                maps=(),
+                joins=(
+                    KeyedJoinDecl(
+                        source=starter,
+                        join=join,
+                        accepted_categories=frozenset({"success"}),
+                        reduction="all_by_key",
+                    ),
+                ),
+                loops=(
+                    LoopDecl(
+                        starter=starter,
+                        member=member,
+                        join=join,
+                        enter_outcomes=frozenset({"enter"}),
+                        bypass_outcomes=frozenset({"bypass"}),
+                        continue_outcomes=frozenset({"again"}),
+                        exit_outcomes=frozenset({"exit", "failure"}),
+                        initial=(
+                            LoopInitialBinding(
+                                source=NodeOutputRef(node=starter, port="value"),
+                                destination=NodeInputRef(node=member, port="previous"),
+                            ),
+                        ),
+                        carried=(
+                            LoopCarriedBinding(
+                                source=NodeOutputRef(node=member, port="value"),
+                                destination=NodeInputRef(node=member, port="previous"),
+                            ),
+                        ),
+                        max_iterations=loop_bound,
+                    ),
+                ),
+            ),
+        ),
+        limits=DynamicLimits(
+            max_maps=0,
+            max_joins=1,
+            max_loops=1,
+            max_children_per_map=0,
+            max_iterations_per_loop=loop_bound,
+            max_dynamic_depth=1,
+            max_activation_occurrences=loop_bound + 3,
+        ),
+    )
+    operations = {
+        starter: starter_operation,
+        member: member_operation,
+        ordinary: ordinary_operation,
+        join: join_operation,
+    }
+    capabilities = tuple(_capability(operation, index) for index, operation in enumerate(operations.values()))
+    by_node = dict(zip(operations, capabilities, strict=True))
+    data = _data(1)
+    target = next(iter(data.targets))
+    prepared = prepare(
+        data=data,
+        workflow=workflow,
+        activation_limits=ActivationLimits(
+            max_events=24,
+            max_entries=loop_bound + 3,
+            max_parent_depth=2,
+        ),
+        bound_inputs=(BoundInput(target=target, source=target, port="initial", artifact_type=text_type),),
+        configuration=PreparationConfiguration(
+            purpose="execution_only", required_protection_outcomes=frozenset(), hard_request_limit=None
+        ),
+        state=StateRevisionView(revisions=frozenset()),
+        selections=tuple(
+            ImplementationSelection(
+                node=node,
+                implementation=by_node[node].implementation,
+                configuration=by_node[node].configuration,
+            )
+            for node in operations
+        ),
+        capabilities=capabilities,
+        limits=_limits(capabilities=4, slots=loop_bound + 3),
+    )
+    context = admit_context_plan(
+        prepared=prepared,
+        bound_context=None,
+        adaptive_retrievals=(),
+        context_capabilities=(),
+    )
+    admitted = admit_execution_plan(
+        context=context,
+        capabilities=capabilities,
+        policies=tuple(
+            OperationExecutionPolicy(
+                node=node,
+                kind="local",
+                request=None,
+                safe_detachment="forbidden",
+                implementations=(
+                    ExecutionImplementation(
+                        implementation=by_node[node].implementation,
+                        configuration=by_node[node].configuration,
+                        capability=by_node[node],
+                        request=None,
+                    ),
+                ),
+                result_outcomes=frozenset(outcome.name for outcome in operation.outcomes),
+                runtime_outcomes=tuple(
+                    replace(row, category="failure")
+                    if row.condition == "result" and row.reported_outcome == "failure"
+                    else row
+                    for row in _rows(frozenset(outcome.name for outcome in operation.outcomes))
+                ),
+            )
+            for node, operation in operations.items()
+        ),
+        decisions=(),
+        assessment_productions=(),
+        assessment_limits=AssessmentLimits(
+            max_productions=0,
+            max_findings_per_production=0,
+            max_finding_code_bytes=0,
+            max_absence_queries=0,
+            max_assessment_facts=0,
+            max_port_facts=12,
+            max_provenance_edges=10,
+        ),
+    )
+    callbacks = {
+        node: _LoopCallback(
+            role="starter" if node == starter else "member" if node == member else "ordinary",
+            mode=mode,
+            text_type=text_type,
+        )
+        for node in operations
+    }
+    handles = tuple(
+        ImplementationHandle(
+            implementation=by_node[node].implementation,
+            operation=operation,
+            configuration=by_node[node].configuration,
+            local=callbacks[node],
+            transport=None,
+            resource=None,
+        )
+        for node, operation in operations.items()
+    )
+    result = await (
+        await start_execution(
+            admitted=admitted,
+            capabilities=capabilities,
+            services=ExecutionServices(
+                handles=handles,
+                context_resources=(),
+                limits=ExecutionLimits(
+                    max_local_in_flight=4,
+                    max_remote_outstanding=0,
+                    max_runtime_artifacts=8,
+                    max_runtime_artifact_bytes=128,
+                    max_collection_items=1,
+                ),
+                decision_limits=DecisionLimits(max_pending=0, max_lifetime_ns=0),
+                clock=_Clock(),
+            ),
+        )
+    ).wait()
+    return result, callbacks, starter, member, ordinary
+
+
+@pytest.mark.parametrize(
+    ("case_id", "mode", "expected_resolution"),
+    (
+        ("map/loop_exit", "exit", "member:1:exit"),
+        ("map/loop_bypass", "bypass", "blocked:bypass"),
+        ("map/loop_prior_continue", "prior_continue", "blocked:no_exit"),
+        ("map/loop_failure", "failure", "blocked:no_exit"),
+        ("map/loop_overflow", "overflow", "blocked:no_exit"),
+    ),
+)
+def test_loop_scalar_source_resolution_matches_frozen_case(
+    case_id: str,
+    mode: str,
+    expected_resolution: str,
+) -> None:
+    asyncio.run(_assert_loop_scalar_source_resolution(case_id, mode, expected_resolution))
+
+
+async def _assert_loop_scalar_source_resolution(
+    case_id: str,
+    mode: str,
+    expected_resolution: str,
+) -> None:
+    case = MAP_CASES[case_id]
+    result, callbacks, starter, member, ordinary = await _execute_loop_resolution(mode)
+    assert case["expected"]["state"]["resolution"] == expected_resolution
+    entries = result.states[0].entries
+    ordinary_entry = next(entry for entry in entries if entry.template == ordinary)
+    starter_entry = next(entry for entry in entries if entry.template == starter)
+
+    if mode == "exit":
+        exited = next(
+            entry
+            for entry in entries
+            if entry.template == member and entry.activation.iteration == 1 and entry.outcome == "exit"
+        )
+        assert ordinary_entry.status == "success"
+        assert len(callbacks[ordinary].calls) == 1
+        ordinary_input = callbacks[ordinary].calls[0][0].inputs[0]
+        producer = next(
+            fact
+            for fact in result.provenance
+            if isinstance(fact.key, OperationOutputKey)
+            and fact.key.activation == exited.activation
+            and fact.key.port == "value"
+        )
+        assert ordinary_input.artifact == producer.artifact
+        assert ordinary_input.value == TextArtifactValue(text="target-0:0:1")
+    else:
+        assert ordinary_entry.status == "blocked"
+        assert not callbacks[ordinary].calls
+
+    if mode == "bypass":
+        assert starter_entry.outcome == "bypass"
+        assert not any(entry.template == member for entry in entries)
+    elif mode == "prior_continue":
+        iterations = [entry for entry in entries if entry.template == member]
+        assert [(entry.activation.iteration, entry.outcome) for entry in iterations] == [(0, "again")]
+    elif mode == "failure":
+        iterations = [entry for entry in entries if entry.template == member]
+        assert [(entry.activation.iteration, entry.status, entry.outcome) for entry in iterations] == [
+            (0, "failure", "failure")
+        ]
+    elif mode == "overflow":
+        iterations = sorted(
+            (entry for entry in entries if entry.template == member),
+            key=lambda entry: cast(int, entry.activation.iteration),
+        )
+        assert [(entry.activation.iteration, entry.outcome) for entry in iterations] == [
+            (0, "again"),
+            (1, "again"),
+        ]
 
 
 def test_map_operation_declaration_admits_through_production() -> None:
@@ -882,6 +1331,166 @@ def test_control_only_map_declaration_admits_through_production() -> None:
     assert case["expected"] == {"status": "accepted"}
     assert fixture.workflow.scopes[0].maps[0].item_input is None
     _admit_fixture(fixture)
+
+
+def test_map_dynamic_item_dependency_overrides_static_default_summary() -> None:
+    case = MAP_CASES["map/default_override_dependency"]
+    fixture = _map_fixture(default_override=True)
+    _admit_fixture(fixture)
+    assert case["expected"] == {"status": "accepted"}
+
+
+def test_boolean_collection_limit_rejects_at_typed_constructor() -> None:
+    case = MAP_CASES["map/collection_items_invalid_limit"]
+    with pytest.raises(EffectRejected) as error:
+        ExecutionLimits(
+            max_local_in_flight=1,
+            max_remote_outstanding=0,
+            max_runtime_artifacts=1,
+            max_runtime_artifact_bytes=1,
+            max_collection_items=True,
+        )
+    assert error.value.code == EffectCode.INVALID_TYPE
+    assert error.value.code.value == case["expected"]["code"]
+
+
+def test_map_collection_schema_minimum_conflict_rejects_execution_admission() -> None:
+    asyncio.run(_assert_map_collection_schema_minimum_conflict())
+
+
+async def _assert_map_collection_schema_minimum_conflict() -> None:
+    case = MAP_CASES["map/context_minimum_conflict"]
+    with pytest.raises(EffectRejected) as error:
+        await _execute_membership(
+            1,
+            other_count=1,
+            context_membership_schema=True,
+        )
+    assert error.value.code == EffectCode.CONTRADICTORY
+    assert error.value.code.value == case["expected"]["code"]
+
+
+def test_map_collection_item_schema_conflict_rejects_execution_admission() -> None:
+    asyncio.run(_assert_map_collection_item_schema_conflict())
+
+
+async def _assert_map_collection_item_schema_conflict() -> None:
+    case = MAP_CASES["map/collection_item_schema_conflict"]
+    with pytest.raises(EffectRejected) as error:
+        await _execute_membership(
+            1,
+            other_count=1,
+            context_membership_schema=True,
+            context_schema_item_mismatch=True,
+        )
+    assert error.value.code == EffectCode.CONTRADICTORY
+    assert error.value.code.value == case["expected"]["code"]
+
+
+def test_false_map_item_identity_summary_rejects_execution_admission() -> None:
+    case = MAP_CASES["map/false_identity_summary"]
+    false_identity = _map_fixture(max_children=1, outward_scalar="workflow_output")
+    with pytest.raises(EffectRejected) as error:
+        _admit_fixture(false_identity)
+    assert error.value.code == EffectCode.CONTRADICTORY
+    assert error.value.code.value == case["expected"]["code"]
+
+    nonidentity = _map_fixture(
+        max_children=1,
+        outward_scalar="workflow_output",
+        outward_identity=False,
+    )
+    _admit_fixture(nonidentity)
+
+
+def test_map_item_dependency_summary_mismatch_rejects_execution_admission() -> None:
+    case = MAP_CASES["map/dependency_summary_mismatch"]
+    fixture = _map_fixture(
+        max_children=1,
+        default_override=True,
+        outward_scalar="workflow_output",
+        outward_identity=False,
+        outward_value_depends_on_default=False,
+    )
+    with pytest.raises(EffectRejected) as error:
+        _admit_fixture(fixture)
+    assert error.value.code == EffectCode.CONTRADICTORY
+    assert error.value.code.value == case["expected"]["code"]
+
+
+def test_bound_context_cannot_override_a_dynamic_map_item() -> None:
+    asyncio.run(_assert_bound_context_map_item_conflict())
+
+
+async def _assert_bound_context_map_item_conflict() -> None:
+    case = MAP_CASES["map/context_override_conflict"]
+    fixture = _map_fixture(context_item_override=True)
+    data = _data(1)
+    target = next(iter(data.targets))
+    policy = PhysicalRequestPolicy(
+        visibility="dispatch_and_settlement",
+        pre_dispatch_control="executor",
+        retry_owner="executor",
+        replay="idempotent",
+        max_attempts=1,
+    )
+    capability = ContextSourceCapability(
+        source=SOURCE,
+        artifact_type=fixture.text_type,
+        uses=frozenset({"initial_binding"}),
+        execution="async",
+        resource_owner="caller",
+        cancellation="cooperative_ack",
+        settlement="explicit_ack",
+        usage="exact",
+        request=policy,
+        safe_detachment="forbidden",
+    )
+    provider = _ContextProvider(items=("context",))
+    binding = await (
+        await start_initial_binding(
+            data=data,
+            workflow=fixture.workflow,
+            declarations=(
+                InitialContextDecl(
+                    target=target,
+                    node=fixture.member,
+                    port="item",
+                    artifact_type=fixture.text_type,
+                    source=SOURCE,
+                    selector=ContextSelector(fields=()),
+                    requirement="required",
+                    bounds=RetrievalBounds(max_items=1, max_bytes=7, max_requests=1),
+                    materialization=ContextMaterialization(kind="single", item_type=fixture.text_type),
+                ),
+            ),
+            capabilities=(capability,),
+            resources=(
+                ContextResource(
+                    source=SOURCE,
+                    capability=capability,
+                    lease=ResourceLease.create(owner="caller", safe_detachment="forbidden", handle=provider),
+                    factory=None,
+                ),
+            ),
+            limits=BindingLimits(
+                max_declarations=1,
+                max_sources=1,
+                max_capabilities=1,
+                max_selector_fields=0,
+                max_selector_bytes=0,
+                max_items=1,
+                max_bytes=7,
+                max_requests=1,
+                max_resources=1,
+            ),
+        )
+    ).wait()
+    assert binding.context is not None
+    with pytest.raises(EffectRejected) as error:
+        _admit_fixture(fixture, data=data, bound_context=binding.context)
+    assert error.value.code == EffectCode.CONTRADICTORY
+    assert error.value.code.value == case["expected"]["code"]
 
 
 @pytest.mark.parametrize(
@@ -973,6 +1582,41 @@ def test_map_source_admission_precedence_matches_frozen_case(
     assert error.value.code is code
     assert case["expected"]["status"] == "rejected"
     assert case["expected"]["code"] == code.value
+
+
+@pytest.mark.parametrize("case_id", ("map/map_loop_duplicate_source", "map/duplicate_loop_source"))
+def test_duplicate_dynamic_source_roles_reject_before_shape_checks(case_id: str) -> None:
+    case = MAP_CASES[case_id]
+    workflow, starter, member, _ = _loop_workflow(2)
+    scope = workflow.scopes[0]
+    maps = scope.maps
+    loops = scope.loops
+    if case_id == "map/map_loop_duplicate_source":
+        maps = (
+            MapDecl(
+                expander=starter,
+                member=member,
+                expansion_outcomes=frozenset({"again"}),
+                max_children=1,
+            ),
+        )
+    else:
+        loops = (scope.loops[0], scope.loops[0])
+
+    with pytest.raises(ContractViolation) as error:
+        admit_activation_workflow(
+            workflow=workflow.workflow,
+            scopes=(replace(scope, maps=maps, loops=loops),),
+            limits=replace(
+                workflow.limits,
+                max_maps=len(maps),
+                max_loops=len(loops),
+                max_children_per_map=1,
+                max_activation_occurrences=8,
+            ),
+        )
+    assert error.value.code == ValidationCode.DUPLICATE
+    assert error.value.code.value == case["expected"]["code"]
 
 
 def test_map_provenance_capacity_rejects_before_execution_at_one_over() -> None:
@@ -1082,6 +1726,85 @@ async def _assert_cross_returned_map_association() -> None:
     assert not any(isinstance(fact.key, (OperationOutputKey, MapItemKey)) for fact in result.provenance)
     assert not callbacks[fixture.member].calls
     assert case["expected"]["state"]["terminal"] == "malformed_response"
+
+
+@pytest.mark.parametrize("destination", ("join", "ordinary", "workflow_output"))
+@pytest.mark.parametrize("maximum", (0, 1))
+def test_map_scalar_source_resolution_uses_the_unique_dynamic_member(destination: str, maximum: int) -> None:
+    asyncio.run(_assert_map_scalar_source_resolution(destination, maximum))
+
+
+async def _assert_map_scalar_source_resolution(destination: str, maximum: int) -> None:
+    case = MAP_CASES[f"map/resolve_{destination}_max_{maximum}"]
+    fixture, result, callbacks = await _execute_membership(
+        maximum,
+        item_values=("a",) if maximum else (),
+        max_children=maximum,
+        outward_scalar=destination,
+        outward_identity=destination != "workflow_output",
+    )
+    expected_resolution = case["expected"]["state"]["resolution"]
+    if destination == "workflow_output":
+        values = [fact for fact in result.final_outputs if fact.port == "value"]
+        assert len(values) == maximum
+        assert expected_resolution == ("member:0" if maximum else "blocked:workflow_output")
+        return
+
+    destination_node = fixture.join
+    if destination == "ordinary":
+        destination_node = next(
+            node
+            for node in fixture.implementation_nodes
+            if node not in {fixture.expander, fixture.member_implementation, fixture.join}
+        )
+    calls = callbacks[destination_node].calls
+    assert len(calls) == maximum
+    if maximum:
+        assert calls[0][0].inputs[0].value == TextArtifactValue(text="a")
+        assert expected_resolution == "member:0"
+    else:
+        destination_entry = next(entry for entry in result.states[0].entries if entry.template == destination_node)
+        assert destination_entry.status == "blocked"
+        assert expected_resolution == f"blocked:{destination}"
+
+
+@pytest.mark.parametrize("destination", ("join", "ordinary", "workflow_output"))
+def test_map_scalar_source_resolution_rejects_ambiguous_fanout(destination: str) -> None:
+    case = MAP_CASES[f"map/resolve_{destination}_max_2"]
+    with pytest.raises(ContractViolation) as error:
+        _map_fixture(max_children=2, outward_scalar=destination)
+    assert error.value.code == ValidationCode.UNSUPPORTED
+    assert error.value.code.value == case["expected"]["code"]
+
+
+@pytest.mark.parametrize("destination", ("join", "ordinary", "workflow_output"))
+def test_map_scalar_source_resolution_blocks_an_empty_max_one_expansion(destination: str) -> None:
+    asyncio.run(_assert_empty_max_one_map_scalar_resolution(destination))
+
+
+async def _assert_empty_max_one_map_scalar_resolution(destination: str) -> None:
+    case = MAP_CASES[f"map/resolve_{destination}_max_1_empty"]
+    fixture, result, callbacks = await _execute_membership(
+        0,
+        item_values=(),
+        max_children=1,
+        outward_scalar=destination,
+        outward_identity=destination != "workflow_output",
+    )
+    if destination == "workflow_output":
+        assert not any(fact.port == "value" for fact in result.final_outputs)
+    else:
+        destination_node = fixture.join
+        if destination == "ordinary":
+            destination_node = next(
+                node
+                for node in fixture.implementation_nodes
+                if node not in {fixture.expander, fixture.member_implementation, fixture.join}
+            )
+        assert not callbacks[destination_node].calls
+        entry = next(item for item in result.states[0].entries if item.template == destination_node)
+        assert entry.status == "blocked"
+    assert case["expected"]["state"]["resolution"] == f"blocked:{destination}"
 
 
 def test_map_overflow_publishes_collection_without_item_facts() -> None:

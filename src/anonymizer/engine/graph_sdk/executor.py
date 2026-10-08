@@ -97,7 +97,15 @@ from anonymizer.engine.graph_sdk.resources import (
     SafeDetachment,
     close_resource,
 )
-from anonymizer.graph._values import ActivationKey, ArtifactRef, ContractViolation, DatumId, InvocationId, TaskAttemptId
+from anonymizer.graph._values import (
+    ActivationKey,
+    ArtifactRef,
+    ContractViolation,
+    DatumId,
+    InvocationId,
+    TaskAttemptId,
+    ValidationCode,
+)
 from anonymizer.graph.activation import (
     ActivationSeed,
     ActivationState,
@@ -861,7 +869,14 @@ def _validate_map_expansions(
         if map_replacements:
             replacement_choices.append(tuple(map_replacements))
     for replacements in product(*replacement_choices):
-        validate_dynamic_input_summaries(workflow.workflow, replacements)
+        try:
+            validate_dynamic_input_summaries(workflow.workflow, replacements)
+        except ContractViolation as error:
+            if error.code is ValidationCode.MISSING:
+                reject(EffectCode.MISSING)
+            if error.code is ValidationCode.CONTRADICTORY:
+                reject(EffectCode.CONTRADICTORY)
+            raise
 
 
 def _validate_execution_fact_capacity(
@@ -3503,9 +3518,9 @@ def _final_outputs(
                 (entry.activation for entry in state.entries if entry.activation.parent is None),
                 None,
             )
-            source_activation = (
-                None if root_anchor is None else _source_activation(state, root_anchor, output_binding.source.node)
-            )
+            if root_anchor is None:
+                continue
+            source_activation = _source_activation(state, root_anchor, output_binding.source.node)
             terminal = next(
                 (
                     entry
@@ -3526,14 +3541,22 @@ def _final_outputs(
             )
             if not any(fact.key == producer and fact.artifact == artifact for fact in provenance):
                 reject(EffectCode.MISSING)
-            workflow_outcome = next(
-                (
-                    binding.destination.outcome
-                    for binding in prepared.workflow.workflow.outcome_bindings
-                    if binding.source.node == output_binding.source.node and binding.source.outcome == terminal.outcome
-                ),
-                None,
-            )
+            workflow_outcome = None
+            for binding in prepared.workflow.workflow.outcome_bindings:
+                outcome_activation = _source_activation(state, root_anchor, binding.source.node)
+                outcome_entry = next(
+                    (
+                        entry
+                        for entry in state.entries
+                        if entry.activation == outcome_activation
+                        and entry.status == "success"
+                        and entry.outcome == binding.source.outcome
+                    ),
+                    None,
+                )
+                if outcome_entry is not None:
+                    workflow_outcome = binding.destination.outcome
+                    break
             if workflow_outcome is None:
                 continue
             results.append(

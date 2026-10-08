@@ -687,9 +687,53 @@ def _normalize(
                     predecessors = [template for template in predecessors if template != map_member.expander]
                 prior_entries: list[ActivationEntry] = []
                 missing_prior = False
+                impossible_prior = False
                 for template in predecessors:
                     seed = _reservation_for(reservations, template, context)
                     prior = entries.get(seed.activation) if seed is not None else None
+                    predecessor_map = next(
+                        (
+                            declaration
+                            for declaration in scope.maps
+                            if declaration.member == template and declaration.max_children <= 1
+                        ),
+                        None,
+                    )
+                    if prior is None and predecessor_map is not None:
+                        expander_seed = _reservation_for(reservations, predecessor_map.expander, context)
+                        expansion = expansions.get(expander_seed.activation) if expander_seed is not None else None
+                        if expansion is not None and expansion.status == "closed":
+                            if len(expansion.members) == 1:
+                                prior = entries.get(next(iter(expansion.members)))
+                            else:
+                                impossible_prior = True
+                    predecessor_loop = next(
+                        (declaration for declaration in scope.loops if declaration.member == template),
+                        None,
+                    )
+                    if prior is None and predecessor_loop is not None:
+                        starter_seed = _reservation_for(reservations, predecessor_loop.starter, context)
+                        starter_entry = entries.get(starter_seed.activation) if starter_seed is not None else None
+                        loop_entries = [
+                            item
+                            for item in entries.values()
+                            if starter_seed is not None
+                            and item.template == template
+                            and item.activation.parent == starter_seed.activation
+                        ]
+                        exited = [
+                            item
+                            for item in loop_entries
+                            if item.status == "success" and item.outcome in predecessor_loop.exit_outcomes
+                        ]
+                        if len(exited) == 1:
+                            prior = exited[0]
+                        elif (
+                            starter_entry is not None
+                            and starter_entry.status in _TERMINAL
+                            and all(item.status in _TERMINAL for item in loop_entries)
+                        ):
+                            impossible_prior = True
                     if prior is None or prior.status not in _TERMINAL:
                         missing_prior = True
                     else:
@@ -716,11 +760,54 @@ def _normalize(
                         continue
                     source_seed = _reservation_for(reservations, source.node, context)
                     source_entry = entries.get(source_seed.activation) if source_seed is not None else None
+                    source_map = next(
+                        (
+                            declaration
+                            for declaration in scope.maps
+                            if declaration.member == source.node and declaration.max_children <= 1
+                        ),
+                        None,
+                    )
+                    if source_entry is None and source_map is not None:
+                        expander_seed = _reservation_for(reservations, source_map.expander, context)
+                        expansion = expansions.get(expander_seed.activation) if expander_seed is not None else None
+                        if expansion is not None and expansion.status == "closed":
+                            if len(expansion.members) == 1:
+                                source_entry = entries.get(next(iter(expansion.members)))
+                            else:
+                                impossible = True
+                    source_loop = next(
+                        (declaration for declaration in scope.loops if declaration.member == source.node),
+                        None,
+                    )
+                    if source_entry is None and source_loop is not None:
+                        starter_seed = _reservation_for(reservations, source_loop.starter, context)
+                        starter_entry = entries.get(starter_seed.activation) if starter_seed is not None else None
+                        loop_entries = [
+                            item
+                            for item in entries.values()
+                            if starter_seed is not None
+                            and item.template == source.node
+                            and item.activation.parent == starter_seed.activation
+                        ]
+                        exited = [
+                            item
+                            for item in loop_entries
+                            if item.status == "success" and item.outcome in source_loop.exit_outcomes
+                        ]
+                        if len(exited) == 1:
+                            source_entry = exited[0]
+                        elif (
+                            starter_entry is not None
+                            and starter_entry.status in _TERMINAL
+                            and all(item.status in _TERMINAL for item in loop_entries)
+                        ):
+                            impossible = True
                     if source_entry is None or source_entry.status not in _TERMINAL:
                         inputs_ready = False
                     elif not _produces(workflow, source_entry, source.port):
                         impossible = True
-                blocked = impossible
+                blocked = impossible_prior or impossible
                 ready = not missing_prior and inputs_ready and not blocked
             target = "blocked" if blocked else "ready" if ready else "unstarted"
             if target != entry.status:
