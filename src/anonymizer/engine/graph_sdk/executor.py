@@ -3719,11 +3719,18 @@ async def _cleanup_execution(
 ) -> tuple[tuple[CleanupFact, ...], tuple[CleanupAssociation, ...]]:
     leases = {item.resource.resource: item.resource for item in handles if item.resource is not None}
     leases.update({item.resource: item for item in context_leases.values()})
-    unsettled = requests.remote_outstanding | requests.local_in_flight
-    uncertain_resources = {request_resources[request] for request in unsettled if request in request_resources}
+    local_resources = {
+        request_resources[request] for request in requests.local_in_flight if request in request_resources
+    }
+    remote_resources = {
+        request_resources[request] for request in requests.remote_outstanding if request in request_resources
+    }
     cleanup_values: list[CleanupFact] = []
     for lease in leases.values():
-        if lease.resource in uncertain_resources and lease.owner == "sdk" and lease.safe_detachment == "forbidden":
+        if lease.owner == "sdk" and (
+            lease.resource in local_resources
+            or (lease.resource in remote_resources and lease.safe_detachment == "forbidden")
+        ):
             cleanup_values.append(CleanupFact(resource=lease.resource, owner=lease.owner, disposition="left_open"))
         else:
             cleanup_values.append(await close_resource(lease))
