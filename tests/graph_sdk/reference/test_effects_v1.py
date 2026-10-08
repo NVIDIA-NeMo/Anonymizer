@@ -104,6 +104,53 @@ def test_replay_and_runtime_mapping_products_are_closed() -> None:
     assert {f"failure_{failure}" for failure in reference.FAILURE_CLASSES} <= bridge_ids
 
 
+def test_retries_require_a_terminal_for_the_same_association() -> None:
+    cross = cast(reference.Object, reference.case_by_id("retry/cross_association_predecessor")["expected"])
+    assert cross == {"code": "missing_predecessor", "status": "rejected"}
+
+
+def test_settlement_and_usage_grammar_rejects_ambiguous_completion() -> None:
+    completed = cast(
+        reference.Object,
+        reference.case_by_id("races/settlement_completed_without_remote_stop")["expected"],
+    )
+    assert completed == {"code": "invalid_settlement", "status": "rejected"}
+    missing_usage = cast(reference.Object, reference.case_by_id("races/stop_missing_usage")["expected"])
+    assert missing_usage == {"code": "invalid_usage", "status": "rejected"}
+
+
+def test_bridges_are_admitted_and_integrated_with_shared_requests() -> None:
+    fabricated = reference.reduce_trace(
+        {},
+        [
+            {"kind": "bridge_start", "node": "N0", "task": "T0"},
+            {"condition": "result", "kind": "bridge_condition", "reported_outcome": "ok", "task": "T0"},
+        ],
+    )
+    assert fabricated == {"code": "runtime_mapping", "status": "rejected"}
+    admitted = cast(reference.Object, reference.case_by_id("bridges/result")["declaration"])
+    supplied_output = reference.reduce_trace(
+        admitted,
+        [
+            {"kind": "bridge_start", "node": "N0", "task": "T0"},
+            {
+                "category": "failure",
+                "condition": "result",
+                "kind": "bridge_condition",
+                "outcome": None,
+                "reported_outcome": "ok",
+                "task": "T0",
+            },
+        ],
+    )
+    assert supplied_output == {"code": "runtime_mapping", "status": "rejected"}
+    for suffix in ("two_targets", "missing", "duplicate", "extra", "foreign"):
+        case = reference.case_by_id(f"bridges/shared_request_{suffix}")
+        kinds = [event["kind"] for event in cast(list[reference.Object], case["events"])]
+        assert "dispatch" in kinds and "result" in kinds and "bridge_emit" in kinds
+        assert cast(reference.Object, case["expected"])["status"] == "accepted"
+
+
 def test_binding_identity_resource_and_partial_receipt_witnesses() -> None:
     collision = cast(reference.Object, reference.case_by_id("binding/two_sources_same_key")["expected"])
     state = cast(reference.Object, collision["state"])
@@ -116,6 +163,33 @@ def test_binding_identity_resource_and_partial_receipt_witnesses() -> None:
     partial = cast(reference.Object, reference.case_by_id("binding/required_failure_preserves_prior")["expected"])
     assert cast(reference.Object, partial["state"])["binding_terminal"] == "failed"
     assert len(cast(list[object], cast(reference.Object, partial["state"])["artifacts"])) == 1
+
+
+def test_binding_results_require_the_dispatched_declaration_association() -> None:
+    unsolicited = cast(reference.Object, reference.case_by_id("binding/unsolicited_source_result")["expected"])
+    assert unsolicited == {"code": "unsolicited_source", "status": "rejected"}
+    wrong = cast(reference.Object, reference.case_by_id("binding/wrong_source")["expected"])
+    assert wrong == {"code": "foreign_source", "status": "rejected"}
+    for suffix, defect in (
+        ("missing_result", "missing_keyed_result"),
+        ("duplicate_result", "duplicate_keyed_result"),
+        ("foreign_result_association", "foreign_keyed_result"),
+    ):
+        result = cast(reference.Object, reference.case_by_id(f"binding/{suffix}")["expected"])
+        assert defect in cast(list[str], cast(reference.Object, result["state"])["defects"])
+
+
+def test_admission_errors_are_derived_from_malformed_declarations() -> None:
+    assert reference.admit({"admission_error": "invented"}) == {
+        "code": "invalid_value",
+        "status": "rejected",
+    }
+    cases = reference.generate_cases()
+    assert all("admission_error" not in cast(reference.Object, case["declaration"]) for case in cases)
+    assert (
+        cast(reference.Object, reference.case_by_id("admission/aggregate_limit")["expected"])["code"]
+        == "limit_exceeded"
+    )
 
 
 def test_resource_cleanup_respects_remote_uncertainty_and_ownership() -> None:

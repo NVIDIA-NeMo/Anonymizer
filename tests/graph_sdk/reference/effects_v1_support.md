@@ -23,7 +23,9 @@ The generator enumerates these declared products and named boundary families:
   missing, duplicate, extra, and foreign association defect;
 - retry paths cross the three replay levels with their boundary failure class,
   plus correction, repair, failover, cross-policy use, cumulative attempt
-  exhaustion, mixed exhausted/eligible sharing, and graph-budget denial;
+  exhaustion, mixed exhausted/eligible sharing, graph-budget denial, and a
+  cross-association predecessor negative. Retry, correction, and failover use
+  the terminal fact for each exact association and its bound policy;
 - request races enumerate success and failure with settlement before and after,
   cancel before result, result before cancel, trusted stop, unknown stop/Lost,
   late result, identical and conflicting terminal, identical and conflicting
@@ -31,12 +33,17 @@ The generator enumerates these declared products and named boundary families:
 - binding covers required/optional failure, reordered sources, omitted optional,
   oversize rejection, pre/post-dispatch cancellation, two sources returning the
   same key/version, and two declarations sharing one source and resource while
-  retaining one request per declaration;
+  retaining one request per declaration. Result and failure events name the
+  dispatched one-declaration request; unsolicited, wrong-source, empty,
+  duplicate, and foreign-association results are separate negatives;
 - cleanup crosses caller/SDK ownership, local and remote outstanding work,
   forbidden and independently safe detachment, trusted stop, close failure,
   and close uncertainty;
 - bridges enumerate every runtime condition, all six failure classes, abnormal
-  `None`, named result, and the no-attempt unstarted closure;
+  `None`, named result, and the no-attempt unstarted closure. Each condition is
+  resolved through an admitted mapping rather than through event-provided
+  outcome/category values. The shared two-task request is integrated with both
+  reordered success and every keyed-result defect before both bridge emits;
 - decisions cover matching resume while unrelated work advances, deadline,
   cancellation, implementation failure, and foreign, stale, unknown, duplicate,
   and late identity classes;
@@ -44,6 +51,12 @@ The generator enumerates these declared products and named boundary families:
   owner, duplicate, missing, unsupported, contradictory, outcome mapping,
   category, bounded catalog, identical failover policy, and one-implementation
   local/decision rules.
+
+The admission cases contain the malformed declaration itself. There is no
+fixture-only expected-error field or reducer shortcut. Settlement disposition,
+remote-stop certainty, and exact-or-unknown usage form one closed grammar:
+completed/rejected/stopped require trusted remote stop, while unknown retains
+remote uncertainty; trusted cancellation stop also carries usage.
 
 Only causal sequences are emitted. Policy binding precedes reservation;
 reservation precedes dispatch; dispatch precedes terminal and settlement;

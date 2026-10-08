@@ -81,8 +81,10 @@ def load_cases(value: object) -> tuple[Object, ...]:
 def _initial(declaration: Object) -> Object:
     return {
         "artifacts": [],
+        "association_terminals": {},
         "attempts": {},
         "binding_sources": {},
+        "binding_declarations": declaration.get("binding_declarations", {}),
         "binding_terminal": None,
         "bindings": {},
         "cancel_requested": [],
@@ -99,6 +101,8 @@ def _initial(declaration: Object) -> Object:
         "remote_outstanding": [],
         "request_associations": {},
         "request_failures": {},
+        "request_policies": {},
+        "reservation_policies": {},
         "reservations": {},
         "resource_count": 0,
         "resources": {},
@@ -132,6 +136,14 @@ def _remove(state: Object, key: str, value: str) -> None:
         state[key] = values
 
 
+def _valid_usage(value: Json) -> bool:
+    if value == "unknown":
+        return True
+    if not isinstance(value, dict) or set(value) != {"input", "output"}:
+        return False
+    return all(isinstance(item, int) and not isinstance(item, bool) and item >= 0 for item in value.values())
+
+
 def _advance(state: Object, declaration: Object, event: Object) -> Object | None:
     kind = cast(str, event.get("kind"))
     reservations = _object(state["reservations"])
@@ -153,14 +165,25 @@ def _advance(state: Object, declaration: Object, event: Object) -> Object | None
         if any(policy not in _strings(bindings.get(item, [])) for item in associations):
             return _reject("cross_policy")
         maximum = cast(int, _object(_object(state["policies"])[policy])["max_attempts"])
-        if event.get("purpose") == "retry":
+        if event.get("purpose") in ("retry", "correction", "failover"):
             replay = _object(_object(state["policies"])[policy])["replay"]
-            failures = _object(state["request_failures"])
-            prior = next((cast(str, failures[key]) for key in reversed(list(failures))), None)
-            permitted = prior == "rejected_before_acceptance" and replay in ("before_acceptance", "idempotent")
-            permitted = permitted or prior in ("retryable", "transport_unknown") and replay == "idempotent"
-            if not permitted:
-                return _reject("replay_forbidden")
+            terminals = _object(state["association_terminals"])
+            for item in associations:
+                if item not in terminals:
+                    return _reject("missing_predecessor")
+                predecessor = _object(terminals[item])
+                if predecessor["policy"] != policy:
+                    return _reject("predecessor_policy")
+                failure = predecessor["failure"]
+                if event.get("purpose") == "correction" and failure != "malformed_response":
+                    return _reject("invalid_correction")
+                permitted = failure == "rejected_before_acceptance" and replay in (
+                    "before_acceptance",
+                    "idempotent",
+                )
+                permitted = permitted or failure != "rejected_before_acceptance" and replay == "idempotent"
+                if not permitted:
+                    return _reject("replay_forbidden")
         eligible: list[str] = []
         for item in associations:
             if cast(int, attempts.get(item, 0)) >= maximum:
@@ -178,12 +201,15 @@ def _advance(state: Object, declaration: Object, event: Object) -> Object | None
             eligible = []
         if eligible:
             reservations[request] = eligible
+            _object(state["reservation_policies"])[request] = policy
     elif kind == "dispatch":
         request = cast(str, event["request"])
         if request not in reservations:
             return _reject("missing_reservation")
         associations = _strings(reservations.pop(request))
         _object(state["request_associations"])[request] = associations
+        policy = cast(str, _object(state["reservation_policies"]).pop(request))
+        _object(state["request_policies"])[request] = policy
         dispatched.append(request)
         state["dispatched"] = sorted(set(dispatched))
         state["dispatched_count"] = cast(int, state["dispatched_count"]) + 1
@@ -219,6 +245,12 @@ def _advance(state: Object, declaration: Object, event: Object) -> Object | None
         if request not in dispatched:
             return _reject("not_dispatched")
         _object(state["request_failures"])[request] = event["failure"]
+        for association in _strings(_object(state["request_associations"])[request]):
+            _object(state["association_terminals"])[association] = {
+                "failure": event["failure"],
+                "policy": _object(state["request_policies"])[request],
+                "request": request,
+            }
         _terminal(state, request, "failure")
         _remove(state, "local_in_flight", request)
         _remove(state, "remote_outstanding", request)
@@ -228,6 +260,7 @@ def _advance(state: Object, declaration: Object, event: Object) -> Object | None
             pass
         elif request in reservations:
             reservations.pop(request)
+            _object(state["reservation_policies"]).pop(request)
             _terminal(state, request, "cancelled")
         elif request in dispatched:
             values = _strings(state["cancel_requested"])
@@ -238,10 +271,13 @@ def _advance(state: Object, declaration: Object, event: Object) -> Object | None
     elif kind == "scope_cancel":
         for request in tuple(reservations):
             reservations.pop(request)
+            _object(state["reservation_policies"]).pop(request)
             _terminal(state, request, "cancelled")
         state["cancel_requested"] = sorted(set(_strings(state["cancel_requested"])) | set(dispatched))
     elif kind == "stop":
         request = cast(str, event["request"])
+        if "usage" not in event or not _valid_usage(event["usage"]):
+            return _reject("invalid_usage")
         if request not in _strings(state["cancel_requested"]):
             return _reject("cancel_not_requested")
         _terminal(state, request, "cancelled")
@@ -256,6 +292,16 @@ def _advance(state: Object, declaration: Object, event: Object) -> Object | None
     elif kind == "settlement":
         request = cast(str, event["request"])
         settlements = _object(state["settlements"])
+        if request not in dispatched:
+            return _reject("not_dispatched")
+        disposition = event.get("disposition")
+        remote_stopped = event.get("remote_stopped")
+        if disposition not in ("completed", "rejected", "stopped", "unknown"):
+            return _reject("invalid_settlement")
+        if not _valid_usage(event.get("usage")):
+            return _reject("invalid_usage")
+        if (disposition == "unknown") != (remote_stopped is not True):
+            return _reject("invalid_settlement")
         value: Object = {key: event[key] for key in ("disposition", "usage", "remote_stopped")}
         if request in settlements and settlements[request] != value:
             _unique(_array(state["defects"]), "conflicting_settlement")
@@ -264,8 +310,35 @@ def _advance(state: Object, declaration: Object, event: Object) -> Object | None
         if event["remote_stopped"] is True:
             _remove(state, "remote_outstanding", request)
     elif kind == "source_result":
-        identity, source = cast(str, event["identity"]), cast(str, event["source"])
+        request = cast(str, event.get("request"))
+        if request not in dispatched or request not in _object(state["request_associations"]):
+            return _reject("unsolicited_source")
+        expected = _strings(_object(state["request_associations"])[request])
+        if len(expected) != 1:
+            return _reject("binding_request_shape")
+        identity, source = expected[0], cast(str, event["source"])
+        if _object(state["binding_declarations"]).get(identity) != source:
+            return _reject("foreign_source")
         items = _array(event["items"])
+        returned = [cast(str, _object(item).get("association")) for item in items]
+        defects: list[str] = []
+        if not returned:
+            defects.append("missing_keyed_result")
+        if any(item != identity for item in returned):
+            defects.append("foreign_keyed_result")
+        item_keys = [
+            (cast(str, _object(item).get("association")), _object(item).get("key"), _object(item).get("version"))
+            for item in items
+        ]
+        if len(item_keys) != len(set(item_keys)):
+            defects.append("duplicate_keyed_result")
+        if defects:
+            for defect in defects:
+                _unique(_array(state["defects"]), defect)
+            _terminal(state, request, "inconsistent")
+            _remove(state, "local_in_flight", request)
+            _remove(state, "remote_outstanding", request)
+            return None
         limits = _object(declaration.get("binding_limits", {}))
         byte_count = sum(len(cast(str, _object(item)["text"]).encode()) for item in items)
         if len(items) > cast(int, limits.get("max_items", len(items))) or byte_count > cast(
@@ -286,10 +359,24 @@ def _advance(state: Object, declaration: Object, event: Object) -> Object | None
             else:
                 _array(state["artifacts"]).append(artifact)
         _object(state["binding_sources"])[identity] = "bound"
+        _terminal(state, request, "success")
+        _remove(state, "local_in_flight", request)
+        _remove(state, "remote_outstanding", request)
     elif kind == "source_failure":
-        identity = cast(str, event["identity"])
+        request = cast(str, event.get("request"))
+        if request not in dispatched or request not in _object(state["request_associations"]):
+            return _reject("unsolicited_source")
+        associations = _strings(_object(state["request_associations"])[request])
+        if len(associations) != 1:
+            return _reject("binding_request_shape")
+        identity = associations[0]
+        if event.get("association") != identity:
+            return _reject("foreign_association")
         _object(state["binding_sources"])[identity] = event.get("terminal", "failed")
         state["binding_terminal"] = "failed" if event.get("required", True) else "partial"
+        _terminal(state, request, "failure")
+        _remove(state, "local_in_flight", request)
+        _remove(state, "remote_outstanding", request)
     elif kind == "binding_finish":
         if state["binding_terminal"] is None:
             state["binding_terminal"] = "success"
@@ -327,7 +414,29 @@ def _advance(state: Object, declaration: Object, event: Object) -> Object | None
         task = cast(str, event["task"])
         if _object(state["tasks"]).get(task) != "running":
             return _reject("task_not_running")
-        _object(state["tasks"])[task] = f"pending:{event['outcome']}:{event['category']}"
+        if set(event) - {"condition", "failure", "kind", "reported_outcome", "task"}:
+            return _reject("runtime_mapping")
+        mappings = [
+            _object(value)
+            for value in _array(declaration.get("runtime_mappings", []))
+            if _object(value).get("condition") == event.get("condition")
+            and _object(value).get("failure") == event.get("failure")
+            and _object(value).get("reported_outcome") == event.get("reported_outcome")
+        ]
+        if len(mappings) != 1:
+            return _reject("runtime_mapping")
+        mapping = mappings[0]
+        condition = mapping.get("condition")
+        outcome = mapping.get("outcome")
+        category = mapping.get("category")
+        categories = _object(declaration.get("outcome_categories", {}))
+        if condition not in RUNTIME_CONDITIONS:
+            return _reject("runtime_mapping")
+        if outcome is None and category == "success":
+            return _reject("runtime_mapping")
+        if outcome is not None and categories.get(cast(str, outcome)) != category:
+            return _reject("runtime_mapping")
+        _object(state["tasks"])[task] = f"pending:{mapping['outcome']}:{mapping['category']}"
     elif kind == "bridge_emit":
         task = cast(str, event["task"])
         expected = f"pending:{event['outcome']}:{event['category']}"
@@ -380,10 +489,64 @@ def reduce_trace(declaration: Object, events: Sequence[Object]) -> Object:
 
 
 def admit(declaration: Object) -> Object:
-    if declaration.get("admission_error") is not None:
-        return _reject(cast(str, declaration["admission_error"]))
-    for raw in _array(declaration.get("execution_policies", [])):
-        policy = _object(raw)
+    allowed = {
+        "admission_limits",
+        "binding_targets",
+        "declared_outcomes",
+        "execution_policies",
+        "outcome_categories",
+        "required_runtime_conditions",
+        "runtime_mappings",
+        "targets",
+    }
+    if set(declaration) - allowed:
+        return _reject("invalid_value")
+    policies_value = declaration.get("execution_policies", [])
+    if not isinstance(policies_value, list):
+        return _reject("invalid_type")
+    limits = declaration.get("admission_limits", {"max_policies": len(policies_value)})
+    if not isinstance(limits, dict) or not isinstance(limits.get("max_policies"), int):
+        return _reject("invalid_type")
+    if len(policies_value) > cast(int, limits["max_policies"]):
+        return _reject("limit_exceeded")
+    if any(not isinstance(raw, dict) for raw in policies_value):
+        return _reject("invalid_type")
+    policies = [_object(raw) for raw in policies_value]
+    if any(policy.get("kind") not in ("local", "external", "decision") for policy in policies):
+        return _reject("invalid_value")
+    if any(policy.get("owner", "I0") != "I0" for policy in policies):
+        return _reject("foreign_owner")
+    nodes = [policy.get("node") for policy in policies]
+    if len(nodes) != len({json.dumps(node, sort_keys=True) for node in nodes}):
+        return _reject("duplicate")
+    if any(not isinstance(policy.get("implementations"), list) or not policy["implementations"] for policy in policies):
+        return _reject("missing")
+    if any(policy.get("retry_owner") == "implementation" for policy in policies):
+        return _reject("unsupported")
+    declared_outcomes = set(_strings(declaration.get("declared_outcomes", [])))
+    mappings = declaration.get("runtime_mappings", [])
+    if not isinstance(mappings, list) or any(not isinstance(value, dict) for value in mappings):
+        return _reject("invalid_type")
+    if any(_object(value).get("condition") not in RUNTIME_CONDITIONS for value in mappings):
+        return _reject("invalid_value")
+    required_conditions = set(_strings(declaration.get("required_runtime_conditions", [])))
+    actual_conditions = {cast(str, _object(value).get("condition")) for value in mappings}
+    if not required_conditions <= actual_conditions:
+        return _reject("missing")
+    if any(_object(value).get("outcome") not in declared_outcomes | {None} for value in mappings):
+        return _reject("unsupported")
+    categories = _object(declaration.get("outcome_categories", {}))
+    if any(
+        _object(value).get("outcome") is not None
+        and categories.get(cast(str, _object(value)["outcome"])) != _object(value).get("category")
+        for value in mappings
+    ):
+        return _reject("contradictory")
+    targets = set(_strings(declaration.get("targets", [])))
+    binding_targets = _strings(declaration.get("binding_targets", []))
+    if any(target not in targets for target in binding_targets):
+        return _reject("foreign_owner")
+    for policy in policies:
         implementations = _array(policy["implementations"])
         if policy["kind"] in ("local", "decision") and len(implementations) != 1:
             return _reject("implementation_count")
@@ -411,6 +574,33 @@ def _policy(max_attempts: int = 2, replay: str = "idempotent") -> Object:
 
 def _decl(limit: int | None = 2, attempts: int = 2) -> Object:
     return {"hard_limit": limit, "policies": {"P0": _policy(attempts), "P1": _policy(3)}}
+
+
+def _runtime_decl(
+    condition: str,
+    outcome: str | None,
+    category: str,
+    *,
+    failure: str | None = None,
+    reported_outcome: str | None = None,
+) -> Object:
+    mapping: Object = {"category": category, "condition": condition, "outcome": outcome}
+    if failure is not None:
+        mapping["failure"] = failure
+    if reported_outcome is not None:
+        mapping["reported_outcome"] = reported_outcome
+    declaration: Object = {"runtime_mappings": [mapping]}
+    if outcome is not None:
+        declaration["declared_outcomes"] = [outcome]
+        declaration["outcome_categories"] = {outcome: category}
+    return declaration
+
+
+def _binding_decl(sources: Mapping[str, str], *, max_bytes: int = 8, max_items: int = 2) -> Object:
+    declaration = _decl()
+    declaration["binding_declarations"] = dict(sources)
+    declaration["binding_limits"] = {"max_bytes": max_bytes, "max_items": max_items}
+    return declaration
 
 
 def _bind(item: str, *policies: str) -> Object:
@@ -536,7 +726,7 @@ def _generate_specs() -> tuple[Object, ...]:
             + [
                 {"failure": "retryable", "kind": "failure", "request": "R0"},
                 _bind("T1", "P0"),
-                _reserve("R1", ["T0", "T1"], purpose="retry"),
+                _reserve("R1", ["T0", "T1"]),
                 _dispatch("R1"),
             ],
         )
@@ -569,7 +759,34 @@ def _generate_specs() -> tuple[Object, ...]:
             _trace()
             + [{"failure": "retryable", "kind": "failure", "request": "R0"}, _reserve("R1", ["T0"], purpose="retry")],
         ),
-        _case("retry", "implementation_owner_rejected", {"admission_error": "retry_owner"}, [], "admission"),
+        _case(
+            "retry",
+            "cross_association_predecessor",
+            _decl(),
+            _trace()
+            + [
+                {"failure": "retryable", "kind": "failure", "request": "R0"},
+                _bind("T1", "P0"),
+                _reserve("R1", ["T1"], purpose="retry"),
+            ],
+        ),
+        _case(
+            "retry",
+            "implementation_owner_rejected",
+            {
+                "execution_policies": [
+                    {
+                        "implementations": [{"physical_policy": "P0"}],
+                        "kind": "external",
+                        "node": "N0",
+                        "physical_policy": "P0",
+                        "retry_owner": "implementation",
+                    }
+                ]
+            },
+            [],
+            "admission",
+        ),
     ]
     base = _trace()
     settlement: Object = {
@@ -586,7 +803,7 @@ def _generate_specs() -> tuple[Object, ...]:
             "races",
             "cancel_trusted_stop",
             _decl(),
-            base + [{"kind": "cancel", "request": "R0"}, {"kind": "stop", "request": "R0"}],
+            base + [{"kind": "cancel", "request": "R0"}, {"kind": "stop", "request": "R0", "usage": "unknown"}],
         ),
         _case(
             "races",
@@ -635,14 +852,22 @@ def _generate_specs() -> tuple[Object, ...]:
             "races",
             "lost_unknown_settlement",
             _decl(),
-            base + [{"kind": "lost", "request": "R0"}, dict(settlement, remote_stopped=None, usage="unknown")],
+            base
+            + [
+                {"kind": "lost", "request": "R0"},
+                dict(settlement, disposition="unknown", remote_stopped=None, usage="unknown"),
+            ],
         ),
         _case(
             "races",
             "cancel_stop_late_result",
             _decl(),
             base
-            + [{"kind": "cancel", "request": "R0"}, {"kind": "stop", "request": "R0"}, _result("R0", ("T0",), ("T0",))],
+            + [
+                {"kind": "cancel", "request": "R0"},
+                {"kind": "stop", "request": "R0", "usage": "unknown"},
+                _result("R0", ("T0",), ("T0",)),
+            ],
         ),
         _case(
             "races",
@@ -661,6 +886,18 @@ def _generate_specs() -> tuple[Object, ...]:
             "races", "conflicting_settlement", _decl(), base + [settlement, dict(settlement, disposition="rejected")]
         ),
         _case("races", "scope_cancel", _decl(), [_bind("T0", "P0"), _reserve("R0", ["T0"]), {"kind": "scope_cancel"}]),
+        _case(
+            "races",
+            "stop_missing_usage",
+            _decl(),
+            base + [{"kind": "cancel", "request": "R0"}, {"kind": "stop", "request": "R0"}],
+        ),
+        _case(
+            "races", "settlement_completed_without_remote_stop", _decl(), base + [dict(settlement, remote_stopped=None)]
+        ),
+        _case(
+            "races", "settlement_unknown_with_remote_stop", _decl(), base + [dict(settlement, disposition="unknown")]
+        ),
     ]
     c += [
         _case("inflight", "dispatch_sets_both", _decl(), base),
@@ -675,7 +912,11 @@ def _generate_specs() -> tuple[Object, ...]:
             "inflight",
             "unknown_settlement_keeps_remote",
             _decl(),
-            base + [{"kind": "lost", "request": "R0"}, dict(settlement, remote_stopped=None, usage="unknown")],
+            base
+            + [
+                {"kind": "lost", "request": "R0"},
+                dict(settlement, disposition="unknown", remote_stopped=None, usage="unknown"),
+            ],
         ),
         _case("inflight", "result_clears_both", _decl(), base + [_result("R0", ("T0",), ("T0",))]),
     ]
@@ -686,9 +927,9 @@ def _generate_specs() -> tuple[Object, ...]:
             _reserve(request, [identity], purpose="initial_binding"),
             _dispatch(request),
             {
-                "identity": identity,
-                "items": [{"key": 0, "text": text, "version": 1}],
+                "items": [{"association": identity, "key": 0, "text": text, "version": 1}],
                 "kind": "source_result",
+                "request": request,
                 "source": source,
             },
         ]
@@ -697,13 +938,13 @@ def _generate_specs() -> tuple[Object, ...]:
         _case(
             "binding",
             "two_sources_same_key",
-            _decl(),
+            _binding_decl({"D0": "S0", "D1": "S1"}),
             binding("D0", "S0", "R0", "a") + binding("D1", "S1", "R1", "b") + [{"kind": "binding_finish"}],
         ),
         _case(
             "binding",
             "one_source_two_declarations",
-            _decl(),
+            _binding_decl({"D0": "S0", "D1": "S0"}),
             [
                 {"kind": "resource", "owner": "sdk", "resource": "Q0", "safe_detachment": "forbidden"},
                 *binding("D0", "S0", "R0", "a"),
@@ -714,67 +955,88 @@ def _generate_specs() -> tuple[Object, ...]:
         _case(
             "binding",
             "required_failure_preserves_prior",
-            _decl(),
+            _binding_decl({"D0": "S0", "D1": "S1"}),
             binding("D0", "S0", "R0", "a")
             + [
                 _bind("D1", "P0"),
                 _reserve("R1", ["D1"], purpose="initial_binding"),
                 _dispatch("R1"),
-                {"identity": "D1", "kind": "source_failure", "required": True},
+                {"association": "D1", "kind": "source_failure", "request": "R1", "required": True},
             ],
         ),
         _case(
             "binding",
             "optional_failure_partial",
-            _decl(),
-            binding("D0", "S0", "R0", "a") + [{"identity": "D1", "kind": "source_failure", "required": False}],
+            _binding_decl({"D0": "S0", "D1": "S1"}),
+            binding("D0", "S0", "R0", "a")
+            + [
+                _bind("D1", "P0"),
+                _reserve("R1", ["D1"], purpose="initial_binding"),
+                _dispatch("R1"),
+                {"association": "D1", "kind": "source_failure", "request": "R1", "required": False},
+            ],
         ),
         _case(
             "binding",
             "omitted_optional",
-            _decl(),
+            _binding_decl({"D0": "S0"}),
             [
-                {"identity": "D0", "kind": "source_failure", "required": False, "terminal": "omitted_optional"},
+                _bind("D0", "P0"),
+                _reserve("R0", ["D0"], purpose="initial_binding"),
+                _dispatch("R0"),
+                {
+                    "association": "D0",
+                    "kind": "source_failure",
+                    "request": "R0",
+                    "required": False,
+                    "terminal": "omitted_optional",
+                },
                 {"kind": "binding_finish"},
             ],
         ),
         _case(
             "binding",
             "response_reordered",
-            _decl(),
+            _binding_decl({"D0": "S0", "D1": "S1"}),
             binding("D1", "S1", "R1", "b") + binding("D0", "S0", "R0", "a") + [{"kind": "binding_finish"}],
         ),
         _case(
             "binding",
             "oversize_no_truncation",
-            _decl(),
-            [{"identity": "D0", "kind": "source_failure", "required": True, "terminal": "oversize"}],
+            _binding_decl({"D0": "S0"}, max_bytes=1),
+            binding("D0", "S0", "R0", "aa"),
         ),
         _case(
             "binding",
             "cancel_before_dispatch",
-            _decl(),
+            _binding_decl({"D0": "S0"}),
             [_bind("D0", "P0"), _reserve("R0", ["D0"], purpose="initial_binding"), {"kind": "cancel", "request": "R0"}],
         ),
         _case(
             "binding",
             "cancel_after_dispatch_lost",
-            _decl(),
+            _binding_decl({"D0": "S0"}),
             binding("D0", "S0", "R0", "a")[:3]
             + [{"kind": "cancel", "request": "R0"}, {"kind": "lost", "request": "R0"}],
         ),
-        _case("binding", "invalid_local_zero_effects", {"admission_error": "foreign_target"}, [], "admission"),
+        _case(
+            "binding",
+            "invalid_local_zero_effects",
+            {"binding_targets": ["B0"], "targets": ["A0"]},
+            [],
+            "admission",
+        ),
     ]
-    exact_bounds = _decl()
-    exact_bounds["binding_limits"] = {"max_bytes": 2, "max_items": 2}
-    one_byte = _decl()
-    one_byte["binding_limits"] = {"max_bytes": 1, "max_items": 2}
-    one_item = _decl()
-    one_item["binding_limits"] = {"max_bytes": 2, "max_items": 1}
+    exact_bounds = _binding_decl({"D0": "S0"}, max_bytes=2, max_items=2)
+    one_byte = _binding_decl({"D0": "S0"}, max_bytes=1, max_items=2)
+    one_item = _binding_decl({"D0": "S0"}, max_bytes=2, max_items=1)
     two_items: Object = {
-        "identity": "D0",
-        "items": [{"key": 0, "text": "a", "version": 1}, {"key": 1, "text": "b", "version": 1}],
+        "items": [
+            {"association": "D0", "key": 0, "text": "a", "version": 1},
+            {"association": "D0", "key": 1, "text": "b", "version": 1},
+        ],
         "kind": "source_result",
+        "request": "R0",
         "source": "S0",
     }
     c += [
@@ -795,6 +1057,69 @@ def _generate_specs() -> tuple[Object, ...]:
             "one_over_item_bound",
             one_item,
             [_bind("D0", "P0"), _reserve("R0", ["D0"]), _dispatch("R0"), two_items],
+        ),
+        _case(
+            "binding",
+            "unsolicited_source_result",
+            _binding_decl({"D0": "S0"}),
+            [{"items": [], "kind": "source_result", "request": "R0", "source": "S0"}],
+        ),
+        _case(
+            "binding",
+            "wrong_source",
+            _binding_decl({"D0": "S0"}),
+            [
+                _bind("D0", "P0"),
+                _reserve("R0", ["D0"]),
+                _dispatch("R0"),
+                {"items": [], "kind": "source_result", "request": "R0", "source": "S1"},
+            ],
+        ),
+        _case(
+            "binding",
+            "missing_result",
+            _binding_decl({"D0": "S0"}),
+            [
+                _bind("D0", "P0"),
+                _reserve("R0", ["D0"]),
+                _dispatch("R0"),
+                {"items": [], "kind": "source_result", "request": "R0", "source": "S0"},
+            ],
+        ),
+        _case(
+            "binding",
+            "duplicate_result",
+            _binding_decl({"D0": "S0"}),
+            [
+                _bind("D0", "P0"),
+                _reserve("R0", ["D0"]),
+                _dispatch("R0"),
+                {
+                    "items": [
+                        {"association": "D0", "key": 0, "text": "a", "version": 1},
+                        {"association": "D0", "key": 0, "text": "a", "version": 1},
+                    ],
+                    "kind": "source_result",
+                    "request": "R0",
+                    "source": "S0",
+                },
+            ],
+        ),
+        _case(
+            "binding",
+            "foreign_result_association",
+            _binding_decl({"D0": "S0"}),
+            [
+                _bind("D0", "P0"),
+                _reserve("R0", ["D0"]),
+                _dispatch("R0"),
+                {
+                    "items": [{"association": "D1", "key": 0, "text": "a", "version": 1}],
+                    "kind": "source_result",
+                    "request": "R0",
+                    "source": "S0",
+                },
+            ],
         ),
     ]
     c += [
@@ -848,7 +1173,10 @@ def _generate_specs() -> tuple[Object, ...]:
         if terminal == "lost":
             events.append({"kind": "lost", "request": "R0"})
         elif terminal == "stop":
-            events += [{"kind": "cancel", "request": "R0"}, {"kind": "stop", "request": "R0"}]
+            events += [
+                {"kind": "cancel", "request": "R0"},
+                {"kind": "stop", "request": "R0", "usage": "unknown"},
+            ]
         events.append({"kind": "close_resource", "resource": "Q0"})
         c.append(_case("resources", name, _decl(), events))
     c.append(
@@ -874,14 +1202,13 @@ def _generate_specs() -> tuple[Object, ...]:
             _case(
                 "bridges",
                 condition,
-                {},
+                _runtime_decl(condition, outcome, category, reported_outcome="ok" if condition == "result" else None),
                 [
                     {"kind": "bridge_start", "node": "N0", "task": "T0"},
                     {
-                        "category": category,
                         "condition": condition,
                         "kind": "bridge_condition",
-                        "outcome": outcome,
+                        **({"reported_outcome": "ok"} if condition == "result" else {}),
                         "task": "T0",
                     },
                     {"category": category, "kind": "bridge_emit", "outcome": outcome, "task": "T0"},
@@ -893,18 +1220,60 @@ def _generate_specs() -> tuple[Object, ...]:
             _case(
                 "bridges",
                 f"failure_{failure}",
-                {},
+                _runtime_decl("failure", None, "failure", failure=failure),
                 [
                     {"kind": "bridge_start", "node": "N0", "task": "T0"},
                     {
-                        "category": "failure",
                         "condition": "failure",
                         "failure": failure,
                         "kind": "bridge_condition",
-                        "outcome": None,
                         "task": "T0",
                     },
                     {"category": "failure", "kind": "bridge_emit", "outcome": None, "task": "T0"},
+                ],
+            )
+        )
+    shared_bridge = _decl()
+    shared_bridge.update(_runtime_decl("result", "ok", "success", reported_outcome="ok"))
+    c.append(
+        _case(
+            "bridges",
+            "shared_request_two_targets",
+            shared_bridge,
+            _trace(("T0", "T1"))
+            + [
+                {"kind": "bridge_start", "node": "N0", "task": "T0"},
+                {"kind": "bridge_start", "node": "N1", "task": "T1"},
+                _result("R0", ("T0", "T1"), ("T1", "T0")),
+                {"condition": "result", "kind": "bridge_condition", "reported_outcome": "ok", "task": "T0"},
+                {"condition": "result", "kind": "bridge_condition", "reported_outcome": "ok", "task": "T1"},
+                {"category": "success", "kind": "bridge_emit", "outcome": "ok", "task": "T0"},
+                {"category": "success", "kind": "bridge_emit", "outcome": "ok", "task": "T1"},
+            ],
+        )
+    )
+    for name, returned in (
+        ("missing", ("T0",)),
+        ("duplicate", ("T0", "T0", "T1")),
+        ("extra", ("T0", "T1", "T2")),
+        ("foreign", ("T0", "T1", "X0")),
+    ):
+        inconsistent = _decl()
+        inconsistent.update(_runtime_decl("request_inconsistent", None, "inconsistent"))
+        c.append(
+            _case(
+                "bridges",
+                f"shared_request_{name}",
+                inconsistent,
+                _trace(("T0", "T1"))
+                + [
+                    {"kind": "bridge_start", "node": "N0", "task": "T0"},
+                    {"kind": "bridge_start", "node": "N1", "task": "T1"},
+                    _result("R0", ("T0", "T1"), returned),
+                    {"condition": "request_inconsistent", "kind": "bridge_condition", "task": "T0"},
+                    {"condition": "request_inconsistent", "kind": "bridge_condition", "task": "T1"},
+                    {"category": "inconsistent", "kind": "bridge_emit", "outcome": None, "task": "T0"},
+                    {"category": "inconsistent", "kind": "bridge_emit", "outcome": None, "task": "T1"},
                 ],
             )
         )
@@ -923,15 +1292,14 @@ def _generate_specs() -> tuple[Object, ...]:
         _case(
             "decisions",
             "matching_resume_unrelated_advances",
-            {},
+            _runtime_decl("result", "ok", "success", reported_outcome="ok"),
             [
                 *opened,
                 {"kind": "bridge_start", "node": "N1", "task": "T1"},
                 {
-                    "category": "success",
                     "condition": "result",
                     "kind": "bridge_condition",
-                    "outcome": "ok",
+                    "reported_outcome": "ok",
                     "task": "T1",
                 },
                 {"category": "success", "kind": "bridge_emit", "outcome": "ok", "task": "T1"},
@@ -961,14 +1329,12 @@ def _generate_specs() -> tuple[Object, ...]:
         _case(
             "decisions",
             "cancel_condition",
-            {},
+            _runtime_decl("cancel_after_start", None, "cancelled"),
             [
                 {"kind": "bridge_start", "node": "N0", "task": "T0"},
                 {
-                    "category": "cancelled",
                     "condition": "cancel_after_start",
                     "kind": "bridge_condition",
-                    "outcome": None,
                     "task": "T0",
                 },
                 {"category": "cancelled", "kind": "bridge_emit", "outcome": None, "task": "T0"},
@@ -977,14 +1343,13 @@ def _generate_specs() -> tuple[Object, ...]:
         _case(
             "decisions",
             "implementation_failure",
-            {},
+            _runtime_decl("failure", None, "failure", failure="implementation_exception"),
             [
                 {"kind": "bridge_start", "node": "N0", "task": "T0"},
                 {
-                    "category": "failure",
                     "condition": "failure",
+                    "failure": "implementation_exception",
                     "kind": "bridge_condition",
-                    "outcome": None,
                     "task": "T0",
                 },
                 {"category": "failure", "kind": "bridge_emit", "outcome": None, "task": "T0"},
@@ -1013,21 +1378,55 @@ def _generate_specs() -> tuple[Object, ...]:
             [*opened, {"kind": "bridge_start", "node": "N1", "task": "T1"}, open1],
         ),
     ]
-    for error in (
-        "outer_type",
-        "aggregate_limit",
-        "member_type",
-        "invalid_value",
-        "foreign_owner",
-        "duplicate",
-        "missing",
-        "unsupported",
-        "contradictory",
-        "runtime_mapping_missing",
-        "wrong_category",
-        "unknown_outcome",
-    ):
-        c.append(_case("admission", error, {"admission_error": error}, [], "admission"))
+    valid_policy: Object = {
+        "implementations": [{"physical_policy": "P0"}],
+        "kind": "external",
+        "node": "N0",
+        "physical_policy": "P0",
+        "retry_owner": "executor",
+    }
+    admission_negatives: tuple[tuple[str, Object], ...] = (
+        ("outer_type", {"execution_policies": "invalid"}),
+        (
+            "aggregate_limit",
+            {"admission_limits": {"max_policies": 0}, "execution_policies": [valid_policy]},
+        ),
+        ("member_type", {"execution_policies": [0]}),
+        ("invalid_value", {"execution_policies": [dict(valid_policy, kind="unknown")]}),
+        ("foreign_owner", {"execution_policies": [dict(valid_policy, owner="I1")]}),
+        ("duplicate", {"execution_policies": [valid_policy, valid_policy]}),
+        ("missing", {"execution_policies": [dict(valid_policy, implementations=[])]}),
+        ("unsupported", {"execution_policies": [dict(valid_policy, retry_owner="implementation")]}),
+        (
+            "contradictory",
+            {
+                "declared_outcomes": ["ok"],
+                "outcome_categories": {"ok": "success"},
+                "runtime_mappings": [{"category": "failure", "condition": "result", "outcome": "ok"}],
+            },
+        ),
+        (
+            "runtime_mapping_missing",
+            {"required_runtime_conditions": ["result"], "runtime_mappings": []},
+        ),
+        (
+            "wrong_category",
+            {
+                "declared_outcomes": ["ok"],
+                "outcome_categories": {"ok": "success"},
+                "runtime_mappings": [{"category": "blocked", "condition": "result", "outcome": "ok"}],
+            },
+        ),
+        (
+            "unknown_outcome",
+            {
+                "declared_outcomes": ["ok"],
+                "runtime_mappings": [{"category": "success", "condition": "result", "outcome": "other"}],
+            },
+        ),
+    )
+    for name, declaration in admission_negatives:
+        c.append(_case("admission", name, declaration, [], "admission"))
     c += [
         _case(
             "admission",
