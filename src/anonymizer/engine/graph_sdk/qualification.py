@@ -42,6 +42,7 @@ from anonymizer.engine.graph_sdk.requests import (
     SemanticAssociation,
     TextCollectionValue,
 )
+from anonymizer.engine.graph_sdk.resources import CleanupAssociation, CleanupFact
 from anonymizer.graph._values import ActivationKey, DatumId
 from anonymizer.graph.activation import ActivationEntry
 from anonymizer.graph.workflow import NodeId, NodeOutputRef, ProtectionRequirement, SubgraphNode, WorkflowInputRef
@@ -692,7 +693,7 @@ class _Qualification:
                             target = self._association_target(association)
                             if target is not None:
                                 self.withholding[target].add("request_accounting")
-            if dispatch.purpose != "initial":
+            if dispatch.purpose in {"retry", "correction", "failover"}:
                 for association in dispatch.associations:
                     predecessor = previous.get(association)
                     prior = next(
@@ -758,11 +759,23 @@ class _Qualification:
         return False
 
     def cleanup_accounting(self) -> None:
-        facts = {item.resource: item for item in self.result.cleanup}
-        associations = {item.resource: item for item in self.result.cleanup_associations}
+        self._cleanup_ledger(self.result.cleanup, self.result.cleanup_associations)
+        bound = self.admitted.execution.context.bound_context
+        if bound is not None:
+            self._cleanup_ledger(bound.receipt.cleanup, bound.receipt.cleanup_associations, binding=True)
+
+    def _cleanup_ledger(
+        self,
+        cleanup: tuple[CleanupFact, ...],
+        cleanup_associations: tuple[CleanupAssociation, ...],
+        *,
+        binding: bool = False,
+    ) -> None:
+        facts = {item.resource: item for item in cleanup}
+        associations = {item.resource: item for item in cleanup_associations}
         if (
-            len(facts) != len(self.result.cleanup)
-            or len(associations) != len(self.result.cleanup_associations)
+            len(facts) != len(cleanup)
+            or len(associations) != len(cleanup_associations)
             or facts.keys() != associations.keys()
         ):
             for codes in self.withholding.values():
@@ -775,6 +788,8 @@ class _Qualification:
                 and association.purpose != "transport_only"
                 or not association.targets <= self.prepared.data.targets
                 or association.purpose not in {"verification", "accounting", "transport_only"}
+                or binding
+                and association.purpose != "accounting"
                 or fact.disposition == "left_open"
                 and fact.owner != "caller"
             ):

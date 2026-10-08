@@ -32,7 +32,7 @@ from anonymizer.engine.graph_sdk.requests import (
     SemanticAssociation,
     StopResult,
 )
-from anonymizer.engine.graph_sdk.resources import CleanupFact, ResourceLease
+from anonymizer.engine.graph_sdk.resources import CleanupAssociation, CleanupFact, ResourceLease
 from anonymizer.graph._values import DatumId
 from anonymizer.graph.workflow import (
     AdmittedActivationWorkflow,
@@ -324,6 +324,7 @@ class BindingReceipt(PrivateValue):
     artifacts: tuple[BoundTextArtifact, ...]
     requests: RequestReceipt
     cleanup: tuple[CleanupFact, ...]
+    cleanup_associations: tuple[CleanupAssociation, ...]
 
     def __init__(self, *, _key: object, **values: object) -> None:
         if _key is not _RESULT_KEY:
@@ -647,6 +648,7 @@ def _create_binding_result(
     artifacts: tuple[BoundTextArtifact, ...],
     requests: RequestReceipt,
     cleanup: tuple[CleanupFact, ...],
+    cleanup_associations: tuple[CleanupAssociation, ...],
 ) -> BindingResult:
     """Construct the authenticated result of an initial-binding operation."""
     receipt = BindingReceipt(
@@ -659,6 +661,7 @@ def _create_binding_result(
         artifacts=artifacts,
         requests=requests,
         cleanup=cleanup,
+        cleanup_associations=cleanup_associations,
     )
     context = (
         BoundContext(_key=_RESULT_KEY, receipt=receipt, artifacts=artifacts)

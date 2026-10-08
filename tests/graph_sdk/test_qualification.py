@@ -11,6 +11,15 @@ from typing import cast
 import pytest
 
 from anonymizer.engine.graph_sdk._effect_values import EffectCode, EffectRejected
+from anonymizer.engine.graph_sdk.context import (
+    ContextResource,
+    ContextSelector,
+    ContextSourceCapability,
+    ContextSourceRef,
+    RetrievalBounds,
+    SourceItem,
+    SourceResponse,
+)
 from anonymizer.engine.graph_sdk.data import AtomicGroup, CoherenceScope, DataGraph, DataLimits, DatumDependency
 from anonymizer.engine.graph_sdk.evidence import AssessmentSubmission, admit_qualification, evidence_revision_view
 from anonymizer.engine.graph_sdk.executor import AdmittedExecutionPlan, AssessmentFinding, ExecutionResult
@@ -21,14 +30,18 @@ from anonymizer.engine.graph_sdk.requests import (
     ExactUsage,
     ExternalSettlement,
     FailureClass,
+    PhysicalRequestId,
+    PhysicalRequestPolicy,
     PortArtifact,
+    RequestAssociation,
     StopConfirmed,
     TransportFailure,
     TransportResult,
     TransportSuccess,
     UnknownUsage,
 )
-from anonymizer.engine.graph_sdk.resources import ResourceLease
+from anonymizer.engine.graph_sdk.resources import ResourceId, ResourceLease
+from anonymizer.graph.workflow import ArtifactType
 from tests.graph_sdk.test_evidence import _execute_assessment, _qualification_limits
 
 
@@ -552,3 +565,151 @@ def test_current_partial_coverage_cannot_satisfy_a_complete_requirement(selected
         supported = frozenset(item.reference for item in output.verified if item.promise.name == "checked")
         assert output.qualified[0].evidence == supported
         assert output.record.statuses[0].qualification == "met"
+
+
+@dataclass
+class _BindingSource:
+    source: ContextSourceRef
+    fail_close: bool = False
+    calls: int = 0
+    closes: int = 0
+
+    async def retrieve(
+        self,
+        *,
+        request: PhysicalRequestId,
+        association: RequestAssociation,
+        selector: ContextSelector,
+        bounds: RetrievalBounds,
+    ) -> SourceResponse:
+        del selector, bounds
+        self.calls += 1
+        return SourceResponse(
+            source=self.source,
+            items=(SourceItem(association=association, key=0, version=1, text="initial context"),),
+            settlement=ExternalSettlement(
+                request=request,
+                disposition="completed",
+                usage=ExactUsage(input_units=1, output_units=1),
+                remote_stopped=True,
+            ),
+        )
+
+    async def cancel(self, request: PhysicalRequestId) -> StopConfirmed:
+        del request
+        return StopConfirmed(usage=ExactUsage(input_units=0, output_units=0))
+
+
+class _BindingProvider(_BindingSource):
+    async def close(self) -> None:
+        self.closes += 1
+        if self.fail_close:
+            raise RuntimeError("provider cleanup failed")
+
+
+def _initial_resource(provider: _BindingSource) -> ContextResource:
+    return ContextResource(
+        source=provider.source,
+        capability=ContextSourceCapability(
+            source=provider.source,
+            artifact_type=ArtifactType(name="text", revision=1),
+            uses=frozenset({"initial_binding"}),
+            execution="async",
+            resource_owner="sdk",
+            cancellation="cooperative_ack",
+            settlement="explicit_ack",
+            usage="exact",
+            request=PhysicalRequestPolicy(
+                visibility="dispatch_and_settlement",
+                pre_dispatch_control="executor",
+                retry_owner="executor",
+                replay="idempotent",
+                max_attempts=1,
+            ),
+            safe_detachment="forbidden",
+        ),
+        lease=None,
+        factory=lambda: provider,
+    )
+
+
+@pytest.mark.parametrize("disposition", ["closed", "close_failed", "close_unknown"])
+def test_initial_binding_cleanup_withholds_only_its_admitted_targets(disposition: str) -> None:
+    a = (_BindingSource if disposition == "close_unknown" else _BindingProvider)(
+        ContextSourceRef(name="A", revision=1), fail_close=disposition == "close_failed"
+    )
+    fail_close = disposition != "closed"
+    c = _BindingProvider(ContextSourceRef(name="C", revision=1))
+    execution, result = asyncio.run(
+        _execute_assessment(target_count=2, initial_resources=(_initial_resource(a), _initial_resource(c)))
+    )
+    bound = execution.context.bound_context
+    assert bound is not None
+    assert bound.receipt.terminal == "success"
+    assert a.calls == c.calls == c.closes == 1
+    assert a.closes == (0 if disposition == "close_unknown" else 1)
+    assert {item.disposition for item in bound.receipt.cleanup} == {"closed", disposition}
+    targets = {item.declaration.source: item.declaration.target for item in bound.receipt.sources}
+    assert {item.targets for item in bound.receipt.cleanup_associations} == {
+        frozenset({target}) for target in targets.values()
+    }
+    assert all(item.purpose == "accounting" for item in bound.receipt.cleanup_associations)
+    admitted, current, submissions = _inputs(execution, result)
+    output = qualify(admitted=admitted, result=result, current=current, submissions=submissions)
+    assert {item.target for item in output.qualified} == ({targets[c.source]} if fail_close else set(targets.values()))
+    assert all(item.completion == "closed" for item in output.record.statuses)
+    assert {item.target for item in output.targets if "cleanup_accounting" in item.withholding} == (
+        {targets[a.source]} if fail_close else set()
+    )
+
+
+@pytest.mark.parametrize("mutation", ["missing", "extra", "duplicate", "foreign", "empty", "purpose"])
+def test_initial_binding_cleanup_rejects_inconsistent_associations(mutation: str) -> None:
+    provider = _BindingProvider(ContextSourceRef(name="initial", revision=1))
+    execution, result = asyncio.run(_execute_assessment(initial_resources=(_initial_resource(provider),)))
+    bound = execution.context.bound_context
+    assert bound is not None
+    original = bound.receipt.cleanup_associations
+    cleanup = bound.receipt.cleanup
+    association = original[0]
+    field = "resource" if mutation == "foreign" else "targets" if mutation == "empty" else "purpose"
+    old = getattr(association, field)
+    if mutation in {"foreign", "empty", "purpose"}:
+        object.__setattr__(
+            association,
+            field,
+            ResourceId.new() if mutation == "foreign" else frozenset() if mutation == "empty" else "transport_only",
+        )
+    else:
+        object.__setattr__(
+            bound.receipt,
+            "cleanup_associations",
+            () if mutation == "missing" else original if mutation == "extra" else (*original, association),
+        )
+        if mutation == "extra":
+            object.__setattr__(bound.receipt, "cleanup", ())
+    try:
+        admitted, current, submissions = _inputs(execution, result)
+        output = qualify(admitted=admitted, result=result, current=current, submissions=submissions)
+        assert not output.qualified
+        assert all("inconsistent_attribution" in item.withholding for item in output.targets)
+    finally:
+        object.__setattr__(association, field, old)
+        object.__setattr__(bound.receipt, "cleanup_associations", original)
+        object.__setattr__(bound.receipt, "cleanup", cleanup)
+
+
+def test_binding_cleanup_shared_source_retains_union_before_close() -> None:
+    provider = _BindingProvider(ContextSourceRef(name="shared", revision=1), fail_close=True)
+    execution, result = asyncio.run(
+        _execute_assessment(target_count=3, initial_resources=(_initial_resource(provider),))
+    )
+    bound = execution.context.bound_context
+    assert bound is not None
+    assert provider.calls == 3 and provider.closes == 1
+    assert len(bound.receipt.cleanup) == len(bound.receipt.cleanup_associations) == 1
+    assert bound.receipt.cleanup_associations[0].targets == execution.context.prepared.data.targets
+    admitted, current, submissions = _inputs(execution, result)
+    output = qualify(admitted=admitted, result=result, current=current, submissions=submissions)
+    assert not output.qualified
+    assert all(item.withholding == frozenset({"cleanup_accounting"}) for item in output.targets)

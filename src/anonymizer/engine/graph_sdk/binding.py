@@ -55,7 +55,7 @@ from anonymizer.engine.graph_sdk.requests import (
     initialize_requests,
     request_receipt,
 )
-from anonymizer.engine.graph_sdk.resources import CleanupFact, ResourceLease, close_resource
+from anonymizer.engine.graph_sdk.resources import CleanupFact, ResourceLease, _cleanup_association, close_resource
 from anonymizer.graph.workflow import (
     AdmittedActivationWorkflow,
     ContextInputRef,
@@ -148,7 +148,22 @@ async def _run_binding(work: _BindingWork) -> BindingResult:
             artifacts=(),
             requests=request_receipt(state),
             cleanup=(),
+            cleanup_associations=(),
         )
+    associations = tuple(
+        _cleanup_association(
+            resource=lease.resource,
+            targets=frozenset(
+                declaration.target
+                for source, source_lease in acquired.items()
+                if source_lease.resource == lease.resource
+                for declaration in work.declarations
+                if declaration.source == source
+            ),
+            purpose="accounting",
+        )
+        for lease in {item.resource: item for item in acquired.values()}.values()
+    )
     facts: list[SourceBindingFact] = []
     artifacts: list[BoundTextArtifact] = []
     if work.cancelled:
@@ -167,6 +182,7 @@ async def _run_binding(work: _BindingWork) -> BindingResult:
             artifacts=(),
             requests=request_receipt(state),
             cleanup=tuple(cleanup),
+            cleanup_associations=associations,
         )
     total_items = 0
     total_bytes = 0
@@ -196,6 +212,7 @@ async def _run_binding(work: _BindingWork) -> BindingResult:
         artifacts=tuple(artifacts),
         requests=request_receipt(state),
         cleanup=tuple(cleanup),
+        cleanup_associations=associations,
     )
 
 
@@ -559,7 +576,7 @@ def _acquire_resources(work: _BindingWork) -> tuple[dict[object, ResourceLease],
 
 
 async def _cleanup(acquired: dict[object, ResourceLease]) -> list[CleanupFact]:
-    return [await close_resource(lease) for lease in acquired.values()]
+    return [await close_resource(lease) for lease in {item.resource: item for item in acquired.values()}.values()]
 
 
 def _capability(

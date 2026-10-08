@@ -91,10 +91,12 @@ from anonymizer.engine.graph_sdk.requests import (
     request_receipt,
 )
 from anonymizer.engine.graph_sdk.resources import (
+    CleanupAssociation,
     CleanupFact,
     ResourceId,
     ResourceLease,
     SafeDetachment,
+    _cleanup_association,
     close_resource,
 )
 from anonymizer.graph._values import (
@@ -156,7 +158,6 @@ RuntimeCondition: TypeAlias = Literal[
     "deadline_exhausted",
 ]
 ArtifactRole: TypeAlias = Literal["artifact", "candidate", "decision", "evidence"]
-CleanupPurpose: TypeAlias = Literal["verification", "accounting", "transport_only"]
 AssessmentStatus: TypeAlias = Literal["satisfied", "unsatisfied", "unknown"]
 
 
@@ -515,16 +516,6 @@ class ArtifactProvenanceFact(PrivateValue):
     artifact: ArtifactRef
     parents: frozenset[ProvenanceKey]
     decision: bool
-
-    def __init__(self, *, _key: object, **values: object) -> None:
-        _init_fact(self, _key, values)
-
-
-@dataclass(frozen=True, slots=True, kw_only=True, repr=False, init=False)
-class CleanupAssociation(PrivateValue):
-    resource: ResourceId
-    targets: frozenset[DatumId]
-    purpose: CleanupPurpose
 
     def __init__(self, *, _key: object, **values: object) -> None:
         _init_fact(self, _key, values)
@@ -3791,16 +3782,6 @@ async def _cleanup_execution(
     remote_resources = {
         request_resources[request] for request in requests.remote_outstanding if request in request_resources
     }
-    cleanup_values: list[CleanupFact] = []
-    for lease in leases.values():
-        if lease.owner == "sdk" and (
-            lease.resource in local_resources
-            or (lease.resource in remote_resources and lease.safe_detachment == "forbidden")
-        ):
-            cleanup_values.append(CleanupFact(resource=lease.resource, owner=lease.owner, disposition="left_open"))
-        else:
-            cleanup_values.append(await close_resource(lease))
-    cleanup = tuple(cleanup_values)
     all_targets = admitted.context.prepared.data.targets
     external_resources = {
         handle.resource.resource
@@ -3823,14 +3804,23 @@ async def _cleanup_execution(
         for source, lease in context_leases.items()
     }
     associations = tuple(
-        CleanupAssociation(
-            _key=_FACT_KEY,
+        _cleanup_association(
             resource=resource,
             targets=context_targets.get(resource, all_targets),
             purpose="accounting" if resource in external_resources | context_resource_ids else "verification",
         )
         for resource in leases
     )
+    cleanup_values: list[CleanupFact] = []
+    for lease in leases.values():
+        if lease.owner == "sdk" and (
+            lease.resource in local_resources
+            or (lease.resource in remote_resources and lease.safe_detachment == "forbidden")
+        ):
+            cleanup_values.append(CleanupFact(resource=lease.resource, owner=lease.owner, disposition="left_open"))
+        else:
+            cleanup_values.append(await close_resource(lease))
+    cleanup = tuple(cleanup_values)
     return cleanup, associations
 
 

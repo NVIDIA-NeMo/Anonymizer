@@ -15,9 +15,11 @@ from anonymizer.engine.graph_sdk._effect_values import (
     require_instance,
     require_literal,
 )
+from anonymizer.graph._values import DatumId
 
 ResourceOwner: TypeAlias = Literal["caller", "sdk"]
 SafeDetachment: TypeAlias = Literal["forbidden", "independent_after_dispatch"]
+CleanupPurpose: TypeAlias = Literal["verification", "accounting", "transport_only"]
 CleanupDisposition: TypeAlias = Literal["closed", "close_failed", "close_unknown", "left_open"]
 
 
@@ -101,6 +103,32 @@ class CleanupFact(PrivateValue):
         require_instance(self.resource, ResourceId)
         require_literal(self.owner, frozenset({"caller", "sdk"}))
         require_literal(self.disposition, frozenset({"closed", "close_failed", "close_unknown", "left_open"}))
+
+
+_ASSOCIATION_KEY = object()
+
+
+@dataclass(frozen=True, slots=True, kw_only=True, repr=False, init=False)
+class CleanupAssociation(PrivateValue):
+    resource: ResourceId
+    targets: frozenset[DatumId]
+    purpose: CleanupPurpose
+
+    def __init__(
+        self, *, _key: object, resource: ResourceId, targets: frozenset[DatumId], purpose: CleanupPurpose
+    ) -> None:
+        if _key is not _ASSOCIATION_KEY:
+            raise TypeError("cleanup associations are created by the resource owner")
+        object.__setattr__(self, "resource", resource)
+        object.__setattr__(self, "targets", targets)
+        object.__setattr__(self, "purpose", purpose)
+
+
+def _cleanup_association(
+    *, resource: ResourceId, targets: frozenset[DatumId], purpose: CleanupPurpose
+) -> CleanupAssociation:
+    """Capture admitted ownership before the owner attempts resource cleanup."""
+    return CleanupAssociation(_key=_ASSOCIATION_KEY, resource=resource, targets=targets, purpose=purpose)
 
 
 async def close_resource(lease: ResourceLease) -> CleanupFact:

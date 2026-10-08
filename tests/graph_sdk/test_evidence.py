@@ -11,8 +11,17 @@ from typing import cast
 import pytest
 
 from anonymizer.engine.graph_sdk._effect_values import EffectCode, EffectRejected
+from anonymizer.engine.graph_sdk.binding import start_initial_binding
 from anonymizer.engine.graph_sdk.capabilities import FrozenConfig, ImplementationRef, ImplementationSelection
-from anonymizer.engine.graph_sdk.context import admit_context_plan
+from anonymizer.engine.graph_sdk.context import (
+    BindingLimits,
+    ContextMaterialization,
+    ContextResource,
+    ContextSelector,
+    InitialContextDecl,
+    RetrievalBounds,
+    admit_context_plan,
+)
 from anonymizer.engine.graph_sdk.data import ValidatedDataGraph
 from anonymizer.engine.graph_sdk.evidence import (
     AssessmentSubmission,
@@ -63,6 +72,8 @@ from anonymizer.engine.graph_sdk.resources import ResourceLease
 from anonymizer.graph._values import ArtifactRef, InvocationId
 from anonymizer.graph.activation import ActivationLimits
 from anonymizer.graph.workflow import (
+    ContextInputRef,
+    ContextUse,
     CoverageAtom,
     DynamicScope,
     InputBinding,
@@ -132,6 +143,18 @@ class _AssessmentWithAuxiliaryOutput:
         )
 
 
+@dataclass
+class _AssessmentWithContext:
+    assessor: _AssessingLocal
+
+    async def run(self, request: tuple[AssociationInput, ...]) -> LocalCompleted:
+        completed = await self.assessor.run(request)
+        return replace(
+            completed,
+            results=tuple(replace(item, consumed_context_ports=frozenset({"input"})) for item in completed.results),
+        )
+
+
 async def _execute_assessment(
     *,
     environment: bool = False,
@@ -151,6 +174,7 @@ async def _execute_assessment(
     finding: AssessmentFinding | None = None,
     resource: ResourceLease | None = None,
     external: tuple[RequestTransport, ResourceLease] | None = None,
+    initial_resources: tuple[ContextResource, ...] = (),
 ) -> tuple[AdmittedExecutionPlan, ExecutionResult]:
     auxiliary_output = auxiliary_output or partial_assessment
     depth = nested_depth or int(nested)
@@ -158,6 +182,7 @@ async def _execute_assessment(
     assert not root_passthrough or candidate_input
     assert not (decision_input and external is not None)
     assert not (auxiliary_output and (rename_ports or nested or decision_input or external is not None))
+    assert not initial_resources or not (nested or rename_ports or decision_input or external or root_passthrough)
     predecessor = decision_input or external is not None
     request_policy = (
         PhysicalRequestPolicy(
@@ -182,6 +207,9 @@ async def _execute_assessment(
             replace(
                 outcome,
                 state_effects=frozenset({read}) if environment else frozenset(),
+                context=frozenset({ContextUse(port="input", meaning="retrieved", capture="whole_artifact")})
+                if initial_resources
+                else outcome.context,
                 evidence=frozenset(replace(promise, coverage=coverage) for promise in outcome.evidence),
             )
             for outcome in raw.interface.outcomes
@@ -209,7 +237,10 @@ async def _execute_assessment(
         )
     decision_node = NodeId.new(workflow=raw.workflow)
     nodes = (OperationNode(id=node, operation=operation),)
-    bindings = tuple(raw.input_bindings)
+    bindings = tuple(
+        replace(item, source=ContextInputRef(port="input")) if initial_resources else item
+        for item in raw.input_bindings
+    )
     if predecessor:
         decision_operation = replace(
             operation,
@@ -375,6 +406,44 @@ async def _execute_assessment(
     )
     data = data if data is not None else _data(target_count)
     target_count = len(data.targets)
+    bound_context = None
+    if initial_resources:
+        binding = await (
+            await start_initial_binding(
+                data=data,
+                workflow=workflow,
+                declarations=tuple(
+                    InitialContextDecl(
+                        target=target,
+                        node=node,
+                        port="input",
+                        artifact_type=artifact,
+                        source=initial_resources[index % len(initial_resources)].source,
+                        selector=ContextSelector(fields=()),
+                        requirement="required",
+                        bounds=RetrievalBounds(max_items=1, max_bytes=20, max_requests=1),
+                        materialization=ContextMaterialization(kind="single", item_type=artifact),
+                    )
+                    for index, target in enumerate(data.targets)
+                ),
+                capabilities=tuple(item.capability for item in initial_resources),
+                resources=initial_resources,
+                limits=BindingLimits(
+                    max_declarations=target_count,
+                    max_sources=len(initial_resources),
+                    max_capabilities=len(initial_resources),
+                    max_selector_fields=0,
+                    max_selector_bytes=0,
+                    max_items=target_count,
+                    max_bytes=20 * target_count,
+                    max_requests=target_count,
+                    max_resources=len(initial_resources),
+                ),
+            )
+        ).wait()
+        assert binding.receipt.terminal == "success"
+        assert binding.context is not None
+        bound_context = binding.context
     capabilities = tuple(
         replace(
             _capability(workflow, external=external is not None and item.id == decision_node),
@@ -408,7 +477,9 @@ async def _execute_assessment(
             required_protection_outcomes=frozenset() if execution_only else frozenset({"ok"}),
             hard_request_limit=2 * target_count if external is not None else None,
         ),
-        bound_inputs=tuple(
+        bound_inputs=()
+        if initial_resources
+        else tuple(
             BoundInput(target=target, source=target, port=root_input, artifact_type=artifact) for target in data.targets
         ),
         state=StateRevisionView(
@@ -426,7 +497,7 @@ async def _execute_assessment(
     )
     admitted = admit_execution_plan(
         context=admit_context_plan(
-            prepared=prepared, bound_context=None, adaptive_retrievals=(), context_capabilities=()
+            prepared=prepared, bound_context=bound_context, adaptive_retrievals=(), context_capabilities=()
         ),
         capabilities=capabilities,
         policies=tuple(
@@ -484,6 +555,12 @@ async def _execute_assessment(
                 if external is not None and item.id == decision_node
                 else _Callback(decision=True)
                 if item.id == decision_node
+                else _AssessmentWithContext(
+                    _AssessingLocal(
+                        finding=finding, evidence_port=evidence_port, alias_evidence=candidate_input or alias_output
+                    )
+                )
+                if initial_resources
                 else _AssessmentWithAuxiliaryOutput(
                     _AssessingLocal(
                         finding=finding, evidence_port=evidence_port, alias_evidence=candidate_input or alias_output
