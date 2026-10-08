@@ -100,7 +100,10 @@ REQUEST_FAMILIES = {"budgets", "keyed", "retry", "races", "inflight"}
 _BASE_CASES = tuple(
     case
     for case in json.loads(CORPUS.read_bytes())
-    if (case["family"] in REQUEST_FAMILIES or case["case_id"] == "binding/adaptive_semantic_outcome_independent")
+    if (
+        case["family"] in REQUEST_FAMILIES
+        or case["case_id"] in {"binding/adaptive_semantic_outcome_independent", "binding/unsolicited_source_result"}
+    )
     and case["boundary"] == "runtime"
 )
 CASES = tuple(
@@ -153,6 +156,12 @@ REAL_BINDING_CASE_IDS = {
     "binding/oversize_retrieved_known_usage",
     "binding/optional_oversize_partial",
     "binding/source_failure_explicit_no_settlement",
+    "binding/wrong_source",
+    "binding/missing_result",
+    "binding/duplicate_result",
+    "binding/foreign_result_association",
+    "binding/required_omission_misuse",
+    "binding/empty_optional_response_malformed",
 }
 REAL_BINDING_CASES = tuple(case for case in json.loads(CORPUS.read_bytes()) if case["case_id"] in REAL_BINDING_CASE_IDS)
 
@@ -694,6 +703,36 @@ def test_map_collection_limit_rejects_boolean_at_typed_constructor() -> None:
     )
 
 
+@pytest.mark.parametrize(
+    "case_id",
+    (
+        "binding/source_failure_missing_failure",
+        "binding/source_failure_missing_settlement",
+        "binding/omission_failure_mismatch",
+    ),
+)
+def test_binding_source_failure_constructor_cases(case_id: str) -> None:
+    if case_id == "binding/source_failure_missing_failure":
+        with pytest.raises(TypeError):
+            cast(Any, SourceFailure)(source=ContextSourceRef(name="source", revision=1))
+        return
+    if case_id == "binding/source_failure_missing_settlement":
+        with pytest.raises(TypeError):
+            cast(Any, SourceFailure)(
+                source=ContextSourceRef(name="source", revision=1),
+                failure="permanent",
+            )
+        return
+    with pytest.raises(EffectRejected) as rejected:
+        SourceFailure(
+            source=ContextSourceRef(name="source", revision=1),
+            failure="retryable",
+            settlement=None,
+            disposition="omitted_optional",
+        )
+    assert rejected.value.code.value == "contradictory"
+
+
 @pytest.mark.parametrize("case", ADMISSION_CASES, ids=lambda case: cast(str, case["case_id"]))
 def test_admission_corpus_case_through_production(case: dict[str, Any]) -> None:
     rejected: str | None = None
@@ -780,11 +819,13 @@ class _CaseProvider:
         sources: dict[str, ContextSourceRef],
         association_names: dict[object, str],
         request_names: dict[PhysicalRequestId, str],
+        fallback_associations: list[str],
     ) -> None:
         self.events = events
         self.sources = sources
         self.association_names = association_names
         self.request_names = request_names
+        self.fallback_associations = fallback_associations
 
     async def retrieve(
         self,
@@ -796,7 +837,9 @@ class _CaseProvider:
     ) -> SourceResponse | SourceFailure:
         del selector, bounds
         event = self.events.pop(0)
-        label = cast(str, event.get("association", event.get("items", [{}])[0].get("association")))
+        label = self.association_names.get(association)
+        if label is None:
+            label = self.fallback_associations.pop(0)
         self.association_names[association] = label
         self.request_names[request] = cast(str, event["request"])
         settlement_value = cast(dict[str, Any] | None, event.get("settlement"))
@@ -821,7 +864,13 @@ class _CaseProvider:
             source=source,
             items=tuple(
                 SourceItem(
-                    association=association,
+                    association=(
+                        association
+                        if item["association"] == label
+                        else BindingAssociation(
+                            declaration=BindingDeclarationId.new(binding=BindingId.new(), ordinal=0)
+                        )
+                    ),
                     key=item["key"],
                     version=item["version"],
                     text=item["text"],
@@ -846,8 +895,15 @@ async def _assert_binding_corpus_case(case: dict[str, Any]) -> None:
     event_values = cast(list[dict[str, Any]], case["events"])
     workflow, node, artifact_type = _context_workflow()
     max_response_items = max(
-        (len(cast(list[object], event.get("items", []))) for event in event_values if event["kind"] == "source_result"),
-        default=1,
+        1,
+        max(
+            (
+                len(cast(list[object], event.get("items", [])))
+                for event in event_values
+                if event["kind"] == "source_result"
+            ),
+            default=1,
+        ),
     )
     item_type = artifact_type
     if max_response_items > 1:
@@ -881,7 +937,12 @@ async def _assert_binding_corpus_case(case: dict[str, Any]) -> None:
     assert set(order) == set(binding_sources)
     data = _data(len(order))
     targets = sorted(data.targets, key=repr)
-    source_refs = {name: ContextSourceRef(name=name, revision=1) for name in sorted(set(binding_sources.values()))}
+    result_sources = {
+        cast(str, event["source"]) for event in event_values if event["kind"] in {"source_result", "source_failure"}
+    }
+    source_refs = {
+        name: ContextSourceRef(name=name, revision=1) for name in sorted(set(binding_sources.values()) | result_sources)
+    }
     policies = {name: _policy(value) for name, value in cast(dict[str, dict[str, Any]], raw["policies"]).items()}
     response_events: dict[str, list[dict[str, Any]]] = {
         name: [
@@ -891,6 +952,11 @@ async def _assert_binding_corpus_case(case: dict[str, Any]) -> None:
         ]
         for name in source_refs
     }
+    if case["case_id"] == "binding/wrong_source":
+        declared_source = next(iter(binding_sources.values()))
+        response_events[declared_source] = [
+            event for event in event_values if event["kind"] in {"source_result", "source_failure"}
+        ]
     association_names: dict[object, str] = {}
     request_names: dict[PhysicalRequestId, str] = {}
     providers = {
@@ -899,6 +965,7 @@ async def _assert_binding_corpus_case(case: dict[str, Any]) -> None:
             sources=source_refs,
             association_names=association_names,
             request_names=request_names,
+            fallback_associations=[label for label in order if binding_sources[label] == name],
         )
         for name in source_refs
     }
@@ -925,6 +992,7 @@ async def _assert_binding_corpus_case(case: dict[str, Any]) -> None:
         )
         for label, target in zip(order, targets, strict=True)
     )
+    declared_source_names = set(binding_sources.values())
     capabilities = tuple(
         ContextSourceCapability(
             source=source_refs[name],
@@ -939,6 +1007,7 @@ async def _assert_binding_corpus_case(case: dict[str, Any]) -> None:
             safe_detachment="forbidden",
         )
         for name in source_refs
+        if name in declared_source_names
     )
     resources = tuple(
         ContextResource(
