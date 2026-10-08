@@ -772,8 +772,9 @@ def test_scalar_collection_and_nested_context_sources_execute_with_exact_identit
     asyncio.run(_assert_context_execution("substitution"))
 
 
-def test_optional_context_omission_closes_unstarted_without_an_attempt() -> None:
-    asyncio.run(_assert_context_execution("omitted"))
+@pytest.mark.parametrize("latest", [False, True])
+def test_optional_context_omission_closes_unstarted_without_an_attempt(latest: bool) -> None:
+    asyncio.run(_assert_context_execution("omitted", latest=latest))
 
 
 def test_ordinary_root_and_actual_outcome_context_union_execute_at_real_boundaries() -> None:
@@ -1213,7 +1214,9 @@ async def _assert_collection_schema_rejects_caller_root() -> _ProviderFactory:
     return factory
 
 
-async def _assert_context_execution(mode: str, *, same_key_versions: bool = False, artifact_limit: int = 6) -> None:
+async def _assert_context_execution(
+    mode: str, *, same_key_versions: bool = False, artifact_limit: int = 6, latest: bool = False
+) -> None:
     item_type = ArtifactType(name="text", revision=1)
     input_type = (
         ArtifactType(name="text_collection", revision=1)
@@ -1271,6 +1274,7 @@ async def _assert_context_execution(mode: str, *, same_key_versions: bool = Fals
             kind="collection" if mode in {"collection", "nested", "substitution"} else "single",
             item_type=item_type,
         ),
+        version_selection="latest" if latest else "exact_one",
     )
     binding = await (
         await start_initial_binding(
@@ -1460,11 +1464,11 @@ async def _assert_context_execution(mode: str, *, same_key_versions: bool = Fals
         qualification = admit_qualification(
             execution=admitted, productions=(), limits=_qualification_limits(max_port_facts=32, max_provenance_edges=32)
         )
-        latest = {ref.key: ref for ref, _ in sorted(result.artifacts, key=lambda pair: pair[0].version)}
+        latest_refs = {ref.key: ref for ref, _ in sorted(result.artifacts, key=lambda pair: pair[0].version)}
         current = evidence_revision_view(
             admitted=qualification,
             result=result,
-            artifacts=tuple(latest.values()),
+            artifacts=tuple(latest_refs.values()),
             absences=(),
             configurations=(),
             state=admitted.context.prepared.state,

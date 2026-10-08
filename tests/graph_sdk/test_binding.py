@@ -82,6 +82,8 @@ class _Provider:
 @dataclass
 class _RetryProvider:
     calls: int = 0
+    latest: bool = False
+    correction: bool = False
 
     async def retrieve(self, *, request, association, selector, bounds):
         del selector, bounds
@@ -93,10 +95,19 @@ class _RetryProvider:
             remote_stopped=True,
         )
         if self.calls == 1:
+            if self.correction:
+                return SourceResponse(
+                    source=SOURCE if self.latest else OTHER_SOURCE,
+                    items=tuple(SourceItem(association=association, key=key, version=1, text="bad") for key in (0, 1)),
+                    settlement=settlement,
+                )
             return SourceFailure(source=SOURCE, failure="retryable", settlement=settlement)
         return SourceResponse(
             source=SOURCE,
-            items=(SourceItem(association=association, key=0, version=1, text="retried"),),
+            items=tuple(
+                SourceItem(association=association, key=0, version=version, text="retried")
+                for version in ((2, 1) if self.latest else (1,))
+            ),
             settlement=settlement,
         )
 
@@ -498,8 +509,10 @@ async def _assert_initial_binding() -> None:
     assert result.receipt.cleanup[0].disposition == "left_open"
 
 
-def test_initial_binding_owns_retry_and_charges_each_request() -> None:
-    asyncio.run(_assert_initial_binding_retry())
+@pytest.mark.parametrize("latest", [False, True])
+@pytest.mark.parametrize("correction", [False, True])
+def test_initial_binding_owns_retry_and_charges_each_request(latest: bool, correction: bool) -> None:
+    asyncio.run(_assert_initial_binding_retry(latest=latest, correction=correction))
 
 
 @pytest.mark.parametrize("latest", [False, True])
@@ -588,7 +601,7 @@ async def _assert_initial_binding_boundary_settlements(*, latest: bool) -> None:
         assert not result.receipt.artifacts
 
 
-async def _assert_initial_binding_retry() -> None:
+async def _assert_initial_binding_retry(*, latest: bool, correction: bool) -> None:
     workflow, node, artifact = _context_workflow()
     data = _data(1)
     policy = PhysicalRequestPolicy(
@@ -618,10 +631,11 @@ async def _assert_initial_binding_retry() -> None:
         source=SOURCE,
         selector=ContextSelector(fields=()),
         requirement="required",
-        bounds=RetrievalBounds(max_items=1, max_bytes=20, max_requests=2),
+        bounds=RetrievalBounds(max_items=2 if latest else 1, max_bytes=20, max_requests=2),
         materialization=ContextMaterialization(kind="single", item_type=artifact),
+        version_selection="latest" if latest else "exact_one",
     )
-    provider = _RetryProvider()
+    provider = _RetryProvider(latest=latest, correction=correction)
     result = await (
         await start_initial_binding(
             data=data,
@@ -642,7 +656,7 @@ async def _assert_initial_binding_retry() -> None:
                 max_capabilities=1,
                 max_selector_fields=0,
                 max_selector_bytes=0,
-                max_items=1,
+                max_items=2 if latest else 1,
                 max_bytes=20,
                 max_requests=2,
                 max_resources=1,
@@ -652,7 +666,12 @@ async def _assert_initial_binding_retry() -> None:
     assert provider.calls == 2
     assert result.receipt.terminal == "success"
     assert result.context is not None and result.context.artifacts[0].text == "retried"
-    assert [item.purpose for item in result.receipt.requests.dispatches] == ["initial_binding", "retry"]
+    assert [item.purpose for item in result.receipt.requests.dispatches] == [
+        "initial_binding",
+        "correction" if correction else "retry",
+    ]
+    assert len(result.context.artifacts) == (2 if latest else 1)
+    assert len(result.receipt.requests.settlements) == 2
 
 
 @dataclass

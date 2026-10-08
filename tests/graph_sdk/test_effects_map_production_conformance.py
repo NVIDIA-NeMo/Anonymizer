@@ -520,6 +520,8 @@ class _MapCallback:
     cross_associations: list[SemanticAssociation] = field(default_factory=list)
     cross_ready: asyncio.Event | None = None
     passthrough: bool = False
+    same_key_versions: bool = False
+    item_counts: tuple[int, ...] | None = None
 
     async def run(self, request: tuple[AssociationInput, ...]) -> LocalCompleted | LocalFailure:
         self.calls.append(request)
@@ -551,13 +553,15 @@ class _MapCallback:
                 value=TextCollectionValue(
                     items=tuple(
                         TextCollectionItem(
-                            key=index,
-                            version=1,
+                            key=7 if self.same_key_versions else index,
+                            version=index + 1 if self.same_key_versions else 1,
                             value=TextArtifactValue(
                                 text=(self.item_values[index] if self.item_values is not None else f"item-{index}")
                             ),
                         )
-                        for index in range(self.item_count)
+                        for index in range(
+                            self.item_counts[len(self.calls) - 1] if self.item_counts is not None else self.item_count
+                        )
                     )
                 ),
             )
@@ -778,6 +782,8 @@ async def _execute_membership(
     max_children: int = 2,
     outward_scalar: str | None = None,
     outward_identity: bool = True,
+    same_key_versions: bool = False,
+    item_counts: tuple[int, ...] | None = None,
 ):
     fixture = _map_fixture(
         control_only=control_only,
@@ -890,6 +896,8 @@ async def _execute_membership(
             response_mode=response_mode,
             item_count=item_count,
             item_values=item_values,
+            same_key_versions=same_key_versions,
+            item_counts=item_counts,
             collection_type=fixture.collection_type,
             text_type=fixture.text_type,
             other_type=fixture.other_type,
@@ -2053,21 +2061,26 @@ async def _assert_map_result_publication(
         ("map/artifact_bytes_one_over", 8, 4),
     ),
 )
+@pytest.mark.parametrize("same_key_versions", [False, True])
 def test_map_storage_limits_rollback_publication(
     case_id: str,
     artifact_headroom: int,
     max_collection_items: int,
+    same_key_versions: bool,
 ) -> None:
-    asyncio.run(_assert_map_storage_limit(case_id, artifact_headroom, max_collection_items))
+    asyncio.run(_assert_map_storage_limit(case_id, artifact_headroom, max_collection_items, same_key_versions))
 
 
-async def _assert_map_storage_limit(case_id: str, artifact_headroom: int, max_collection_items: int) -> None:
+async def _assert_map_storage_limit(
+    case_id: str, artifact_headroom: int, max_collection_items: int, same_key_versions: bool
+) -> None:
     case = MAP_CASES[case_id]
     item_count = 3 if case_id == "map/overflow_collection_storage_one_over" else 2
     item_values = ("aa", "bb") if case_id == "map/artifact_bytes_one_over" else None
     fixture, result, callbacks = await _execute_membership(
         item_count,
         item_values=item_values,
+        same_key_versions=same_key_versions,
         artifact_headroom=artifact_headroom,
         artifact_byte_headroom=7 if case_id == "map/artifact_bytes_one_over" else 32,
         max_collection_items=max_collection_items,
@@ -2145,3 +2158,66 @@ def test_canonical_membership_retains_expansions_without_instantiated_children(
     assert {item.activation for item in result.record.terminals} == {
         member for membership in result.record.memberships for member in membership.members
     }
+
+
+def test_versioned_map_lineages_separate_targets_and_invocations_at_exact_capacity() -> None:
+    asyncio.run(_assert_versioned_map_lineages())
+
+
+async def _assert_versioned_map_lineages() -> None:
+    invocations = []
+    for _ in range(2):
+        fixture, result, callbacks = await _execute_membership(
+            2,
+            same_key_versions=True,
+            target_count=2,
+            artifact_headroom=6,
+            artifact_byte_headroom=48,
+            provenance_edge_headroom=2,
+        )
+        items = [fact for fact in result.provenance if isinstance(fact.key, MapItemKey)]
+        assert len(items) == 4
+        owners = {}
+        for fact in items:
+            assert isinstance(fact.key, MapItemKey)
+            owners.setdefault((fact.key.target, fact.key.expander), []).append(fact.artifact)
+        assert len(owners) == 2
+        assert len({refs[0].key for refs in owners.values()}) == 2
+        for refs in owners.values():
+            assert len({ref.key for ref in refs}) == 1
+            assert {ref.version for ref in refs} == {1, 2}
+        assert len(result.artifacts) == 8
+        assert len(callbacks[fixture.member].calls) == 4
+        assert all(state.complete for state in result.states)
+        invocations.append(result.record.invocation)
+    assert invocations[0] != invocations[1]
+
+
+def test_versioned_map_rollback_restores_allocator_for_next_target() -> None:
+    asyncio.run(_assert_versioned_map_rollback_reuse())
+
+
+async def _assert_versioned_map_rollback_reuse() -> None:
+    fixture, result, callbacks = await _execute_membership(
+        2,
+        same_key_versions=True,
+        item_counts=(2, 1),
+        target_count=2,
+        artifact_headroom=2,
+        artifact_byte_headroom=48,
+    )
+    expanders = [entry for state in result.states for entry in state.entries if entry.template == fixture.expander]
+    assert sorted(entry.status for entry in expanders) == ["blocked", "success"]
+    assert len(callbacks[fixture.expander].calls) == 2
+    assert len(callbacks[fixture.member].calls) == 1
+    assert sorted(ref.key for ref, _ in result.artifacts) == [0, 1, 2, 3]
+    items = [fact for fact in result.provenance if isinstance(fact.key, MapItemKey)]
+    assert len(items) == 1
+    assert isinstance(items[0].key, MapItemKey)
+    assert items[0].key.expander == next(entry.activation for entry in expanders if entry.status == "success")
+
+
+def test_versioned_map_provenance_one_over_rejects_at_execution_admission() -> None:
+    with pytest.raises(EffectRejected) as rejected:
+        asyncio.run(_execute_membership(2, same_key_versions=True, target_count=2, provenance_edge_headroom=1))
+    assert rejected.value.code.value == "limit_exceeded"

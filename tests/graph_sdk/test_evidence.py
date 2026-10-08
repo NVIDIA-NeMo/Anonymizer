@@ -178,6 +178,8 @@ async def _execute_assessment(
     initial_resources: tuple[ContextResource, ...] = (),
     initial_item_limit: int = 1,
     initial_version_selection: InitialVersionSelection = "exact_one",
+    execution_limits: ExecutionLimits | None = None,
+    assessment_edge_limit: int | None = None,
 ) -> tuple[AdmittedExecutionPlan, ExecutionResult]:
     auxiliary_output = auxiliary_output or partial_assessment
     depth = nested_depth or int(nested)
@@ -546,7 +548,9 @@ async def _execute_assessment(
             max_absence_queries=1 if environment else 0,
             max_assessment_facts=(1 + int(partial_assessment)) * target_count,
             max_port_facts=(3 + 2 * int(predecessor) + depth + int(auxiliary_output)) * target_count,
-            max_provenance_edges=(2 + int(predecessor) + depth + int(auxiliary_output)) * target_count,
+            max_provenance_edges=(2 + int(predecessor) + depth + int(auxiliary_output)) * target_count
+            if assessment_edge_limit is None
+            else assessment_edge_limit,
         ),
     )
     services = ExecutionServices(
@@ -581,7 +585,8 @@ async def _execute_assessment(
             for item, capability in zip(nodes, capabilities, strict=True)
         ),
         context_resources=(),
-        limits=ExecutionLimits(
+        limits=execution_limits
+        or ExecutionLimits(
             max_local_in_flight=1,
             max_remote_outstanding=1 if external is not None else 0,
             max_runtime_artifacts=(1 + initial_item_limit + int(auxiliary_output)) * target_count,
