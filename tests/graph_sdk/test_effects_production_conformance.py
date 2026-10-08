@@ -605,6 +605,25 @@ def test_map_collection_shape_rejects_at_typed_constructor(
     assert TextCollectionValue(items=canonical).items == canonical
 
 
+@pytest.mark.parametrize(
+    ("case_id", "value"),
+    (
+        ("materialization/initial_wrong_item", 7),
+        ("materialization/adaptive_wrong_item", 7),
+        ("materialization/initial_nested_value", {"items": []}),
+        ("materialization/adaptive_nested_value", {"items": []}),
+    ),
+)
+def test_materialization_item_shape_rejects_at_typed_constructor(case_id: str, value: object) -> None:
+    del case_id
+    binding = BindingId.new()
+    association = BindingAssociation(declaration=BindingDeclarationId.new(binding=binding, ordinal=0))
+    with pytest.raises(EffectRejected) as rejected:
+        SourceItem(association=association, key=0, version=1, text=cast(Any, value))
+    assert rejected.value.code.value == "invalid_type"
+    assert SourceItem(association=association, key=0, version=1, text="valid").text == "valid"
+
+
 @pytest.mark.parametrize("case", ADMISSION_CASES, ids=lambda case: cast(str, case["case_id"]))
 def test_admission_corpus_case_through_production(case: dict[str, Any]) -> None:
     rejected: str | None = None
