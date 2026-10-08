@@ -37,6 +37,7 @@ from anonymizer.engine.graph_sdk.executor import (
     ImplementationHandle,
     LocalAssessmentResult,
     LocalCompleted,
+    LocalFailure,
     MapExpansionDecl,
     MapItemKey,
     OperationExecutionPolicy,
@@ -109,22 +110,32 @@ class _ReferenceMapCallback:
     text_type: ArtifactType
     collection_type: ArtifactType
     calls: int = 0
+    member_failure: bool = False
+    versioned_items: bool = False
+    membership_port: str = "members"
+    expansion_outcome: str = "ok"
 
-    async def run(self, request: tuple[AssociationInput, ...]) -> LocalCompleted:
+    async def run(self, request: tuple[AssociationInput, ...]) -> LocalCompleted | LocalFailure:
         self.calls += 1
         (item,) = request
         assert isinstance(item.association, SemanticAssociation)
+        if self.role == "MN" and self.member_failure:
+            return LocalFailure(failure="permanent")
         outputs: tuple[PortArtifact, ...] = ()
         assessments: tuple[LocalAssessmentResult, ...] = ()
         if self.role == "EXP":
             outputs = (
                 PortArtifact(
-                    port="members",
+                    port=self.membership_port,
                     artifact_type=self.collection_type,
                     artifact=None,
                     value=TextCollectionValue(
                         items=tuple(
-                            TextCollectionItem(key=index, version=1, value=TextArtifactValue(text=str(index)))
+                            TextCollectionItem(
+                                key=0 if self.versioned_items else index,
+                                version=index + 1 if self.versioned_items else 1,
+                                value=TextArtifactValue(text=str(index)),
+                            )
                             for index in range(self.count)
                         )
                     ),
@@ -153,7 +164,7 @@ class _ReferenceMapCallback:
             results=(
                 AssociationResult(
                     association=item.association,
-                    outcome="ok",
+                    outcome=self.expansion_outcome if self.role == "EXP" else "ok",
                     outputs=outputs,
                     consumed_context_ports=frozenset(),
                 ),
@@ -163,8 +174,17 @@ class _ReferenceMapCallback:
 
 
 async def _execute_reference_map(
-    count: int, *, consumed_only: bool = False
+    count: int,
+    *,
+    consumed_only: bool = False,
+    member_failure: bool = False,
+    versioned_items: bool = False,
+    candidate_uses_membership: bool = True,
+    candidate_passthrough: bool = False,
+    alternate_expansion: bool = False,
 ) -> tuple[AdmittedExecutionPlan, ExecutionResult, dict[str, NodeId]]:
+    membership_port = "alternate_members" if alternate_expansion else "members"
+    expansion_outcome = "alternate" if alternate_expansion else "ok"
     owner = WorkflowId.new()
     nodes = {name: NodeId.new(workflow=owner) for name in ("N", "EXP", "MN", "J")}
     text_type = ArtifactType(name="text", revision=1)
@@ -187,8 +207,8 @@ async def _execute_reference_map(
         expander=nodes["EXP"],
         member=nodes["MN"],
         item_input="item",
-        membership_port="members",
-        expansion_outcome="ok",
+        membership_port=membership_port,
+        expansion_outcome=expansion_outcome,
     )
     operations = {
         "N": OperationSpec(
@@ -196,12 +216,16 @@ async def _execute_reference_map(
             inputs=(
                 InputPort(name="subject", artifact_type=text_type),
                 InputPort(name="context", artifact_type=text_type),
-                InputPort(name="membership", artifact_type=collection_type),
+                *((InputPort(name="membership", artifact_type=collection_type),) if candidate_uses_membership else ()),
             ),
             outputs=tuple(OutputPort(name=name, artifact_type=text_type) for name in ("result", "evidence")),
             output_dependencies=(
                 OutputDependency(
-                    output="result", inputs=frozenset({"subject", "membership"}), identity_input="subject"
+                    output="result",
+                    inputs=frozenset({"subject", "membership"})
+                    if candidate_uses_membership
+                    else frozenset({"subject"}),
+                    identity_input="subject",
                 ),
                 OutputDependency(output="evidence", inputs=frozenset({"context"}), identity_input=None),
             ),
@@ -216,11 +240,15 @@ async def _execute_reference_map(
         "EXP": OperationSpec(
             name="EXP",
             inputs=(InputPort(name="context", artifact_type=text_type),),
-            outputs=(OutputPort(name="members", artifact_type=collection_type),),
+            outputs=(OutputPort(name=membership_port, artifact_type=collection_type),),
             output_dependencies=(
-                OutputDependency(output="members", inputs=frozenset({"context"}), identity_input=None),
+                OutputDependency(output=membership_port, inputs=frozenset({"context"}), identity_input=None),
             ),
-            outcomes=(_outcome("ok", produced=frozenset({"members"}), max_activations=4, max_output_bytes=32),),
+            outcomes=(
+                _outcome(
+                    expansion_outcome, produced=frozenset({membership_port}), max_activations=4, max_output_bytes=32
+                ),
+            ),
         ),
         "MN": OperationSpec(
             name="MN",
@@ -244,7 +272,13 @@ async def _execute_reference_map(
         inputs=tuple(InputPort(name=name, artifact_type=text_type) for name in ("subject", "context")),
         outputs=(OutputPort(name="result", artifact_type=text_type),),
         output_dependencies=(
-            OutputDependency(output="result", inputs=frozenset({"subject", "context"}), identity_input="subject"),
+            OutputDependency(
+                output="result",
+                inputs=frozenset({"subject", "context"})
+                if candidate_uses_membership and not candidate_passthrough
+                else frozenset({"subject"}),
+                identity_input="subject",
+            ),
         ),
         outcomes=(
             replace(
@@ -278,9 +312,15 @@ async def _execute_reference_map(
             InputBinding(
                 source=WorkflowInputRef(port="subject"), destination=NodeInputRef(node=nodes["MN"], port="item")
             ),
-            InputBinding(
-                source=NodeOutputRef(node=nodes["EXP"], port="members"),
-                destination=NodeInputRef(node=nodes["N"], port="membership"),
+            *(
+                (
+                    InputBinding(
+                        source=NodeOutputRef(node=nodes["EXP"], port=membership_port),
+                        destination=NodeInputRef(node=nodes["N"], port="membership"),
+                    ),
+                )
+                if candidate_uses_membership
+                else ()
             ),
             *(
                 (
@@ -295,13 +335,17 @@ async def _execute_reference_map(
         ),
         output_bindings=(
             OutputBinding(
-                source=NodeOutputRef(node=nodes["N"], port="result"), destination=WorkflowOutputRef(port="result")
+                source=WorkflowInputRef(port="subject")
+                if candidate_passthrough
+                else NodeOutputRef(node=nodes["N"], port="result"),
+                destination=WorkflowOutputRef(port="result"),
             ),
         ),
-        outcome_bindings=(
+        outcome_bindings=tuple(
             OutcomeBinding(
-                source=NodeOutcomeRef(node=nodes["J"], outcome="ok"), destination=WorkflowOutcomeRef(outcome="ok")
-            ),
+                source=NodeOutcomeRef(node=nodes[name], outcome="ok"), destination=WorkflowOutcomeRef(outcome="ok")
+            )
+            for name in ("J", "N")
         ),
         sequence=(
             SequenceEdge(before=nodes["EXP"], after=nodes["MN"]),
@@ -329,7 +373,7 @@ async def _execute_reference_map(
         ),
         limits=WorkflowLimits(
             max_nodes=4,
-            max_bindings=8 + int(consumed_only),
+            max_bindings=9 + int(consumed_only),
             max_sequence_edges=4,
             max_choices=0,
             max_branch_members=0,
@@ -346,7 +390,7 @@ async def _execute_reference_map(
                     MapDecl(
                         expander=nodes["EXP"],
                         member=nodes["MN"],
-                        expansion_outcomes=frozenset({"ok"}),
+                        expansion_outcomes=frozenset({expansion_outcome}),
                         max_children=2,
                         item_input="item",
                     ),
@@ -426,8 +470,8 @@ async def _execute_reference_map(
                         request=None,
                     ),
                 ),
-                result_outcomes=frozenset({"ok"}),
-                runtime_outcomes=_rows(frozenset({"ok"})),
+                result_outcomes=frozenset(outcome.name for outcome in capability.operation.outcomes),
+                runtime_outcomes=_rows(frozenset(outcome.name for outcome in capability.operation.outcomes)),
             )
             for node, capability in zip(nodes.values(), capabilities, strict=True)
         ),
@@ -453,10 +497,24 @@ async def _execute_reference_map(
             max_provenance_edges=16,
         ),
         map_expansions=(
-            MapExpansionDecl(expander=nodes["EXP"], outcome="ok", membership_port="members", item_type=text_type),
+            MapExpansionDecl(
+                expander=nodes["EXP"], outcome=expansion_outcome, membership_port=membership_port, item_type=text_type
+            ),
         ),
     )
-    callbacks = tuple(_ReferenceMapCallback(name, count, text_type, collection_type) for name in nodes)
+    callbacks = tuple(
+        _ReferenceMapCallback(
+            name,
+            count,
+            text_type,
+            collection_type,
+            member_failure=member_failure,
+            versioned_items=versioned_items,
+            membership_port=membership_port,
+            expansion_outcome=expansion_outcome,
+        )
+        for name in nodes
+    )
     running = await start_execution(
         admitted=admitted,
         capabilities=capabilities,
@@ -486,7 +544,7 @@ async def _execute_reference_map(
         ),
     )
     result = await running.wait()
-    assert [callback.calls for callback in callbacks] == [1, 1, count, 1]
+    assert [callback.calls for callback in callbacks] == [1, 1, count, int(not member_failure)]
     return admitted, result, nodes
 
 
@@ -497,6 +555,11 @@ FLAT_CASE_IDS = {
         f"map_item_evidence/{suffix}"
         for suffix in (
             "typed_consumed_endpoint",
+            "member_non_success",
+            "distinct_outcome_port",
+            "item_stale",
+            "different_final_ancestry",
+            "candidate_passthrough_unrelated",
             "missing_submission",
             "foreign_submission",
             "repeated_submission",
@@ -529,9 +592,19 @@ async def _run_reference_map_case(case: dict[str, Any]) -> dict[str, Any]:
     events = case["events"]
     count = sum(event["kind"] == "entry" and event["node"] == "MN" for event in events)
     consumed_only = case["case_id"] == "map_item_evidence/typed_consumed_endpoint"
+    member_failure = case["case_id"] == "map_item_evidence/member_non_success"
+    versioned_items = case["case_id"] == "map_item_evidence/item_stale"
+    candidate_uses_membership = case["case_id"] != "map_item_evidence/different_final_ancestry"
+    candidate_passthrough = case["case_id"] == "map_item_evidence/candidate_passthrough_unrelated"
+    alternate_expansion = case["case_id"] == "map_item_evidence/distinct_outcome_port"
     baseline = (
         case
         if consumed_only
+        or member_failure
+        or versioned_items
+        or not candidate_uses_membership
+        or candidate_passthrough
+        or alternate_expansion
         else next(item for item in CORPUS if item["case_id"] == f"map_item_evidence/direct_{count}")
     )
     mutable_events = {"assessment_submission", "assessment", "revision"}
@@ -541,7 +614,15 @@ async def _run_reference_map_case(case: dict[str, Any]) -> dict[str, Any]:
     assert {key: value for key, value in case["declaration"].items() if key != "limits"} == {
         key: value for key, value in baseline["declaration"].items() if key != "limits"
     }
-    execution, result, nodes = await _execute_reference_map(count, consumed_only=consumed_only)
+    execution, result, nodes = await _execute_reference_map(
+        count,
+        consumed_only=consumed_only,
+        member_failure=member_failure,
+        versioned_items=versioned_items,
+        candidate_uses_membership=candidate_uses_membership,
+        candidate_passthrough=candidate_passthrough,
+        alternate_expansion=alternate_expansion,
+    )
     assert len(result.states[0].entries) == len(result.record.terminals) == count + 3
     names = _MapRecordNames(execution, result, nodes)
     names.assert_retained_facts(events)
@@ -627,17 +708,28 @@ class _MapRecordNames:
                     port.port
                 ]
             elif node == "EXP":
-                name = {"context": "XAv0", "members": "CAv0"}[port.port]
+                name = "XAv0" if port.port == "context" else "CAv0"
             else:
                 assert node == "MN"
                 index = self.activations[port.activation][1:]
-                name = "Av0" if port.port == "subject" else f"MI{index}v1" if port.port == "item" else f"ME{index}v0"
+                if port.port == "item":
+                    key = next(
+                        fact.key
+                        for fact in result.provenance
+                        if isinstance(fact.key, MapItemKey) and fact.key.member == port.activation
+                    )
+                    name = f"MI{key.item_key}v{key.item_version}"
+                else:
+                    name = "Av0" if port.port == "subject" else f"ME{index}v0"
             if port.artifact in self.artifacts:
                 assert self.artifacts[port.artifact] == name
             self.artifacts[port.artifact] = name
         assert len(set(self.artifacts.values())) == len(self.artifacts)
         assert set(self.artifacts) == {ref for ref, _ in result.artifacts} == set(result.record.artifacts)
-        assert all(ref.version == 1 for ref in self.artifacts)
+        assert all(
+            ref.version == (int(name.rsplit("v", 1)[1]) if name.startswith("MI") else 1)
+            for ref, name in self.artifacts.items()
+        )
         self.producers = {
             fact.key: f"MAPITEM:{self.activations[fact.key.member][1:]}"
             for fact in result.provenance

@@ -18,9 +18,9 @@ CONTRACT_SHA256 = "239bdaf97eda6b90caeb13d29826abead08e2beff6297460c26409b3e1f5d
 STRUCTURAL_CONTRACT_SHA256 = "88c0ef075b225847f1b2668d2a749307c220eceb50215718db722119d828dc6b"
 MATERIALIZED_VERSION_CONTRACT_SHA256 = "165c7c95bce31a7c5808860f28d012bbe1986bf0712cebdc86fb08ad07afcb21"
 MAP_ITEM_EVIDENCE_CONTRACT_SHA256 = "d5e270fe413f4f5632b522e3ce57e0c913a143060997d63b7673268ae9acfbd8"
-GENERATOR_VERSION = "qualification-v1-generator-23-blocked-joins-v4"
-SELF_TEST_VERSION = "qualification-v1-self-test-23-blocked-joins-v4"
-CORPUS_PATH = "future-contracts/r3-map-item-v4/qualification_v1_cases.json"
+GENERATOR_VERSION = "qualification-v1-generator-25-admission-precedence-v6"
+SELF_TEST_VERSION = "qualification-v1-self-test-25-admission-precedence-v6"
+CORPUS_PATH = "future-contracts/r3-map-item-v6/qualification_v1_cases.json"
 V10_IDS_SHA256 = "043c433056b1ecb21d17ef48efa8bcca6a678fd6b722e7a91ea2e1b3a05c9544"
 
 TERMINAL_CATEGORIES = {"blocked", "cancelled", "failure", "inconsistent", "lost", "success"}
@@ -496,10 +496,7 @@ def admit(d: Obj) -> Obj:
             return reject("invalid_value")
         if any(
             not isinstance(endpoint["path"], list)
-            or any(
-                not isinstance(node, str) or obj(d["node_kinds"]).get(node) != "container"
-                for node in arr(endpoint["path"])
-            )
+            or any(not isinstance(node, str) or not node for node in arr(endpoint["path"]))
             or any(not isinstance(endpoint[field], str) or not endpoint[field] for field in endpoint_fields - {"path"})
             for endpoint in endpoints
         ):
@@ -518,6 +515,8 @@ def admit(d: Obj) -> Obj:
         if len(domains) != 1:
             return reject("contradictory")
         domain = next(iter(domains))
+        if any(obj(d["node_kinds"]).get(cast(str, node)) != "container" for node in domain[0]):
+            return reject("invalid_value")
         route_matches = [
             route
             for route in routes
@@ -529,7 +528,16 @@ def admit(d: Obj) -> Obj:
             and route["membership_port"] == domain[5]
         ]
         if len(route_matches) != 1:
-            return reject("missing" if not route_matches else "duplicate")
+            same_map_routes = [
+                route
+                for route in routes
+                if route["expander"] == domain[1]
+                and route["member"] == domain[2]
+                and route["item_input"] == domain[3]
+                and route["outcome"] == domain[4]
+                and route["membership_port"] == domain[5]
+            ]
+            return reject("duplicate" if route_matches else "foreign_owner" if same_map_routes else "missing")
         if not any(
             map_input["expander"] == domain[1]
             and map_input["item_input"] == domain[3]
@@ -3176,6 +3184,7 @@ def case(
         "assessment/wrong_kind_coverage",
         "joins/evidence_port_swap",
         "joins/subject_port_swap",
+        "map_item_evidence/wrong_subject_artifact",
     }
     c["comparison_scope"] = "neutral_only" if case_id in neutral_only else "production_boundary"
     c["traces"] = [{"events": x, "expected": reduce(d, x), "name": f"alternate_{i}"} for i, x in enumerate(alternates)]
@@ -4750,6 +4759,14 @@ def generate_cases() -> tuple[Obj, ...]:
     ]
     e = direct_item_events(1)
     next(event for event in e if event.get("kind") == "final")["producer"] = "ROOT:A:subject"
+    next(
+        event
+        for event in e
+        if event.get("kind") == "port"
+        and event.get("activation") == "ROOT:A"
+        and event.get("node") == "N"
+        and event.get("port") == "result"
+    )["role"] = "artifact"
     c.append(case("map_item_evidence", "candidate_passthrough_unrelated", d, e))
 
     nested_endpoint = map_item_endpoint(path=("SG",))

@@ -93566,7 +93566,7 @@
     },
     "events": [],
     "expected": {
-      "code": "invalid_value",
+      "code": "contradictory",
       "status": "rejected"
     },
     "family": "map_item_admission",
@@ -94031,7 +94031,7 @@
     },
     "events": [],
     "expected": {
-      "code": "missing",
+      "code": "foreign_owner",
       "status": "rejected"
     },
     "family": "map_item_admission",
@@ -95131,7 +95131,7 @@
   {
     "boundary": "qualification",
     "case_id": "map_item_evidence/wrong_subject_artifact",
-    "comparison_scope": "production_boundary",
+    "comparison_scope": "neutral_only",
     "declaration": {
       "atomic": [
         [
@@ -104909,7 +104909,7 @@
         "kind": "port",
         "node": "N",
         "port": "result",
-        "role": "candidate",
+        "role": "artifact",
         "target": "A"
       },
       {

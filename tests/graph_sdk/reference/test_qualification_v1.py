@@ -352,6 +352,16 @@ def test_map_item_endpoint_admission_and_exact_runtime_owner() -> None:
         "two_maps_cross_owner",
     ):
         assert result(f"map_item_evidence/{name}")["status"] == "rejected"
+    assert case("map_item_evidence/wrong_subject_artifact")["comparison_scope"] == "neutral_only"
+    assert case("map_item_evidence/wrong_item_owner")["comparison_scope"] == "production_boundary"
+    assert (
+        result("map_item_evidence/wrong_subject_artifact")
+        == result("map_item_evidence/wrong_item_owner")
+        == {
+            "code": "contradictory",
+            "status": "rejected",
+        }
+    )
 
 
 def test_map_item_routes_retain_ordered_containment_and_map_owner_transition() -> None:
@@ -367,9 +377,17 @@ def test_map_item_routes_retain_ordered_containment_and_map_owner_transition() -
         }
     ]
     assert result("map_item_admission/valid_container_wrong_route") == {
-        "code": "missing",
+        "code": "foreign_owner",
         "status": "rejected",
     }
+    assert result("map_item_admission/invalid_path_owner") == {
+        "code": "contradictory",
+        "status": "rejected",
+    }
+    wrong_route = case("map_item_admission/valid_container_wrong_route")["declaration"]
+    assert wrong_route["node_kinds"]["UNRELATED"] == "container"
+    assert wrong_route["map_routes"][0]["path"] == []
+    assert wrong_route["map_item_requirements"][0]["subject_endpoint"]["path"] == ["UNRELATED"]
     assert result("map_item_admission/duplicate_typed_requirement") == {
         "code": "duplicate",
         "status": "rejected",
@@ -508,6 +526,20 @@ def test_map_item_paths_domains_and_candidate_ancestry_are_exact() -> None:
     assert result("map_item_evidence/missing_fact") == {"code": "missing", "status": "rejected"}
     assert result("map_item_bounds/submissions_one_over") == {"code": "limit_exceeded", "status": "rejected"}
     assert result("map_item_bounds/verified_one_over") == {"code": "limit_exceeded", "status": "rejected"}
+
+
+def test_root_input_passthrough_does_not_relabel_unused_operation_output_candidate() -> None:
+    item = case("map_item_evidence/candidate_passthrough_unrelated")
+    events = cast(list[reference.Obj], item["events"])
+    ports = {
+        (event["activation"], event["node"], event["port"]): event["role"]
+        for event in events
+        if event.get("kind") == "port"
+    }
+    assert ports[("ROOT:A", "N", "subject")] == "candidate"
+    assert ports[("ROOT:A", "N", "result")] == "artifact"
+    assert next(event for event in events if event.get("kind") == "final")["producer"] == "ROOT:A:subject"
+    assert row("map_item_evidence/candidate_passthrough_unrelated")["withholding"] == ["missing_assessment"]
 
 
 def test_validity_selectivity_and_output_independence() -> None:

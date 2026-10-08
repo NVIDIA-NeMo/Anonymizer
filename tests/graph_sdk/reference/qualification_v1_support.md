@@ -1,7 +1,50 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# Qualification v1 R3 map-item evidence reference extension v4
+# Qualification v1 R3 map-item evidence reference extension v6
+
+## Typed admission precedence and route ownership
+
+V6 corrects two typed admission codes to the public owner boundary. A
+`ProtectionRequirement` first establishes that all typed subject and consumed
+endpoints name one exact map domain. Therefore `invalid_path_owner`, whose
+subject path is `MN` while its consumed path is empty, rejects
+`contradictory` before either path is validated as a container route.
+
+For `valid_container_wrong_route`, `UNRELATED` is a genuine declared container,
+but the retained `map_routes` owner record places the same expander and member
+at the root route. Entering the unrelated container changes workflow ownership;
+the root-owned expander/member cannot belong to that body. The case therefore
+rejects `foreign_owner`, rather than treating the map declaration as merely
+missing. The evaluator derives this result by matching the endpoint's map
+identity against its retained route owner; it does not switch on a case ID or
+stored expected error.
+
+`map_item_evidence/wrong_subject_artifact` remains in the corpus with its
+`contradictory` result, but is tagged `neutral_only`. A real
+`ExecutionAssessmentFact` has no caller-supplied subject-artifact field; P7
+derives that artifact from the admitted promise subject port and its retained
+occurrence port. Production comparison must therefore corrupt the actual
+retained item owner instead. `map_item_evidence/wrong_item_owner` is the
+corresponding production-boundary witness: the member item port/input parent no
+longer resolves to its exact `MapItemKey` and rejects `contradictory`. This
+mapping preserves the neutral family without adding an SDK field or concealing
+the real owner check.
+
+## Root-input candidate passthrough output role
+
+V5 corrects one retained port role in
+`map_item_evidence/candidate_passthrough_unrelated`. Its final workflow output
+is bound directly from the root `subject` input. That root input and `N`'s
+assessment-subject occurrence are candidates. The separately executed but
+unused `N.result` output is neither an assessment subject nor the source of a
+`NodeOutputRef` workflow output binding, so its occurrence role is `artifact`.
+
+The result port remains retained with its operation provenance; only its role
+changes from v4's incorrect `candidate` to `artifact`. The final candidate is
+still the root subject, its ancestry is still unrelated to the membership
+producer, and the case continues to withhold `missing_assessment`. No verifier
+normalization or product behavior change is implied.
 
 ## Blocked keyed joins
 
