@@ -172,6 +172,7 @@ def test_request_corpus_case_through_production(case: dict[str, Any]) -> None:
         "reservation_policies",
         "settlements",
         "request_facts",
+        "cancel_requested",
     ):
         assert actual[key] == expected_state[key], (case["case_id"], key)
 
@@ -344,4 +345,5 @@ def _normalize(
         },
         "settlements": settlements,
         "request_facts": request_facts,
+        "cancel_requested": sorted(request_names[item] for item in state.cancel_requested),
     }

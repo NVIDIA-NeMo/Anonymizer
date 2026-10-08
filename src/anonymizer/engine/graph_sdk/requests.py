@@ -258,6 +258,10 @@ class AssociationResult(PrivateValue):
             reject(EffectCode.INVALID_TYPE)
         if any(not item for item in self.consumed_context_ports):
             reject(EffectCode.INVALID_VALUE)
+        if isinstance(self.association, BindingAssociation) and (
+            self.outcome != "retrieved" or self.outputs or self.consumed_context_ports
+        ):
+            reject(EffectCode.CONTRADICTORY)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True, repr=False)
@@ -498,6 +502,7 @@ class RequestState(PrivateValue):
     defects: tuple[RequestDefect, ...]
     local_in_flight: frozenset[PhysicalRequestId]
     remote_outstanding: frozenset[PhysicalRequestId]
+    cancel_requested: frozenset[PhysicalRequestId]
     cancelled: bool
 
 
@@ -515,6 +520,7 @@ class RequestReceipt(PrivateValue):
     defects: tuple[RequestDefect, ...]
     local_in_flight: frozenset[PhysicalRequestId]
     remote_outstanding: frozenset[PhysicalRequestId]
+    cancel_requested: frozenset[PhysicalRequestId]
 
 
 @dataclass(frozen=True, slots=True, kw_only=True, repr=False)
@@ -609,6 +615,7 @@ def initialize_requests(
         defects=(),
         local_in_flight=frozenset(),
         remote_outstanding=frozenset(),
+        cancel_requested=frozenset(),
         cancelled=False,
     )
 
@@ -644,6 +651,7 @@ def request_receipt(state: RequestState) -> RequestReceipt:
         defects=state.defects,
         local_in_flight=state.local_in_flight,
         remote_outstanding=state.remote_outstanding,
+        cancel_requested=state.cancel_requested,
     )
 
 
@@ -701,7 +709,9 @@ def advance_requests(*, state: RequestState, event: RequestEvent) -> RequestStat
             return replace(state, reserved=reservations, terminals=terminal, defects=defects)
         if request not in state.dispatched:
             reject(EffectCode.MISSING)
-        return state
+        if any(item.request == request for item in state.terminals):
+            return state
+        return replace(state, cancel_requested=state.cancel_requested | {request})
     if isinstance(event, StopAcknowledged):
         if request not in state.dispatched:
             reject(EffectCode.MISSING)

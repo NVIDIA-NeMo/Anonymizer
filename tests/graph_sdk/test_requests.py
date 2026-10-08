@@ -8,18 +8,27 @@ from typing import Literal
 
 import pytest
 
+from anonymizer.engine.graph_sdk._effect_values import EffectCode, EffectRejected
 from anonymizer.engine.graph_sdk.requests import (
     AcceptFailure,
     AcceptResult,
     AssociationResult,
+    BindingAssociation,
+    BindingDeclarationId,
+    BindingId,
     Dispatch,
     FailureClass,
     InvocationRequestScope,
     PhysicalRequestId,
     PhysicalRequestPolicy,
+    PortArtifact,
+    RequestCancel,
     RequestPolicyBinding,
     Reserve,
     SemanticAssociation,
+    StopAcknowledged,
+    TextArtifactValue,
+    UnknownUsage,
     advance_requests,
     bind_request_policies,
     can_reserve_followup,
@@ -27,6 +36,7 @@ from anonymizer.engine.graph_sdk.requests import (
     request_receipt,
 )
 from anonymizer.graph._values import ActivationKey, InvocationId, PlanId, TaskAttemptId
+from anonymizer.graph.workflow import ArtifactType
 
 
 def _association(invocation: InvocationId, occurrence: int) -> SemanticAssociation:
@@ -176,3 +186,62 @@ def test_followup_eligibility_uses_the_request_authority_replay_rule(
         )
         is expected
     )
+
+
+def test_dispatched_cancel_intent_is_retained_through_stop_and_receipt() -> None:
+    invocation = InvocationId.new(plan=PlanId.new())
+    scope = InvocationRequestScope(invocation=invocation)
+    policy = _policy()
+    association = _association(invocation, 0)
+    state = initialize_requests(scope=scope, hard_limit=None, policies=frozenset({policy}))
+    state = bind_request_policies(
+        state=state,
+        binding=RequestPolicyBinding.create(association=association, policies=frozenset({policy})),
+    )
+    request = PhysicalRequestId.new(scope=scope)
+    state = advance_requests(
+        state=state,
+        event=Reserve(request=request, purpose="initial", associations=frozenset({association}), policy=policy),
+    )
+    state = advance_requests(state=state, event=Dispatch(request=request))
+    state = advance_requests(state=state, event=RequestCancel(request=request))
+    state = advance_requests(state=state, event=RequestCancel(request=request))
+    state = advance_requests(state=state, event=StopAcknowledged(request=request, usage=UnknownUsage()))
+    assert state.cancel_requested == frozenset({request})
+    assert request_receipt(state).cancel_requested == frozenset({request})
+
+
+@pytest.mark.parametrize(
+    ("outcome", "outputs", "consumed"),
+    (
+        ("ok", (), frozenset()),
+        (
+            "retrieved",
+            (
+                PortArtifact(
+                    port="unexpected",
+                    artifact_type=ArtifactType(name="text", revision=1),
+                    artifact=None,
+                    value=TextArtifactValue(text="unexpected"),
+                ),
+            ),
+            frozenset(),
+        ),
+        ("retrieved", (), frozenset({"context"})),
+    ),
+)
+def test_binding_results_require_the_retrieved_empty_physical_shape(
+    outcome: str,
+    outputs: tuple[PortArtifact, ...],
+    consumed: frozenset[str],
+) -> None:
+    binding = BindingId.new()
+    association = BindingAssociation(declaration=BindingDeclarationId.new(binding=binding, ordinal=0))
+    with pytest.raises(EffectRejected) as caught:
+        AssociationResult(
+            association=association,
+            outcome=outcome,
+            outputs=outputs,
+            consumed_context_ports=consumed,
+        )
+    assert caught.value.code == EffectCode.CONTRADICTORY
