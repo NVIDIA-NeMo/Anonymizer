@@ -267,12 +267,20 @@ class _MapCallback:
     text_type: ArtifactType
     other_type: ArtifactType
     other_count: int
+    started: asyncio.Event | None = None
+    release: asyncio.Event | None = None
     calls: list[tuple[AssociationInput, ...]] = field(default_factory=list)
 
     async def run(self, request: tuple[AssociationInput, ...]) -> LocalCompleted:
         self.calls.append(request)
         association = request[0].association
         assert isinstance(association, SemanticAssociation)
+        if self.mode == "expander" and self.started is not None and self.release is not None:
+            self.started.set()
+            try:
+                await self.release.wait()
+            except asyncio.CancelledError:
+                await self.release.wait()
         outputs: tuple[PortArtifact, ...] = ()
         outcome = "ok"
         if self.mode == "expander":
@@ -431,10 +439,13 @@ async def _execute_membership(
     max_collection_items: int = 4,
     control_only: bool = False,
     other_count: int = 0,
+    cancel_before_result: bool = False,
 ):
     fixture = _map_fixture(control_only=control_only, other_count=other_count)
     admitted = _admit_fixture(fixture)
     by_node = dict(zip((fixture.expander, fixture.member, fixture.join), fixture.capabilities, strict=True))
+    started = asyncio.Event() if cancel_before_result else None
+    release = asyncio.Event() if cancel_before_result else None
     callbacks = {
         node: _MapCallback(
             mode="expander" if node == fixture.expander else "operation",
@@ -445,6 +456,8 @@ async def _execute_membership(
             text_type=fixture.text_type,
             other_type=fixture.other_type,
             other_count=other_count,
+            started=started if node == fixture.expander else None,
+            release=release if node == fixture.expander else None,
         )
         for node in by_node
     }
@@ -459,25 +472,32 @@ async def _execute_membership(
         )
         for node, capability in by_node.items()
     )
-    result = await (
-        await start_execution(
-            admitted=admitted,
-            capabilities=fixture.capabilities,
-            services=ExecutionServices(
-                handles=handles,
-                context_resources=(),
-                limits=ExecutionLimits(
-                    max_local_in_flight=4,
-                    max_remote_outstanding=0,
-                    max_runtime_artifacts=1 + artifact_headroom,
-                    max_runtime_artifact_bytes=len("target-0".encode()) + artifact_byte_headroom,
-                    max_collection_items=max_collection_items,
-                ),
-                decision_limits=DecisionLimits(max_pending=0, max_lifetime_ns=0),
-                clock=_Clock(),
+    running = await start_execution(
+        admitted=admitted,
+        capabilities=fixture.capabilities,
+        services=ExecutionServices(
+            handles=handles,
+            context_resources=(),
+            limits=ExecutionLimits(
+                max_local_in_flight=4,
+                max_remote_outstanding=0,
+                max_runtime_artifacts=1 + artifact_headroom,
+                max_runtime_artifact_bytes=len("target-0".encode()) + artifact_byte_headroom,
+                max_collection_items=max_collection_items,
             ),
-        )
-    ).wait()
+            decision_limits=DecisionLimits(max_pending=0, max_lifetime_ns=0),
+            clock=_Clock(),
+        ),
+    )
+    if cancel_before_result:
+        assert started is not None and release is not None
+        wait = asyncio.create_task(running.wait())
+        await started.wait()
+        running.request_cancel()
+        release.set()
+        result = await wait
+    else:
+        result = await running.wait()
     return fixture, result, callbacks
 
 
@@ -718,6 +738,25 @@ async def _assert_map_storage_limit(case_id: str, artifact_headroom: int, max_co
     assert expander.status == "blocked"
     assert expander.outcome is None
     assert case["expected"]["state"]["terminal"] == "artifact_limit"
+    assert not any(isinstance(fact.key, (OperationOutputKey, MapItemKey)) for fact in result.provenance)
+    assert len(result.artifacts) == 1
+    assert not result.assessments
+
+
+@pytest.mark.parametrize(
+    "case_id",
+    ("map/prospective_transition_rejected", "map/caller_transition_verdict_rejected"),
+)
+def test_map_result_after_parent_cancellation_is_not_published(case_id: str) -> None:
+    asyncio.run(_assert_cancelled_map_result(case_id))
+
+
+async def _assert_cancelled_map_result(case_id: str) -> None:
+    case = MAP_CASES[case_id]
+    fixture, result, _ = await _execute_membership(1, cancel_before_result=True)
+    expander = next(entry for entry in result.states[0].entries if entry.template == fixture.expander)
+    assert expander.status == "cancelled"
+    assert case["expected"]["state"]["terminal"] == "transition_rejected"
     assert not any(isinstance(fact.key, (OperationOutputKey, MapItemKey)) for fact in result.provenance)
     assert len(result.artifacts) == 1
     assert not result.assessments
