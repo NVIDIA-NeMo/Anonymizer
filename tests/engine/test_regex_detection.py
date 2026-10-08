@@ -127,6 +127,32 @@ def test_ipv6_regex_consumes_an_embedded_ipv4_tail() -> None:
     ]
 
 
+@pytest.mark.parametrize(
+    ("text", "address", "start"),
+    [
+        ("IP:2001:db8::1", "2001:db8::1", 3),
+        ("IP:::1", "::1", 3),
+    ],
+)
+def test_ipv6_regex_excludes_a_prose_colon_from_the_match(text: str, address: str, start: int) -> None:
+    rules = resolve_regex_rules(labels=["ipv6"], builtin_regexes=True, rules=[])
+
+    result = detect_regex_entities(text, rules=rules)
+
+    assert [(entity.value, entity.start_position, entity.end_position) for entity in result.llm_entities] == [
+        (address, start, start + len(address))
+    ]
+    assert text[start : start + len(address)] == address
+
+
+def test_ipv6_regex_does_not_extract_a_suffix_from_an_overlong_hex_group() -> None:
+    rules = resolve_regex_rules(labels=["ipv6"], builtin_regexes=True, rules=[])
+
+    result = detect_regex_entities("12345:2001:db8::1", rules=rules)
+
+    assert result.llm_entities == []
+
+
 def test_url_validator_accepts_uppercase_www_prefix() -> None:
     address = "WWW.example.com/path"
     text = f"Visit {address} now"

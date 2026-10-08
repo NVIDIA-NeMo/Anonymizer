@@ -547,7 +547,8 @@ _BUILTIN_RULES: tuple[ResolvedRegexRule, ...] = (
         rule_id="nemo-anonymizer.ipv6.v1",
         label="ipv6",
         pattern=(
-            r"(?<![0-9A-Fa-f:])(?:"
+            r"(?:(?<![0-9A-Fa-f:])|(?<=^:)|(?<=[^0-9A-Fa-f:]:))"
+            r"(?!:(?!:))(?!:::)(?:"
             r"(?:[0-9A-Fa-f]{0,4}:){2,6}(?:[0-9]{1,3}\.){3}[0-9]{1,3}"
             r"|(?:[0-9A-Fa-f]{0,4}:){2,7}[0-9A-Fa-f]{0,4}"
             r")(?![0-9A-Fa-f:]|\.[0-9])"
