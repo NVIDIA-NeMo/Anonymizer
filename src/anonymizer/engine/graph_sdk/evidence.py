@@ -321,8 +321,10 @@ class _EvidenceFacts:
                 reference = CandidateRef(artifact=port.artifact, target=target)
             elif port.role == "decision":
                 reference = DecisionRef(artifact=port.artifact)
-            else:
+            elif port.role in ("artifact", "evidence"):
                 reference = port.artifact
+            else:
+                reject(EffectCode.UNSUPPORTED)
             consumed.append((name, reference))
         self._verify_environment(fact, production)
         if fact.finding not in production.declaration.supported_findings:

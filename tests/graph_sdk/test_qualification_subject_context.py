@@ -11,7 +11,7 @@ import pytest
 
 from anonymizer.engine.graph_sdk._effect_values import EffectCode, EffectRejected
 from anonymizer.engine.graph_sdk.context import admit_context_plan
-from anonymizer.engine.graph_sdk.data import DataGraph, DataLimits
+from anonymizer.engine.graph_sdk.data import AtomicGroup, DataGraph, DataLimits, DatumDependency
 from anonymizer.engine.graph_sdk.evidence import AssessmentSubmission, admit_qualification, evidence_revision_view
 from anonymizer.engine.graph_sdk.executor import (
     AdmittedExecutionPlan,
@@ -71,6 +71,8 @@ from tests.graph_sdk.test_preparation import _capability, _prepare, _workflow
 @dataclass
 class _SeparateAssessment:
     finding: AssessmentFinding | None
+    target_findings: tuple[tuple[str, AssessmentFinding], ...] = ()
+    returned_evidence_port: str = "evidence"
     calls: int = 0
 
     async def run(self, request: tuple[AssociationInput, ...]) -> LocalCompleted:
@@ -78,30 +80,39 @@ class _SeparateAssessment:
         (item,) = request
         assert isinstance(item.association, SemanticAssociation)
         subject = next(port for port in item.inputs if port.port == "subject")
+        finding = self.finding
+        if self.target_findings:
+            assert isinstance(subject.value, TextArtifactValue)
+            finding = dict(self.target_findings)[subject.value.text]
+        outputs = (
+            PortArtifact(port="result", artifact_type=subject.artifact_type, artifact=None, value=subject.value),
+        )
+        if finding is not None:
+            outputs += (
+                PortArtifact(
+                    port="evidence",
+                    artifact_type=subject.artifact_type,
+                    artifact=None,
+                    value=TextArtifactValue(text="E"),
+                ),
+            )
         return LocalCompleted(
             results=(
                 AssociationResult(
                     association=item.association,
                     outcome="ok",
-                    outputs=(
-                        PortArtifact(
-                            port="result", artifact_type=subject.artifact_type, artifact=None, value=subject.value
-                        ),
-                        PortArtifact(
-                            port="evidence",
-                            artifact_type=subject.artifact_type,
-                            artifact=None,
-                            value=TextArtifactValue(text="E"),
-                        ),
-                    ),
+                    outputs=outputs,
                     consumed_context_ports=frozenset(),
                 ),
             ),
             assessments=()
-            if self.finding is None
+            if finding is None
             else (
                 LocalAssessmentResult(
-                    association=item.association, promise="checked", evidence_port="evidence", finding=self.finding
+                    association=item.association,
+                    promise="checked",
+                    evidence_port=self.returned_evidence_port,
+                    finding=finding,
                 ),
             ),
         )
@@ -116,6 +127,11 @@ async def _execute_separate_subject_context(
     finding: AssessmentFinding | None = None,
     execution_only: bool = False,
     expose_evidence: bool = True,
+    target_labels: tuple[str, ...] = ("A",),
+    target_findings: tuple[AssessmentFinding, ...] = (),
+    dependencies: tuple[tuple[int, int], ...] = (),
+    atomic_groups: tuple[tuple[int, ...], ...] = (),
+    returned_evidence_port: str = "evidence",
 ) -> tuple[AdmittedExecutionPlan, ExecutionResult]:
     base, node, artifact = _workflow(with_input=True)
     raw = base.workflow
@@ -153,6 +169,17 @@ async def _execute_separate_subject_context(
             ),
         ),
     )
+    if execution_only:
+        expose_evidence = False
+        operation = replace(
+            operation,
+            outputs=tuple(port for port in operation.outputs if port.name == "result"),
+            output_dependencies=tuple(dep for dep in operation.output_dependencies if dep.output == "result"),
+            outcomes=tuple(
+                replace(outcome, produced_ports=frozenset({"result"}), evidence=frozenset())
+                for outcome in operation.outcomes
+            ),
+        )
     static = admit_static_workflow(
         workflow=raw.workflow,
         interface=operation
@@ -175,7 +202,9 @@ async def _execute_separate_subject_context(
         outcome_bindings=tuple(raw.outcome_bindings),
         sequence=(),
         choices=(),
-        protection=(
+        protection=()
+        if execution_only
+        else (
             ProtectionRequirement(
                 outcome="ok",
                 meaning="test assessment",
@@ -191,17 +220,27 @@ async def _execute_separate_subject_context(
     )
     capability = _capability(workflow)
     graph = DataGraph.new()
-    graph, target = graph.add_text("A")
+    targets = []
+    for label in target_labels:
+        graph, target = graph.add_text(label)
+        targets.append(target)
     graph, context_source = graph.add_text("X")
+    target_count = len(targets)
     data = graph.validate(
-        targets=(target,),
+        targets=tuple(targets),
         source_relations=(),
         contexts=(),
-        dependencies=(),
+        dependencies=tuple(DatumDependency(prerequisite=targets[a], dependent=targets[b]) for a, b in dependencies),
         coherence=(),
-        atomic=(),
+        atomic=tuple(AtomicGroup(members=tuple(targets[index] for index in group)) for group in atomic_groups),
         output_regions=(),
-        limits=DataLimits(max_datums=2, max_targets=1, max_text_bytes=2, max_declarations=0, max_group_members=0),
+        limits=DataLimits(
+            max_datums=target_count + 1,
+            max_targets=target_count,
+            max_text_bytes=sum(len(label.encode()) for label in target_labels) + 1,
+            max_declarations=len(dependencies) + len(atomic_groups),
+            max_group_members=target_count,
+        ),
     )
     prepared = _prepare(
         workflow=workflow,
@@ -214,6 +253,7 @@ async def _execute_separate_subject_context(
         ),
         bound_inputs=tuple(
             BoundInput(target=target, source=source, port=name, artifact_type=artifact)
+            for target in targets
             for name, source in (("subject", target), ("context", context_source))
         ),
         state=StateRevisionView(
@@ -221,6 +261,8 @@ async def _execute_separate_subject_context(
         ),
     )
     finding = finding if finding is not None else AssessmentFinding(status="satisfied", code="observed")
+    assert not target_findings or len(target_findings) == target_count
+    supported_findings = frozenset(target_findings) if target_findings else frozenset({finding})
     admitted = admit_execution_plan(
         context=admit_context_plan(
             prepared=prepared, bound_context=None, adaptive_retrievals=(), context_capabilities=()
@@ -254,20 +296,24 @@ async def _execute_separate_subject_context(
                 promise="checked",
                 evidence_port="evidence",
                 absence_queries=frozenset({0}) if environment else frozenset(),
-                supported_findings=frozenset({finding}),
+                supported_findings=supported_findings,
             ),
         ),
         assessment_limits=AssessmentLimits(
             max_productions=1,
-            max_findings_per_production=1,
+            max_findings_per_production=len(supported_findings),
             max_finding_code_bytes=16,
             max_absence_queries=1 if environment else 0,
-            max_assessment_facts=1,
-            max_port_facts=4,
-            max_provenance_edges=3,
+            max_assessment_facts=target_count,
+            max_port_facts=4 * target_count,
+            max_provenance_edges=3 * target_count,
         ),
     )
-    callback = _SeparateAssessment(None if execution_only else finding)
+    callback = _SeparateAssessment(
+        None if execution_only else finding,
+        tuple(zip(target_labels, target_findings, strict=True)) if target_findings else (),
+        returned_evidence_port,
+    )
     running = await start_execution(
         admitted=admitted,
         capabilities=(capability,),
@@ -286,8 +332,8 @@ async def _execute_separate_subject_context(
             limits=ExecutionLimits(
                 max_local_in_flight=1,
                 max_remote_outstanding=0,
-                max_runtime_artifacts=3,
-                max_runtime_artifact_bytes=32,
+                max_runtime_artifacts=3 * target_count,
+                max_runtime_artifact_bytes=32 * target_count,
                 max_collection_items=0,
             ),
             decision_limits=DecisionLimits(max_pending=0, max_lifetime_ns=0),
@@ -296,7 +342,7 @@ async def _execute_separate_subject_context(
         ),
     )
     result = await running.wait()
-    assert callback.calls == 1
+    assert callback.calls == target_count
     return admitted, result
 
 
@@ -360,3 +406,13 @@ def test_execution_only_has_no_assessment_production_or_callback_result() -> Non
     assert output.record.statuses[0].qualification == "not_assessed"
     assert output.record.statuses[0].artifact_available
     assert not output.record.statuses[0].protection_available
+
+
+def test_wrong_callback_evidence_port_fails_before_retaining_assessment() -> None:
+    execution, result = asyncio.run(_execute_separate_subject_context(returned_evidence_port="wrong"))
+    assert len(execution.assessment_productions) == 1
+    assert result.assessments == ()
+    assert result.final_outputs == ()
+    assert result.record.terminals[0].category == "failure"
+    assert len(result.artifacts) == 2
+    assert all(value != TextArtifactValue(text="E") for _, value in result.artifacts)
