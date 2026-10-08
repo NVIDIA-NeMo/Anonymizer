@@ -1295,3 +1295,49 @@ def test_v12_latest_selection_and_owner_chain() -> None:
         "binding_cleanup",
     ]
     assert not any(value["kind"] == "publication_rejected" for value in events)
+
+
+def test_v10_structural_owner_scope_and_real_owner_recasts() -> None:
+    neutral_only = {
+        "authentication/entry_target",
+        "authentication/terminal_target",
+        "membership/duplicate_member",
+        "membership/foreign_target",
+        "structural/node_kind_mismatch",
+    }
+    assert all(case(case_id)["comparison_scope"] == "neutral_only" for case_id in neutral_only)
+
+    terminal_outcome = case("authentication/terminal_outcome")
+    terminal_events = cast(list[reference.Obj], terminal_outcome["events"])
+    entry = next(event for event in terminal_events if event.get("kind") == "entry")
+    terminal = next(event for event in terminal_events if event.get("kind") == "terminal")
+    assert entry["state_outcome"] == "other"
+    assert terminal["outcome"] == "ok"
+    assert terminal_outcome["comparison_scope"] == "production_boundary"
+    assert terminal_outcome["expected"] == {"code": "contradictory", "status": "rejected"}
+
+    expansion_outcome = case("membership/wrong_expansion_outcome")
+    expansion_declaration = expansion_outcome["declaration"]
+    map_outcomes = {value["outcome"] for value in cast(list[reference.Obj], expansion_declaration["map_inputs"])}
+    output_outcomes = {
+        value["outcome"]
+        for value in cast(list[reference.Obj], expansion_declaration["output_dependencies"])
+        if value["node"] == "EXP"
+    }
+    assert map_outcomes == {"ok"}
+    assert output_outcomes == {"ok", "other"}
+    expansion_events = cast(list[reference.Obj], expansion_outcome["events"])
+    expander_entry = next(
+        event for event in expansion_events if event.get("kind") == "entry" and event.get("activation") == "MAP"
+    )
+    retained_membership = next(
+        event for event in expansion_events if event.get("kind") == "membership" and event.get("parent") == "MAP"
+    )
+    projected_membership = expansion_outcome["expected"]["record"]["memberships"]["MAP"]
+    assert expander_entry["state_outcome"] == "other"
+    assert retained_membership["expansion_outcome"] == "ok"
+    assert projected_membership["expansion_outcome"] == "other"
+    assert "incomplete_membership" in row("membership/wrong_expansion_outcome")["withholding"]
+
+    support = (HERE / "qualification_v1_support.md").read_text()
+    assert all(case_id in support for case_id in neutral_only)

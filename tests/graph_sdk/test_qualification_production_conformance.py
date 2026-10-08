@@ -471,6 +471,7 @@ CORRUPTION_IDS = frozenset(
         "joins/producer_artifact_mismatch",
         "authentication/evidence_port_target",
         "authentication/entry_node",
+        "authentication/terminal_outcome",
         "authentication/missing_absence_environment",
         "authentication/missing_configuration_environment",
         "authentication/missing_state_environment",
@@ -665,10 +666,12 @@ def _run_retained_corruption(case: dict[str, Any], events: list[dict[str, Any]])
             object.__setattr__(result.record, "artifacts", frozenset(ref for ref, _ in artifacts))
         elif original["kind"] == "entry":
             assert len(added) == 1
-            assert {key: value for key, value in original.items() if key != "node"} == {
-                key: value for key, value in added[0].items() if key != "node"
-            }
-            object.__setattr__(names.entry, "template", NodeId.new(workflow=names.entry.template.workflow))
+            changed = [field for field in original if original[field] != added[0][field]]
+            assert len(changed) == 1 and changed[0] in {"node", "state_outcome"}
+            if changed[0] == "node":
+                object.__setattr__(names.entry, "template", NodeId.new(workflow=names.entry.template.workflow))
+            else:
+                object.__setattr__(names.entry, "outcome", added[0]["state_outcome"])
         elif original["kind"] == "final":
             assert len(added) == 1
             changed = [field for field in original if original[field] != added[0][field]]

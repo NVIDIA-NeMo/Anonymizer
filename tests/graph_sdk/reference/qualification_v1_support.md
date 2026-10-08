@@ -1,7 +1,7 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# Qualification v1 R3 map-item evidence reference extension v9
+# Qualification v1 R3 map-item evidence reference extension v10
 
 ## Public admission ownership corrections
 
@@ -465,6 +465,39 @@ The finite neutral cases retain these concrete production witness obligations:
 | `joins/subject_port_swap` | Mutate the static promise/requirement subject declaration at admission or corrupt the real retained subject port fact at P7. |
 
 These obligations preserve the full D08 family without adding coverage, consumed-set, subject, target, or evidence-port fields to the real assessment fact.
+
+## Structural retained-owner correction (v10)
+
+Activation and record ownership remain with the real retained types. An
+`ActivationEntry` has no target or node-kind field, a `TerminalFact` has no
+target or outcome field, and an `ExpectedMembership` has no target, status, or
+expansion-outcome field. Normalized target, kind, status, and outcome values are
+derived projections; they are never new SDK fact fields.
+
+`authentication/terminal_outcome` now mutates the entry-owned
+`state_outcome`. Its unchanged terminal projection no longer agrees with that
+entry, so the exact result remains `contradictory` at the production boundary.
+`membership/wrong_expansion_outcome` declares a second valid success outcome
+for the expander through its output declaration, while the map admits only
+`ok` as an expansion outcome. The actual entry and terminal select the second
+outcome. The membership projection derives `expansion_outcome` from that parent
+entry, and the closed empty expansion remains accepted but incomplete.
+
+Five finite neutral mutations cannot be represented as the same isolated
+public retained-field mutation and are therefore `neutral_only`:
+
+| Neutral case | Actual owner boundary and required witness |
+| --- | --- |
+| `authentication/entry_target` | Target is derived by pairing the final activation state with its prepared target occurrence. Place an entry under the wrong prepared target occurrence and require the real owner/reconciliation rejection; never add a target field to `ActivationEntry`. |
+| `authentication/terminal_target` | Derive terminal target from its activation and state owner. A terminal for a foreign or wrong-owned activation must reject at the real owner/presence boundary; never add a target field to `TerminalFact`. |
+| `membership/duplicate_member` | `ExpectedMembership.members` is a frozenset, so literal repetition cannot survive construction. Cover observable duplication with repeated retained membership rows or a real member appearing in two retained memberships. |
+| `membership/foreign_target` | Derive membership ownership from the parent/child activation states. `membership/cross_target_member` is the direct real retained witness and must reject `foreign_owner`; never add a target field to `ExpectedMembership`. |
+| `structural/node_kind_mismatch` | Derive kind from the admitted node for the entry template. Real structural-on-operation and operation-on-container terminal mismatches must reject `contradictory`; never add a node-kind field to `ActivationEntry`. |
+
+The partial-member failed and overflow expansion cases remain unchanged. They
+continue to require production witnesses that preserve every observed member
+while excluding reserved but uninstantiated capacity. This correction does not
+claim full P7 coverage.
 
 ## Exact retained owners and representable revisions (v16)
 

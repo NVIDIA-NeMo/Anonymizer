@@ -1,8 +1,8 @@
 {
   "case_count": 372,
   "contract_sha256": "239bdaf97eda6b90caeb13d29826abead08e2beff6297460c26409b3e1f5d87c",
-  "corpus_path": "future-contracts/r3-map-item-v9/qualification_v1_cases.json",
-  "corpus_sha256": "c4a5ee202be299edf6199c99c55f9be0e0abb1f69a382b82c46b00d101c3ff13",
+  "corpus_path": "future-contracts/r3-map-item-v10/qualification_v1_cases.json",
+  "corpus_sha256": "8a6a1242f444e68cf1a940ce8f0b101c156e7c32e0f2af6b02052206e0a78c9b",
   "event_count": 12188,
   "family_counts": {
     "admission": 16,
@@ -31,10 +31,10 @@
     "structural": 15,
     "validity": 24
   },
-  "generator_version": "qualification-v1-generator-28-admission-owners-v9",
+  "generator_version": "qualification-v1-generator-29-structural-owners-v10",
   "map_item_evidence_contract_sha256": "d5e270fe413f4f5632b522e3ce57e0c913a143060997d63b7673268ae9acfbd8",
   "materialized_version_contract_sha256": "165c7c95bce31a7c5808860f28d012bbe1986bf0712cebdc86fb08ad07afcb21",
-  "self_test_version": "qualification-v1-self-test-28-admission-owners-v9",
+  "self_test_version": "qualification-v1-self-test-29-structural-owners-v10",
   "structural_contract_sha256": "88c0ef075b225847f1b2668d2a749307c220eceb50215718db722119d828dc6b",
   "trace_count": 373,
   "v10_ids_sha256": "043c433056b1ecb21d17ef48efa8bcca6a678fd6b722e7a91ea2e1b3a05c9544"

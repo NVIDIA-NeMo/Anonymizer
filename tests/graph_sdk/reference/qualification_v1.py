@@ -18,9 +18,9 @@ CONTRACT_SHA256 = "239bdaf97eda6b90caeb13d29826abead08e2beff6297460c26409b3e1f5d
 STRUCTURAL_CONTRACT_SHA256 = "88c0ef075b225847f1b2668d2a749307c220eceb50215718db722119d828dc6b"
 MATERIALIZED_VERSION_CONTRACT_SHA256 = "165c7c95bce31a7c5808860f28d012bbe1986bf0712cebdc86fb08ad07afcb21"
 MAP_ITEM_EVIDENCE_CONTRACT_SHA256 = "d5e270fe413f4f5632b522e3ce57e0c913a143060997d63b7673268ae9acfbd8"
-GENERATOR_VERSION = "qualification-v1-generator-28-admission-owners-v9"
-SELF_TEST_VERSION = "qualification-v1-self-test-28-admission-owners-v9"
-CORPUS_PATH = "future-contracts/r3-map-item-v9/qualification_v1_cases.json"
+GENERATOR_VERSION = "qualification-v1-generator-29-structural-owners-v10"
+SELF_TEST_VERSION = "qualification-v1-self-test-29-structural-owners-v10"
+CORPUS_PATH = "future-contracts/r3-map-item-v10/qualification_v1_cases.json"
 V10_IDS_SHA256 = "043c433056b1ecb21d17ef48efa8bcca6a678fd6b722e7a91ea2e1b3a05c9544"
 
 TERMINAL_CATEGORIES = {"blocked", "cancelled", "failure", "inconsistent", "lost", "success"}
@@ -1293,7 +1293,12 @@ def reconcile(d: Obj, s: Obj) -> tuple[dict[str, set[str]], Obj | None]:
             parent_terminal = obj(terms[cast(str, parent)])
             if parent_entry.get("target") != t:
                 return codes, reject("foreign_owner")
-            is_map_expander = any(obj(x).get("expander") == parent_entry.get("node") for x in arr(d["map_inputs"]))
+            expansion_outcomes = {
+                obj(x).get("outcome")
+                for x in arr(d["map_inputs"])
+                if obj(x).get("expander") == parent_entry.get("node")
+            }
+            is_map_expander = bool(expansion_outcomes)
             is_subgraph = any(
                 obj(x).get("node") == parent_entry.get("node")
                 and obj(x).get("outcome") == parent_entry.get("state_outcome")
@@ -1313,7 +1318,7 @@ def reconcile(d: Obj, s: Obj) -> tuple[dict[str, set[str]], Obj | None]:
             if (
                 is_map_expander
                 and m.get("status") == "closed"
-                and parent_terminal.get("outcome") != m.get("expansion_outcome")
+                and parent_entry.get("state_outcome") not in expansion_outcomes
             ):
                 codes[cast(str, t)].add("incomplete_membership")
             if m.get("status") in ("failed", "overflow"):
@@ -2497,11 +2502,21 @@ def qualify(d: Obj, s: Obj) -> Obj:
         )
     if len(union) > cast(int, lim["max_required_decisions"]):
         return reject("limit_exceeded")
+    projected_memberships = deepcopy(obj(s["memberships"]))
+    for membership_key, raw_membership in projected_memberships.items():
+        membership = obj(raw_membership)
+        if membership_key == "__ROOT__":
+            membership["expansion_outcome"] = None
+            continue
+        parent_entry = obj(obj(s["entries"]).get(membership_key, {}))
+        is_map = any(obj(map_input).get("expander") == parent_entry.get("node") for map_input in arr(d["map_inputs"]))
+        if is_map and membership.get("status") not in ("failed", "overflow"):
+            membership["expansion_outcome"] = parent_entry.get("state_outcome")
     record = {
         "artifacts": sorted(arts),
         "evidence": sorted(cast(str, a["evidence_artifact"]) for a in valid),
         "execution": s["execution"],
-        "memberships": s["memberships"],
+        "memberships": projected_memberships,
         "targets": rows,
         "terminals": s["terminals"],
     }
@@ -3250,6 +3265,8 @@ def case(
         "assessment/foreign_target",
         "assessment/incomplete_coverage",
         "assessment/wrong_kind_coverage",
+        "authentication/entry_target",
+        "authentication/terminal_target",
         "joins/evidence_port_swap",
         "joins/subject_port_swap",
         "map_item_evidence/expansion_failed",
@@ -3258,6 +3275,9 @@ def case(
         "map_item_evidence/member_blocked_unreached",
         "map_item_evidence/two_maps_cross_owner",
         "map_item_evidence/wrong_subject_artifact",
+        "membership/duplicate_member",
+        "membership/foreign_target",
+        "structural/node_kind_mismatch",
     }
     c["comparison_scope"] = "neutral_only" if case_id in neutral_only else "production_boundary"
     c["traces"] = [{"events": x, "expected": reduce(d, x), "name": f"alternate_{i}"} for i, x in enumerate(alternates)]
@@ -5340,8 +5360,6 @@ def generate_cases() -> tuple[Obj, ...]:
         ("evidence_port_target", "port", "evidence", "target", "B"),
         ("entry_node", "entry", "ROOT:A", "node", "OTHER"),
         ("entry_target", "entry", "ROOT:A", "target", "B"),
-        ("terminal_outcome", "terminal", "ROOT:A", "outcome", "other"),
-        ("terminal_target", "terminal", "ROOT:A", "target", "B"),
     ):
         e = deepcopy(base)
         fact = next(
@@ -5349,6 +5367,12 @@ def generate_cases() -> tuple[Obj, ...]:
         )
         fact[field] = value
         c.append(case("authentication", name, declaration(), e))
+    e = deepcopy(base)
+    next(x for x in e if x.get("kind") == "entry" and x.get("activation") == "ROOT:A")["state_outcome"] = "other"
+    c.append(case("authentication", "terminal_outcome", declaration(), e))
+    e = deepcopy(base)
+    next(x for x in e if x.get("kind") == "terminal" and x.get("activation") == "ROOT:A")["target"] = "B"
+    c.append(case("authentication", "terminal_target", declaration(), e))
     for name, environment in (
         ("missing_absence_environment", {"absences": {}, "configurations": {"N": "c0"}, "state": {"read": 1}}),
         ("missing_configuration_environment", {"absences": {"Q0": 1}, "configurations": {}, "state": {"read": 1}}),
@@ -5421,8 +5445,13 @@ def generate_cases() -> tuple[Obj, ...]:
     c.append(case("cleanup", "foreign_target", declaration(), e))
     # Expansion outcomes and restored open/terminal categories.
     e = map_events(0)
-    next(x for x in e if x.get("kind") == "membership" and x.get("parent") == "MAP")["expansion_outcome"] = "other"
-    c.append(case("membership", "wrong_expansion_outcome", declaration(), e))
+    next(x for x in e if x.get("kind") == "entry" and x.get("activation") == "MAP")["state_outcome"] = "other"
+    next(x for x in e if x.get("kind") == "terminal" and x.get("activation") == "MAP")["outcome"] = "other"
+    d = declaration()
+    arr(d["output_dependencies"]).append(
+        {"identity_input": None, "inputs": [], "node": "EXP", "outcome": "other", "port": "alternate"}
+    )
+    c.append(case("membership", "wrong_expansion_outcome", d, e))
     for name, closed, nested in (("open", False, False), ("nested_open", False, True)):
         e = map_events(1, nested=nested)
         memberships = [x for x in e if x.get("kind") == "membership"]

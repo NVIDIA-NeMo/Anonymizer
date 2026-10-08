@@ -30410,7 +30410,7 @@
   {
     "boundary": "qualification",
     "case_id": "membership/duplicate_member",
-    "comparison_scope": "production_boundary",
+    "comparison_scope": "neutral_only",
     "declaration": {
       "atomic": [
         [
@@ -136986,7 +136986,7 @@
   {
     "boundary": "qualification",
     "case_id": "authentication/entry_target",
-    "comparison_scope": "production_boundary",
+    "comparison_scope": "neutral_only",
     "declaration": {
       "atomic": [
         [
@@ -137590,7 +137590,7 @@
         "occurrence": 0,
         "parent": null,
         "state_category": "success",
-        "state_outcome": "ok",
+        "state_outcome": "other",
         "target": "A"
       },
       {
@@ -137598,7 +137598,7 @@
         "attempt": "TASK:ROOT:A",
         "category": "success",
         "kind": "terminal",
-        "outcome": "other",
+        "outcome": "ok",
         "reasons": [],
         "structural": false,
         "target": "A"
@@ -137844,7 +137844,7 @@
   {
     "boundary": "qualification",
     "case_id": "authentication/terminal_target",
-    "comparison_scope": "production_boundary",
+    "comparison_scope": "neutral_only",
     "declaration": {
       "atomic": [
         [
@@ -147154,6 +147154,13 @@
           "node": "EXP",
           "outcome": "ok",
           "port": "members"
+        },
+        {
+          "identity_input": null,
+          "inputs": [],
+          "node": "EXP",
+          "outcome": "other",
+          "port": "alternate"
         }
       ],
       "productions": [
@@ -147469,7 +147476,7 @@
         "occurrence": 0,
         "parent": null,
         "state_category": "success",
-        "state_outcome": "ok",
+        "state_outcome": "other",
         "target": "A"
       },
       {
@@ -147477,14 +147484,14 @@
         "attempt": null,
         "category": "success",
         "kind": "terminal",
-        "outcome": "ok",
+        "outcome": "other",
         "reasons": [],
         "structural": true,
         "target": "A"
       },
       {
         "closed": true,
-        "expansion_outcome": "other",
+        "expansion_outcome": "ok",
         "kind": "membership",
         "members": [],
         "parent": "MAP",
@@ -147590,7 +147597,7 @@
           "MAP": {
             "attempt": null,
             "category": "success",
-            "outcome": "ok",
+            "outcome": "other",
             "reasons": [],
             "structural": true,
             "target": "A"
@@ -151398,7 +151405,7 @@
   {
     "boundary": "qualification",
     "case_id": "membership/foreign_target",
-    "comparison_scope": "production_boundary",
+    "comparison_scope": "neutral_only",
     "declaration": {
       "atomic": [
         [
@@ -157310,7 +157317,7 @@
   {
     "boundary": "qualification",
     "case_id": "structural/node_kind_mismatch",
-    "comparison_scope": "production_boundary",
+    "comparison_scope": "neutral_only",
     "declaration": {
       "atomic": [
         [
