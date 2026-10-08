@@ -1083,6 +1083,7 @@ def _validate_assessments(
 @dataclass(slots=True)
 class _ExecutionControl:
     cancelled: bool = False
+    scheduler_changed: asyncio.Event = field(default_factory=asyncio.Event)
     pending: dict[DecisionWaitId, DecisionWait] = field(default_factory=dict)
     responses: dict[DecisionWaitId, DecisionResponse] = field(default_factory=dict)
     closed: set[DecisionWaitId] = field(default_factory=set)
@@ -1511,7 +1512,11 @@ async def _run_execution(
                         event=CloseUnstarted(activation=entry.activation, category="blocked"),
                     )
                     continue
-                local_jobs = sum(item.policy.kind != "external" for item in jobs.values())
+                waiting_activations = {wait.activation for wait in control.pending.values()}
+                local_jobs = sum(
+                    item.policy.kind != "external" and item.activation not in waiting_activations
+                    for item in jobs.values()
+                )
                 remote_jobs = len(
                     {physical_jobs.get(task, task) for task, item in jobs.items() if item.policy.kind == "external"}
                 ) + len(_group_external_jobs(external_jobs))
@@ -1703,8 +1708,16 @@ async def _run_execution(
             if not scheduled:
                 break
             continue
-        completed, _ = await asyncio.wait(jobs, return_when=asyncio.FIRST_COMPLETED)
-        pending_completed = set(completed)
+        scheduler_wakeup = asyncio.create_task(control.scheduler_changed.wait())
+        try:
+            completed, _ = await asyncio.wait((*jobs, scheduler_wakeup), return_when=asyncio.FIRST_COMPLETED)
+        finally:
+            scheduler_wakeup.cancel()
+            with suppress(asyncio.CancelledError):
+                await scheduler_wakeup
+        if scheduler_wakeup in completed:
+            control.scheduler_changed.clear()
+        pending_completed = {task for task in jobs if task in completed}
         while pending_completed:
             first = next(iter(pending_completed))
             physical = physical_jobs.get(first)
@@ -2697,6 +2710,7 @@ async def _run_decision(
     responses = control.responses
     closed = control.closed
     pending[wait.wait] = wait
+    control.scheduler_changed.set()
     while True:
         if control.cancelled:
             mapping = _mapping(policy, "cancel_after_start", None, None)
