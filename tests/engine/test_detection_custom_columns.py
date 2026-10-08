@@ -444,6 +444,63 @@ def test_reclassified_detector_acceptance_survives_regex_coalescing(malformed_si
     assert replaced[COL_REPLACED_TEXT].iloc[0] == "allow:[REDACTED_TOKEN] deny:[REDACTED_TOKEN]"
 
 
+def test_drop_decision_is_not_replayed_against_reclassified_merged_entity() -> None:
+    """A stale ID decision cannot remove a different candidate after route merging."""
+    text = "allow:ABC deny:ABC"
+    accepted = {
+        "id": "token_6_9",
+        "value": "ABC",
+        "label": "token",
+        "start_position": 6,
+        "end_position": 9,
+        "score": 1.0,
+        "source": "regex_user:user:token:v1",
+        "propagate_occurrences": False,
+    }
+    row: dict[str, Any] = {
+        COL_TEXT: text,
+        COL_RAW_DETECTED: _raw(
+            [
+                {"text": "ABC", "label": "token", "start": 6, "end": 9, "score": 0.9},
+                {"text": "ABC", "label": "identifier", "start": 6, "end": 9, "score": 0.8},
+            ]
+        ),
+        COL_REGEX_ENTITIES: {"entities": []},
+        COL_REGEX_ACCEPTED_ENTITIES: {"entities": [accepted]},
+        COL_AUGMENTED_ENTITIES: {"entities": []},
+    }
+
+    parse_detected_entities(row)
+    prepare_validation_inputs(row)
+    row[COL_VALIDATED_ENTITIES] = {
+        "decisions": [
+            {"id": "token_6_9", "decision": "drop", "reason": "wrong detector label"},
+            {
+                "id": "identifier_6_9",
+                "decision": "reclass",
+                "proposed_label": "token",
+                "reason": "token in this context",
+            },
+        ]
+    }
+    apply_validation_to_seed_entities(row)
+    seed_entity = row[COL_VALIDATED_SEED_ENTITIES]["entities"][0]
+    assert seed_entity["id"] == "token_6_9"
+    assert seed_entity["source"] == "regex_user:user:token:v1|detector"
+    assert _parse_entity_spans(row[COL_VALIDATED_SEED_ENTITIES])[0].propagate_occurrences is True
+
+    merge_and_build_candidates(row)
+    result = apply_validation_and_finalize(row)
+
+    entities = result[COL_DETECTED_ENTITIES]["entities"]
+    assert [(entity["start_position"], entity["end_position"]) for entity in entities] == [(6, 9), (15, 18)]
+    replaced = apply_local_replace_strategy(
+        pd.DataFrame({COL_TEXT: [text], COL_FINAL_ENTITIES: [result[COL_DETECTED_ENTITIES]]}),
+        strategy=Redact(),
+    )
+    assert replaced[COL_REPLACED_TEXT].iloc[0] == "allow:[REDACTED_TOKEN] deny:[REDACTED_TOKEN]"
+
+
 def test_missing_detector_decision_retains_legacy_propagation_without_direct_regex() -> None:
     text = "allow:ABC deny:ABC"
     row: dict[str, Any] = {
@@ -1206,7 +1263,7 @@ def test_merge_does_not_derive_regex_constrained_name_part_without_exact_regex_e
     assert any(entity["label"] == "last_name" and entity["start_position"] == 24 for entity in entities)
 
 
-def test_finalize_filters_reclassification_to_excluded_label() -> None:
+def test_finalize_filters_merged_entity_with_excluded_label() -> None:
     row: dict[str, Any] = {
         COL_TEXT: "San Diego",
         COL_MERGED_ENTITIES: {
@@ -1214,7 +1271,7 @@ def test_finalize_filters_reclassification_to_excluded_label() -> None:
                 {
                     "id": "country_0_9",
                     "value": "San Diego",
-                    "label": "country",
+                    "label": "city",
                     "start_position": 0,
                     "end_position": 9,
                     "score": 0.95,
@@ -1222,18 +1279,7 @@ def test_finalize_filters_reclassification_to_excluded_label() -> None:
                 }
             ]
         },
-        COL_VALIDATED_ENTITIES: {
-            "decisions": [
-                {
-                    "id": "country_0_9",
-                    "value": "San Diego",
-                    "label": "country",
-                    "decision": "reclass",
-                    "proposed_label": "city",
-                    "reason": "San Diego is a city",
-                }
-            ]
-        },
+        COL_VALIDATED_ENTITIES: {"decisions": []},
     }
 
     result = apply_validation_and_finalize(row, excluded_entity_labels=["city"])
@@ -1242,7 +1288,7 @@ def test_finalize_filters_reclassification_to_excluded_label() -> None:
     assert result[COL_TAGGED_TEXT] == "San Diego"
 
 
-def test_finalize_reclassification_to_regex_constrained_label_requires_exact_regex_evidence() -> None:
+def test_finalize_merged_regex_constrained_label_requires_exact_regex_evidence() -> None:
     row: dict[str, Any] = {
         COL_TEXT: "OTHER-123",
         COL_MERGED_ENTITIES: {
@@ -1250,7 +1296,7 @@ def test_finalize_reclassification_to_regex_constrained_label_requires_exact_reg
                 {
                     "id": "identifier_0_9",
                     "value": "OTHER-123",
-                    "label": "identifier",
+                    "label": "ticket",
                     "start_position": 0,
                     "end_position": 9,
                     "score": 0.9,
@@ -1258,16 +1304,7 @@ def test_finalize_reclassification_to_regex_constrained_label_requires_exact_reg
                 }
             ]
         },
-        COL_VALIDATED_ENTITIES: {
-            "decisions": [
-                {
-                    "id": "identifier_0_9",
-                    "decision": "reclass",
-                    "proposed_label": "ticket",
-                    "reason": "looks like a ticket",
-                }
-            ]
-        },
+        COL_VALIDATED_ENTITIES: {"decisions": []},
         COL_REGEX_ACCEPTED_ENTITIES: {"entities": []},
     }
 
@@ -1295,7 +1332,7 @@ def test_finalize_does_not_reuse_dropped_regex_candidate_as_evidence() -> None:
                 {
                     "id": "identifier_0_9",
                     "value": "OTHER-123",
-                    "label": "identifier",
+                    "label": "ticket",
                     "start_position": 0,
                     "end_position": 9,
                     "score": 0.9,
@@ -1329,7 +1366,7 @@ def test_finalize_does_not_reuse_dropped_regex_candidate_as_evidence() -> None:
     assert result[COL_TAGGED_TEXT] == "OTHER-123"
 
 
-def test_finalize_filters_reclassification_outside_explicit_label_set() -> None:
+def test_finalize_filters_merged_entity_outside_explicit_label_set() -> None:
     row: dict[str, Any] = {
         COL_TEXT: "San Diego",
         COL_MERGED_ENTITIES: {
@@ -1337,7 +1374,7 @@ def test_finalize_filters_reclassification_outside_explicit_label_set() -> None:
                 {
                     "id": "country_0_9",
                     "value": "San Diego",
-                    "label": "country",
+                    "label": "city",
                     "start_position": 0,
                     "end_position": 9,
                     "score": 0.95,
@@ -1345,18 +1382,7 @@ def test_finalize_filters_reclassification_outside_explicit_label_set() -> None:
                 }
             ]
         },
-        COL_VALIDATED_ENTITIES: {
-            "decisions": [
-                {
-                    "id": "country_0_9",
-                    "value": "San Diego",
-                    "label": "country",
-                    "decision": "reclass",
-                    "proposed_label": "city",
-                    "reason": "San Diego is a city",
-                }
-            ]
-        },
+        COL_VALIDATED_ENTITIES: {"decisions": []},
     }
 
     result = apply_validation_and_finalize(row, allowed_entity_labels=["country"])

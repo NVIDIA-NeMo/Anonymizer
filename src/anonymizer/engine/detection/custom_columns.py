@@ -263,10 +263,6 @@ def apply_validation_and_finalize(
     """
     text = str(row.get(COL_TEXT, ""))
     merged = _parse_entity_spans(row.get(COL_MERGED_ENTITIES, {}))
-    validated = apply_validation_decisions(
-        entities=merged,
-        validation_output=row.get(COL_VALIDATED_ENTITIES, {}),
-    )
     accepted_regex = _parse_entity_spans(row.get(COL_REGEX_ACCEPTED_ENTITIES, {}))
     regex_evidence = _validated_regex_evidence(row, accepted_regex=accepted_regex)
     accepted_regex = _admit_detection_candidates(
@@ -276,14 +272,14 @@ def apply_validation_and_finalize(
         regex_constrained_entity_labels=regex_constrained_entity_labels,
         regex_evidence=regex_evidence,
     )
-    validated = _admit_detection_candidates(
-        validated,
+    admitted = _admit_detection_candidates(
+        merged,
         excluded_entity_labels=excluded_entity_labels,
         allowed_entity_labels=allowed_entity_labels,
         regex_constrained_entity_labels=regex_constrained_entity_labels,
         regex_evidence=regex_evidence,
     )
-    protected = _merge_detection_routes(accepted_regex, validated)
+    protected = _merge_detection_routes(accepted_regex, admitted)
     expanded = expand_entity_occurrences(text=text, entities=protected)
     row[COL_DETECTED_ENTITIES] = EntitiesSchema(entities=[entity.as_dict() for entity in expanded]).model_dump(
         mode="json"
