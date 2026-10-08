@@ -624,6 +624,54 @@ def test_materialization_item_shape_rejects_at_typed_constructor(case_id: str, v
     assert SourceItem(association=association, key=0, version=1, text="valid").text == "valid"
 
 
+@pytest.mark.parametrize(
+    ("case_id", "kind", "same_type", "max_items"),
+    (
+        ("materialization/single_output_mismatch", "single", False, 1),
+        ("materialization/single_max_items", "single", True, 2),
+        ("materialization/collection_scalar_output", "collection", True, 3),
+        ("materialization/collection_zero_max", "collection", False, 0),
+    ),
+)
+def test_initial_materialization_shape_rejects_at_typed_constructor(
+    case_id: str,
+    kind: str,
+    same_type: bool,
+    max_items: int,
+) -> None:
+    del case_id
+    data = _data(1)
+    target = next(iter(data.targets))
+    workflow = WorkflowId.new()
+    item_type = ArtifactType(name="text", revision=1)
+    output_type = item_type if same_type else ArtifactType(name="text-collection", revision=1)
+    common = {
+        "target": target,
+        "node": NodeId.new(workflow=workflow),
+        "port": "context",
+        "source": ContextSourceRef(name="source", revision=1),
+        "selector": ContextSelector(fields=()),
+        "requirement": "required",
+    }
+    with pytest.raises(EffectRejected) as rejected:
+        InitialContextDecl(
+            **cast(Any, common),
+            artifact_type=output_type,
+            bounds=RetrievalBounds(max_items=max_items, max_bytes=12, max_requests=1),
+            materialization=ContextMaterialization(kind=cast(Any, kind), item_type=item_type),
+        )
+    assert rejected.value.code.value == "contradictory"
+    valid_kind = cast(Any, kind)
+    valid_output = item_type if kind == "single" else ArtifactType(name="valid-collection", revision=1)
+    valid = InitialContextDecl(
+        **cast(Any, common),
+        artifact_type=valid_output,
+        bounds=RetrievalBounds(max_items=1, max_bytes=12, max_requests=1),
+        materialization=ContextMaterialization(kind=valid_kind, item_type=item_type),
+    )
+    assert valid.materialization.kind == kind
+
+
 @pytest.mark.parametrize("case", ADMISSION_CASES, ids=lambda case: cast(str, case["case_id"]))
 def test_admission_corpus_case_through_production(case: dict[str, Any]) -> None:
     rejected: str | None = None
