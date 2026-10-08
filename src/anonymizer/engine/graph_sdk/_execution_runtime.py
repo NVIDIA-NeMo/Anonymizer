@@ -41,14 +41,12 @@ from anonymizer.engine.graph_sdk._execution_publication import (
     _validate_assessment_returns,
 )
 from anonymizer.engine.graph_sdk._execution_state import (
-    _DeferredAcceptance,
     _ExecutionControl,
     _ExecutionFacts,
     _ExecutionJob,
     _ExecutionTask,
     _FactCheckpoint,
     _group_external_jobs,
-    _RequestAuthority,
 )
 from anonymizer.engine.graph_sdk._execution_topology import (
     _inherited_artifact_role,
@@ -65,15 +63,14 @@ from anonymizer.engine.graph_sdk._execution_values import (
     LocalAssessmentResult,
     OperationExecutionPolicy,
     ProvenanceKey,
+    PublicationFailureFact,
     RootInputKey,
     RuntimeOutcome,
 )
+from anonymizer.engine.graph_sdk._request_driver import _RequestAuthority
 from anonymizer.engine.graph_sdk.requests import (
-    AcceptFailure,
-    AcceptResult,
     AssociationResult,
     InvocationRequestScope,
-    ObserveSettlement,
     PhysicalRequestId,
     ScopeCancel,
     SemanticAssociation,
@@ -140,7 +137,6 @@ class _InvocationRuntime:
                 policies=frozenset((item.request for item in self.admitted.policies if item.request is not None)),
             )
         )
-        self.deferred_acceptances: dict[SemanticAssociation, _DeferredAcceptance] = {}
         self.request_resources: dict[PhysicalRequestId, ResourceId] = {}
         self.facts = _ExecutionFacts()
         self.root_inputs: dict[tuple[DatumId, str], ArtifactRef] = {}
@@ -158,6 +154,8 @@ class _InvocationRuntime:
         )
         self.attempts: dict[ActivationKey, TaskAttemptId] = {}
         self.cancelled_unstarted: set[ActivationKey] = set()
+        self.blocked_reasons: dict[ActivationKey, str] = {}
+        self.publication_failures: list[PublicationFailureFact] = []
         self.jobs: dict[_ExecutionTask, _ExecutionJob] = {}
         self.physical_jobs: dict[asyncio.Task[object], asyncio.Task[object]] = {}
 
@@ -245,6 +243,7 @@ class _InvocationRuntime:
                 reject(EffectCode.PENDING_LIMIT)
             return False
         if _operation_has_omitted_context(self.admitted, target, entry.template):
+            self.blocked_reasons[entry.activation] = "omitted_optional"
             self.states[state_index] = advance_activation(
                 state=self.states[state_index],
                 event=CloseUnstarted(activation=entry.activation, category="blocked"),
@@ -427,7 +426,6 @@ class _InvocationRuntime:
                         self.context_leases,
                         self.control,
                         self.services.limits,
-                        self.deferred_acceptances,
                         self.request_resources,
                     )
         elif policy.kind == "decision":
@@ -435,7 +433,9 @@ class _InvocationRuntime:
                 self.admitted, policy, handle, job.association, job.inputs, job.activation, self.services, self.control
             )
         else:
-            coroutine = _run_local(policy, handle, job.association, job.inputs, self.control)
+            coroutine = _run_local(
+                policy, handle, job.association, job.inputs, self.control, self.admitted.ingress_limits
+            )
         self.jobs[asyncio.create_task(coroutine)] = job
 
     def _dispatch_external(self, external_jobs: list[_ExecutionJob]) -> None:
@@ -450,7 +450,6 @@ class _InvocationRuntime:
                     self.request_authority,
                     self.control,
                     self.services.limits,
-                    self.deferred_acceptances,
                     self.request_resources,
                 )
             )
@@ -482,38 +481,24 @@ class _InvocationRuntime:
             else [first]
         )
         await asyncio.gather(*peers)
-        deferred = self.deferred_acceptances.get(self.jobs[first].association)
-        transaction = self.facts.checkpoint()
-        prior_states = list(self.states)
-        outcomes: list[tuple[_ExecutionJob, RuntimeOutcome]] = []
         for task in peers:
             job = self.jobs.pop(task)
             self.physical_jobs.pop(task, None)
             mapping, results, assessments = task.result()
-            self.deferred_acceptances.pop(job.association, None)
+            accepted = mapping.condition == "result"
             mapping, results, checkpoint, staged_result = self._stage_outputs(job, mapping, results, assessments)
             mapping = self._advance_completed(job, mapping, results, checkpoint, staged_result)
-            outcomes.append((job, mapping))
-        if deferred is not None:
-            failed = any((mapping.condition != "result" for _, mapping in outcomes))
-            if failed and len(peers) > 1:
-                self.facts.restore(transaction)
-                self.states[:] = prior_states
-                for job, mapping in outcomes:
-                    if mapping.condition == "result":
-                        mapping = _mapping(job.policy, "failure", None, "malformed_response")
-                    self.states[job.state_index] = advance_activation(
-                        state=self.states[job.state_index],
-                        event=ObserveTerminal(
-                            activation=job.activation, outcome=mapping.outcome, category=mapping.category
-                        ),
+            if mapping.category == "blocked" and mapping.condition == "artifact_limit_exhausted":
+                self.blocked_reasons[job.activation] = mapping.condition
+            if mapping.condition == "artifact_limit_exhausted" or accepted and mapping.condition != "result":
+                self.publication_failures.append(
+                    PublicationFailureFact(
+                        association=job.association,
+                        target=job.target,
+                        condition=mapping.condition,
+                        failure=mapping.failure,
                     )
-            if failed:
-                self.request_authority.apply(AcceptFailure(request=deferred.request, failure="malformed_response"))
-            else:
-                self.request_authority.apply(AcceptResult(request=deferred.request, results=deferred.results))
-            if deferred.settlement is not None:
-                self.request_authority.apply(ObserveSettlement(settlement=deferred.settlement))
+                )
         return peers
 
     def _stage_outputs(
@@ -557,6 +542,7 @@ class _InvocationRuntime:
                     self.services.limits,
                 )
                 if output_status != "valid":
+                    self.facts.restore(checkpoint)
                     mapping = _mapping(
                         job.policy,
                         "artifact_limit_exhausted" if output_status == "limit" else "failure",
@@ -661,6 +647,8 @@ class _InvocationRuntime:
                 state=prior_state,
                 event=ObserveTerminal(activation=job.activation, outcome=mapping.outcome, category=mapping.category),
             )
+        if checkpoint is not None:
+            self.facts.commit(checkpoint)
         self.states[job.state_index] = candidate_state
         return mapping
 
@@ -682,6 +670,7 @@ class _InvocationRuntime:
             self.attempts,
             frozenset(self.facts.values),
             frozenset(self.cancelled_unstarted),
+            self.blocked_reasons,
         )
         final_outputs = _final_outputs(self.prepared, tuple(self.states), self.facts.produced, self.facts.provenance)
         return ExecutionResult(
@@ -703,6 +692,7 @@ class _InvocationRuntime:
             final_outputs=final_outputs,
             provenance=tuple(self.facts.provenance),
             cleanup_associations=cleanup_associations,
+            publication_failures=tuple(self.publication_failures),
         )
 
 

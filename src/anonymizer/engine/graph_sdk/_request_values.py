@@ -40,6 +40,24 @@ FailureClass: TypeAlias = Literal[
 
 RequestTerminal: TypeAlias = Literal["success", "failure", "cancelled", "lost", "inconsistent"]
 
+RuntimeCondition: TypeAlias = Literal[
+    "result",
+    "failure",
+    "cancel_before_start",
+    "cancel_after_start",
+    "cancel_after_dispatch",
+    "lost",
+    "request_inconsistent",
+    "budget_exhausted",
+    "request_limit_exhausted",
+    "artifact_limit_exhausted",
+    "deadline_exhausted",
+]
+
+AssociationTerminal: TypeAlias = Literal[
+    "success", "failure", "cancelled", "lost", "inconsistent", "publication_failed"
+]
+
 
 RequestDenialCategory: TypeAlias = Literal["budget_stopped", "request_limit_stopped"]
 
@@ -54,6 +72,7 @@ RequestDefectCode: TypeAlias = Literal[
     "missing_keyed_result",
     "extra_keyed_result",
     "foreign_keyed_result",
+    "invalid_settlement",
 ]
 
 
@@ -359,18 +378,95 @@ StopResult: TypeAlias = StopConfirmed | StopUnknown
 
 
 @dataclass(frozen=True, slots=True, kw_only=True, repr=False)
+class RequestAssociationSummary(PrivateValue):
+    """Payload-free first acceptance; publication is resolved through occurrence facts."""
+
+    association: RequestAssociation
+    outcome: str | None
+    category: AssociationTerminal
+    failure: FailureClass | None
+    condition: RuntimeCondition | None
+    consumed_context_ports: frozenset[str]
+    artifacts: tuple[ArtifactRef, ...] = ()
+
+    def __post_init__(self) -> None:
+        require_instance(self.association, (SemanticAssociation, BindingAssociation))
+        require_literal(
+            self.category,
+            frozenset(
+                {
+                    "success",
+                    "failure",
+                    "cancelled",
+                    "lost",
+                    "inconsistent",
+                    "publication_failed",
+                }
+            ),
+        )
+        if self.outcome is not None:
+            require_text(self.outcome)
+        if self.failure is not None:
+            require_literal(self.failure, _FAILURES)
+        if self.condition is not None:
+            require_literal(
+                self.condition,
+                frozenset(
+                    {
+                        "result",
+                        "failure",
+                        "cancel_before_start",
+                        "cancel_after_start",
+                        "cancel_after_dispatch",
+                        "lost",
+                        "request_inconsistent",
+                        "budget_exhausted",
+                        "request_limit_exhausted",
+                        "artifact_limit_exhausted",
+                        "deadline_exhausted",
+                    }
+                ),
+            )
+        if type(self.consumed_context_ports) is not frozenset or any(
+            type(port) is not str or not port for port in self.consumed_context_ports
+        ):
+            reject(EffectCode.INVALID_TYPE)
+        if type(self.artifacts) is not tuple or any(type(item) is not ArtifactRef for item in self.artifacts):
+            reject(EffectCode.INVALID_TYPE)
+        if self.category == "success":
+            if self.outcome is None or self.failure is not None or self.condition != "result":
+                reject(EffectCode.CONTRADICTORY)
+        elif self.outcome is not None or self.consumed_context_ports or self.artifacts:
+            reject(EffectCode.CONTRADICTORY)
+        if self.category == "failure" and (self.failure is None or self.condition != "failure"):
+            reject(EffectCode.CONTRADICTORY)
+        if self.category in {"cancelled", "lost", "inconsistent"} and (
+            self.failure is not None or self.condition is not None
+        ):
+            reject(EffectCode.CONTRADICTORY)
+        if self.artifacts and (
+            not isinstance(self.association, SemanticAssociation)
+            or any(item.invocation != self.association.task.activation.invocation for item in self.artifacts)
+        ):
+            reject(EffectCode.FOREIGN_OWNER)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True, repr=False)
 class RequestTerminalFact(PrivateValue):
     request: PhysicalRequestId
     category: RequestTerminal
     failure: FailureClass | None
-    results: tuple[AssociationResult, ...]
+    results: tuple[RequestAssociationSummary, ...]
+    schema_version: Literal[2] = 2
 
     def __post_init__(self) -> None:
         require_instance(self.request, PhysicalRequestId)
         require_literal(self.category, frozenset({"success", "failure", "cancelled", "lost", "inconsistent"}))
         if self.failure is not None:
             require_literal(self.failure, _FAILURES)
-        if not isinstance(self.results, tuple) or any(not isinstance(item, AssociationResult) for item in self.results):
+        if type(self.schema_version) is not int or self.schema_version != 2:
+            reject(EffectCode.INVALID_VALUE)
+        if type(self.results) is not tuple or any(type(item) is not RequestAssociationSummary for item in self.results):
             reject(EffectCode.INVALID_TYPE)
         if self.category == "success" and (self.failure is not None or not self.results):
             reject(EffectCode.CONTRADICTORY)
@@ -400,6 +496,7 @@ class RequestDefect(PrivateValue):
                     "missing_keyed_result",
                     "extra_keyed_result",
                     "foreign_keyed_result",
+                    "invalid_settlement",
                 }
             ),
         )
@@ -412,6 +509,12 @@ class RequestDefect(PrivateValue):
         keyed = self.code.endswith("keyed_result")
         valid = (
             (keyed and self.association is not None and self.terminal is None and self.settlement is None)
+            or (
+                self.code == "invalid_settlement"
+                and self.association is None
+                and self.terminal is None
+                and self.settlement is None
+            )
             or (
                 self.code == "conflicting_terminal"
                 and self.association is None
@@ -554,13 +657,18 @@ class Dispatch(PrivateValue):
 @dataclass(frozen=True, slots=True, kw_only=True, repr=False)
 class AcceptResult(PrivateValue):
     request: PhysicalRequestId
-    results: tuple[AssociationResult, ...]
+    results: tuple[AssociationResult | RequestAssociationSummary, ...]
 
 
 @dataclass(frozen=True, slots=True, kw_only=True, repr=False)
 class AcceptFailure(PrivateValue):
     request: PhysicalRequestId
     failure: FailureClass
+
+
+@dataclass(frozen=True, slots=True, kw_only=True, repr=False)
+class RejectSettlement(PrivateValue):
+    request: PhysicalRequestId
 
 
 @dataclass(frozen=True, slots=True, kw_only=True, repr=False)
@@ -599,6 +707,7 @@ RequestEvent: TypeAlias = (
     | Dispatch
     | AcceptResult
     | AcceptFailure
+    | RejectSettlement
     | RequestCancel
     | ScopeCancel
     | StopAcknowledged

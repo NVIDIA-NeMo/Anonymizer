@@ -437,6 +437,13 @@ class _Qualification:
                     bad |= (
                         len(associations) != len(set(associations)) or frozenset(associations) != dispatch.associations
                     )
+                    for summary in terminal.results:
+                        if summary.category != "success" and not self._recovered(
+                            dispatch, receipt, summary.association
+                        ):
+                            target = self._association_target(summary.association)
+                            if target is not None:
+                                self.withholding[target].add("request_accounting")
                 elif terminal.category == "failure":
                     for association in dispatch.associations:
                         if not self._recovered(dispatch, receipt, association):
@@ -458,7 +465,7 @@ class _Qualification:
                         predecessor is None
                         or prior is None
                         or predecessor.policy != dispatch.policy
-                        or not self._followup(dispatch, prior)
+                        or not self._followup(dispatch, prior, association)
                     ):
                         bad = True
             previous.update((association, dispatch) for association in dispatch.associations)
@@ -472,8 +479,9 @@ class _Qualification:
                 codes.add("inconsistent_attribution")
 
     @staticmethod
-    def _followup(dispatch: RequestReservation, prior: RequestTerminalFact) -> bool:
-        failure = prior.failure
+    def _followup(dispatch: RequestReservation, prior: RequestTerminalFact, association: RequestAssociation) -> bool:
+        summary = next((item for item in prior.results if item.association == association), None)
+        failure = prior.failure if summary is None else summary.failure
         policy = dispatch.policy
         if failure is None:
             return False
@@ -505,7 +513,9 @@ class _Qualification:
             if later and association in successor.associations:
                 terminal = next((item for item in receipt.terminals if item.request == successor.request), None)
                 if terminal is not None and terminal.category == "success":
-                    return True
+                    return any(
+                        item.association == association and item.category == "success" for item in terminal.results
+                    )
         return False
 
     def cleanup_accounting(self) -> None:

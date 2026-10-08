@@ -26,6 +26,7 @@ from anonymizer.engine.graph_sdk.context import (
     SourceResponse,
     admit_context_plan,
 )
+from anonymizer.engine.graph_sdk.inspection import inspect_binding_requests
 from anonymizer.engine.graph_sdk.requests import (
     ExactUsage,
     ExternalSettlement,
@@ -507,6 +508,14 @@ async def _assert_initial_binding() -> None:
     assert result.receipt.requests.dispatched_count == 1
     assert result.receipt.requests.terminals[0].results[0].outcome == "retrieved"
     assert result.receipt.cleanup[0].disposition == "left_open"
+    receipt = result.receipt
+    (view,) = inspect_binding_requests(receipt)
+    assert view.ownership_resolved and view.binding_terminal == "bound"
+    assert view.target == target and view.binding_artifacts == (receipt.artifacts[0].reference,)
+    assert not view.artifacts and view.operation_terminal is None
+    assert view.acceptance is receipt.requests.terminals[0].results[0]
+    assert not view.acceptance.artifacts
+    assert inspect_binding_requests(receipt) == (view,) and provider.calls == 1
 
 
 @pytest.mark.parametrize("latest", [False, True])

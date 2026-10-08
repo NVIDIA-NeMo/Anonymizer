@@ -247,7 +247,13 @@ async def _assert_terminal(case: dict[str, Any]) -> None:
         assert len(result.requests.terminals) == 1
         request_terminal = result.requests.terminals[0]
         if condition == "artifact_limit_exhausted":
-            assert request_terminal.failure == "malformed_response"
+            # A1 separates physical acceptance from publication capacity.
+            assert request_terminal.category == "success" and request_terminal.failure is None
+            assert len(result.publication_failures) == 1
+            failure = result.publication_failures[0]
+            assert failure.condition == "artifact_limit_exhausted"
+            assert failure.association == request_terminal.results[0].association
+            assert not request_terminal.results[0].artifacts
         else:
             assert request_terminal.category == terminal.category
 

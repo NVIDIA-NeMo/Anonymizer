@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping, MutableMapping, MutableSequence
 from typing import Literal
 
 from anonymizer.engine.graph_sdk._effect_values import (
@@ -354,8 +355,8 @@ def _validate_assessment_returns(
 def _final_outputs(
     prepared: PreparedPlan,
     states: tuple[ActivationState, ...],
-    produced: dict[tuple[DatumId, ActivationKey | NodeId, str], ArtifactRef],
-    provenance: list[ArtifactProvenanceFact],
+    produced: MutableMapping[tuple[DatumId, ActivationKey | NodeId, str], ArtifactRef],
+    provenance: MutableSequence[ArtifactProvenanceFact],
 ) -> tuple[FinalOutputFact, ...]:
     results: list[FinalOutputFact] = []
     for target_map, state in zip(prepared.target_occurrences, states, strict=True):
@@ -434,6 +435,7 @@ def _canonical_record(
     attempts: dict[ActivationKey, TaskAttemptId],
     artifacts: frozenset[ArtifactRef],
     cancelled_unstarted: frozenset[ActivationKey],
+    blocked_reasons: Mapping[ActivationKey, str],
 ) -> CanonicalRecord:
     del target_keys
     prepared = admitted.context.prepared
@@ -479,7 +481,11 @@ def _canonical_record(
                 "cancelled": frozenset({"cancel_requested"}),
                 "lost": frozenset({"transport_lost"}),
                 "blocked": frozenset(
-                    {"cancel_requested" if entry.activation in cancelled_unstarted else "prerequisite"}
+                    {
+                        "cancel_requested"
+                        if entry.activation in cancelled_unstarted
+                        else blocked_reasons.get(entry.activation, "prerequisite")
+                    }
                 ),
                 "inconsistent": frozenset({"contradictory"}),
             }.get(entry.status, frozenset())

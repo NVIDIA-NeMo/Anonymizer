@@ -379,7 +379,8 @@ async def _assert_late_initial_provider_case(case: dict[str, Any]) -> None:
             assert terminal is not None
             rows = []
             for returned in terminal.results:
-                assert not returned.outputs and not returned.consumed_context_ports
+                assert not returned.artifacts and not returned.consumed_context_ports
+                assert terminal.schema_version == 2
                 rows.append(
                     {
                         "association": association_names[returned.association],

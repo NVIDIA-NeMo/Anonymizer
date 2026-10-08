@@ -29,7 +29,9 @@ from anonymizer.engine.graph_sdk._request_values import (
     ObserveSettlement,
     PhysicalRequestId,
     PhysicalRequestPolicy,
+    RejectSettlement,
     RequestAssociation,
+    RequestAssociationSummary,
     RequestCancel,
     RequestDefect,
     RequestDenialFact,
@@ -46,6 +48,7 @@ from anonymizer.engine.graph_sdk._request_values import (
     SemanticAssociation,
     StopAcknowledged,
     T,
+    UnknownUsage,
     _association_in_scope,
 )
 
@@ -128,6 +131,7 @@ def advance_requests(*, state: RequestState, event: RequestEvent) -> RequestStat
             StopAcknowledged,
             MarkLost,
             ObserveSettlement,
+            RejectSettlement,
         ),
     )
     if isinstance(event, ScopeCancel):
@@ -193,13 +197,31 @@ def advance_requests(*, state: RequestState, event: RequestEvent) -> RequestStat
         )
     if isinstance(event, ObserveSettlement):
         return _observe_settlement(state, event.settlement)
+    if isinstance(event, RejectSettlement):
+        interim = _observe_settlement(
+            state,
+            ExternalSettlement(
+                request=request,
+                disposition="unknown",
+                usage=UnknownUsage(),
+                remote_stopped=None,
+            ),
+        )
+        defect = RequestDefect(
+            request=request, code="invalid_settlement", association=None, terminal=None, settlement=None
+        )
+        return replace(interim, defects=_append_unique(interim.defects, defect))
     if request not in state.dispatched:
         reject(EffectCode.MISSING)
     if isinstance(event, AcceptFailure):
         require_literal(event.failure, _FAILURES)
         terminal = RequestTerminalFact(request=request, category="failure", failure=event.failure, results=())
         terminals, defects = _terminal(state, terminal)
-        clear_remote = not any(item.request == request for item in state.terminals)
+        clear_remote = (
+            not any(item.request == request for item in state.terminals)
+            and not any(item.request == request and item.code == "invalid_settlement" for item in state.defects)
+            and not any(item.request == request and item.remote_stopped is not True for item in state.settlements)
+        )
         return replace(
             state,
             terminals=terminals,
@@ -319,7 +341,9 @@ def _terminal(
 
 
 def _accept_results(state: RequestState, event: AcceptResult) -> RequestState:
-    if not isinstance(event.results, tuple) or any(not isinstance(item, AssociationResult) for item in event.results):
+    if type(event.results) is not tuple or any(
+        type(item) not in {AssociationResult, RequestAssociationSummary} for item in event.results
+    ):
         reject(EffectCode.INVALID_TYPE)
     reservation = _dispatched_reservation(state, event.request)
     expected = reservation.associations
@@ -375,17 +399,38 @@ def _accept_results(state: RequestState, event: AcceptResult) -> RequestState:
         request=event.request,
         category="inconsistent" if malformed else "success",
         failure=None,
-        results=() if malformed else event.results,
+        results=() if malformed else tuple(_acceptance_summary(item) for item in event.results),
     )
     interim = replace(state, defects=defects)
     terminals, defects = _terminal(interim, terminal)
-    clear_remote = not any(item.request == event.request for item in state.terminals)
+    clear_remote = (
+        not any(item.request == event.request for item in state.terminals)
+        and not any(item.request == event.request and item.code == "invalid_settlement" for item in state.defects)
+        and not any(item.request == event.request and item.remote_stopped is not True for item in state.settlements)
+    )
     return replace(
         state,
         terminals=terminals,
         defects=defects,
         local_in_flight=state.local_in_flight - {event.request},
         remote_outstanding=state.remote_outstanding - ({event.request} if clear_remote else set()),
+    )
+
+
+def _acceptance_summary(result: AssociationResult | RequestAssociationSummary) -> RequestAssociationSummary:
+    if isinstance(result, RequestAssociationSummary):
+        # The physical reducer has no publication authority. Exact occurrence joins
+        # resolve artifacts after publication, without rewriting this first terminal.
+        if result.artifacts:
+            reject(EffectCode.FOREIGN_OWNER)
+        return result
+    return RequestAssociationSummary(
+        association=result.association,
+        outcome=result.outcome,
+        category="success",
+        failure=None,
+        condition="result",
+        consumed_context_ports=result.consumed_context_ports,
     )
 
 
@@ -413,14 +458,15 @@ def _followup_rejection(
         terminal = next((item for item in state.terminals if item.request == latest.request), None)
         if terminal is None:
             return EffectCode.MISSING_PREDECESSOR
-        if terminal.failure is None:
+        summary = next((item for item in terminal.results if item.association == association), None)
+        failure = terminal.failure if summary is None else summary.failure
+        if failure is None:
             code = {
                 "retry": EffectCode.INVALID_RETRY,
                 "correction": EffectCode.INVALID_CORRECTION,
                 "failover": EffectCode.INVALID_FAILOVER,
             }[purpose]
             return code
-        failure = terminal.failure
         if purpose == "retry":
             if failure not in {"rejected_before_acceptance", "retryable", "transport_unknown"}:
                 return EffectCode.INVALID_RETRY

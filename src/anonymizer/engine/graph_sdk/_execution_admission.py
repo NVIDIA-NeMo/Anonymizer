@@ -30,6 +30,7 @@ from anonymizer.engine.graph_sdk._execution_values import (
     OperationExecutionPolicy,
     RequestTransport,
 )
+from anonymizer.engine.graph_sdk._ingress_values import IngressLimits
 from anonymizer.engine.graph_sdk.capabilities import (
     ImplementationCapability,
     validate_capability,
@@ -68,9 +69,11 @@ def admit_execution_plan(
     assessment_productions: tuple[EvidenceProductionDecl, ...],
     assessment_limits: AssessmentLimits,
     map_expansions: tuple[MapExpansionDecl, ...] = (),
+    ingress_limits: IngressLimits = IngressLimits(),
 ) -> AdmittedExecutionPlan:
     """Admit exact execution policies over one immutable prepared plan."""
     require_instance(context, AdmittedContextPlan)
+    require_instance(ingress_limits, IngressLimits)
     prepared = context.prepared
     if not isinstance(capabilities, tuple):
         reject(EffectCode.INVALID_TYPE)
@@ -148,6 +151,7 @@ def admit_execution_plan(
         map_expansions=map_expansions,
         assessment_productions=assessment_productions,
         assessment_limits=assessment_limits,
+        ingress_limits=ingress_limits,
     )
 
 

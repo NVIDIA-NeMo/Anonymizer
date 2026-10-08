@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from collections.abc import MutableMapping, MutableSequence
+
 from anonymizer.engine.graph_sdk._effect_values import (
     EffectCode,
     reject,
@@ -75,9 +77,9 @@ def _operation_inputs(
     root_inputs: dict[tuple[DatumId, str], ArtifactRef],
     subgraph_inputs: dict[tuple[DatumId, ActivationKey, str], ArtifactRef],
     subgraph_input_parents: dict[tuple[DatumId, ActivationKey, str], ProvenanceKey],
-    produced: dict[tuple[DatumId, ActivationKey | NodeId, str], ArtifactRef],
-    values: dict[ArtifactRef, ArtifactValue],
-    provenance: list[ArtifactProvenanceFact],
+    produced: MutableMapping[tuple[DatumId, ActivationKey | NodeId, str], ArtifactRef],
+    values: MutableMapping[ArtifactRef, ArtifactValue],
+    provenance: MutableSequence[ArtifactProvenanceFact],
 ) -> tuple[tuple[AssociationInput, ...], dict[str, ProvenanceKey]]:
     operation = admitted.nodes[node].operation
     ports: list[PortArtifact] = []
@@ -290,8 +292,8 @@ def _materialize_subgraph_inputs(
     root_inputs: dict[tuple[DatumId, str], ArtifactRef],
     subgraph_inputs: dict[tuple[DatumId, ActivationKey, str], ArtifactRef],
     subgraph_input_parents: dict[tuple[DatumId, ActivationKey, str], ProvenanceKey],
-    produced: dict[tuple[DatumId, ActivationKey | NodeId, str], ArtifactRef],
-    provenance: list[ArtifactProvenanceFact],
+    produced: MutableMapping[tuple[DatumId, ActivationKey | NodeId, str], ArtifactRef],
+    provenance: MutableSequence[ArtifactProvenanceFact],
 ) -> None:
     declaration = admitted.nodes[node]
     for port in declaration.operation.inputs:
@@ -489,9 +491,9 @@ def _bridge_structural_map_membership(
 def _materialize_bound_context(
     admitted: AdmittedExecutionPlan,
     invocation: InvocationId,
-    values: dict[ArtifactRef, ArtifactValue],
-    produced: dict[tuple[DatumId, ActivationKey | NodeId, str], ArtifactRef],
-    provenance: list[ArtifactProvenanceFact],
+    values: MutableMapping[ArtifactRef, ArtifactValue],
+    produced: MutableMapping[tuple[DatumId, ActivationKey | NodeId, str], ArtifactRef],
+    provenance: MutableSequence[ArtifactProvenanceFact],
     next_artifact: int,
     limits: ExecutionLimits,
 ) -> int:

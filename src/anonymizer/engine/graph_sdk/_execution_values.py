@@ -20,6 +20,7 @@ from anonymizer.engine.graph_sdk._effect_values import (
     require_literal,
     require_text,
 )
+from anonymizer.engine.graph_sdk._ingress_values import IngressLimits
 from anonymizer.engine.graph_sdk._workflow import reachable_workflows
 from anonymizer.engine.graph_sdk.capabilities import (
     FrozenConfig,
@@ -46,6 +47,7 @@ from anonymizer.engine.graph_sdk.requests import (
     FailureClass,
     PhysicalRequestPolicy,
     RequestReceipt,
+    RuntimeCondition,
     SemanticAssociation,
     StopResult,
     TransportResult,
@@ -80,21 +82,6 @@ from anonymizer.graph.workflow import (
 )
 
 ExecutionKind: TypeAlias = Literal["local", "external", "decision"]
-
-
-RuntimeCondition: TypeAlias = Literal[
-    "result",
-    "failure",
-    "cancel_before_start",
-    "cancel_after_start",
-    "cancel_after_dispatch",
-    "lost",
-    "request_inconsistent",
-    "budget_exhausted",
-    "request_limit_exhausted",
-    "artifact_limit_exhausted",
-    "deadline_exhausted",
-]
 
 
 ArtifactRole: TypeAlias = Literal["artifact", "candidate", "decision", "evidence"]
@@ -483,6 +470,7 @@ class AdmittedExecutionPlan(PrivateValue):
     map_expansions: tuple[MapExpansionDecl, ...]
     assessment_productions: tuple[EvidenceProductionDecl, ...]
     assessment_limits: AssessmentLimits
+    ingress_limits: IngressLimits
     nodes: Mapping[NodeId, Node] = field(compare=False)
     input_sources: Mapping[NodeInputRef, WorkflowInputRef | ContextInputRef | NodeOutputRef] = field(compare=False)
     materialization_schemas: Mapping[ArtifactType, Literal["scalar", "collection"]] = field(compare=False)
@@ -694,9 +682,20 @@ class ExecutionResult(PrivateValue):
     final_outputs: tuple[FinalOutputFact, ...]
     provenance: tuple[ArtifactProvenanceFact, ...]
     cleanup_associations: tuple[CleanupAssociation, ...]
+    publication_failures: tuple[PublicationFailureFact, ...]
 
     def __init__(self, *, _key: object, **values: object) -> None:
         if _key is not _RESULT_KEY:
             raise TypeError("execution results are created by the executor")
         for name, value in values.items():
             object.__setattr__(self, name, value)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True, repr=False)
+class PublicationFailureFact(PrivateValue):
+    """Occurrence-local publication rejection, independent of physical acceptance."""
+
+    association: SemanticAssociation
+    target: DatumId
+    condition: RuntimeCondition
+    failure: FailureClass | None

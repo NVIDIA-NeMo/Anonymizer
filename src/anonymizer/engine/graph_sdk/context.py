@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Literal, Protocol, TypeAlias, runtime_checkable
 
 from anonymizer.engine.graph_sdk._effect_values import (
@@ -16,6 +16,7 @@ from anonymizer.engine.graph_sdk._effect_values import (
     require_literal,
     require_text,
 )
+from anonymizer.engine.graph_sdk._ingress_values import IngressLimits
 from anonymizer.engine.graph_sdk._workflow import reachable_workflows
 from anonymizer.engine.graph_sdk.data import ValidatedDataGraph
 from anonymizer.engine.graph_sdk.preparation import PreparedPlan
@@ -210,8 +211,10 @@ class BindingLimits(PrivateValue):
     max_bytes: int
     max_requests: int
     max_resources: int
+    ingress: IngressLimits = field(default_factory=IngressLimits)
 
     def __post_init__(self) -> None:
+        require_instance(self.ingress, IngressLimits)
         for value in (
             self.max_declarations,
             self.max_sources,

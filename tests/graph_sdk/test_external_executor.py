@@ -12,16 +12,19 @@ import pytest
 from anonymizer.engine.graph_sdk.capabilities import ImplementationCapability
 from anonymizer.engine.graph_sdk.context import admit_context_plan
 from anonymizer.engine.graph_sdk.executor import (
+    AdmittedExecutionPlan,
     AssessmentLimits,
     DecisionLimits,
     ExecutionImplementation,
     ExecutionLimits,
     ExecutionServices,
     ImplementationHandle,
+    IngressLimits,
     OperationExecutionPolicy,
     admit_execution_plan,
     start_execution,
 )
+from anonymizer.engine.graph_sdk.inspection import inspect_requests
 from anonymizer.engine.graph_sdk.preparation import PreparationConfiguration
 from anonymizer.engine.graph_sdk.requests import (
     AssociationResult,
@@ -111,12 +114,18 @@ class _DelayedSuccessTransport:
                         value=TextArtifactValue(text="x"),
                     ),
                 )
-                if self.mode in {"output_valid", "output_limit"}
+                if self.mode.startswith("output_")
                 else (),
                 consumed_context_ports=frozenset(),
             )
             for item in reversed(request.associations)
         )
+        if self.mode == "output_malformed" and self.calls == 1:
+            first = rows[0]
+            rows = (
+                replace(first, outputs=(replace(first.outputs[0], value=TextArtifactValue(text=chr(0xD800))),)),
+                *rows[1:],
+            )
         if self.mode == "missing":
             rows = rows[:1]
         elif self.mode == "duplicate":
@@ -258,9 +267,11 @@ def test_remote_capacity_waits_for_settlement_before_dispatching_later_work() ->
     asyncio.run(_assert_transient_remote_capacity())
 
 
-async def _assert_transient_remote_capacity(*, shared: bool = False, mode: str = "valid") -> None:
+def _capacity_plan(
+    *, shared: bool, mode: str, ingress_limits: IngressLimits = IngressLimits()
+) -> tuple[AdmittedExecutionPlan, ImplementationCapability]:
     workflow, node, artifact_type = _workflow(requests=2 if mode == "retry" else 1)
-    if mode in {"output_valid", "output_limit"}:
+    if mode.startswith("output_"):
         static = workflow.workflow
         operation = replace(
             static.interface,
@@ -325,6 +336,7 @@ async def _assert_transient_remote_capacity(*, shared: bool = False, mode: str =
         request=request_policy,
     )
     admitted = admit_execution_plan(
+        ingress_limits=ingress_limits,
         context=context,
         capabilities=(capability,),
         policies=(
@@ -350,6 +362,11 @@ async def _assert_transient_remote_capacity(*, shared: bool = False, mode: str =
             max_provenance_edges=0,
         ),
     )
+    return admitted, capability
+
+
+async def _assert_transient_remote_capacity(*, shared: bool = False, mode: str = "valid") -> None:
+    admitted, capability = _capacity_plan(shared=shared, mode=mode)
     release = asyncio.Event()
     first_dispatched = asyncio.Event()
     transport = _DelayedSuccessTransport(release=release, first_dispatched=first_dispatched, mode=mode)
@@ -375,7 +392,7 @@ async def _assert_transient_remote_capacity(*, shared: bool = False, mode: str =
             limits=ExecutionLimits(
                 max_local_in_flight=0,
                 max_remote_outstanding=1,
-                max_runtime_artifacts=1 if mode == "output_limit" else 2,
+                max_runtime_artifacts={"output_zero": 0, "output_limit": 1}.get(mode, 2),
                 max_runtime_artifact_bytes=2,
                 max_collection_items=0,
             ),
@@ -399,13 +416,24 @@ async def _assert_transient_remote_capacity(*, shared: bool = False, mode: str =
     assert all(state.complete for state in result.states)
     if mode in {"valid", "retry", "output_valid"}:
         assert all(item.category == "success" for item in result.record.terminals)
-    elif mode == "output_limit":
-        assert all(item.category != "success" for item in result.record.terminals)
-        assert not result.artifacts
-        assert not result.ports
-        assert not result.final_outputs
-        assert not result.provenance
+    elif mode in {"output_limit", "output_malformed"}:
+        assert sum(item.category == "success" for item in result.record.terminals) == 1
+        assert len(result.artifacts) == len(result.ports) == len(result.final_outputs) == len(result.provenance) == 1
         assert not result.assessments
+        if mode == "output_limit":
+            assert len(result.publication_failures) == 1
+            failure = result.publication_failures[0]
+            assert failure.condition == "artifact_limit_exhausted"
+            assert all(port.activation != failure.association.task.activation for port in result.ports)
+        else:
+            assert not result.publication_failures
+            summaries = [row for terminal in result.requests.terminals for row in terminal.results]
+            assert sorted(row.category for row in summaries) == ["failure", "success"]
+            assert next(row for row in summaries if row.category == "failure").failure == "malformed_response"
+        assert all(terminal.category == "success" for terminal in result.requests.terminals)
+    elif mode == "output_zero":
+        assert not result.artifacts and not result.ports and not result.provenance and not result.final_outputs
+        assert len(result.publication_failures) == 2
     else:
         assert all(item.category == "inconsistent" for item in result.record.terminals)
     if mode == "output_valid":
@@ -414,6 +442,24 @@ async def _assert_transient_remote_capacity(*, shared: bool = False, mode: str =
     assert len(result.requests.terminals) == result.requests.dispatched_count
     assert len(result.requests.settlements) == result.requests.dispatched_count
     assert not result.requests.remote_outstanding
+    views = inspect_requests(result)
+    assert len(views) == sum(len(dispatch.associations) for dispatch in result.requests.dispatches)
+    assert all(view.ownership_resolved for view in views)
+    assert {view.publication_failure for view in views if view.publication_failure is not None} == set(
+        result.publication_failures
+    )
+    for view in views:
+        assert isinstance(view.association, SemanticAssociation)
+        assert view.operation_terminal is not None and view.operation_terminal.attempt == view.association.task
+        assert not view.binding_artifacts and view.binding_terminal is None
+        assert set(view.artifacts) == {
+            port.artifact for port in result.ports if port.activation == view.association.task.activation
+        }
+        if view.acceptance is not None:
+            assert not view.acceptance.artifacts
+        if view.publication_failure is not None:
+            assert not view.artifacts
+    assert inspect_requests(result) == views and transport.calls == physical_count
 
 
 @pytest.mark.parametrize("mode", ["valid", "missing", "duplicate", "extra", "foreign", "retry"])
@@ -421,6 +467,7 @@ def test_shared_request_dispatches_once_and_bridges_each_key(mode: str) -> None:
     asyncio.run(_assert_transient_remote_capacity(shared=True, mode=mode))
 
 
-@pytest.mark.parametrize("mode", ["output_valid", "output_limit"])
-def test_shared_request_publishes_all_outputs_or_rolls_back(mode: str) -> None:
-    asyncio.run(_assert_transient_remote_capacity(shared=True, mode=mode))
+@pytest.mark.parametrize("mode", ["output_valid", "output_zero", "output_limit", "output_malformed"])
+@pytest.mark.parametrize("shared", [True, False])
+def test_independent_publication_survives_peer_rejection(mode: str, shared: bool) -> None:
+    asyncio.run(_assert_transient_remote_capacity(shared=shared, mode=mode))

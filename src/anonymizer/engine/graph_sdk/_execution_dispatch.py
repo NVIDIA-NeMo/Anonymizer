@@ -13,7 +13,7 @@ from anonymizer.engine.graph_sdk._effect_values import (
     reject,
 )
 from anonymizer.engine.graph_sdk._execution_publication import _identity_input, _validate_output_shape
-from anonymizer.engine.graph_sdk._execution_state import _DeferredAcceptance, _ExecutionControl, _RequestAuthority
+from anonymizer.engine.graph_sdk._execution_state import _ExecutionControl
 from anonymizer.engine.graph_sdk._execution_values import (
     AdmittedExecutionPlan,
     DecisionWait,
@@ -28,6 +28,15 @@ from anonymizer.engine.graph_sdk._execution_values import (
     OperationExecutionPolicy,
     RuntimeOutcome,
 )
+from anonymizer.engine.graph_sdk._ingress import (
+    _trusted_association,
+    inspect_associations,
+    inspect_failure,
+    inspect_source,
+    inspect_source_identity,
+)
+from anonymizer.engine.graph_sdk._ingress_values import IngressLimits
+from anonymizer.engine.graph_sdk._request_driver import _RequestAuthority, drive_request, late_source_event
 from anonymizer.engine.graph_sdk.capabilities import (
     FrozenConfig,
     ImplementationRef,
@@ -47,24 +56,19 @@ from anonymizer.engine.graph_sdk.requests import (
     ArtifactValue,
     AssociationInput,
     AssociationResult,
-    Dispatch,
     DispatchEnvelope,
     FailureClass,
     MarkLost,
-    ObserveSettlement,
     PhysicalRequestId,
     PortArtifact,
-    RequestCancel,
+    RequestAssociationSummary,
     RequestPolicyBinding,
     Reserve,
     SemanticAssociation,
-    StopAcknowledged,
-    StopConfirmed,
     TextArtifactValue,
     TextCollectionItem,
     TextCollectionValue,
     TransportFailure,
-    TransportLost,
     TransportSuccess,
     can_reserve_followup,
 )
@@ -86,35 +90,30 @@ async def _run_local(
     association: SemanticAssociation,
     inputs: tuple[AssociationInput, ...],
     control: _ExecutionControl,
+    ingress: IngressLimits,
 ) -> tuple[RuntimeOutcome, tuple[AssociationResult, ...], tuple[LocalAssessmentResult, ...]]:
     if handle.local is None:
         reject(EffectCode.MISSING)
-    operation = asyncio.create_task(handle.local.run(inputs))
     try:
+        operation = asyncio.create_task(handle.local.run(inputs))
         while not operation.done():
             if control.cancelled:
                 operation.cancel()
-                with suppress(asyncio.CancelledError):
+                with suppress(Exception, asyncio.CancelledError):
                     await operation
                 return _mapping(policy, "cancel_after_start", None, None), (), ()
             await asyncio.sleep(0)
         result = operation.result()
     except Exception:
         return _mapping(policy, "failure", None, "implementation_exception"), (), ()
-    if isinstance(result, LocalFailure):
-        return _mapping(policy, "failure", None, result.failure), (), ()
-    if isinstance(result, LocalDecisionWait):
+    if type(result) is LocalFailure:
+        return _mapping(policy, "failure", None, inspect_failure(result.failure)), (), ()
+    if type(result) is LocalDecisionWait:
         return _mapping(policy, "failure", None, "implementation_exception"), (), ()
-    if not isinstance(result, LocalCompleted):
+    if type(result) is not LocalCompleted:
         return _mapping(policy, "failure", None, "implementation_exception"), (), ()
-    if (
-        not isinstance(result.results, tuple)
-        or len(result.results) != 1
-        or not isinstance(result.results[0], AssociationResult)
-        or result.results[0].association != association
-        or not isinstance(result.assessments, tuple)
-        or any(not isinstance(item, LocalAssessmentResult) for item in result.assessments)
-    ):
+    invalid = inspect_associations(result.results, frozenset({association}), ingress, assessments=result.assessments)
+    if invalid is None or invalid:
         return _mapping(policy, "failure", None, "malformed_response"), (), ()
     reported = result.results[0].outcome
     if reported not in policy.result_outcomes:
@@ -156,14 +155,14 @@ async def _run_decision(
         result = operation.result()
     except Exception:
         return _mapping(policy, "failure", None, "implementation_exception"), (), ()
-    if isinstance(result, LocalFailure):
+    if type(result) is LocalFailure:
         failure: FailureClass = (
             result.failure
             if result.failure in {"permanent", "implementation_exception"}
             else ("implementation_exception")
         )
         return _mapping(policy, "failure", None, failure), (), ()
-    if not isinstance(result, LocalDecisionWait):
+    if type(result) is not LocalDecisionWait:
         return _mapping(policy, "failure", None, "implementation_exception"), (), ()
     if result.association != association or result.artifact != artifact:
         return _mapping(policy, "failure", None, "implementation_exception"), (), ()
@@ -250,7 +249,6 @@ async def _run_external_batch(
     authority: _RequestAuthority,
     control: _ExecutionControl,
     limits: ExecutionLimits,
-    deferred_acceptances: dict[SemanticAssociation, _DeferredAcceptance],
     request_resources: dict[PhysicalRequestId, ResourceId],
 ) -> dict[SemanticAssociation, tuple[RuntimeOutcome, tuple[AssociationResult, ...], tuple[LocalAssessmentResult, ...]]]:
     if policy.request is None:
@@ -264,12 +262,16 @@ async def _run_external_batch(
     for association in associations:
         authority.bind(RequestPolicyBinding.create(association=association, policies=frozenset({policy.request})))
 
+    completed: dict[
+        SemanticAssociation, tuple[RuntimeOutcome, tuple[AssociationResult, ...], tuple[LocalAssessmentResult, ...]]
+    ] = {}
+
     def failed(
         mapping: RuntimeOutcome,
     ) -> dict[
         SemanticAssociation, tuple[RuntimeOutcome, tuple[AssociationResult, ...], tuple[LocalAssessmentResult, ...]]
     ]:
-        return {association: (mapping, (), ()) for association in associations}
+        return {**completed, **{association: (mapping, (), ()) for association in associations}}
 
     implementation_index = 0
     purpose: Literal["initial", "retry", "correction", "failover"] = "initial"
@@ -282,6 +284,7 @@ async def _run_external_batch(
         ]
         if handle.transport is None:
             reject(EffectCode.MISSING)
+        transport = handle.transport
         request = PhysicalRequestId.new(scope=authority.state.scope)
         authority.apply(
             Reserve(
@@ -295,38 +298,29 @@ async def _run_external_batch(
             denial = next(item for item in reversed(authority.state.denials) if item.request == request)
             condition = "budget_exhausted" if denial.category == "budget_stopped" else "request_limit_exhausted"
             return failed(_mapping(policy, condition, None, None))
-        authority.apply(Dispatch(request=request))
         if handle.resource is not None:
             request_resources[request] = handle.resource.resource
-        envelope = DispatchEnvelope(
-            request=request,
-            purpose=purpose,
-            operation=handle.operation,
-            associations=inputs,
+        envelope = DispatchEnvelope(request=request, purpose=purpose, operation=handle.operation, associations=inputs)
+        completion = await drive_request(
+            authority,
+            request,
+            control,
+            lambda: transport.dispatch(envelope),
+            transport.cancel,
         )
-        dispatch = asyncio.create_task(handle.transport.dispatch(envelope))
-        while not dispatch.done() and not control.cancelled:
-            await asyncio.sleep(0)
-        if control.cancelled and not dispatch.done():
-            authority.apply(RequestCancel(request=request))
-            try:
-                stopped = await handle.transport.cancel(request)
-            except Exception:
-                stopped = None
-            dispatch.cancel()
-            with suppress(asyncio.CancelledError):
-                await dispatch
-            if isinstance(stopped, StopConfirmed):
-                authority.apply(StopAcknowledged(request=request, usage=stopped.usage))
-                return failed(_mapping(policy, "cancel_after_dispatch", None, None))
-            authority.apply(MarkLost(request=request))
-            return failed(_mapping(policy, "lost", None, None))
-        try:
-            result = dispatch.result()
-        except Exception:
-            result = TransportLost(settlement=None)
-        if isinstance(result, TransportSuccess):
-            if result.settlement is not None and result.settlement.request != request:
+        if completion.cancelled:
+            condition = (
+                "cancel_before_start"
+                if request not in authority.state.dispatched
+                else "cancel_after_dispatch"
+                if completion.stop_confirmed
+                else "lost"
+            )
+            return failed(_mapping(policy, condition, None, None))
+        result = completion.value
+        settlement_valid = completion.settlement_valid
+        if type(result) is TransportSuccess:
+            if not settlement_valid:
                 failure = "malformed_response"
                 authority.apply(AcceptFailure(request=request, failure=failure))
                 if can_reserve_followup(
@@ -338,50 +332,62 @@ async def _run_external_batch(
                     purpose = "correction"
                     continue
                 return failed(_mapping(policy, "failure", None, failure))
-            returned = [value.association for value in result.results]
-            keyed = len(returned) == len(associations) and set(returned) == associations
-            mappings: dict[SemanticAssociation, RuntimeOutcome] = {}
-            if keyed:
-                for row in result.results:
-                    if (
-                        not isinstance(row.association, SemanticAssociation)
-                        or row.outcome not in policy.result_outcomes
-                    ):
-                        break
-                    mapping = _mapping(policy, "result", row.outcome, None)
-                    row_inputs = tuple(value for value in inputs if value.association == row.association)
-                    if not _validate_output_shape(
-                        admitted, handle.operation, mapping, row.association, row_inputs, (row,)
-                    ):
-                        break
-                    mappings[row.association] = mapping
-            if keyed and len(mappings) == len(associations):
-                deferred = _DeferredAcceptance(
-                    request=request,
-                    results=result.results,
-                    settlement=result.settlement,
-                )
-                for association in associations:
-                    deferred_acceptances[association] = deferred
-                return {
-                    association: (
-                        mappings[association],
-                        tuple(row for row in result.results if row.association == association),
-                        (),
+            invalid = inspect_associations(result.results, associations, admitted.ingress_limits)
+            if invalid is None:
+                safe_rows = (
+                    type(result.results) is tuple
+                    and len(result.results) <= admitted.ingress_limits.max_associations
+                    and all(
+                        type(row) is AssociationResult and _trusted_association(row.association)
+                        for row in result.results
                     )
-                    for association in associations
-                }
-            if not keyed:
-                authority.apply(AcceptResult(request=request, results=result.results))
-                if result.settlement is not None:
-                    authority.apply(ObserveSettlement(settlement=result.settlement))
+                )
+                authority.apply(AcceptResult(request=request, results=result.results if safe_rows else ()))
                 return failed(_mapping(policy, "request_inconsistent", None, None))
+            summaries: list[RequestAssociationSummary] = []
+            malformed: set[SemanticAssociation] = set()
+            for row in result.results:
+                assert isinstance(row.association, SemanticAssociation)
+                row_inputs = tuple(value for value in inputs if value.association == row.association)
+                mapping = (
+                    _mapping(policy, "result", row.outcome, None)
+                    if row.association not in invalid and row.outcome in policy.result_outcomes
+                    else None
+                )
+                if mapping is not None and _validate_output_shape(
+                    admitted, handle.operation, mapping, row.association, row_inputs, (row,)
+                ):
+                    completed[row.association] = (mapping, (row,), ())
+                    summaries.append(
+                        RequestAssociationSummary(
+                            association=row.association,
+                            outcome=row.outcome,
+                            category="success",
+                            failure=None,
+                            condition="result",
+                            consumed_context_ports=row.consumed_context_ports,
+                        )
+                    )
+                else:
+                    malformed.add(row.association)
+                    summaries.append(
+                        RequestAssociationSummary(
+                            association=row.association,
+                            outcome=None,
+                            category="failure",
+                            failure="malformed_response",
+                            condition="failure",
+                            consumed_context_ports=frozenset(),
+                        )
+                    )
+            authority.apply(AcceptResult(request=request, results=tuple(summaries)))
+            if not malformed:
+                return completed
+            associations = frozenset(malformed)
+            inputs = tuple(value for value in inputs if value.association in associations)
             failure: FailureClass = "malformed_response"
-            authority.apply(AcceptFailure(request=request, failure=failure))
-            if result.settlement is not None and result.settlement.request == request:
-                authority.apply(ObserveSettlement(settlement=result.settlement))
-        elif isinstance(result, TransportFailure):
-            if result.settlement is not None and result.settlement.request != request:
+        elif type(result) is TransportFailure:
+            if not settlement_valid:
                 failure = "malformed_response"
                 authority.apply(AcceptFailure(request=request, failure=failure))
                 if can_reserve_followup(
@@ -393,18 +399,10 @@ async def _run_external_batch(
                     purpose = "correction"
                     continue
                 return failed(_mapping(policy, "failure", None, failure))
-            failure = result.failure
+            failure = inspect_failure(result.failure)
             authority.apply(AcceptFailure(request=request, failure=failure))
-            if result.settlement is not None:
-                authority.apply(ObserveSettlement(settlement=result.settlement))
         else:
             authority.apply(MarkLost(request=request))
-            if (
-                isinstance(result, TransportLost)
-                and result.settlement is not None
-                and result.settlement.request == request
-            ):
-                authority.apply(ObserveSettlement(settlement=result.settlement))
             return failed(_mapping(policy, "lost", None, None))
 
         if failure == "malformed_response" and can_reserve_followup(
@@ -447,7 +445,6 @@ async def _run_adaptive(
     leases: dict[object, ResourceLease],
     control: _ExecutionControl,
     limits: ExecutionLimits,
-    deferred_acceptances: dict[SemanticAssociation, _DeferredAcceptance],
     request_resources: dict[PhysicalRequestId, ResourceId],
 ) -> tuple[RuntimeOutcome, tuple[AssociationResult, ...], tuple[LocalAssessmentResult, ...]]:
     capability = next(
@@ -485,77 +482,50 @@ async def _run_adaptive(
             denial = next(item for item in reversed(authority.state.denials) if item.request == request)
             condition = "budget_exhausted" if denial.category == "budget_stopped" else "request_limit_exhausted"
             return _mapping(policy, condition, None, None), (), ()
-        authority.apply(Dispatch(request=request))
         request_resources[request] = lease.resource
-        retrieval = asyncio.create_task(
-            provider.retrieve(
-                request=request,
-                association=association,
-                selector=selector,
-                bounds=declaration.bounds,
-            )
+        completion = await drive_request(
+            authority,
+            request,
+            control,
+            lambda: provider.retrieve(
+                request=request, association=association, selector=selector, bounds=declaration.bounds
+            ),
+            provider.cancel,
+            lambda value: late_source_event(
+                value,
+                request,
+                association,
+                _adaptive_success_outcome(policy),
+                declaration.source,
+                lambda response: (
+                    inspect_source(response, association, admitted.ingress_limits)
+                    and response.source == declaration.source
+                    and bool(response.items)
+                    and len({(item.key, item.version) for item in response.items}) == len(response.items)
+                ),
+            ),
         )
-        while not retrieval.done() and not control.cancelled:
-            await asyncio.sleep(0)
-        if control.cancelled and not retrieval.done():
-            authority.apply(RequestCancel(request=request))
-            try:
-                stopped = await provider.cancel(request)
-            except Exception:
-                stopped = None
-            retrieval.cancel()
-            late_result: SourceResponse | SourceFailure | SourceLost | None = None
-            try:
-                late_result = await retrieval
-            except asyncio.CancelledError:
-                pass
-            if isinstance(stopped, StopConfirmed):
-                authority.apply(StopAcknowledged(request=request, usage=stopped.usage))
-                mapping = _mapping(policy, "cancel_after_dispatch", None, None)
-            else:
-                authority.apply(MarkLost(request=request))
-                mapping = _mapping(policy, "lost", None, None)
-            if isinstance(late_result, SourceResponse):
-                valid_late_result = (
-                    late_result.source == declaration.source
-                    and bool(late_result.items)
-                    and all(item.association == association for item in late_result.items)
-                    and len({(item.key, item.version) for item in late_result.items}) == len(late_result.items)
-                )
-                if valid_late_result:
-                    authority.apply(
-                        AcceptResult(
-                            request=request,
-                            results=(
-                                AssociationResult(
-                                    association=association,
-                                    outcome=_adaptive_success_outcome(policy),
-                                    outputs=(),
-                                    consumed_context_ports=frozenset(),
-                                ),
-                            ),
-                        )
-                    )
-                else:
-                    authority.apply(AcceptFailure(request=request, failure="malformed_response"))
-            late_settlement = late_result.settlement if late_result is not None else None
-            if late_settlement is not None and late_settlement.request == request:
-                authority.apply(ObserveSettlement(settlement=late_settlement))
-            return mapping, (), ()
-        try:
-            result = retrieval.result()
-        except Exception:
-            result = SourceLost(source=declaration.source, settlement=None)
-        if isinstance(result, SourceResponse):
+        if completion.cancelled:
+            condition = (
+                "cancel_before_start"
+                if request not in authority.state.dispatched
+                else "cancel_after_dispatch"
+                if completion.stop_confirmed
+                else "lost"
+            )
+            return _mapping(policy, condition, None, None), (), ()
+        result = completion.value
+        if type(result) is SourceResponse:
             valid = (
-                result.source == declaration.source
-                and result.settlement.request == request
+                inspect_source(result, association, admitted.ingress_limits)
+                and result.source == declaration.source
+                and completion.settlement_valid
                 and bool(result.items)
                 and all(item.association == association for item in result.items)
                 and len({(item.key, item.version) for item in result.items}) == len(result.items)
             )
-            byte_count = sum(len(item.text.encode()) for item in result.items)
-            oversize = (
+            byte_count = sum(len(item.text.encode()) for item in result.items) if valid else 0
+            oversize = valid and (
                 len(result.items) > declaration.bounds.max_items
                 or byte_count > declaration.bounds.max_bytes
                 or (declaration.materialization.kind == "single" and len(result.items) > 1)
@@ -574,7 +544,6 @@ async def _run_adaptive(
                         ),
                     )
                 )
-                authority.apply(ObserveSettlement(settlement=result.settlement))
                 return _mapping(policy, "artifact_limit_exhausted", None, None), (), ()
             if valid:
                 value: ArtifactValue
@@ -609,29 +578,22 @@ async def _run_adaptive(
                     ),
                     consumed_context_ports=frozenset(),
                 )
-                deferred_acceptances[association] = _DeferredAcceptance(
-                    request=request,
-                    results=(accepted,),
-                    settlement=result.settlement,
-                )
+                authority.apply(AcceptResult(request=request, results=(accepted,)))
                 return _mapping(policy, "result", outcome, None), (accepted,), ()
             failure: FailureClass = "malformed_response"
             authority.apply(AcceptFailure(request=request, failure=failure))
-            if result.settlement.request == request:
-                authority.apply(ObserveSettlement(settlement=result.settlement))
-        elif isinstance(result, SourceFailure):
+        elif type(result) is SourceFailure:
             failure = (
-                result.failure
-                if result.source == declaration.source
+                inspect_failure(result.failure)
+                if inspect_source_identity(result.source, declaration.source)
+                and type(result.disposition) is str
                 and result.disposition == "failed"
-                and (result.settlement is None or result.settlement.request == request)
+                and (completion.settlement_valid)
                 else "malformed_response"
             )
             authority.apply(AcceptFailure(request=request, failure=failure))
-            if result.settlement is not None and result.settlement.request == request:
-                authority.apply(ObserveSettlement(settlement=result.settlement))
         else:
-            if isinstance(result, SourceLost) and result.source != declaration.source:
+            if type(result) is SourceLost and result.source != declaration.source:
                 authority.apply(AcceptFailure(request=request, failure="malformed_response"))
                 if can_reserve_followup(
                     state=authority.state,
@@ -643,12 +605,6 @@ async def _run_adaptive(
                     continue
                 return _mapping(policy, "failure", None, "malformed_response"), (), ()
             authority.apply(MarkLost(request=request))
-            if (
-                isinstance(result, SourceLost)
-                and result.settlement is not None
-                and result.settlement.request == request
-            ):
-                authority.apply(ObserveSettlement(settlement=result.settlement))
             return _mapping(policy, "lost", None, None), (), ()
         if failure == "malformed_response" and can_reserve_followup(
             state=authority.state,

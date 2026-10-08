@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 from anonymizer.engine.graph_sdk._effect_values import (
     EffectCode,
     reject,
@@ -109,8 +111,8 @@ def _operation_has_omitted_context(
 
 def _inherited_artifact_role(
     parent: ProvenanceKey | None,
-    provenance: list[ArtifactProvenanceFact],
-    ports: list[ExecutionPortFact],
+    provenance: Sequence[ArtifactProvenanceFact],
+    ports: Sequence[ExecutionPortFact],
 ) -> ArtifactRole:
     if parent is None:
         return "artifact"

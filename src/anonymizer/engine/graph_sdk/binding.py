@@ -9,6 +9,8 @@ from dataclasses import dataclass
 from typing import Literal
 
 from anonymizer.engine.graph_sdk._effect_values import EffectCode, EffectRejected, reject, require_instance
+from anonymizer.engine.graph_sdk._ingress import inspect_failure, inspect_source, inspect_source_identity
+from anonymizer.engine.graph_sdk._request_driver import _RequestAuthority, drive_request, late_source_event
 from anonymizer.engine.graph_sdk._workflow import reachable_workflows
 from anonymizer.engine.graph_sdk.context import (
     BindingArtifactRef,
@@ -36,10 +38,8 @@ from anonymizer.engine.graph_sdk.requests import (
     BindingDeclarationId,
     BindingId,
     BindingRequestScope,
-    Dispatch,
     FailureClass,
     MarkLost,
-    ObserveSettlement,
     PhysicalRequestId,
     RequestCancel,
     RequestPolicyBinding,
@@ -47,8 +47,6 @@ from anonymizer.engine.graph_sdk.requests import (
     RequestState,
     Reserve,
     ScopeCancel,
-    StopAcknowledged,
-    StopConfirmed,
     advance_requests,
     bind_request_policies,
     can_reserve_followup,
@@ -147,7 +145,7 @@ async def _run_binding(work: _BindingWork) -> BindingResult:
             for identity, declaration in zip(work.identities, work.declarations, strict=True)
         )
         associations = _binding_cleanup_associations(work, acquired)
-        cleanup = await _cleanup(acquired)
+        cleanup = await _cleanup(work, acquired, state)
         return _create_binding_result(
             binding=work.binding,
             data=work.data,
@@ -168,7 +166,7 @@ async def _run_binding(work: _BindingWork) -> BindingResult:
             SourceBindingFact(identity=identity, declaration=declaration, terminal="cancelled")
             for identity, declaration in zip(work.identities, work.declarations, strict=True)
         )
-        cleanup = await _cleanup(acquired)
+        cleanup = await _cleanup(work, acquired, state)
         return _create_binding_result(
             binding=work.binding,
             data=work.data,
@@ -197,7 +195,7 @@ async def _run_binding(work: _BindingWork) -> BindingResult:
         artifacts.extend(retained)
         total_items += item_count
         total_bytes += byte_count
-    cleanup = await _cleanup(acquired)
+    cleanup = await _cleanup(work, acquired, state)
     terminal = _binding_terminal(facts)
     return _create_binding_result(
         binding=work.binding,
@@ -248,82 +246,44 @@ async def _bind_declaration(
         if work.cancelled:
             state = advance_requests(state=state, event=RequestCancel(request=request))
             return state, _source_fact(identity, declaration, "cancelled"), (), 0, 0
-        state = advance_requests(state=state, event=Dispatch(request=request))
-        retrieval = asyncio.create_task(
-            provider.retrieve(
-                request=request,
-                association=association,
-                selector=declaration.selector,
-                bounds=declaration.bounds,
-            )
+        authority = _RequestAuthority(state)
+        completion = await drive_request(
+            authority,
+            request,
+            work,
+            lambda: provider.retrieve(
+                request=request, association=association, selector=declaration.selector, bounds=declaration.bounds
+            ),
+            provider.cancel,
+            lambda value: late_source_event(
+                value,
+                request,
+                association,
+                "retrieved",
+                declaration.source,
+                lambda response: (
+                    inspect_source(response, association, work.limits.ingress)
+                    and declaration.accepts_response_items(response, association)
+                ),
+            ),
         )
-        while not retrieval.done() and not work.cancelled:
-            await asyncio.sleep(0)
-        if work.cancelled and not retrieval.done():
-            state = advance_requests(state=state, event=RequestCancel(request=request))
-            try:
-                stopped = await provider.cancel(request)
-            except Exception:
-                stopped = None
-            retrieval.cancel()
-            late_result: SourceResponse | SourceFailure | SourceLost | None = None
-            try:
-                late_result = await retrieval
-            except asyncio.CancelledError:
-                pass
-            if isinstance(stopped, StopConfirmed):
-                state = advance_requests(state=state, event=StopAcknowledged(request=request, usage=stopped.usage))
-                terminal: SourceTerminal = "cancelled"
-            else:
-                state = advance_requests(state=state, event=MarkLost(request=request))
-                terminal = "lost"
-            if isinstance(late_result, SourceResponse):
-                valid_late_result = declaration.accepts_response_items(late_result, association)
-                event: AcceptResult | AcceptFailure
-                if valid_late_result:
-                    event = AcceptResult(
-                        request=request,
-                        results=(
-                            AssociationResult(
-                                association=association,
-                                outcome="retrieved",
-                                outputs=(),
-                                consumed_context_ports=frozenset(),
-                            ),
-                        ),
-                    )
-                else:
-                    event = AcceptFailure(request=request, failure="malformed_response")
-                state = advance_requests(state=state, event=event)
-            elif isinstance(late_result, SourceFailure):
-                valid_late_failure = late_result.source == declaration.source and (
-                    late_result.settlement is None or late_result.settlement.request == request
-                )
-                state = advance_requests(
-                    state=state,
-                    event=AcceptFailure(
-                        request=request,
-                        failure=late_result.failure if valid_late_failure else "malformed_response",
-                    ),
-                )
-            late_settlement = late_result.settlement if late_result is not None else None
-            if late_settlement is not None and late_settlement.request == request:
-                state = advance_requests(state=state, event=ObserveSettlement(settlement=late_settlement))
+        state = authority.state
+        if completion.cancelled:
+            terminal: SourceTerminal = "cancelled" if completion.stop_confirmed else "lost"
             return state, _source_fact(identity, declaration, terminal), (), 0, 0
-        try:
-            result = retrieval.result()
-        except Exception:
+        result = completion.value
+        if completion.raised:
             state = advance_requests(state=state, event=MarkLost(request=request))
             return state, _source_fact(identity, declaration, "lost"), (), 0, 0
-        if isinstance(result, SourceResponse):
-            valid_settlement = result.settlement.request == request
-            valid_items = declaration.accepts_response_items(result, association)
+        if type(result) is SourceResponse:
+            valid_settlement = completion.settlement_valid
+            valid_items = inspect_source(
+                result, association, work.limits.ingress
+            ) and declaration.accepts_response_items(result, association)
             if not valid_settlement or not valid_items:
                 state = advance_requests(
                     state=state, event=AcceptFailure(request=request, failure="malformed_response")
                 )
-                if valid_settlement:
-                    state = advance_requests(state=state, event=ObserveSettlement(settlement=result.settlement))
                 purpose = "correction"
                 if _can_retry(capability, declaration, state, association, "malformed_response"):
                     continue
@@ -349,7 +309,7 @@ async def _bind_declaration(
                     ),
                 ),
             )
-            state = advance_requests(state=accepted, event=ObserveSettlement(settlement=result.settlement))
+            state = accepted
             if oversize:
                 return state, _source_fact(identity, declaration, "oversize"), (), 0, 0
             retained = tuple(
@@ -365,27 +325,26 @@ async def _bind_declaration(
                 for item in result.items
             )
             return state, _source_fact(identity, declaration, "bound"), retained, len(result.items), item_bytes
-        if isinstance(result, SourceFailure):
-            valid_owner = result.source == declaration.source and (
-                result.settlement is None or result.settlement.request == request
+        if type(result) is SourceFailure:
+            valid_owner = inspect_source_identity(result.source, declaration.source) and completion.settlement_valid
+            valid_omission = type(result.disposition) is str and (
+                result.disposition == "failed"
+                or (
+                    result.disposition == "omitted_optional"
+                    and declaration.requirement == "optional"
+                    and inspect_failure(result.failure) == "permanent"
+                )
             )
-            valid_omission = result.disposition == "failed" or (
-                declaration.requirement == "optional" and result.failure == "permanent"
-            )
-            failure = result.failure if valid_owner and valid_omission else "malformed_response"
+            failure = inspect_failure(result.failure) if valid_owner and valid_omission else "malformed_response"
             state = advance_requests(state=state, event=AcceptFailure(request=request, failure=failure))
-            if result.settlement is not None and result.settlement.request == request:
-                state = advance_requests(state=state, event=ObserveSettlement(settlement=result.settlement))
             if failure != "malformed_response" and result.disposition == "omitted_optional":
                 return state, _source_fact(identity, declaration, "omitted_optional"), (), 0, 0
             purpose = "correction" if failure == "malformed_response" else "retry"
             if _can_retry(capability, declaration, state, association, failure):
                 continue
             return state, _source_fact(identity, declaration, _failed_terminal(declaration)), (), 0, 0
-        if isinstance(result, SourceLost) and result.source == declaration.source:
+        if type(result) is SourceLost and inspect_source_identity(result.source, declaration.source):
             state = advance_requests(state=state, event=MarkLost(request=request))
-            if result.settlement is not None and result.settlement.request == request:
-                state = advance_requests(state=state, event=ObserveSettlement(settlement=result.settlement))
             return state, _source_fact(identity, declaration, "lost"), (), 0, 0
         state = advance_requests(state=state, event=AcceptFailure(request=request, failure="malformed_response"))
         purpose = "correction"
@@ -577,8 +536,29 @@ def _binding_cleanup_associations(
     )
 
 
-async def _cleanup(acquired: dict[object, ResourceLease]) -> list[CleanupFact]:
-    return [await close_resource(lease) for lease in {item.resource: item for item in acquired.values()}.values()]
+async def _cleanup(
+    work: _BindingWork,
+    acquired: dict[object, ResourceLease],
+    state: RequestState,
+) -> list[CleanupFact]:
+    uncertain_sources = {
+        work.declarations[association.declaration.ordinal].source
+        for dispatch in state.dispatches
+        if dispatch.request in state.local_in_flight or dispatch.request in state.remote_outstanding
+        for association in dispatch.associations
+        if isinstance(association, BindingAssociation)
+    }
+    unsafe = {
+        lease.resource
+        for source, lease in acquired.items()
+        if source in uncertain_sources and lease.safe_detachment == "forbidden"
+    }
+    return [
+        CleanupFact(resource=lease.resource, owner=lease.owner, disposition="left_open")
+        if lease.resource in unsafe
+        else await close_resource(lease)
+        for lease in {item.resource: item for item in acquired.values()}.values()
+    ]
 
 
 def _capability(

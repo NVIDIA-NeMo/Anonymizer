@@ -46,6 +46,8 @@ _REASON_CODES = frozenset(
         "stale",
         "contradictory",
         "prerequisite",
+        "omitted_optional",
+        "artifact_limit_exhausted",
     }
 )
 _COMPLETIONS = frozenset({"pending", "closed"})
