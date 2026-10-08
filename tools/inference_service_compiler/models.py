@@ -93,7 +93,7 @@ class VllmFactoryIntegration(FrozenModel):
 class Vllm(FrozenModel):
     """vLLM's OpenAI-compatible server with bounded common options."""
 
-    python_executable: str = Field(default=".venv/bin/python", min_length=1)
+    python_executable: str = Field(default="tools/inference-service-runtime/.venv/bin/python", min_length=1)
     served_model_name: str | None = Field(default=None, min_length=1)
     reasoning_parser: str | None = Field(default=None, min_length=1)
     api_key_env: str | None = Field(default=None, min_length=1)

@@ -104,6 +104,9 @@ def launch_plan(
         raise RuntimeEffectError(RuntimeDiagnostic(code="missing-secret", message=str(exc))) from exc
     argv = plan.command.render_argv()
     environment = os.environ.copy()
+    # The configured interpreter owns its imports, even when the controller uses another environment.
+    for variable in ("PYTHONHOME", "PYTHONPATH", "VIRTUAL_ENV"):
+        environment.pop(variable, None)
     environment.update(command_environment)
     launch_token = secrets.token_urlsafe(32)
     environment[LAUNCH_TOKEN_ENVIRONMENT_VARIABLE] = launch_token

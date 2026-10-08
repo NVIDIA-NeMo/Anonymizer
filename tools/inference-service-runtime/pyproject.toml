@@ -1,0 +1,30 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+[project]
+name = "anonymizer-inference-service-runtime"
+version = "0.0.0"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "vllm==0.29.0",
+    "vllm-factory[gliner] @ git+https://github.com/latenceainew/vllm-factory.git@7d6ff68ce68f9f7c0a9d72f9645bcf6d335d02f0",
+    "nvidia-cuda-nvcc==13.0.88",
+    "nvidia-cuda-crt==13.0.88",
+    "nvidia-nvvm==13.0.88",
+    "cyclopts>=3",
+    "pydantic>=2.9,<3",
+    "httpx>=0.27.0",
+]
+
+[dependency-groups]
+test = ["pytest>=9.0.3,<10"]
+
+[tool.uv]
+package = false
+
+constraint-dependencies = [
+  "grpcio>=1.68.0",  # CVE-2024-11407
+  "urllib3>=2.7.0",  # CVE-2026-44432
+  "python-dotenv>=1.2.2",  # CVE-2026-28684
+  "pyjwt>=2.13.0",  # CVE-2026-48524, CVE-2026-48522, CVE-2026-48525, CVE-2026-48526
+]

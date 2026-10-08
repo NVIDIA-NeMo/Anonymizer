@@ -18,21 +18,20 @@ TOOLS_ROOT = Path(__file__).resolve().parents[2] / "tools"
 REPO_ROOT = TOOLS_ROOT.parent
 
 
-def test_local_models_group_pins_vllm_and_external_factory_source() -> None:
-    """The runtime pins vLLM and the reviewed external factory source revision."""
-    project = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
-
-    assert project["dependency-groups"]["local-models"] == [
-        "vllm==0.29.0; sys_platform == 'linux' and python_version >= '3.12'",
-        (
-            "vllm-factory[gliner] @ git+https://github.com/latenceainew/vllm-factory.git@"
-            "7d6ff68ce68f9f7c0a9d72f9645bcf6d335d02f0; sys_platform == 'linux' "
-            "and python_version >= '3.12'"
-        ),
-        "nvidia-cuda-nvcc==13.0.88; sys_platform == 'linux' and python_version >= '3.12'",
-        "nvidia-cuda-crt==13.0.88; sys_platform == 'linux' and python_version >= '3.12'",
-        "nvidia-nvvm==13.0.88; sys_platform == 'linux' and python_version >= '3.12'",
-    ]
+def test_serving_project_pins_vllm_without_anonymizer_dependencies() -> None:
+    """Serving resolves independently from Anonymizer and DataDesigner."""
+    project = tomllib.loads((TOOLS_ROOT / "inference-service-runtime" / "pyproject.toml").read_text())
+    dependencies = project["project"]["dependencies"]
+    assert "vllm==0.29.0" in dependencies
+    assert (
+        "vllm-factory[gliner] @ git+https://github.com/latenceainew/vllm-factory.git@"
+        "7d6ff68ce68f9f7c0a9d72f9645bcf6d335d02f0"
+    ) in dependencies
+    assert {"nvidia-cuda-nvcc==13.0.88", "nvidia-cuda-crt==13.0.88", "nvidia-nvvm==13.0.88"} <= set(dependencies)
+    lock = tomllib.loads((TOOLS_ROOT / "inference-service-runtime" / "uv.lock").read_text())
+    assert not {"nemo-anonymizer", "data-designer"} & {package["name"] for package in lock["package"]}
+    root = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text())
+    assert "local-models" not in root["dependency-groups"]
 
 
 def test_parse_server_parameters_accepts_only_the_compiler_contract() -> None:

@@ -104,17 +104,28 @@ The v2 profile schema has four sections:
 
 ### Install
 
-Install [uv](https://docs.astral.sh/uv/) and sync the local-model dependency
-group with Python 3.12:
+Install [uv](https://docs.astral.sh/uv/) and sync the independent serving project
+with Python 3.12. Run these commands from the repository root:
 
 ```bash
-uv sync --python 3.12 --group dev --group local-models
-uv run --python 3.12 python -m vllm_factory.compat.doctor
+uv sync --project tools/inference-service-runtime --locked
+uv run --project tools/inference-service-runtime --locked python -m vllm_factory.compat.doctor
 nvidia-smi
 ```
 
-The lockfile pins vLLM 0.29.0, vLLM Factory, and the CUDA compiler wheels used
-by the Nemotron FlashInfer profile.
+The serving project's lockfile pins vLLM 0.29.0, vLLM Factory, and the CUDA
+compiler wheels used by the Nemotron FlashInfer profile. Its environment does
+not install Anonymizer or DataDesigner. Install Anonymizer separately for client
+code; the native notebook runtime continues to use the notebook extra.
+
+Profiles default to `tools/inference-service-runtime/.venv/bin/python`. You can
+run the controller from the root Anonymizer environment; it starts this serving
+interpreter directly. To use another serving environment, set
+`vllm.python_executable` in your profile. Recompile existing plans after migrating
+from the root `local-models` group. The launcher clears inherited `PYTHONHOME`,
+`PYTHONPATH`, and `VIRTUAL_ENV` before starting the child; GPU, Hugging Face, and
+other runtime settings remain inherited. Avoid setting `UV_PROJECT_ENVIRONMENT`
+to the root `.venv` when syncing the serving project.
 
 ### Compile and launch
 
@@ -122,12 +133,12 @@ Run all commands from the repository root. This example starts NVIDIA GLiNER
 on `127.0.0.1:8001`:
 
 ```bash
-uv run --python 3.12 python tools/inference_service.py compile \
+uv run --project tools/inference-service-runtime --locked python tools/inference_service.py compile \
   --profile tools/inference_service_profiles/nvidia-gliner.toml \
   --source-revision "$(git rev-parse HEAD)" \
   --output gliner-plan.json
 
-uv run --python 3.12 python tools/inference_service.py launch \
+uv run --project tools/inference-service-runtime --locked python tools/inference_service.py launch \
   --plan gliner-plan.json \
   --output gliner-launch.json \
   --log-directory .inference-service-runs
@@ -144,7 +155,7 @@ marker, and process group.
 Read the non-secret client values from the compiled plan, then connect through the public factory:
 
 ```bash
-uv run --python 3.12 python tools/inference_service.py connection \
+uv run --project tools/inference-service-runtime --locked python tools/inference_service.py connection \
   --plan gliner-plan.json
 ```
 
@@ -169,15 +180,15 @@ below for status and shutdown.
 ### Operate the service
 
 ```bash
-uv run --python 3.12 python tools/inference_service.py status \
+uv run --project tools/inference-service-runtime --locked python tools/inference_service.py status \
   --receipt gliner-launch.json
 
-uv run --python 3.12 python tools/inference_service.py probe \
+uv run --project tools/inference-service-runtime --locked python tools/inference_service.py probe \
   --plan gliner-plan.json
 
 curl -sf http://127.0.0.1:8001/v1/models | python -m json.tool
 
-uv run --python 3.12 python tools/inference_service.py stop \
+uv run --project tools/inference-service-runtime --locked python tools/inference_service.py stop \
   --receipt gliner-launch.json
 ```
 

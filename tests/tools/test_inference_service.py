@@ -6,7 +6,12 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
+import shutil
+import socket
 import stat
+import sys
+import venv
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
@@ -258,7 +263,11 @@ def test_generation_argv_keeps_local_vllm_controls_and_omits_defaults() -> None:
         source_revision="test",
     )
     argv = plan.command.render_argv()
-    assert argv[:3] == (".venv/bin/python", "tools/inference_service_compiler/vllm_server.py", "openai/gpt-oss-20b")
+    assert argv[:3] == (
+        "tools/inference-service-runtime/.venv/bin/python",
+        "tools/inference_service_compiler/vllm_server.py",
+        "openai/gpt-oss-20b",
+    )
     assert ("--tensor-parallel-size", "2") == argv[
         argv.index("--tensor-parallel-size") : argv.index("--tensor-parallel-size") + 2
     ]
@@ -823,3 +832,48 @@ def test_readiness_stops_when_the_managed_process_exits(tmp_path: Path) -> None:
     ):
         runtime.wait_for_readiness(plan, handle=handle)
     probe.assert_not_called()
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="managed process identity uses Linux /proc")
+def test_launch_uses_independent_interpreter_and_cleans_python_environment(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A second interpreter can prove ownership and be stopped by the controller."""
+    serving = tmp_path / "serving"
+    venv.EnvBuilder(with_pip=False, symlinks=True).create(serving)
+    server = tmp_path / "tools/inference_service_compiler/vllm_server.py"
+    server.parent.mkdir(parents=True)
+    shutil.copyfile(Path(__file__).parent / "fixtures/inference_process.py", server)
+    with socket.socket() as listener:
+        listener.bind(("127.0.0.1", 0))
+        port = listener.getsockname()[1]
+    spec = generation(python_executable=str(serving / "bin/python"))
+    spec = spec.model_copy(
+        update={"local": models.LocalProcess(port=port, startup_timeout_seconds=10, shutdown_timeout_seconds=0.1)}
+    )
+    plan = compiler.compile_profile(spec, source_revision="test")
+    monkeypatch.chdir(tmp_path)
+    for variable in ("PYTHONHOME", "PYTHONPATH", "VIRTUAL_ENV"):
+        monkeypatch.setenv(variable, str(tmp_path / "foreign-python"))
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "0")
+    monkeypatch.setenv("HF_HOME", str(tmp_path / "models"))
+    receipt = runtime.launch_plan(plan, secret_values={}, log_directory=tmp_path / "logs")
+    try:
+        observed = json.loads((tmp_path / "observed.json").read_text())
+        assert observed["prefix"] == str(serving) != sys.prefix
+        assert observed["pid"] == receipt.handle.pid == receipt.handle.process_group_id
+        assert str(tmp_path / "foreign-python") not in observed["path"]
+        assert observed["environment"] == {
+            "PYTHONHOME": None,
+            "PYTHONPATH": None,
+            "VIRTUAL_ENV": None,
+            "CUDA_VISIBLE_DEVICES": "0",
+            "HF_HOME": str(tmp_path / "models"),
+        }
+        assert receipt.probe.passed
+        assert runtime.is_handle_running(receipt.handle)
+    finally:
+        runtime.stop_run(receipt)
+        os.waitpid(receipt.handle.pid, 0)
+    assert not runtime.is_handle_running(receipt.handle)

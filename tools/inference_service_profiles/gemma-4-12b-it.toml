@@ -9,7 +9,7 @@ revision = "707f0a3b8a3c7ad586ed01e27eafbad8a27dd0f7"
 
 [vllm]
 reasoning_parser = "gemma4"
-python_executable = ".venv/bin/python"
+python_executable = "tools/inference-service-runtime/.venv/bin/python"
 served_model_name = "gemma-4-12b-it-local"
 gpu_memory_utilization = 0.90
 max_model_len = 8192

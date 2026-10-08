@@ -9,7 +9,7 @@ revision = "33268dc8a6da85a56be2b12241453e4e1237bbe1"
 
 [vllm]
 reasoning_parser = "nemotron_v3"
-python_executable = ".venv/bin/python"
+python_executable = "tools/inference-service-runtime/.venv/bin/python"
 served_model_name = "nemotron-3.5-lightning-local"
 gpu_memory_utilization = 0.88
 max_model_len = 8192

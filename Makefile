@@ -17,7 +17,7 @@ help:
 	@echo "  copyright              - Add missing SPDX headers to source files"
 	@echo "  copyright-check        - Check all source files have SPDX headers (read-only)"
 	@echo "  check                  - Run all read-only checks"
-	@echo "  lock-check             - Check uv.lock is up to date"
+	@echo "  lock-check             - Check root and serving lockfiles are up to date"
 	@echo ""
 	@echo "  test                   - Run all unit tests"
 	@echo "  test-e2e               - Run end-to-end tests"
@@ -85,8 +85,9 @@ check:
 	$(MAKE) format-check typecheck lock-check copyright-check
 
 lock-check:
-	@echo "Checking uv.lock is up to date..."
+	@echo "Checking root and serving lockfiles are up to date..."
 	uv lock --check
+	uv lock --project tools/inference-service-runtime --check
 
 test:
 	@echo "Running unit tests..."
