@@ -117,6 +117,8 @@ class _BoundaryProvider:
         )
         if self.mode == "multiple":
             items += (SourceItem(association=association, key=1, version=1, text="b"),)
+        elif self.mode == "duplicate":
+            items += (SourceItem(association=association, key=0, version=1, text="duplicate"),)
         return SourceResponse(
             source=OTHER_SOURCE if self.mode == "malformed" else SOURCE,
             items=items,
@@ -274,6 +276,7 @@ async def _assert_initial_binding_boundary_settlements() -> None:
     )
     for mode, expected_request, expected_source in (
         ("malformed", "failure", "failed"),
+        ("duplicate", "failure", "failed"),
         ("oversize", "success", "oversize"),
         ("multiple", "success", "oversize"),
     ):
