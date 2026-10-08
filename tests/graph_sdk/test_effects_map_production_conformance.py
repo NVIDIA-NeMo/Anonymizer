@@ -343,9 +343,10 @@ def _admit_fixture(
     fixture: _MapFixture,
     *,
     map_expansions: tuple[MapExpansionDecl, ...] | None = None,
+    data: Any | None = None,
 ):
     by_node = dict(zip((fixture.expander, fixture.member, fixture.join), fixture.capabilities, strict=True))
-    data = _data(1)
+    data = _data(1) if data is None else data
     target = next(iter(data.targets))
     prepared = prepare(
         data=data,
@@ -442,7 +443,10 @@ async def _execute_membership(
     cancel_before_result: bool = False,
 ):
     fixture = _map_fixture(control_only=control_only, other_count=other_count)
-    admitted = _admit_fixture(fixture)
+    data = _data(1)
+    admitted = _admit_fixture(fixture, data=data)
+    baseline_artifacts = len(data.targets)
+    baseline_bytes = sum(len(datum.text.encode()) for datum in data.datums if datum.id in data.targets)
     by_node = dict(zip((fixture.expander, fixture.member, fixture.join), fixture.capabilities, strict=True))
     started = asyncio.Event() if cancel_before_result else None
     release = asyncio.Event() if cancel_before_result else None
@@ -481,8 +485,8 @@ async def _execute_membership(
             limits=ExecutionLimits(
                 max_local_in_flight=4,
                 max_remote_outstanding=0,
-                max_runtime_artifacts=1 + artifact_headroom,
-                max_runtime_artifact_bytes=len("target-0".encode()) + artifact_byte_headroom,
+                max_runtime_artifacts=baseline_artifacts + artifact_headroom,
+                max_runtime_artifact_bytes=baseline_bytes + artifact_byte_headroom,
                 max_collection_items=max_collection_items,
             ),
             decision_limits=DecisionLimits(max_pending=0, max_lifetime_ns=0),
@@ -603,10 +607,7 @@ async def _assert_malformed_map_result(case_id: str, response_mode: str, other_c
     assert expander.status == "failure"
     assert expander.outcome is None
     assert case["expected"]["state"]["terminal"] == "malformed_response"
-    assert not any(isinstance(fact.key, (OperationOutputKey, MapItemKey)) for fact in result.provenance)
-    assert all(fact.node != fixture.expander or fact.port == "default" for fact in result.ports)
-    assert len(result.artifacts) == 1
-    assert not result.assessments
+    _assert_only_setup_baseline(fixture, result)
 
 
 def test_map_overflow_publishes_collection_without_item_facts() -> None:
@@ -634,7 +635,7 @@ def test_overflow_collection_storage_exact_matches_frozen_publication() -> None:
 
 async def _assert_overflow_collection_storage_exact() -> None:
     case = MAP_CASES["map/overflow_collection_storage_exact"]
-    fixture, result, _ = await _execute_membership(
+    fixture, result, callbacks = await _execute_membership(
         3,
         item_values=("a", "b", "c"),
         max_collection_items=3,
@@ -710,7 +711,7 @@ async def _assert_map_result_publication(
     other_count: int,
 ) -> None:
     case = MAP_CASES[case_id]
-    fixture, result, _ = await _execute_membership(
+    fixture, result, callbacks = await _execute_membership(
         len(values),
         item_values=values,
         artifact_headroom=artifact_headroom,
@@ -735,6 +736,20 @@ async def _assert_map_result_publication(
     assert output.parents == frozenset({root.key})
     map_items = [fact for fact in staged_provenance if isinstance(fact.key, MapItemKey)]
     assert all(fact.parents == frozenset({output.key}) for fact in map_items)
+    item_artifacts = {fact.key.member: fact.artifact for fact in map_items}
+    member_inputs = [call[0] for call in callbacks[fixture.member].calls]
+    assert [item.inputs[0].value for item in member_inputs] == [TextArtifactValue(text=value) for value in values]
+    assert all(
+        isinstance(item.association, SemanticAssociation)
+        and item.inputs[0].artifact == item_artifacts[item.association.task.activation]
+        for item in member_inputs
+    )
+    output_port = next(fact for fact in staged_ports if fact.node == fixture.expander)
+    assert output_port.port == "members"
+    assert output_port.artifact == output.artifact
+    item_ports = [fact for fact in staged_ports if fact.node == fixture.member]
+    assert {fact.activation: fact.artifact for fact in item_ports} == item_artifacts
+    assert all(fact.port == "item" and fact.artifact_type == fixture.text_type for fact in item_ports)
     expansion = next(iter(result.states[0].expansions))
     assert expansion.status == "closed"
     assert len(expansion.members) == len(values)
@@ -774,9 +789,7 @@ async def _assert_map_storage_limit(case_id: str, artifact_headroom: int, max_co
     assert expander.status == "blocked"
     assert expander.outcome is None
     assert case["expected"]["state"]["terminal"] == "artifact_limit"
-    assert not any(isinstance(fact.key, (OperationOutputKey, MapItemKey)) for fact in result.provenance)
-    assert len(result.artifacts) == 1
-    assert not result.assessments
+    _assert_only_setup_baseline(fixture, result)
 
 
 @pytest.mark.parametrize(
@@ -793,6 +806,28 @@ async def _assert_cancelled_map_result(case_id: str) -> None:
     expander = next(entry for entry in result.states[0].entries if entry.template == fixture.expander)
     assert expander.status == "cancelled"
     assert case["expected"]["state"]["terminal"] == "transition_rejected"
-    assert not any(isinstance(fact.key, (OperationOutputKey, MapItemKey)) for fact in result.provenance)
+    _assert_only_setup_baseline(fixture, result)
+
+
+def _assert_only_setup_baseline(fixture: _MapFixture, result: Any) -> None:
     assert len(result.artifacts) == 1
     assert not result.assessments
+    assert len(result.provenance) == 1
+    root = result.provenance[0]
+    assert isinstance(root.key, RootInputKey)
+    assert not root.parents
+    assert len(result.ports) == 1
+    port = result.ports[0]
+    assert port.node == fixture.expander
+    assert port.port == "default"
+    assert port.artifact == root.artifact
+    requests = result.requests
+    assert requests.dispatched_count == 0
+    assert not requests.dispatches
+    assert not requests.denials
+    assert not requests.terminals
+    assert not requests.settlements
+    assert not requests.defects
+    assert not requests.local_in_flight
+    assert not requests.remote_outstanding
+    assert not requests.cancel_requested
