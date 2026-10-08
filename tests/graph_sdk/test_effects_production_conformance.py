@@ -1552,6 +1552,41 @@ async def _assert_adaptive_materialization_case(case: dict[str, Any]) -> None:
         "provenance_edges": sum(len(fact.parents) for fact in result.provenance),
     }
     assert materialization_actual == expected["materialization"]
+    root_fact = next(fact for fact in result.provenance if isinstance(fact.key, RootInputKey))
+    output_facts = [fact for fact in result.provenance if isinstance(fact.key, OperationOutputKey)]
+    input_port = next(fact for fact in result.ports if fact.port == "input")
+    assert (
+        input_port.node,
+        input_port.target,
+        input_port.artifact,
+        input_port.artifact_type,
+        input_port.role,
+    ) == (node, target, root_fact.artifact, item_type, "artifact")
+    if output_facts:
+        assert len(output_facts) == 1
+        output_fact = output_facts[0]
+        output_port = next(fact for fact in result.ports if fact.port == "context")
+        assert len(result.ports) == 2
+        assert (
+            output_port.node,
+            output_port.target,
+            output_port.artifact,
+            output_port.artifact_type,
+            output_port.role,
+        ) == (node, target, output_fact.artifact, output_type, "candidate")
+        assert len(result.final_outputs) == 1
+        final = result.final_outputs[0]
+        assert (final.target, final.outcome, final.port, final.candidate.target) == (
+            target,
+            "ok",
+            "context",
+            target,
+        )
+        assert final.candidate.artifact == output_fact.artifact
+        assert final.producer == output_fact.key
+    else:
+        assert len(result.ports) == 1
+        assert not result.final_outputs
 
 
 class _Closable:
