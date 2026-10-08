@@ -205,6 +205,8 @@ REAL_BINDING_CASE_IDS = {
     "materialization/latest_retry",
     "materialization/latest_correction",
     "materialization/latest_caller_cleanup",
+    "materialization/latest_sdk_cleanup_close_failed",
+    "materialization/latest_sdk_cleanup_close_unknown",
     "materialization/latest_duplicate_pair",
     "materialization/latest_multiple_keys",
     "materialization/latest_items_one_over",
@@ -1122,6 +1124,23 @@ class _CaseProvider:
         self.closes += 1
 
 
+class _CloseFailureProvider(_CaseProvider):
+    async def close(self) -> None:
+        await super().close()
+        raise RuntimeError("scripted close failure")
+
+
+@dataclass
+class _ProviderWithoutClose:
+    delegate: _CaseProvider
+
+    async def retrieve(self, **kwargs: Any) -> SourceResponse | SourceFailure:
+        return await self.delegate.retrieve(**kwargs)
+
+    async def cancel(self, request: PhysicalRequestId) -> StopConfirmed:
+        return await self.delegate.cancel(request)
+
+
 @dataclass
 class _BridgeLocalCallback:
     failure: str | None
@@ -1489,8 +1508,12 @@ async def _assert_binding_corpus_case(case: dict[str, Any]) -> None:
         ]
     association_names: dict[object, str] = {}
     request_names: dict[PhysicalRequestId, str] = {}
+    cleanup_dispositions = {
+        event["resource"]: event["disposition"] for event in event_values if event["kind"] == "binding_cleanup"
+    }
+    provider_class = _CloseFailureProvider if "close_failed" in cleanup_dispositions.values() else _CaseProvider
     providers = {
-        name: _CaseProvider(
+        name: provider_class(
             events=response_events[name],
             sources=source_refs,
             association_names=association_names,
@@ -1548,16 +1571,26 @@ async def _assert_binding_corpus_case(case: dict[str, Any]) -> None:
         for name in source_refs
         if name in declared_source_names
     )
+    handles = {
+        name: _ProviderWithoutClose(provider)
+        if any(
+            cleanup_dispositions.get(f"Q:{label}") == "close_unknown"
+            for label in order
+            if binding_sources[label] == name
+        )
+        else provider
+        for name, provider in providers.items()
+    }
     resources = tuple(
         ContextResource(
             source=capability.source,
             capability=capability,
             lease=ResourceLease.create(
-                owner="caller", safe_detachment="forbidden", handle=providers[capability.source.name]
+                owner="caller", safe_detachment="forbidden", handle=handles[capability.source.name]
             )
             if capability.resource_owner == "caller"
             else None,
-            factory=(lambda source=capability.source: providers[source.name])
+            factory=(lambda source=capability.source: handles[source.name])
             if capability.resource_owner == "sdk"
             else None,
         )
@@ -1623,7 +1656,10 @@ async def _assert_binding_corpus_case(case: dict[str, Any]) -> None:
                 "owner": cleanup_owners[association.resource],
             }
         assert actual_cleanup == expected["binding_cleanup_associations"]
-        assert all(provider.closes == int(owners[name] == "sdk") for name, provider in providers.items())
+        assert all(
+            provider.closes == int(owners[name] == "sdk" and not isinstance(handles[name], _ProviderWithoutClose))
+            for name, provider in providers.items()
+        )
     if latest:
         expected_artifacts = expected["binding_artifacts"]
         actual_artifacts = [
