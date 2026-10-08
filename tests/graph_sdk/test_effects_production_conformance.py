@@ -162,6 +162,19 @@ REAL_BINDING_CASE_IDS = {
     "binding/foreign_result_association",
     "binding/required_omission_misuse",
     "binding/empty_optional_response_malformed",
+    "materialization/initial_single_exact",
+    "materialization/initial_single_multiple",
+    "materialization/initial_collection_1",
+    "materialization/initial_collection_2",
+    "materialization/initial_collection_3",
+    "materialization/initial_collection_one_over",
+    "materialization/initial_collection_0",
+    "materialization/initial_canonical_reorder",
+    "materialization/initial_duplicate",
+    "materialization/initial_outer_count_precedence",
+    "materialization/initial_declared_bytes_exact",
+    "materialization/initial_declared_bytes_one_over",
+    "materialization/initial_single_zero_collection_limit",
 }
 REAL_BINDING_CASES = tuple(case for case in json.loads(CORPUS.read_bytes()) if case["case_id"] in REAL_BINDING_CASE_IDS)
 
@@ -820,12 +833,14 @@ class _CaseProvider:
         association_names: dict[object, str],
         request_names: dict[PhysicalRequestId, str],
         fallback_associations: list[str],
+        default_source: ContextSourceRef,
     ) -> None:
         self.events = events
         self.sources = sources
         self.association_names = association_names
         self.request_names = request_names
         self.fallback_associations = fallback_associations
+        self.default_source = default_source
 
     async def retrieve(
         self,
@@ -851,7 +866,7 @@ class _CaseProvider:
                 usage=_usage(settlement_value["usage"]),
                 remote_stopped=settlement_value["remote_stopped"],
             )
-        source = self.sources[cast(str, event["source"])]
+        source = self.sources[cast(str, event["source"])] if "source" in event else self.default_source
         if event["kind"] == "source_failure":
             return SourceFailure(
                 source=source,
@@ -866,14 +881,14 @@ class _CaseProvider:
                 SourceItem(
                     association=(
                         association
-                        if item["association"] == label
+                        if item.get("association", event.get("association")) == label
                         else BindingAssociation(
                             declaration=BindingDeclarationId.new(binding=BindingId.new(), ordinal=0)
                         )
                     ),
                     key=item["key"],
                     version=item["version"],
-                    text=item["text"],
+                    text=item.get("text", item.get("value")),
                 )
                 for item in cast(list[dict[str, Any]], event["items"])
             ),
@@ -900,19 +915,22 @@ async def _assert_binding_corpus_case(case: dict[str, Any]) -> None:
             (
                 len(cast(list[object], event.get("items", [])))
                 for event in event_values
-                if event["kind"] == "source_result"
+                if event["kind"] in {"source_result", "materialize_result"}
             ),
             default=1,
         ),
     )
+    materializations = cast(list[dict[str, Any]], raw.get("materializations", []))
+    materialization_kind = cast(str, materializations[0]["kind"]) if materializations else None
+    declared_max_items = cast(int, materializations[0]["max_items"]) if materializations else max_response_items
     item_type = artifact_type
-    if max_response_items > 1:
-        collection_type = ArtifactType(name="text_collection", revision=1)
+    if materialization_kind == "collection" or (materialization_kind is None and max_response_items > 1):
+        output_type = ArtifactType(name="text_collection", revision=1)
         static = workflow.workflow
         operation_node = next(item for item in static.nodes if isinstance(item, OperationNode))
         operation = replace(
             operation_node.operation,
-            inputs=(InputPort(name="input", artifact_type=collection_type),),
+            inputs=(InputPort(name="input", artifact_type=output_type),),
         )
         rebuilt = admit_static_workflow(
             workflow=static.workflow,
@@ -931,27 +949,29 @@ async def _assert_binding_corpus_case(case: dict[str, Any]) -> None:
             scopes=(DynamicScope(workflow=rebuilt, maps=(), joins=(), loops=()),),
             limits=workflow.limits,
         )
-        artifact_type = collection_type
+        artifact_type = output_type
     binding_sources = cast(dict[str, str], raw["binding_declarations"])
     order = list(dict.fromkeys(event["association"] for event in event_values if event["kind"] == "bind_policy"))
     assert set(order) == set(binding_sources)
     data = _data(len(order))
     targets = sorted(data.targets, key=repr)
     result_sources = {
-        cast(str, event["source"]) for event in event_values if event["kind"] in {"source_result", "source_failure"}
+        cast(str, event["source"])
+        for event in event_values
+        if event["kind"] in {"source_result", "source_failure"} and "source" in event
     }
     source_refs = {
         name: ContextSourceRef(name=name, revision=1) for name in sorted(set(binding_sources.values()) | result_sources)
     }
     policies = {name: _policy(value) for name, value in cast(dict[str, dict[str, Any]], raw["policies"]).items()}
-    response_events: dict[str, list[dict[str, Any]]] = {
-        name: [
-            event
-            for event in event_values
-            if event["kind"] in {"source_result", "source_failure"} and event["source"] == name
-        ]
-        for name in source_refs
-    }
+    response_events: dict[str, list[dict[str, Any]]] = {name: [] for name in source_refs}
+    for event in event_values:
+        if event["kind"] not in {"source_result", "source_failure", "materialize_result"}:
+            continue
+        source_name = cast(str | None, event.get("source"))
+        if source_name is None:
+            source_name = binding_sources[cast(str, event["association"])]
+        response_events[source_name].append(event)
     if case["case_id"] == "binding/wrong_source":
         declared_source = next(iter(binding_sources.values()))
         response_events[declared_source] = [
@@ -966,6 +986,7 @@ async def _assert_binding_corpus_case(case: dict[str, Any]) -> None:
             association_names=association_names,
             request_names=request_names,
             fallback_associations=[label for label in order if binding_sources[label] == name],
+            default_source=source_refs[name],
         )
         for name in source_refs
     }
@@ -981,12 +1002,12 @@ async def _assert_binding_corpus_case(case: dict[str, Any]) -> None:
             selector=ContextSelector(fields=()),
             requirement=cast(Any, requirements.get(label, "required")),
             bounds=RetrievalBounds(
-                max_items=max_response_items,
+                max_items=declared_max_items,
                 max_bytes=max(1, declaration_limits["max_bytes"]),
                 max_requests=policies["P0"].max_attempts,
             ),
             materialization=ContextMaterialization(
-                kind="single" if max_response_items == 1 else "collection",
+                kind=cast(Any, materialization_kind or ("single" if max_response_items == 1 else "collection")),
                 item_type=item_type,
             ),
         )
@@ -1046,16 +1067,39 @@ async def _assert_binding_corpus_case(case: dict[str, Any]) -> None:
         "binding_sources"
     ]
     assert result.receipt.terminal == expected["binding_terminal"]
-    actual_artifacts = [
-        {
-            "identity": f"{source_names[item.reference.declaration]}:{item.reference.key}:{item.reference.version}",
-            "source": item.source.name,
-            "text": item.text,
-        }
-        for item in result.receipt.artifacts
-    ]
+    if materializations:
+        target_names = {target: f"T{index}" for index, target in enumerate(targets)}
+        expected_artifacts = [
+            item for item in expected["artifacts"] if cast(str, item["identity"]).startswith("BoundInputKey:")
+        ]
+        expected_by_identity = {item["identity"]: item for item in expected_artifacts}
+        actual_artifacts = []
+        for item in result.receipt.artifacts:
+            identity = (
+                f"BoundInputKey:{target_names[item.target]}:N0:context:"
+                f"{source_names[item.reference.declaration]}:{item.reference.key}:{item.reference.version}"
+            )
+            expected_item = expected_by_identity[identity]
+            actual_item = {"identity": identity, "artifact_type": item_type.name}
+            if "source" in expected_item:
+                actual_item["source"] = item.source.name
+            if "text" in expected_item:
+                actual_item["text"] = item.text
+            if "value" in expected_item:
+                actual_item["value"] = item.text
+            actual_artifacts.append(actual_item)
+    else:
+        expected_artifacts = expected["artifacts"]
+        actual_artifacts = [
+            {
+                "identity": f"{source_names[item.reference.declaration]}:{item.reference.key}:{item.reference.version}",
+                "source": item.source.name,
+                "text": item.text,
+            }
+            for item in result.receipt.artifacts
+        ]
     assert sorted(actual_artifacts, key=lambda item: item["identity"]) == sorted(
-        expected["artifacts"], key=lambda item: item["identity"]
+        expected_artifacts, key=lambda item: item["identity"]
     )
     request_actual = _normalize(
         result.receipt.requests,
