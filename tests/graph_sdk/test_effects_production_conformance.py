@@ -672,6 +672,28 @@ def test_initial_materialization_shape_rejects_at_typed_constructor(
     assert valid.materialization.kind == kind
 
 
+def test_map_collection_limit_rejects_boolean_at_typed_constructor() -> None:
+    with pytest.raises(EffectRejected) as rejected:
+        ExecutionLimits(
+            max_local_in_flight=1,
+            max_remote_outstanding=1,
+            max_runtime_artifacts=8,
+            max_runtime_artifact_bytes=32,
+            max_collection_items=cast(Any, True),
+        )
+    assert rejected.value.code.value == "invalid_type"
+    assert (
+        ExecutionLimits(
+            max_local_in_flight=1,
+            max_remote_outstanding=1,
+            max_runtime_artifacts=8,
+            max_runtime_artifact_bytes=32,
+            max_collection_items=4,
+        ).max_collection_items
+        == 4
+    )
+
+
 @pytest.mark.parametrize("case", ADMISSION_CASES, ids=lambda case: cast(str, case["case_id"]))
 def test_admission_corpus_case_through_production(case: dict[str, Any]) -> None:
     rejected: str | None = None
