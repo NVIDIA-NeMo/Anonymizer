@@ -1109,3 +1109,20 @@ def test_map_provenance_capacity_rejects_before_execution() -> None:
     exact = reference.case_by_id("map/bounds_exact")
     assert reference._map_execution_preflight(cast(reference.Object, exact["declaration"])) == {"status": "accepted"}
     assert cast(reference.Object, exact["expected"])["status"] == "accepted"
+
+
+def test_wrong_parent_uses_public_callback_association_boundary() -> None:
+    case = reference.case_by_id("map/wrong_parent")
+    assert case["boundary"] == "local_callback"
+    event = cast(list[reference.Object], case["events"])[0]
+    assert event["supplied_association"] == "E0"
+    assert event["returned_association"] == "E1"
+    state = cast(reference.Object, cast(reference.Object, case["expected"])["state"])
+    assert state["terminal"] == "malformed_response"
+    assert state["parent_phase"] == "failed"
+    assert state["expansion"] == {"parent": "E0", "members": [], "status": "failed"}
+    assert state["publication"] == reference._empty_map_state()["publication"]
+    assert state["transition"] is None
+    valid = dict(event, returned_association="E0")
+    accepted = reference._map_local_result(cast(reference.Object, case["declaration"]), [valid])
+    assert cast(reference.Object, accepted["state"])["terminal"] == "published"

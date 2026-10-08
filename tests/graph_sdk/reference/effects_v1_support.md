@@ -1,3 +1,9 @@
+# R2 v14 public callback association correction
+
+Retain historical ID map/wrong_parent but replace the uninjectable internal parent field with a public AssociationResult association mismatch. Capture two actual executor-supplied expander associations in the production regression and cross-return them. The expected malformed_response occurs before output, item or assessment publication; the actual parent normalizes to one failed-empty expansion. No map publication transition occurs. The matched-association counterpart publishes normally. All other v13 case objects remain unchanged. Independent review pending.
+
+## Retained v13 history
+
 # R2 v13 map provenance admission correction
 
 Only map/provenance_one_over changes: public execution admission rejects LIMIT_EXCEEDED before callbacks or publication because declared maximum item provenance exceeds capacity. Its runtime event is removed. The paired bounds_exact case remains unchanged and accepted.

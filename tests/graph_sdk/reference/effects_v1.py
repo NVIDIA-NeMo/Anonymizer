@@ -1308,8 +1308,33 @@ def _map_execution_preflight(declaration: Object) -> Object:
     return {"status": "accepted"}
 
 
+def _map_local_result(declaration: Object, events: Sequence[Object]) -> Object:
+    admitted = _admit_map(declaration)
+    if admitted["status"] != "accepted":
+        return admitted
+    if len(events) != 1 or events[0].get("kind") != "local_result":
+        return _reject("invalid_value")
+    event = events[0]
+    supplied = event.get("supplied_association")
+    returned = event.get("returned_association")
+    if supplied != returned:
+        state = _empty_map_state()
+        state["terminal"] = "malformed_response"
+        state["parent_phase"] = "failed"
+        state["expansion"] = {"parent": supplied, "members": [], "status": "failed"}
+        return {"status": "accepted", "state": state}
+    result = dict(event)
+    result["kind"] = "map_result"
+    result["parent"] = supplied
+    del result["supplied_association"]
+    del result["returned_association"]
+    return _reduce_map(declaration, [result])
+
+
 def evaluate_case(case: Mapping[str, Json]) -> Object:
     declaration = _object(case["declaration"])
+    if case["boundary"] == "local_callback":
+        return _map_local_result(declaration, [_object(raw) for raw in _array(case["events"])])
     if case["boundary"] == "map_execution_preflight":
         return _map_execution_preflight(declaration)
     if case["boundary"] == "execution_preflight":
@@ -2334,8 +2359,11 @@ def _map_specs() -> list[Object]:
     malformed_events: list[tuple[str, Object]] = [
         ("missing_membership_port", _map_event(("a",), port="other")),
         ("wrong_membership_type", _map_event(("a",), artifact_type="text")),
-        ("wrong_parent", _map_event(("a",), parent="E1")),
     ]
+    wrong_association = _map_event(("a",))
+    wrong_association.pop("parent")
+    wrong_association.update({"kind": "local_result", "supplied_association": "E0", "returned_association": "E1"})
+    cases.append(_case("map", "wrong_parent", _map_decl(), [wrong_association], "local_callback"))
     duplicate_port = _map_event(("a",))
     _array(duplicate_port["outputs"]).append(dict(_object(_array(duplicate_port["outputs"])[0])))
     malformed_events.append(("duplicate_membership_port", duplicate_port))

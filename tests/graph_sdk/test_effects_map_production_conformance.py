@@ -83,6 +83,7 @@ from anonymizer.graph.workflow import (
     OutputDependency,
     OutputPort,
     SequenceEdge,
+    SubgraphNode,
     WorkflowId,
     WorkflowInputRef,
     WorkflowLimits,
@@ -92,7 +93,7 @@ from anonymizer.graph.workflow import (
     admit_static_workflow,
 )
 from tests.graph_sdk.test_context_source_execution import SOURCE, _ContextProvider
-from tests.graph_sdk.test_dynamic_executor import _capability, _operation, _outcome, _rows
+from tests.graph_sdk.test_dynamic_executor import _capability, _outcome, _rows
 from tests.graph_sdk.test_local_executor import _Clock
 from tests.graph_sdk.test_preparation import _data, _limits
 
@@ -105,6 +106,7 @@ class _MapFixture:
     workflow: Any
     expander: NodeId
     member: NodeId
+    member_implementation: NodeId
     join: NodeId
     default_source: NodeId | None
     text_type: ArtifactType
@@ -119,10 +121,13 @@ def _map_fixture(
     control_only: bool = False,
     other_count: int = 0,
     default_override: bool = False,
+    outward_scalar: str | None = None,
+    member_subgraph: bool = False,
 ) -> _MapFixture:
     owner = WorkflowId.new()
     expander, member, join = (NodeId.new(workflow=owner) for _ in range(3))
     default_source = NodeId.new(workflow=owner) if default_override else None
+    ordinary = NodeId.new(workflow=owner) if outward_scalar == "ordinary" else None
     text_type = ArtifactType(name="text", revision=1)
     collection_type = ArtifactType(name="members_t", revision=1)
     other_type = ArtifactType(name="other_t", revision=1)
@@ -171,11 +176,69 @@ def _map_fixture(
     member_operation = OperationSpec(
         name="member",
         inputs=() if control_only else (InputPort(name="item", artifact_type=text_type),),
+        outputs=(OutputPort(name="value", artifact_type=text_type),) if outward_scalar else (),
+        output_dependencies=(OutputDependency(output="value", inputs=frozenset({"item"}), identity_input="item"),)
+        if outward_scalar
+        else (),
+        outcomes=(
+            _outcome(
+                "ok",
+                produced=frozenset({"value"}) if outward_scalar else frozenset(),
+                max_output_bytes=32 if outward_scalar else 0,
+            ),
+        ),
+    )
+    member_node: OperationNode | SubgraphNode = OperationNode(id=member, operation=member_operation)
+    member_implementation = member
+    if member_subgraph:
+        body_owner = WorkflowId.new()
+        body_child = NodeId.new(workflow=body_owner)
+        member_implementation = body_child
+        body = admit_static_workflow(
+            workflow=body_owner,
+            interface=member_operation,
+            nodes=(OperationNode(id=body_child, operation=member_operation),),
+            input_bindings=(
+                InputBinding(
+                    source=WorkflowInputRef(port="item"),
+                    destination=NodeInputRef(node=body_child, port="item"),
+                ),
+            ),
+            output_bindings=(),
+            outcome_bindings=(
+                OutcomeBinding(
+                    source=NodeOutcomeRef(node=body_child, outcome="ok"),
+                    destination=WorkflowOutcomeRef(outcome="ok"),
+                ),
+            ),
+            sequence=(),
+            choices=(),
+            protection=(),
+            limits=WorkflowLimits(
+                max_nodes=1,
+                max_bindings=2,
+                max_sequence_edges=0,
+                max_choices=0,
+                max_branch_members=0,
+                max_subgraph_depth=1,
+                max_choice_states=1,
+            ),
+        )
+        member_node = SubgraphNode(id=member, operation=body.interface, body=body)
+    join_operation = OperationSpec(
+        name="join",
+        inputs=(InputPort(name="value", artifact_type=text_type),) if outward_scalar == "join" else (),
         outputs=(),
         output_dependencies=(),
         outcomes=(_outcome("ok"),),
     )
-    join_operation = _operation("join", (_outcome("ok"),))
+    ordinary_operation = OperationSpec(
+        name="ordinary",
+        inputs=(InputPort(name="value", artifact_type=text_type),),
+        outputs=(),
+        output_dependencies=(),
+        outcomes=(_outcome("ok"),),
+    )
     default_operation = OperationSpec(
         name="default-source",
         inputs=(),
@@ -189,15 +252,25 @@ def _map_fixture(
             InputPort(name="default", artifact_type=text_type),
             *((InputPort(name="schema", artifact_type=other_type),) if other_count else ()),
         ),
-        outputs=(OutputPort(name="members", artifact_type=collection_type),),
-        output_dependencies=(OutputDependency(output="members", inputs=frozenset({"default"}), identity_input=None),),
+        outputs=(
+            OutputPort(name="members", artifact_type=collection_type),
+            *((OutputPort(name="value", artifact_type=text_type),) if outward_scalar == "workflow_output" else ()),
+        ),
+        output_dependencies=(
+            OutputDependency(output="members", inputs=frozenset({"default"}), identity_input=None),
+            *(
+                (OutputDependency(output="value", inputs=frozenset({"default"}), identity_input="default"),)
+                if outward_scalar == "workflow_output"
+                else ()
+            ),
+        ),
         outcomes=(
             replace(
                 _outcome(
                     "ok",
-                    produced=frozenset({"members"}),
-                    max_activations=max_children + (8 if default_source is not None else 4),
-                    max_output_bytes=512 if default_source is not None else 128,
+                    produced=frozenset({"members", *(("value",) if outward_scalar == "workflow_output" else ())}),
+                    max_activations=max_children + (8 if default_source is not None or outward_scalar else 4),
+                    max_output_bytes=512 if default_source is not None or outward_scalar else 128,
                 ),
                 evidence=frozenset(
                     {
@@ -223,9 +296,10 @@ def _map_fixture(
         interface=interface,
         nodes=(
             OperationNode(id=expander, operation=expander_operation),
-            OperationNode(id=member, operation=member_operation),
+            member_node,
             OperationNode(id=join, operation=join_operation),
             *((OperationNode(id=default_source, operation=default_operation),) if default_source is not None else ()),
+            *((OperationNode(id=ordinary, operation=ordinary_operation),) if ordinary is not None else ()),
         ),
         input_bindings=(
             *(
@@ -241,6 +315,19 @@ def _map_fixture(
                         destination=NodeInputRef(node=member, port="item"),
                     ),
                 )
+            ),
+            *(
+                (
+                    InputBinding(
+                        source=NodeOutputRef(node=member, port="value"),
+                        destination=NodeInputRef(
+                            node=join if outward_scalar == "join" else cast(NodeId, ordinary),
+                            port="value",
+                        ),
+                    ),
+                )
+                if outward_scalar in {"join", "ordinary"}
+                else ()
             ),
             InputBinding(
                 source=WorkflowInputRef(port="default"),
@@ -262,6 +349,16 @@ def _map_fixture(
                 source=NodeOutputRef(node=expander, port="members"),
                 destination=WorkflowOutputRef(port="members"),
             ),
+            *(
+                (
+                    OutputBinding(
+                        source=NodeOutputRef(node=member, port="value"),
+                        destination=WorkflowOutputRef(port="value"),
+                    ),
+                )
+                if outward_scalar == "workflow_output"
+                else ()
+            ),
         ),
         outcome_bindings=(
             OutcomeBinding(
@@ -273,16 +370,21 @@ def _map_fixture(
             SequenceEdge(before=expander, after=member),
             SequenceEdge(before=member, after=join),
             *((SequenceEdge(before=default_source, after=join),) if default_source is not None else ()),
+            *(
+                (SequenceEdge(before=member, after=ordinary), SequenceEdge(before=ordinary, after=join))
+                if ordinary is not None
+                else ()
+            ),
         ),
         choices=(),
         protection=(),
         limits=WorkflowLimits(
-            max_nodes=4 if default_source is not None else 3,
-            max_bindings=5 if other_count else 4,
-            max_sequence_edges=3 if default_source is not None else 2,
+            max_nodes=3 + int(default_source is not None) + int(ordinary is not None) + int(member_subgraph),
+            max_bindings=(5 if other_count else 4) + int(outward_scalar is not None),
+            max_sequence_edges=2 + int(default_source is not None) + (2 if ordinary is not None else 0),
             max_choices=0,
             max_branch_members=0,
-            max_subgraph_depth=1,
+            max_subgraph_depth=2 if member_subgraph else 1,
             max_choice_states=1,
         ),
     )
@@ -310,6 +412,11 @@ def _map_fixture(
                 ),
                 loops=(),
             ),
+            *(
+                (DynamicScope(workflow=member_node.body, maps=(), joins=(), loops=()),)
+                if isinstance(member_node, SubgraphNode)
+                else ()
+            ),
         ),
         limits=DynamicLimits(
             max_maps=1,
@@ -317,8 +424,11 @@ def _map_fixture(
             max_loops=0,
             max_children_per_map=max_children,
             max_iterations_per_loop=0,
-            max_dynamic_depth=1,
-            max_activation_occurrences=max_children + (3 if default_source is not None else 2),
+            max_dynamic_depth=2 if member_subgraph else 1,
+            max_activation_occurrences=(2 * max_children if member_subgraph else max_children)
+            + 2
+            + int(default_source is not None)
+            + int(ordinary is not None),
         ),
     )
     operations = (
@@ -326,12 +436,14 @@ def _map_fixture(
         member_operation,
         join_operation,
         *((default_operation,) if default_source is not None else ()),
+        *((ordinary_operation,) if ordinary is not None else ()),
     )
     capabilities = tuple(_capability(operation, index) for index, operation in enumerate(operations))
     return _MapFixture(
         workflow,
         expander,
         member,
+        member_implementation,
         join,
         default_source,
         text_type,
@@ -354,11 +466,20 @@ class _MapCallback:
     started: asyncio.Event | None = None
     release: asyncio.Event | None = None
     calls: list[tuple[AssociationInput, ...]] = field(default_factory=list)
+    cross_associations: list[SemanticAssociation] = field(default_factory=list)
+    cross_ready: asyncio.Event | None = None
 
     async def run(self, request: tuple[AssociationInput, ...]) -> LocalCompleted | LocalFailure:
         self.calls.append(request)
         association = request[0].association
         assert isinstance(association, SemanticAssociation)
+        if self.mode == "expander" and self.response_mode == "cross_association":
+            assert self.cross_ready is not None
+            self.cross_associations.append(association)
+            if len(self.cross_associations) == 2:
+                self.cross_ready.set()
+            await self.cross_ready.wait()
+            association = next(item for item in self.cross_associations if item != association)
         if self.mode == "expander" and self.started is not None and self.release is not None:
             self.started.set()
             try:
@@ -436,21 +557,23 @@ def _admit_fixture(
     port_fact_headroom: int = 8,
     provenance_edge_headroom: int = 8,
 ):
-    nodes = (fixture.expander, fixture.member, fixture.join) + (
+    nodes = (fixture.expander, fixture.member_implementation, fixture.join) + (
         (fixture.default_source,) if fixture.default_source is not None else ()
     )
     by_node = dict(zip(nodes, fixture.capabilities, strict=True))
     data = _data(1) if data is None else data
-    target = next(iter(data.targets))
     prepared = prepare(
         data=data,
         workflow=fixture.workflow,
         activation_limits=ActivationLimits(
-            max_events=20,
+            max_events=max(20, 4 * fixture.workflow.limits.max_activation_occurrences),
             max_entries=fixture.workflow.limits.max_activation_occurrences,
-            max_parent_depth=2,
+            max_parent_depth=fixture.workflow.limits.max_dynamic_depth + 1,
         ),
-        bound_inputs=(BoundInput(target=target, source=target, port="default", artifact_type=fixture.text_type),),
+        bound_inputs=tuple(
+            BoundInput(target=target, source=target, port="default", artifact_type=fixture.text_type)
+            for target in data.targets
+        ),
         configuration=PreparationConfiguration(
             purpose="execution_only", required_protection_outcomes=frozenset(), hard_request_limit=None
         ),
@@ -466,7 +589,7 @@ def _admit_fixture(
         capabilities=fixture.capabilities,
         limits=_limits(
             capabilities=len(fixture.capabilities),
-            slots=fixture.workflow.limits.max_activation_occurrences,
+            slots=fixture.workflow.limits.max_activation_occurrences * len(data.targets),
         ),
     )
     context = admit_context_plan(
@@ -514,7 +637,7 @@ def _admit_fixture(
             max_findings_per_production=1,
             max_finding_code_bytes=16,
             max_absence_queries=0,
-            max_assessment_facts=1,
+            max_assessment_facts=len(data.targets),
             max_port_facts=baseline_port_facts + port_fact_headroom,
             max_provenance_edges=baseline_provenance_edges + provenance_edge_headroom,
         ),
@@ -544,9 +667,16 @@ async def _execute_membership(
     cancel_before_result: bool = False,
     provenance_edge_headroom: int = 8,
     default_override: bool = False,
+    member_subgraph: bool = False,
+    target_count: int = 1,
 ):
-    fixture = _map_fixture(control_only=control_only, other_count=other_count, default_override=default_override)
-    data = _data(1)
+    fixture = _map_fixture(
+        control_only=control_only,
+        other_count=other_count,
+        default_override=default_override,
+        member_subgraph=member_subgraph,
+    )
+    data = _data(target_count)
     bound_context = None
     if other_count:
         target = next(iter(data.targets))
@@ -611,15 +741,16 @@ async def _execute_membership(
         ).wait()
         assert binding.context is not None
         bound_context = binding.context
-    baseline_port_facts = 1 + (1 if bound_context is not None else 0)
-    baseline_provenance_edges = (1 if bound_context is not None else 0) + 1 + other_count
+    baseline_port_facts = target_count * (1 + (1 if bound_context is not None else 0))
+    baseline_provenance_edges = target_count * ((1 if bound_context is not None else 0) + 1 + other_count)
     admitted = _admit_fixture(
         fixture,
         data=data,
         bound_context=bound_context,
         baseline_port_facts=baseline_port_facts,
         baseline_provenance_edges=baseline_provenance_edges,
-        provenance_edge_headroom=provenance_edge_headroom,
+        port_fact_headroom=8 * target_count,
+        provenance_edge_headroom=provenance_edge_headroom * target_count,
     )
     context_item_bytes = (
         sum(len(artifact.text.encode()) for artifact in bound_context.artifacts) if bound_context is not None else 0
@@ -630,7 +761,7 @@ async def _execute_membership(
         + context_item_bytes
         + (context_item_bytes if bound_context is not None else 0)
     )
-    nodes = (fixture.expander, fixture.member, fixture.join) + (
+    nodes = (fixture.expander, fixture.member_implementation, fixture.join) + (
         (fixture.default_source,) if fixture.default_source is not None else ()
     )
     by_node = dict(zip(nodes, fixture.capabilities, strict=True))
@@ -654,6 +785,7 @@ async def _execute_membership(
             other_count=other_count,
             started=started if node == fixture.expander else None,
             release=release if node == fixture.expander else None,
+            cross_ready=asyncio.Event() if node == fixture.expander and response_mode == "cross_association" else None,
         )
         for node in by_node
     }
@@ -704,12 +836,81 @@ def test_map_operation_declaration_admits_through_production() -> None:
     assert fixture.workflow.scopes[0].maps[0].member == fixture.member
 
 
+def test_map_subgraph_declaration_admits_through_production() -> None:
+    case = MAP_CASES["map/admit_subgraph"]
+    fixture = _map_fixture(member_subgraph=True)
+    member = next(node for node in fixture.workflow.workflow.nodes if node.id == fixture.member)
+    assert isinstance(member, SubgraphNode)
+    assert case["expected"] == {"status": "accepted"}
+
+
+def test_map_items_are_projected_into_real_subgraph_members() -> None:
+    asyncio.run(_assert_map_subgraph_item_binding())
+
+
+async def _assert_map_subgraph_item_binding() -> None:
+    case = MAP_CASES["map/subgraph_item_binding"]
+    fixture, result, callbacks = await _execute_membership(
+        2,
+        item_values=("left", "right"),
+        member_subgraph=True,
+    )
+    expected = case["expected"]["state"]["publication"]
+    map_items = [fact for fact in result.provenance if isinstance(fact.key, MapItemKey)]
+    assert len(map_items) == len(expected["inputs"]) == 2
+    by_member = {fact.key.member: fact for fact in map_items}
+    calls = [call[0] for call in callbacks[fixture.member_implementation].calls]
+    assert len(calls) == 2
+    assert {
+        cast(SemanticAssociation, call.association).task.activation.parent: (
+            call.inputs[0].artifact,
+            call.inputs[0].value,
+        )
+        for call in calls
+    } == {
+        member: (fact.artifact, TextArtifactValue(text=("left", "right")[fact.key.item_key]))
+        for member, fact in by_member.items()
+    }
+    expansion = next(iter(result.states[0].expansions))
+    assert expansion.status == "closed"
+    assert expansion.members == frozenset(by_member)
+
+
 def test_control_only_map_declaration_admits_through_production() -> None:
     case = MAP_CASES["map/admit_control_only"]
     fixture = _map_fixture(control_only=True)
     assert case["expected"] == {"status": "accepted"}
     assert fixture.workflow.scopes[0].maps[0].item_input is None
     _admit_fixture(fixture)
+
+
+@pytest.mark.parametrize(
+    ("case_id", "max_children", "destination", "accepted"),
+    (
+        ("map/max_zero_scalar_join", 0, "join", True),
+        ("map/max_one_scalar_ordinary", 1, "ordinary", True),
+        ("map/max_one_scalar_workflow", 1, "workflow_output", True),
+        ("map/max_two_scalar_join", 2, "join", False),
+        ("map/max_two_scalar_ordinary", 2, "ordinary", False),
+        ("map/max_two_scalar_workflow_output", 2, "workflow_output", False),
+    ),
+)
+def test_scalar_map_cardinality_admission_matches_frozen_case(
+    case_id: str,
+    max_children: int,
+    destination: str,
+    accepted: bool,
+) -> None:
+    case = MAP_CASES[case_id]
+    if accepted:
+        _map_fixture(max_children=max_children, outward_scalar=destination)
+        assert case["expected"] == {"status": "accepted"}
+        return
+
+    with pytest.raises(ContractViolation) as error:
+        _map_fixture(max_children=max_children, outward_scalar=destination)
+    assert error.value.code is ValidationCode.CONTRADICTORY
+    assert case["expected"] == {"status": "rejected", "code": "unsupported"}
 
 
 @pytest.mark.parametrize(
@@ -852,6 +1053,35 @@ async def _assert_malformed_map_result(case_id: str, response_mode: str, other_c
     assert expander.outcome is None
     assert case["expected"]["state"]["terminal"] == "malformed_response"
     _assert_only_setup_baseline(fixture, result, callbacks)
+
+
+def test_cross_returned_map_association_fails_before_publication() -> None:
+    asyncio.run(_assert_cross_returned_map_association())
+
+
+async def _assert_cross_returned_map_association() -> None:
+    case = MAP_CASES["map/wrong_parent"]
+    fixture, result, callbacks = await _execute_membership(
+        1,
+        response_mode="cross_association",
+        target_count=2,
+    )
+    callback = callbacks[fixture.expander]
+    assert len(callback.calls) == len(callback.cross_associations) == 2
+    assert callback.calls[0][0].association != callback.calls[1][0].association
+    assert case["boundary"] == "local_callback"
+    for state in result.states:
+        expander = next(entry for entry in state.entries if entry.template == fixture.expander)
+        assert expander.status == "failure"
+        assert expander.outcome is None
+        expansion = next(iter(state.expansions))
+        assert expansion.parent == expander.activation
+        assert expansion.status == "failed"
+        assert not expansion.members
+    assert not result.assessments
+    assert not any(isinstance(fact.key, (OperationOutputKey, MapItemKey)) for fact in result.provenance)
+    assert not callbacks[fixture.member].calls
+    assert case["expected"]["state"]["terminal"] == "malformed_response"
 
 
 def test_map_overflow_publishes_collection_without_item_facts() -> None:
