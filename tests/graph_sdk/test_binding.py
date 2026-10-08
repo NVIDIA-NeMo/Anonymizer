@@ -1,0 +1,179 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+"""Initial context binding tests with real provider calls and receipts."""
+
+from __future__ import annotations
+
+import asyncio
+from dataclasses import dataclass, replace
+
+from anonymizer.engine.graph_sdk.binding import start_initial_binding
+from anonymizer.engine.graph_sdk.context import (
+    BindingLimits,
+    ContextMaterialization,
+    ContextResource,
+    ContextSelector,
+    ContextSourceCapability,
+    ContextSourceRef,
+    InitialContextDecl,
+    RetrievalBounds,
+    SourceItem,
+    SourceResponse,
+)
+from anonymizer.engine.graph_sdk.requests import (
+    BindingAssociation,
+    ExactUsage,
+    ExternalSettlement,
+    PhysicalRequestId,
+    PhysicalRequestPolicy,
+    StopConfirmed,
+)
+from anonymizer.engine.graph_sdk.resources import ResourceLease
+from anonymizer.graph.workflow import (
+    ContextUse,
+    DynamicLimits,
+    DynamicScope,
+    OperationNode,
+    admit_activation_workflow,
+    admit_static_workflow,
+)
+from tests.graph_sdk.test_preparation import _data, _workflow
+
+
+@dataclass
+class _Provider:
+    calls: int = 0
+
+    async def retrieve(
+        self,
+        *,
+        request: PhysicalRequestId,
+        association: BindingAssociation,
+        selector: ContextSelector,
+        bounds: RetrievalBounds,
+    ) -> SourceResponse:
+        self.calls += 1
+        assert bounds.max_items == 1 and not selector.fields
+        return SourceResponse(
+            source=SOURCE,
+            items=(SourceItem(association=association, key=0, version=1, text="context"),),
+            settlement=ExternalSettlement(
+                request=request,
+                disposition="completed",
+                usage=ExactUsage(input_units=1, output_units=1),
+                remote_stopped=True,
+            ),
+        )
+
+    async def cancel(self, request: object) -> StopConfirmed:
+        del request
+        return StopConfirmed(usage=ExactUsage(input_units=0, output_units=0))
+
+
+SOURCE = ContextSourceRef(name="test-source", revision=1)
+
+
+def _context_workflow():
+    admitted, node, artifact = _workflow(with_input=True)
+    static = admitted.workflow
+    operation_node = next(item for item in static.nodes if isinstance(item, OperationNode))
+    outcome = replace(
+        operation_node.operation.outcomes[0],
+        context=frozenset({ContextUse(port="input", meaning="test", capture="whole_artifact")}),
+    )
+    operation = replace(operation_node.operation, outcomes=(outcome,))
+    rebuilt = admit_static_workflow(
+        workflow=static.workflow,
+        interface=operation,
+        nodes=(OperationNode(id=node, operation=operation),),
+        input_bindings=tuple(static.input_bindings),
+        output_bindings=tuple(static.output_bindings),
+        outcome_bindings=tuple(static.outcome_bindings),
+        sequence=tuple(static.sequence),
+        choices=tuple(static.choices),
+        protection=(),
+        limits=static.limits,
+    )
+    return (
+        admit_activation_workflow(
+            workflow=rebuilt,
+            scopes=(DynamicScope(workflow=rebuilt, maps=(), joins=(), loops=()),),
+            limits=DynamicLimits(
+                max_maps=0,
+                max_joins=0,
+                max_loops=0,
+                max_children_per_map=0,
+                max_iterations_per_loop=0,
+                max_dynamic_depth=1,
+                max_activation_occurrences=1,
+            ),
+        ),
+        node,
+        artifact,
+    )
+
+
+def test_initial_binding_preserves_provider_text_and_receipt() -> None:
+    asyncio.run(_assert_initial_binding())
+
+
+async def _assert_initial_binding() -> None:
+    workflow, node, artifact = _context_workflow()
+    data = _data(1)
+    target = next(iter(data.targets))
+    policy = PhysicalRequestPolicy(
+        visibility="dispatch_and_settlement",
+        pre_dispatch_control="executor",
+        retry_owner="executor",
+        replay="idempotent",
+        max_attempts=1,
+    )
+    capability = ContextSourceCapability(
+        source=SOURCE,
+        artifact_type=artifact,
+        uses=frozenset({"initial_binding"}),
+        execution="async",
+        resource_owner="caller",
+        cancellation="cooperative_ack",
+        settlement="explicit_ack",
+        usage="exact",
+        request=policy,
+        safe_detachment="forbidden",
+    )
+    declaration = InitialContextDecl(
+        target=target,
+        node=node,
+        port="input",
+        artifact_type=artifact,
+        source=SOURCE,
+        selector=ContextSelector(fields=()),
+        requirement="required",
+        bounds=RetrievalBounds(max_items=1, max_bytes=20, max_requests=1),
+        materialization=ContextMaterialization(kind="single", item_type=artifact),
+    )
+    provider = _Provider()
+    lease = ResourceLease.create(owner="caller", safe_detachment="forbidden", handle=provider)
+    running = await start_initial_binding(
+        data=data,
+        workflow=workflow,
+        declarations=(declaration,),
+        capabilities=(capability,),
+        resources=(ContextResource(source=SOURCE, capability=capability, lease=lease, factory=None),),
+        limits=BindingLimits(
+            max_declarations=1,
+            max_sources=1,
+            max_capabilities=1,
+            max_selector_fields=0,
+            max_selector_bytes=0,
+            max_items=1,
+            max_bytes=20,
+            max_requests=1,
+            max_resources=1,
+        ),
+    )
+    result = await running.wait()
+    assert provider.calls == 1
+    assert result.context is not None
+    assert result.context.artifacts[0].text == "context"
+    assert result.receipt.requests.dispatched_count == 1
+    assert result.receipt.cleanup[0].disposition == "left_open"
