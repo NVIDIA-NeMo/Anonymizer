@@ -31089,6 +31089,10 @@
         "request": "R0"
       },
       {
+        "kind": "cancel",
+        "request": "R0"
+      },
+      {
         "kind": "lost",
         "request": "R0"
       },
@@ -31147,7 +31151,9 @@
             "P0"
           ]
         },
-        "cancel_requested": [],
+        "cancel_requested": [
+          "R0"
+        ],
         "cleanup": {},
         "closed_unstarted": {},
         "decisions": {},

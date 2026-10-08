@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, cast
 
@@ -50,11 +50,13 @@ from anonymizer.engine.graph_sdk.requests import (
     AssociationInput,
     AssociationResult,
     BindingAssociation,
+    BindingId,
     ExactUsage,
     ExternalSettlement,
     PhysicalRequestId,
     PhysicalRequestPolicy,
     PortArtifact,
+    SemanticAssociation,
     StopConfirmed,
     TextArtifactValue,
     TextCollectionValue,
@@ -114,7 +116,7 @@ class _ContextProvider:
         self,
         *,
         request: PhysicalRequestId,
-        association: BindingAssociation,
+        association: SemanticAssociation | BindingAssociation,
         selector: ContextSelector,
         bounds: RetrievalBounds,
     ) -> SourceResponse | SourceFailure:
@@ -145,6 +147,16 @@ class _ContextProvider:
     async def cancel(self, request: PhysicalRequestId) -> StopConfirmed:
         del request
         return StopConfirmed(usage=ExactUsage(input_units=0, output_units=0))
+
+
+@dataclass
+class _ProviderFactory:
+    provider: _ContextProvider
+    calls: int = 0
+
+    def __call__(self) -> _ContextProvider:
+        self.calls += 1
+        return self.provider
 
 
 @dataclass
@@ -995,11 +1007,25 @@ async def _assert_special_fixture_execution(case_id: str) -> None:
         )
 
 
-def test_initial_collection_schema_rejects_same_typed_caller_root_before_provider_effects() -> None:
-    asyncio.run(_assert_collection_schema_rejects_caller_root())
+def test_initial_collection_schema_rejects_same_typed_caller_root_before_provider_effects(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    binding_ids = 0
+    original_new = BindingId.new
+
+    def counted_new(cls: type[BindingId]) -> BindingId:
+        del cls
+        nonlocal binding_ids
+        binding_ids += 1
+        return original_new()
+
+    monkeypatch.setattr(BindingId, "new", classmethod(counted_new))
+    factory = asyncio.run(_assert_collection_schema_rejects_caller_root())
+    assert binding_ids == 0
+    assert factory.calls == 0
 
 
-async def _assert_collection_schema_rejects_caller_root() -> None:
+async def _assert_collection_schema_rejects_caller_root() -> _ProviderFactory:
     collection_type = ArtifactType(name="collection", revision=1)
     item_type = ArtifactType(name="item", revision=1)
     owner = WorkflowId.new()
@@ -1097,7 +1123,7 @@ async def _assert_collection_schema_rejects_caller_root() -> None:
         artifact_type=item_type,
         uses=frozenset({"initial_binding"}),
         execution="async",
-        resource_owner="caller",
+        resource_owner="sdk",
         cancellation="cooperative_ack",
         settlement="explicit_ack",
         usage="exact",
@@ -1105,30 +1131,30 @@ async def _assert_collection_schema_rejects_caller_root() -> None:
         safe_detachment="forbidden",
     )
     provider = _ContextProvider(items=("ab", "cd"))
+    factory = _ProviderFactory(provider=provider)
+    declaration = InitialContextDecl(
+        target=next(iter(data.targets)),
+        node=node,
+        port="context",
+        artifact_type=collection_type,
+        source=SOURCE,
+        selector=ContextSelector(fields=()),
+        requirement="required",
+        bounds=RetrievalBounds(max_items=2, max_bytes=8, max_requests=1),
+        materialization=ContextMaterialization(kind="collection", item_type=item_type),
+    )
     with pytest.raises(EffectRejected) as rejected:
         await start_initial_binding(
             data=data,
             workflow=workflow,
-            declarations=(
-                InitialContextDecl(
-                    target=next(iter(data.targets)),
-                    node=node,
-                    port="context",
-                    artifact_type=collection_type,
-                    source=SOURCE,
-                    selector=ContextSelector(fields=()),
-                    requirement="required",
-                    bounds=RetrievalBounds(max_items=2, max_bytes=8, max_requests=1),
-                    materialization=ContextMaterialization(kind="collection", item_type=item_type),
-                ),
-            ),
+            declarations=(declaration,),
             capabilities=(capability,),
             resources=(
                 ContextResource(
                     source=SOURCE,
                     capability=capability,
-                    lease=ResourceLease.create(owner="caller", safe_detachment="forbidden", handle=provider),
-                    factory=None,
+                    lease=None,
+                    factory=factory,
                 ),
             ),
             limits=BindingLimits(
@@ -1145,6 +1171,33 @@ async def _assert_collection_schema_rejects_caller_root() -> None:
         )
     assert rejected.value.code.value == "contradictory"
     assert provider.calls == 0
+    foreign_data = _data(1)
+    foreign_target = next(iter(foreign_data.targets))
+    foreign_declaration = replace(declaration, target=foreign_target)
+    assert foreign_target not in data.targets
+    assert foreign_declaration.target is foreign_target
+    with pytest.raises(EffectRejected) as rejected:
+        await start_initial_binding(
+            data=data,
+            workflow=workflow,
+            declarations=(foreign_declaration,),
+            capabilities=(capability,),
+            resources=(ContextResource(source=SOURCE, capability=capability, lease=None, factory=factory),),
+            limits=BindingLimits(
+                max_declarations=1,
+                max_sources=1,
+                max_capabilities=1,
+                max_selector_fields=0,
+                max_selector_bytes=0,
+                max_items=2,
+                max_bytes=8,
+                max_requests=1,
+                max_resources=1,
+            ),
+        )
+    assert rejected.value.code.value == "foreign_owner"
+    assert provider.calls == 0
+    return factory
 
 
 async def _assert_context_execution(mode: str) -> None:
@@ -1233,6 +1286,10 @@ async def _assert_context_execution(mode: str) -> None:
         )
     ).wait()
     assert binding.context is not None
+    if mode == "omitted":
+        assert binding.receipt.sources[0].terminal == "omitted_optional"
+        assert not binding.receipt.artifacts
+        assert not binding.context.artifacts
     capability = _capability(workflow)
     prepared = prepare(
         data=data,

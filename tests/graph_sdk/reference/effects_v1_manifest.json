@@ -3,9 +3,9 @@
   "case_count": 296,
   "contract_sha256": "9b0ab07b8c0212ffd954dc37eb37540141da6899753fc778ad26238494aeaeca",
   "corpus_path": "tests/graph_sdk/reference/effects_v1_cases.json",
-  "corpus_sha256": "90c35f44f83e04a5072e88c18d4abaa165111c761974d3d0860347ab7628e994",
-  "corrected_predecessor_prefix_sha256": "5b896a6308f7f71d0414815b7fbf3aa5469f64969219992d9d97eeb91a916b71",
-  "event_count": 1022,
+  "corpus_sha256": "d6ba6bfdfad37ef334282a0215f9f878dbface3be86e0476e2a09624255bf5c0",
+  "corrected_predecessor_prefix_sha256": "35b52f87349e256337afce3c8e571f0fa2c8dad4fac834d31c3a2f4ac37c9b75",
+  "event_count": 1023,
   "family_counts": {
     "admission": 23,
     "binding": 39,

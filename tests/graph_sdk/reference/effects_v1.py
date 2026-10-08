@@ -2115,6 +2115,8 @@ def _materialization_specs() -> list[Object]:
                 if terminal == "lost"
                 else [{"kind": "cancel", "request": "R0"}, {"kind": "stop", "request": "R0", "usage": "unknown"}]
             )
+            if path == "adaptive" and terminal == "lost":
+                terminals.insert(0, {"kind": "cancel", "request": "R0"})
             cases.append(
                 _case(
                     "materialization",

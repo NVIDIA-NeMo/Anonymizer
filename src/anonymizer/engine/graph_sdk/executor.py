@@ -2905,6 +2905,29 @@ async def _run_adaptive(
             else:
                 authority.apply(MarkLost(request=request))
                 mapping = _mapping(policy, "lost", None, None)
+            if isinstance(late_result, SourceResponse):
+                valid_late_result = (
+                    late_result.source == declaration.source
+                    and bool(late_result.items)
+                    and all(item.association == association for item in late_result.items)
+                    and len({(item.key, item.version) for item in late_result.items}) == len(late_result.items)
+                )
+                if valid_late_result:
+                    authority.apply(
+                        AcceptResult(
+                            request=request,
+                            results=(
+                                AssociationResult(
+                                    association=association,
+                                    outcome=_adaptive_success_outcome(policy),
+                                    outputs=(),
+                                    consumed_context_ports=frozenset(),
+                                ),
+                            ),
+                        )
+                    )
+                else:
+                    authority.apply(AcceptFailure(request=request, failure="malformed_response"))
             late_settlement = late_result.settlement if late_result is not None else None
             if late_settlement is not None and late_settlement.request == request:
                 authority.apply(ObserveSettlement(settlement=late_settlement))

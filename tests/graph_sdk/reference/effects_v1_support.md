@@ -1,3 +1,9 @@
+# R2 v11 causal adaptive late-loss trace
+
+The real public executor reaches Lost here after cancellation and a failed stop. Add the missing cancel event before Lost in materialization/adaptive_late_lost. Preserve the immutable lost terminal, conflicting_terminal defect, valid late settlement and absence of materialized output. No comparator may override expected cancellation or defect facts. Only this case changes; all other v10 declarations and expectations remain unchanged. Independent review and production comparison are pending.
+
+## Retained v10 history
+
 # R2 v10 public-loop causality correction
 
 V9 failed independent review despite passing its self-tests. V10 applies the

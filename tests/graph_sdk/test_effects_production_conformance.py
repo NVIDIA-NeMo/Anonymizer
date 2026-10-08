@@ -1360,6 +1360,7 @@ def test_late_adaptive_result_stays_request_terminal_at_authority_boundary(case:
     )
     state = advance_requests(state=state, event=Dispatch(request=request))
     if case["case_id"] == "materialization/adaptive_late_lost":
+        state = advance_requests(state=state, event=RequestCancel(request=request))
         state = advance_requests(state=state, event=MarkLost(request=request))
     else:
         state = advance_requests(state=state, event=RequestCancel(request=request))
@@ -1679,12 +1680,6 @@ async def _assert_adaptive_materialization_case(case: dict[str, Any], *, late_mo
         "defects",
         "attempts",
     ):
-        if late_mode == "lost" and key == "cancel_requested":
-            assert request_actual[key] == ["R0"]
-            continue
-        if late_mode is not None and key == "defects":
-            assert request_actual[key] == []
-            continue
         assert request_actual[key] == expected[key], (case["case_id"], key)
     values = dict(result.artifacts)
     if late_mode is not None:

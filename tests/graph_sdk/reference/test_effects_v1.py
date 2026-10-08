@@ -1067,3 +1067,17 @@ def test_adaptive_negative_requests_have_real_selector_readiness() -> None:
         assert state["tasks"] == {"A0": "failure"}
         assert state["binding_sources"] == {}
         assert state["settlements"]
+
+
+def test_adaptive_late_loss_retains_causal_cancel_and_terminal_conflict() -> None:
+    cases = {case["case_id"]: case for case in reference.generate_cases()}
+    case = cases["materialization/adaptive_late_lost"]
+    events = cast(list[reference.Object], case["events"])
+    kinds = [event["kind"] for event in events]
+    assert kinds.index("cancel") < kinds.index("lost") < kinds.index("materialize_result")
+    expected = cast(reference.Object, case["expected"])
+    state = cast(reference.Object, expected["state"])
+    assert state["cancel_requested"] == ["R0"]
+    assert state["terminals"] == {"R0": "lost"}
+    assert state["defects"] == ["conflicting_terminal"]
+    assert cast(reference.Object, state["materialization"])["ports"] == {}
