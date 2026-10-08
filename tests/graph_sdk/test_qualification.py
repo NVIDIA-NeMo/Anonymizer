@@ -473,3 +473,17 @@ def test_failed_expansion_reconciles_actual_members(count: int, mode: str, statu
         assert "incomplete_membership" in output.targets[0].withholding
     finally:
         object.__setattr__(expansion, "members", original)
+
+
+def test_direct_root_input_output_retains_its_actual_producer_and_qualifies() -> None:
+    from anonymizer.engine.graph_sdk.executor import RootInputKey
+
+    execution, result = asyncio.run(_execute_assessment(candidate_input=True, root_passthrough=True))
+    assert len(result.final_outputs) == 1
+    assert isinstance(result.final_outputs[0].producer, RootInputKey)
+    admitted, current, submissions = _inputs(execution, result)
+    output = qualify(admitted=admitted, result=result, current=current, submissions=submissions)
+    assert len(output.qualified) == 1
+    assert output.qualified[0].candidate == result.final_outputs[0].candidate
+    assert not output.required_decisions
+    assert output.record.statuses[0].qualification == "met"

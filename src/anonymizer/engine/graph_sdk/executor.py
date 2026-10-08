@@ -3654,35 +3654,41 @@ def _final_outputs(
     results: list[FinalOutputFact] = []
     for target_map, state in zip(prepared.target_occurrences, states, strict=True):
         for output_binding in prepared.workflow.workflow.output_bindings:
-            if not isinstance(output_binding.source, NodeOutputRef):
-                continue
             root_anchor = next(
                 (entry.activation for entry in state.entries if entry.activation.parent is None),
                 None,
             )
             if root_anchor is None:
                 continue
-            source_activation = _source_activation(state, root_anchor, output_binding.source.node)
-            terminal = next(
-                (
-                    entry
-                    for entry in state.entries
-                    if entry.activation == source_activation and entry.status == "success"
-                ),
-                None,
-            )
-            if terminal is None or terminal.outcome is None:
-                continue
-            artifact = produced.get((target_map.target, terminal.activation, output_binding.source.port))
-            if artifact is None:
-                continue
-            producer = OperationOutputKey(
-                activation=terminal.activation,
-                target=target_map.target,
-                port=output_binding.source.port,
-            )
-            if not any(fact.key == producer and fact.artifact == artifact for fact in provenance):
-                reject(EffectCode.MISSING)
+            producer: ProvenanceKey
+            if isinstance(output_binding.source, WorkflowInputRef):
+                producer = RootInputKey(target=target_map.target, port=output_binding.source.port)
+                source_fact = next((fact for fact in provenance if fact.key == producer), None)
+                if source_fact is None:
+                    continue
+                artifact = source_fact.artifact
+            else:
+                source_activation = _source_activation(state, root_anchor, output_binding.source.node)
+                terminal = next(
+                    (
+                        entry
+                        for entry in state.entries
+                        if entry.activation == source_activation and entry.status == "success"
+                    ),
+                    None,
+                )
+                if terminal is None or terminal.outcome is None:
+                    continue
+                artifact = produced.get((target_map.target, terminal.activation, output_binding.source.port))
+                if artifact is None:
+                    continue
+                producer = OperationOutputKey(
+                    activation=terminal.activation,
+                    target=target_map.target,
+                    port=output_binding.source.port,
+                )
+                if not any(fact.key == producer and fact.artifact == artifact for fact in provenance):
+                    reject(EffectCode.MISSING)
             workflow_outcome = None
             for binding in prepared.workflow.workflow.outcome_bindings:
                 outcome_activation = _source_activation(state, root_anchor, binding.source.node)

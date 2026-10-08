@@ -125,6 +125,7 @@ async def _execute_assessment(
     candidate_input: bool = False,
     alias_output: bool = False,
     auxiliary_output: bool = False,
+    root_passthrough: bool = False,
     decision_input: bool = False,
     coverage: frozenset[CoverageAtom] = frozenset(),
     target_count: int = 1,
@@ -136,6 +137,7 @@ async def _execute_assessment(
     resource: ResourceLease | None = None,
     external: tuple[RequestTransport, ResourceLease] | None = None,
 ) -> tuple[AdmittedExecutionPlan, ExecutionResult]:
+    assert not root_passthrough or (candidate_input and not nested)
     assert not (decision_input and external is not None)
     assert not (auxiliary_output and (rename_ports or nested or decision_input or external is not None))
     predecessor = decision_input or external is not None
@@ -269,7 +271,12 @@ async def _execute_assessment(
         nodes=nodes,
         input_bindings=bindings,
         output_bindings=tuple(
-            replace(binding, destination=WorkflowOutputRef(port=root_output)) for binding in raw.output_bindings
+            replace(
+                binding,
+                source=WorkflowInputRef(port=root_input) if root_passthrough else binding.source,
+                destination=WorkflowOutputRef(port=root_output),
+            )
+            for binding in raw.output_bindings
         )
         + (
             (
