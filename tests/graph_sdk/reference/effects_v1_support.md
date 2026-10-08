@@ -1,3 +1,6 @@
+<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
 # R2 v14 public callback association correction
 
 Retain historical ID map/wrong_parent but replace the uninjectable internal parent field with a public AssociationResult association mismatch. Capture two actual executor-supplied expander associations in the production regression and cross-return them. The expected malformed_response occurs before output, item or assessment publication; the actual parent normalizes to one failed-empty expansion. No map publication transition occurs. The matched-association counterpart publishes normally. All other v13 case objects remain unchanged. Independent review pending.
