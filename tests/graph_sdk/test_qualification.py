@@ -573,6 +573,7 @@ class _BindingSource:
     fail_close: bool = False
     calls: int = 0
     closes: int = 0
+    versions: tuple[int, ...] | None = None
 
     async def retrieve(
         self,
@@ -586,7 +587,15 @@ class _BindingSource:
         self.calls += 1
         return SourceResponse(
             source=self.source,
-            items=(SourceItem(association=association, key=0, version=1, text="initial context"),),
+            items=tuple(
+                SourceItem(
+                    association=association,
+                    key=0,
+                    version=version,
+                    text="initial context" if self.versions is None else str(version),
+                )
+                for version in ((1,) if self.versions is None else self.versions)
+            ),
             settlement=ExternalSettlement(
                 request=request,
                 disposition="completed",
@@ -713,3 +722,130 @@ def test_binding_cleanup_shared_source_retains_union_before_close() -> None:
     output = qualify(admitted=admitted, result=result, current=current, submissions=submissions)
     assert not output.qualified
     assert all(item.withholding == frozenset({"cleanup_accounting"}) for item in output.targets)
+
+
+@pytest.mark.parametrize("alias", [False, True])
+def test_bound_input_identity_alias_requires_exact_reference(alias: bool) -> None:
+    provider = _BindingProvider(source=ContextSourceRef(name="version-owner", revision=1))
+    execution, result = asyncio.run(
+        _execute_assessment(initial_resources=(_initial_resource(provider),), alias_output=alias)
+    )
+    admitted, current, submissions = _inputs(execution, result)
+    assert qualify(admitted=admitted, result=result, current=current, submissions=submissions).qualified
+
+
+@pytest.mark.parametrize("version", [1, 2])
+def test_fresh_output_cannot_reuse_bound_input_runtime_key(version: int) -> None:
+    from anonymizer.engine.graph_sdk.executor import BoundInputKey, OperationOutputKey
+
+    provider = _BindingProvider(source=ContextSourceRef(name="version-owner", revision=1))
+    execution, result = asyncio.run(_execute_assessment(initial_resources=(_initial_resource(provider),)))
+    source = next(item.artifact for item in result.provenance if isinstance(item.key, BoundInputKey))
+    output = next(item.artifact for item in result.provenance if isinstance(item.key, OperationOutputKey))
+    original = (output.key, output.version)
+    object.__setattr__(output, "key", source.key)
+    object.__setattr__(output, "version", version)
+    try:
+        with pytest.raises(EffectRejected) as error:
+            admitted, current, submissions = _inputs(execution, result)
+            qualify(admitted=admitted, result=result, current=current, submissions=submissions)
+        assert error.value.code is (EffectCode.DUPLICATE if version == 1 else EffectCode.CONTRADICTORY)
+    finally:
+        object.__setattr__(output, "key", original[0])
+        object.__setattr__(output, "version", original[1])
+
+
+@pytest.mark.parametrize("versions", [(1,), (1, 2), (2, 1), (7, 2)])
+@pytest.mark.parametrize("alias", [False, True])
+def test_latest_initial_scalar_has_real_versioned_evidence(versions: tuple[int, ...], alias: bool) -> None:
+    from anonymizer.engine.graph_sdk.evidence import evidence_validity, verify_evidence
+    from anonymizer.engine.graph_sdk.executor import BoundInputKey
+
+    provider = _BindingProvider(source=ContextSourceRef(name="version-owner", revision=1), versions=versions)
+    execution, result = asyncio.run(
+        _execute_assessment(
+            initial_resources=(_initial_resource(provider),),
+            initial_item_limit=len(versions),
+            initial_version_selection="latest",
+            alias_output=alias,
+        )
+    )
+    sources = [item.artifact for item in result.provenance if isinstance(item.key, BoundInputKey)]
+    assert len(sources) == len(versions)
+    assert len({item.key for item in sources}) == 1
+    assert {item.version for item in sources} == set(versions)
+    selected = next(item.artifact for item in result.ports if item.port == "input")
+    assert selected.version == max(versions)
+    from anonymizer.engine.graph_sdk.requests import TextArtifactValue
+
+    selected_value = dict(result.artifacts)[selected]
+    assert isinstance(selected_value, TextArtifactValue)
+    assert selected_value.text == str(max(versions))
+    admitted = admit_qualification(
+        execution=execution, productions=execution.assessment_productions, limits=_qualification_limits()
+    )
+    submissions = (AssessmentSubmission(fact=result.assessments[0]),)
+    (verified,) = verify_evidence(admitted=admitted, result=result, submissions=submissions)
+    assert verified.reference.consumed == frozenset({selected})
+    assert (verified.reference.artifact == selected) == alias
+    for choice in (max(versions), min(versions), None):
+        refs = tuple(ref for ref, _ in result.artifacts if ref.key != selected.key or ref.version == choice)
+        current = evidence_revision_view(
+            admitted=admitted,
+            result=result,
+            artifacts=refs,
+            absences=(),
+            configurations=((result.assessments[0].node, result.assessments[0].environment.configuration),),
+            state=execution.context.prepared.state,
+        )
+        expected = "unknown" if choice is None else "current" if choice == max(versions) else "stale"
+        assert evidence_validity(evidence=verified, current=current) == expected
+        qualified = qualify(admitted=admitted, result=result, current=current, submissions=submissions)
+        assert bool(qualified.qualified) == (expected == "current")
+    assert provider.calls == 1
+    assert provider.closes == 1
+
+
+@pytest.mark.parametrize("mutation", ["split-lineage", "cross-lineage", "source-version"])
+def test_qualification_rejects_corrupted_materialized_lineage(mutation: str) -> None:
+    from anonymizer.engine.graph_sdk.executor import BoundInputKey
+
+    provider = _BindingProvider(source=ContextSourceRef(name="version-owner", revision=1), versions=(1, 2))
+    execution, result = asyncio.run(
+        _execute_assessment(
+            initial_resources=(_initial_resource(provider),),
+            initial_item_limit=2,
+            initial_version_selection="latest",
+            target_count=2,
+        )
+    )
+    sources = sorted(
+        (item.artifact for item in result.provenance if isinstance(item.key, BoundInputKey)),
+        key=lambda item: (item.key, item.version),
+    )
+    changed = sources[0]
+    original = (changed.key, changed.version)
+    if mutation == "split-lineage":
+        object.__setattr__(changed, "key", max(ref.key for ref, _ in result.artifacts) + 1)
+    elif mutation == "cross-lineage":
+        object.__setattr__(changed, "key", sources[2].key)
+    else:
+        object.__setattr__(changed, "version", 3)
+    try:
+        with pytest.raises(EffectRejected) as error:
+            admitted = admit_qualification(
+                execution=execution, productions=execution.assessment_productions, limits=_qualification_limits()
+            )
+            current = evidence_revision_view(
+                admitted=admitted,
+                result=result,
+                artifacts=(),
+                absences=(),
+                configurations=(),
+                state=execution.context.prepared.state,
+            )
+            qualify(admitted=admitted, result=result, current=current, submissions=())
+        assert error.value.code is (EffectCode.DUPLICATE if mutation == "cross-lineage" else EffectCode.CONTRADICTORY)
+    finally:
+        object.__setattr__(changed, "key", original[0])
+        object.__setattr__(changed, "version", original[1])

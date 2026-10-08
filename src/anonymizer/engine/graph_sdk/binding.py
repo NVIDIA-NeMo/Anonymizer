@@ -327,6 +327,7 @@ async def _bind_declaration(
                 and all(item.association == association for item in result.items)
                 and len({(item.association, item.key, item.version) for item in result.items}) == len(result.items)
                 and bool(result.items)
+                and (declaration.version_selection != "latest" or len({item.key for item in result.items}) == 1)
             )
             if not valid_settlement or not valid_items:
                 state = advance_requests(

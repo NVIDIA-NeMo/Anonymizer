@@ -185,6 +185,8 @@ class _BoundaryProvider:
             items += (SourceItem(association=association, key=1, version=1, text="b"),)
         elif self.mode == "duplicate":
             items += (SourceItem(association=association, key=0, version=1, text="duplicate"),)
+        elif self.mode == "versions":
+            items += (SourceItem(association=association, key=0, version=2, text="b"),)
         return SourceResponse(
             source=OTHER_SOURCE if self.mode == "malformed" else SOURCE,
             items=items,
@@ -488,11 +490,12 @@ def test_initial_binding_owns_retry_and_charges_each_request() -> None:
     asyncio.run(_assert_initial_binding_retry())
 
 
-def test_initial_binding_retains_matching_settlement_for_malformed_and_oversize_responses() -> None:
-    asyncio.run(_assert_initial_binding_boundary_settlements())
+@pytest.mark.parametrize("latest", [False, True])
+def test_initial_binding_retains_matching_settlement_for_malformed_and_oversize_responses(latest: bool) -> None:
+    asyncio.run(_assert_initial_binding_boundary_settlements(latest=latest))
 
 
-async def _assert_initial_binding_boundary_settlements() -> None:
+async def _assert_initial_binding_boundary_settlements(*, latest: bool) -> None:
     workflow, node, artifact = _context_workflow()
     data = _data(1)
     policy = PhysicalRequestPolicy(
@@ -518,9 +521,12 @@ async def _assert_initial_binding_boundary_settlements() -> None:
         ("malformed", "failure", "failed"),
         ("duplicate", "failure", "failed"),
         ("oversize", "success", "oversize"),
-        ("multiple", "success", "oversize"),
+        ("versions", "success", "oversize"),
+        ("multiple", "failure" if latest else "success", "failed" if latest else "oversize"),
     ):
         provider = _BoundaryProvider(mode=mode)
+        item_limit = 2 if latest and mode != "versions" else 1
+        byte_limit = 20 if mode == "versions" else 2
         declaration = InitialContextDecl(
             target=next(iter(data.targets)),
             node=node,
@@ -529,8 +535,9 @@ async def _assert_initial_binding_boundary_settlements() -> None:
             source=SOURCE,
             selector=ContextSelector(fields=()),
             requirement="required",
-            bounds=RetrievalBounds(max_items=1, max_bytes=2, max_requests=1),
+            bounds=RetrievalBounds(max_items=item_limit, max_bytes=byte_limit, max_requests=1),
             materialization=ContextMaterialization(kind="single", item_type=artifact),
+            version_selection="latest" if latest else "exact_one",
         )
         result = await (
             await start_initial_binding(
@@ -552,8 +559,8 @@ async def _assert_initial_binding_boundary_settlements() -> None:
                     max_capabilities=1,
                     max_selector_fields=0,
                     max_selector_bytes=0,
-                    max_items=1,
-                    max_bytes=2,
+                    max_items=item_limit,
+                    max_bytes=byte_limit,
                     max_requests=1,
                     max_resources=1,
                 ),
@@ -762,3 +769,29 @@ async def _assert_failed_acquisition_cleanup(factory_failure: str, ownership: st
         assert facts[1].resource == associations[1].resource
         assert facts[1].disposition == "closed"
         assert associations[1].targets == frozenset({second_target})
+
+
+@pytest.mark.parametrize("case", ["exact-one-many", "latest-empty", "latest-collection"])
+def test_initial_version_selection_rejects_incompatible_declarations(case: str) -> None:
+    workflow, node, artifact = _context_workflow()
+    del workflow
+    data = _data(1)
+    base = InitialContextDecl(
+        target=next(iter(data.targets)),
+        node=node,
+        port="input",
+        artifact_type=artifact,
+        source=SOURCE,
+        selector=ContextSelector(fields=()),
+        requirement="required",
+        bounds=RetrievalBounds(max_items=1, max_bytes=20, max_requests=1),
+        materialization=ContextMaterialization(kind="single", item_type=artifact),
+    )
+    with pytest.raises(EffectRejected) as error:
+        if case == "exact-one-many":
+            replace(base, bounds=replace(base.bounds, max_items=2))
+        elif case == "latest-empty":
+            replace(base, version_selection="latest", bounds=replace(base.bounds, max_items=0))
+        else:
+            replace(base, version_selection="latest", materialization=replace(base.materialization, kind="collection"))
+    assert error.value.code.value == "contradictory"

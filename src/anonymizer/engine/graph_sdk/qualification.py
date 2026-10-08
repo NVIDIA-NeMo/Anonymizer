@@ -356,7 +356,7 @@ class _Qualification:
             if not fact.parents <= self.provenance.keys():
                 reject(EffectCode.MISSING)
             self._producer(fact)
-        self._validate_materialized_versions()
+        self._validate_artifact_allocations()
         self._provenance_acyclic()
         outputs = [(item.target, item.port) for item in self.result.final_outputs]
         if len(outputs) != len(set(outputs)):
@@ -405,7 +405,7 @@ class _Qualification:
             }:
                 reject(EffectCode.CONTRADICTORY)
 
-    def _validate_materialized_versions(self) -> None:
+    def _validate_artifact_allocations(self) -> None:
         allocated: dict[tuple[object, ...], int] = {}
         owners: dict[int, tuple[object, ...]] = {}
         for fact in self.result.provenance:
@@ -416,8 +416,18 @@ class _Qualification:
             elif isinstance(key, MapItemKey):
                 lineage = (MapItemKey, key.expander, key.target, key.item_key)
                 version = key.item_version
+            elif isinstance(key, OperationOutputKey):
+                node = self.nodes[self.entries[key.activation].template]
+                if isinstance(node, SubgraphNode):
+                    continue
+                dependency = next(item for item in node.operation.output_dependencies if item.output == key.port)
+                if dependency.identity_input is not None:
+                    continue
+                lineage = (OperationOutputKey, key)
+                version = 1
             else:
-                continue
+                lineage = (type(key), key)
+                version = 1
             if (
                 fact.artifact.version != version
                 or allocated.setdefault(lineage, fact.artifact.key) != fact.artifact.key
@@ -544,6 +554,10 @@ class _Qualification:
                 if any(item not in self.input_parents for item in input_keys):
                     reject(EffectCode.MISSING)
                 expected = frozenset(self.input_parents[item] for item in input_keys)
+                if dependency.identity_input is not None:
+                    identity_parent = self.input_parents[key.target, key.activation, dependency.identity_input]
+                    if fact.artifact != self.provenance[identity_parent].artifact:
+                        reject(EffectCode.CONTRADICTORY)
                 if fact.parents != expected or fact.decision != any(
                     item.node == entry.template for item in self.admitted.execution.decisions
                 ):

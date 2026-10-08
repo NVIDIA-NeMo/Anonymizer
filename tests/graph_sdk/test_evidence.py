@@ -19,6 +19,7 @@ from anonymizer.engine.graph_sdk.context import (
     ContextResource,
     ContextSelector,
     InitialContextDecl,
+    InitialVersionSelection,
     RetrievalBounds,
     admit_context_plan,
 )
@@ -175,6 +176,8 @@ async def _execute_assessment(
     resource: ResourceLease | None = None,
     external: tuple[RequestTransport, ResourceLease] | None = None,
     initial_resources: tuple[ContextResource, ...] = (),
+    initial_item_limit: int = 1,
+    initial_version_selection: InitialVersionSelection = "exact_one",
 ) -> tuple[AdmittedExecutionPlan, ExecutionResult]:
     auxiliary_output = auxiliary_output or partial_assessment
     depth = nested_depth or int(nested)
@@ -421,8 +424,9 @@ async def _execute_assessment(
                         source=initial_resources[index % len(initial_resources)].source,
                         selector=ContextSelector(fields=()),
                         requirement="required",
-                        bounds=RetrievalBounds(max_items=1, max_bytes=20, max_requests=1),
+                        bounds=RetrievalBounds(max_items=initial_item_limit, max_bytes=20, max_requests=1),
                         materialization=ContextMaterialization(kind="single", item_type=artifact),
+                        version_selection=initial_version_selection,
                     )
                     for index, target in enumerate(data.targets)
                 ),
@@ -434,7 +438,7 @@ async def _execute_assessment(
                     max_capabilities=len(initial_resources),
                     max_selector_fields=0,
                     max_selector_bytes=0,
-                    max_items=target_count,
+                    max_items=initial_item_limit * target_count,
                     max_bytes=20 * target_count,
                     max_requests=target_count,
                     max_resources=len(initial_resources),
@@ -580,7 +584,7 @@ async def _execute_assessment(
         limits=ExecutionLimits(
             max_local_in_flight=1,
             max_remote_outstanding=1 if external is not None else 0,
-            max_runtime_artifacts=(2 + int(auxiliary_output)) * target_count,
+            max_runtime_artifacts=(1 + initial_item_limit + int(auxiliary_output)) * target_count,
             max_runtime_artifact_bytes=100,
             max_collection_items=0,
         ),

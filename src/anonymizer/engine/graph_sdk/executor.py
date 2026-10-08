@@ -3497,9 +3497,9 @@ def _materialize_bound_context(
             parents.add(key)
         destination = (declaration.target, declaration.node, declaration.port)
         if declaration.materialization.kind == "single":
-            if len(item_refs) != 1:
+            if declaration.version_selection == "exact_one" and len(item_refs) != 1:
                 reject(EffectCode.CONTRADICTORY)
-            produced[destination] = item_refs[0]
+            produced[destination] = max(item_refs, key=lambda item: item.version)
         else:
             reference = ArtifactRef(invocation=invocation, key=next_artifact, version=1)
             next_artifact += 1

@@ -44,6 +44,7 @@ from anonymizer.graph.workflow import (
 )
 
 ContextRequirement: TypeAlias = Literal["required", "optional"]
+InitialVersionSelection: TypeAlias = Literal["exact_one", "latest"]
 ProviderExecution: TypeAlias = Literal["async", "blocking"]
 SourceTerminal: TypeAlias = Literal["bound", "failed", "cancelled", "lost", "oversize", "omitted_optional"]
 BindingTerminal: TypeAlias = Literal["success", "partial", "failed", "cancelled", "lost", "inconsistent"]
@@ -128,6 +129,7 @@ class InitialContextDecl(PrivateValue):
     requirement: ContextRequirement
     bounds: RetrievalBounds
     materialization: ContextMaterialization
+    version_selection: InitialVersionSelection = "exact_one"
 
     def __post_init__(self) -> None:
         require_instance(self.target, DatumId)
@@ -139,10 +141,20 @@ class InitialContextDecl(PrivateValue):
         require_literal(self.requirement, frozenset({"required", "optional"}))
         require_instance(self.bounds, RetrievalBounds)
         require_instance(self.materialization, ContextMaterialization)
+        require_literal(self.version_selection, frozenset({"exact_one", "latest"}))
         if self.materialization.kind == "single":
-            if self.artifact_type != self.materialization.item_type or self.bounds.max_items != 1:
+            if (
+                self.artifact_type != self.materialization.item_type
+                or self.bounds.max_items == 0
+                or self.version_selection == "exact_one"
+                and self.bounds.max_items != 1
+            ):
                 reject(EffectCode.CONTRADICTORY)
-        elif self.artifact_type == self.materialization.item_type or self.bounds.max_items == 0:
+        elif (
+            self.artifact_type == self.materialization.item_type
+            or self.bounds.max_items == 0
+            or self.version_selection != "exact_one"
+        ):
             reject(EffectCode.CONTRADICTORY)
 
 
@@ -570,8 +582,14 @@ def _validate_bound_context(
             reject(EffectCode.CONTRADICTORY)
         retained = [item for item in context.artifacts if item.reference.declaration == fact.identity]
         if fact.terminal == "bound":
-            if not retained or (declaration.materialization.kind == "single" and len(retained) != 1):
+            if not retained or (
+                declaration.materialization.kind == "single"
+                and declaration.version_selection == "exact_one"
+                and len(retained) != 1
+            ):
                 reject(EffectCode.MISSING)
+            if declaration.version_selection == "latest" and len({item.reference.key for item in retained}) != 1:
+                reject(EffectCode.CONTRADICTORY)
         elif retained:
             reject(EffectCode.EXTRA)
         if declaration.requirement == "required" and fact.terminal != "bound":
