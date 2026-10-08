@@ -5,7 +5,6 @@
 from __future__ import annotations
 
 import asyncio
-from contextlib import suppress
 from dataclasses import dataclass
 from typing import Literal
 
@@ -251,18 +250,61 @@ async def _bind_declaration(
         while not retrieval.done() and not work.cancelled:
             await asyncio.sleep(0)
         if work.cancelled and not retrieval.done():
+            state = advance_requests(state=state, event=RequestCancel(request=request))
             try:
                 stopped = await provider.cancel(request)
             except Exception:
                 stopped = None
             retrieval.cancel()
-            with suppress(asyncio.CancelledError):
-                await retrieval
+            late_result: SourceResponse | SourceFailure | SourceLost | None = None
+            try:
+                late_result = await retrieval
+            except asyncio.CancelledError:
+                pass
             if isinstance(stopped, StopConfirmed):
                 state = advance_requests(state=state, event=StopAcknowledged(request=request, usage=stopped.usage))
-                return state, _source_fact(identity, declaration, "cancelled"), (), 0, 0
-            state = advance_requests(state=state, event=MarkLost(request=request))
-            return state, _source_fact(identity, declaration, "lost"), (), 0, 0
+                terminal: SourceTerminal = "cancelled"
+            else:
+                state = advance_requests(state=state, event=MarkLost(request=request))
+                terminal = "lost"
+            if isinstance(late_result, SourceResponse):
+                valid_late_result = (
+                    late_result.source == declaration.source
+                    and bool(late_result.items)
+                    and all(item.association == association for item in late_result.items)
+                    and len({(item.key, item.version) for item in late_result.items}) == len(late_result.items)
+                )
+                event: AcceptResult | AcceptFailure
+                if valid_late_result:
+                    event = AcceptResult(
+                        request=request,
+                        results=(
+                            AssociationResult(
+                                association=association,
+                                outcome="retrieved",
+                                outputs=(),
+                                consumed_context_ports=frozenset(),
+                            ),
+                        ),
+                    )
+                else:
+                    event = AcceptFailure(request=request, failure="malformed_response")
+                state = advance_requests(state=state, event=event)
+            elif isinstance(late_result, SourceFailure):
+                valid_late_failure = late_result.source == declaration.source and (
+                    late_result.settlement is None or late_result.settlement.request == request
+                )
+                state = advance_requests(
+                    state=state,
+                    event=AcceptFailure(
+                        request=request,
+                        failure=late_result.failure if valid_late_failure else "malformed_response",
+                    ),
+                )
+            late_settlement = late_result.settlement if late_result is not None else None
+            if late_settlement is not None and late_settlement.request == request:
+                state = advance_requests(state=state, event=ObserveSettlement(settlement=late_settlement))
+            return state, _source_fact(identity, declaration, terminal), (), 0, 0
         try:
             result = retrieval.result()
         except Exception:

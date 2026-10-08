@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from typing import Any, cast
 
 import pytest
@@ -102,6 +102,40 @@ class _RetryProvider:
 
     async def cancel(self, request):
         del request
+        return StopConfirmed(usage=ExactUsage(input_units=0, output_units=0))
+
+
+@dataclass
+class _LateProvider:
+    mode: str
+    acknowledge_stop: bool
+    started: asyncio.Event = field(default_factory=asyncio.Event)
+
+    async def retrieve(self, *, request, association, selector, bounds):
+        del selector, bounds
+        self.started.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            pass
+        settlement = ExternalSettlement(
+            request=request,
+            disposition="completed",
+            usage=ExactUsage(input_units=1, output_units=1),
+            remote_stopped=True,
+        )
+        if self.mode == "failure":
+            return SourceFailure(source=SOURCE, failure="permanent", settlement=settlement)
+        return SourceResponse(
+            source=SOURCE,
+            items=(SourceItem(association=association, key=0, version=1, text="late"),),
+            settlement=settlement,
+        )
+
+    async def cancel(self, request):
+        del request
+        if not self.acknowledge_stop:
+            raise RuntimeError("stop not acknowledged")
         return StopConfirmed(usage=ExactUsage(input_units=0, output_units=0))
 
 
@@ -211,6 +245,90 @@ def _context_workflow():
 
 def test_initial_binding_preserves_provider_text_and_receipt() -> None:
     asyncio.run(_assert_initial_binding())
+
+
+@pytest.mark.parametrize("mode", ("response", "failure"))
+@pytest.mark.parametrize("acknowledge_stop", (False, True))
+def test_initial_binding_retains_late_request_facts_without_materializing(
+    mode: str,
+    acknowledge_stop: bool,
+) -> None:
+    asyncio.run(_assert_late_initial_binding(mode, acknowledge_stop))
+
+
+async def _assert_late_initial_binding(mode: str, acknowledge_stop: bool) -> None:
+    workflow, node, artifact = _context_workflow()
+    data = _data(1)
+    target = next(iter(data.targets))
+    policy = PhysicalRequestPolicy(
+        visibility="dispatch_and_settlement",
+        pre_dispatch_control="executor",
+        retry_owner="executor",
+        replay="idempotent",
+        max_attempts=1,
+    )
+    capability = ContextSourceCapability(
+        source=SOURCE,
+        artifact_type=artifact,
+        uses=frozenset({"initial_binding"}),
+        execution="async",
+        resource_owner="caller",
+        cancellation="cooperative_ack",
+        settlement="explicit_ack",
+        usage="exact",
+        request=policy,
+        safe_detachment="forbidden",
+    )
+    declaration = InitialContextDecl(
+        target=target,
+        node=node,
+        port="input",
+        artifact_type=artifact,
+        source=SOURCE,
+        selector=ContextSelector(fields=()),
+        requirement="required",
+        bounds=RetrievalBounds(max_items=1, max_bytes=20, max_requests=1),
+        materialization=ContextMaterialization(kind="single", item_type=artifact),
+    )
+    provider = _LateProvider(mode=mode, acknowledge_stop=acknowledge_stop)
+    running = await start_initial_binding(
+        data=data,
+        workflow=workflow,
+        declarations=(declaration,),
+        capabilities=(capability,),
+        resources=(
+            ContextResource(
+                source=SOURCE,
+                capability=capability,
+                lease=ResourceLease.create(owner="caller", safe_detachment="forbidden", handle=provider),
+                factory=None,
+            ),
+        ),
+        limits=BindingLimits(
+            max_declarations=1,
+            max_sources=1,
+            max_capabilities=1,
+            max_selector_fields=0,
+            max_selector_bytes=0,
+            max_items=1,
+            max_bytes=20,
+            max_requests=1,
+            max_resources=1,
+        ),
+    )
+    await provider.started.wait()
+    running.request_cancel()
+    result = await running.wait()
+    expected_terminal = "cancelled" if acknowledge_stop else "lost"
+    assert result.receipt.terminal == ("failed" if acknowledge_stop else "lost")
+    assert result.receipt.sources[0].terminal == expected_terminal
+    assert result.context is None
+    assert not result.receipt.artifacts
+    request = result.receipt.requests
+    assert request.terminals[0].category == expected_terminal
+    assert request.cancel_requested == frozenset({request.dispatches[0].request})
+    assert [item.code for item in request.defects] == ["conflicting_terminal"]
+    assert len(request.settlements) == 1
 
 
 def test_context_source_requires_exact_initial_declaration_before_provider_effects() -> None:

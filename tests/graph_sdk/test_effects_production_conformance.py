@@ -113,7 +113,13 @@ _BASE_CASES = tuple(
     for case in json.loads(CORPUS.read_bytes())
     if (
         case["family"] in REQUEST_FAMILIES
-        or case["case_id"] in {"binding/adaptive_semantic_outcome_independent", "binding/unsolicited_source_result"}
+        or case["case_id"]
+        in {
+            "binding/adaptive_semantic_outcome_independent",
+            "binding/cancel_after_dispatch_lost",
+            "binding/cancel_before_dispatch",
+            "binding/unsolicited_source_result",
+        }
     )
     and case["boundary"] == "runtime"
 )
