@@ -13,6 +13,7 @@ import pytest
 from anonymizer.engine.graph_sdk._effect_values import EffectCode, EffectRejected
 from anonymizer.engine.graph_sdk.capabilities import FrozenConfig, ImplementationRef, ImplementationSelection
 from anonymizer.engine.graph_sdk.context import admit_context_plan
+from anonymizer.engine.graph_sdk.data import ValidatedDataGraph
 from anonymizer.engine.graph_sdk.evidence import (
     AssessmentSubmission,
     QualificationLimits,
@@ -49,6 +50,7 @@ from anonymizer.engine.graph_sdk.preparation import (
     prepare,
 )
 from anonymizer.engine.graph_sdk.records import AbsenceRef, CandidateRef, DecisionRef
+from anonymizer.engine.graph_sdk.resources import ResourceLease
 from anonymizer.graph._values import ArtifactRef, InvocationId
 from anonymizer.graph.activation import ActivationLimits
 from anonymizer.graph.workflow import (
@@ -57,12 +59,19 @@ from anonymizer.graph.workflow import (
     InputBinding,
     NodeId,
     NodeInputRef,
+    NodeOutcomeRef,
     NodeOutputRef,
     OperationNode,
+    OutcomeBinding,
+    OutputBinding,
     ProtectionRequirement,
     SequenceEdge,
     StateEffect,
+    SubgraphNode,
+    WorkflowId,
     WorkflowInputRef,
+    WorkflowOutcomeRef,
+    WorkflowOutputRef,
     admit_activation_workflow,
     admit_static_workflow,
 )
@@ -80,13 +89,20 @@ async def _execute_assessment(
     *,
     environment: bool = False,
     candidate_input: bool = False,
+    alias_output: bool = False,
     decision_input: bool = False,
     coverage: frozenset[CoverageAtom] = frozenset(),
     target_count: int = 1,
+    nested: bool = False,
+    rename_ports: bool = False,
+    data: ValidatedDataGraph | None = None,
+    execution_only: bool = False,
+    finding: AssessmentFinding | None = None,
+    resource: ResourceLease | None = None,
 ) -> tuple[AdmittedExecutionPlan, ExecutionResult]:
     evidence_port = "assessment" if candidate_input else "context"
     base, node, artifact = _adaptive_workflow(
-        assessment=True, requests=0, distinct_subject=candidate_input, alias_evidence=candidate_input
+        assessment=True, requests=0, distinct_subject=candidate_input, alias_evidence=candidate_input or alias_output
     )
     raw = base.workflow
     read = StateEffect(kind="read", name="assessment-policy")
@@ -140,12 +156,52 @@ async def _execute_assessment(
             for outcome in operation.outcomes
         ),
     )
+    root_input = "document" if rename_ports else "input"
+    root_output = "protected" if rename_ports else evidence_port
+    if rename_ports:
+        interface = replace(
+            interface,
+            inputs=tuple(replace(port, name=root_input) for port in interface.inputs),
+            outputs=tuple(replace(port, name=root_output) for port in interface.outputs),
+            output_dependencies=tuple(
+                replace(
+                    item,
+                    output=root_output,
+                    inputs=frozenset({root_input}),
+                    identity_input=root_input if item.identity_input is not None else None,
+                )
+                for item in interface.output_dependencies
+            ),
+            outcomes=tuple(
+                replace(
+                    outcome,
+                    produced_ports=frozenset({root_output}),
+                    evidence=frozenset(
+                        replace(
+                            promise,
+                            subject_port=root_input if candidate_input else root_output,
+                            consumed_ports=frozenset({root_input}),
+                        )
+                        for promise in outcome.evidence
+                    ),
+                )
+                for outcome in interface.outcomes
+            ),
+        )
+        bindings = tuple(
+            replace(binding, source=WorkflowInputRef(port=root_input))
+            if isinstance(binding.source, WorkflowInputRef)
+            else binding
+            for binding in bindings
+        )
     static = admit_static_workflow(
         workflow=raw.workflow,
         interface=interface,
         nodes=nodes,
         input_bindings=bindings,
-        output_bindings=tuple(raw.output_bindings),
+        output_bindings=tuple(
+            replace(binding, destination=WorkflowOutputRef(port=root_output)) for binding in raw.output_bindings
+        ),
         outcome_bindings=tuple(raw.outcome_bindings),
         sequence=(SequenceEdge(before=decision_node, after=node),) if decision_input else (),
         choices=tuple(raw.choices),
@@ -153,23 +209,70 @@ async def _execute_assessment(
             ProtectionRequirement(
                 outcome="ok",
                 meaning="test assessment",
-                subject_port="input" if candidate_input else evidence_port,
-                consumed_ports=frozenset({"input"}),
+                subject_port=root_input if candidate_input else root_output,
+                consumed_ports=frozenset({root_input}),
                 coverage=coverage,
             ),
         ),
         limits=replace(raw.limits, max_nodes=len(nodes), max_bindings=4, max_sequence_edges=1),
     )
+    scopes = (DynamicScope(workflow=static, maps=(), loops=(), joins=()),)
+    if nested:
+        body = static
+        owner = WorkflowId.new()
+        container = NodeId.new(workflow=owner)
+        outer_interface = replace(
+            body.interface,
+            outcomes=tuple(
+                replace(outcome, ceiling=replace(outcome.ceiling, max_activations=outcome.ceiling.max_activations + 1))
+                for outcome in body.interface.outcomes
+            ),
+        )
+        static = admit_static_workflow(
+            workflow=owner,
+            interface=outer_interface,
+            nodes=(SubgraphNode(id=container, operation=body.interface, body=body),),
+            input_bindings=(
+                InputBinding(
+                    source=WorkflowInputRef(port=root_input), destination=NodeInputRef(node=container, port=root_input)
+                ),
+            ),
+            output_bindings=(
+                OutputBinding(
+                    source=NodeOutputRef(node=container, port=root_output),
+                    destination=WorkflowOutputRef(port=root_output),
+                ),
+            ),
+            outcome_bindings=tuple(
+                OutcomeBinding(
+                    source=NodeOutcomeRef(node=container, outcome=item.name),
+                    destination=WorkflowOutcomeRef(outcome=item.name),
+                )
+                for item in body.interface.outcomes
+            ),
+            sequence=(),
+            choices=(),
+            protection=tuple(body.protection_requirements),
+            limits=replace(body.limits, max_nodes=len(nodes) + 1, max_subgraph_depth=2),
+        )
+        scopes = (*scopes, DynamicScope(workflow=static, maps=(), loops=(), joins=()))
+    count = len(nodes) + int(nested)
     workflow = admit_activation_workflow(
         workflow=static,
-        scopes=(DynamicScope(workflow=static, maps=(), loops=(), joins=()),),
-        limits=replace(base.limits, max_activation_occurrences=len(nodes)),
+        scopes=scopes,
+        limits=replace(base.limits, max_activation_occurrences=count, max_dynamic_depth=2 if nested else 1),
     )
-    data = _data(target_count)
+    data = data if data is not None else _data(target_count)
+    target_count = len(data.targets)
     capabilities = tuple(
         replace(
             _capability(workflow),
             operation=item.operation,
+            resource_lifetime="stateless"
+            if resource is None
+            else "caller_owned"
+            if resource.owner == "caller"
+            else "executor_owned",
             implementation=ImplementationRef(name=f"evidence-fixture-{index}", revision=1),
         )
         for index, item in enumerate(nodes)
@@ -178,7 +281,9 @@ async def _execute_assessment(
         data=data,
         workflow=workflow,
         capabilities=capabilities,
-        activation_limits=ActivationLimits(max_events=3 * len(nodes), max_entries=len(nodes), max_parent_depth=1),
+        activation_limits=ActivationLimits(
+            max_events=3 * count, max_entries=count, max_parent_depth=2 if nested else 1
+        ),
         selections=tuple(
             ImplementationSelection(
                 node=item.id, implementation=capability.implementation, configuration=capability.configuration
@@ -187,16 +292,18 @@ async def _execute_assessment(
         ),
         limits=_limits(capabilities=len(nodes)),
         configuration=PreparationConfiguration(
-            purpose="protection", required_protection_outcomes=frozenset({"ok"}), hard_request_limit=None
+            purpose="execution_only" if execution_only else "protection",
+            required_protection_outcomes=frozenset() if execution_only else frozenset({"ok"}),
+            hard_request_limit=None,
         ),
         bound_inputs=tuple(
-            BoundInput(target=target, source=target, port="input", artifact_type=artifact) for target in data.targets
+            BoundInput(target=target, source=target, port=root_input, artifact_type=artifact) for target in data.targets
         ),
         state=StateRevisionView(
             revisions=frozenset({StateRevision(effect=read, revision=3)}) if environment else frozenset()
         ),
     )
-    finding = AssessmentFinding(status="satisfied", code="observed")
+    finding = finding if finding is not None else AssessmentFinding(status="satisfied", code="observed")
     declaration = EvidenceProductionDecl(
         node=node,
         outcome="ok",
@@ -249,8 +356,8 @@ async def _execute_assessment(
             max_finding_code_bytes=20,
             max_absence_queries=1 if environment else 0,
             max_assessment_facts=target_count,
-            max_port_facts=(3 + 2 * int(decision_input)) * target_count,
-            max_provenance_edges=(2 + int(decision_input)) * target_count,
+            max_port_facts=(3 + 2 * int(decision_input) + int(nested)) * target_count,
+            max_provenance_edges=(2 + int(decision_input) + int(nested)) * target_count,
         ),
     )
     services = ExecutionServices(
@@ -261,9 +368,11 @@ async def _execute_assessment(
                 configuration=capability.configuration,
                 local=_Callback(decision=True)
                 if item.id == decision_node
-                else _AssessingLocal(finding=finding, evidence_port=evidence_port, alias_evidence=candidate_input),
+                else _AssessingLocal(
+                    finding=finding, evidence_port=evidence_port, alias_evidence=candidate_input or alias_output
+                ),
                 transport=None,
-                resource=None,
+                resource=resource,
             )
             for item, capability in zip(nodes, capabilities, strict=True)
         ),

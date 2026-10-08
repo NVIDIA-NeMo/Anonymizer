@@ -4,7 +4,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, fields
+from dataclasses import dataclass, fields, replace
+from itertools import product
 from typing import Literal
 
 from anonymizer.engine.graph_sdk._effect_values import (
@@ -28,7 +29,23 @@ from anonymizer.engine.graph_sdk.executor import (
 from anonymizer.engine.graph_sdk.preparation import StateRevisionView
 from anonymizer.engine.graph_sdk.records import AbsenceRef, CandidateRef, ConsumedRef, DecisionRef, EvidenceRef
 from anonymizer.graph._values import ActivationKey, ArtifactRef, DatumId
-from anonymizer.graph.workflow import CoverageAtom, EvidencePromise, NodeId, OperationNode, OperationSpec, OutcomeSpec
+from anonymizer.graph.workflow import (
+    AdmittedWorkflow,
+    ContextInputRef,
+    CoverageAtom,
+    EvidencePromise,
+    NodeId,
+    OperationNode,
+    OperationSpec,
+    OutcomeSpec,
+    ProtectionRequirement,
+    SubgraphNode,
+    Vertex,
+    WorkflowInputRef,
+    _selected_nodes,
+    _walk_endpoints,
+    _walk_interface_inputs,
+)
 
 Validity = Literal["current", "stale", "unknown"]
 _EVIDENCE_KEY = object()
@@ -75,6 +92,7 @@ class AdmittedQualification(PrivateValue):
     productions: tuple[EvidenceProductionDecl, ...]
     limits: QualificationLimits
     _resolved: tuple[_Production, ...]
+    _projections: tuple[_ProjectedPromise, ...]
 
     def __init__(
         self,
@@ -84,6 +102,7 @@ class AdmittedQualification(PrivateValue):
         productions: tuple[EvidenceProductionDecl, ...],
         limits: QualificationLimits,
         _resolved: tuple[_Production, ...],
+        _projections: tuple[_ProjectedPromise, ...],
     ) -> None:
         if _key is not _EVIDENCE_KEY:
             raise TypeError("qualification admission requires admit_qualification")
@@ -145,14 +164,27 @@ def admit_qualification(
         reject(EffectCode.DUPLICATE)
     if any(item.node not in operations for item in productions):
         reject(EffectCode.MISSING)
-    if frozenset(productions) != frozenset(execution.assessment_productions):
-        reject(
-            EffectCode.MISSING
-            if frozenset(productions) < frozenset(execution.assessment_productions)
-            else EffectCode.UNSUPPORTED
-        )
     resolved = tuple(_resolve_production(item, operations[item.node], limits) for item in productions)
-    node_order = {slot.template: slot.index for slot in reversed(prepared.reservation_recipe)}
+    projections = _PromiseProjection(execution).all()
+    requirements = tuple(
+        item
+        for item in prepared.workflow.workflow.protection_requirements
+        if item.outcome in prepared.configuration.required_protection_outcomes
+    )
+    required = {
+        (item.node, item.outcome, item.promise.name)
+        for item in projections
+        if any(item.matches(requirement) for requirement in requirements)
+    }
+    observed = set(keys)
+    if required - observed:
+        reject(EffectCode.MISSING)
+    if observed - required or any(item not in execution.assessment_productions for item in productions):
+        reject(EffectCode.UNSUPPORTED)
+    node_order = {
+        node.id: index
+        for index, node in enumerate(node for body in reachable_workflows(prepared.workflow) for node in body.nodes)
+    }
     resolved = tuple(
         sorted(resolved, key=lambda item: (node_order[item.declaration.node], item.outcome.name, item.promise.name))
     )
@@ -162,6 +194,7 @@ def admit_qualification(
         productions=tuple(item.declaration for item in resolved),
         limits=limits,
         _resolved=resolved,
+        _projections=tuple(item for item in projections if (item.node, item.outcome, item.promise.name) in observed),
     )
 
 
@@ -424,7 +457,10 @@ def evidence_revision_view(
     if len({item.target for item in candidates}) != len(candidates):
         reject(EffectCode.CONTRADICTORY)
     prepared = admitted.execution.context.prepared
-    order = {slot.template: slot.index for slot in reversed(prepared.reservation_recipe)}
+    order = {
+        node.id: index
+        for index, node in enumerate(node for body in reachable_workflows(prepared.workflow) for node in body.nodes)
+    }
     return EvidenceRevisionView(
         _key=_EVIDENCE_KEY,
         candidates=candidates,
@@ -522,3 +558,131 @@ def evidence_validity(*, evidence: VerifiedEvidence, current: EvidenceRevisionVi
     if any(actual is None for _, actual in comparisons):
         return "unknown"
     return "current"
+
+
+@dataclass(frozen=True, slots=True, kw_only=True, repr=False)
+class _ProjectedPromise(PrivateValue):
+    interface_outcome: str
+    path: tuple[NodeId, ...]
+    node: NodeId
+    outcome: str
+    promise: EvidencePromise
+
+    def matches(self, requirement: ProtectionRequirement) -> bool:
+        return (
+            self.interface_outcome == requirement.outcome
+            and self.promise.meaning == requirement.meaning
+            and self.promise.subject_port == requirement.subject_port
+            and self.promise.consumed_ports >= requirement.consumed_ports
+        )
+
+
+class _PromiseProjection:
+    """Lift operation promises through the admitted interface identity bindings."""
+
+    def __init__(self, execution: AdmittedExecutionPlan) -> None:
+        self.workflow = execution.context.prepared.workflow
+
+    def all(self) -> tuple[_ProjectedPromise, ...]:
+        return tuple(self._body(self.workflow.workflow, ()))
+
+    def _body(self, body: AdmittedWorkflow, path: tuple[NodeId, ...]) -> list[_ProjectedPromise]:
+        projected: set[_ProjectedPromise] = set()
+        nodes = tuple(body.nodes)
+        children = {
+            node.id: self._body(node.body, (*path, node.id)) for node in nodes if isinstance(node, SubgraphNode)
+        }
+        for outcomes in product(*(node.operation.outcomes for node in nodes)):
+            assignment = {node.id: outcome for node, outcome in zip(nodes, outcomes, strict=True)}
+            selected = _selected_nodes(frozenset(assignment), tuple(body.choices), assignment)
+            sinks = selected - {
+                edge.before for edge in body.sequence if edge.before in selected and edge.after in selected
+            }
+            mapping = next(
+                item
+                for item in body.outcome_bindings
+                if item.source.node in sinks and assignment[item.source.node].name == item.source.outcome
+            )
+            assignment = {node: outcome for node, outcome in assignment.items() if node in selected}
+            edges = self._edges(body, assignment)
+            for node in nodes:
+                if node.id not in selected:
+                    continue
+                outcome = assignment[node.id]
+                if isinstance(node, SubgraphNode):
+                    promises = [item for item in children[node.id] if item.interface_outcome == outcome.name]
+                else:
+                    promises = [
+                        _ProjectedPromise(
+                            interface_outcome=outcome.name,
+                            path=path,
+                            node=node.id,
+                            outcome=outcome.name,
+                            promise=promise,
+                        )
+                        for promise in outcome.evidence
+                    ]
+                inputs = {item.name for item in node.operation.inputs}
+                for item in promises:
+                    promise = item.promise
+                    if promise.subject_port in inputs:
+                        subjects = _walk_interface_inputs(("in", node.id, promise.subject_port), edges, backward=True)
+                    else:
+                        subjects = _walk_endpoints(
+                            ("out", node.id, promise.subject_port), edges, backward=False, endpoint_kind="wo"
+                        )
+                    consumed = [
+                        _walk_interface_inputs(("in", node.id, port), edges, backward=True)
+                        for port in promise.consumed_ports
+                    ]
+                    if len(subjects) != 1 or any(len(ports) != 1 for ports in consumed):
+                        continue
+                    projected.add(
+                        replace(
+                            item,
+                            interface_outcome=mapping.destination.outcome,
+                            promise=replace(
+                                promise,
+                                subject_port=next(iter(subjects)),
+                                consumed_ports=frozenset(port for ports in consumed for port in ports),
+                            ),
+                        )
+                    )
+        return list(projected)
+
+    def _edges(self, body: AdmittedWorkflow, assignment: dict[NodeId, OutcomeSpec]) -> set[tuple[Vertex, Vertex]]:
+        scope = next(item for item in self.workflow.scopes if item.workflow is body)
+        replaced = {(item.member, item.item_input) for item in scope.maps if item.item_input is not None}
+        edges: set[tuple[Vertex, Vertex]] = set()
+        for binding in body.input_bindings:
+            if (
+                binding.destination.node not in assignment
+                or (binding.destination.node, binding.destination.port) in replaced
+            ):
+                continue
+            if isinstance(binding.source, WorkflowInputRef):
+                source: Vertex = ("wi", None, binding.source.port)
+            elif isinstance(binding.source, ContextInputRef):
+                source = ("ci", None, binding.source.port)
+            else:
+                source = ("out", binding.source.node, binding.source.port)
+            edges.add((source, ("in", binding.destination.node, binding.destination.port)))
+        for binding in body.output_bindings:
+            if not isinstance(binding.source, WorkflowInputRef) and (
+                binding.source.node not in assignment
+                or binding.source.port not in assignment[binding.source.node].produced_ports
+            ):
+                continue
+            source = (
+                ("wi", None, binding.source.port)
+                if isinstance(binding.source, WorkflowInputRef)
+                else ("out", binding.source.node, binding.source.port)
+            )
+            edges.add((source, ("wo", None, binding.destination.port)))
+        for node in body.nodes:
+            if node.id not in assignment:
+                continue
+            for dependency in node.operation.output_dependencies:
+                if dependency.identity_input is not None and dependency.output in assignment[node.id].produced_ports:
+                    edges.add((("in", node.id, dependency.identity_input), ("out", node.id, dependency.output)))
+        return edges
