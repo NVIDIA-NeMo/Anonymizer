@@ -63,6 +63,7 @@ from anonymizer.engine.graph_sdk.requests import (
     BindingAssociation,
     BindingDeclarationId,
     BindingId,
+    BindingRequestScope,
     Dispatch,
     ExactUsage,
     ExternalSettlement,
@@ -2307,7 +2308,9 @@ def _policy(value: dict[str, Any]) -> PhysicalRequestPolicy:
 def test_request_corpus_case_through_production(case: dict[str, Any]) -> None:
     declaration = cast(dict[str, Any], case["declaration"])
     invocation = InvocationId.new(plan=PlanId.new())
-    scope = InvocationRequestScope(invocation=invocation)
+    binding = BindingId.new()
+    binding_labels = set(cast(dict[str, str], declaration.get("binding_declarations", {})))
+    scope = BindingRequestScope(binding=binding) if binding_labels else InvocationRequestScope(invocation=invocation)
     policies = {
         name: _policy(value) for name, value in cast(dict[str, dict[str, Any]], declaration["policies"]).items()
     }
@@ -2327,13 +2330,17 @@ def test_request_corpus_case_through_production(case: dict[str, Any]) -> None:
     )
     foreign_invocation = InvocationId.new(plan=invocation.plan)
     tasks = {
-        name: SemanticAssociation(
-            task=TaskAttemptId.new(
-                activation=ActivationKey(
-                    invocation=foreign_invocation if name.startswith("X") else invocation,
-                    occurrence=index,
-                    parent=None,
-                    iteration=None,
+        name: (
+            BindingAssociation(declaration=BindingDeclarationId.new(binding=binding, ordinal=index))
+            if name in binding_labels
+            else SemanticAssociation(
+                task=TaskAttemptId.new(
+                    activation=ActivationKey(
+                        invocation=foreign_invocation if name.startswith("X") else invocation,
+                        occurrence=index,
+                        parent=None,
+                        iteration=None,
+                    )
                 )
             )
         )
@@ -2385,7 +2392,7 @@ def test_request_corpus_case_through_production(case: dict[str, Any]) -> None:
 def _apply(
     state: RequestState,
     event: dict[str, Any],
-    tasks: dict[str, SemanticAssociation],
+    tasks: dict[str, Any],
     requests: dict[str, PhysicalRequestId],
     policies: dict[str, PhysicalRequestPolicy],
 ) -> RequestState:
@@ -2502,7 +2509,7 @@ def _usage(value: object):
 
 def _normalize(
     state: Any,
-    tasks: dict[str, SemanticAssociation],
+    tasks: dict[str, Any],
     requests: dict[str, PhysicalRequestId],
     policies: dict[str, PhysicalRequestPolicy],
 ) -> dict[str, object]:
