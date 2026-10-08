@@ -1010,6 +1010,10 @@ async def _assert_special_fixture_execution(case_id: str) -> None:
 def test_initial_collection_schema_rejects_same_typed_caller_root_before_provider_effects(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    _assert_collection_root_preflight(monkeypatch)
+
+
+def _assert_collection_root_preflight(monkeypatch: pytest.MonkeyPatch) -> None:
     binding_ids = 0
     original_new = BindingId.new
 

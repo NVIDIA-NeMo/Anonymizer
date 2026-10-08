@@ -19,7 +19,7 @@ from anonymizer.engine.graph_sdk.context import (
 from anonymizer.engine.graph_sdk.requests import BindingDeclarationId, BindingId
 from anonymizer.graph.workflow import ArtifactType, NodeId, WorkflowId
 from tests.graph_sdk.test_context_source_execution import (
-    test_initial_collection_schema_rejects_same_typed_caller_root_before_provider_effects as _assert_collection_root_rejection,
+    _assert_collection_root_preflight,
 )
 from tests.graph_sdk.test_effects_production_conformance import CORPUS, _assert_adaptive_materialization_case
 
@@ -60,4 +60,4 @@ def test_known_collection_cannot_be_supplied_as_a_caller_root(monkeypatch: pytes
     assert case["expected"] == {"status": "rejected", "code": "contradictory"}
     # The shared production fixture alpha-renames text/text_collection to
     # item/collection and proves zero BindingIds and provider factory calls.
-    _assert_collection_root_rejection(monkeypatch)
+    _assert_collection_root_preflight(monkeypatch)
