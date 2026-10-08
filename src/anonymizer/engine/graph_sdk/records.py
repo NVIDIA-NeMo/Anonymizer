@@ -30,6 +30,8 @@ ReasonCode: TypeAlias = Literal[
     "stale",
     "contradictory",
     "prerequisite",
+    "omitted_optional",
+    "artifact_limit_exhausted",
 ]
 Completion: TypeAlias = Literal["pending", "closed"]
 Qualification: TypeAlias = Literal["not_assessed", "met", "unmet", "unknown"]

@@ -7,16 +7,22 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Iterator
 from dataclasses import fields, replace
-from typing import cast
+from typing import cast, get_args
 
 import pytest
 
 from anonymizer.engine.graph_sdk._effect_values import EffectRejected
-from anonymizer.engine.graph_sdk._ingress import inspect_associations
+from anonymizer.engine.graph_sdk._ingress import inspect_associations, inspect_source
+from anonymizer.engine.graph_sdk.context import ContextSourceRef, SourceItem, SourceResponse
 from anonymizer.engine.graph_sdk.executor import AssessmentFinding, IngressLimits, LocalAssessmentResult
+from anonymizer.engine.graph_sdk.records import ReasonCode, TerminalFact
 from anonymizer.engine.graph_sdk.requests import (
     AssociationResult,
     DispatchEnvelope,
+    ExactUsage,
+    ExternalSettlement,
+    InvocationRequestScope,
+    PhysicalRequestId,
     PortArtifact,
     RequestAssociationSummary,
     SemanticAssociation,
@@ -66,7 +72,7 @@ def _rows(*, collection: bool = False) -> tuple[AssociationResult, ...]:
 
 
 @pytest.mark.parametrize(
-    "field,exact", [("max_text_bytes", 4), ("max_metadata_bytes", 14), ("max_metadata_items", 8), ("max_depth", 6)]
+    "field,exact", [("max_text_bytes", 4), ("max_metadata_bytes", 14), ("max_metadata_items", 8), ("max_depth", 7)]
 )
 def test_scalar_response_exact_and_one_over_aggregate(field: str, exact: int) -> None:
     rows = _rows()
@@ -78,9 +84,9 @@ def test_scalar_response_exact_and_one_over_aggregate(field: str, exact: int) ->
 def test_collection_count_is_aggregate_and_counts_repeated_values() -> None:
     rows = _rows(collection=True)
     expected = frozenset(row.association for row in rows)
-    assert inspect_associations(rows, expected, IngressLimits(max_collection_items=2, max_depth=9)) == frozenset()
+    assert inspect_associations(rows, expected, IngressLimits(max_collection_items=2, max_depth=10)) == frozenset()
     assert inspect_associations(rows, expected, IngressLimits(max_collection_items=1)) == expected
-    assert inspect_associations(rows, expected, IngressLimits(max_depth=8)) == expected
+    assert inspect_associations(rows, expected, IngressLimits(max_depth=9)) == expected
 
 
 def test_invalid_correlated_value_and_per_member_output_bound_are_local() -> None:
@@ -95,7 +101,7 @@ def test_invalid_correlated_value_and_per_member_output_bound_are_local() -> Non
     ) == frozenset({first.association})
 
 
-@pytest.mark.parametrize("mode", ["rows", "member", "outputs", "surrogate", "settlement", "usage"])
+@pytest.mark.parametrize("mode", ["rows", "member", "outputs", "surrogate", "nested", "settlement", "usage"])
 def test_external_foreign_values_preserve_accounting_and_safe_cleanup(
     monkeypatch: pytest.MonkeyPatch, mode: str
 ) -> None:
@@ -115,6 +121,14 @@ def test_external_foreign_values_preserve_accounting_and_safe_cleanup(
             result = replace(
                 result,
                 results=(replace(row, outputs=(replace(row.outputs[0], value=TextArtifactValue(text=chr(0xD800))),)),),
+            )
+        elif mode == "nested":
+            item = TextCollectionItem(key=0, version=1, value=TextArtifactValue(text="x"))
+            object.__setattr__(item, "value", TextCollectionValue(items=()))
+            row = result.results[0]
+            result = replace(
+                result,
+                results=(replace(row, outputs=(replace(row.outputs[0], value=TextCollectionValue(items=(item,))),)),),
             )
         elif mode == "settlement":
             object.__setattr__(result, "settlement", object())
@@ -198,3 +212,78 @@ def test_ingress_rejects_custom_container_without_hooks(field: str) -> None:
         assert inspect_associations(rows, expected, IngressLimits()) == frozenset({rows[0].association})
     else:
         assert inspect_associations(rows, expected, IngressLimits(), assessments=foreign) == expected
+
+
+@pytest.mark.parametrize("kind", ["outputs", "collection", "metadata"])
+@pytest.mark.parametrize("reverse", [False, True])
+def test_malformed_sibling_cannot_hide_aggregate_payload(kind: str, reverse: bool) -> None:
+    rows = _rows()
+    bad = replace(rows[0].outputs[0], value=TextArtifactValue(text=chr(0xD800)))
+    large = replace(rows[0].outputs[0], value=TextArtifactValue(text="x" * 100))
+    if kind == "outputs":
+        outputs = (bad, large)
+    elif kind == "collection":
+        outputs = (
+            replace(
+                large,
+                value=TextCollectionValue(
+                    items=(
+                        TextCollectionItem(key=0, version=1, value=TextArtifactValue(text=chr(0xD800))),
+                        TextCollectionItem(key=1, version=1, value=TextArtifactValue(text="x" * 100)),
+                    )
+                ),
+            ),
+        )
+    else:
+        outputs = (replace(large, port=chr(0xD800)),)
+    changed = (replace(rows[0], outputs=outputs), rows[1])
+    expected = frozenset(row.association for row in rows)
+    assert (
+        inspect_associations(
+            tuple(reversed(changed)) if reverse else changed, expected, IngressLimits(max_text_bytes=5)
+        )
+        == expected
+    )
+
+
+def test_source_and_assessment_depth_include_scalar_leaves() -> None:
+    row = _rows()[0]
+    association = cast(SemanticAssociation, row.association)
+    request = PhysicalRequestId.new(scope=InvocationRequestScope(invocation=association.task.activation.invocation))
+    source = SourceResponse(
+        source=ContextSourceRef(name="test", revision=1),
+        items=(SourceItem(association=association, key=0, version=1, text="x"),),
+        settlement=ExternalSettlement(
+            request=request,
+            disposition="completed",
+            usage=ExactUsage(input_units=1, output_units=0),
+            remote_stopped=True,
+        ),
+    )
+    assert inspect_source(source, association, IngressLimits(max_depth=4))
+    assert not inspect_source(source, association, IngressLimits(max_depth=3))
+    bare = replace(row, outputs=())
+    assessments = (
+        LocalAssessmentResult(
+            association=association,
+            promise="p",
+            evidence_port="e",
+            finding=AssessmentFinding(status="satisfied", code="ok"),
+        ),
+    )
+    expected = frozenset({association})
+    assert inspect_associations((bare,), expected, IngressLimits(max_depth=5), assessments=assessments) == frozenset()
+    assert inspect_associations((bare,), expected, IngressLimits(max_depth=4), assessments=assessments) == expected
+
+
+@pytest.mark.parametrize("reason", ["omitted_optional", "artifact_limit_exhausted"])
+def test_accepted_terminal_reason_type_matches_constructor(reason: str) -> None:
+    assert reason in get_args(ReasonCode)
+    association = cast(SemanticAssociation, _rows()[0].association)
+    fact = TerminalFact(
+        activation=association.task.activation,
+        attempt=None if reason == "omitted_optional" else association.task,
+        category="blocked",
+        reasons=frozenset({cast(ReasonCode, reason)}),
+    )
+    assert reason in fact.reasons

@@ -23,6 +23,7 @@ from anonymizer.engine.graph_sdk.context import (
     RetrievalBounds,
     SourceFailure,
     SourceItem,
+    SourceLost,
     SourceResponse,
     admit_context_plan,
 )
@@ -202,7 +203,7 @@ class _BoundaryProvider:
             items += (SourceItem(association=association, key=0, version=1, text="duplicate"),)
         elif self.mode == "versions":
             items += (SourceItem(association=association, key=0, version=2, text="b"),)
-        return SourceResponse(
+        response = SourceResponse(
             source=OTHER_SOURCE if self.mode == "malformed" else SOURCE,
             items=items,
             settlement=ExternalSettlement(
@@ -212,6 +213,12 @@ class _BoundaryProvider:
                 remote_stopped=True,
             ),
         )
+
+        if self.mode == "foreign_lost":
+            lost = SourceLost(source=SOURCE, settlement=response.settlement)
+            object.__setattr__(lost, "source", _ForeignSource())
+            return lost
+        return response
 
     async def cancel(self, request):
         del request
@@ -553,6 +560,7 @@ async def _assert_initial_binding_boundary_settlements(*, latest: bool) -> None:
     )
     for mode, expected_request, expected_source in (
         ("malformed", "failure", "failed"),
+        ("foreign_lost", "failure", "failed"),
         ("duplicate", "failure", "failed"),
         ("oversize", "success", "oversize"),
         ("versions", "success", "oversize"),
@@ -835,3 +843,8 @@ def test_initial_version_selection_rejects_incompatible_declarations(case: str) 
         else:
             replace(base, version_selection="latest", materialization=replace(base.materialization, kind="collection"))
     assert error.value.code.value == "contradictory"
+
+
+class _ForeignSource:
+    def __eq__(self, other: object) -> bool:
+        raise AssertionError("foreign source equality")

@@ -34,10 +34,6 @@ from anonymizer.graph._values import ArtifactRef, TaskAttemptId
 from anonymizer.graph.workflow import ArtifactType
 
 
-class _MalformedIngress(Exception):
-    pass
-
-
 class _ExhaustedIngress(Exception):
     pass
 
@@ -101,82 +97,88 @@ class _IngressBudget:
         if depth > self.limits.max_depth:
             raise _ExhaustedIngress
 
-    def text(self, value: object, *, payload: bool = False) -> None:
+    def text(self, value: object, depth: int, *, payload: bool = False) -> bool:
+        self.depth(depth)
         if type(value) is not str:
-            raise _MalformedIngress
+            return False
         name = "text_bytes" if payload else "metadata_bytes"
         if not payload:
             self.debit("metadata_items", 1)
-        # UTF-8 is at least one byte per code point. Reject before allocating a
-        # second large buffer, then encode only bounded chunks for exact charging.
         if len(value) > getattr(self.limits, "max_" + name) - getattr(self, name):
             raise _ExhaustedIngress
-        malformed = False
+        valid = True
         for offset in range(0, len(value), 1024):
             chunk = value[offset : offset + 1024]
             try:
                 encoded = chunk.encode("utf-8", "strict")
             except UnicodeEncodeError:
-                # Charge the entire closed string deterministically, including
-                # rejected code points, so row order cannot change exhaustion.
+                # Charge rejected code points too; keep scanning known siblings.
                 encoded = chunk.encode("utf-8", "surrogatepass")
-                malformed = True
+                valid = False
             self.debit(name, len(encoded))
-        if malformed:
-            raise _MalformedIngress
+        return valid
 
-    def artifact(self, value: object, depth: int) -> None:
+    def artifact(self, value: object, depth: int) -> bool:
         self.depth(depth)
         if type(value) is TextArtifactValue:
-            self.text(value.text, payload=True)
-        elif type(value) is TextCollectionValue:
-            self.depth(depth + 1)
-            if type(value.items) is not tuple:
-                raise _MalformedIngress
-            self.debit("collection_items", len(value.items))
-            prior: tuple[int, int] | None = None
-            for item in value.items:
-                self.depth(depth + 2)
-                if type(item) is not TextCollectionItem:
-                    raise _MalformedIngress
-                if type(item.key) is not int or item.key < 0 or type(item.version) is not int or item.version <= 0:
-                    raise _MalformedIngress
+            return self.text(value.text, depth + 1, payload=True)
+        if type(value) is not TextCollectionValue:
+            return False
+        self.depth(depth + 1)
+        if type(value.items) is not tuple:
+            return False
+        self.debit("collection_items", len(value.items))
+        prior: tuple[int, int] | None = None
+        valid = True
+        for item in value.items:
+            self.depth(depth + 2)
+            if type(item) is not TextCollectionItem:
+                valid = False
+                continue
+            self.depth(depth + 3)  # key, version and scalar value
+            if type(item.key) is int and item.key >= 0 and type(item.version) is int and item.version > 0:
                 identity = (item.key, item.version)
-                if prior is not None and identity <= prior:
-                    raise _MalformedIngress
+                valid = (prior is None or identity > prior) and valid
                 prior = identity
-                self.debit("metadata_items", 2)
-                self.artifact(item.value, depth + 3)
-        else:
-            raise _MalformedIngress
+            else:
+                valid = False
+            self.debit("metadata_items", 2)
+            scalar = type(item.value) is TextArtifactValue
+            # Even a malformed known nested value must not hide aggregate bytes.
+            valid = self.artifact(item.value, depth + 3) and scalar and valid
+        return valid
 
-    def row(self, row: AssociationResult, depth: int) -> None:
+    def row(self, row: AssociationResult, depth: int) -> bool:
         self.depth(depth)
         self.debit("metadata_items", 1)
-        self.text(row.outcome)
-        if type(row.outputs) is not tuple or type(row.consumed_context_ports) is not frozenset:
-            raise _MalformedIngress
+        valid = self.text(row.outcome, depth + 1)
         self.depth(depth + 1)
-        if len(row.outputs) > self.limits.max_outputs_per_association:
-            raise _MalformedIngress
-        if len(row.consumed_context_ports) > self.limits.max_metadata_items - self.metadata_items:
-            raise _ExhaustedIngress
-        for port in row.consumed_context_ports:
-            self.text(port)
+        if type(row.consumed_context_ports) is not frozenset:
+            valid = False
+        else:
+            if len(row.consumed_context_ports) > self.limits.max_metadata_items - self.metadata_items:
+                raise _ExhaustedIngress
+            for port in row.consumed_context_ports:
+                valid = self.text(port, depth + 2) and valid
+        if type(row.outputs) is not tuple or len(row.outputs) > self.limits.max_outputs_per_association:
+            return False
         for output in row.outputs:
             self.depth(depth + 2)
-            if type(output) is not PortArtifact or type(output.artifact_type) is not ArtifactType:
-                raise _MalformedIngress
-            self.text(output.port)
+            if type(output) is not PortArtifact:
+                valid = False
+                continue
+            valid = self.text(output.port, depth + 3) and valid
             self.depth(depth + 3)
-            self.text(output.artifact_type.name)
-            if type(output.artifact_type.revision) is not int or output.artifact_type.revision <= 0:
-                raise _MalformedIngress
+            if type(output.artifact_type) is ArtifactType:
+                valid = self.text(output.artifact_type.name, depth + 4) and valid
+                valid = (type(output.artifact_type.revision) is int and output.artifact_type.revision > 0) and valid
+            else:
+                valid = False
             if output.artifact is not None:
-                if type(output.artifact) is not ArtifactRef:
-                    raise _MalformedIngress
+                valid = type(output.artifact) is ArtifactRef and valid
                 self.debit("metadata_items", 1)
-            self.artifact(output.value, depth + 3)
+            valid = self.artifact(output.value, depth + 3) and valid
+        return valid
 
 
 def _trusted_association(value: object) -> bool:
@@ -217,9 +219,7 @@ def inspect_associations(
     try:
         budget.depth(2)  # response root, then its results tuple
         for row in typed_rows:
-            try:
-                budget.row(row, 3)
-            except _MalformedIngress:
+            if not budget.row(row, 3):
                 invalid.add(row.association)
         if type(assessments) is not tuple:
             return expected
@@ -230,16 +230,16 @@ def inspect_associations(
                 return expected
             if assessment.association not in expected:
                 return expected
-            try:
-                budget.debit("metadata_items", 1)
-                budget.text(assessment.promise)
-                budget.text(assessment.evidence_port)
-                budget.depth(4)
-                if type(assessment.finding) is not AssessmentFinding:
-                    raise _MalformedIngress
-                budget.text(assessment.finding.status)
-                budget.text(assessment.finding.code)
-            except _MalformedIngress:
+            budget.debit("metadata_items", 1)
+            valid = budget.text(assessment.promise, 4)
+            valid = budget.text(assessment.evidence_port, 4) and valid
+            budget.depth(4)
+            if type(assessment.finding) is AssessmentFinding:
+                valid = budget.text(assessment.finding.status, 5) and valid
+                valid = budget.text(assessment.finding.code, 5) and valid
+            else:
+                valid = False
+            if not valid:
                 invalid.add(assessment.association)
     except _ExhaustedIngress:
         return expected
@@ -257,7 +257,7 @@ def inspect_source(response: SourceResponse, association: RequestAssociation, li
     budget = _IngressBudget(limits)
     try:
         budget.depth(2)
-        budget.text(response.source.name)
+        valid = budget.text(response.source.name, 3)
         if type(response.source.revision) is not int or response.source.revision <= 0:
             return False
         budget.debit("collection_items", len(response.items))
@@ -270,10 +270,10 @@ def inspect_source(response: SourceResponse, association: RequestAssociation, li
             if type(item.key) is not int or item.key < 0 or type(item.version) is not int or item.version <= 0:
                 return False
             budget.debit("metadata_items", 3)
-            budget.text(item.text, payload=True)
-    except (_MalformedIngress, _ExhaustedIngress):
+            valid = budget.text(item.text, 4, payload=True) and valid
+    except _ExhaustedIngress:
         return False
-    return True
+    return valid
 
 
 def inspect_source_identity(value: object, expected: ContextSourceRef) -> bool:

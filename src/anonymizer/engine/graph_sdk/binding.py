@@ -41,6 +41,7 @@ from anonymizer.engine.graph_sdk.requests import (
     FailureClass,
     MarkLost,
     PhysicalRequestId,
+    RejectSettlement,
     RequestCancel,
     RequestPolicyBinding,
     RequestPurpose,
@@ -346,6 +347,8 @@ async def _bind_declaration(
         if type(result) is SourceLost and inspect_source_identity(result.source, declaration.source):
             state = advance_requests(state=state, event=MarkLost(request=request))
             return state, _source_fact(identity, declaration, "lost"), (), 0, 0
+        if type(result) is SourceLost and result.settlement is None:
+            state = advance_requests(state=state, event=RejectSettlement(request=request))
         state = advance_requests(state=state, event=AcceptFailure(request=request, failure="malformed_response"))
         purpose = "correction"
         if not _can_retry(capability, declaration, state, association, "malformed_response"):

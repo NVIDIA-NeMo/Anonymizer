@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, replace
+from typing import cast
 
 import pytest
 
@@ -20,6 +21,7 @@ from anonymizer.engine.graph_sdk.context import (
     ContextSourceRef,
     RetrievalBounds,
     SourceItem,
+    SourceLost,
     SourceResponse,
     admit_context_plan,
 )
@@ -311,7 +313,7 @@ def test_adaptive_retrieval_materializes_provider_result_once() -> None:
     asyncio.run(_assert_adaptive_retrieval())
 
 
-async def _assert_adaptive_retrieval() -> None:
+async def _assert_adaptive_retrieval(*, malformed_lost: bool = False) -> None:
     workflow, node, artifact = _adaptive_workflow()
     data = _data(1)
     target = next(iter(data.targets))
@@ -426,6 +428,12 @@ async def _assert_adaptive_retrieval() -> None:
     assert provider.calls == 1
     assert result.requests.dispatched_count == 1
     assert result.states[0].complete
+    if malformed_lost:
+        assert result.record.terminals[0].category == "failure"
+        assert result.requests.terminals[0].failure == "malformed_response"
+        assert result.requests.remote_outstanding
+        assert not result.final_outputs
+        return
     assert any(value == TextArtifactValue(text="retrieved") for _, value in result.artifacts)
     assert result.final_outputs[0].candidate.target == target
 
@@ -952,3 +960,19 @@ async def _assert_nested_assessment() -> None:
     assert evidence.role == "evidence"
     assert result.final_outputs[0].candidate.artifact == evidence.artifact
     assert subject.artifact != result.final_outputs[0].candidate.artifact
+
+
+class _ForeignSource:
+    def __eq__(self, other: object) -> bool:
+        raise AssertionError("foreign source equality")
+
+
+def test_adaptive_lost_rejects_foreign_identity_without_hooks(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def retrieve(self: _Provider, **kwargs: object) -> SourceResponse:
+        self.calls += 1
+        result = SourceLost(source=SOURCE, settlement=None)
+        object.__setattr__(result, "source", _ForeignSource())
+        return cast(SourceResponse, result)
+
+    monkeypatch.setattr(_Provider, "retrieve", retrieve)
+    asyncio.run(_assert_adaptive_retrieval(malformed_lost=True))

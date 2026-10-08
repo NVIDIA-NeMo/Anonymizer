@@ -61,6 +61,7 @@ from anonymizer.engine.graph_sdk.requests import (
     MarkLost,
     PhysicalRequestId,
     PortArtifact,
+    RejectSettlement,
     RequestAssociationSummary,
     RequestPolicyBinding,
     Reserve,
@@ -593,7 +594,9 @@ async def _run_adaptive(
             )
             authority.apply(AcceptFailure(request=request, failure=failure))
         else:
-            if type(result) is SourceLost and result.source != declaration.source:
+            if type(result) is SourceLost and not inspect_source_identity(result.source, declaration.source):
+                if result.settlement is None:
+                    authority.apply(RejectSettlement(request=request))
                 authority.apply(AcceptFailure(request=request, failure="malformed_response"))
                 if can_reserve_followup(
                     state=authority.state,
