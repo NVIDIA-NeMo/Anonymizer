@@ -27,11 +27,11 @@ from anonymizer.engine.graph_sdk.context import (
     admit_context_plan,
 )
 from anonymizer.engine.graph_sdk.requests import (
-    BindingAssociation,
     ExactUsage,
     ExternalSettlement,
     PhysicalRequestId,
     PhysicalRequestPolicy,
+    RequestAssociation,
     StopConfirmed,
 )
 from anonymizer.engine.graph_sdk.resources import ResourceLease
@@ -57,7 +57,7 @@ class _Provider:
         self,
         *,
         request: PhysicalRequestId,
-        association: BindingAssociation,
+        association: RequestAssociation,
         selector: ContextSelector,
         bounds: RetrievalBounds,
     ) -> SourceResponse:
@@ -634,3 +634,131 @@ async def _assert_initial_binding_retry() -> None:
     assert result.receipt.terminal == "success"
     assert result.context is not None and result.context.artifacts[0].text == "retried"
     assert [item.purpose for item in result.receipt.requests.dispatches] == ["initial_binding", "retry"]
+
+
+@dataclass
+class _CloseableProvider(_Provider):
+    closes: int = 0
+    fail_close: bool = False
+
+    async def close(self) -> None:
+        self.closes += 1
+        if self.fail_close:
+            raise RuntimeError("cleanup failed")
+
+
+@dataclass
+class _CloseableNonProvider:
+    closes: int = 0
+
+    async def close(self) -> None:
+        self.closes += 1
+
+
+@pytest.mark.parametrize("factory_failure", ["raises", "invalid"])
+@pytest.mark.parametrize("ownership", ["sdk", "sdk-close-failed", "caller"])
+def test_failed_acquisition_retains_and_cleans_partial_resource_inventory(factory_failure: str, ownership: str) -> None:
+    asyncio.run(_assert_failed_acquisition_cleanup(factory_failure, ownership))
+
+
+async def _assert_failed_acquisition_cleanup(factory_failure: str, ownership: str) -> None:
+    workflow, node, artifact = _context_workflow()
+    data = _data(2)
+    first_target, second_target = data.targets
+    first = _CloseableProvider(fail_close=ownership == "sdk-close-failed")
+    invalid = _CloseableNonProvider()
+    factory_calls = 0
+
+    def failed_factory():
+        nonlocal factory_calls
+        factory_calls += 1
+        if factory_failure == "raises":
+            raise RuntimeError("factory failed")
+        return invalid
+
+    policy = PhysicalRequestPolicy(
+        visibility="dispatch_and_settlement",
+        pre_dispatch_control="executor",
+        retry_owner="executor",
+        replay="idempotent",
+        max_attempts=1,
+    )
+    capability = ContextSourceCapability(
+        source=SOURCE,
+        artifact_type=artifact,
+        uses=frozenset({"initial_binding"}),
+        execution="async",
+        resource_owner="caller" if ownership == "caller" else "sdk",
+        cancellation="cooperative_ack",
+        settlement="explicit_ack",
+        usage="exact",
+        request=policy,
+        safe_detachment="forbidden",
+    )
+    other_capability = replace(capability, source=OTHER_SOURCE, resource_owner="sdk")
+    declaration = InitialContextDecl(
+        target=first_target,
+        node=node,
+        port="input",
+        artifact_type=artifact,
+        source=SOURCE,
+        selector=ContextSelector(fields=()),
+        requirement="required",
+        bounds=RetrievalBounds(max_items=1, max_bytes=20, max_requests=1),
+        materialization=ContextMaterialization(kind="single", item_type=artifact),
+    )
+    running = await start_initial_binding(
+        data=data,
+        workflow=workflow,
+        declarations=(declaration, replace(declaration, target=second_target, source=OTHER_SOURCE)),
+        capabilities=(capability, other_capability),
+        resources=(
+            ContextResource(
+                source=SOURCE,
+                capability=capability,
+                lease=ResourceLease.create(owner="caller", safe_detachment="forbidden", handle=first)
+                if ownership == "caller"
+                else None,
+                factory=None if ownership == "caller" else lambda: first,
+            ),
+            ContextResource(
+                source=OTHER_SOURCE, capability=other_capability, lease=None, factory=cast(Any, failed_factory)
+            ),
+        ),
+        limits=BindingLimits(
+            max_declarations=2,
+            max_sources=2,
+            max_capabilities=2,
+            max_selector_fields=0,
+            max_selector_bytes=0,
+            max_items=2,
+            max_bytes=40,
+            max_requests=2,
+            max_resources=2,
+        ),
+    )
+    result = await running.wait()
+    assert result is await running.wait()
+    assert result.context is None and result.receipt.terminal == "failed"
+    assert all(item.terminal == "failed" for item in result.receipt.sources)
+    assert factory_calls == 1 and first.calls == result.receipt.requests.dispatched_count == 0
+    assert first.closes == (0 if ownership == "caller" else 1)
+    assert invalid.closes == (1 if factory_failure == "invalid" else 0)
+    facts = result.receipt.cleanup
+    associations = result.receipt.cleanup_associations
+    assert len(facts) == len(associations) == (2 if factory_failure == "invalid" else 1)
+    assert facts[0].resource == associations[0].resource
+    assert associations[0].targets == frozenset({first_target})
+    assert associations[0].purpose == "accounting"
+    assert (
+        facts[0].disposition
+        == {
+            "sdk": "closed",
+            "sdk-close-failed": "close_failed",
+            "caller": "left_open",
+        }[ownership]
+    )
+    if factory_failure == "invalid":
+        assert facts[1].resource == associations[1].resource
+        assert facts[1].disposition == "closed"
+        assert associations[1].targets == frozenset({second_target})

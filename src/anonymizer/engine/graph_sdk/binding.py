@@ -55,7 +55,13 @@ from anonymizer.engine.graph_sdk.requests import (
     initialize_requests,
     request_receipt,
 )
-from anonymizer.engine.graph_sdk.resources import CleanupFact, ResourceLease, _cleanup_association, close_resource
+from anonymizer.engine.graph_sdk.resources import (
+    CleanupAssociation,
+    CleanupFact,
+    ResourceLease,
+    _cleanup_association,
+    close_resource,
+)
 from anonymizer.graph.workflow import (
     AdmittedActivationWorkflow,
     ContextInputRef,
@@ -132,13 +138,16 @@ async def _run_binding(work: _BindingWork) -> BindingResult:
         hard_limit=work.limits.max_requests,
         policies=frozenset(item.request for item in work.capabilities),
     )
+    acquired: dict[object, ResourceLease] = {}
     try:
-        acquired, cleanup = _acquire_resources(work)
+        _acquire_resources(work, acquired)
     except Exception:
         facts = tuple(
             SourceBindingFact(identity=identity, declaration=declaration, terminal="failed")
             for identity, declaration in zip(work.identities, work.declarations, strict=True)
         )
+        associations = _binding_cleanup_associations(work, acquired)
+        cleanup = await _cleanup(acquired)
         return _create_binding_result(
             binding=work.binding,
             data=work.data,
@@ -147,23 +156,10 @@ async def _run_binding(work: _BindingWork) -> BindingResult:
             sources=facts,
             artifacts=(),
             requests=request_receipt(state),
-            cleanup=(),
-            cleanup_associations=(),
+            cleanup=tuple(cleanup),
+            cleanup_associations=associations,
         )
-    associations = tuple(
-        _cleanup_association(
-            resource=lease.resource,
-            targets=frozenset(
-                declaration.target
-                for source, source_lease in acquired.items()
-                if source_lease.resource == lease.resource
-                for declaration in work.declarations
-                if declaration.source == source
-            ),
-            purpose="accounting",
-        )
-        for lease in {item.resource: item for item in acquired.values()}.values()
-    )
+    associations = _binding_cleanup_associations(work, acquired)
     facts: list[SourceBindingFact] = []
     artifacts: list[BoundTextArtifact] = []
     if work.cancelled:
@@ -172,7 +168,7 @@ async def _run_binding(work: _BindingWork) -> BindingResult:
             SourceBindingFact(identity=identity, declaration=declaration, terminal="cancelled")
             for identity, declaration in zip(work.identities, work.declarations, strict=True)
         )
-        cleanup.extend(await _cleanup(acquired))
+        cleanup = await _cleanup(acquired)
         return _create_binding_result(
             binding=work.binding,
             data=work.data,
@@ -201,7 +197,7 @@ async def _run_binding(work: _BindingWork) -> BindingResult:
         artifacts.extend(retained)
         total_items += item_count
         total_bytes += byte_count
-    cleanup.extend(await _cleanup(acquired))
+    cleanup = await _cleanup(acquired)
     terminal = _binding_terminal(facts)
     return _create_binding_result(
         binding=work.binding,
@@ -553,9 +549,7 @@ def _validate_binding(
         reject(EffectCode.CONTRADICTORY)
 
 
-def _acquire_resources(work: _BindingWork) -> tuple[dict[object, ResourceLease], list[CleanupFact]]:
-    acquired: dict[object, ResourceLease] = {}
-    cleanup: list[CleanupFact] = []
+def _acquire_resources(work: _BindingWork, acquired: dict[object, ResourceLease]) -> None:
     for resource in work.resources:
         if resource.lease is not None:
             acquired[resource.source] = resource.lease
@@ -565,14 +559,32 @@ def _acquire_resources(work: _BindingWork) -> tuple[dict[object, ResourceLease],
         if resource.factory is None:
             reject(EffectCode.MISSING)
         provider = resource.factory()
-        if not isinstance(provider, ContextProvider):
-            reject(EffectCode.INVALID_TYPE)
         acquired[resource.source] = ResourceLease.create(
             owner="sdk",
             safe_detachment=resource.capability.safe_detachment,
             handle=provider,
         )
-    return acquired, cleanup
+        if not isinstance(provider, ContextProvider):
+            reject(EffectCode.INVALID_TYPE)
+
+
+def _binding_cleanup_associations(
+    work: _BindingWork, acquired: dict[object, ResourceLease]
+) -> tuple[CleanupAssociation, ...]:
+    return tuple(
+        _cleanup_association(
+            resource=lease.resource,
+            targets=frozenset(
+                declaration.target
+                for source, source_lease in acquired.items()
+                if source_lease.resource == lease.resource
+                for declaration in work.declarations
+                if declaration.source == source
+            ),
+            purpose="accounting",
+        )
+        for lease in {item.resource: item for item in acquired.values()}.values()
+    )
 
 
 async def _cleanup(acquired: dict[object, ResourceLease]) -> list[CleanupFact]:
