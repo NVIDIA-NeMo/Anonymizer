@@ -28,6 +28,9 @@ The generator enumerates these declared products and named boundary families:
   the first immutable terminal fact for each exact association and its bound
   policy. Their permitted failure classes are separate, with cross-purpose and
   late-conflicting-terminal negatives;
+- failover also crosses replay authority: an eligible failure class still
+  requires idempotent replay, or before-acceptance replay when that exact
+  predecessor was rejected before acceptance;
 - request races enumerate success and failure with settlement before and after,
   cancel before result, result before cancel, trusted stop, unknown stop/Lost,
   late result, identical and conflicting terminal, identical and conflicting
@@ -68,9 +71,11 @@ fixture-only expected-error field or reducer shortcut. Settlement disposition,
 remote-stop certainty, and exact-or-unknown usage form one closed grammar:
 completed/rejected/stopped require trusted remote stop, while unknown retains
 remote uncertainty; trusted cancellation stop also carries usage.
-`remote_stopped` is exactly `bool | None`. A late result after Lost records a
-terminal conflict but cannot clear remote uncertainty; only a compatible
-trusted settlement can do that. A whole oversize binding response still closes
+`remote_stopped` is exactly `bool | None`. Late generic results/failures and
+binding results/failures after Lost preserve the first terminal and remote
+uncertainty; only a compatible trusted settlement can clear it. Late binding
+responses after Lost or cancellation create no artifacts or binding state.
+A whole oversize binding response still closes
 the charged physical request while failing the binding without truncation.
 
 Only causal sequences are emitted. Policy binding precedes reservation;

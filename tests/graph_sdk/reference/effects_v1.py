@@ -241,9 +241,13 @@ def _advance(state: Object, declaration: Object, event: Object) -> Object | None
                     permitted = failure == "malformed_response" and replay == "idempotent"
                 else:
                     policy_value = _object(_object(state["policies"])[policy])
-                    permitted = failure in _strings(policy_value.get("failover_failures", []))
+                    if failure not in _strings(policy_value.get("failover_failures", [])):
+                        return _reject("invalid_failover")
+                    permitted = replay == "idempotent" or (
+                        failure == "rejected_before_acceptance" and replay == "before_acceptance"
+                    )
                 if not permitted:
-                    return _reject("replay_forbidden" if purpose != "failover" else "invalid_failover")
+                    return _reject("replay_forbidden")
         eligible: list[str] = []
         for item in associations:
             if cast(int, attempts.get(item, 0)) >= maximum:
@@ -339,7 +343,8 @@ def _advance(state: Object, declaration: Object, event: Object) -> Object | None
                 _unique(_array(state["defects"]), "conflicting_terminal")
         _terminal(state, request, "failure")
         _remove(state, "local_in_flight", request)
-        _remove(state, "remote_outstanding", request)
+        if first_terminal:
+            _remove(state, "remote_outstanding", request)
     elif kind == "cancel":
         request = cast(str, event["request"])
         if request in _object(state["terminals"]):
@@ -397,8 +402,8 @@ def _advance(state: Object, declaration: Object, event: Object) -> Object | None
             _unique(_array(state["defects"]), "conflicting_settlement")
         else:
             settlements[request] = value
-        if event["remote_stopped"] is True:
-            _remove(state, "remote_outstanding", request)
+            if event["remote_stopped"] is True:
+                _remove(state, "remote_outstanding", request)
     elif kind == "source_result":
         request = cast(str, event.get("request"))
         if request not in dispatched or request not in _object(state["request_associations"]):
@@ -409,6 +414,9 @@ def _advance(state: Object, declaration: Object, event: Object) -> Object | None
         identity, source = expected[0], cast(str, event["source"])
         if _object(state["binding_declarations"]).get(identity) != source:
             return _reject("foreign_source")
+        if request in _object(state["terminals"]):
+            _terminal(state, request, "success")
+            return None
         items = _array(event["items"])
         returned = [cast(str, _object(item).get("association")) for item in items]
         defects: list[str] = []
@@ -465,6 +473,9 @@ def _advance(state: Object, declaration: Object, event: Object) -> Object | None
         identity = associations[0]
         if event.get("association") != identity:
             return _reject("foreign_association")
+        if request in _object(state["terminals"]):
+            _terminal(state, request, "failure")
+            return None
         _object(state["binding_sources"])[identity] = event.get("terminal", "failed")
         state["binding_terminal"] = "failed" if event.get("required", True) else "partial"
         _terminal(state, request, "failure")
@@ -1935,6 +1946,75 @@ def _generate_specs() -> tuple[Object, ...]:
         _case("admission", "runtime_product_extra_local_condition", extra_product, [], "admission"),
         _case("admission", "duplicate_result_outcome", duplicate_outcome, [], "admission"),
     ]
+    for replay in ("never", "before_acceptance", "idempotent"):
+        failover_decl = _decl()
+        _object(failover_decl["policies"])["P0"] = _policy(replay=replay)
+        c.append(
+            _case(
+                "retry",
+                f"failover_permanent_replay_{replay}",
+                failover_decl,
+                [
+                    *_trace(),
+                    {"kind": "failure", "request": "R0", "failure": "permanent"},
+                    _reserve("R1", ["T0"], purpose="failover"),
+                ],
+            )
+        )
+    c.append(
+        _case(
+            "races",
+            "lost_late_failure_without_settlement",
+            _decl(),
+            [
+                *_trace(),
+                {"kind": "lost", "request": "R0"},
+                {"kind": "failure", "request": "R0", "failure": "retryable"},
+            ],
+        )
+    )
+    c.append(
+        _case(
+            "races",
+            "lost_conflicting_settlement_preserves_remote",
+            _decl(),
+            [
+                *_trace(),
+                {"kind": "lost", "request": "R0"},
+                dict(settlement, disposition="unknown", remote_stopped=None, usage="unknown"),
+                settlement,
+            ],
+        )
+    )
+    late_binding_responses: tuple[Object, ...] = (
+        {
+            "kind": "source_result",
+            "request": "R0",
+            "source": "S0",
+            "items": [{"association": "D0", "key": 0, "version": 1, "text": "late"}],
+        },
+        {"kind": "source_failure", "request": "R0", "association": "D0", "required": True},
+    )
+    for terminal in ("lost", "cancelled"):
+        closure: list[Object] = (
+            [{"kind": "lost", "request": "R0"}]
+            if terminal == "lost"
+            else [
+                {"kind": "cancel", "request": "R0"},
+                {"kind": "stop", "request": "R0", "usage": "unknown"},
+            ]
+        )
+        for response in late_binding_responses:
+            late_events = [*_trace(("D0",)), *closure, response]
+            c.append(
+                _case(
+                    "binding",
+                    f"{terminal}_late_{response['kind']}",
+                    _binding_decl({"D0": "S0"}),
+                    late_events,
+                    traces=[[*late_events, settlement]],
+                )
+            )
     return tuple(c)
 
 

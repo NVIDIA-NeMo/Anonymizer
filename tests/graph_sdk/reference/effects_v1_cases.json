@@ -16240,5 +16240,1811 @@
     },
     "family": "admission",
     "traces": []
+  },
+  {
+    "boundary": "runtime",
+    "case_id": "retry/failover_permanent_replay_never",
+    "declaration": {
+      "hard_limit": 2,
+      "policies": {
+        "P0": {
+          "failover_failures": [
+            "permanent",
+            "implementation_exception"
+          ],
+          "max_attempts": 2,
+          "replay": "never",
+          "retry_owner": "executor"
+        },
+        "P1": {
+          "failover_failures": [
+            "permanent",
+            "implementation_exception"
+          ],
+          "max_attempts": 3,
+          "replay": "idempotent",
+          "retry_owner": "executor"
+        }
+      }
+    },
+    "events": [
+      {
+        "association": "T0",
+        "kind": "bind_policy",
+        "policies": [
+          "P0"
+        ]
+      },
+      {
+        "associations": [
+          "T0"
+        ],
+        "kind": "reserve",
+        "policy": "P0",
+        "purpose": "initial",
+        "request": "R0"
+      },
+      {
+        "kind": "dispatch",
+        "request": "R0"
+      },
+      {
+        "failure": "permanent",
+        "kind": "failure",
+        "request": "R0"
+      },
+      {
+        "associations": [
+          "T0"
+        ],
+        "kind": "reserve",
+        "policy": "P0",
+        "purpose": "failover",
+        "request": "R1"
+      }
+    ],
+    "expected": {
+      "code": "replay_forbidden",
+      "status": "rejected"
+    },
+    "family": "retry",
+    "traces": []
+  },
+  {
+    "boundary": "runtime",
+    "case_id": "retry/failover_permanent_replay_before_acceptance",
+    "declaration": {
+      "hard_limit": 2,
+      "policies": {
+        "P0": {
+          "failover_failures": [
+            "permanent",
+            "implementation_exception"
+          ],
+          "max_attempts": 2,
+          "replay": "before_acceptance",
+          "retry_owner": "executor"
+        },
+        "P1": {
+          "failover_failures": [
+            "permanent",
+            "implementation_exception"
+          ],
+          "max_attempts": 3,
+          "replay": "idempotent",
+          "retry_owner": "executor"
+        }
+      }
+    },
+    "events": [
+      {
+        "association": "T0",
+        "kind": "bind_policy",
+        "policies": [
+          "P0"
+        ]
+      },
+      {
+        "associations": [
+          "T0"
+        ],
+        "kind": "reserve",
+        "policy": "P0",
+        "purpose": "initial",
+        "request": "R0"
+      },
+      {
+        "kind": "dispatch",
+        "request": "R0"
+      },
+      {
+        "failure": "permanent",
+        "kind": "failure",
+        "request": "R0"
+      },
+      {
+        "associations": [
+          "T0"
+        ],
+        "kind": "reserve",
+        "policy": "P0",
+        "purpose": "failover",
+        "request": "R1"
+      }
+    ],
+    "expected": {
+      "code": "replay_forbidden",
+      "status": "rejected"
+    },
+    "family": "retry",
+    "traces": []
+  },
+  {
+    "boundary": "runtime",
+    "case_id": "retry/failover_permanent_replay_idempotent",
+    "declaration": {
+      "hard_limit": 2,
+      "policies": {
+        "P0": {
+          "failover_failures": [
+            "permanent",
+            "implementation_exception"
+          ],
+          "max_attempts": 2,
+          "replay": "idempotent",
+          "retry_owner": "executor"
+        },
+        "P1": {
+          "failover_failures": [
+            "permanent",
+            "implementation_exception"
+          ],
+          "max_attempts": 3,
+          "replay": "idempotent",
+          "retry_owner": "executor"
+        }
+      }
+    },
+    "events": [
+      {
+        "association": "T0",
+        "kind": "bind_policy",
+        "policies": [
+          "P0"
+        ]
+      },
+      {
+        "associations": [
+          "T0"
+        ],
+        "kind": "reserve",
+        "policy": "P0",
+        "purpose": "initial",
+        "request": "R0"
+      },
+      {
+        "kind": "dispatch",
+        "request": "R0"
+      },
+      {
+        "failure": "permanent",
+        "kind": "failure",
+        "request": "R0"
+      },
+      {
+        "associations": [
+          "T0"
+        ],
+        "kind": "reserve",
+        "policy": "P0",
+        "purpose": "failover",
+        "request": "R1"
+      }
+    ],
+    "expected": {
+      "state": {
+        "artifacts": [],
+        "association_requests": {
+          "T0": "R0"
+        },
+        "association_terminals": {
+          "T0": {
+            "failure": "permanent",
+            "policy": "P0",
+            "request": "R0"
+          }
+        },
+        "attempts": {
+          "T0": 1
+        },
+        "binding_declarations": {},
+        "binding_sources": {},
+        "binding_terminal": null,
+        "bindings": {
+          "T0": [
+            "P0"
+          ]
+        },
+        "cancel_requested": [],
+        "cleanup": {},
+        "closed_unstarted": {},
+        "decision_defects": [],
+        "decisions": {},
+        "defects": [],
+        "denials": {},
+        "dispatched": [
+          "R0"
+        ],
+        "dispatched_count": 1,
+        "local_in_flight": [],
+        "policies": {
+          "P0": {
+            "failover_failures": [
+              "permanent",
+              "implementation_exception"
+            ],
+            "max_attempts": 2,
+            "replay": "idempotent",
+            "retry_owner": "executor"
+          },
+          "P1": {
+            "failover_failures": [
+              "permanent",
+              "implementation_exception"
+            ],
+            "max_attempts": 3,
+            "replay": "idempotent",
+            "retry_owner": "executor"
+          }
+        },
+        "remote_outstanding": [],
+        "request_associations": {
+          "R0": [
+            "T0"
+          ]
+        },
+        "request_facts": {
+          "R0": {
+            "condition": "failure",
+            "failure": "permanent"
+          }
+        },
+        "request_failures": {
+          "R0": "permanent"
+        },
+        "request_policies": {
+          "R0": "P0"
+        },
+        "reservation_policies": {
+          "R1": "P0"
+        },
+        "reservations": {
+          "R1": [
+            "T0"
+          ]
+        },
+        "resource_count": 0,
+        "resources": {},
+        "settlements": {},
+        "task_requests": {},
+        "tasks": {},
+        "terminals": {
+          "R0": "failure"
+        }
+      },
+      "status": "accepted"
+    },
+    "family": "retry",
+    "traces": []
+  },
+  {
+    "boundary": "runtime",
+    "case_id": "races/lost_late_failure_without_settlement",
+    "declaration": {
+      "hard_limit": 2,
+      "policies": {
+        "P0": {
+          "failover_failures": [
+            "permanent",
+            "implementation_exception"
+          ],
+          "max_attempts": 2,
+          "replay": "idempotent",
+          "retry_owner": "executor"
+        },
+        "P1": {
+          "failover_failures": [
+            "permanent",
+            "implementation_exception"
+          ],
+          "max_attempts": 3,
+          "replay": "idempotent",
+          "retry_owner": "executor"
+        }
+      }
+    },
+    "events": [
+      {
+        "association": "T0",
+        "kind": "bind_policy",
+        "policies": [
+          "P0"
+        ]
+      },
+      {
+        "associations": [
+          "T0"
+        ],
+        "kind": "reserve",
+        "policy": "P0",
+        "purpose": "initial",
+        "request": "R0"
+      },
+      {
+        "kind": "dispatch",
+        "request": "R0"
+      },
+      {
+        "kind": "lost",
+        "request": "R0"
+      },
+      {
+        "failure": "retryable",
+        "kind": "failure",
+        "request": "R0"
+      }
+    ],
+    "expected": {
+      "state": {
+        "artifacts": [],
+        "association_requests": {
+          "T0": "R0"
+        },
+        "association_terminals": {},
+        "attempts": {
+          "T0": 1
+        },
+        "binding_declarations": {},
+        "binding_sources": {},
+        "binding_terminal": null,
+        "bindings": {
+          "T0": [
+            "P0"
+          ]
+        },
+        "cancel_requested": [],
+        "cleanup": {},
+        "closed_unstarted": {},
+        "decision_defects": [],
+        "decisions": {},
+        "defects": [
+          "conflicting_terminal"
+        ],
+        "denials": {},
+        "dispatched": [
+          "R0"
+        ],
+        "dispatched_count": 1,
+        "local_in_flight": [],
+        "policies": {
+          "P0": {
+            "failover_failures": [
+              "permanent",
+              "implementation_exception"
+            ],
+            "max_attempts": 2,
+            "replay": "idempotent",
+            "retry_owner": "executor"
+          },
+          "P1": {
+            "failover_failures": [
+              "permanent",
+              "implementation_exception"
+            ],
+            "max_attempts": 3,
+            "replay": "idempotent",
+            "retry_owner": "executor"
+          }
+        },
+        "remote_outstanding": [
+          "R0"
+        ],
+        "request_associations": {
+          "R0": [
+            "T0"
+          ]
+        },
+        "request_facts": {
+          "R0": {
+            "condition": "lost"
+          }
+        },
+        "request_failures": {},
+        "request_policies": {
+          "R0": "P0"
+        },
+        "reservation_policies": {},
+        "reservations": {},
+        "resource_count": 0,
+        "resources": {},
+        "settlements": {},
+        "task_requests": {},
+        "tasks": {},
+        "terminals": {
+          "R0": "lost"
+        }
+      },
+      "status": "accepted"
+    },
+    "family": "races",
+    "traces": []
+  },
+  {
+    "boundary": "runtime",
+    "case_id": "races/lost_conflicting_settlement_preserves_remote",
+    "declaration": {
+      "hard_limit": 2,
+      "policies": {
+        "P0": {
+          "failover_failures": [
+            "permanent",
+            "implementation_exception"
+          ],
+          "max_attempts": 2,
+          "replay": "idempotent",
+          "retry_owner": "executor"
+        },
+        "P1": {
+          "failover_failures": [
+            "permanent",
+            "implementation_exception"
+          ],
+          "max_attempts": 3,
+          "replay": "idempotent",
+          "retry_owner": "executor"
+        }
+      }
+    },
+    "events": [
+      {
+        "association": "T0",
+        "kind": "bind_policy",
+        "policies": [
+          "P0"
+        ]
+      },
+      {
+        "associations": [
+          "T0"
+        ],
+        "kind": "reserve",
+        "policy": "P0",
+        "purpose": "initial",
+        "request": "R0"
+      },
+      {
+        "kind": "dispatch",
+        "request": "R0"
+      },
+      {
+        "kind": "lost",
+        "request": "R0"
+      },
+      {
+        "disposition": "unknown",
+        "kind": "settlement",
+        "remote_stopped": null,
+        "request": "R0",
+        "usage": "unknown"
+      },
+      {
+        "disposition": "completed",
+        "kind": "settlement",
+        "remote_stopped": true,
+        "request": "R0",
+        "usage": {
+          "input": 1,
+          "output": 1
+        }
+      }
+    ],
+    "expected": {
+      "state": {
+        "artifacts": [],
+        "association_requests": {
+          "T0": "R0"
+        },
+        "association_terminals": {},
+        "attempts": {
+          "T0": 1
+        },
+        "binding_declarations": {},
+        "binding_sources": {},
+        "binding_terminal": null,
+        "bindings": {
+          "T0": [
+            "P0"
+          ]
+        },
+        "cancel_requested": [],
+        "cleanup": {},
+        "closed_unstarted": {},
+        "decision_defects": [],
+        "decisions": {},
+        "defects": [
+          "conflicting_settlement"
+        ],
+        "denials": {},
+        "dispatched": [
+          "R0"
+        ],
+        "dispatched_count": 1,
+        "local_in_flight": [],
+        "policies": {
+          "P0": {
+            "failover_failures": [
+              "permanent",
+              "implementation_exception"
+            ],
+            "max_attempts": 2,
+            "replay": "idempotent",
+            "retry_owner": "executor"
+          },
+          "P1": {
+            "failover_failures": [
+              "permanent",
+              "implementation_exception"
+            ],
+            "max_attempts": 3,
+            "replay": "idempotent",
+            "retry_owner": "executor"
+          }
+        },
+        "remote_outstanding": [
+          "R0"
+        ],
+        "request_associations": {
+          "R0": [
+            "T0"
+          ]
+        },
+        "request_facts": {
+          "R0": {
+            "condition": "lost"
+          }
+        },
+        "request_failures": {},
+        "request_policies": {
+          "R0": "P0"
+        },
+        "reservation_policies": {},
+        "reservations": {},
+        "resource_count": 0,
+        "resources": {},
+        "settlements": {
+          "R0": {
+            "disposition": "unknown",
+            "remote_stopped": null,
+            "usage": "unknown"
+          }
+        },
+        "task_requests": {},
+        "tasks": {},
+        "terminals": {
+          "R0": "lost"
+        }
+      },
+      "status": "accepted"
+    },
+    "family": "races",
+    "traces": []
+  },
+  {
+    "boundary": "runtime",
+    "case_id": "binding/lost_late_source_result",
+    "declaration": {
+      "binding_declarations": {
+        "D0": "S0"
+      },
+      "binding_limits": {
+        "max_bytes": 8,
+        "max_items": 2
+      },
+      "hard_limit": 2,
+      "policies": {
+        "P0": {
+          "failover_failures": [
+            "permanent",
+            "implementation_exception"
+          ],
+          "max_attempts": 2,
+          "replay": "idempotent",
+          "retry_owner": "executor"
+        },
+        "P1": {
+          "failover_failures": [
+            "permanent",
+            "implementation_exception"
+          ],
+          "max_attempts": 3,
+          "replay": "idempotent",
+          "retry_owner": "executor"
+        }
+      }
+    },
+    "events": [
+      {
+        "association": "D0",
+        "kind": "bind_policy",
+        "policies": [
+          "P0"
+        ]
+      },
+      {
+        "associations": [
+          "D0"
+        ],
+        "kind": "reserve",
+        "policy": "P0",
+        "purpose": "initial",
+        "request": "R0"
+      },
+      {
+        "kind": "dispatch",
+        "request": "R0"
+      },
+      {
+        "kind": "lost",
+        "request": "R0"
+      },
+      {
+        "items": [
+          {
+            "association": "D0",
+            "key": 0,
+            "text": "late",
+            "version": 1
+          }
+        ],
+        "kind": "source_result",
+        "request": "R0",
+        "source": "S0"
+      }
+    ],
+    "expected": {
+      "state": {
+        "artifacts": [],
+        "association_requests": {
+          "D0": "R0"
+        },
+        "association_terminals": {},
+        "attempts": {
+          "D0": 1
+        },
+        "binding_declarations": {
+          "D0": "S0"
+        },
+        "binding_sources": {},
+        "binding_terminal": null,
+        "bindings": {
+          "D0": [
+            "P0"
+          ]
+        },
+        "cancel_requested": [],
+        "cleanup": {},
+        "closed_unstarted": {},
+        "decision_defects": [],
+        "decisions": {},
+        "defects": [
+          "conflicting_terminal"
+        ],
+        "denials": {},
+        "dispatched": [
+          "R0"
+        ],
+        "dispatched_count": 1,
+        "local_in_flight": [],
+        "policies": {
+          "P0": {
+            "failover_failures": [
+              "permanent",
+              "implementation_exception"
+            ],
+            "max_attempts": 2,
+            "replay": "idempotent",
+            "retry_owner": "executor"
+          },
+          "P1": {
+            "failover_failures": [
+              "permanent",
+              "implementation_exception"
+            ],
+            "max_attempts": 3,
+            "replay": "idempotent",
+            "retry_owner": "executor"
+          }
+        },
+        "remote_outstanding": [
+          "R0"
+        ],
+        "request_associations": {
+          "R0": [
+            "D0"
+          ]
+        },
+        "request_facts": {
+          "R0": {
+            "condition": "lost"
+          }
+        },
+        "request_failures": {},
+        "request_policies": {
+          "R0": "P0"
+        },
+        "reservation_policies": {},
+        "reservations": {},
+        "resource_count": 0,
+        "resources": {},
+        "settlements": {},
+        "task_requests": {},
+        "tasks": {},
+        "terminals": {
+          "R0": "lost"
+        }
+      },
+      "status": "accepted"
+    },
+    "family": "binding",
+    "traces": [
+      {
+        "events": [
+          {
+            "association": "D0",
+            "kind": "bind_policy",
+            "policies": [
+              "P0"
+            ]
+          },
+          {
+            "associations": [
+              "D0"
+            ],
+            "kind": "reserve",
+            "policy": "P0",
+            "purpose": "initial",
+            "request": "R0"
+          },
+          {
+            "kind": "dispatch",
+            "request": "R0"
+          },
+          {
+            "kind": "lost",
+            "request": "R0"
+          },
+          {
+            "items": [
+              {
+                "association": "D0",
+                "key": 0,
+                "text": "late",
+                "version": 1
+              }
+            ],
+            "kind": "source_result",
+            "request": "R0",
+            "source": "S0"
+          },
+          {
+            "disposition": "completed",
+            "kind": "settlement",
+            "remote_stopped": true,
+            "request": "R0",
+            "usage": {
+              "input": 1,
+              "output": 1
+            }
+          }
+        ],
+        "expected": {
+          "state": {
+            "artifacts": [],
+            "association_requests": {
+              "D0": "R0"
+            },
+            "association_terminals": {},
+            "attempts": {
+              "D0": 1
+            },
+            "binding_declarations": {
+              "D0": "S0"
+            },
+            "binding_sources": {},
+            "binding_terminal": null,
+            "bindings": {
+              "D0": [
+                "P0"
+              ]
+            },
+            "cancel_requested": [],
+            "cleanup": {},
+            "closed_unstarted": {},
+            "decision_defects": [],
+            "decisions": {},
+            "defects": [
+              "conflicting_terminal"
+            ],
+            "denials": {},
+            "dispatched": [
+              "R0"
+            ],
+            "dispatched_count": 1,
+            "local_in_flight": [],
+            "policies": {
+              "P0": {
+                "failover_failures": [
+                  "permanent",
+                  "implementation_exception"
+                ],
+                "max_attempts": 2,
+                "replay": "idempotent",
+                "retry_owner": "executor"
+              },
+              "P1": {
+                "failover_failures": [
+                  "permanent",
+                  "implementation_exception"
+                ],
+                "max_attempts": 3,
+                "replay": "idempotent",
+                "retry_owner": "executor"
+              }
+            },
+            "remote_outstanding": [],
+            "request_associations": {
+              "R0": [
+                "D0"
+              ]
+            },
+            "request_facts": {
+              "R0": {
+                "condition": "lost"
+              }
+            },
+            "request_failures": {},
+            "request_policies": {
+              "R0": "P0"
+            },
+            "reservation_policies": {},
+            "reservations": {},
+            "resource_count": 0,
+            "resources": {},
+            "settlements": {
+              "R0": {
+                "disposition": "completed",
+                "remote_stopped": true,
+                "usage": {
+                  "input": 1,
+                  "output": 1
+                }
+              }
+            },
+            "task_requests": {},
+            "tasks": {},
+            "terminals": {
+              "R0": "lost"
+            }
+          },
+          "status": "accepted"
+        },
+        "name": "alternate_0"
+      }
+    ]
+  },
+  {
+    "boundary": "runtime",
+    "case_id": "binding/lost_late_source_failure",
+    "declaration": {
+      "binding_declarations": {
+        "D0": "S0"
+      },
+      "binding_limits": {
+        "max_bytes": 8,
+        "max_items": 2
+      },
+      "hard_limit": 2,
+      "policies": {
+        "P0": {
+          "failover_failures": [
+            "permanent",
+            "implementation_exception"
+          ],
+          "max_attempts": 2,
+          "replay": "idempotent",
+          "retry_owner": "executor"
+        },
+        "P1": {
+          "failover_failures": [
+            "permanent",
+            "implementation_exception"
+          ],
+          "max_attempts": 3,
+          "replay": "idempotent",
+          "retry_owner": "executor"
+        }
+      }
+    },
+    "events": [
+      {
+        "association": "D0",
+        "kind": "bind_policy",
+        "policies": [
+          "P0"
+        ]
+      },
+      {
+        "associations": [
+          "D0"
+        ],
+        "kind": "reserve",
+        "policy": "P0",
+        "purpose": "initial",
+        "request": "R0"
+      },
+      {
+        "kind": "dispatch",
+        "request": "R0"
+      },
+      {
+        "kind": "lost",
+        "request": "R0"
+      },
+      {
+        "association": "D0",
+        "kind": "source_failure",
+        "request": "R0",
+        "required": true
+      }
+    ],
+    "expected": {
+      "state": {
+        "artifacts": [],
+        "association_requests": {
+          "D0": "R0"
+        },
+        "association_terminals": {},
+        "attempts": {
+          "D0": 1
+        },
+        "binding_declarations": {
+          "D0": "S0"
+        },
+        "binding_sources": {},
+        "binding_terminal": null,
+        "bindings": {
+          "D0": [
+            "P0"
+          ]
+        },
+        "cancel_requested": [],
+        "cleanup": {},
+        "closed_unstarted": {},
+        "decision_defects": [],
+        "decisions": {},
+        "defects": [
+          "conflicting_terminal"
+        ],
+        "denials": {},
+        "dispatched": [
+          "R0"
+        ],
+        "dispatched_count": 1,
+        "local_in_flight": [],
+        "policies": {
+          "P0": {
+            "failover_failures": [
+              "permanent",
+              "implementation_exception"
+            ],
+            "max_attempts": 2,
+            "replay": "idempotent",
+            "retry_owner": "executor"
+          },
+          "P1": {
+            "failover_failures": [
+              "permanent",
+              "implementation_exception"
+            ],
+            "max_attempts": 3,
+            "replay": "idempotent",
+            "retry_owner": "executor"
+          }
+        },
+        "remote_outstanding": [
+          "R0"
+        ],
+        "request_associations": {
+          "R0": [
+            "D0"
+          ]
+        },
+        "request_facts": {
+          "R0": {
+            "condition": "lost"
+          }
+        },
+        "request_failures": {},
+        "request_policies": {
+          "R0": "P0"
+        },
+        "reservation_policies": {},
+        "reservations": {},
+        "resource_count": 0,
+        "resources": {},
+        "settlements": {},
+        "task_requests": {},
+        "tasks": {},
+        "terminals": {
+          "R0": "lost"
+        }
+      },
+      "status": "accepted"
+    },
+    "family": "binding",
+    "traces": [
+      {
+        "events": [
+          {
+            "association": "D0",
+            "kind": "bind_policy",
+            "policies": [
+              "P0"
+            ]
+          },
+          {
+            "associations": [
+              "D0"
+            ],
+            "kind": "reserve",
+            "policy": "P0",
+            "purpose": "initial",
+            "request": "R0"
+          },
+          {
+            "kind": "dispatch",
+            "request": "R0"
+          },
+          {
+            "kind": "lost",
+            "request": "R0"
+          },
+          {
+            "association": "D0",
+            "kind": "source_failure",
+            "request": "R0",
+            "required": true
+          },
+          {
+            "disposition": "completed",
+            "kind": "settlement",
+            "remote_stopped": true,
+            "request": "R0",
+            "usage": {
+              "input": 1,
+              "output": 1
+            }
+          }
+        ],
+        "expected": {
+          "state": {
+            "artifacts": [],
+            "association_requests": {
+              "D0": "R0"
+            },
+            "association_terminals": {},
+            "attempts": {
+              "D0": 1
+            },
+            "binding_declarations": {
+              "D0": "S0"
+            },
+            "binding_sources": {},
+            "binding_terminal": null,
+            "bindings": {
+              "D0": [
+                "P0"
+              ]
+            },
+            "cancel_requested": [],
+            "cleanup": {},
+            "closed_unstarted": {},
+            "decision_defects": [],
+            "decisions": {},
+            "defects": [
+              "conflicting_terminal"
+            ],
+            "denials": {},
+            "dispatched": [
+              "R0"
+            ],
+            "dispatched_count": 1,
+            "local_in_flight": [],
+            "policies": {
+              "P0": {
+                "failover_failures": [
+                  "permanent",
+                  "implementation_exception"
+                ],
+                "max_attempts": 2,
+                "replay": "idempotent",
+                "retry_owner": "executor"
+              },
+              "P1": {
+                "failover_failures": [
+                  "permanent",
+                  "implementation_exception"
+                ],
+                "max_attempts": 3,
+                "replay": "idempotent",
+                "retry_owner": "executor"
+              }
+            },
+            "remote_outstanding": [],
+            "request_associations": {
+              "R0": [
+                "D0"
+              ]
+            },
+            "request_facts": {
+              "R0": {
+                "condition": "lost"
+              }
+            },
+            "request_failures": {},
+            "request_policies": {
+              "R0": "P0"
+            },
+            "reservation_policies": {},
+            "reservations": {},
+            "resource_count": 0,
+            "resources": {},
+            "settlements": {
+              "R0": {
+                "disposition": "completed",
+                "remote_stopped": true,
+                "usage": {
+                  "input": 1,
+                  "output": 1
+                }
+              }
+            },
+            "task_requests": {},
+            "tasks": {},
+            "terminals": {
+              "R0": "lost"
+            }
+          },
+          "status": "accepted"
+        },
+        "name": "alternate_0"
+      }
+    ]
+  },
+  {
+    "boundary": "runtime",
+    "case_id": "binding/cancelled_late_source_result",
+    "declaration": {
+      "binding_declarations": {
+        "D0": "S0"
+      },
+      "binding_limits": {
+        "max_bytes": 8,
+        "max_items": 2
+      },
+      "hard_limit": 2,
+      "policies": {
+        "P0": {
+          "failover_failures": [
+            "permanent",
+            "implementation_exception"
+          ],
+          "max_attempts": 2,
+          "replay": "idempotent",
+          "retry_owner": "executor"
+        },
+        "P1": {
+          "failover_failures": [
+            "permanent",
+            "implementation_exception"
+          ],
+          "max_attempts": 3,
+          "replay": "idempotent",
+          "retry_owner": "executor"
+        }
+      }
+    },
+    "events": [
+      {
+        "association": "D0",
+        "kind": "bind_policy",
+        "policies": [
+          "P0"
+        ]
+      },
+      {
+        "associations": [
+          "D0"
+        ],
+        "kind": "reserve",
+        "policy": "P0",
+        "purpose": "initial",
+        "request": "R0"
+      },
+      {
+        "kind": "dispatch",
+        "request": "R0"
+      },
+      {
+        "kind": "cancel",
+        "request": "R0"
+      },
+      {
+        "kind": "stop",
+        "request": "R0",
+        "usage": "unknown"
+      },
+      {
+        "items": [
+          {
+            "association": "D0",
+            "key": 0,
+            "text": "late",
+            "version": 1
+          }
+        ],
+        "kind": "source_result",
+        "request": "R0",
+        "source": "S0"
+      }
+    ],
+    "expected": {
+      "state": {
+        "artifacts": [],
+        "association_requests": {
+          "D0": "R0"
+        },
+        "association_terminals": {},
+        "attempts": {
+          "D0": 1
+        },
+        "binding_declarations": {
+          "D0": "S0"
+        },
+        "binding_sources": {},
+        "binding_terminal": null,
+        "bindings": {
+          "D0": [
+            "P0"
+          ]
+        },
+        "cancel_requested": [
+          "R0"
+        ],
+        "cleanup": {},
+        "closed_unstarted": {},
+        "decision_defects": [],
+        "decisions": {},
+        "defects": [
+          "conflicting_terminal"
+        ],
+        "denials": {},
+        "dispatched": [
+          "R0"
+        ],
+        "dispatched_count": 1,
+        "local_in_flight": [],
+        "policies": {
+          "P0": {
+            "failover_failures": [
+              "permanent",
+              "implementation_exception"
+            ],
+            "max_attempts": 2,
+            "replay": "idempotent",
+            "retry_owner": "executor"
+          },
+          "P1": {
+            "failover_failures": [
+              "permanent",
+              "implementation_exception"
+            ],
+            "max_attempts": 3,
+            "replay": "idempotent",
+            "retry_owner": "executor"
+          }
+        },
+        "remote_outstanding": [],
+        "request_associations": {
+          "R0": [
+            "D0"
+          ]
+        },
+        "request_facts": {
+          "R0": {
+            "condition": "cancel_after_dispatch"
+          }
+        },
+        "request_failures": {},
+        "request_policies": {
+          "R0": "P0"
+        },
+        "reservation_policies": {},
+        "reservations": {},
+        "resource_count": 0,
+        "resources": {},
+        "settlements": {},
+        "task_requests": {},
+        "tasks": {},
+        "terminals": {
+          "R0": "cancelled"
+        }
+      },
+      "status": "accepted"
+    },
+    "family": "binding",
+    "traces": [
+      {
+        "events": [
+          {
+            "association": "D0",
+            "kind": "bind_policy",
+            "policies": [
+              "P0"
+            ]
+          },
+          {
+            "associations": [
+              "D0"
+            ],
+            "kind": "reserve",
+            "policy": "P0",
+            "purpose": "initial",
+            "request": "R0"
+          },
+          {
+            "kind": "dispatch",
+            "request": "R0"
+          },
+          {
+            "kind": "cancel",
+            "request": "R0"
+          },
+          {
+            "kind": "stop",
+            "request": "R0",
+            "usage": "unknown"
+          },
+          {
+            "items": [
+              {
+                "association": "D0",
+                "key": 0,
+                "text": "late",
+                "version": 1
+              }
+            ],
+            "kind": "source_result",
+            "request": "R0",
+            "source": "S0"
+          },
+          {
+            "disposition": "completed",
+            "kind": "settlement",
+            "remote_stopped": true,
+            "request": "R0",
+            "usage": {
+              "input": 1,
+              "output": 1
+            }
+          }
+        ],
+        "expected": {
+          "state": {
+            "artifacts": [],
+            "association_requests": {
+              "D0": "R0"
+            },
+            "association_terminals": {},
+            "attempts": {
+              "D0": 1
+            },
+            "binding_declarations": {
+              "D0": "S0"
+            },
+            "binding_sources": {},
+            "binding_terminal": null,
+            "bindings": {
+              "D0": [
+                "P0"
+              ]
+            },
+            "cancel_requested": [
+              "R0"
+            ],
+            "cleanup": {},
+            "closed_unstarted": {},
+            "decision_defects": [],
+            "decisions": {},
+            "defects": [
+              "conflicting_terminal"
+            ],
+            "denials": {},
+            "dispatched": [
+              "R0"
+            ],
+            "dispatched_count": 1,
+            "local_in_flight": [],
+            "policies": {
+              "P0": {
+                "failover_failures": [
+                  "permanent",
+                  "implementation_exception"
+                ],
+                "max_attempts": 2,
+                "replay": "idempotent",
+                "retry_owner": "executor"
+              },
+              "P1": {
+                "failover_failures": [
+                  "permanent",
+                  "implementation_exception"
+                ],
+                "max_attempts": 3,
+                "replay": "idempotent",
+                "retry_owner": "executor"
+              }
+            },
+            "remote_outstanding": [],
+            "request_associations": {
+              "R0": [
+                "D0"
+              ]
+            },
+            "request_facts": {
+              "R0": {
+                "condition": "cancel_after_dispatch"
+              }
+            },
+            "request_failures": {},
+            "request_policies": {
+              "R0": "P0"
+            },
+            "reservation_policies": {},
+            "reservations": {},
+            "resource_count": 0,
+            "resources": {},
+            "settlements": {
+              "R0": {
+                "disposition": "completed",
+                "remote_stopped": true,
+                "usage": {
+                  "input": 1,
+                  "output": 1
+                }
+              }
+            },
+            "task_requests": {},
+            "tasks": {},
+            "terminals": {
+              "R0": "cancelled"
+            }
+          },
+          "status": "accepted"
+        },
+        "name": "alternate_0"
+      }
+    ]
+  },
+  {
+    "boundary": "runtime",
+    "case_id": "binding/cancelled_late_source_failure",
+    "declaration": {
+      "binding_declarations": {
+        "D0": "S0"
+      },
+      "binding_limits": {
+        "max_bytes": 8,
+        "max_items": 2
+      },
+      "hard_limit": 2,
+      "policies": {
+        "P0": {
+          "failover_failures": [
+            "permanent",
+            "implementation_exception"
+          ],
+          "max_attempts": 2,
+          "replay": "idempotent",
+          "retry_owner": "executor"
+        },
+        "P1": {
+          "failover_failures": [
+            "permanent",
+            "implementation_exception"
+          ],
+          "max_attempts": 3,
+          "replay": "idempotent",
+          "retry_owner": "executor"
+        }
+      }
+    },
+    "events": [
+      {
+        "association": "D0",
+        "kind": "bind_policy",
+        "policies": [
+          "P0"
+        ]
+      },
+      {
+        "associations": [
+          "D0"
+        ],
+        "kind": "reserve",
+        "policy": "P0",
+        "purpose": "initial",
+        "request": "R0"
+      },
+      {
+        "kind": "dispatch",
+        "request": "R0"
+      },
+      {
+        "kind": "cancel",
+        "request": "R0"
+      },
+      {
+        "kind": "stop",
+        "request": "R0",
+        "usage": "unknown"
+      },
+      {
+        "association": "D0",
+        "kind": "source_failure",
+        "request": "R0",
+        "required": true
+      }
+    ],
+    "expected": {
+      "state": {
+        "artifacts": [],
+        "association_requests": {
+          "D0": "R0"
+        },
+        "association_terminals": {},
+        "attempts": {
+          "D0": 1
+        },
+        "binding_declarations": {
+          "D0": "S0"
+        },
+        "binding_sources": {},
+        "binding_terminal": null,
+        "bindings": {
+          "D0": [
+            "P0"
+          ]
+        },
+        "cancel_requested": [
+          "R0"
+        ],
+        "cleanup": {},
+        "closed_unstarted": {},
+        "decision_defects": [],
+        "decisions": {},
+        "defects": [
+          "conflicting_terminal"
+        ],
+        "denials": {},
+        "dispatched": [
+          "R0"
+        ],
+        "dispatched_count": 1,
+        "local_in_flight": [],
+        "policies": {
+          "P0": {
+            "failover_failures": [
+              "permanent",
+              "implementation_exception"
+            ],
+            "max_attempts": 2,
+            "replay": "idempotent",
+            "retry_owner": "executor"
+          },
+          "P1": {
+            "failover_failures": [
+              "permanent",
+              "implementation_exception"
+            ],
+            "max_attempts": 3,
+            "replay": "idempotent",
+            "retry_owner": "executor"
+          }
+        },
+        "remote_outstanding": [],
+        "request_associations": {
+          "R0": [
+            "D0"
+          ]
+        },
+        "request_facts": {
+          "R0": {
+            "condition": "cancel_after_dispatch"
+          }
+        },
+        "request_failures": {},
+        "request_policies": {
+          "R0": "P0"
+        },
+        "reservation_policies": {},
+        "reservations": {},
+        "resource_count": 0,
+        "resources": {},
+        "settlements": {},
+        "task_requests": {},
+        "tasks": {},
+        "terminals": {
+          "R0": "cancelled"
+        }
+      },
+      "status": "accepted"
+    },
+    "family": "binding",
+    "traces": [
+      {
+        "events": [
+          {
+            "association": "D0",
+            "kind": "bind_policy",
+            "policies": [
+              "P0"
+            ]
+          },
+          {
+            "associations": [
+              "D0"
+            ],
+            "kind": "reserve",
+            "policy": "P0",
+            "purpose": "initial",
+            "request": "R0"
+          },
+          {
+            "kind": "dispatch",
+            "request": "R0"
+          },
+          {
+            "kind": "cancel",
+            "request": "R0"
+          },
+          {
+            "kind": "stop",
+            "request": "R0",
+            "usage": "unknown"
+          },
+          {
+            "association": "D0",
+            "kind": "source_failure",
+            "request": "R0",
+            "required": true
+          },
+          {
+            "disposition": "completed",
+            "kind": "settlement",
+            "remote_stopped": true,
+            "request": "R0",
+            "usage": {
+              "input": 1,
+              "output": 1
+            }
+          }
+        ],
+        "expected": {
+          "state": {
+            "artifacts": [],
+            "association_requests": {
+              "D0": "R0"
+            },
+            "association_terminals": {},
+            "attempts": {
+              "D0": 1
+            },
+            "binding_declarations": {
+              "D0": "S0"
+            },
+            "binding_sources": {},
+            "binding_terminal": null,
+            "bindings": {
+              "D0": [
+                "P0"
+              ]
+            },
+            "cancel_requested": [
+              "R0"
+            ],
+            "cleanup": {},
+            "closed_unstarted": {},
+            "decision_defects": [],
+            "decisions": {},
+            "defects": [
+              "conflicting_terminal"
+            ],
+            "denials": {},
+            "dispatched": [
+              "R0"
+            ],
+            "dispatched_count": 1,
+            "local_in_flight": [],
+            "policies": {
+              "P0": {
+                "failover_failures": [
+                  "permanent",
+                  "implementation_exception"
+                ],
+                "max_attempts": 2,
+                "replay": "idempotent",
+                "retry_owner": "executor"
+              },
+              "P1": {
+                "failover_failures": [
+                  "permanent",
+                  "implementation_exception"
+                ],
+                "max_attempts": 3,
+                "replay": "idempotent",
+                "retry_owner": "executor"
+              }
+            },
+            "remote_outstanding": [],
+            "request_associations": {
+              "R0": [
+                "D0"
+              ]
+            },
+            "request_facts": {
+              "R0": {
+                "condition": "cancel_after_dispatch"
+              }
+            },
+            "request_failures": {},
+            "request_policies": {
+              "R0": "P0"
+            },
+            "reservation_policies": {},
+            "reservations": {},
+            "resource_count": 0,
+            "resources": {},
+            "settlements": {
+              "R0": {
+                "disposition": "completed",
+                "remote_stopped": true,
+                "usage": {
+                  "input": 1,
+                  "output": 1
+                }
+              }
+            },
+            "task_requests": {},
+            "tasks": {},
+            "terminals": {
+              "R0": "cancelled"
+            }
+          },
+          "status": "accepted"
+        },
+        "name": "alternate_0"
+      }
+    ]
   }
 ]

@@ -117,6 +117,64 @@ def test_retries_require_a_terminal_for_the_same_association() -> None:
         assert result == {"code": code, "status": "rejected"}
 
 
+def test_failover_requires_replay_authority_after_failure_class_check() -> None:
+    for replay in ("never", "before_acceptance", "idempotent"):
+        case = reference.case_by_id(f"retry/failover_permanent_replay_{replay}")
+        result = reference.evaluate_case(case)
+        if replay == "idempotent":
+            state = cast(reference.Object, result["state"])
+            assert state["reservations"] == {"R1": ["T0"]}
+        else:
+            assert result == {"code": "replay_forbidden", "status": "rejected"}
+
+
+def test_late_binding_responses_cannot_create_outputs_or_change_terminal() -> None:
+    for terminal in ("lost", "cancelled"):
+        for response in ("source_result", "source_failure"):
+            case = reference.case_by_id(f"binding/{terminal}_late_{response}")
+            result = reference.evaluate_case(case)
+            state = cast(reference.Object, result["state"])
+            assert state["terminals"] == {"R0": terminal}
+            assert state["artifacts"] == []
+            assert state["binding_sources"] == {}
+            assert state["binding_terminal"] is None
+            assert state["remote_outstanding"] == (["R0"] if terminal == "lost" else [])
+            if terminal == "lost":
+                events = cast(list[reference.Object], case["events"])
+                settled = reference.reduce_trace(
+                    cast(reference.Object, case["declaration"]),
+                    [
+                        *events,
+                        {
+                            "kind": "settlement",
+                            "request": "R0",
+                            "disposition": "completed",
+                            "usage": "unknown",
+                            "remote_stopped": True,
+                        },
+                    ],
+                )
+                assert cast(reference.Object, settled["state"])["remote_outstanding"] == []
+
+
+def test_late_generic_failure_preserves_lost_remote_uncertainty() -> None:
+    case = reference.case_by_id("races/lost_late_failure_without_settlement")
+    state = cast(reference.Object, reference.evaluate_case(case)["state"])
+    assert state["terminals"] == {"R0": "lost"}
+    assert state["remote_outstanding"] == ["R0"]
+    assert state["request_failures"] == {}
+    assert state["association_terminals"] == {}
+
+
+def test_conflicting_settlement_cannot_release_remote_capacity() -> None:
+    case = reference.case_by_id("races/lost_conflicting_settlement_preserves_remote")
+    state = cast(reference.Object, reference.evaluate_case(case)["state"])
+    assert state["remote_outstanding"] == ["R0"]
+    assert state["terminals"] == {"R0": "lost"}
+    assert state["defects"] == ["conflicting_settlement"]
+    assert cast(reference.Object, cast(reference.Object, state["settlements"])["R0"])["disposition"] == "unknown"
+
+
 def test_settlement_and_usage_grammar_rejects_ambiguous_completion() -> None:
     completed = cast(
         reference.Object,
