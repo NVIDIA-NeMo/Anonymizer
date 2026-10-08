@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, cast
@@ -33,6 +34,7 @@ from anonymizer.engine.graph_sdk.context import (
 from anonymizer.engine.graph_sdk.data import DataGraph, DataLimits
 from anonymizer.engine.graph_sdk.executor import (
     AssessmentLimits,
+    BoundInputKey,
     DecisionDeclaration,
     DecisionLimits,
     DecisionOutcome,
@@ -42,6 +44,8 @@ from anonymizer.engine.graph_sdk.executor import (
     ExecutionLimits,
     ExecutionServices,
     ImplementationHandle,
+    InitialCollectionKey,
+    LocalCompleted,
     LocalDecisionWait,
     OperationExecutionPolicy,
     OperationOutputKey,
@@ -88,6 +92,7 @@ from anonymizer.engine.graph_sdk.resources import ResourceLease, close_resource
 from anonymizer.graph._values import ActivationKey, ArtifactRef, InvocationId, PlanId, TaskAttemptId
 from anonymizer.graph.workflow import (
     ArtifactType,
+    ContextInputRef,
     DynamicScope,
     InputPort,
     NodeId,
@@ -998,6 +1003,24 @@ class _LateAdaptiveProvider:
         return StopConfirmed(usage=UnknownUsage())
 
 
+@dataclass
+class _ContextConsumer:
+    port: str
+
+    async def run(self, request: tuple[AssociationInput, ...]) -> LocalCompleted:
+        assert len(request) == 1
+        return LocalCompleted(
+            results=(
+                AssociationResult(
+                    association=request[0].association,
+                    outcome="ok",
+                    outputs=(),
+                    consumed_context_ports=frozenset({self.port}),
+                ),
+            )
+        )
+
+
 @pytest.mark.parametrize("case", REAL_BINDING_CASES, ids=lambda case: cast(str, case["case_id"]))
 def test_binding_corpus_case_through_real_provider(case: dict[str, Any]) -> None:
     asyncio.run(_assert_binding_corpus_case(case))
@@ -1022,17 +1045,60 @@ async def _assert_binding_corpus_case(case: dict[str, Any]) -> None:
     materialization_kind = cast(str, materializations[0]["kind"]) if materializations else None
     declared_max_items = cast(int, materializations[0]["max_items"]) if materializations else max_response_items
     item_type = artifact_type
-    if materialization_kind == "collection" or (materialization_kind is None and max_response_items > 1):
-        output_type = ArtifactType(name="text_collection", revision=1)
+    context_port = cast(str, materializations[0]["port"]) if materializations else "input"
+    if materializations:
+        input_type = (
+            ArtifactType(name="text_collection", revision=1) if materialization_kind == "collection" else item_type
+        )
         static = workflow.workflow
         operation_node = next(item for item in static.nodes if isinstance(item, OperationNode))
         operation = replace(
             operation_node.operation,
-            inputs=(InputPort(name="input", artifact_type=output_type),),
+            inputs=(InputPort(name=context_port, artifact_type=input_type),),
+            outcomes=tuple(
+                replace(
+                    outcome,
+                    context=frozenset(replace(use, port=context_port) for use in outcome.context),
+                )
+                for outcome in operation_node.operation.outcomes
+            ),
         )
         rebuilt = admit_static_workflow(
             workflow=static.workflow,
-            interface=operation,
+            interface=replace(operation, inputs=(InputPort(name=context_port, artifact_type=input_type),)),
+            nodes=(OperationNode(id=node, operation=operation),),
+            input_bindings=tuple(
+                replace(
+                    binding,
+                    source=ContextInputRef(port=context_port),
+                    destination=replace(binding.destination, port=context_port),
+                )
+                for binding in static.input_bindings
+            ),
+            output_bindings=tuple(static.output_bindings),
+            outcome_bindings=tuple(static.outcome_bindings),
+            sequence=tuple(static.sequence),
+            choices=tuple(static.choices),
+            protection=(),
+            limits=static.limits,
+        )
+        workflow = admit_activation_workflow(
+            workflow=rebuilt,
+            scopes=(DynamicScope(workflow=rebuilt, maps=(), joins=(), loops=()),),
+            limits=workflow.limits,
+        )
+        artifact_type = input_type
+    elif materialization_kind is None and max_response_items > 1:
+        artifact_type = ArtifactType(name="text_collection", revision=1)
+        static = workflow.workflow
+        operation_node = next(item for item in static.nodes if isinstance(item, OperationNode))
+        operation = replace(
+            operation_node.operation,
+            inputs=(InputPort(name="input", artifact_type=artifact_type),),
+        )
+        rebuilt = admit_static_workflow(
+            workflow=static.workflow,
+            interface=replace(static.interface, inputs=(InputPort(name="input", artifact_type=artifact_type),)),
             nodes=(OperationNode(id=node, operation=operation),),
             input_bindings=tuple(static.input_bindings),
             output_bindings=tuple(static.output_bindings),
@@ -1047,7 +1113,6 @@ async def _assert_binding_corpus_case(case: dict[str, Any]) -> None:
             scopes=(DynamicScope(workflow=rebuilt, maps=(), joins=(), loops=()),),
             limits=workflow.limits,
         )
-        artifact_type = output_type
     binding_sources = cast(dict[str, str], raw["binding_declarations"])
     order = list(dict.fromkeys(event["association"] for event in event_values if event["kind"] == "bind_policy"))
     assert set(order) == set(binding_sources)
@@ -1094,7 +1159,7 @@ async def _assert_binding_corpus_case(case: dict[str, Any]) -> None:
         InitialContextDecl(
             target=target,
             node=node,
-            port="input",
+            port=context_port,
             artifact_type=artifact_type,
             source=source_refs[binding_sources[label]],
             selector=ContextSelector(fields=()),
@@ -1246,6 +1311,195 @@ async def _assert_binding_corpus_case(case: dict[str, Any]) -> None:
         actual_value = sorted(cast(list[str], request_actual[key])) if key == "dispatched" else request_actual[key]
         expected_value = sorted(cast(list[str], expected[key])) if key == "dispatched" else expected[key]
         assert actual_value == expected_value, (case["case_id"], key)
+    if materializations and result.context is not None and expected.get("materialization") is not None:
+        await _assert_initial_execution_projection(
+            data=data,
+            workflow=workflow,
+            node=node,
+            item_type=item_type,
+            input_type=artifact_type,
+            bound_context=result.context,
+            expected=expected,
+            declaration_names=source_names,
+            target_names=target_names,
+            limits=cast(dict[str, int], raw["materialization_limits"]),
+        )
+
+
+async def _assert_initial_execution_projection(
+    *,
+    data: Any,
+    workflow: Any,
+    node: NodeId,
+    item_type: ArtifactType,
+    input_type: ArtifactType,
+    bound_context: Any,
+    expected: dict[str, Any],
+    declaration_names: dict[BindingDeclarationId, str],
+    target_names: Mapping[Any, str],
+    limits: dict[str, int],
+) -> None:
+    capability = _capability(workflow)
+    prepared = _prepare(
+        data=data,
+        workflow=workflow,
+        capability=capability,
+        bound_inputs=(),
+        limits=_limits(capabilities=1),
+    )
+    context = admit_context_plan(
+        prepared=prepared,
+        bound_context=bound_context,
+        adaptive_retrievals=(),
+        context_capabilities=(),
+    )
+    policy = OperationExecutionPolicy(
+        node=node,
+        kind="local",
+        request=None,
+        safe_detachment="forbidden",
+        implementations=(
+            ExecutionImplementation(
+                implementation=capability.implementation,
+                configuration=capability.configuration,
+                capability=capability,
+                request=None,
+            ),
+        ),
+        result_outcomes=frozenset({"ok"}),
+        runtime_outcomes=_valid_runtime_rows("local", frozenset({"ok"})),
+    )
+    admitted = admit_execution_plan(
+        context=context,
+        capabilities=(capability,),
+        policies=(policy,),
+        decisions=(),
+        assessment_productions=(),
+        assessment_limits=AssessmentLimits(
+            max_productions=0,
+            max_findings_per_production=0,
+            max_finding_code_bytes=0,
+            max_absence_queries=0,
+            max_assessment_facts=0,
+            max_port_facts=16,
+            max_provenance_edges=limits["max_provenance_edges"],
+        ),
+    )
+    context_port = bound_context.receipt.sources[0].declaration.port
+    execution = await (
+        await start_execution(
+            admitted=admitted,
+            capabilities=(capability,),
+            services=ExecutionServices(
+                handles=(
+                    ImplementationHandle(
+                        implementation=capability.implementation,
+                        operation=capability.operation,
+                        configuration=capability.configuration,
+                        local=_ContextConsumer(port=context_port),
+                        transport=None,
+                        resource=None,
+                    ),
+                ),
+                context_resources=(),
+                limits=ExecutionLimits(
+                    max_local_in_flight=1,
+                    max_remote_outstanding=0,
+                    max_runtime_artifacts=limits["max_artifacts"],
+                    max_runtime_artifact_bytes=limits["max_artifact_bytes"],
+                    max_collection_items=limits["max_collection_items"],
+                ),
+                decision_limits=DecisionLimits(max_pending=0, max_lifetime_ns=0),
+                clock=_Clock(),
+            ),
+        )
+    ).wait()
+    values = dict(execution.artifacts)
+    bound_receipts = {item.reference: item for item in bound_context.receipt.artifacts}
+    expected_by_identity = {item["identity"]: item for item in expected["artifacts"]}
+    identities: dict[object, str] = {}
+    actual_artifacts: list[dict[str, object]] = []
+    for fact in execution.provenance:
+        key = fact.key
+        if isinstance(key, BoundInputKey):
+            declaration = declaration_names[key.binding_artifact.declaration]
+            identity = (
+                f"BoundInputKey:{target_names[key.target]}:N0:{key.port}:"
+                f"{declaration}:{key.binding_artifact.key}:{key.binding_artifact.version}"
+            )
+            artifact_type = item_type
+        elif isinstance(key, InitialCollectionKey):
+            declaration = declaration_names[key.declaration]
+            identity = f"InitialCollectionKey:{target_names[key.target]}:N0:{key.port}:{declaration}"
+            artifact_type = input_type
+        else:
+            continue
+        identities[key] = identity
+        value = values[fact.artifact]
+        expected_item = expected_by_identity[identity]
+        actual_item: dict[str, object] = {"identity": identity, "artifact_type": artifact_type.name}
+        if isinstance(key, BoundInputKey):
+            receipt = bound_receipts[key.binding_artifact]
+            if "source" in expected_item:
+                actual_item["source"] = receipt.source.name
+            if "text" in expected_item:
+                actual_item["text"] = receipt.text
+            if "value" in expected_item:
+                actual_item["value"] = receipt.text
+        elif "value" in expected_item:
+            actual_item["value"] = (
+                value.text
+                if isinstance(value, TextArtifactValue)
+                else [{"key": item.key, "version": item.version, "value": item.value.text} for item in value.items]
+            )
+        actual_artifacts.append(actual_item)
+    assert sorted(actual_artifacts, key=lambda item: cast(str, item["identity"])) == sorted(
+        expected["artifacts"], key=lambda item: item["identity"]
+    )
+    aggregate = next(fact for fact in execution.provenance if isinstance(fact.key, BoundInputKey))
+    if any(isinstance(fact.key, InitialCollectionKey) for fact in execution.provenance):
+        aggregate = next(fact for fact in execution.provenance if isinstance(fact.key, InitialCollectionKey))
+    aggregate_value = values[aggregate.artifact]
+    declaration = declaration_names[bound_context.receipt.sources[0].identity]
+    materialization = {
+        "artifact_bytes": sum(
+            len(value.text.encode())
+            if isinstance(value, TextArtifactValue)
+            else sum(len(item.value.text.encode()) for item in value.items)
+            for value in values.values()
+        ),
+        "artifact_count": len(values),
+        "ports": {
+            f"initial:T0:N0:{context_port}:{declaration}": {
+                "artifact_type": input_type.name,
+                "key": identities[aggregate.key],
+                "value": (
+                    aggregate_value.text
+                    if isinstance(aggregate_value, TextArtifactValue)
+                    else [
+                        {"key": item.key, "version": item.version, "value": item.value.text}
+                        for item in aggregate_value.items
+                    ]
+                ),
+            }
+        },
+        "provenance": {
+            identities[fact.key]: sorted(identities[parent] for parent in fact.parents)
+            for fact in execution.provenance
+            if fact.key in identities
+        },
+        "provenance_edges": sum(len(fact.parents) for fact in execution.provenance),
+    }
+    assert materialization == expected["materialization"]
+    assert len(execution.ports) == 1
+    port = execution.ports[0]
+    assert (port.node, port.artifact, port.artifact_type, port.role) == (
+        node,
+        aggregate.artifact,
+        input_type,
+        "artifact",
+    )
+    assert not execution.final_outputs
 
 
 def test_binding_foreign_target_admission_case_through_production() -> None:
