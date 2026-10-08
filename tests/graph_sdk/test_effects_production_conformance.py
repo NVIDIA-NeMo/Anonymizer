@@ -292,6 +292,10 @@ LATE_INITIAL_CASES = tuple(
         "binding/lost_late_source_result",
         "materialization/initial_late_cancelled",
         "materialization/initial_late_lost",
+        "materialization/latest_cancelled_late_valid",
+        "materialization/latest_cancelled_late_multikey",
+        "materialization/latest_lost_late_valid",
+        "materialization/latest_lost_late_multikey",
     }
 )
 
@@ -1329,6 +1333,9 @@ class _LateBindingCaseProvider:
             raise RuntimeError("stop not acknowledged")
         return StopConfirmed(usage=UnknownUsage())
 
+    async def close(self) -> None:
+        await self.delegate.close()
+
 
 @dataclass
 class _ContextConsumer:
@@ -2133,6 +2140,9 @@ async def _assert_late_initial_provider_case(case: dict[str, Any]) -> None:
     raw = cast(dict[str, Any], case["declaration"])
     workflow, node, artifact_type = _context_workflow()
     materializations = cast(list[dict[str, Any]], raw.get("materializations", []))
+    latest = bool(materializations and materializations[0].get("version_selection") == "latest")
+    owner = "sdk" if latest else "caller"
+    publication = materializations[0].get("publication") if materializations else None
     context_port = cast(str, materializations[0]["port"]) if materializations else "input"
     if context_port != "input":
         static = workflow.workflow
@@ -2148,6 +2158,28 @@ async def _assert_late_initial_provider_case(case: dict[str, Any]) -> None:
                 for outcome in operation_node.operation.outcomes
             ),
         )
+        if publication is not None:
+            assert materializations[0]["output_type"] == artifact_type.name
+            assert publication["artifact_type"] == artifact_type.name
+            assert publication["activation"] == f"OP:{materializations[0]['association']}"
+            assert publication["node"] == materializations[0]["node"] == "N0"
+            (published_outcome,) = operation.outcomes
+            assert publication["outcome"] == published_outcome.name == "ok"
+            operation = replace(
+                operation,
+                outputs=(OutputPort(name=publication["output_port"], artifact_type=artifact_type),),
+                output_dependencies=(
+                    OutputDependency(
+                        output=publication["output_port"],
+                        inputs=frozenset(publication["inputs"]),
+                        identity_input=None,
+                    ),
+                ),
+                outcomes=tuple(
+                    replace(outcome, produced_ports=frozenset({publication["output_port"]}))
+                    for outcome in operation.outcomes
+                ),
+            )
         rebuilt = admit_static_workflow(
             workflow=static.workflow,
             interface=replace(operation, inputs=(InputPort(name=context_port, artifact_type=artifact_type),)),
@@ -2160,12 +2192,19 @@ async def _assert_late_initial_provider_case(case: dict[str, Any]) -> None:
                 )
                 for binding in static.input_bindings
             ),
-            output_bindings=tuple(static.output_bindings),
+            output_bindings=(
+                OutputBinding(
+                    source=NodeOutputRef(node=node, port=publication["output_port"]),
+                    destination=WorkflowOutputRef(port=publication["output_port"]),
+                ),
+            )
+            if publication is not None
+            else tuple(static.output_bindings),
             outcome_bindings=tuple(static.outcome_bindings),
             sequence=tuple(static.sequence),
             choices=tuple(static.choices),
             protection=(),
-            limits=static.limits,
+            limits=replace(static.limits, max_bindings=static.limits.max_bindings + int(publication is not None)),
         )
         workflow = admit_activation_workflow(
             workflow=rebuilt,
@@ -2198,7 +2237,7 @@ async def _assert_late_initial_provider_case(case: dict[str, Any]) -> None:
         artifact_type=artifact_type,
         uses=frozenset({"initial_binding"}),
         execution="async",
-        resource_owner="caller",
+        resource_owner=cast(Any, owner),
         cancellation="cooperative_ack",
         settlement="explicit_ack",
         usage="exact",
@@ -2213,7 +2252,12 @@ async def _assert_late_initial_provider_case(case: dict[str, Any]) -> None:
         source=source,
         selector=ContextSelector(fields=()),
         requirement="required",
-        bounds=RetrievalBounds(max_items=1, max_bytes=12, max_requests=policy.max_attempts),
+        bounds=RetrievalBounds(
+            max_items=materializations[0]["max_items"] if materializations else 1,
+            max_bytes=materializations[0]["max_bytes"] if materializations else 12,
+            max_requests=policy.max_attempts,
+        ),
+        version_selection="latest" if latest else "exact_one",
         materialization=ContextMaterialization(kind="single", item_type=artifact_type),
     )
     binding_limits = cast(dict[str, int], raw["binding_limits"])
@@ -2226,8 +2270,10 @@ async def _assert_late_initial_provider_case(case: dict[str, Any]) -> None:
             ContextResource(
                 source=source,
                 capability=capability,
-                lease=ResourceLease.create(owner="caller", safe_detachment="forbidden", handle=provider),
-                factory=None,
+                lease=None
+                if latest
+                else ResourceLease.create(owner="caller", safe_detachment="forbidden", handle=provider),
+                factory=(lambda: provider) if latest else None,
             ),
         ),
         limits=BindingLimits(
@@ -2276,6 +2322,62 @@ async def _assert_late_initial_provider_case(case: dict[str, Any]) -> None:
     assert result.receipt.terminal == ("failed" if acknowledge_stop else "lost")
     assert result.context is None
     assert not result.receipt.artifacts
+
+    if latest:
+        conflicts = []
+        for defect in result.receipt.requests.defects:
+            assert defect.association is None and defect.settlement is None
+            terminal = defect.terminal
+            assert terminal is not None
+            rows = []
+            for returned in terminal.results:
+                assert not returned.outputs and not returned.consumed_context_ports
+                rows.append(
+                    {
+                        "association": association_names[returned.association],
+                        "outcome": returned.outcome,
+                        "outputs": [],
+                        "consumed_context_ports": [],
+                    }
+                )
+            conflicts.append(
+                {
+                    "request": request_names[defect.request],
+                    "code": defect.code,
+                    "association": None,
+                    "terminal": {
+                        "request": request_names[terminal.request],
+                        "category": terminal.category,
+                        "failure": terminal.failure,
+                        "results": rows,
+                    },
+                    "settlement": None,
+                }
+            )
+        assert conflicts == expected["conflicting_terminal_facts"]
+        # No BoundContext exists, so this driver cannot enter the execution owner.
+        # Authenticate the reference's downstream zero projection at that boundary.
+        assert expected["artifacts"] == []
+        assert expected["lineage_allocations"] == {}
+        assert expected["allocator_next"] == 0
+        assert expected["operation_occurrences"] == {}
+        assert expected["publication_attempts"] == []
+        assert expected["publication_failures"] == []
+        assert expected["binding_sources"] == {"D0": result.receipt.sources[0].terminal}
+        assert expected["binding_terminal"] == result.receipt.terminal
+        assert not expected["binding_artifacts"]
+        assert not expected["association_terminals"]
+        assert all(not terminal.results and terminal.failure is None for terminal in result.receipt.requests.terminals)
+        (cleanup,) = result.receipt.cleanup
+        (association,) = result.receipt.cleanup_associations
+        assert cleanup.resource == association.resource
+        assert association.targets == frozenset({target})
+        assert association.purpose == "accounting"
+        assert expected["binding_cleanup"] == {"Q:D0": cleanup.disposition}
+        assert expected["binding_cleanup_associations"] == {
+            "Q:D0": {"association": "D0", "target": "T0", "owner": cleanup.owner}
+        }
+        assert cleanup.owner == "sdk" and delegate.closes == 1
 
 
 def test_binding_foreign_target_admission_case_through_production() -> None:

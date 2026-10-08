@@ -47341,6 +47341,27 @@
         ],
         "cleanup": {},
         "closed_unstarted": {},
+        "conflicting_terminal_facts": [
+          {
+            "association": null,
+            "code": "conflicting_terminal",
+            "request": "R0",
+            "settlement": null,
+            "terminal": {
+              "category": "success",
+              "failure": null,
+              "request": "R0",
+              "results": [
+                {
+                  "association": "D0",
+                  "consumed_context_ports": [],
+                  "outcome": "retrieved",
+                  "outputs": []
+                }
+              ]
+            }
+          }
+        ],
         "decisions": {},
         "defects": [
           "conflicting_terminal"
@@ -47627,9 +47648,22 @@
         ],
         "cleanup": {},
         "closed_unstarted": {},
+        "conflicting_terminal_facts": [
+          {
+            "association": null,
+            "code": "conflicting_terminal",
+            "request": "R0",
+            "settlement": null,
+            "terminal": {
+              "category": "failure",
+              "failure": "malformed_response",
+              "request": "R0",
+              "results": []
+            }
+          }
+        ],
         "decisions": {},
         "defects": [
-          "malformed_late_response",
           "conflicting_terminal"
         ],
         "denials": {},
@@ -47899,7 +47933,7 @@
         "binding_sources": {
           "D0": "lost"
         },
-        "binding_terminal": "failed",
+        "binding_terminal": "lost",
         "bindings": {
           "D0": [
             "P0"
@@ -47910,6 +47944,27 @@
         ],
         "cleanup": {},
         "closed_unstarted": {},
+        "conflicting_terminal_facts": [
+          {
+            "association": null,
+            "code": "conflicting_terminal",
+            "request": "R0",
+            "settlement": null,
+            "terminal": {
+              "category": "success",
+              "failure": null,
+              "request": "R0",
+              "results": [
+                {
+                  "association": "D0",
+                  "consumed_context_ports": [],
+                  "outcome": "retrieved",
+                  "outputs": []
+                }
+              ]
+            }
+          }
+        ],
         "decisions": {},
         "defects": [
           "conflicting_terminal"
@@ -48181,7 +48236,7 @@
         "binding_sources": {
           "D0": "lost"
         },
-        "binding_terminal": "failed",
+        "binding_terminal": "lost",
         "bindings": {
           "D0": [
             "P0"
@@ -48192,9 +48247,22 @@
         ],
         "cleanup": {},
         "closed_unstarted": {},
+        "conflicting_terminal_facts": [
+          {
+            "association": null,
+            "code": "conflicting_terminal",
+            "request": "R0",
+            "settlement": null,
+            "terminal": {
+              "category": "failure",
+              "failure": "malformed_response",
+              "request": "R0",
+              "results": []
+            }
+          }
+        ],
         "decisions": {},
         "defects": [
-          "malformed_late_response",
           "conflicting_terminal"
         ],
         "denials": {},

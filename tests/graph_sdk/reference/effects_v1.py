@@ -18,8 +18,8 @@ MappingKey: TypeAlias = tuple[str, str | None, str | None]
 CONTRACT_SHA256 = "9b0ab07b8c0212ffd954dc37eb37540141da6899753fc778ad26238494aeaeca"
 REQUEST_BOUNDARY_ADDENDUM_SHA256 = "6344f7f1bdbb14a4c9e08f546928d31c89f26d3ed26e0c50362d9537d891c3a5"
 
-GENERATOR_VERSION = "effects-v1-generator-16-caller-cleanup-lifecycle"
-SELF_TEST_VERSION = "effects-v1-self-test-16-caller-cleanup-lifecycle"
+GENERATOR_VERSION = "effects-v1-generator-17-late-conflict-payload"
+SELF_TEST_VERSION = "effects-v1-self-test-17-late-conflict-payload"
 MATERIALIZATION_ADDENDUM_SHA256 = "b1a5651ee2649b01c89e80bd1442e3f03209292b48ce846d27714698f57eb07c"
 BASE_CORPUS_SHA256 = "c62f2cc7e7237ea030451ac8d35a3c30b39f71766b4275348597949d560a7a6a"
 PREDECESSOR_CASE_COUNT = 214
@@ -30,7 +30,7 @@ BINDING_SUCCESS_ADDENDUM_SHA256 = "c6689c78f712837072235ad8343de8bd8240ea2c7e858
 MATERIALIZED_VERSION_CONTRACT_SHA256 = "165c7c95bce31a7c5808860f28d012bbe1986bf0712cebdc86fb08ad07afcb21"
 ACCEPTED_PREDECESSOR_CORPUS_SHA256 = "d56c9c64367ca9f4aa211aeb0e1bc8c5c213c977af07f906eced572764bc7726"
 ACCEPTED_PREDECESSOR_CASE_COUNT = 296
-CORPUS_PATH = "future-contracts/r2-version-selection-v7/effects_v1_cases.json"
+CORPUS_PATH = "future-contracts/r2-version-selection-v8/effects_v1_cases.json"
 FAMILIES = (
     "budgets",
     "keyed",
@@ -304,6 +304,35 @@ def _record_binding_success(state: Object, request: str, association: str, outco
     _remove(state, "local_in_flight", request)
     if first_terminal:
         _remove(state, "remote_outstanding", request)
+
+
+def _record_late_terminal_conflict(state: Object, request: str, *, association: str, failure: str | None) -> None:
+    results: list[Json] = []
+    category = "failure" if failure is not None else "success"
+    if failure is None:
+        results.append(
+            {
+                "association": association,
+                "consumed_context_ports": [],
+                "outcome": "retrieved",
+                "outputs": [],
+            }
+        )
+    facts = state.setdefault("conflicting_terminal_facts", [])
+    _array(facts).append(
+        {
+            "association": None,
+            "code": "conflicting_terminal",
+            "request": request,
+            "settlement": None,
+            "terminal": {
+                "category": category,
+                "failure": failure,
+                "request": request,
+                "results": results,
+            },
+        }
+    )
 
 
 def _natural(value: Json, *, positive: bool = False) -> bool:
@@ -1094,9 +1123,14 @@ def _advance(state: Object, declaration: Object, event: Object) -> Object | None
             or (spec.get("version_selection") == "latest" and len({pair[0] for pair in pairs}) != 1)
         )
         if malformed:
-            if was_terminal:
-                _unique(_array(state["defects"]), "malformed_late_response")
             _record_request_failure(state, request, "malformed_response")
+            if was_terminal and spec.get("version_selection") == "latest":
+                _record_late_terminal_conflict(
+                    state,
+                    request,
+                    association=association,
+                    failure="malformed_response",
+                )
             _apply_embedded_settlement(state, request, event["settlement"])
             if not was_terminal and not _source_followup_available(
                 state, declaration, association, request, "malformed_response"
@@ -1110,18 +1144,20 @@ def _advance(state: Object, declaration: Object, event: Object) -> Object | None
                     _object(state["binding_sources"])[association] = "failed"
                     state["binding_terminal"] = "failed"
             elif was_terminal and spec.get("version_selection") == "latest":
-                _object(state["binding_sources"])[association] = cast(str, _object(state["terminals"])[request])
-                state["binding_terminal"] = "failed"
+                original = cast(str, _object(state["terminals"])[request])
+                _object(state["binding_sources"])[association] = original
+                state["binding_terminal"] = "lost" if original == "lost" else "failed"
             return None
         if was_terminal:
             _record_binding_success(state, request, association, outcome)
             _apply_embedded_settlement(state, request, event["settlement"])
             if spec.get("version_selection") == "latest":
+                _record_late_terminal_conflict(state, request, association=association, failure=None)
                 original = cast(str, _object(state["terminals"])[request])
                 if original == "success":
                     original = "failed"
                 _object(state["binding_sources"])[association] = original
-                state["binding_terminal"] = "failed"
+                state["binding_terminal"] = "lost" if original == "lost" else "failed"
             return None
         candidate = deepcopy(state)
         rejected = _materialize(candidate, declaration, event)

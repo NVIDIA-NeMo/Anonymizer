@@ -91,11 +91,46 @@ def test_latest_malformed_oversize_and_late_paths_preserve_boundaries() -> None:
         malformed_state = cast(reference.Object, malformed["state"])
         assert valid_state["terminals"] == {"R0": terminal}
         assert malformed_state["terminals"] == {"R0": terminal}
-        assert "malformed_late_response" not in cast(list[str], valid_state["defects"])
-        assert "malformed_late_response" in cast(list[str], malformed_state["defects"])
+        assert valid_state["defects"] == malformed_state["defects"] == ["conflicting_terminal"]
+        assert valid_state["conflicting_terminal_facts"] == [
+            {
+                "association": None,
+                "code": "conflicting_terminal",
+                "request": "R0",
+                "settlement": None,
+                "terminal": {
+                    "category": "success",
+                    "failure": None,
+                    "request": "R0",
+                    "results": [
+                        {
+                            "association": "D0",
+                            "consumed_context_ports": [],
+                            "outcome": "retrieved",
+                            "outputs": [],
+                        }
+                    ],
+                },
+            }
+        ]
+        assert malformed_state["conflicting_terminal_facts"] == [
+            {
+                "association": None,
+                "code": "conflicting_terminal",
+                "request": "R0",
+                "settlement": None,
+                "terminal": {
+                    "category": "failure",
+                    "failure": "malformed_response",
+                    "request": "R0",
+                    "results": [],
+                },
+            }
+        ]
         assert valid_state["binding_sources"] == {"D0": terminal}
         assert malformed_state["binding_sources"] == {"D0": terminal}
-        assert valid_state["binding_terminal"] == malformed_state["binding_terminal"] == "failed"
+        aggregate = "lost" if terminal == "lost" else "failed"
+        assert valid_state["binding_terminal"] == malformed_state["binding_terminal"] == aggregate
         assert valid_state["binding_cleanup"] == malformed_state["binding_cleanup"] == {"Q:D0": "closed"}
 
 

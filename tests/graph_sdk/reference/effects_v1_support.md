@@ -1,4 +1,20 @@
-# R2 latest-selection supplement v7
+# R2 latest-selection supplement v8
+
+V8 corrects the four late `latest` response projections while preserving every
+case ID and every unrelated case object. The immutable first request terminal
+remains `cancelled` or `lost`. Each late response now retains one structured
+`conflicting_terminal_facts` row shaped exactly like the public
+`RequestDefect`: request, code, null association, exact conflicting candidate
+terminal, and null settlement. A well-formed late response carries a success
+candidate with the exact `retrieved` binding result; a multi-key response
+carries `failure/malformed_response` with no results. Both have the single
+compatibility defect code `conflicting_terminal`; the earlier invented
+`malformed_late_response` string is removed. Required cancelled sources still
+aggregate to `failed`, while required lost sources aggregate to `lost` and
+preserve remote uncertainty. No late case retains artifacts, context, lineage,
+or publication.
+
+## Retained v7 history
 
 V7 corrects the caller-owned cleanup witness without changing its ID or any
 accepted predecessor. `materialization/latest_caller_cleanup` now replaces the
