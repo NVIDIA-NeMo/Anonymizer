@@ -694,15 +694,19 @@ def _normalize(
                         missing_prior = True
                     else:
                         prior_entries.append(prior)
+                mapped_item_port = (
+                    map_member.item_input
+                    if map_member is not None
+                    and any(
+                        key in expansion.members and expansion.parent == key.parent for expansion in expansions.values()
+                    )
+                    else None
+                )
                 bindings = [
                     binding
                     for binding in scope.workflow.input_bindings
                     if binding.destination.node == entry.template
-                    and not (
-                        map_member is not None
-                        and map_member.item_input is not None
-                        and binding.destination.port == map_member.item_input
-                    )
+                    and not (mapped_item_port is not None and binding.destination.port == mapped_item_port)
                 ]
                 impossible = False
                 inputs_ready = True
