@@ -1,7 +1,28 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# Qualification v1 R3 map-item evidence reference extension v10
+# Qualification v1 R3 map-item evidence reference extension v13
+
+## Dispatched input occurrence shape
+
+V13 corrects the failed-expansion pair to match public P5 retention. The root
+input artifacts `Av0` and `XAv0` and their parent-free `RootInputKey`
+provenance survive because inputs are captured before dispatch. The expander
+was dispatched, so only `MAP.context` has a retained port and input-producer
+fact. Dependent `ROOT:A` closes unstarted and therefore has no input port or
+private input-parent fact. An injected M0 assessment uses the admitted typed
+item endpoint; because failed expansion produced no item or member occurrence,
+authentication rejects it as `missing`. The same injected shape in blocked or
+failed existing member occurrences remains `unsupported` by occurrence owner.
+
+The blocked-member pair follows the same dispatch boundary. Expansion has
+already created and retained `MI0v1` and its `MapItemKey` provenance, but the
+failed ordinary prerequisite prevents M0 dispatch, so M0 has no item port or
+input-producer fact and its callback count is zero. Its injected assessment
+uses the admitted item endpoint and remains `unsupported` because a blocked
+occurrence is not a possible assessment owner.
+
+All other 367 case objects are preserved from V12.
 
 ## Public admission ownership corrections
 
@@ -515,4 +536,8 @@ The required retained assessment owners are derived after entry, terminal, and m
 
 The historical membership and map-provenance cases now name their ordinary member operation `MEM`, which has no admitted evidence production. This matches the actual map fixture: the expander emits the member collection, while ordinary members consume projected items without returning assessments. `membership/closed_1` and `provenance/map_item_two_members` therefore remain genuine positives rather than hiding assessment omissions or being converted into rejection cases.
 
-`assessment/dynamic_occurrences_0|1|2` add a separate assessed member operation `MN`, modeled on the actual representable P5 map shape. Each member retains its exact dynamic `MapItemKey` input and separately receives the root candidate as its `subject` input. Its promise consumes that scalar subject, and its fresh occurrence-owned evidence output depends on the same subject. The member assessment carries the operation configuration and no absence or state revisions, matching the actual callback. The map item is not silently claimed as assessment consumption: dynamic item projection has no scalar identity to the root input and is a separate contract question. Each successful member retains one `P_MEMBER` assessment fact independently of P7 selection. `dynamic_occurrence_missing` removes the required member fact and rejects `missing`; `dynamic_occurrence_duplicate` adds the same owner under a fresh neutral fact reference and rejects `duplicate`.
+`assessment/dynamic_occurrences_0|1|2` now use one count-independent typed map declaration and a complete executable `N/EXP/MN/J` topology. `EXP` is an ordinary operation, `J` is the keyed control join, and `N.result` depends on the single membership collection plus the root subject. Only `MN.item` is sourced from a `MapItemKey`; the final candidate ancestry contains the collection producer and never arbitrary per-count item inputs on `N`. Each successful member retains one occurrence-scoped `P_MEMBER` fact whose typed subject and consumed endpoint are its exact item and whose fresh evidence depends on that item. Zero actual members makes the typed requirement vacuously complete. One or two actual members require their exact retained facts, while P7 release additionally requires their exact ordered submissions. `dynamic_occurrence_missing` removes one required retained fact and rejects `missing`; `dynamic_occurrence_duplicate` adds the same owner under a fresh neutral fact reference and rejects `duplicate`.
+
+The failure variants retain the same static declaration. Failed publication starts and fails the real expander, blocks its dependants, produces no final candidate or assessment, and withholds for `terminal_failure` plus `missing_candidate`. The blocked member variant retains a distinct failed ordinary prerequisite, an unstarted member terminal with reason `prerequisite`, and no member callback fact. Started member failure retains its attempt and failure terminal. A removed successful member terminal leaves its unsubmitted assessment as retained history and withholds only for `incomplete_membership`; submitting that fact rejects `missing`. These cases remain bounded neutral reference claims pending an exact public-record adapter review and do not claim full P7 coverage.
+
+The failed-publication record still retains both root input artifacts and their `RootInputKey` provenance. Port facts and captured input producers are occurrence facts created only when an operation dispatches: the failed expander therefore retains its `context` port and exact parent, while blocked `N` retains neither an input port nor an input producer. The subject retains role `artifact` because no final-output occurrence promotes it to a candidate. The record omits outputs that were never published: the collection, result, evidence, item, assessment, and final output. A fact injected for the selected reservation whose member activation was never entered rejects `missing`; `unsupported` remains reserved for the blocked and failed member occurrences that have real entries but cannot produce an assessment.

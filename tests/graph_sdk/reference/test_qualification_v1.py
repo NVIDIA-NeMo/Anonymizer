@@ -212,11 +212,6 @@ def test_assessment_inventory_follows_successful_producing_occurrences() -> None
                 for event in events
                 if event.get("kind") == "port" and event.get("activation") == member and event.get("port") == "item"
             )
-            subject_port = next(
-                event
-                for event in events
-                if event.get("kind") == "port" and event.get("activation") == member and event.get("port") == "subject"
-            )
             member_assessment = next(
                 event for event in events if event.get("kind") == "assessment" and event.get("activation") == member
             )
@@ -224,15 +219,21 @@ def test_assessment_inventory_follows_successful_producing_occurrences() -> None
                 event for event in events if event.get("kind") == "provenance" and event.get("key") == f"EVID:{member}"
             )
             assert item_port["role"] == "artifact" and item_port["artifact"] == f"MI{index}v1"
-            assert subject_port["role"] == "candidate" and subject_port["artifact"] == "Av0"
-            assert member_assessment["consumed"] == {"subject": "Av0"}
+            assert member_assessment["subject_port"] == "item"
+            assert member_assessment["subject_artifact"] == f"MI{index}v1"
+            assert member_assessment["consumed"] == {"item": f"MI{index}v1"}
             assert member_assessment["environment"] == {
                 "absences": {},
                 "configurations": {"MN": "c0"},
                 "state": {},
             }
-            assert evidence["parents"] == ["ROOT:A:subject"]
+            assert evidence["parents"] == [f"MAPITEM:{index}"]
         assert result(case_id)["status"] == "accepted"
+
+    assert row("assessment/dynamic_occurrences_0")["qualification"] == "met"
+    assert row("assessment/dynamic_occurrences_0")["withholding"] == []
+    for count in (1, 2):
+        assert row(f"assessment/dynamic_occurrences_{count}")["withholding"] == ["missing_assessment"]
 
     assert result("assessment/dynamic_occurrence_missing") == {"code": "missing", "status": "rejected"}
     assert result("assessment/dynamic_occurrence_duplicate") == {"code": "duplicate", "status": "rejected"}
@@ -254,6 +255,41 @@ def test_dynamic_occurrence_submissions_are_exact_and_ordered() -> None:
         assert row(case_id)["qualification"] == "met"
     assert result("assessment/dynamic_submission_repeated") == {"code": "duplicate", "status": "rejected"}
     assert result("assessment/dynamic_submission_foreign") == {"code": "foreign_owner", "status": "rejected"}
+
+
+def test_dynamic_declaration_and_topology_are_count_independent() -> None:
+    declarations = [case(f"assessment/dynamic_occurrences_{count}")["declaration"] for count in range(3)]
+    assert declarations[0] == declarations[1] == declarations[2]
+    for count in range(3):
+        events = cast(list[reference.Obj], case(f"assessment/dynamic_occurrences_{count}")["events"])
+        entries = {cast(str, event["activation"]): event for event in events if event.get("kind") == "entry"}
+        assert entries["MAP"]["node"] == "EXP" and entries["MAP"]["node_kind"] == "operation"
+        assert entries["JOIN"]["node"] == "J"
+        assert all(
+            event["attempt"] is not None
+            for event in events
+            if event.get("kind") == "terminal" and event.get("category") == "success"
+        )
+        root_ports = {
+            cast(str, event["port"])
+            for event in events
+            if event.get("kind") == "port" and event.get("activation") == "ROOT:A"
+        }
+        assert "membership" in root_ports
+        assert not any(port.startswith("mapped_") for port in root_ports)
+        item_inputs = [
+            event
+            for event in events
+            if event.get("kind") == "input_producer" and str(event.get("producer", "")).startswith("MAPITEM:")
+        ]
+        assert {(event["activation"], event["port"]) for event in item_inputs} == {
+            (f"M{index}", "item") for index in range(count)
+        }
+        final_provenance = next(
+            event for event in events if event.get("kind") == "provenance" and event.get("key") == "OUT:A"
+        )
+        assert final_provenance["parents"] == ["OP:MAP:A:members", "ROOT:A:subject"]
+        assert not any(str(parent).startswith("MAPITEM:") for parent in cast(list[str], final_provenance["parents"]))
 
 
 def test_verified_tuple_uses_declared_finite_ordinals_not_submission_order() -> None:
@@ -313,7 +349,50 @@ def test_unreached_and_unsuccessful_assessed_members_require_no_fact() -> None:
         assert not any(event.get("kind") == "assessment" and event.get("activation") == "M0" for event in events)
         assert result(case_id)["status"] == "accepted"
         assert "terminal_failure" in cast(list[str], row(case_id)["withholding"])
-        assert result(f"{case_id}_injected") == {"code": "unsupported", "status": "rejected"}
+        injected_code = "missing" if name == "unreached_failed_expansion" else "unsupported"
+        assert result(f"{case_id}_injected") == {"code": injected_code, "status": "rejected"}
+        injected = next(
+            event
+            for event in cast(list[reference.Obj], case(f"{case_id}_injected")["events"])
+            if event.get("kind") == "assessment" and event.get("activation") == "M0"
+        )
+        assert injected["subject_port"] == "item"
+        assert injected["subject_artifact"] == "MI0v1"
+        assert injected["consumed"] == {"item": "MI0v1"}
+
+    blocked_events = cast(list[reference.Obj], case("assessment/dynamic_blocked_unreached")["events"])
+    assert not any(
+        event.get("activation") == "M0"
+        and event.get("port") == "item"
+        and event.get("kind") in {"port", "input_producer"}
+        for event in blocked_events
+    )
+    assert any(event.get("kind") == "artifact" and event.get("ref") == "MI0v1" for event in blocked_events)
+    assert any(event.get("kind") == "provenance" and event.get("key") == "MAPITEM:0" for event in blocked_events)
+
+    assert result("assessment/dynamic_unreached_failed_expansion")["verified"] == []
+    assert row("assessment/dynamic_unreached_failed_expansion")["withholding"] == [
+        "missing_candidate",
+        "terminal_failure",
+    ]
+    assert {event["ref"]: event["role"] for event in suppressed_events if event.get("kind") == "artifact"} == {
+        "Av0": "artifact",
+        "XAv0": "artifact",
+    }
+    assert {
+        (event["activation"], event["port"], event["role"])
+        for event in suppressed_events
+        if event.get("kind") == "port"
+    } == {("MAP", "context", "artifact")}
+    assert {
+        (event["activation"], event["port"], event["producer"])
+        for event in suppressed_events
+        if event.get("kind") == "input_producer"
+    } == {("MAP", "context", "ROOT:A:context")}
+    assert {event["key"] for event in suppressed_events if event.get("kind") == "provenance"} == {
+        "ROOT:A:subject",
+        "ROOT:A:context",
+    }
 
     blocked_entry = next(
         event
@@ -321,6 +400,17 @@ def test_unreached_and_unsuccessful_assessed_members_require_no_fact() -> None:
         if event.get("kind") == "entry" and event.get("activation") == "M0"
     )
     assert blocked_entry["closed_unstarted"] is True
+    blocked_events = cast(list[reference.Obj], case("assessment/dynamic_blocked_unreached")["events"])
+    failed_source = next(
+        event for event in blocked_events if event.get("kind") == "entry" and event.get("activation") == "FAILED"
+    )
+    assert failed_source["state_category"] == "failure"
+    assert (
+        next(event for event in blocked_events if event.get("kind") == "terminal" and event.get("activation") == "M0")[
+            "attempt"
+        ]
+        is None
+    )
     failure_entry = next(
         event
         for event in cast(list[reference.Obj], case("assessment/dynamic_started_failure")["events"])
@@ -343,7 +433,12 @@ def test_missing_terminal_retains_unsubmitted_possible_owner_history() -> None:
         assert fact not in cast(list[str], state["assessment_submissions"])
         assert result(case_id)["status"] == "accepted"
         assert row(case_id)["completion"] == "pending"
-        assert row(case_id)["withholding"] == ["incomplete_membership", "missing_assessment"]
+        expected = (
+            ["incomplete_membership"]
+            if case_id == "assessment/dynamic_missing_terminal_unsubmitted"
+            else ["incomplete_membership", "missing_assessment"]
+        )
+        assert row(case_id)["withholding"] == expected
 
     assert result("assessment/root_missing_terminal_submitted") == {"code": "missing", "status": "rejected"}
     assert result("assessment/dynamic_missing_terminal_submitted") == {"code": "missing", "status": "rejected"}

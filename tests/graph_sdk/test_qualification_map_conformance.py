@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from copy import copy
 from dataclasses import dataclass, fields, replace
 from pathlib import Path
 from typing import Any
@@ -112,6 +113,7 @@ class _ReferenceMapCallback:
     collection_type: ArtifactType
     calls: int = 0
     member_failure: bool = False
+    expander_failure: bool = False
     versioned_items: bool = False
     membership_port: str = "members"
     expansion_outcome: str = "ok"
@@ -121,7 +123,11 @@ class _ReferenceMapCallback:
         self.calls += 1
         (item,) = request
         assert isinstance(item.association, SemanticAssociation)
-        if self.role == "MN" and self.member_failure:
+        if (
+            self.role == "FAILED_SOURCE"
+            or (self.role == "MN" and self.member_failure)
+            or (self.role == "EXP" and self.expander_failure)
+        ):
             return LocalFailure(failure="permanent")
         outputs: tuple[PortArtifact, ...] = ()
         assessments: tuple[LocalAssessmentResult, ...] = ()
@@ -180,12 +186,15 @@ async def _execute_reference_map(
     *,
     consumed_only: bool = False,
     member_failure: bool = False,
+    expander_failure: bool = False,
     versioned_items: bool = False,
     candidate_uses_membership: bool = True,
     candidate_passthrough: bool = False,
     alternate_expansion: bool = False,
     nested: bool = False,
     two_maps: bool = False,
+    member_promise: str = "P_ITEM",
+    blocked_member: bool = False,
 ) -> tuple[AdmittedExecutionPlan, ExecutionResult, dict[str, NodeId]]:
     membership_port = "alternate_members" if alternate_expansion else "members"
     expansion_outcome = "alternate" if alternate_expansion else "ok"
@@ -197,6 +206,8 @@ async def _execute_reference_map(
         nodes["SG"] = NodeId.new(workflow=owner)
     if two_maps:
         nodes.update({name: NodeId.new(workflow=owner) for name in ("EXP2", "MN2", "J2")})
+    if blocked_member:
+        nodes["FAILED_SOURCE"] = NodeId.new(workflow=owner)
     text_type = ArtifactType(name="text", revision=1)
     collection_type = ArtifactType(name="members", revision=1)
     coverage = frozenset(CoverageAtom(kind="field", name=name) for name in ("K0", "K1"))
@@ -206,7 +217,7 @@ async def _execute_reference_map(
         name="P", meaning="privacy", subject_port="subject", consumed_ports=frozenset({"context"}), coverage=coverage
     )
     item_promise = EvidencePromise(
-        name="P_ITEM",
+        name=member_promise,
         meaning="item_privacy",
         subject_port="subject" if consumed_only else "item",
         consumed_ports=frozenset({"item"}),
@@ -277,6 +288,18 @@ async def _execute_reference_map(
         ),
         "J": OperationSpec(name="J", inputs=(), outputs=(), output_dependencies=(), outcomes=(_outcome("ok"),)),
     }
+    if blocked_member:
+        operations["FAILED_SOURCE"] = OperationSpec(
+            name="FAILED_SOURCE",
+            inputs=(),
+            outputs=(OutputPort(name="ready", artifact_type=text_type),),
+            output_dependencies=(OutputDependency(output="ready", inputs=frozenset(), identity_input=None),),
+            outcomes=(_outcome("ok", produced=frozenset({"ready"})),),
+        )
+        operations["MN"] = replace(
+            operations["MN"],
+            inputs=operations["MN"].inputs + (InputPort(name="prerequisite", artifact_type=text_type),),
+        )
     if two_maps:
         second_promise = replace(
             item_promise,
@@ -342,7 +365,7 @@ async def _execute_reference_map(
                 _outcome(
                     "ok",
                     produced=frozenset({"result"}),
-                    max_activations=13 if two_maps else 7,
+                    max_activations=13 if two_maps else 8 if blocked_member else 7,
                     max_output_bytes=256 if two_maps else 128,
                 ),
                 evidence=frozenset(
@@ -459,6 +482,15 @@ async def _execute_reference_map(
             max_choice_states=1,
         ),
     )
+    if blocked_member:
+        prerequisite = InputBinding(
+            source=NodeOutputRef(node=nodes["FAILED_SOURCE"], port="ready"),
+            destination=NodeInputRef(node=nodes["MN"], port="prerequisite"),
+        )
+        edge = SequenceEdge(before=nodes["FAILED_SOURCE"], after=nodes["MN"])
+        static_options["input_bindings"] += (prerequisite,)
+        static_options["sequence"] += (edge,)
+        static_options["limits"] = replace(static_options["limits"], max_nodes=5, max_bindings=10, max_sequence_edges=5)
     if two_maps:
         static_options["input_bindings"] += (
             InputBinding(
@@ -583,6 +615,9 @@ async def _execute_reference_map(
             ),
         )
     static = admit_static_workflow(**static_options)
+    if blocked_member:
+        assert prerequisite in static.input_bindings
+        assert edge in static.sequence
     workflow = admit_activation_workflow(
         workflow=static,
         scopes=(
@@ -641,7 +676,7 @@ async def _execute_reference_map(
             max_children_per_map=2,
             max_iterations_per_loop=0,
             max_dynamic_depth=2 if nested else 1,
-            max_activation_occurrences=9 if two_maps else 6 if nested else 5,
+            max_activation_occurrences=9 if two_maps else 6 if nested or blocked_member else 5,
         ),
     )
     graph = DataGraph.new()
@@ -662,7 +697,9 @@ async def _execute_reference_map(
         data=data,
         workflow=workflow,
         activation_limits=ActivationLimits(
-            max_events=64, max_entries=9 if two_maps else 6 if nested else 5, max_parent_depth=3 if nested else 2
+            max_events=64,
+            max_entries=9 if two_maps else 6 if nested or blocked_member else 5,
+            max_parent_depth=3 if nested else 2,
         ),
         bound_inputs=tuple(
             BoundInput(target=target, source=source, port=port, artifact_type=text_type)
@@ -679,7 +716,7 @@ async def _execute_reference_map(
             for node, capability in zip((nodes[name] for name in operations), capabilities, strict=True)
         ),
         capabilities=capabilities,
-        limits=_limits(capabilities=7 if two_maps else 4, slots=9 if two_maps else 6 if nested else 5),
+        limits=_limits(capabilities=len(operations), slots=9 if two_maps else 6 if nested or blocked_member else 5),
     )
     admitted = admit_execution_plan(
         context=admit_context_plan(
@@ -715,7 +752,7 @@ async def _execute_reference_map(
                 absence_queries=frozenset({0}) if name == "N" else frozenset(),
                 supported_findings=frozenset({AssessmentFinding(status="satisfied", code="observed")}),
             )
-            for name, promise in (("N", "P"), ("MN", "P_ITEM"), *((("MN2", "P_ITEM_2"),) if two_maps else ()))
+            for name, promise in (("N", "P"), ("MN", member_promise), *((("MN2", "P_ITEM_2"),) if two_maps else ()))
         ),
         assessment_limits=AssessmentLimits(
             max_productions=3 if two_maps else 2,
@@ -748,10 +785,11 @@ async def _execute_reference_map(
             text_type,
             collection_type,
             member_failure=member_failure,
+            expander_failure=expander_failure,
             versioned_items=versioned_items,
             membership_port="members2" if name == "EXP2" else membership_port,
             expansion_outcome=expansion_outcome,
-            item_promise="P_ITEM_2" if name == "MN2" else "P_ITEM",
+            item_promise="P_ITEM_2" if name == "MN2" else member_promise,
         )
         for name in operations
     )
@@ -784,14 +822,19 @@ async def _execute_reference_map(
         ),
     )
     result = await running.wait()
-    assert [callback.calls for callback in callbacks] == [1, 1, count, int(not member_failure)] + (
-        [1, count, 1] if two_maps else []
+    assert [callback.calls for callback in callbacks] == (
+        [1, 1, 0, 0, 1]
+        if blocked_member
+        else [0, 1, 0, 0]
+        if expander_failure
+        else [1, 1, count, int(not member_failure)] + ([1, count, 1] if two_maps else [])
     )
     return admitted, result, nodes
 
 
 CORPUS = json.loads((Path(__file__).parent / "reference/qualification_v1_cases.json").read_text())
 FLAT_CASE_IDS = {
+    *(case["case_id"] for case in CORPUS if case["case_id"].startswith("assessment/dynamic_")),
     *(f"map_item_evidence/direct_{count}" for count in (0, 1, 2)),
     *(
         f"map_item_evidence/{suffix}"
@@ -837,9 +880,28 @@ def test_reference_map_case_through_real_execution(case: dict[str, Any]) -> None
 
 async def _run_reference_map_case(case: dict[str, Any]) -> dict[str, Any]:
     events = case["events"]
+    injected = case["case_id"] in {
+        "assessment/dynamic_unreached_failed_expansion_injected",
+        "assessment/dynamic_blocked_unreached_injected",
+        "assessment/dynamic_started_failure_injected",
+    }
+    injected_fact = (
+        next((event for event in events if event["kind"] == "assessment" and event["node"] == "MN"), None)
+        if injected
+        else None
+    )
+    if injected:
+        # Authenticate the real failure record before corrupting its retained inventory.
+        events = [event for event in events if event is not injected_fact]
+        case = {**case, "events": events, "case_id": case["case_id"].removesuffix("_injected")}
+
+    dynamic = case["case_id"].startswith("assessment/dynamic_")
+    member_promise = "P_MEMBER" if dynamic else "P_ITEM"
     count = sum(event["kind"] == "entry" and event["node"] == "MN" for event in events)
     consumed_only = case["case_id"] == "map_item_evidence/typed_consumed_endpoint"
-    member_failure = case["case_id"] == "map_item_evidence/member_non_success"
+    member_failure = case["case_id"] in {"map_item_evidence/member_non_success", "assessment/dynamic_started_failure"}
+    expander_failure = case["case_id"] == "assessment/dynamic_unreached_failed_expansion"
+    blocked_member = case["case_id"] == "assessment/dynamic_blocked_unreached"
     versioned_items = case["case_id"] == "map_item_evidence/item_stale"
     candidate_uses_membership = case["case_id"] != "map_item_evidence/different_final_ancestry"
     candidate_passthrough = case["case_id"] == "map_item_evidence/candidate_passthrough_unrelated"
@@ -849,10 +911,12 @@ async def _run_reference_map_case(case: dict[str, Any]) -> dict[str, Any]:
         "map_item_evidence/two_independent_maps",
         "map_item_evidence/two_maps_no_crossproduct",
     }
-    baseline = (
+    baseline: dict[str, Any] = (
         case
         if consumed_only
         or member_failure
+        or expander_failure
+        or blocked_member
         or versioned_items
         or not candidate_uses_membership
         or candidate_passthrough
@@ -862,29 +926,74 @@ async def _run_reference_map_case(case: dict[str, Any]) -> dict[str, Any]:
     )
     if two_maps:
         baseline = next(item for item in CORPUS if item["case_id"] == "map_item_evidence/two_independent_maps")
+    if dynamic:
+        # The dynamic family names the same member promise differently.
+        baseline = json.loads(json.dumps(baseline).replace("P_ITEM", member_promise))
+    missing_terminal = case["case_id"] in {
+        "assessment/dynamic_missing_terminal_unsubmitted",
+        "assessment/dynamic_missing_terminal_submitted",
+    }
+    if missing_terminal:
+        baseline = {
+            **baseline,
+            "events": [
+                event
+                for event in baseline["events"]
+                if not (event["kind"] == "terminal" and event["activation"] == "M0")
+            ],
+        }
     mutable_events = {"assessment_submission", "assessment", "revision"}
-    assert [event for event in events if event["kind"] not in mutable_events] == [
-        event for event in baseline["events"] if event["kind"] not in mutable_events
-    ]
+    actual_immutable = [event for event in events if event["kind"] not in mutable_events]
+    baseline_immutable = [event for event in baseline["events"] if event["kind"] not in mutable_events]
+    if dynamic:
+        # These retained owner facts are unordered; occurrence identities remain exact.
+        actual_immutable.sort(key=lambda event: json.dumps(event, sort_keys=True))
+        baseline_immutable.sort(key=lambda event: json.dumps(event, sort_keys=True))
+    assert actual_immutable == baseline_immutable
+    declaration_baseline = baseline["declaration"]
+    if dynamic:
+        # Failure events differ, but their declaration still uses the independent
+        # ordinary map contract, plus the explicit failed prerequisite owner.
+        declaration_baseline = json.loads(
+            json.dumps(
+                next(item["declaration"] for item in CORPUS if item["case_id"] == "map_item_evidence/direct_0")
+            ).replace("P_ITEM", member_promise)
+        )
+        if blocked_member:
+            declaration_baseline["node_kinds"]["FAILED_SOURCE"] = "operation"
     assert {key: value for key, value in case["declaration"].items() if key != "limits"} == {
-        key: value for key, value in baseline["declaration"].items() if key != "limits"
+        key: value for key, value in declaration_baseline.items() if key != "limits"
     }
     execution, result, nodes = await _execute_reference_map(
         count,
         consumed_only=consumed_only,
         member_failure=member_failure,
+        expander_failure=expander_failure,
         versioned_items=versioned_items,
         candidate_uses_membership=candidate_uses_membership,
         candidate_passthrough=candidate_passthrough,
         alternate_expansion=alternate_expansion,
         nested=nested,
         two_maps=two_maps,
+        member_promise=member_promise,
+        blocked_member=blocked_member,
     )
     assert (
         len(result.states[0].entries)
         == len(result.record.terminals)
-        == count + 3 + int(nested) + (count + 2 if two_maps else 0)
+        == count + 3 + int(nested) + int(blocked_member) + (count + 2 if two_maps else 0)
     )
+    if missing_terminal:
+        (member_activation,) = (entry.activation for entry in result.states[0].entries if entry.template == nodes["MN"])
+        member_terminals = [
+            terminal for terminal in result.record.terminals if terminal.activation == member_activation
+        ]
+        assert len(member_terminals) == 1
+        object.__setattr__(
+            result.record,
+            "terminals",
+            tuple(terminal for terminal in result.record.terminals if terminal != member_terminals[0]),
+        )
     names = _MapRecordNames(execution, result, nodes)
     names.assert_retained_facts(events)
     names.assert_assessments(baseline["events"])
@@ -892,16 +1001,28 @@ async def _run_reference_map_case(case: dict[str, Any]) -> dict[str, Any]:
         ("F:A:P" if fact.node == nodes["N"] else f"F:{names.activation(fact.activation)}:{fact.promise}"): fact
         for fact in result.assessments
     }
+    if case["case_id"] == "assessment/dynamic_occurrence_duplicate":
+        # Fact labels are reference aliases; the retained owner tuple is duplicated.
+        events = [
+            {**event, "fact": event["fact"].removesuffix(":DUPLICATE")} if event["kind"] == "assessment" else event
+            for event in events
+        ]
     retained = {event["fact"] for event in events if event["kind"] == "assessment"}
     assert retained <= set(facts)
     if retained != set(facts):
-        assert case["case_id"] == "map_item_evidence/missing_fact"
+        assert case["case_id"] in {"map_item_evidence/missing_fact", "assessment/dynamic_occurrence_missing"}
         object.__setattr__(result, "assessments", tuple(fact for name, fact in facts.items() if name in retained))
+    if case["case_id"] == "assessment/dynamic_occurrence_duplicate":
+        retained_order = [event["fact"] for event in events if event["kind"] == "assessment"]
+        assert len(retained_order) == len(facts) + 1
+        object.__setattr__(result, "assessments", tuple(facts[name] for name in retained_order))
     names.assert_assessments(events)
     if any(event["kind"] == "assessment_submission" and event["fact"] not in facts for event in events):
-        assert case["case_id"] == "map_item_evidence/foreign_submission"
-        _, foreign, foreign_nodes = await _execute_reference_map(1)
-        facts["F:FOREIGN:P_ITEM"] = next(fact for fact in foreign.assessments if fact.node == foreign_nodes["MN"])
+        assert case["case_id"] in {"map_item_evidence/foreign_submission", "assessment/dynamic_submission_foreign"}
+        _, foreign, foreign_nodes = await _execute_reference_map(1, member_promise=member_promise)
+        facts[f"F:FOREIGN:{member_promise}"] = next(
+            fact for fact in foreign.assessments if fact.node == foreign_nodes["MN"]
+        )
     admitted = admit_qualification(
         execution=execution,
         productions=execution.assessment_productions,
@@ -939,6 +1060,31 @@ async def _run_reference_map_case(case: dict[str, Any]) -> dict[str, Any]:
     submissions = tuple(
         AssessmentSubmission(fact=facts[event["fact"]]) for event in events if event["kind"] == "assessment_submission"
     )
+    if injected_fact is not None:
+        _, successful, successful_nodes = await _execute_reference_map(1, member_promise=member_promise)
+        original = next(fact for fact in successful.assessments if fact.node == successful_nodes["MN"])
+        corrupted = copy(original)
+        member = min(
+            (
+                reservation.activation
+                for state in result.states
+                for reservation in state.reservations
+                if reservation.template == nodes["MN"]
+            ),
+            key=lambda activation: activation.occurrence,
+        )
+        object.__setattr__(corrupted, "activation", member)
+        object.__setattr__(corrupted, "node", nodes["MN"])
+        assert (
+            injected_fact["activation"],
+            injected_fact["node"],
+            injected_fact["outcome"],
+            injected_fact["promise"],
+        ) == ("M0", "MN", corrupted.outcome, corrupted.promise)
+        assert corrupted.finding.status == injected_fact["finding"]
+        assert corrupted.activation.invocation == result.record.invocation
+        assert not any(fact.activation == member for fact in result.assessments)
+        object.__setattr__(result, "assessments", (*result.assessments, corrupted))
     output = qualify(admitted=admitted, result=result, current=current, submissions=submissions)
     return names.normalize(output)
 
@@ -965,6 +1111,7 @@ class _MapRecordNames:
                     "SG": "WRAP",
                     "EXP2": "MAP2",
                     "J2": "JOIN2",
+                    "FAILED_SOURCE": "FAILED",
                 }[self.nodes[entry.template]]
         if "MN2" in nodes:
             second_members = sorted(
@@ -972,7 +1119,15 @@ class _MapRecordNames:
                 key=lambda entry: entry.activation.occurrence,
             )
             self.activations.update({entry.activation: f"Z{index}" for index, entry in enumerate(second_members)})
-        self.artifacts: dict[ArtifactRef, str] = {}
+        self.artifacts: dict[ArtifactRef, str] = {
+            fact.artifact: {"subject": "Av0", "context": "XAv0"}[fact.key.port]
+            for fact in result.provenance
+            if isinstance(fact.key, RootInputKey)
+        }
+        for fact in result.provenance:
+            if isinstance(fact.key, MapItemKey):
+                prefix = "MJ" if self.entries[fact.key.member].template == nodes.get("MN2") else "MI"
+                self.artifacts[fact.artifact] = f"{prefix}{fact.key.item_key}v{fact.key.item_version}"
         for port in result.ports:
             node = self.nodes[port.node]
             if node == "N":
@@ -1187,7 +1342,7 @@ class _MapRecordNames:
             node = self.nodes[item.node]
             fact = next(fact for fact in self.result.assessments if fact.activation == item.activation)
             assert item.environment.configuration == fact.environment.configuration
-            assert item.promise.name == ("P" if node == "N" else "P_ITEM_2" if node == "MN2" else "P_ITEM")
+            assert item.promise.name == ("P" if node == "N" else "P_ITEM_2" if node == "MN2" else fact.promise)
             assert item.promise.meaning == (
                 "privacy" if node == "N" else "item_privacy_2" if node == "MN2" else "item_privacy"
             )
@@ -1256,7 +1411,7 @@ class _MapRecordNames:
                 "target": None if membership.parent is None else "A",
                 "members": sorted(self.activation(key) for key in membership.members),
                 "closed": membership.closed,
-                "status": "closed" if membership.closed else "open",
+                "status": expansion.status if expansion is not None else "closed" if membership.closed else "open",
                 "expansion_outcome": None if expansion is None else self.entries[expansion.parent].outcome,
             }
         terminals = {}

@@ -18,9 +18,9 @@ CONTRACT_SHA256 = "239bdaf97eda6b90caeb13d29826abead08e2beff6297460c26409b3e1f5d
 STRUCTURAL_CONTRACT_SHA256 = "88c0ef075b225847f1b2668d2a749307c220eceb50215718db722119d828dc6b"
 MATERIALIZED_VERSION_CONTRACT_SHA256 = "165c7c95bce31a7c5808860f28d012bbe1986bf0712cebdc86fb08ad07afcb21"
 MAP_ITEM_EVIDENCE_CONTRACT_SHA256 = "d5e270fe413f4f5632b522e3ce57e0c913a143060997d63b7673268ae9acfbd8"
-GENERATOR_VERSION = "qualification-v1-generator-29-structural-owners-v10"
-SELF_TEST_VERSION = "qualification-v1-self-test-29-structural-owners-v10"
-CORPUS_PATH = "future-contracts/r3-map-item-v10/qualification_v1_cases.json"
+GENERATOR_VERSION = "qualification-v1-generator-32-dispatched-input-shape-v13"
+SELF_TEST_VERSION = "qualification-v1-self-test-32-dispatched-input-shape-v13"
+CORPUS_PATH = "future-contracts/r3-map-item-v13/qualification_v1_cases.json"
 V10_IDS_SHA256 = "043c433056b1ecb21d17ef48efa8bcca6a678fd6b722e7a91ea2e1b3a05c9544"
 
 TERMINAL_CATEGORIES = {"blocked", "cancelled", "failure", "inconsistent", "lost", "success"}
@@ -1819,9 +1819,12 @@ def qualify(d: Obj, s: Obj) -> Obj:
                 and fact.get("port") == value.get("port")
                 and fact.get("target") == value.get("target")
             ]
-            if len(source_matches) != 1:
-                return reject("contradictory")
             source_entry = obj(entries.get(cast(str, value.get("activation")), {}))
+            retained_undispatched_root = (
+                source == "root_input" and source_entry.get("closed_unstarted") is True and not source_matches
+            )
+            if len(source_matches) != 1 and not retained_undispatched_root:
+                return reject("contradictory")
             map_output = any(
                 map_input.get("expander") == value.get("node")
                 and map_input.get("outcome") == source_entry.get("state_outcome")
@@ -2080,6 +2083,7 @@ def qualify(d: Obj, s: Obj) -> Obj:
             parent_fact = obj(prov.get(parent_keys[0], {}))
             collection = obj(obj(s["collection_values"]).get(parent_keys[0], {}))
             member_port = obj(ports.get(f"{member}|{map_input['item_input']}", {}))
+            retained_undispatched_item = member_entry.get("closed_unstarted") is True and not member_port
             membership_members = [cast(str, item) for item in arr(membership.get("members"))]
             ordered_members = sorted(membership_members, key=lambda item: cast(int, obj(entries[item])["occurrence"]))
             occurrences = [obj(entries[item]).get("occurrence") for item in ordered_members]
@@ -2101,9 +2105,12 @@ def qualify(d: Obj, s: Obj) -> Obj:
                 or member_index < 0
                 or items[member_index].get("key") != item_key
                 or items[member_index].get("version") != item_version
-                or member_port.get("artifact") != artifact_ref
-                or member_port.get("target") != value.get("target")
-                or member_port.get("node") != member_entry.get("node")
+                or not retained_undispatched_item
+                and (
+                    member_port.get("artifact") != artifact_ref
+                    or member_port.get("target") != value.get("target")
+                    or member_port.get("node") != member_entry.get("node")
+                )
             ):
                 return reject("contradictory")
         if value.get("decision") is True and not any(
@@ -2446,6 +2453,8 @@ def qualify(d: Obj, s: Obj) -> Obj:
         actual_owner_set = set(retained_assessment_owners)
         if len(retained_assessment_owners) != len(actual_owner_set):
             return reject("duplicate")
+        if any(cast(str, owner[0]) not in obj(s["entries"]) for owner in actual_owner_set):
+            return reject("missing")
         if required_assessment_owners - actual_owner_set:
             return reject("missing")
         if actual_owner_set - possible_assessment_owners:
@@ -4166,45 +4175,91 @@ def generate_cases() -> tuple[Obj, ...]:
         case("provenance", "map_item_two_members_operation_expander", d, map_item_events(2, operation_expander=True))
     )
 
-    def assessed_map_declaration(count: int) -> Obj:
-        d = map_declaration(count)
-        obj(d["node_kinds"])["MN"] = "operation"
+    def assessed_map_declaration(_count: int) -> Obj:
+        """One count-independent typed map declaration for dynamic cases."""
+        d = map_declaration(0, operation_expander=True)
+        obj(d["node_kinds"]).update({"MN": "operation", "J": "operation"})
         member_production = deepcopy(obj(arr(d["productions"])[0]))
         member_production.update(
             {
                 "absence_queries": [],
-                "consumed_ports": ["subject"],
+                "consumed_ports": ["item"],
                 "evidence_port": "evidence",
-                "meaning": "member_privacy",
+                "meaning": "item_privacy",
                 "node": "MN",
                 "promise": "P_MEMBER",
                 "read_state": [],
-                "subject_port": "subject",
+                "subject_port": "item",
                 "subject_source": "input",
             }
         )
         arr(d["productions"]).append(member_production)
-        arr(d["requirements"]).append(
+        endpoint: Obj = {
+            "expander": "EXP",
+            "expansion_outcome": "ok",
+            "item_input": "item",
+            "member": "MN",
+            "membership_port": "members",
+            "path": [],
+        }
+        d["map_item_requirements"] = [
             {
-                "consumed_ports": ["subject"],
+                "candidate_port": "result",
+                "consumed_endpoints": [deepcopy(endpoint)],
                 "coverage": ["K0"],
-                "meaning": "member_privacy",
-                "outcome": "ok",
-                "subject_port": "subject",
+                "meaning": "item_privacy",
+                "promise": "P_MEMBER",
+                "subject_endpoint": deepcopy(endpoint),
                 "target": "A",
             }
-        )
-        set_output_dependency(d, "MN", "evidence", ("subject",))
+        ]
+        d["map_routes"] = [
+            {
+                "expander": "EXP",
+                "item_input": "item",
+                "member": "MN",
+                "membership_port": "members",
+                "outcome": "ok",
+                "path": [],
+            }
+        ]
+        d["keyed_joins"] = [
+            {"accepted_categories": ["success"], "join": "J", "reduction": "all_by_key", "source": "EXP"}
+        ]
+        set_output_dependency(d, "MN", "evidence", ("item",))
+        set_output_dependency(d, "N", "result", ("membership", "subject"), identity_input="subject")
         return d
 
-    def assessed_map_events(count: int) -> list[Obj]:
-        e = map_item_events(count)
+    def assessed_map_events(count: int, *, submit_members: bool = False) -> list[Obj]:
+        """Retain an executable N/EXP/MN/J record with actual member owners."""
+        e = map_item_events(count, operation_expander=True)
+        root_membership = next(
+            event for event in e if event.get("kind") == "membership" and event.get("parent") is None
+        )
+        arr(root_membership["members"]).append("JOIN")
+        cut = next(i for i, event in enumerate(e) if event.get("kind") == "revision")
+        e[cut:cut] = [entry("JOIN", "A", "J"), terminal("JOIN", "A")]
+        e = [
+            event
+            for event in e
+            if not (
+                event.get("activation") == "ROOT:A"
+                and event.get("kind") in {"port", "input_producer"}
+                and cast(str, event.get("port")).startswith("mapped_")
+            )
+        ]
+        out = next(event for event in e if event.get("kind") == "provenance" and event.get("key") == "OUT:A")
+        out["parents"] = ["OP:MAP:A:members", "ROOT:A:subject"]
         insert_at = next(
             i for i, event in enumerate(e) if event.get("kind") == "provenance" and event.get("key") == "OUT:A"
         )
-        member_facts: list[Obj] = []
+        member_facts: list[Obj] = [
+            port("ROOT:A", "A", "membership", "CAv0", "artifact"),
+            input_producer("ROOT:A", "A", "N", "membership", "OP:MAP:A:members"),
+        ]
         for item_key in range(count):
             member = f"M{item_key}"
+            item_ref = f"MI{item_key}v1"
             evidence_ref = f"ME{item_key}v0"
             entry_fact = next(
                 event for event in e if event.get("kind") == "entry" and event.get("activation") == member
@@ -4227,14 +4282,12 @@ def generate_cases() -> tuple[Obj, ...]:
             member_facts.extend(
                 [
                     artifact(evidence_ref, "A", "evidence"),
-                    port(member, "A", "subject", "Av0", "candidate", "MN"),
-                    input_producer(member, "A", "MN", "subject", "ROOT:A:subject"),
                     port(member, "A", "evidence", evidence_ref, "evidence", "MN"),
                     provenance(
                         f"EVID:{member}",
                         evidence_ref,
                         "A",
-                        ("ROOT:A:subject",),
+                        (f"MAPITEM:{item_key}",),
                         port_name="evidence",
                         activation=member,
                         node="MN",
@@ -4242,7 +4295,7 @@ def generate_cases() -> tuple[Obj, ...]:
                     assessment(
                         "A",
                         activation=member,
-                        consumed={"subject": "Av0"},
+                        consumed={"item": item_ref},
                         evidence_artifact=evidence_ref,
                         environment={
                             "absences": {},
@@ -4252,8 +4305,8 @@ def generate_cases() -> tuple[Obj, ...]:
                         fact=f"F:{member}:P_MEMBER",
                         node="MN",
                         promise="P_MEMBER",
-                        subject_artifact="Av0",
-                        subject_port="subject",
+                        subject_artifact=item_ref,
+                        subject_port="item",
                     ),
                 ]
             )
@@ -4265,7 +4318,26 @@ def generate_cases() -> tuple[Obj, ...]:
                 {"collection": "artifacts", "key": f"ME{item_key}", "kind": "revision", "value": 0},
             )
             seal += 1
+            e.insert(
+                seal,
+                {"collection": "artifacts", "key": f"MI{item_key}", "kind": "revision", "value": 1},
+            )
+            seal += 1
         e.insert(seal, {"collection": "configurations", "key": "MN", "kind": "revision", "value": "c0"})
+        occurrence_by_activation = {"MAP": 0, "M0": 1, "M1": 2, "ROOT:A": 3, "JOIN": 4}
+        for event in e:
+            if event.get("kind") == "entry" and event.get("activation") in occurrence_by_activation:
+                event["occurrence"] = occurrence_by_activation[cast(str, event["activation"])]
+        if submit_members:
+            insertion = (
+                next(
+                    i
+                    for i, event in enumerate(e)
+                    if event.get("kind") == "assessment_submission" and event.get("fact") == "F:A:P"
+                )
+                + 1
+            )
+            e[insertion:insertion] = [assessment_submission(f"M{index}", "P_MEMBER") for index in range(count)]
         return e
 
     for count in range(3):
@@ -4288,16 +4360,8 @@ def generate_cases() -> tuple[Obj, ...]:
     e.insert(next(i for i, event in enumerate(e) if event.get("kind") == "revision"), duplicate)
     c.append(case("assessment", "dynamic_occurrence_duplicate", assessed_map_declaration(1), e))
 
-    def submit_dynamic_occurrences(count: int, *, canonical_occurrences: bool = False) -> list[Obj]:
-        events = assessed_map_events(count)
-        insertion = next(i for i, event in enumerate(events) if event.get("kind") == "revision")
-        events[insertion:insertion] = [assessment_submission(f"M{index}", "P_MEMBER") for index in range(count)]
-        if canonical_occurrences:
-            occurrence_by_activation = {"MAP": 0, "M0": 1, "M1": 2, "ROOT:A": 3}
-            for event in events:
-                if event.get("kind") == "entry" and event.get("activation") in occurrence_by_activation:
-                    event["occurrence"] = occurrence_by_activation[cast(str, event["activation"])]
-        return events
+    def submit_dynamic_occurrences(count: int) -> list[Obj]:
+        return assessed_map_events(count, submit_members=True)
 
     for count in (1, 2):
         c.append(
@@ -4305,7 +4369,7 @@ def generate_cases() -> tuple[Obj, ...]:
                 "assessment",
                 f"dynamic_submissions_{count}",
                 assessed_map_declaration(count),
-                submit_dynamic_occurrences(count, canonical_occurrences=True),
+                submit_dynamic_occurrences(count),
             )
         )
     e = submit_dynamic_occurrences(1)
@@ -4325,30 +4389,93 @@ def generate_cases() -> tuple[Obj, ...]:
             assessment(
                 "A",
                 activation="M0",
-                consumed={"subject": "Av0"},
+                consumed={"item": "MI0v1"},
                 evidence_artifact="ME0v0",
                 environment={"absences": {}, "configurations": {"MN": "c0"}, "state": {}},
                 fact="F:M0:P_MEMBER",
                 node="MN",
                 promise="P_MEMBER",
-                subject_artifact="Av0",
-                subject_port="subject",
+                subject_artifact="MI0v1",
+                subject_port="item",
             ),
         )
         return injected
 
-    # A terminal expansion can retain a selected reservation without starting
-    # the child. It contributes no assessment owner.
-    e = map_events(0)
-    next(event for event in e if event.get("kind") == "provenance" and event.get("key") == "OUT:A")["parents"] = [
-        "ROOT:A:subject"
+    def remove_member_evidence(events: list[Obj], member: str = "M0") -> list[Obj]:
+        evidence_ref = f"ME{member.removeprefix('M')}v0"
+        evidence_key = evidence_ref.rsplit("v", 1)[0]
+        return [
+            event
+            for event in events
+            if not (
+                event.get("kind") == "assessment"
+                and event.get("activation") == member
+                or event.get("kind") == "assessment_submission"
+                and event.get("fact") == f"F:{member}:P_MEMBER"
+                or event.get("kind") == "artifact"
+                and event.get("ref") == evidence_ref
+                or event.get("kind") == "port"
+                and event.get("activation") == member
+                and event.get("port") == "evidence"
+                or event.get("kind") == "provenance"
+                and event.get("key") == f"EVID:{member}"
+                or event.get("kind") == "revision"
+                and event.get("collection") == "artifacts"
+                and event.get("key") == evidence_key
+            )
+        ]
+
+    # A failed publication starts the ordinary expander but creates no item,
+    # candidate, or assessment owner. Both dependants close blocked.
+    e = assessed_map_events(0)
+    e = [
+        event
+        for event in e
+        if not (
+            event.get("kind") == "assessment"
+            or event.get("kind") == "assessment_submission"
+            or event.get("kind") == "final"
+            or event.get("kind") == "artifact"
+            and event.get("ref") in {"EAv0", "CAv0"}
+            or event.get("kind") == "collection_value"
+            or event.get("kind") == "port"
+            and (event.get("activation"), event.get("port"))
+            in {
+                ("ROOT:A", "subject"),
+                ("ROOT:A", "context"),
+                ("ROOT:A", "evidence"),
+                ("ROOT:A", "result"),
+                ("ROOT:A", "membership"),
+                ("MAP", "members"),
+            }
+            or event.get("kind") == "input_producer"
+            and event.get("activation") == "ROOT:A"
+            or event.get("kind") == "provenance"
+            and event.get("key") not in {"ROOT:A:subject", "ROOT:A:context"}
+            or event.get("kind") == "revision"
+            and event.get("collection") == "artifacts"
+            and event.get("key") == "EA"
+        )
     ]
+    next(event for event in e if event.get("kind") == "artifact" and event.get("ref") == "Av0")["role"] = "artifact"
     map_entry = next(event for event in e if event.get("kind") == "entry" and event.get("activation") == "MAP")
     map_entry.update({"state_category": "failure", "state_outcome": None})
     map_terminal = next(event for event in e if event.get("kind") == "terminal" and event.get("activation") == "MAP")
     map_terminal.update({"category": "failure", "outcome": None, "reasons": ["execution_failed"]})
     membership = next(event for event in e if event.get("kind") == "membership" and event.get("parent") == "MAP")
     membership.update({"expansion_outcome": None, "status": "failed"})
+    root_entry = next(event for event in e if event.get("kind") == "entry" and event.get("activation") == "ROOT:A")
+    root_entry.update({"closed_unstarted": True, "state_category": "blocked", "state_outcome": None})
+    root_terminal = next(
+        event for event in e if event.get("kind") == "terminal" and event.get("activation") == "ROOT:A"
+    )
+    root_terminal.clear()
+    root_terminal.update(terminal("ROOT:A", "A", "blocked", None))
+    join_entry = next(event for event in e if event.get("kind") == "entry" and event.get("activation") == "JOIN")
+    join_entry.update({"closed_unstarted": True, "state_category": "blocked", "state_outcome": None})
+    join_terminal = next(event for event in e if event.get("kind") == "terminal" and event.get("activation") == "JOIN")
+    join_terminal.clear()
+    join_terminal.update(terminal("JOIN", "A", "blocked", None))
     insertion = e.index(membership)
     e.insert(
         insertion,
@@ -4365,7 +4492,7 @@ def generate_cases() -> tuple[Obj, ...]:
     )
 
     def non_success_member_events(category: str, *, closed_unstarted: bool) -> list[Obj]:
-        events = map_item_events(1)
+        events = remove_member_evidence(assessed_map_events(1))
         member_entry = next(
             event for event in events if event.get("kind") == "entry" and event.get("activation") == "M0"
         )
@@ -4383,16 +4510,36 @@ def generate_cases() -> tuple[Obj, ...]:
         replacement = terminal("M0", "A", category, None)
         member_terminal.clear()
         member_terminal.update(replacement)
-        next(
-            event
-            for event in events
-            if event.get("kind") == "port" and event.get("activation") == "M0" and event.get("port") == "item"
-        )["node"] = "MN"
-        next(
-            event
-            for event in events
-            if event.get("kind") == "input_producer" and event.get("activation") == "M0" and event.get("port") == "item"
-        )["node"] = "MN"
+        join_entry = next(
+            event for event in events if event.get("kind") == "entry" and event.get("activation") == "JOIN"
+        )
+        join_entry.update({"closed_unstarted": True, "state_category": "blocked", "state_outcome": None})
+        join_terminal = next(
+            event for event in events if event.get("kind") == "terminal" and event.get("activation") == "JOIN"
+        )
+        join_terminal.clear()
+        join_terminal.update(terminal("JOIN", "A", "blocked", None))
+        if category == "blocked":
+            obj_kind = obj(assessed_map_declaration(1)["node_kinds"])
+            assert obj_kind["MN"] == "operation"
+            root_membership = next(
+                event for event in events if event.get("kind") == "membership" and event.get("parent") is None
+            )
+            arr(root_membership["members"]).append("FAILED")
+            insertion = next(i for i, event in enumerate(events) if event.get("kind") == "revision")
+            events[insertion:insertion] = [
+                entry("FAILED", "A", "FAILED_SOURCE", state_category="failure", state_outcome=None),
+                terminal("FAILED", "A", "failure", None),
+            ]
+            events = [
+                event
+                for event in events
+                if not (
+                    event.get("activation") == "M0"
+                    and event.get("port") == "item"
+                    and event.get("kind") in {"port", "input_producer"}
+                )
+            ]
         return events
 
     for name, category, closed_unstarted in (
@@ -4400,12 +4547,15 @@ def generate_cases() -> tuple[Obj, ...]:
         ("started_failure", "failure", False),
     ):
         e = non_success_member_events(category, closed_unstarted=closed_unstarted)
-        c.append(case("assessment", f"dynamic_{name}", assessed_map_declaration(1), e))
+        d = assessed_map_declaration(1)
+        if category == "blocked":
+            obj(d["node_kinds"])["FAILED_SOURCE"] = "operation"
+        c.append(case("assessment", f"dynamic_{name}", d, e))
         c.append(
             case(
                 "assessment",
                 f"dynamic_{name}_injected",
-                assessed_map_declaration(1),
+                d,
                 inject_member_assessment(e),
             )
         )
