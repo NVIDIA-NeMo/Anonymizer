@@ -11,7 +11,7 @@ from typing import cast
 import pytest
 
 from anonymizer.engine.graph_sdk._effect_values import EffectCode, EffectRejected
-from anonymizer.engine.graph_sdk.capabilities import FrozenConfig
+from anonymizer.engine.graph_sdk.capabilities import FrozenConfig, ImplementationRef, ImplementationSelection
 from anonymizer.engine.graph_sdk.context import admit_context_plan
 from anonymizer.engine.graph_sdk.evidence import (
     AssessmentSubmission,
@@ -26,7 +26,10 @@ from anonymizer.engine.graph_sdk.executor import (
     AdmittedExecutionPlan,
     AssessmentFinding,
     AssessmentLimits,
+    DecisionDeclaration,
     DecisionLimits,
+    DecisionOutcome,
+    DecisionResponse,
     EvidenceProductionDecl,
     ExecutionAssessmentFact,
     ExecutionImplementation,
@@ -43,21 +46,30 @@ from anonymizer.engine.graph_sdk.preparation import (
     PreparationConfiguration,
     StateRevision,
     StateRevisionView,
+    prepare,
 )
-from anonymizer.engine.graph_sdk.records import AbsenceRef, CandidateRef
+from anonymizer.engine.graph_sdk.records import AbsenceRef, CandidateRef, DecisionRef
 from anonymizer.graph._values import ArtifactRef, InvocationId
+from anonymizer.graph.activation import ActivationLimits
 from anonymizer.graph.workflow import (
     CoverageAtom,
     DynamicScope,
+    InputBinding,
+    NodeId,
+    NodeInputRef,
+    NodeOutputRef,
     OperationNode,
     ProtectionRequirement,
+    SequenceEdge,
     StateEffect,
+    WorkflowInputRef,
     admit_activation_workflow,
     admit_static_workflow,
 )
 from tests.graph_sdk.test_adaptive_executor import _adaptive_workflow, _AssessingLocal
-from tests.graph_sdk.test_local_executor import _Clock, _runtime_rows
-from tests.graph_sdk.test_preparation import _capability, _data, _prepare
+from tests.graph_sdk.test_decision_scheduling import _Callback
+from tests.graph_sdk.test_effects_production_conformance import _valid_runtime_rows, _ZeroClock
+from tests.graph_sdk.test_preparation import _capability, _data, _limits
 
 
 def _qualification_limits(**changes: int) -> QualificationLimits:
@@ -68,6 +80,7 @@ async def _execute_assessment(
     *,
     environment: bool = False,
     candidate_input: bool = False,
+    decision_input: bool = False,
     coverage: frozenset[CoverageAtom] = frozenset(),
     target_count: int = 1,
 ) -> tuple[AdmittedExecutionPlan, ExecutionResult]:
@@ -88,14 +101,53 @@ async def _execute_assessment(
             for outcome in raw.interface.outcomes
         ),
     )
+    decision_node = NodeId.new(workflow=raw.workflow)
+    nodes = (OperationNode(id=node, operation=operation),)
+    bindings = tuple(raw.input_bindings)
+    if decision_input:
+        decision_operation = replace(
+            operation,
+            name="approve-input",
+            outcomes=tuple(
+                replace(outcome, evidence=frozenset(), state_effects=frozenset()) for outcome in operation.outcomes
+            ),
+            output_dependencies=tuple(
+                replace(dependency, identity_input="input") for dependency in operation.output_dependencies
+            ),
+        )
+        nodes = (OperationNode(id=decision_node, operation=decision_operation), *nodes)
+        bindings = (
+            InputBinding(
+                source=WorkflowInputRef(port="input"), destination=NodeInputRef(node=decision_node, port="input")
+            ),
+            InputBinding(
+                source=NodeOutputRef(node=decision_node, port=evidence_port),
+                destination=NodeInputRef(node=node, port="input"),
+            ),
+        )
+    interface = replace(
+        operation,
+        outcomes=tuple(
+            replace(
+                outcome,
+                ceiling=replace(
+                    outcome.ceiling,
+                    max_activations=len(nodes),
+                    max_input_bytes=100 * len(nodes),
+                    max_output_bytes=100 * len(nodes),
+                ),
+            )
+            for outcome in operation.outcomes
+        ),
+    )
     static = admit_static_workflow(
         workflow=raw.workflow,
-        interface=operation,
-        nodes=(OperationNode(id=node, operation=operation),),
-        input_bindings=tuple(raw.input_bindings),
+        interface=interface,
+        nodes=nodes,
+        input_bindings=bindings,
         output_bindings=tuple(raw.output_bindings),
         outcome_bindings=tuple(raw.outcome_bindings),
-        sequence=tuple(raw.sequence),
+        sequence=(SequenceEdge(before=decision_node, after=node),) if decision_input else (),
         choices=tuple(raw.choices),
         protection=(
             ProtectionRequirement(
@@ -106,19 +158,34 @@ async def _execute_assessment(
                 coverage=coverage,
             ),
         ),
-        limits=raw.limits,
+        limits=replace(raw.limits, max_nodes=len(nodes), max_bindings=4, max_sequence_edges=1),
     )
     workflow = admit_activation_workflow(
         workflow=static,
         scopes=(DynamicScope(workflow=static, maps=(), loops=(), joins=()),),
-        limits=base.limits,
+        limits=replace(base.limits, max_activation_occurrences=len(nodes)),
     )
     data = _data(target_count)
-    capability = _capability(workflow)
-    prepared = _prepare(
+    capabilities = tuple(
+        replace(
+            _capability(workflow),
+            operation=item.operation,
+            implementation=ImplementationRef(name=f"evidence-fixture-{index}", revision=1),
+        )
+        for index, item in enumerate(nodes)
+    )
+    prepared = prepare(
         data=data,
         workflow=workflow,
-        capability=capability,
+        capabilities=capabilities,
+        activation_limits=ActivationLimits(max_events=3 * len(nodes), max_entries=len(nodes), max_parent_depth=1),
+        selections=tuple(
+            ImplementationSelection(
+                node=item.id, implementation=capability.implementation, configuration=capability.configuration
+            )
+            for item, capability in zip(nodes, capabilities, strict=True)
+        ),
+        limits=_limits(capabilities=len(nodes)),
         configuration=PreparationConfiguration(
             purpose="protection", required_protection_outcomes=frozenset({"ok"}), hard_request_limit=None
         ),
@@ -142,11 +209,11 @@ async def _execute_assessment(
         context=admit_context_plan(
             prepared=prepared, bound_context=None, adaptive_retrievals=(), context_capabilities=()
         ),
-        capabilities=(capability,),
-        policies=(
+        capabilities=capabilities,
+        policies=tuple(
             OperationExecutionPolicy(
-                node=node,
-                kind="local",
+                node=item.id,
+                kind="decision" if item.id == decision_node else "local",
                 request=None,
                 safe_detachment="forbidden",
                 implementations=(
@@ -157,11 +224,24 @@ async def _execute_assessment(
                         request=None,
                     ),
                 ),
-                result_outcomes=frozenset({"ok"}),
-                runtime_outcomes=_runtime_rows(),
-            ),
+                result_outcomes=frozenset() if item.id == decision_node else frozenset({"ok"}),
+                runtime_outcomes=_valid_runtime_rows(
+                    "decision" if item.id == decision_node else "local",
+                    frozenset() if item.id == decision_node else frozenset({"ok"}),
+                ),
+            )
+            for item, capability in zip(nodes, capabilities, strict=True)
         ),
-        decisions=(),
+        decisions=(
+            DecisionDeclaration(
+                node=decision_node,
+                artifact_port="input",
+                outcomes=(DecisionOutcome(decision="approve", outcome="ok"),),
+                max_lifetime_ns=10,
+            ),
+        )
+        if decision_input
+        else (),
         assessment_productions=(declaration,),
         assessment_limits=AssessmentLimits(
             max_productions=1,
@@ -169,20 +249,23 @@ async def _execute_assessment(
             max_finding_code_bytes=20,
             max_absence_queries=1 if environment else 0,
             max_assessment_facts=target_count,
-            max_port_facts=3 * target_count,
-            max_provenance_edges=2 * target_count,
+            max_port_facts=(3 + 2 * int(decision_input)) * target_count,
+            max_provenance_edges=(2 + int(decision_input)) * target_count,
         ),
     )
     services = ExecutionServices(
-        handles=(
+        handles=tuple(
             ImplementationHandle(
                 implementation=capability.implementation,
                 operation=capability.operation,
                 configuration=capability.configuration,
-                local=_AssessingLocal(finding=finding, evidence_port=evidence_port, alias_evidence=candidate_input),
+                local=_Callback(decision=True)
+                if item.id == decision_node
+                else _AssessingLocal(finding=finding, evidence_port=evidence_port, alias_evidence=candidate_input),
                 transport=None,
                 resource=None,
-            ),
+            )
+            for item, capability in zip(nodes, capabilities, strict=True)
         ),
         context_resources=(),
         limits=ExecutionLimits(
@@ -192,12 +275,27 @@ async def _execute_assessment(
             max_runtime_artifact_bytes=100,
             max_collection_items=0,
         ),
-        decision_limits=DecisionLimits(max_pending=0, max_lifetime_ns=0),
-        clock=_Clock(),
+        decision_limits=DecisionLimits(
+            max_pending=target_count if decision_input else 0, max_lifetime_ns=10 if decision_input else 0
+        ),
+        clock=_ZeroClock(),
         absence_revisions=((7, 4),) if environment else (),
     )
-    running = await start_execution(admitted=admitted, capabilities=(capability,), services=services)
-    return admitted, await running.wait()
+    running = await start_execution(admitted=admitted, capabilities=capabilities, services=services)
+    if decision_input:
+        async with asyncio.timeout(2):
+            submitted = set()
+            while len(submitted) < target_count:
+                for wait in running.pending_decisions():
+                    if wait.wait not in submitted:
+                        running.submit_decision(
+                            DecisionResponse(
+                                wait=wait.wait, workflow=wait.workflow, artifact=wait.artifact, decision="approve"
+                            )
+                        )
+                        submitted.add(wait.wait)
+                await asyncio.sleep(0)
+    return admitted, await asyncio.wait_for(running.wait(), 2)
 
 
 @pytest.fixture
@@ -610,3 +708,30 @@ def test_fixed_point_outer_bound_precedes_missing_production() -> None:
     with pytest.raises(EffectRejected) as error:
         admit_qualification(execution=execution, productions=(), limits=_qualification_limits(max_fixed_point_steps=1))
     assert error.value.code is EffectCode.LIMIT_EXCEEDED
+
+
+def test_consumed_decision_is_derived_from_an_actual_resumed_producer() -> None:
+    execution, result = asyncio.run(_execute_assessment(decision_input=True))
+    admitted = admit_qualification(
+        execution=execution, productions=execution.assessment_productions, limits=_qualification_limits()
+    )
+    fact = result.assessments[0]
+    (verified,) = verify_evidence(admitted=admitted, result=result, submissions=(AssessmentSubmission(fact=fact),))
+    ((port, decision),) = verified.consumed_by_port
+    assert port == "input" and isinstance(decision, DecisionRef)
+    producers = [item for item in result.provenance if item.decision]
+    assert len(producers) == 1 and producers[0].artifact == decision.artifact
+    assert len(result.record.terminals) == 2
+    assert all(item.category == "success" for item in result.record.terminals)
+    artifacts = tuple(reference for reference, _ in result.artifacts)
+    for missing in (False, True):
+        selected = tuple(item for item in artifacts if not missing or item != decision.artifact)
+        current = evidence_revision_view(
+            admitted=admitted,
+            result=result,
+            artifacts=selected,
+            absences=(),
+            configurations=((fact.node, fact.environment.configuration),),
+            state=fact.environment.state,
+        )
+        assert evidence_validity(evidence=verified, current=current) == ("unknown" if missing else "current")
