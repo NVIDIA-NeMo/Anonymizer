@@ -1,0 +1,907 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+"""Execute the independent map-evidence topology through public SDK owners."""
+
+from __future__ import annotations
+
+import asyncio
+import json
+from dataclasses import dataclass, fields, replace
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+from anonymizer.engine.graph_sdk._effect_values import EffectRejected
+from anonymizer.engine.graph_sdk.capabilities import ImplementationSelection
+from anonymizer.engine.graph_sdk.context import admit_context_plan
+from anonymizer.engine.graph_sdk.data import DataGraph, DataLimits
+from anonymizer.engine.graph_sdk.evidence import (
+    AssessmentSubmission,
+    MapItemSubjectRef,
+    QualificationLimits,
+    admit_qualification,
+    evidence_revision_view,
+    evidence_validity,
+)
+from anonymizer.engine.graph_sdk.executor import (
+    AdmittedExecutionPlan,
+    AssessmentFinding,
+    AssessmentLimits,
+    DecisionLimits,
+    EvidenceProductionDecl,
+    ExecutionImplementation,
+    ExecutionLimits,
+    ExecutionResult,
+    ExecutionServices,
+    ImplementationHandle,
+    LocalAssessmentResult,
+    LocalCompleted,
+    MapExpansionDecl,
+    MapItemKey,
+    OperationExecutionPolicy,
+    OperationOutputKey,
+    RootInputKey,
+    admit_execution_plan,
+    start_execution,
+)
+from anonymizer.engine.graph_sdk.preparation import (
+    BoundInput,
+    PreparationConfiguration,
+    StateRevision,
+    StateRevisionView,
+    prepare,
+)
+from anonymizer.engine.graph_sdk.qualification import QualificationResult, qualify
+from anonymizer.engine.graph_sdk.records import AbsenceRef, CandidateRef, DecisionRef
+from anonymizer.engine.graph_sdk.requests import (
+    AssociationInput,
+    AssociationResult,
+    PortArtifact,
+    SemanticAssociation,
+    TextArtifactValue,
+    TextCollectionItem,
+    TextCollectionValue,
+)
+from anonymizer.graph._values import ActivationKey, ArtifactRef
+from anonymizer.graph.activation import ActivationLimits
+from anonymizer.graph.workflow import (
+    ArtifactType,
+    CoverageAtom,
+    DynamicLimits,
+    DynamicScope,
+    EvidencePromise,
+    InputBinding,
+    InputPort,
+    KeyedJoinDecl,
+    MapDecl,
+    MapItemPort,
+    NodeId,
+    NodeInputRef,
+    NodeOutcomeRef,
+    NodeOutputRef,
+    OperationNode,
+    OperationSpec,
+    OutcomeBinding,
+    OutputBinding,
+    OutputDependency,
+    OutputPort,
+    ProtectionRequirement,
+    SequenceEdge,
+    StateEffect,
+    WorkflowId,
+    WorkflowInputRef,
+    WorkflowLimits,
+    WorkflowOutcomeRef,
+    WorkflowOutputRef,
+    admit_activation_workflow,
+    admit_static_workflow,
+)
+from tests.graph_sdk.test_dynamic_executor import _capability, _outcome, _rows
+from tests.graph_sdk.test_local_executor import _Clock
+from tests.graph_sdk.test_preparation import _limits
+
+
+@dataclass
+class _ReferenceMapCallback:
+    role: str
+    count: int
+    text_type: ArtifactType
+    collection_type: ArtifactType
+    calls: int = 0
+
+    async def run(self, request: tuple[AssociationInput, ...]) -> LocalCompleted:
+        self.calls += 1
+        (item,) = request
+        assert isinstance(item.association, SemanticAssociation)
+        outputs: tuple[PortArtifact, ...] = ()
+        assessments: tuple[LocalAssessmentResult, ...] = ()
+        if self.role == "EXP":
+            outputs = (
+                PortArtifact(
+                    port="members",
+                    artifact_type=self.collection_type,
+                    artifact=None,
+                    value=TextCollectionValue(
+                        items=tuple(
+                            TextCollectionItem(key=index, version=1, value=TextArtifactValue(text=str(index)))
+                            for index in range(self.count)
+                        )
+                    ),
+                ),
+            )
+        elif self.role in {"MN", "N"}:
+            outputs = (
+                PortArtifact(
+                    port="evidence", artifact_type=self.text_type, artifact=None, value=TextArtifactValue(text="E")
+                ),
+            )
+            if self.role == "N":
+                subject = next(port for port in item.inputs if port.port == "subject")
+                outputs += (
+                    PortArtifact(port="result", artifact_type=self.text_type, artifact=None, value=subject.value),
+                )
+            assessments = (
+                LocalAssessmentResult(
+                    association=item.association,
+                    promise="P" if self.role == "N" else "P_ITEM",
+                    evidence_port="evidence",
+                    finding=AssessmentFinding(status="satisfied", code="observed"),
+                ),
+            )
+        return LocalCompleted(
+            results=(
+                AssociationResult(
+                    association=item.association,
+                    outcome="ok",
+                    outputs=outputs,
+                    consumed_context_ports=frozenset(),
+                ),
+            ),
+            assessments=assessments,
+        )
+
+
+async def _execute_reference_map(
+    count: int, *, consumed_only: bool = False
+) -> tuple[AdmittedExecutionPlan, ExecutionResult, dict[str, NodeId]]:
+    owner = WorkflowId.new()
+    nodes = {name: NodeId.new(workflow=owner) for name in ("N", "EXP", "MN", "J")}
+    text_type = ArtifactType(name="text", revision=1)
+    collection_type = ArtifactType(name="members", revision=1)
+    coverage = frozenset(CoverageAtom(kind="field", name=name) for name in ("K0", "K1"))
+    required = frozenset({CoverageAtom(kind="field", name="K0")})
+    read = StateEffect(kind="read", name="read")
+    root_promise = EvidencePromise(
+        name="P", meaning="privacy", subject_port="subject", consumed_ports=frozenset({"context"}), coverage=coverage
+    )
+    item_promise = EvidencePromise(
+        name="P_ITEM",
+        meaning="item_privacy",
+        subject_port="subject" if consumed_only else "item",
+        consumed_ports=frozenset({"item"}),
+        coverage=coverage,
+    )
+    endpoint = MapItemPort(
+        path=(),
+        expander=nodes["EXP"],
+        member=nodes["MN"],
+        item_input="item",
+        membership_port="members",
+        expansion_outcome="ok",
+    )
+    operations = {
+        "N": OperationSpec(
+            name="N",
+            inputs=(
+                InputPort(name="subject", artifact_type=text_type),
+                InputPort(name="context", artifact_type=text_type),
+                InputPort(name="membership", artifact_type=collection_type),
+            ),
+            outputs=tuple(OutputPort(name=name, artifact_type=text_type) for name in ("result", "evidence")),
+            output_dependencies=(
+                OutputDependency(
+                    output="result", inputs=frozenset({"subject", "membership"}), identity_input="subject"
+                ),
+                OutputDependency(output="evidence", inputs=frozenset({"context"}), identity_input=None),
+            ),
+            outcomes=(
+                replace(
+                    _outcome("ok", produced=frozenset({"result", "evidence"}), max_output_bytes=32),
+                    evidence=frozenset({root_promise}),
+                    state_effects=frozenset({read}),
+                ),
+            ),
+        ),
+        "EXP": OperationSpec(
+            name="EXP",
+            inputs=(InputPort(name="context", artifact_type=text_type),),
+            outputs=(OutputPort(name="members", artifact_type=collection_type),),
+            output_dependencies=(
+                OutputDependency(output="members", inputs=frozenset({"context"}), identity_input=None),
+            ),
+            outcomes=(_outcome("ok", produced=frozenset({"members"}), max_activations=4, max_output_bytes=32),),
+        ),
+        "MN": OperationSpec(
+            name="MN",
+            inputs=(
+                InputPort(name="item", artifact_type=text_type),
+                *((InputPort(name="subject", artifact_type=text_type),) if consumed_only else ()),
+            ),
+            outputs=(OutputPort(name="evidence", artifact_type=text_type),),
+            output_dependencies=(OutputDependency(output="evidence", inputs=frozenset({"item"}), identity_input=None),),
+            outcomes=(
+                replace(
+                    _outcome("ok", produced=frozenset({"evidence"}), max_output_bytes=32),
+                    evidence=frozenset({item_promise}),
+                ),
+            ),
+        ),
+        "J": OperationSpec(name="J", inputs=(), outputs=(), output_dependencies=(), outcomes=(_outcome("ok"),)),
+    }
+    interface = OperationSpec(
+        name="root",
+        inputs=tuple(InputPort(name=name, artifact_type=text_type) for name in ("subject", "context")),
+        outputs=(OutputPort(name="result", artifact_type=text_type),),
+        output_dependencies=(
+            OutputDependency(output="result", inputs=frozenset({"subject", "context"}), identity_input="subject"),
+        ),
+        outcomes=(
+            replace(
+                _outcome("ok", produced=frozenset({"result"}), max_activations=7, max_output_bytes=128),
+                evidence=frozenset(
+                    {
+                        root_promise,
+                        replace(
+                            item_promise,
+                            subject_port="subject" if consumed_only else endpoint,
+                            consumed_ports=frozenset({endpoint}),
+                        ),
+                    }
+                ),
+                state_effects=frozenset({read}),
+            ),
+        ),
+    )
+    static = admit_static_workflow(
+        workflow=owner,
+        interface=interface,
+        nodes=tuple(OperationNode(id=nodes[name], operation=operation) for name, operation in operations.items()),
+        input_bindings=(
+            *(
+                InputBinding(source=WorkflowInputRef(port=name), destination=NodeInputRef(node=nodes["N"], port=name))
+                for name in ("subject", "context")
+            ),
+            InputBinding(
+                source=WorkflowInputRef(port="context"), destination=NodeInputRef(node=nodes["EXP"], port="context")
+            ),
+            InputBinding(
+                source=WorkflowInputRef(port="subject"), destination=NodeInputRef(node=nodes["MN"], port="item")
+            ),
+            InputBinding(
+                source=NodeOutputRef(node=nodes["EXP"], port="members"),
+                destination=NodeInputRef(node=nodes["N"], port="membership"),
+            ),
+            *(
+                (
+                    InputBinding(
+                        source=WorkflowInputRef(port="subject"),
+                        destination=NodeInputRef(node=nodes["MN"], port="subject"),
+                    ),
+                )
+                if consumed_only
+                else ()
+            ),
+        ),
+        output_bindings=(
+            OutputBinding(
+                source=NodeOutputRef(node=nodes["N"], port="result"), destination=WorkflowOutputRef(port="result")
+            ),
+        ),
+        outcome_bindings=(
+            OutcomeBinding(
+                source=NodeOutcomeRef(node=nodes["J"], outcome="ok"), destination=WorkflowOutcomeRef(outcome="ok")
+            ),
+        ),
+        sequence=(
+            SequenceEdge(before=nodes["EXP"], after=nodes["MN"]),
+            SequenceEdge(before=nodes["MN"], after=nodes["J"]),
+            SequenceEdge(before=nodes["EXP"], after=nodes["N"]),
+            SequenceEdge(before=nodes["N"], after=nodes["J"]),
+        ),
+        choices=(),
+        protection=(
+            ProtectionRequirement(
+                outcome="ok",
+                meaning="privacy",
+                subject_port="subject",
+                consumed_ports=frozenset({"context"}),
+                coverage=required,
+            ),
+            ProtectionRequirement(
+                outcome="ok",
+                meaning="item_privacy",
+                subject_port="subject" if consumed_only else endpoint,
+                consumed_ports=frozenset({endpoint}),
+                coverage=required,
+                candidate_port="result",
+            ),
+        ),
+        limits=WorkflowLimits(
+            max_nodes=4,
+            max_bindings=8 + int(consumed_only),
+            max_sequence_edges=4,
+            max_choices=0,
+            max_branch_members=0,
+            max_subgraph_depth=1,
+            max_choice_states=1,
+        ),
+    )
+    workflow = admit_activation_workflow(
+        workflow=static,
+        scopes=(
+            DynamicScope(
+                workflow=static,
+                maps=(
+                    MapDecl(
+                        expander=nodes["EXP"],
+                        member=nodes["MN"],
+                        expansion_outcomes=frozenset({"ok"}),
+                        max_children=2,
+                        item_input="item",
+                    ),
+                ),
+                joins=(
+                    KeyedJoinDecl(
+                        source=nodes["EXP"],
+                        join=nodes["J"],
+                        accepted_categories=frozenset({"success"}),
+                        reduction="all_by_key",
+                    ),
+                ),
+                loops=(),
+            ),
+        ),
+        limits=DynamicLimits(
+            max_maps=1,
+            max_joins=1,
+            max_loops=0,
+            max_children_per_map=2,
+            max_iterations_per_loop=0,
+            max_dynamic_depth=1,
+            max_activation_occurrences=5,
+        ),
+    )
+    graph = DataGraph.new()
+    graph, target = graph.add_text("A")
+    graph, context = graph.add_text("X")
+    data = graph.validate(
+        targets=(target,),
+        source_relations=(),
+        contexts=(),
+        dependencies=(),
+        coherence=(),
+        atomic=(),
+        output_regions=(),
+        limits=DataLimits(max_datums=2, max_targets=1, max_text_bytes=2, max_declarations=0, max_group_members=1),
+    )
+    capabilities = tuple(_capability(operation, index) for index, operation in enumerate(operations.values()))
+    prepared = prepare(
+        data=data,
+        workflow=workflow,
+        activation_limits=ActivationLimits(max_events=40, max_entries=5, max_parent_depth=2),
+        bound_inputs=tuple(
+            BoundInput(target=target, source=source, port=port, artifact_type=text_type)
+            for port, source in (("subject", target), ("context", context))
+        ),
+        configuration=PreparationConfiguration(
+            purpose="protection", required_protection_outcomes=frozenset({"ok"}), hard_request_limit=None
+        ),
+        state=StateRevisionView(revisions=frozenset({StateRevision(effect=read, revision=1)})),
+        selections=tuple(
+            ImplementationSelection(
+                node=node, implementation=capability.implementation, configuration=capability.configuration
+            )
+            for node, capability in zip(nodes.values(), capabilities, strict=True)
+        ),
+        capabilities=capabilities,
+        limits=_limits(capabilities=4, slots=5),
+    )
+    admitted = admit_execution_plan(
+        context=admit_context_plan(
+            prepared=prepared, bound_context=None, adaptive_retrievals=(), context_capabilities=()
+        ),
+        capabilities=capabilities,
+        policies=tuple(
+            OperationExecutionPolicy(
+                node=node,
+                kind="local",
+                request=None,
+                safe_detachment="forbidden",
+                implementations=(
+                    ExecutionImplementation(
+                        implementation=capability.implementation,
+                        configuration=capability.configuration,
+                        capability=capability,
+                        request=None,
+                    ),
+                ),
+                result_outcomes=frozenset({"ok"}),
+                runtime_outcomes=_rows(frozenset({"ok"})),
+            )
+            for node, capability in zip(nodes.values(), capabilities, strict=True)
+        ),
+        decisions=(),
+        assessment_productions=tuple(
+            EvidenceProductionDecl(
+                node=nodes[name],
+                outcome="ok",
+                promise=promise,
+                evidence_port="evidence",
+                absence_queries=frozenset({0}) if name == "N" else frozenset(),
+                supported_findings=frozenset({AssessmentFinding(status="satisfied", code="observed")}),
+            )
+            for name, promise in (("N", "P"), ("MN", "P_ITEM"))
+        ),
+        assessment_limits=AssessmentLimits(
+            max_productions=2,
+            max_findings_per_production=1,
+            max_finding_code_bytes=16,
+            max_absence_queries=1,
+            max_assessment_facts=3,
+            max_port_facts=16,
+            max_provenance_edges=16,
+        ),
+        map_expansions=(
+            MapExpansionDecl(expander=nodes["EXP"], outcome="ok", membership_port="members", item_type=text_type),
+        ),
+    )
+    callbacks = tuple(_ReferenceMapCallback(name, count, text_type, collection_type) for name in nodes)
+    running = await start_execution(
+        admitted=admitted,
+        capabilities=capabilities,
+        services=ExecutionServices(
+            handles=tuple(
+                ImplementationHandle(
+                    implementation=capability.implementation,
+                    operation=capability.operation,
+                    configuration=capability.configuration,
+                    local=callback,
+                    transport=None,
+                    resource=None,
+                )
+                for capability, callback in zip(capabilities, callbacks, strict=True)
+            ),
+            context_resources=(),
+            limits=ExecutionLimits(
+                max_local_in_flight=1,
+                max_remote_outstanding=0,
+                max_runtime_artifacts=32,
+                max_runtime_artifact_bytes=64,
+                max_collection_items=2,
+            ),
+            decision_limits=DecisionLimits(max_pending=0, max_lifetime_ns=0),
+            clock=_Clock(),
+            absence_revisions=((0, 1),),
+        ),
+    )
+    result = await running.wait()
+    assert [callback.calls for callback in callbacks] == [1, 1, count, 1]
+    return admitted, result, nodes
+
+
+CORPUS = json.loads((Path(__file__).parent / "reference/qualification_v1_cases.json").read_text())
+FLAT_CASE_IDS = {
+    *(f"map_item_evidence/direct_{count}" for count in (0, 1, 2)),
+    *(
+        f"map_item_evidence/{suffix}"
+        for suffix in (
+            "typed_consumed_endpoint",
+            "missing_submission",
+            "foreign_submission",
+            "repeated_submission",
+            "missing_fact",
+            "copied_member_submission",
+            "item_unknown",
+        )
+    ),
+    "map_item_bounds/submissions_one_over",
+    "map_item_bounds/verified_one_over",
+}
+
+
+@pytest.mark.parametrize(
+    "case", [case for case in CORPUS if case["case_id"] in FLAT_CASE_IDS], ids=lambda case: case["case_id"]
+)
+def test_reference_map_case_through_real_execution(case: dict[str, Any]) -> None:
+    try:
+        actual = asyncio.run(_run_reference_map_case(case))
+    except EffectRejected as exc:
+        actual = {"status": "rejected", "code": exc.code.value}
+    expected = json.loads(json.dumps(case["expected"]))
+    if "record" in expected:
+        for membership in expected["record"]["memberships"].values():
+            membership["members"].sort()
+    assert actual == expected
+
+
+async def _run_reference_map_case(case: dict[str, Any]) -> dict[str, Any]:
+    events = case["events"]
+    count = sum(event["kind"] == "entry" and event["node"] == "MN" for event in events)
+    consumed_only = case["case_id"] == "map_item_evidence/typed_consumed_endpoint"
+    baseline = (
+        case
+        if consumed_only
+        else next(item for item in CORPUS if item["case_id"] == f"map_item_evidence/direct_{count}")
+    )
+    mutable_events = {"assessment_submission", "assessment", "revision"}
+    assert [event for event in events if event["kind"] not in mutable_events] == [
+        event for event in baseline["events"] if event["kind"] not in mutable_events
+    ]
+    assert {key: value for key, value in case["declaration"].items() if key != "limits"} == {
+        key: value for key, value in baseline["declaration"].items() if key != "limits"
+    }
+    execution, result, nodes = await _execute_reference_map(count, consumed_only=consumed_only)
+    assert len(result.states[0].entries) == len(result.record.terminals) == count + 3
+    names = _MapRecordNames(execution, result, nodes)
+    names.assert_retained_facts(events)
+    names.assert_assessments(baseline["events"])
+    facts = {
+        ("F:A:P" if fact.node == nodes["N"] else f"F:{names.activation(fact.activation)}:P_ITEM"): fact
+        for fact in result.assessments
+    }
+    retained = {event["fact"] for event in events if event["kind"] == "assessment"}
+    assert retained <= set(facts)
+    if retained != set(facts):
+        assert case["case_id"] == "map_item_evidence/missing_fact"
+        object.__setattr__(result, "assessments", tuple(fact for name, fact in facts.items() if name in retained))
+    names.assert_assessments(events)
+    if any(event["kind"] == "assessment_submission" and event["fact"] not in facts for event in events):
+        assert case["case_id"] == "map_item_evidence/foreign_submission"
+        _, foreign, foreign_nodes = await _execute_reference_map(1)
+        facts["F:FOREIGN:P_ITEM"] = next(fact for fact in foreign.assessments if fact.node == foreign_nodes["MN"])
+    admitted = admit_qualification(
+        execution=execution,
+        productions=execution.assessment_productions,
+        limits=QualificationLimits(
+            **{field.name: case["declaration"]["limits"][field.name] for field in fields(QualificationLimits)}
+        ),
+    )
+    revisions = [event for event in events if event["kind"] == "revision"]
+    artifacts = {name: ref for ref, name in names.artifacts.items()}
+    configurations = {item.node: item.capability.configuration for item in execution.context.prepared.implementations}
+    current = evidence_revision_view(
+        admitted=admitted,
+        result=result,
+        artifacts=tuple(
+            artifacts[f"{event['key']}v{event['value']}"] for event in revisions if event["collection"] == "artifacts"
+        ),
+        absences=tuple(
+            AbsenceRef(invocation=result.record.invocation, query=int(event["key"][1:]), scope_revision=event["value"])
+            for event in revisions
+            if event["collection"] == "absences"
+        ),
+        configurations=tuple(
+            (nodes[event["key"]], configurations[nodes[event["key"]]])
+            for event in revisions
+            if event["collection"] == "configurations"
+        ),
+        state=StateRevisionView.from_revisions(
+            revisions=tuple(
+                StateRevision(effect=StateEffect(kind="read", name=event["key"]), revision=event["value"])
+                for event in revisions
+                if event["collection"] == "state"
+            )
+        ),
+    )
+    submissions = tuple(
+        AssessmentSubmission(fact=facts[event["fact"]]) for event in events if event["kind"] == "assessment_submission"
+    )
+    output = qualify(admitted=admitted, result=result, current=current, submissions=submissions)
+    return names.normalize(output)
+
+
+class _MapRecordNames:
+    """Name every retained occurrence without dropping joins or producer facts."""
+
+    def __init__(self, execution: AdmittedExecutionPlan, result: ExecutionResult, nodes: dict[str, NodeId]) -> None:
+        self.execution = execution
+        self.result = result
+        self.nodes = {node: name for name, node in nodes.items()}
+        self.entries = {entry.activation: entry for state in result.states for entry in state.entries}
+        members = sorted(
+            (entry for entry in self.entries.values() if entry.template == nodes["MN"]),
+            key=lambda entry: entry.activation.occurrence,
+        )
+        self.activations = {entry.activation: f"M{index}" for index, entry in enumerate(members)}
+        for entry in self.entries.values():
+            if entry.template != nodes["MN"]:
+                self.activations[entry.activation] = {"N": "ROOT:A", "EXP": "MAP", "J": "JOIN"}[
+                    self.nodes[entry.template]
+                ]
+        self.artifacts: dict[ArtifactRef, str] = {}
+        for port in result.ports:
+            node = self.nodes[port.node]
+            if node == "N":
+                name = {"subject": "Av0", "result": "Av0", "context": "XAv0", "evidence": "EAv0", "membership": "CAv0"}[
+                    port.port
+                ]
+            elif node == "EXP":
+                name = {"context": "XAv0", "members": "CAv0"}[port.port]
+            else:
+                assert node == "MN"
+                index = self.activations[port.activation][1:]
+                name = "Av0" if port.port == "subject" else f"MI{index}v1" if port.port == "item" else f"ME{index}v0"
+            if port.artifact in self.artifacts:
+                assert self.artifacts[port.artifact] == name
+            self.artifacts[port.artifact] = name
+        assert len(set(self.artifacts.values())) == len(self.artifacts)
+        assert set(self.artifacts) == {ref for ref, _ in result.artifacts} == set(result.record.artifacts)
+        assert all(ref.version == 1 for ref in self.artifacts)
+        self.producers = {
+            fact.key: f"MAPITEM:{self.activations[fact.key.member][1:]}"
+            for fact in result.provenance
+            if isinstance(fact.key, MapItemKey)
+        }
+        assert result.record.graph == execution.context.prepared.data.graph
+        assert result.record.plan == execution.context.prepared.plan
+        assert result.record.invocation.plan == result.record.plan
+        assert result._execution is execution
+
+    def assert_retained_facts(self, events: list[dict[str, Any]]) -> None:
+        expected_ports = {
+            (event["activation"], event["node"], event["port"], event["artifact"], event["role"])
+            for event in events
+            if event["kind"] == "port"
+        }
+        actual_ports = {
+            (
+                self.activation(port.activation),
+                self.nodes[port.node],
+                port.port,
+                self.artifact(port.artifact),
+                port.role,
+            )
+            for port in self.result.ports
+        }
+        assert len(actual_ports) == len(self.result.ports)
+        assert actual_ports == expected_ports
+        producers: dict[object, str] = {key: value for key, value in self.producers.items()}
+        for fact in self.result.provenance:
+            key = fact.key
+            if isinstance(key, RootInputKey):
+                producers[key] = f"ROOT:A:{key.port}"
+            elif isinstance(key, OperationOutputKey):
+                activation = self.activation(key.activation)
+                if activation == "MAP":
+                    producers[key] = f"OP:MAP:A:{key.port}"
+                elif activation == "ROOT:A":
+                    producers[key] = "OUT:A" if key.port == "result" else "EVID:A"
+                else:
+                    assert key.port == "evidence"
+                    producers[key] = f"EVID:{activation}"
+            else:
+                assert isinstance(key, MapItemKey)
+        assert len(producers) == len(self.result.provenance)
+        actual_provenance = {
+            producers[fact.key]: {
+                "artifact": self.artifact(fact.artifact),
+                "parents": sorted(producers[parent] for parent in fact.parents),
+                "decision": fact.decision,
+            }
+            for fact in self.result.provenance
+        }
+        expected_provenance = {
+            event["key"]: {
+                "artifact": event["artifact"],
+                "parents": sorted(event["parents"]),
+                "decision": event["decision"],
+            }
+            for event in events
+            if event["kind"] == "provenance"
+        }
+        assert actual_provenance == expected_provenance
+        for fact in self.result.provenance:
+            if isinstance(fact.key, MapItemKey):
+                event = next(
+                    event for event in events if event["kind"] == "provenance" and event["key"] == producers[fact.key]
+                )
+                assert (
+                    fact.key.item_key,
+                    fact.key.item_version,
+                    self.activation(fact.key.expander),
+                    self.activation(fact.key.member),
+                    fact.key.port,
+                ) == (event["item_key"], event["item_version"], event["expander"], event["member"], event["port"])
+
+    def assert_assessments(self, events: list[dict[str, Any]]) -> None:
+        expected = [event for event in events if event["kind"] == "assessment"]
+        actual: list[dict[str, Any]] = []
+        target = self.execution.context.prepared.target_occurrences[0].target
+        for fact in self.result.assessments:
+            node = self.nodes[fact.node]
+            activation = self.activation(fact.activation)
+            selected = next(item for item in self.execution.context.prepared.implementations if item.node == fact.node)
+            outcome = next(
+                outcome for outcome in selected.capability.operation.outcomes if outcome.name == fact.outcome
+            )
+            promise = next(promise for promise in outcome.evidence if promise.name == fact.promise)
+            production = next(
+                production
+                for production in self.execution.assessment_productions
+                if production.node == fact.node and production.promise == fact.promise
+            )
+            assert fact.environment.configuration == selected.capability.configuration
+            assert fact.finding in production.supported_findings
+            ports = {port.port: port for port in self.result.ports if port.activation == fact.activation}
+            assert all(port.target == target for port in ports.values())
+            assert isinstance(promise.subject_port, str)
+            assert all(isinstance(port, str) for port in promise.consumed_ports)
+            assert all(atom.kind == "field" for atom in promise.coverage)
+            actual.append(
+                {
+                    "kind": "assessment",
+                    "fact": "F:A:P" if node == "N" else f"F:{activation}:P_ITEM",
+                    "activation": activation,
+                    "authenticated_factory": "EXEC:I0",
+                    "node": node,
+                    "target": "A",
+                    "outcome": fact.outcome,
+                    "promise": fact.promise,
+                    "subject_port": promise.subject_port,
+                    "subject_artifact": self.artifact(ports[promise.subject_port].artifact),
+                    "evidence_port": production.evidence_port,
+                    "evidence_artifact": self.artifact(fact.evidence_artifact),
+                    "consumed": {
+                        port: self.artifact(ports[port].artifact)
+                        for port in promise.consumed_ports
+                        if isinstance(port, str)
+                    },
+                    "coverage": sorted(atom.name for atom in promise.coverage),
+                    "finding": fact.finding.status,
+                    "environment": {
+                        "absences": {f"Q{ref.query}": ref.scope_revision for ref in fact.environment.absences},
+                        "configurations": {node: "c0"},
+                        "state": {
+                            revision.effect.name: revision.revision for revision in fact.environment.state.revisions
+                        },
+                    },
+                }
+            )
+        assert sorted(actual, key=lambda item: item["fact"]) == sorted(expected, key=lambda item: item["fact"])
+
+    def artifact(self, ref: ArtifactRef) -> str:
+        assert ref.invocation == self.result.record.invocation
+        return self.artifacts[ref]
+
+    def activation(self, key: ActivationKey) -> str:
+        return self.activations[key]
+
+    def normalize(self, output: QualificationResult) -> dict[str, Any]:
+        assert output._result is self.result
+        (target,) = output.targets
+        (status,) = output.record.statuses
+        assert target.target == status.target == self.execution.context.prepared.target_occurrences[0].target
+        target_row = {
+            "target": "A",
+            "candidate": None if target.candidate is None else self.artifact(target.candidate.artifact),
+            "verified": sorted(self.artifact(ref.artifact) for ref in target.verified),
+            "required_decisions": sorted(self.artifact(ref.artifact) for ref in target.required_decisions),
+            "withholding": sorted(target.withholding),
+            "completion": status.completion,
+            "qualification": status.qualification,
+            "artifact_available": status.artifact_available,
+            "protection_available": status.protection_available,
+        }
+        verified = []
+        for item in output.verified:
+            assert item._result is self.result
+            node = self.nodes[item.node]
+            fact = next(fact for fact in self.result.assessments if fact.activation == item.activation)
+            assert item.environment.configuration == fact.environment.configuration
+            assert item.promise.name == ("P" if node == "N" else "P_ITEM")
+            assert item.promise.meaning == ("privacy" if node == "N" else "item_privacy")
+            consumed = {}
+            roles = {}
+            for port, ref in item.consumed_by_port:
+                assert not isinstance(ref, AbsenceRef)
+                consumed[port] = self.artifact(ref.artifact if isinstance(ref, (CandidateRef, DecisionRef)) else ref)
+                roles[port] = (
+                    "candidate"
+                    if isinstance(ref, CandidateRef)
+                    else "decision"
+                    if isinstance(ref, DecisionRef)
+                    else "artifact"
+                )
+            row = {
+                "activation": self.activation(item.activation),
+                "authenticated_factory": "EXEC:I0",
+                "node": node,
+                "target": "A",
+                "outcome": item.outcome,
+                "promise": item.promise.name,
+                "meaning": item.promise.meaning,
+                "subject_port": item.promise.subject_port,
+                "subject_artifact": self.artifact(item.subject.artifact),
+                "evidence_port": next(
+                    production.evidence_port
+                    for production in self.execution.assessment_productions
+                    if production.node == item.node and production.promise == item.promise.name
+                ),
+                "evidence_artifact": self.artifact(item.reference.artifact),
+                "consumed": consumed,
+                "consumed_roles": roles,
+                "coverage": sorted(atom.name for atom in item.coverage),
+                "finding": item.finding.status,
+                "environment": {
+                    "absences": {f"Q{ref.query}": ref.scope_revision for ref in item.environment.absences},
+                    "configurations": {node: "c0"},
+                    "state": {revision.effect.name: revision.revision for revision in item.environment.state.revisions},
+                },
+                "validity": evidence_validity(evidence=item, current=output._current),
+            }
+            if isinstance(item.subject, MapItemSubjectRef):
+                row["subject"] = {
+                    "artifact": self.artifact(item.subject.artifact),
+                    "producer": self.producers[item.subject.producer],
+                }
+                assert item.subject.producer.target == target.target
+            else:
+                assert item.subject.target == target.target
+            verified.append(row)
+        memberships = {}
+        for membership in output.record.memberships:
+            name = "__ROOT__" if membership.parent is None else self.activation(membership.parent)
+            expansion = next(
+                (
+                    expansion
+                    for state in self.result.states
+                    for expansion in state.expansions
+                    if expansion.parent == membership.parent
+                ),
+                None,
+            )
+            memberships[name] = {
+                "parent": None if membership.parent is None else name,
+                "target": None if membership.parent is None else "A",
+                "members": sorted(self.activation(key) for key in membership.members),
+                "closed": membership.closed,
+                "status": "closed" if membership.closed else "open",
+                "expansion_outcome": None if expansion is None else self.entries[expansion.parent].outcome,
+            }
+        terminals = {}
+        for terminal in output.record.terminals:
+            name = self.activation(terminal.activation)
+            if terminal.attempt is not None:
+                assert terminal.attempt.activation == terminal.activation
+            terminals[name] = {
+                "attempt": None if terminal.attempt is None else f"TASK:{name}",
+                "category": terminal.category,
+                "outcome": self.entries[terminal.activation].outcome,
+                "reasons": sorted(terminal.reasons),
+                "structural": terminal.structural,
+                "target": "A",
+            }
+        return {
+            "status": "accepted",
+            "targets": [target_row],
+            "qualified": [
+                {
+                    "target": "A",
+                    "candidate": self.artifact(item.candidate.artifact),
+                    "evidence": sorted(self.artifact(ref.artifact) for ref in item.evidence),
+                    "required_decisions": sorted(self.artifact(ref.artifact) for ref in item.required_decisions),
+                }
+                for item in output.qualified
+            ],
+            "verified": sorted(verified, key=lambda row: (row["target"], row["activation"], row["evidence_artifact"])),
+            "required_decisions": sorted(self.artifact(ref.artifact) for ref in output.required_decisions),
+            "record": {
+                "execution": {"factory": "EXEC:I0", "graph": "G0", "invocation": "I0", "plan": "P0"},
+                "artifacts": sorted(self.artifact(ref) for ref in output.record.artifacts),
+                "evidence": sorted(self.artifact(ref.artifact) for ref in output.record.evidence),
+                "memberships": memberships,
+                "terminals": terminals,
+                "targets": [target_row],
+            },
+        }
