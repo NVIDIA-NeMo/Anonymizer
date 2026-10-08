@@ -73,6 +73,8 @@ from anonymizer.engine.graph_sdk.requests import (
     StopAcknowledged,
     StopConfirmed,
     TextArtifactValue,
+    TextCollectionItem,
+    TextCollectionValue,
     UnknownUsage,
     advance_requests,
     bind_request_policies,
@@ -564,6 +566,43 @@ async def _assert_decision_submission(case_id: str, expected: str) -> None:
 )
 def test_decision_submission_rejections_use_public_running_execution(case_id: str, expected: str) -> None:
     asyncio.run(_assert_decision_submission(case_id, expected))
+
+
+@pytest.mark.parametrize(
+    ("case_id", "items", "expected"),
+    (
+        (
+            "map/duplicate_item",
+            (
+                TextCollectionItem(key=0, version=1, value=TextArtifactValue(text="a")),
+                TextCollectionItem(key=0, version=1, value=TextArtifactValue(text="b")),
+            ),
+            "duplicate",
+        ),
+        (
+            "map/noncanonical_items",
+            (
+                TextCollectionItem(key=1, version=1, value=TextArtifactValue(text="b")),
+                TextCollectionItem(key=0, version=1, value=TextArtifactValue(text="a")),
+            ),
+            "invalid_value",
+        ),
+    ),
+)
+def test_map_collection_shape_rejects_at_typed_constructor(
+    case_id: str,
+    items: tuple[TextCollectionItem, ...],
+    expected: str,
+) -> None:
+    del case_id
+    with pytest.raises(EffectRejected) as rejected:
+        TextCollectionValue(items=items)
+    assert rejected.value.code.value == expected
+    canonical = (
+        TextCollectionItem(key=0, version=1, value=TextArtifactValue(text="a")),
+        TextCollectionItem(key=1, version=1, value=TextArtifactValue(text="b")),
+    )
+    assert TextCollectionValue(items=canonical).items == canonical
 
 
 @pytest.mark.parametrize("case", ADMISSION_CASES, ids=lambda case: cast(str, case["case_id"]))
