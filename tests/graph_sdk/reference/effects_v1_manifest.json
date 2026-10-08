@@ -1,0 +1,22 @@
+{
+  "case_count": 112,
+  "contract_sha256": "9b0ab07b8c0212ffd954dc37eb37540141da6899753fc778ad26238494aeaeca",
+  "corpus_path": "tests/graph_sdk/reference/effects_v1_cases.json",
+  "corpus_sha256": "f54c587284362d9a0170097cb5f746604a99ea68994ab22d7145e3847cb29ddd",
+  "event_count": 409,
+  "family_counts": {
+    "admission": 16,
+    "binding": 13,
+    "bridges": 16,
+    "budgets": 6,
+    "decisions": 11,
+    "inflight": 5,
+    "keyed": 8,
+    "races": 17,
+    "resources": 8,
+    "retry": 12
+  },
+  "generator_version": "effects-v1-generator-1",
+  "self_test_version": "effects-v1-self-test-1",
+  "trace_count": 113
+}
