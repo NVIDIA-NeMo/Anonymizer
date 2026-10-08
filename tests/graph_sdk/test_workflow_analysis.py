@@ -12,6 +12,7 @@ from typing import ParamSpec, cast
 import pytest
 
 from anonymizer.graph import _workflow_composition as composition
+from anonymizer.graph import _workflow_values as values
 from anonymizer.graph._values import ContractViolation, ValidationCode
 from anonymizer.graph._workflow_analysis import _ANALYSIS, _AnalysisMeter
 from anonymizer.graph._workflow_composition import validate_dynamic_input_summaries
@@ -30,7 +31,7 @@ from tests.graph_sdk.reference._workflow_static_v1.builders import (
     _wrap,
 )
 from tests.graph_sdk.reference._workflow_static_v1.validation import judge
-from tests.graph_sdk.test_workflow_static import Object, _Adapter, _execute, _object
+from tests.graph_sdk.test_workflow_static import Json, Object, _Adapter, _execute, _object
 
 _P = ParamSpec("_P")
 
@@ -235,3 +236,126 @@ def test_quotient_and_complete_product_have_the_same_hand_derived_interface(
     dependency = complete.interface.output_dependencies[0]
     assert dependency.inputs == {"i0"}
     assert dependency.identity_input == "i0"
+
+
+def test_rejected_evidence_projection_charges_scalar_scans(monkeypatch: pytest.MonkeyPatch) -> None:
+    declaration = _chain(3)
+    operation = _object(cast(list[Object], declaration["nodes"])[0]["operation"])
+    alternate = cast(list[Object], operation["outcomes"])[1]
+    alternate["evidence"] = [_evidence("assessment", "label", "o0", ("i0",), ("field",))]
+    scans: list[tuple[int, int, int, bool]] = []
+    validate = values._validate_scalars
+
+    def observe(
+        *,
+        strings: tuple[object, ...] = (),
+        nonnegative_integers: tuple[object, ...] = (),
+        positive_integers: tuple[object, ...] = (),
+    ) -> None:
+        meter = _ANALYSIS.get()
+        before = 0 if meter is None else meter.work
+        completed = False
+        try:
+            validate(strings=strings, nonnegative_integers=nonnegative_integers, positive_integers=positive_integers)
+            completed = True
+        finally:
+            if meter is not None:
+                scans.append((len(strings), before, meter.work - before, completed))
+
+    monkeypatch.setattr(values, "_validate_scalars", observe)
+    adapter = _Adapter()
+    with pytest.raises(ContractViolation) as original:
+        adapter.admit(declaration)
+    assert original.value.code is ValidationCode.CONTRADICTORY
+    evidence_scans = [scan for scan in scans if scan[0] == 4]
+    assert len(evidence_scans) == 1
+    _, before, charged, completed = evidence_scans[0]
+    assert charged == 8 and completed  # Four type checks, then four nonempty checks.
+
+    original_limits = adapter.limits
+
+    def bounded_limits(value: Json) -> values.WorkflowLimits:
+        return replace(original_limits(value), max_analysis_work=before + charged - 1)
+
+    monkeypatch.setattr(adapter, "limits", bounded_limits)
+    scans.clear()
+    with pytest.raises(ContractViolation) as exhausted:
+        adapter.admit(declaration)
+    assert exhausted.value.code is ValidationCode.ANALYSIS_LIMIT_EXCEEDED
+    assert [scan for scan in scans if scan[0] == 4] == [(4, before, 7, False)]
+    assert _ANALYSIS.get() is None
+
+
+@pytest.mark.parametrize("limit", (25, 26))
+def test_scalar_collection_construction_and_repeated_scans_share_the_budget(limit: int) -> None:
+    # Three strings are inspected twice; five integers are copied, type-checked,
+    # filtered into typed collections and range-checked: 3*2 + 5*4 = 26 visits.
+    meter = _AnalysisMeter(limit)
+    token = _ANALYSIS.set(meter)
+    try:
+        if limit == 26:
+            values._validate_scalars(strings=("a", "b", "c"), nonnegative_integers=(0, 1), positive_integers=(1, 2, 3))
+        else:
+            with pytest.raises(ContractViolation) as exhausted:
+                values._validate_scalars(
+                    strings=("a", "b", "c"), nonnegative_integers=(0, 1), positive_integers=(1, 2, 3)
+                )
+            assert exhausted.value.code is ValidationCode.ANALYSIS_LIMIT_EXCEEDED
+        assert meter.work == limit
+    finally:
+        _ANALYSIS.reset(token)
+
+
+def test_retained_workflow_comparison_uses_active_worklist_budget() -> None:
+    left = _Adapter().admit(_chain(2))
+    right = _readmit(left)
+    assert left == right
+    meter = _AnalysisMeter(1)
+    token = _ANALYSIS.set(meter)
+    try:
+        with pytest.raises(ContractViolation) as exhausted:
+            _ = left == right
+        assert exhausted.value.code is ValidationCode.ANALYSIS_LIMIT_EXCEEDED
+        assert meter.work == 1
+    finally:
+        _ANALYSIS.reset(token)
+
+
+def test_evidence_bearing_path_exact_work_and_one_less(monkeypatch: pytest.MonkeyPatch) -> None:
+    declaration = _chain(3)
+    operation = _object(cast(list[Object], declaration["nodes"])[0]["operation"])
+    for specification in (operation, _object(declaration["interface"])):
+        for outcome in cast(list[Object], specification["outcomes"]):
+            outcome["evidence"] = [_evidence("assessment", "label", "o0", ("i0",), ("field",))]
+    workflow = _Adapter().admit(declaration)
+    observed = _meters(monkeypatch)
+    _readmit(workflow)
+    required = observed[-1].work
+    assert _readmit(workflow, required).interface == workflow.interface
+    with pytest.raises(ContractViolation) as exhausted:
+        _readmit(workflow, required - 1)
+    assert exhausted.value.code is ValidationCode.ANALYSIS_LIMIT_EXCEEDED
+    assert observed[-1].work == required - 1
+    assert _ANALYSIS.get() is None
+
+
+def test_dynamic_endpoint_lifting_charges_variable_path_copy() -> None:
+    workflow = WorkflowId.new()
+    container = NodeId.new(workflow=workflow)
+    endpoint = values.MapItemPort(
+        path=(container,) * 3,
+        expander=NodeId.new(workflow=workflow),
+        member=NodeId.new(workflow=workflow),
+        item_input="item",
+        membership_port="members",
+        expansion_outcome="expanded",
+    )
+    # Three copied path entries, four validated path entries and two scans of
+    # the three endpoint strings all use the same compiler meter.
+    meter = _AnalysisMeter(13)
+    token = _ANALYSIS.set(meter)
+    try:
+        assert endpoint.lifted(container).path == (container,) * 4
+        assert meter.work == 13
+    finally:
+        _ANALYSIS.reset(token)

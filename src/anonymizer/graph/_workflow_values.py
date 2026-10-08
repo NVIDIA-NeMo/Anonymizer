@@ -8,7 +8,7 @@ from dataclasses import dataclass, replace
 from typing import Any, Literal, Never, SupportsIndex, TypeAlias
 
 from anonymizer.graph._values import ContractViolation, ValidationCode
-from anonymizer.graph._workflow_analysis import _visits
+from anonymizer.graph._workflow_analysis import _equal, _visited_pop, _visits
 
 OutcomeClass: TypeAlias = Literal["success", "failure", "cancelled", "lost", "blocked", "inconsistent"]
 
@@ -56,17 +56,17 @@ def _validate_scalars(
     nonnegative_integers: tuple[object, ...] = (),
     positive_integers: tuple[object, ...] = (),
 ) -> None:
-    integers = nonnegative_integers + positive_integers
-    if any(not isinstance(value, str) for value in strings) or any(
-        isinstance(value, bool) or not isinstance(value, int) for value in integers
+    integers = (*_visits(nonnegative_integers), *_visits(positive_integers))
+    if any(not isinstance(value, str) for value in _visits(strings)) or any(
+        isinstance(value, bool) or not isinstance(value, int) for value in _visits(integers)
     ):
         _reject(ValidationCode.INVALID_TYPE)
-    nonnegative_values = tuple(value for value in nonnegative_integers if isinstance(value, int))
-    positive_values = tuple(value for value in positive_integers if isinstance(value, int))
+    nonnegative_values = tuple(value for value in _visits(nonnegative_integers) if isinstance(value, int))
+    positive_values = tuple(value for value in _visits(positive_integers) if isinstance(value, int))
     if (
-        any(not value for value in strings)
-        or any(value < 0 for value in nonnegative_values)
-        or any(value < 1 for value in positive_values)
+        any(not value for value in _visits(strings))
+        or any(value < 0 for value in _visits(nonnegative_values))
+        or any(value < 1 for value in _visits(positive_values))
     ):
         _reject(ValidationCode.INVALID_VALUE)
 
@@ -251,7 +251,7 @@ class MapItemPort(_PrivateValue):
         """Preserve the map identity when exposing it through one containing node."""
         if not isinstance(container, NodeId):
             _reject(ValidationCode.INVALID_TYPE)
-        return replace(self, path=(container, *self.path))
+        return replace(self, path=(container, *_visits(self.path)))
 
     def validate_in(self, *, workflow: WorkflowId, nodes: tuple[Node, ...]) -> None:
         """Validate the static route; dynamic admission binds its map declaration."""
@@ -899,20 +899,20 @@ class AdmittedWorkflow(_PrivateValue):
         pending: list[tuple[AdmittedWorkflow, AdmittedWorkflow]] = [(self, other)]
         seen: set[tuple[int, int]] = set()
         while pending:
-            left, right = pending.pop()
+            left, right = _visited_pop(pending)
             pair = (id(left), id(right))
             if pair in seen:
                 continue
             seen.add(pair)
-            if _workflow_local_state(left) != _workflow_local_state(right):
+            if not _equal(_workflow_local_state(left), _workflow_local_state(right)):
                 return False
-            left_nodes = {node.id: node for node in left.nodes}
-            right_nodes = {node.id: node for node in right.nodes}
-            if left_nodes.keys() != right_nodes.keys():
+            left_nodes = {node.id: node for node in _visits(left.nodes)}
+            right_nodes = {node.id: node for node in _visits(right.nodes)}
+            if not _equal(left_nodes.keys(), right_nodes.keys()):
                 return False
-            for node_id, left_node in left_nodes.items():
+            for node_id, left_node in _visits(left_nodes.items()):
                 right_node = right_nodes[node_id]
-                if type(left_node) is not type(right_node) or left_node.operation != right_node.operation:
+                if type(left_node) is not type(right_node) or not _equal(left_node.operation, right_node.operation):
                     return False
                 if isinstance(left_node, SubgraphNode):
                     assert isinstance(right_node, SubgraphNode)
@@ -923,7 +923,7 @@ class AdmittedWorkflow(_PrivateValue):
         pending: list[tuple[AdmittedWorkflow, bool]] = [(self, False)]
         hashes: dict[int, int] = {}
         while pending:
-            workflow, children_visited = pending.pop()
+            workflow, children_visited = _visited_pop(pending)
             key = id(workflow)
             if key in hashes:
                 continue
