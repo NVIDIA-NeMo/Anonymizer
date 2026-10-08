@@ -1471,6 +1471,13 @@ async def _run_execution(
                     if services.decision_limits.max_pending == 0:
                         reject(EffectCode.PENDING_LIMIT)
                     continue
+                if _operation_has_omitted_context(admitted, target_map.target, entry.template):
+                    scheduled = True
+                    states[state_index] = advance_activation(
+                        state=states[state_index],
+                        event=CloseUnstarted(activation=entry.activation, category="blocked"),
+                    )
+                    continue
                 local_jobs = sum(item.policy.kind != "external" for item in jobs.values())
                 remote_jobs = sum(item.policy.kind == "external" for item in jobs.values())
                 if policy.kind != "external":
@@ -1900,15 +1907,15 @@ def _operation_inputs(
             reject(EffectCode.MISSING)
         if reference is None:
             reference = produced.get((target, node, port.name))
-        if reference is None and isinstance(source, WorkflowInputRef):
+        if reference is None and isinstance(source, (WorkflowInputRef, ContextInputRef)):
             if activation.parent is not None:
                 reference = subgraph_inputs.get((target, activation.parent, source.port))
                 parent = subgraph_input_parents.get((target, activation.parent, source.port))
                 if parent is not None:
                     parents[port.name] = parent
-            if reference is None:
+            if reference is None and isinstance(source, WorkflowInputRef):
                 reference = root_inputs.get((target, source.port))
-            if reference is not None:
+            if reference is not None and isinstance(source, WorkflowInputRef):
                 parents.setdefault(port.name, RootInputKey(target=target, port=source.port))
         elif reference is None and isinstance(source, NodeOutputRef):
             source_activation = _source_activation(state, activation, source.node)
@@ -1919,8 +1926,6 @@ def _operation_inputs(
                         activation=source_activation, target=target, port=source.port
                     )
         if reference is None:
-            if _optional_context_omitted(admitted, target, node, port.name):
-                continue
             reject(EffectCode.MISSING)
         if port.name not in parents:
             candidates = [
@@ -2000,11 +2005,10 @@ def _is_mapped_item_input(
     )
 
 
-def _optional_context_omitted(
+def _operation_has_omitted_context(
     admitted: AdmittedExecutionPlan,
     target: DatumId,
     node: NodeId,
-    port: str,
 ) -> bool:
     context = admitted.context.bound_context
     if context is None:
@@ -2012,7 +2016,6 @@ def _optional_context_omitted(
     return any(
         fact.declaration.target == target
         and fact.declaration.node == node
-        and fact.declaration.port == port
         and fact.declaration.requirement == "optional"
         and fact.terminal == "omitted_optional"
         for fact in context.receipt.sources

@@ -1577,11 +1577,19 @@ async def _assert_adaptive_materialization_case(case: dict[str, Any]) -> None:
         if terminal.request in dispatch_by_request
         for returned in terminal.results
     } | cast(dict[str, object], request_actual["association_terminals"])
-    request_actual["task_requests"] = (
-        request_actual["association_requests"]
-        if any(event["kind"] == "bridge_start" for event in cast(list[dict[str, Any]], case["events"]))
-        else {}
-    )
+    actual_task_requests: dict[str, str] = {}
+    if any(event["kind"] == "bridge_start" for event in cast(list[dict[str, Any]], case["events"])):
+        for dispatch in result.requests.dispatches:
+            for association in dispatch.associations:
+                if not isinstance(association, SemanticAssociation):
+                    continue
+                name = association_names[association]
+                terminal = next(
+                    item for item in result.record.terminals if item.activation == association.task.activation
+                )
+                assert terminal.category == expected["tasks"][name]
+                actual_task_requests[name] = request_names[dispatch.request]
+    request_actual["task_requests"] = actual_task_requests
     for key in (
         "bindings",
         "dispatched",
