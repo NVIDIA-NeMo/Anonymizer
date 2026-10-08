@@ -1235,6 +1235,13 @@ def _validate_services(admitted: AdmittedExecutionPlan, services: ExecutionServi
         item.bounds.max_items > services.limits.max_collection_items for item in admitted.context.adaptive_retrievals
     ):
         reject(EffectCode.LIMIT_EXCEEDED)
+    bound_context = admitted.context.bound_context
+    if bound_context is not None and any(
+        item.declaration.materialization.kind == "collection"
+        and item.declaration.bounds.max_items > services.limits.max_collection_items
+        for item in bound_context.receipt.sources
+    ):
+        reject(EffectCode.LIMIT_EXCEEDED)
     _validate_initial_materialization_capacity(admitted, services.limits)
     if not isinstance(services.handles, tuple) or any(
         not isinstance(item, ImplementationHandle) for item in services.handles

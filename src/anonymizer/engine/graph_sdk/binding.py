@@ -266,12 +266,13 @@ async def _bind_declaration(
                 and all(item.association == association for item in result.items)
                 and len({(item.association, item.key, item.version) for item in result.items}) == len(result.items)
                 and bool(result.items)
-                and (declaration.materialization.kind != "single" or len(result.items) == 1)
             )
             if not valid_settlement or not valid_items:
                 state = advance_requests(
                     state=state, event=AcceptFailure(request=request, failure="malformed_response")
                 )
+                if valid_settlement:
+                    state = advance_requests(state=state, event=ObserveSettlement(settlement=result.settlement))
                 purpose = "correction"
                 if _can_retry(capability, declaration, state, association, "malformed_response"):
                     continue
