@@ -206,6 +206,11 @@ ADAPTIVE_MATERIALIZATION_CASE_IDS = {
 ADAPTIVE_MATERIALIZATION_CASES = tuple(
     case for case in json.loads(CORPUS.read_bytes()) if case["case_id"] in ADAPTIVE_MATERIALIZATION_CASE_IDS
 )
+LATE_ADAPTIVE_CASES = tuple(
+    case
+    for case in json.loads(CORPUS.read_bytes())
+    if case["case_id"] in {"materialization/adaptive_late_lost", "materialization/adaptive_late_cancelled"}
+)
 
 
 def _selector_data():
@@ -1282,6 +1287,97 @@ async def _reject_foreign_binding_target() -> str | None:
 )
 def test_adaptive_materialization_corpus_through_real_execution(case: dict[str, Any]) -> None:
     asyncio.run(_assert_adaptive_materialization_case(case))
+
+
+@pytest.mark.parametrize("case", LATE_ADAPTIVE_CASES, ids=lambda case: cast(str, case["case_id"]))
+def test_late_adaptive_result_stays_request_terminal_at_authority_boundary(case: dict[str, Any]) -> None:
+    raw = cast(dict[str, Any], case["declaration"])
+    invocation = InvocationId.new(plan=PlanId.new())
+    scope = InvocationRequestScope(invocation=invocation)
+    association = SemanticAssociation(
+        task=TaskAttemptId.new(
+            activation=ActivationKey(invocation=invocation, occurrence=0, parent=None, iteration=None)
+        )
+    )
+    policy = _policy(cast(dict[str, Any], raw["policies"])["P0"])
+    state = initialize_requests(scope=scope, hard_limit=cast(int, raw["hard_limit"]), policies=frozenset({policy}))
+    state = bind_request_policies(
+        state=state,
+        binding=RequestPolicyBinding.create(association=association, policies=frozenset({policy})),
+    )
+    request = PhysicalRequestId.new(scope=scope)
+    state = advance_requests(
+        state=state,
+        event=Reserve(
+            request=request,
+            purpose="adaptive_retrieval",
+            associations=frozenset({association}),
+            policy=policy,
+        ),
+    )
+    state = advance_requests(state=state, event=Dispatch(request=request))
+    if case["case_id"] == "materialization/adaptive_late_lost":
+        state = advance_requests(state=state, event=MarkLost(request=request))
+    else:
+        state = advance_requests(state=state, event=RequestCancel(request=request))
+        state = advance_requests(
+            state=state,
+            event=StopAcknowledged(request=request, usage=UnknownUsage()),
+        )
+    state = advance_requests(
+        state=state,
+        event=AcceptResult(
+            request=request,
+            results=(
+                AssociationResult(
+                    association=association,
+                    outcome="ok",
+                    outputs=(),
+                    consumed_context_ports=frozenset(),
+                ),
+            ),
+        ),
+    )
+    settlement_value = next(
+        cast(dict[str, Any], event["settlement"])
+        for event in cast(list[dict[str, Any]], case["events"])
+        if event["kind"] == "materialize_result"
+    )
+    state = advance_requests(
+        state=state,
+        event=ObserveSettlement(
+            settlement=ExternalSettlement(
+                request=request,
+                disposition=settlement_value["disposition"],
+                usage=_usage(settlement_value["usage"]),
+                remote_stopped=settlement_value["remote_stopped"],
+            )
+        ),
+    )
+    actual = _normalize(state, {"A0": association}, {"R0": request}, {"P0": policy})
+    expected = cast(dict[str, Any], case["expected"])["state"]
+    for key in (
+        "bindings",
+        "dispatched",
+        "dispatched_count",
+        "terminals",
+        "settlements",
+        "request_facts",
+        "request_failures",
+        "association_terminals",
+        "request_associations",
+        "request_policies",
+        "cancel_requested",
+        "local_in_flight",
+        "remote_outstanding",
+        "defects",
+        "denials",
+        "association_requests",
+        "attempts",
+    ):
+        assert actual[key] == expected[key], (case["case_id"], key)
+    assert not expected["materialization"]["ports"]
+    assert all(not item["identity"].startswith("OperationOutputKey:") for item in expected["artifacts"])
 
 
 async def _assert_adaptive_materialization_case(case: dict[str, Any]) -> None:
