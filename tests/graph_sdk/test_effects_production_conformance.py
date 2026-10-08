@@ -74,6 +74,7 @@ from anonymizer.engine.graph_sdk.requests import (
     PhysicalRequestId,
     PhysicalRequestPolicy,
     PortArtifact,
+    RequestAssociation,
     RequestCancel,
     RequestPolicyBinding,
     RequestState,
@@ -188,6 +189,10 @@ ADMISSION_CASES = tuple(
     if case["family"] == "admission" or case["case_id"] == "retry/implementation_owner_rejected"
 )
 REAL_BINDING_CASE_IDS = {
+    "materialization/latest_duplicate_pair",
+    "materialization/latest_multiple_keys",
+    "materialization/latest_items_one_over",
+    "materialization/latest_bytes_one_over",
     "binding/two_sources_same_key",
     "binding/one_source_two_declarations",
     "binding/required_failure_preserves_prior",
@@ -1038,12 +1043,13 @@ class _CaseProvider:
         self.request_names = request_names
         self.fallback_associations = fallback_associations
         self.default_source = default_source
+        self.closes = 0
 
     async def retrieve(
         self,
         *,
         request: PhysicalRequestId,
-        association: BindingAssociation,
+        association: RequestAssociation,
         selector: ContextSelector,
         bounds: RetrievalBounds,
     ) -> SourceResponse | SourceFailure:
@@ -1095,6 +1101,9 @@ class _CaseProvider:
     async def cancel(self, request: PhysicalRequestId) -> StopConfirmed:
         del request
         return StopConfirmed(usage=ExactUsage(input_units=0, output_units=0))
+
+    async def close(self) -> None:
+        self.closes += 1
 
 
 @dataclass
@@ -1440,6 +1449,11 @@ async def _assert_binding_corpus_case(case: dict[str, Any]) -> None:
     }
     declaration_limits = cast(dict[str, int], raw["binding_limits"])
     requirements = cast(dict[str, str], raw.get("binding_requirements", {}))
+    owners = {
+        binding_sources[event["association"]]: event["owner"]
+        for event in event_values
+        if event["kind"] == "binding_cleanup_association"
+    }
     declarations = tuple(
         InitialContextDecl(
             target=target,
@@ -1454,6 +1468,9 @@ async def _assert_binding_corpus_case(case: dict[str, Any]) -> None:
                 max_bytes=max(1, declaration_limits["max_bytes"]),
                 max_requests=policies["P0"].max_attempts,
             ),
+            version_selection=materializations[0].get("version_selection", "exact_one")
+            if materializations
+            else "exact_one",
             materialization=ContextMaterialization(
                 kind=cast(Any, materialization_kind or ("single" if max_response_items == 1 else "collection")),
                 item_type=item_type,
@@ -1468,7 +1485,7 @@ async def _assert_binding_corpus_case(case: dict[str, Any]) -> None:
             artifact_type=item_type,
             uses=frozenset({"initial_binding"}),
             execution="async",
-            resource_owner="caller",
+            resource_owner=owners.get(name, "caller"),
             cancellation="cooperative_ack",
             settlement="explicit_ack",
             usage="exact",
@@ -1484,8 +1501,12 @@ async def _assert_binding_corpus_case(case: dict[str, Any]) -> None:
             capability=capability,
             lease=ResourceLease.create(
                 owner="caller", safe_detachment="forbidden", handle=providers[capability.source.name]
-            ),
-            factory=None,
+            )
+            if capability.resource_owner == "caller"
+            else None,
+            factory=(lambda source=capability.source: providers[source.name])
+            if capability.resource_owner == "sdk"
+            else None,
         )
         for capability in capabilities
     )
@@ -1516,6 +1537,40 @@ async def _assert_binding_corpus_case(case: dict[str, Any]) -> None:
         "binding_sources"
     ]
     assert result.receipt.terminal == expected["binding_terminal"]
+    if materializations and materializations[0].get("version_selection") == "latest":
+        # These binding failures never produce a context or allocate execution state.
+        assert result.context is None
+        assert not result.receipt.artifacts
+        assert expected["binding_artifacts"] == expected["artifacts"] == []
+        assert expected["allocator_next"] == 0
+        assert expected["lineage_allocations"] == expected["operation_occurrences"] == {}
+        assert "materialization" not in expected
+        resource_names = {
+            association.resource: f"Q:{label}"
+            for association in result.receipt.cleanup_associations
+            for label, target in zip(order, targets, strict=True)
+            if association.targets == frozenset({target})
+        }
+        assert len(resource_names) == len(resources)
+        assert len(result.receipt.cleanup_associations) == len(expected["binding_cleanup_associations"])
+        assert len(result.receipt.cleanup) == len(expected["binding_cleanup"])
+        assert {resource_names[fact.resource]: fact.disposition for fact in result.receipt.cleanup} == expected[
+            "binding_cleanup"
+        ]
+        target_names = {target: f"T{index}" for index, target in enumerate(targets)}
+        actual_cleanup = {}
+        cleanup_owners = {fact.resource: fact.owner for fact in result.receipt.cleanup}
+        for association in result.receipt.cleanup_associations:
+            (target,) = association.targets
+            name = resource_names[association.resource]
+            label = name.removeprefix("Q:")
+            actual_cleanup[name] = {
+                "association": label,
+                "target": target_names[target],
+                "owner": cleanup_owners[association.resource],
+            }
+        assert actual_cleanup == expected["binding_cleanup_associations"]
+        assert all(provider.closes == 1 for provider in providers.values())
     if materializations and not preflight_rejection:
         target_names = {target: f"T{index}" for index, target in enumerate(targets)}
         expected_artifacts = [

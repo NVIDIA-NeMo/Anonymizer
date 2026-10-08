@@ -1,5 +1,49 @@
-<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
-<!-- SPDX-License-Identifier: Apache-2.0 -->
+# R2 latest-selection supplement v7
+
+V7 corrects the caller-owned cleanup witness without changing its ID or any
+accepted predecessor. `materialization/latest_caller_cleanup` now replaces the
+single retained cleanup association owner with `caller` and the single cleanup
+disposition with `left_open` in the complete successful trace. It retains the
+binding finish, operation start, successful terminal, and publication. The
+case therefore proves that caller-owned accounting can preserve a usable bound
+context; it no longer creates a duplicate cleanup inventory.
+
+All V6 lifecycle, immutability, selection, rollback, and preflight semantics
+remain unchanged.
+
+## Retained v6 history
+
+V6 corrects every independent review329 finding while retaining the accepted 296-case R2 v14 prefix exactly.
+
+Malformed latest responses now use the admitted one-attempt request bound. Duplicate `(association,key,version)` and multi-key responses retain the immutable malformed request failure and settlement, then complete the source as `failed` and the aggregate binding as `failed` before SDK cleanup closes. Cancelled and Lost late valid or malformed responses preserve the first request terminal, retain the corresponding `cancelled` or `lost` source fact, complete the aggregate binding as `failed`, and only then close cleanup. Malformed late responses add their distinct defect without replacing the first terminal.
+
+P6 latest materialization retains only the physical source versions, parent-free `BoundInputKey` provenance, and maximum-version scalar destination. Binding finish and cleanup complete before P5 starts an admitted operation occurrence. Each occurrence has an exact activation and attempt, one terminal, and at most one publication per output port. The reducer derives the unique selected producer parent, allocates the operation artifact transactionally, and records its exact `OperationOutputKey`.
+
+`binding_finish` seals an explicit retained `binding_finished` phase. Removing it rejects operation start even when source and cleanup events otherwise look complete. The seal requires every initial declaration to have a terminal source disposition: required sources are bound, and optional sources are either bound or explicitly `omitted_optional` by an admitted permanent-failure response. It derives aggregate `success` or `partial` from that complete inventory rather than manufacturing success for an unresolved declaration. Once sealed, later initial-binding policy, reserve, dispatch, request result/failure/settlement, source result/failure, and materialization events reject. Cleanup association and cleanup facts remain a later accounting phase. Operation start requires the latest source itself to be bound, the selected scalar occurrence to exist, and an exact one-to-one cleanup association/fact inventory for every initial declaration.
+
+SDK `closed`, `close_failed`, and `close_unknown` dispositions and caller `left_open` remain retained accounting facts after a usable context is sealed; they do not erase it or prevent P5 execution. `latest_sdk_cleanup_close_failed` and `latest_sdk_cleanup_close_unknown` exercise those defects. `latest_bound_with_optional_omission` retains a bound required latest source, an unrelated omitted optional source, aggregate `partial`, complete cleanup inventory, and a successful consumer publication.
+
+`latest_unresolved_optional_at_finish`, `latest_post_finish_source_failure`, and `latest_post_finish_materialization` are direct lifecycle negatives. They reject an unresolved optional declaration at the seal and reject source or materialization mutation after it.
+
+The provenance exact/one-over pair derives its structural edge and output reservation from the admitted publication declaration. Removing the runtime publication event cannot change preflight. Changing the publication owner rejects at the typed owner lookup; the declaration has no `output_dependency_edges` or `output_artifacts` scalar. `latest_publication_rollback_then_reuse` retains real root K0/K1 and bound-input K2 facts. OP:D0's byte-one-over publication rolls back all artifact mutations and terminalizes that occurrence as `artifact_limit_exhausted`; distinct admitted occurrence OP:D1 then reuses K3 successfully. Publication failure carries no binding request or association attribution.
+
+`latest_items_exact` and `latest_items_one_over` exercise three versus four same-key versions. `latest_bytes_exact` and `latest_bytes_one_over` exercise 12 versus 13 bytes. Every case retains reserve, dispatch, physical terminal, exact settlement, source and aggregate binding completion, and cleanup as applicable.
+
+## Rejected v2 history
+
+# R2 latest-selection supplement v2
+
+This version preserves all 296 accepted R2 v14 case objects byte-for-byte as the corpus prefix. Nineteen appended cases exercise the adopted initial `single/latest` extension through the existing request, association, policy, terminal, settlement, binding, cleanup, and publication state machine. They do not use an isolated selection reducer.
+
+`latest_one_version`, `two_versions`, `reordered_versions`, and `version_gap` retain every physical source item, allocate one artifact lineage for the admitted `(BindingDeclarationId, SourceItem.key)`, select the maximum positive version at the scalar destination, and publish one operation output with one real dependency edge. Duplicate `(association,key,version)` and multiple-key latest responses are malformed physical responses. Item and byte one-over responses retain the retrieved request terminal and settlement, mark the source `oversize`, fail the required binding, and publish no artifacts.
+
+Cancelled and Lost late responses preserve the first terminal and settlement. A well-formed late response records the ordinary conflicting-terminal defect; a duplicate-key or multi-key response additionally records `malformed_late_response`. Retry and correction cases retain the exact failed predecessor and later successful authority. Optional permanent failure ends `partial`, while SDK cleanup closes and caller cleanup remains `left_open`.
+
+The initial bound versions have zero provenance parents. The paired preflight cases therefore count only the downstream operation dependency: one edge admits and zero-edge capacity rejects before execution. `latest_publication_rollback_then_reuse` starts with two real root artifacts (K0/K1), tentatively allocates K2/K3 for a two-version publication that exceeds artifact capacity, rolls the whole publication state back, then successfully reuses K2/K3 for a one-version publication. Its physical first response and publication failure remain immutable while no rejected artifact, port, provenance, or allocator increment leaks.
+
+The generator validates each expected state from declarations and events. It has no expected-error field or product import. The appended self-tests assert predecessor identity, maximum selection, malformed/oversize boundaries, late races, retry/correction authority, cleanup ownership, exact edge preflight, and transactional allocator reuse.
+
+## Retained v14 history
 
 # R2 v14 public callback association correction
 

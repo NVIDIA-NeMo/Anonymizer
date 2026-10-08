@@ -46,6 +46,267 @@ def test_generation_is_deterministic_and_manifest_is_actual() -> None:
     assert manifest["corpus_sha256"] == hashlib.sha256(first).hexdigest()
 
 
+def test_accepted_predecessor_is_an_exact_prefix() -> None:
+    predecessor = reference.canonical_bytes(reference.generate_cases()[:296])
+    assert hashlib.sha256(predecessor).hexdigest() == (
+        "d56c9c64367ca9f4aa211aeb0e1bc8c5c213c977af07f906eced572764bc7726"
+    )
+
+
+def test_latest_retains_physical_history_and_selects_maximum() -> None:
+    state = cast(reference.Object, reference.case_by_id("materialization/latest_version_gap")["expected"])["state"]
+    state = cast(reference.Object, state)
+    assert state["terminals"] == {"R0": "success"}
+    assert cast(reference.Object, state["settlements"])["R0"] == {
+        "disposition": "completed",
+        "remote_stopped": True,
+        "usage": {"input": 0, "output": 0},
+    }
+    port = next(iter(cast(reference.Object, cast(reference.Object, state["materialization"])["ports"]).values()))
+    assert cast(reference.Object, port)["key"] == "ArtifactRef:I0:K0:3"
+    assert state["binding_cleanup"] == {"Q:D0": "closed"}
+
+
+def test_latest_malformed_oversize_and_late_paths_preserve_boundaries() -> None:
+    duplicate = cast(reference.Object, reference.case_by_id("materialization/latest_duplicate_pair")["expected"])
+    duplicate_state = cast(reference.Object, duplicate["state"])
+    assert duplicate_state["request_failures"] == {"R0": "malformed_response"}
+    assert duplicate_state["binding_artifacts"] == []
+    for suffix in ("items_one_over", "bytes_one_over"):
+        result = cast(reference.Object, reference.case_by_id(f"materialization/latest_{suffix}")["expected"])
+        state = cast(reference.Object, result["state"])
+        assert state["terminals"] == {"R0": "success"}
+        assert state["binding_sources"] == {"D0": "oversize"}
+        assert state["binding_artifacts"] == []
+        assert state["artifacts"] == []
+    for terminal in ("cancelled", "lost"):
+        valid = cast(
+            reference.Object, reference.case_by_id(f"materialization/latest_{terminal}_late_valid")["expected"]
+        )
+        malformed = cast(
+            reference.Object,
+            reference.case_by_id(f"materialization/latest_{terminal}_late_multikey")["expected"],
+        )
+        valid_state = cast(reference.Object, valid["state"])
+        malformed_state = cast(reference.Object, malformed["state"])
+        assert valid_state["terminals"] == {"R0": terminal}
+        assert malformed_state["terminals"] == {"R0": terminal}
+        assert "malformed_late_response" not in cast(list[str], valid_state["defects"])
+        assert "malformed_late_response" in cast(list[str], malformed_state["defects"])
+        assert valid_state["binding_sources"] == {"D0": terminal}
+        assert malformed_state["binding_sources"] == {"D0": terminal}
+        assert valid_state["binding_terminal"] == malformed_state["binding_terminal"] == "failed"
+        assert valid_state["binding_cleanup"] == malformed_state["binding_cleanup"] == {"Q:D0": "closed"}
+
+
+def test_latest_item_and_byte_limits_have_exact_and_one_over_pairs() -> None:
+    for dimension in ("items", "bytes"):
+        exact = cast(reference.Object, reference.case_by_id(f"materialization/latest_{dimension}_exact")["expected"])
+        exact_state = cast(reference.Object, exact["state"])
+        assert exact_state["binding_terminal"] == "success"
+        assert exact_state["binding_cleanup"] == {"Q:D0": "closed"}
+        one_over = cast(
+            reference.Object, reference.case_by_id(f"materialization/latest_{dimension}_one_over")["expected"]
+        )
+        one_over_state = cast(reference.Object, one_over["state"])
+        assert one_over_state["binding_sources"] == {"D0": "oversize"}
+        assert one_over_state["binding_terminal"] == "failed"
+        assert one_over_state["artifacts"] == []
+
+
+def test_latest_followups_cleanup_capacity_and_transactional_rollback() -> None:
+    for suffix, prior in (("retry", "retryable"), ("correction", "malformed_response")):
+        state = cast(
+            reference.Object,
+            cast(reference.Object, reference.case_by_id(f"materialization/latest_{suffix}")["expected"])["state"],
+        )
+        assert cast(reference.Object, state["request_failures"])["R0"] == prior
+        assert state["binding_terminal"] == "success"
+        assert state["binding_cleanup"] == {"Q:D0": "closed"}
+    exact = cast(reference.Object, reference.case_by_id("materialization/latest_provenance_edges_exact")["expected"])
+    assert exact["status"] == "accepted"
+    one_over = cast(
+        reference.Object, reference.case_by_id("materialization/latest_provenance_edges_one_over")["expected"]
+    )
+    assert one_over["code"] == "limit_exceeded" and one_over["status"] == "rejected"
+    assert "binding" in one_over
+    rollback = cast(
+        reference.Object,
+        cast(
+            reference.Object, reference.case_by_id("materialization/latest_publication_rollback_then_reuse")["expected"]
+        )["state"],
+    )
+    assert rollback["lineage_allocations"] == {"D0:0": "K2"}
+    assert rollback["allocator_next"] == 4
+    assert rollback["publication_failures"] == [
+        {"activation": "OP:D0", "attempt": "TASK:OP:D0", "reason": "artifact_limit_exhausted"}
+    ]
+    occurrences = cast(reference.Object, rollback["operation_occurrences"])
+    assert cast(reference.Object, occurrences["OP:D0:TASK:OP:D0"])["terminal"] == {
+        "category": "failure",
+        "reason": "artifact_limit_exhausted",
+    }
+    assert cast(reference.Object, occurrences["OP:D1:TASK:OP:D1"])["terminal"] == {
+        "category": "success",
+        "outcome": "ok",
+    }
+    provenance = cast(reference.Object, cast(reference.Object, rollback["materialization"])["provenance"])
+    assert "OperationOutputKey:OP:D0:T0:N0:ok:result" not in provenance
+    assert provenance["OperationOutputKey:OP:D1:T0:N0:ok:result"] == {
+        "artifact": "ArtifactRef:I0:K3:1",
+        "parents": ["BoundInputKey:T0:N0:context:D0:0:2"],
+    }
+
+
+def test_latest_publication_edges_come_from_exact_owned_parents() -> None:
+    case = reference.case_by_id("materialization/latest_one_version")
+    declaration = cast(reference.Object, case["declaration"])
+    spec = cast(reference.Object, cast(list[reference.Object], declaration["materializations"])[0])
+    assert reference.admit(reference._materialization_decl(spec, admission=True)) == {"status": "accepted"}
+    assert "output_dependency_edges" not in spec and "output_artifacts" not in spec
+    publication = cast(reference.Object, spec["publication"])
+    assert publication["inputs"] == [spec["port"]]
+    events = [dict(event) for event in cast(list[reference.Object], case["events"])]
+    publish = next(event for event in events if event["kind"] == "operation_publish")
+    finish = next(i for i, event in enumerate(events) if event["kind"] == "binding_finish")
+    cleanup = next(i for i, event in enumerate(events) if event["kind"] == "binding_cleanup")
+    start = next(i for i, event in enumerate(events) if event["kind"] == "operation_start")
+    assert finish < cleanup < start < events.index(publish)
+    publish["node"] = "OTHER"
+    assert reference.reduce_trace(declaration, events) == {"code": "missing_materialization", "status": "rejected"}
+
+
+def test_latest_preflight_is_structural_and_publication_is_at_most_once() -> None:
+    item = reference.case_by_id("materialization/latest_provenance_edges_one_over")
+    declaration = cast(reference.Object, item["declaration"])
+    events = cast(list[reference.Object], item["events"])
+    assert all(event["kind"] != "operation_publish" for event in events)
+    assert reference._materialization_preflight(declaration, events) == item["expected"]
+
+    positive = reference.case_by_id("materialization/latest_one_version")
+    positive_declaration = cast(reference.Object, positive["declaration"])
+    duplicated = [dict(event) for event in cast(list[reference.Object], positive["events"])]
+    no_finish = [event for event in duplicated if event["kind"] != "binding_finish"]
+    assert reference.reduce_trace(positive_declaration, no_finish) == {"code": "missing", "status": "rejected"}
+    early = [dict(event) for event in duplicated]
+    start_index = next(i for i, event in enumerate(early) if event["kind"] == "operation_start")
+    start = early.pop(start_index)
+    early.insert(next(i for i, event in enumerate(early) if event["kind"] == "binding_finish"), start)
+    assert reference.reduce_trace(positive_declaration, early) == {"code": "missing", "status": "rejected"}
+    duplicated.append(dict(next(event for event in duplicated if event["kind"] == "operation_publish")))
+    assert reference.reduce_trace(positive_declaration, duplicated) == {"code": "duplicate", "status": "rejected"}
+
+
+def test_latest_sealed_context_survives_cleanup_defects_and_optional_omission() -> None:
+    caller = reference.case_by_id("materialization/latest_caller_cleanup")
+    caller_events = cast(list[reference.Object], caller["events"])
+    caller_state = cast(reference.Object, cast(reference.Object, caller["expected"])["state"])
+    assert cast(reference.Object, caller["expected"])["status"] == "accepted"
+    assert caller_state["binding_cleanup_associations"] == {
+        "Q:D0": {"association": "D0", "owner": "caller", "target": "T0"}
+    }
+    assert caller_state["binding_cleanup"] == {"Q:D0": "left_open"}
+    assert caller_state["binding_finished"] is True
+    assert caller_state["binding_terminal"] == "success"
+    assert cast(reference.Object, caller_state["operation_occurrences"])
+    assert any(event["kind"] == "operation_start" for event in caller_events)
+    assert any(event["kind"] == "operation_publish" for event in caller_events)
+
+    for disposition in ("close_failed", "close_unknown"):
+        item = reference.case_by_id(f"materialization/latest_sdk_cleanup_{disposition}")
+        state = cast(reference.Object, cast(reference.Object, item["expected"])["state"])
+        assert state["binding_finished"] is True
+        assert state["binding_terminal"] == "success"
+        assert state["binding_cleanup"] == {"Q:D0": disposition}
+        assert cast(reference.Object, state["operation_occurrences"])
+
+    mixed = reference.case_by_id("materialization/latest_bound_with_optional_omission")
+    state = cast(reference.Object, cast(reference.Object, mixed["expected"])["state"])
+    assert state["binding_finished"] is True
+    assert state["binding_terminal"] == "partial"
+    assert state["binding_sources"] == {"D0": "bound", "D1": "omitted_optional"}
+    assert state["binding_cleanup"] == {"Q:D0": "closed", "Q:D1": "closed"}
+    assert cast(reference.Object, cast(reference.Object, state["materialization"])["ports"])["initial:T0:N0:context:D0"]
+
+    missing_cleanup = [
+        event
+        for event in cast(list[reference.Object], mixed["events"])
+        if not (
+            event["kind"] in {"binding_cleanup_association", "binding_cleanup"} and event.get("association") == "D1"
+        )
+        and not (event["kind"] == "binding_cleanup" and event.get("resource") == "Q:D1")
+    ]
+    assert reference.reduce_trace(cast(reference.Object, mixed["declaration"]), missing_cleanup) == {
+        "code": "missing",
+        "status": "rejected",
+    }
+    foreign_cleanup = [dict(event) for event in cast(list[reference.Object], mixed["events"])]
+    association = next(
+        event
+        for event in foreign_cleanup
+        if event["kind"] == "binding_cleanup_association" and event["association"] == "D1"
+    )
+    association["target"] = "OTHER"
+    assert reference.reduce_trace(cast(reference.Object, mixed["declaration"]), foreign_cleanup) == {
+        "code": "foreign_owner",
+        "status": "rejected",
+    }
+
+
+def test_binding_finish_requires_every_terminal_and_freezes_binding_state() -> None:
+    expected = {
+        "latest_unresolved_optional_at_finish": "missing_materialization",
+        "latest_post_finish_source_failure": "contradictory",
+        "latest_post_finish_materialization": "contradictory",
+    }
+    for suffix, code in expected.items():
+        item = reference.case_by_id(f"materialization/{suffix}")
+        assert item["expected"] == {"code": code, "status": "rejected"}
+
+    mixed = reference.case_by_id("materialization/latest_bound_with_optional_omission")
+    events = [dict(event) for event in cast(list[reference.Object], mixed["events"])]
+    finish = next(i for i, event in enumerate(events) if event["kind"] == "binding_finish")
+    reserve = reference._reserve("R2", ["D1"], purpose="initial_binding")
+    events.insert(finish + 1, reserve)
+    assert reference.reduce_trace(cast(reference.Object, mixed["declaration"]), events) == {
+        "code": "contradictory",
+        "status": "rejected",
+    }
+
+    positive = reference.case_by_id("materialization/latest_one_version")
+    declaration = cast(reference.Object, positive["declaration"])
+    baseline = [dict(event) for event in cast(list[reference.Object], positive["events"])]
+    finish = next(i for i, event in enumerate(baseline) if event["kind"] == "binding_finish")
+    original = {event["kind"]: dict(event) for event in baseline[:finish]}
+    post_finish_mutations: list[reference.Object] = [
+        original["bind_policy"],
+        reference._reserve("R1", ["D0"], purpose="initial_binding"),
+        original["dispatch"],
+        {"kind": "result", "outcomes": {"D0": "retrieved"}, "request": "R0", "returned": ["D0"]},
+        {"failure": "permanent", "kind": "failure", "request": "R0"},
+        {"kind": "cancel", "request": "R0"},
+        {"kind": "stop", "request": "R0", "usage": {"input": 0, "output": 0}},
+        {"kind": "lost", "request": "R0"},
+        {
+            "disposition": "completed",
+            "kind": "settlement",
+            "remote_stopped": True,
+            "request": "R0",
+            "usage": {"input": 0, "output": 0},
+        },
+        {"association": "D0", "kind": "source_result", "request": "R0"},
+        {"association": "D0", "kind": "source_failure", "request": "R0"},
+        original["materialize_result"],
+    ]
+    for mutation in post_finish_mutations:
+        events = [dict(event) for event in baseline]
+        events.insert(finish + 1, mutation)
+        assert reference.reduce_trace(declaration, events) == {
+            "code": "contradictory",
+            "status": "rejected",
+        }, mutation["kind"]
+
+
 def test_request_mutants_change_semantics_at_the_real_boundary() -> None:
     case = reference.case_by_id("keyed/valid_shared_reordered")
     events = cast(list[reference.Object], case["events"])
@@ -1024,7 +1285,7 @@ def test_final_malformed_receipts_exhaust_both_declared_request_limits() -> None
         failures = cast(reference.Object, state.get("request_failures", {}))
         if "malformed_response" not in failures.values():
             continue
-        final = state.get("binding_terminal") is not None or state.get("tasks") == {"A0": "failure"}
+        final = state.get("binding_terminal") in ("failed", "partial") or state.get("tasks") == {"A0": "failure"}
         if not final:
             continue
         checked += 1
@@ -1033,7 +1294,7 @@ def test_final_malformed_receipts_exhaust_both_declared_request_limits() -> None
         assert cast(reference.Object, policies["P0"])["max_attempts"] == 1, case["case_id"]
         bounds = cast(reference.Object, declaration.get("retrieval_bounds", declaration["binding_limits"]))
         assert bounds["max_requests"] == 1, case["case_id"]
-    assert checked == 12
+    assert checked == 14
 
 
 def test_retry_and_correction_authority_are_intermediate_binding_states() -> None:
