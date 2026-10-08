@@ -107,6 +107,14 @@ def test_replay_and_runtime_mapping_products_are_closed() -> None:
 def test_retries_require_a_terminal_for_the_same_association() -> None:
     cross = cast(reference.Object, reference.case_by_id("retry/cross_association_predecessor")["expected"])
     assert cross == {"code": "missing_predecessor", "status": "rejected"}
+    for suffix, code in (
+        ("retry_after_permanent", "invalid_retry"),
+        ("correction_after_retryable", "invalid_correction"),
+        ("failover_after_malformed", "invalid_failover"),
+        ("late_failure_does_not_change_authority", "invalid_retry"),
+    ):
+        result = cast(reference.Object, reference.case_by_id(f"retry/{suffix}")["expected"])
+        assert result == {"code": code, "status": "rejected"}
 
 
 def test_settlement_and_usage_grammar_rejects_ambiguous_completion() -> None:
@@ -117,6 +125,15 @@ def test_settlement_and_usage_grammar_rejects_ambiguous_completion() -> None:
     assert completed == {"code": "invalid_settlement", "status": "rejected"}
     missing_usage = cast(reference.Object, reference.case_by_id("races/stop_missing_usage")["expected"])
     assert missing_usage == {"code": "invalid_usage", "status": "rejected"}
+    invalid_type = cast(
+        reference.Object,
+        reference.case_by_id("races/settlement_invalid_remote_stopped_type")["expected"],
+    )
+    assert invalid_type == {"code": "invalid_settlement", "status": "rejected"}
+    late = cast(reference.Object, reference.case_by_id("races/lost_late_result_without_settlement")["expected"])
+    late_state = cast(reference.Object, late["state"])
+    assert late_state["terminals"] == {"R0": "lost"}
+    assert late_state["remote_outstanding"] == ["R0"]
 
 
 def test_bridges_are_admitted_and_integrated_with_shared_requests() -> None:
@@ -144,11 +161,16 @@ def test_bridges_are_admitted_and_integrated_with_shared_requests() -> None:
         ],
     )
     assert supplied_output == {"code": "runtime_mapping", "status": "rejected"}
-    for suffix in ("two_targets", "missing", "duplicate", "extra", "foreign"):
+    for suffix in ("two_targets", "start_before_dispatch", "missing", "duplicate", "extra", "foreign"):
         case = reference.case_by_id(f"bridges/shared_request_{suffix}")
         kinds = [event["kind"] for event in cast(list[reference.Object], case["events"])]
         assert "dispatch" in kinds and "result" in kinds and "bridge_emit" in kinds
         assert cast(reference.Object, case["expected"])["status"] == "accepted"
+    for suffix in ("inconsistent_request_cannot_emit_success", "valid_request_cannot_emit_inconsistent"):
+        result = cast(reference.Object, reference.case_by_id(f"bridges/{suffix}")["expected"])
+        assert result == {"code": "request_causality", "status": "rejected"}
+    retry = cast(reference.Object, reference.case_by_id("bridges/retry_uses_latest_physical_request")["expected"])
+    assert cast(reference.Object, retry["state"])["tasks"] == {"T0": "success"}
 
 
 def test_binding_identity_resource_and_partial_receipt_witnesses() -> None:
@@ -177,6 +199,11 @@ def test_binding_results_require_the_dispatched_declaration_association() -> Non
     ):
         result = cast(reference.Object, reference.case_by_id(f"binding/{suffix}")["expected"])
         assert defect in cast(list[str], cast(reference.Object, result["state"])["defects"])
+    oversize = cast(reference.Object, reference.case_by_id("binding/oversize_no_truncation")["expected"])
+    oversize_state = cast(reference.Object, oversize["state"])
+    assert oversize_state["terminals"] == {"R0": "success"}
+    assert oversize_state["local_in_flight"] == []
+    assert oversize_state["remote_outstanding"] == []
 
 
 def test_admission_errors_are_derived_from_malformed_declarations() -> None:
@@ -190,6 +217,24 @@ def test_admission_errors_are_derived_from_malformed_declarations() -> None:
         cast(reference.Object, reference.case_by_id("admission/aggregate_limit")["expected"])["code"]
         == "limit_exceeded"
     )
+    for suffix in ("valid_external_failover", "valid_local_runtime_product", "valid_decision_runtime_product"):
+        assert reference.case_by_id(f"admission/{suffix}")["expected"] == {"status": "accepted"}
+    for suffix, code in (
+        ("duplicate_runtime_mapping", "duplicate"),
+        ("duplicate_required_condition", "duplicate"),
+        ("duplicate_result_outcome", "duplicate"),
+        ("runtime_product_missing_result", "missing"),
+        ("runtime_product_extra_local_condition", "extra"),
+    ):
+        result = cast(reference.Object, reference.case_by_id(f"admission/{suffix}")["expected"])
+        assert result == {"code": code, "status": "rejected"}
+    for suffix in ("valid_external_failover", "valid_local_runtime_product", "valid_decision_runtime_product"):
+        declaration = cast(reference.Object, reference.case_by_id(f"admission/{suffix}")["declaration"])
+        mappings = cast(list[reference.Json], declaration["runtime_mappings"])
+        for index in range(len(mappings)):
+            mutant = json.loads(json.dumps(declaration))
+            cast(list[reference.Json], mutant["runtime_mappings"]).pop(index)
+            assert reference.admit(mutant) == {"code": "missing", "status": "rejected"}
 
 
 def test_resource_cleanup_respects_remote_uncertainty_and_ownership() -> None:

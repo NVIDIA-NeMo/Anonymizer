@@ -25,7 +25,9 @@ The generator enumerates these declared products and named boundary families:
   plus correction, repair, failover, cross-policy use, cumulative attempt
   exhaustion, mixed exhausted/eligible sharing, graph-budget denial, and a
   cross-association predecessor negative. Retry, correction, and failover use
-  the terminal fact for each exact association and its bound policy;
+  the first immutable terminal fact for each exact association and its bound
+  policy. Their permitted failure classes are separate, with cross-purpose and
+  late-conflicting-terminal negatives;
 - request races enumerate success and failure with settlement before and after,
   cancel before result, result before cancel, trusted stop, unknown stop/Lost,
   late result, identical and conflicting terminal, identical and conflicting
@@ -44,6 +46,9 @@ The generator enumerates these declared products and named boundary families:
   resolved through an admitted mapping rather than through event-provided
   outcome/category values. The shared two-task request is integrated with both
   reordered success and every keyed-result defect before both bridge emits;
+  the task/request causal link remains valid when bridge start precedes or
+  follows dispatch. The immutable request fact, including a task's reported
+  result, must match the observed bridge condition;
 - decisions cover matching resume while unrelated work advances, deadline,
   cancellation, implementation failure, and foreign, stale, unknown, duplicate,
   and late identity classes;
@@ -52,11 +57,21 @@ The generator enumerates these declared products and named boundary families:
   category, bounded catalog, identical failover policy, and one-implementation
   local/decision rules.
 
+Admission also enumerates the exact local, external, and decision condition
+products. Runtime mapping keys are unique triples of condition, reported
+outcome, and failure, every row has the exact closed fields, and missing,
+duplicate, extra, unknown, and category-incompatible mutations reject before
+effects.
+
 The admission cases contain the malformed declaration itself. There is no
 fixture-only expected-error field or reducer shortcut. Settlement disposition,
 remote-stop certainty, and exact-or-unknown usage form one closed grammar:
 completed/rejected/stopped require trusted remote stop, while unknown retains
 remote uncertainty; trusted cancellation stop also carries usage.
+`remote_stopped` is exactly `bool | None`. A late result after Lost records a
+terminal conflict but cannot clear remote uncertainty; only a compatible
+trusted settlement can do that. A whole oversize binding response still closes
+the charged physical request while failing the binding without truncation.
 
 Only causal sequences are emitted. Policy binding precedes reservation;
 reservation precedes dispatch; dispatch precedes terminal and settlement;

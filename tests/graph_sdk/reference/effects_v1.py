@@ -13,6 +13,7 @@ from typing import TypeAlias, cast
 
 Json: TypeAlias = str | int | bool | None | list["Json"] | dict[str, "Json"]
 Object: TypeAlias = dict[str, Json]
+MappingKey: TypeAlias = tuple[str, str | None, str | None]
 CONTRACT_SHA256 = "9b0ab07b8c0212ffd954dc37eb37540141da6899753fc778ad26238494aeaeca"
 GENERATOR_VERSION = "effects-v1-generator-1"
 SELF_TEST_VERSION = "effects-v1-self-test-1"
@@ -50,6 +51,47 @@ RUNTIME_CONDITIONS = (
     "artifact_limit_exhausted",
     "deadline_exhausted",
 )
+POLICY_CONDITIONS = {
+    "local": (
+        "cancel_before_start",
+        "cancel_after_start",
+        "artifact_limit_exhausted",
+        "deadline_exhausted",
+    ),
+    "external": (
+        "cancel_before_start",
+        "cancel_after_start",
+        "cancel_after_dispatch",
+        "lost",
+        "request_inconsistent",
+        "budget_exhausted",
+        "request_limit_exhausted",
+        "artifact_limit_exhausted",
+        "deadline_exhausted",
+    ),
+    "decision": (
+        "cancel_before_start",
+        "cancel_after_start",
+        "artifact_limit_exhausted",
+        "deadline_exhausted",
+    ),
+}
+
+
+def _mapping_key(mapping: Object) -> MappingKey:
+    return (
+        cast(str, mapping.get("condition")),
+        cast(str | None, mapping.get("reported_outcome")),
+        cast(str | None, mapping.get("failure")),
+    )
+
+
+def _expected_mapping_keys(kind: str, outcomes: Sequence[str]) -> set[MappingKey]:
+    keys: set[MappingKey] = {("result", outcome, None) for outcome in outcomes}
+    failures = ("permanent", "implementation_exception") if kind == "decision" else FAILURE_CLASSES
+    keys.update(("failure", None, failure) for failure in failures)
+    keys.update((condition, None, None) for condition in POLICY_CONDITIONS[kind])
+    return keys
 
 
 def _object(value: Json) -> Object:
@@ -81,6 +123,7 @@ def load_cases(value: object) -> tuple[Object, ...]:
 def _initial(declaration: Object) -> Object:
     return {
         "artifacts": [],
+        "association_requests": {},
         "association_terminals": {},
         "attempts": {},
         "binding_sources": {},
@@ -101,6 +144,7 @@ def _initial(declaration: Object) -> Object:
         "remote_outstanding": [],
         "request_associations": {},
         "request_failures": {},
+        "request_facts": {},
         "request_policies": {},
         "reservation_policies": {},
         "reservations": {},
@@ -108,6 +152,7 @@ def _initial(declaration: Object) -> Object:
         "resources": {},
         "settlements": {},
         "tasks": {},
+        "task_requests": {},
         "terminals": {},
     }
 
@@ -127,6 +172,12 @@ def _terminal(state: Object, request: str, category: str) -> None:
         terminals[request] = category
     elif terminals[request] != category:
         _unique(_array(state["defects"]), "conflicting_terminal")
+
+
+def _request_fact(state: Object, request: str, fact: Object) -> None:
+    facts = _object(state["request_facts"])
+    if request not in facts:
+        facts[request] = fact
 
 
 def _remove(state: Object, key: str, value: str) -> None:
@@ -175,15 +226,24 @@ def _advance(state: Object, declaration: Object, event: Object) -> Object | None
                 if predecessor["policy"] != policy:
                     return _reject("predecessor_policy")
                 failure = predecessor["failure"]
-                if event.get("purpose") == "correction" and failure != "malformed_response":
-                    return _reject("invalid_correction")
-                permitted = failure == "rejected_before_acceptance" and replay in (
-                    "before_acceptance",
-                    "idempotent",
-                )
-                permitted = permitted or failure != "rejected_before_acceptance" and replay == "idempotent"
+                purpose = event.get("purpose")
+                if purpose == "retry":
+                    if failure not in ("rejected_before_acceptance", "retryable", "transport_unknown"):
+                        return _reject("invalid_retry")
+                    permitted = failure == "rejected_before_acceptance" and replay in (
+                        "before_acceptance",
+                        "idempotent",
+                    )
+                    permitted = permitted or failure in ("retryable", "transport_unknown") and replay == "idempotent"
+                elif purpose == "correction":
+                    if failure != "malformed_response":
+                        return _reject("invalid_correction")
+                    permitted = failure == "malformed_response" and replay == "idempotent"
+                else:
+                    policy_value = _object(_object(state["policies"])[policy])
+                    permitted = failure in _strings(policy_value.get("failover_failures", []))
                 if not permitted:
-                    return _reject("replay_forbidden")
+                    return _reject("replay_forbidden" if purpose != "failover" else "invalid_failover")
         eligible: list[str] = []
         for item in associations:
             if cast(int, attempts.get(item, 0)) >= maximum:
@@ -215,6 +275,9 @@ def _advance(state: Object, declaration: Object, event: Object) -> Object | None
         state["dispatched_count"] = cast(int, state["dispatched_count"]) + 1
         for item in associations:
             attempts[item] = cast(int, attempts.get(item, 0)) + 1
+            _object(state["association_requests"])[item] = request
+            if _object(state["tasks"]).get(item) == "running":
+                _object(state["task_requests"])[item] = request
         for key in ("local_in_flight", "remote_outstanding"):
             values = _strings(state[key])
             _unique(cast(list[Json], values), request)
@@ -225,6 +288,10 @@ def _advance(state: Object, declaration: Object, event: Object) -> Object | None
             return _reject("not_dispatched")
         expected = set(_strings(_object(state["request_associations"])[request]))
         returned = _strings(event["returned"])
+        outcomes_value = event.get("outcomes")
+        if not isinstance(outcomes_value, dict) or any(not isinstance(value, str) for value in outcomes_value.values()):
+            return _reject("invalid_result")
+        outcomes = cast(Object, outcomes_value)
         seen: set[str] = set()
         defects: list[str] = []
         for item in returned:
@@ -235,22 +302,41 @@ def _advance(state: Object, declaration: Object, event: Object) -> Object | None
             seen.add(item)
         if expected - seen:
             defects.append("missing_keyed_result")
+        if not defects and set(outcomes) != expected:
+            defects.append("missing_keyed_result" if expected - set(outcomes) else "extra_keyed_result")
         for defect in defects:
             _unique(_array(state["defects"]), defect)
-        _terminal(state, request, "inconsistent" if defects else "success")
+        terminal = "inconsistent" if defects else "success"
+        first_terminal = request not in _object(state["terminals"])
+        _terminal(state, request, terminal)
+        if first_terminal:
+            if defects:
+                _request_fact(state, request, {"condition": "request_inconsistent"})
+            else:
+                _request_fact(state, request, {"condition": "result", "outcomes": outcomes})
         _remove(state, "local_in_flight", request)
-        _remove(state, "remote_outstanding", request)
+        if first_terminal:
+            _remove(state, "remote_outstanding", request)
     elif kind == "failure":
         request = cast(str, event["request"])
         if request not in dispatched:
             return _reject("not_dispatched")
-        _object(state["request_failures"])[request] = event["failure"]
-        for association in _strings(_object(state["request_associations"])[request]):
-            _object(state["association_terminals"])[association] = {
-                "failure": event["failure"],
-                "policy": _object(state["request_policies"])[request],
-                "request": request,
-            }
+        first_terminal = request not in _object(state["terminals"])
+        if first_terminal:
+            _object(state["request_failures"])[request] = event["failure"]
+            _request_fact(state, request, {"condition": "failure", "failure": event["failure"]})
+            for association in _strings(_object(state["request_associations"])[request]):
+                terminals = _object(state["association_terminals"])
+                if association not in terminals:
+                    terminals[association] = {
+                        "failure": event["failure"],
+                        "policy": _object(state["request_policies"])[request],
+                        "request": request,
+                    }
+        else:
+            fact = _object(_object(state["request_facts"]).get(request, {}))
+            if fact.get("condition") != "failure" or fact.get("failure") != event["failure"]:
+                _unique(_array(state["defects"]), "conflicting_terminal")
         _terminal(state, request, "failure")
         _remove(state, "local_in_flight", request)
         _remove(state, "remote_outstanding", request)
@@ -281,6 +367,7 @@ def _advance(state: Object, declaration: Object, event: Object) -> Object | None
         if request not in _strings(state["cancel_requested"]):
             return _reject("cancel_not_requested")
         _terminal(state, request, "cancelled")
+        _request_fact(state, request, {"condition": "cancel_after_dispatch"})
         _remove(state, "local_in_flight", request)
         _remove(state, "remote_outstanding", request)
     elif kind == "lost":
@@ -288,6 +375,7 @@ def _advance(state: Object, declaration: Object, event: Object) -> Object | None
         if request not in dispatched:
             return _reject("not_dispatched")
         _terminal(state, request, "lost")
+        _request_fact(state, request, {"condition": "lost"})
         _remove(state, "local_in_flight", request)
     elif kind == "settlement":
         request = cast(str, event["request"])
@@ -300,6 +388,8 @@ def _advance(state: Object, declaration: Object, event: Object) -> Object | None
             return _reject("invalid_settlement")
         if not _valid_usage(event.get("usage")):
             return _reject("invalid_usage")
+        if remote_stopped is not None and not isinstance(remote_stopped, bool):
+            return _reject("invalid_settlement")
         if (disposition == "unknown") != (remote_stopped is not True):
             return _reject("invalid_settlement")
         value: Object = {key: event[key] for key in ("disposition", "usage", "remote_stopped")}
@@ -346,6 +436,9 @@ def _advance(state: Object, declaration: Object, event: Object) -> Object | None
         ):
             _object(state["binding_sources"])[identity] = "oversize"
             state["binding_terminal"] = "failed"
+            _terminal(state, request, "success")
+            _remove(state, "local_in_flight", request)
+            _remove(state, "remote_outstanding", request)
             return None
         for raw in items:
             item = _object(raw)
@@ -405,6 +498,9 @@ def _advance(state: Object, declaration: Object, event: Object) -> Object | None
         if task in _object(state["tasks"]):
             return _reject("duplicate_task")
         _object(state["tasks"])[task] = "running"
+        request = _object(state["association_requests"]).get(task)
+        if request is not None:
+            _object(state["task_requests"])[task] = request
     elif kind == "bridge_close_unstarted":
         category = cast(str, event["category"])
         if category not in ("blocked", "inconsistent"):
@@ -416,6 +512,21 @@ def _advance(state: Object, declaration: Object, event: Object) -> Object | None
             return _reject("task_not_running")
         if set(event) - {"condition", "failure", "kind", "reported_outcome", "task"}:
             return _reject("runtime_mapping")
+        request = _object(state["task_requests"]).get(task)
+        if request is None:
+            request = _object(state["association_requests"]).get(task)
+            if request is not None:
+                _object(state["task_requests"])[task] = request
+        if request is not None:
+            fact = _object(_object(state["request_facts"]).get(cast(str, request), {}))
+            if fact.get("condition") != event.get("condition"):
+                return _reject("request_causality")
+            if fact.get("condition") == "failure" and fact.get("failure") != event.get("failure"):
+                return _reject("request_causality")
+            if fact.get("condition") == "result":
+                outcomes = _object(fact.get("outcomes", {}))
+                if outcomes.get(task) != event.get("reported_outcome"):
+                    return _reject("request_causality")
         mappings = [
             _object(value)
             for value in _array(declaration.get("runtime_mappings", []))
@@ -523,23 +634,42 @@ def admit(declaration: Object) -> Object:
         return _reject("missing")
     if any(policy.get("retry_owner") == "implementation" for policy in policies):
         return _reject("unsupported")
-    declared_outcomes = set(_strings(declaration.get("declared_outcomes", [])))
+    declared_values = _strings(declaration.get("declared_outcomes", []))
+    if len(declared_values) != len(set(declared_values)):
+        return _reject("duplicate")
+    declared_outcomes = set(declared_values)
     mappings = declaration.get("runtime_mappings", [])
     if not isinstance(mappings, list) or any(not isinstance(value, dict) for value in mappings):
         return _reject("invalid_type")
-    if any(_object(value).get("condition") not in RUNTIME_CONDITIONS for value in mappings):
+    typed_mappings = [_object(value) for value in mappings]
+    mapping_fields = {"category", "condition", "failure", "outcome", "reported_outcome"}
+    if any(set(value) != mapping_fields for value in typed_mappings):
         return _reject("invalid_value")
-    required_conditions = set(_strings(declaration.get("required_runtime_conditions", [])))
-    actual_conditions = {cast(str, _object(value).get("condition")) for value in mappings}
-    if not required_conditions <= actual_conditions:
+    if any(value.get("condition") not in RUNTIME_CONDITIONS for value in typed_mappings):
+        return _reject("invalid_value")
+    mapping_keys = [_mapping_key(value) for value in typed_mappings]
+    if len(mapping_keys) != len(set(mapping_keys)):
+        return _reject("duplicate")
+    required_values = _strings(declaration.get("required_runtime_conditions", []))
+    if len(required_values) != len(set(required_values)):
+        return _reject("duplicate")
+    required_conditions = set(required_values)
+    actual_conditions = {cast(str, value.get("condition")) for value in typed_mappings}
+    if required_conditions and required_conditions != actual_conditions:
         return _reject("missing")
-    if any(_object(value).get("outcome") not in declared_outcomes | {None} for value in mappings):
+    if any(value.get("outcome") not in declared_outcomes | {None} for value in typed_mappings):
         return _reject("unsupported")
     categories = _object(declaration.get("outcome_categories", {}))
     if any(
-        _object(value).get("outcome") is not None
-        and categories.get(cast(str, _object(value)["outcome"])) != _object(value).get("category")
-        for value in mappings
+        value.get("outcome") is not None and categories.get(cast(str, value["outcome"])) != value.get("category")
+        for value in typed_mappings
+    ):
+        return _reject("contradictory")
+    if any(value.get("outcome") is None and value.get("category") == "success" for value in typed_mappings):
+        return _reject("contradictory")
+    if any(
+        value.get("condition") == "request_inconsistent" and value.get("category") != "inconsistent"
+        for value in typed_mappings
     ):
         return _reject("contradictory")
     targets = set(_strings(declaration.get("targets", [])))
@@ -556,6 +686,24 @@ def admit(declaration: Object) -> Object:
             return _reject("changed_failover_policy")
         if cast(int, policy.get("max_capabilities", len(implementations))) < len(implementations):
             return _reject("capability_limit")
+    if len(policies) == 1:
+        policy = policies[0]
+        outcomes_value = policy.get("result_outcomes", [])
+        if not isinstance(outcomes_value, list) or any(not isinstance(value, str) for value in outcomes_value):
+            return _reject("invalid_type")
+        outcomes = cast(list[str], outcomes_value)
+        if len(outcomes) != len(set(outcomes)):
+            return _reject("duplicate")
+        if policy["kind"] in ("local", "external") and not outcomes:
+            return _reject("missing")
+        if policy["kind"] == "decision" and outcomes:
+            return _reject("contradictory")
+        expected_keys = _expected_mapping_keys(cast(str, policy["kind"]), outcomes)
+        actual_keys = set(mapping_keys)
+        if expected_keys - actual_keys:
+            return _reject("missing")
+        if actual_keys - expected_keys:
+            return _reject("extra")
     return {"status": "accepted"}
 
 
@@ -569,7 +717,12 @@ def evaluate_case(case: Mapping[str, Json]) -> Object:
 
 
 def _policy(max_attempts: int = 2, replay: str = "idempotent") -> Object:
-    return {"max_attempts": max_attempts, "replay": replay, "retry_owner": "executor"}
+    return {
+        "failover_failures": ["permanent", "implementation_exception"],
+        "max_attempts": max_attempts,
+        "replay": replay,
+        "retry_owner": "executor",
+    }
 
 
 def _decl(limit: int | None = 2, attempts: int = 2) -> Object:
@@ -584,15 +737,70 @@ def _runtime_decl(
     failure: str | None = None,
     reported_outcome: str | None = None,
 ) -> Object:
-    mapping: Object = {"category": category, "condition": condition, "outcome": outcome}
-    if failure is not None:
-        mapping["failure"] = failure
-    if reported_outcome is not None:
-        mapping["reported_outcome"] = reported_outcome
+    mapping: Object = {
+        "category": category,
+        "condition": condition,
+        "failure": failure,
+        "outcome": outcome,
+        "reported_outcome": reported_outcome,
+    }
     declaration: Object = {"runtime_mappings": [mapping]}
     if outcome is not None:
         declaration["declared_outcomes"] = [outcome]
         declaration["outcome_categories"] = {outcome: category}
+    return declaration
+
+
+def _policy_runtime_decl(kind: str, outcomes: Sequence[str] = ("ok",)) -> Object:
+    result_outcomes = () if kind == "decision" else tuple(outcomes)
+    mappings: list[Json] = [
+        {
+            "category": "success",
+            "condition": "result",
+            "failure": None,
+            "outcome": outcome,
+            "reported_outcome": outcome,
+        }
+        for outcome in result_outcomes
+    ]
+    failures = ("permanent", "implementation_exception") if kind == "decision" else FAILURE_CLASSES
+    mappings.extend(
+        {
+            "category": "failure",
+            "condition": "failure",
+            "failure": failure,
+            "outcome": None,
+            "reported_outcome": None,
+        }
+        for failure in failures
+    )
+    categories = {
+        "artifact_limit_exhausted": "blocked",
+        "budget_exhausted": "blocked",
+        "cancel_after_dispatch": "cancelled",
+        "cancel_after_start": "cancelled",
+        "cancel_before_start": "cancelled",
+        "deadline_exhausted": "failure",
+        "lost": "lost",
+        "request_inconsistent": "inconsistent",
+        "request_limit_exhausted": "blocked",
+    }
+    mappings.extend(
+        {
+            "category": categories[condition],
+            "condition": condition,
+            "failure": None,
+            "outcome": None,
+            "reported_outcome": None,
+        }
+        for condition in POLICY_CONDITIONS[kind]
+    )
+    declaration: Object = {
+        "declared_outcomes": list(result_outcomes),
+        "outcome_categories": {outcome: "success" for outcome in result_outcomes},
+        "required_runtime_conditions": sorted({cast(str, _object(value)["condition"]) for value in mappings}),
+        "runtime_mappings": mappings,
+    }
     return declaration
 
 
@@ -616,8 +824,9 @@ def _dispatch(request: str) -> Object:
 
 
 def _result(request: str, expected: Sequence[str], returned: Sequence[str]) -> Object:
-    del expected
-    return {"kind": "result", "request": request, "returned": list(returned)}
+    expected_set = set(expected)
+    outcomes = {item: "ok" for item in returned if item in expected_set}
+    return {"kind": "result", "outcomes": outcomes, "request": request, "returned": list(returned)}
 
 
 def _trace(items: Sequence[str] = ("T0",), request: str = "R0") -> list[Object]:
@@ -703,6 +912,44 @@ def _generate_specs() -> tuple[Object, ...]:
                 ],
             )
         )
+    both_mappings = _decl()
+    result_mapping = _object(
+        _array(_runtime_decl("result", "ok", "success", reported_outcome="ok")["runtime_mappings"])[0]
+    )
+    inconsistent_mapping = _object(
+        _array(_runtime_decl("request_inconsistent", None, "inconsistent")["runtime_mappings"])[0]
+    )
+    both_mappings.update(
+        {
+            "declared_outcomes": ["ok"],
+            "outcome_categories": {"ok": "success"},
+            "runtime_mappings": [result_mapping, inconsistent_mapping],
+        }
+    )
+    c += [
+        _case(
+            "bridges",
+            "inconsistent_request_cannot_emit_success",
+            both_mappings,
+            _trace(("T0", "T1"))
+            + [
+                {"kind": "bridge_start", "node": "N0", "task": "T0"},
+                _result("R0", ("T0", "T1"), ("T0",)),
+                {"condition": "result", "kind": "bridge_condition", "reported_outcome": "ok", "task": "T0"},
+            ],
+        ),
+        _case(
+            "bridges",
+            "valid_request_cannot_emit_inconsistent",
+            both_mappings,
+            _trace(("T0", "T1"))
+            + [
+                {"kind": "bridge_start", "node": "N0", "task": "T0"},
+                _result("R0", ("T0", "T1"), ("T0", "T1")),
+                {"condition": "request_inconsistent", "kind": "bridge_condition", "task": "T0"},
+            ],
+        ),
+    ]
     c.append(
         _case(
             "retry",
@@ -787,6 +1034,47 @@ def _generate_specs() -> tuple[Object, ...]:
             [],
             "admission",
         ),
+        _case(
+            "retry",
+            "retry_after_permanent",
+            _decl(),
+            _trace()
+            + [
+                {"failure": "permanent", "kind": "failure", "request": "R0"},
+                _reserve("R1", ["T0"], purpose="retry"),
+            ],
+        ),
+        _case(
+            "retry",
+            "correction_after_retryable",
+            _decl(),
+            _trace()
+            + [
+                {"failure": "retryable", "kind": "failure", "request": "R0"},
+                _reserve("R1", ["T0"], purpose="correction"),
+            ],
+        ),
+        _case(
+            "retry",
+            "failover_after_malformed",
+            _decl(),
+            _trace()
+            + [
+                {"failure": "malformed_response", "kind": "failure", "request": "R0"},
+                _reserve("R1", ["T0"], purpose="failover"),
+            ],
+        ),
+        _case(
+            "retry",
+            "late_failure_does_not_change_authority",
+            _decl(),
+            _trace()
+            + [
+                {"failure": "permanent", "kind": "failure", "request": "R0"},
+                {"failure": "retryable", "kind": "failure", "request": "R0"},
+                _reserve("R1", ["T0"], purpose="retry"),
+            ],
+        ),
     ]
     base = _trace()
     settlement: Object = {
@@ -828,6 +1116,12 @@ def _generate_specs() -> tuple[Object, ...]:
             "lost_late_result_settlement",
             _decl(),
             base + [{"kind": "lost", "request": "R0"}, _result("R0", ("T0",), ("T0",)), settlement],
+        ),
+        _case(
+            "races",
+            "lost_late_result_without_settlement",
+            _decl(),
+            base + [{"kind": "lost", "request": "R0"}, _result("R0", ("T0",), ("T0",))],
         ),
         _case(
             "races",
@@ -897,6 +1191,12 @@ def _generate_specs() -> tuple[Object, ...]:
         ),
         _case(
             "races", "settlement_unknown_with_remote_stop", _decl(), base + [dict(settlement, disposition="unknown")]
+        ),
+        _case(
+            "races",
+            "settlement_invalid_remote_stopped_type",
+            _decl(),
+            base + [dict(settlement, disposition="unknown", remote_stopped="invalid", usage="unknown")],
         ),
     ]
     c += [
@@ -1252,6 +1552,42 @@ def _generate_specs() -> tuple[Object, ...]:
             ],
         )
     )
+    c.append(
+        _case(
+            "bridges",
+            "shared_request_start_before_dispatch",
+            shared_bridge,
+            [
+                {"kind": "bridge_start", "node": "N0", "task": "T0"},
+                {"kind": "bridge_start", "node": "N1", "task": "T1"},
+                *_trace(("T0", "T1")),
+                _result("R0", ("T0", "T1"), ("T0", "T1")),
+                {"condition": "result", "kind": "bridge_condition", "reported_outcome": "ok", "task": "T0"},
+                {"condition": "result", "kind": "bridge_condition", "reported_outcome": "ok", "task": "T1"},
+                {"category": "success", "kind": "bridge_emit", "outcome": "ok", "task": "T0"},
+                {"category": "success", "kind": "bridge_emit", "outcome": "ok", "task": "T1"},
+            ],
+        )
+    )
+    retry_bridge = _decl()
+    retry_bridge.update(_runtime_decl("result", "ok", "success", reported_outcome="ok"))
+    c.append(
+        _case(
+            "bridges",
+            "retry_uses_latest_physical_request",
+            retry_bridge,
+            [
+                {"kind": "bridge_start", "node": "N0", "task": "T0"},
+                *_trace(),
+                {"failure": "retryable", "kind": "failure", "request": "R0"},
+                _reserve("R1", ["T0"], purpose="retry"),
+                _dispatch("R1"),
+                _result("R1", ("T0",), ("T0",)),
+                {"condition": "result", "kind": "bridge_condition", "reported_outcome": "ok", "task": "T0"},
+                {"category": "success", "kind": "bridge_emit", "outcome": "ok", "task": "T0"},
+            ],
+        )
+    )
     for name, returned in (
         ("missing", ("T0",)),
         ("duplicate", ("T0", "T0", "T1")),
@@ -1383,8 +1719,12 @@ def _generate_specs() -> tuple[Object, ...]:
         "kind": "external",
         "node": "N0",
         "physical_policy": "P0",
+        "result_outcomes": ["ok"],
         "retry_owner": "executor",
     }
+    result_mapping = _object(
+        _array(_runtime_decl("result", "ok", "success", reported_outcome="ok")["runtime_mappings"])[0]
+    )
     admission_negatives: tuple[tuple[str, Object], ...] = (
         ("outer_type", {"execution_policies": "invalid"}),
         (
@@ -1402,7 +1742,7 @@ def _generate_specs() -> tuple[Object, ...]:
             {
                 "declared_outcomes": ["ok"],
                 "outcome_categories": {"ok": "success"},
-                "runtime_mappings": [{"category": "failure", "condition": "result", "outcome": "ok"}],
+                "runtime_mappings": [dict(result_mapping, category="failure")],
             },
         ),
         (
@@ -1414,15 +1754,27 @@ def _generate_specs() -> tuple[Object, ...]:
             {
                 "declared_outcomes": ["ok"],
                 "outcome_categories": {"ok": "success"},
-                "runtime_mappings": [{"category": "blocked", "condition": "result", "outcome": "ok"}],
+                "runtime_mappings": [dict(result_mapping, category="blocked")],
             },
         ),
         (
             "unknown_outcome",
             {
                 "declared_outcomes": ["ok"],
-                "runtime_mappings": [{"category": "success", "condition": "result", "outcome": "other"}],
+                "runtime_mappings": [dict(result_mapping, outcome="other", reported_outcome="other")],
             },
+        ),
+        (
+            "duplicate_runtime_mapping",
+            {
+                "declared_outcomes": ["ok"],
+                "outcome_categories": {"ok": "success"},
+                "runtime_mappings": [result_mapping, result_mapping],
+            },
+        ),
+        (
+            "duplicate_required_condition",
+            {"required_runtime_conditions": ["result", "result"], "runtime_mappings": [result_mapping]},
         ),
     )
     for name, declaration in admission_negatives:
@@ -1432,15 +1784,18 @@ def _generate_specs() -> tuple[Object, ...]:
             "admission",
             "valid_external_failover",
             {
+                **_policy_runtime_decl("external"),
                 "execution_policies": [
                     {
                         "implementations": [{"physical_policy": "P0"}, {"physical_policy": "P0"}],
                         "kind": "external",
                         "max_capabilities": 2,
+                        "node": "N0",
                         "physical_policy": "P0",
+                        "result_outcomes": ["ok"],
                         "retry_owner": "executor",
                     }
-                ]
+                ],
             },
             [],
             "admission",
@@ -1454,7 +1809,9 @@ def _generate_specs() -> tuple[Object, ...]:
                         "implementations": [{"physical_policy": "P0"}, {"physical_policy": "P1"}],
                         "kind": "external",
                         "max_capabilities": 2,
+                        "node": "N0",
                         "physical_policy": "P0",
+                        "result_outcomes": ["ok"],
                         "retry_owner": "executor",
                     }
                 ]
@@ -1471,7 +1828,9 @@ def _generate_specs() -> tuple[Object, ...]:
                         "implementations": [{"physical_policy": None}, {"physical_policy": None}],
                         "kind": "local",
                         "max_capabilities": 2,
+                        "node": "N0",
                         "physical_policy": None,
+                        "result_outcomes": ["ok"],
                         "retry_owner": "none",
                     }
                 ]
@@ -1488,7 +1847,9 @@ def _generate_specs() -> tuple[Object, ...]:
                         "implementations": [{"physical_policy": "P0"}, {"physical_policy": "P0"}],
                         "kind": "external",
                         "max_capabilities": 1,
+                        "node": "N0",
                         "physical_policy": "P0",
+                        "result_outcomes": ["ok"],
                         "retry_owner": "executor",
                     }
                 ]
@@ -1496,6 +1857,83 @@ def _generate_specs() -> tuple[Object, ...]:
             [],
             "admission",
         ),
+        _case(
+            "admission",
+            "valid_local_runtime_product",
+            {
+                **_policy_runtime_decl("local"),
+                "execution_policies": [
+                    {
+                        "implementations": [{"physical_policy": None}],
+                        "kind": "local",
+                        "node": "N0",
+                        "physical_policy": None,
+                        "result_outcomes": ["ok"],
+                        "retry_owner": "none",
+                    }
+                ],
+            },
+            [],
+            "admission",
+        ),
+        _case(
+            "admission",
+            "valid_decision_runtime_product",
+            {
+                **_policy_runtime_decl("decision"),
+                "execution_policies": [
+                    {
+                        "implementations": [{"physical_policy": None}],
+                        "kind": "decision",
+                        "node": "N0",
+                        "physical_policy": None,
+                        "result_outcomes": [],
+                        "retry_owner": "none",
+                    }
+                ],
+            },
+            [],
+            "admission",
+        ),
+    ]
+    external_policy: Object = {
+        "implementations": [{"physical_policy": "P0"}],
+        "kind": "external",
+        "node": "N0",
+        "physical_policy": "P0",
+        "result_outcomes": ["ok"],
+        "retry_owner": "executor",
+    }
+    missing_product = _policy_runtime_decl("external")
+    missing_product["execution_policies"] = [external_policy]
+    missing_product["runtime_mappings"] = [
+        value for value in _array(missing_product["runtime_mappings"]) if _object(value).get("condition") != "result"
+    ]
+    extra_product = _policy_runtime_decl("local")
+    extra_product["execution_policies"] = [
+        {
+            "implementations": [{"physical_policy": None}],
+            "kind": "local",
+            "node": "N0",
+            "physical_policy": None,
+            "result_outcomes": ["ok"],
+            "retry_owner": "none",
+        }
+    ]
+    extra_product["runtime_mappings"] = [
+        *_array(extra_product["runtime_mappings"]),
+        _object(_array(_runtime_decl("lost", None, "lost")["runtime_mappings"])[0]),
+    ]
+    extra_product["required_runtime_conditions"] = [
+        *_strings(extra_product["required_runtime_conditions"]),
+        "lost",
+    ]
+    duplicate_outcome = _policy_runtime_decl("external")
+    duplicate_outcome["execution_policies"] = [dict(external_policy, result_outcomes=["ok", "ok"])]
+    c += [
+        _case("admission", "runtime_product_missing_result", missing_product, [], "admission"),
+        _case("admission", "runtime_product_extra_local_condition", extra_product, [], "admission"),
+        _case("admission", "duplicate_result_outcome", duplicate_outcome, [], "admission"),
     ]
     return tuple(c)
 
