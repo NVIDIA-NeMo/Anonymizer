@@ -39,6 +39,8 @@ BASELINE_IDS = frozenset(
     {
         "release/protection_success",
         "release/execution_only",
+        "release/execution_only_empty",
+        "validity/evidence_output_removed",
         "assessment/unsatisfied",
         "assessment/unknown",
         "assessment/missing",

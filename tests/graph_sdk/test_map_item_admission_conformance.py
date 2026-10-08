@@ -12,6 +12,7 @@ import pytest
 
 from anonymizer.graph._values import ContractViolation
 from anonymizer.graph.workflow import (
+    AdmittedActivationWorkflow,
     CoverageAtom,
     MapItemPort,
     NodeId,
@@ -23,6 +24,7 @@ from anonymizer.graph.workflow import (
     WorkflowId,
     WorkflowLimits,
     WorkflowOutcomeRef,
+    admit_activation_workflow,
     admit_static_workflow,
 )
 from tests.graph_sdk import test_qualification_map_conformance as fixture
@@ -124,6 +126,40 @@ def test_map_requirement_admission_matches_reference(case: dict[str, Any], monke
         return admit_static_workflow(**kwargs)
 
     monkeypatch.setattr(fixture, "admit_static_workflow", admit)
+    monkeypatch.setattr(fixture._ReferenceMapCallback, "run", forbidden_callback)
+    with pytest.raises(ContractViolation) as rejected:
+        asyncio.run(fixture._execute_reference_map(1))
+    assert calls == 0
+    assert {"status": "rejected", "code": rejected.value.code.value} == case["expected"]
+
+
+def test_duplicate_map_declaration_rejected_before_execution(monkeypatch: pytest.MonkeyPatch) -> None:
+    case = next(case for case in fixture.CORPUS if case["case_id"] == "admission/duplicate_map_input")
+    baseline = fixture.CORPUS[0]["declaration"]
+    declaration = case["declaration"]
+    assert not case["events"]
+    assert declaration["map_inputs"] == baseline["map_inputs"] * 2
+    assert {key: value for key, value in declaration.items() if key != "map_inputs"} == {
+        key: value for key, value in baseline.items() if key != "map_inputs"
+    }
+    calls = 0
+
+    async def forbidden_callback(self: object, request: object) -> None:
+        nonlocal calls
+        calls += 1
+        raise AssertionError("Duplicate map declaration dispatched a callback")
+
+    def admit(**kwargs: Any) -> AdmittedActivationWorkflow:
+        (scope,) = kwargs["scopes"]
+        (mapping,) = scope.maps
+        (raw,) = baseline["map_inputs"]
+        assert mapping.item_input == raw["item_input"]
+        assert mapping.expansion_outcomes == frozenset({raw["outcome"]})
+        kwargs["scopes"] = (replace(scope, maps=(mapping, mapping)),)
+        kwargs["limits"] = replace(kwargs["limits"], max_maps=2)
+        return admit_activation_workflow(**kwargs)
+
+    monkeypatch.setattr(fixture, "admit_activation_workflow", admit)
     monkeypatch.setattr(fixture._ReferenceMapCallback, "run", forbidden_callback)
     with pytest.raises(ContractViolation) as rejected:
         asyncio.run(fixture._execute_reference_map(1))
