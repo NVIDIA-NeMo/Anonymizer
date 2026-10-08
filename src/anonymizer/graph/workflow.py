@@ -860,10 +860,10 @@ def admit_activation_workflow(
         )
         if any(node.workflow != scope.workflow.workflow for node in referenced):
             _reject(ValidationCode.FOREIGN_OWNER)
-        if not referenced <= owned:
-            _reject(ValidationCode.MISSING)
         if len(members) != len(set(members)) or len(aggregate_joins) != len(set(aggregate_joins)):
             _reject(ValidationCode.DUPLICATE)
+        if not referenced <= owned:
+            _reject(ValidationCode.MISSING)
         join_sources = {item.source for item in scope.joins}
         if join_sources != sources or len(join_sources) != len(scope.joins):
             _reject(ValidationCode.MISSING)
@@ -908,6 +908,9 @@ def admit_activation_workflow(
                 for binding in item.carried
             ):
                 _reject(ValidationCode.CONTRADICTORY)
+        joins_by_source = {item.source: item for item in scope.joins}
+        if any(joins_by_source[item.starter].join != item.join for item in scope.loops):
+            _reject(ValidationCode.CONTRADICTORY)
         edges = {(edge.before, edge.after) for edge in scope.workflow.sequence}
         reachable_pairs = set(edges)
         changed = True

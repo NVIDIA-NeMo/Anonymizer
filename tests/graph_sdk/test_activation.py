@@ -470,6 +470,81 @@ def _loop_workflow(bound: int):
     return dynamic, starter, member, join
 
 
+def test_loop_rejects_keyed_join_target_mismatch() -> None:
+    workflow, starter, _, _ = _loop_workflow(2)
+    scope = workflow.scopes[0]
+    mismatched = DynamicScope(
+        workflow=scope.workflow,
+        maps=(),
+        joins=(
+            KeyedJoinDecl(
+                source=starter,
+                join=starter,
+                accepted_categories=frozenset({"success"}),
+                reduction="all_by_key",
+            ),
+        ),
+        loops=scope.loops,
+    )
+    with pytest.raises(ContractViolation) as raised:
+        admit_activation_workflow(workflow=scope.workflow, scopes=(mismatched,), limits=workflow.limits)
+    assert raised.value.code is ValidationCode.CONTRADICTORY
+
+
+@pytest.mark.parametrize("duplicate_role", ["member", "join"])
+@pytest.mark.parametrize("reverse", [False, True])
+def test_duplicate_dynamic_role_precedes_missing_node(duplicate_role: str, reverse: bool) -> None:
+    workflow, starter, member, join = _loop_workflow(2)
+    static = workflow.workflow
+    absent = NodeId.new(workflow=static.workflow)
+    maps = (
+        MapDecl(
+            expander=starter,
+            member=member,
+            expansion_outcomes=frozenset({"again"}),
+            max_children=1,
+        ),
+        MapDecl(
+            expander=absent,
+            member=member if duplicate_role == "member" else join,
+            expansion_outcomes=frozenset({"again"}),
+            max_children=1,
+        ),
+    )
+    joins = (
+        KeyedJoinDecl(
+            source=starter,
+            join=join,
+            accepted_categories=frozenset({"success"}),
+            reduction="all_by_key",
+        ),
+        KeyedJoinDecl(
+            source=absent,
+            join=join if duplicate_role == "join" else starter,
+            accepted_categories=frozenset({"success"}),
+            reduction="all_by_key",
+        ),
+    )
+    scope = DynamicScope(
+        workflow=static,
+        maps=tuple(reversed(maps)) if reverse else maps,
+        joins=tuple(reversed(joins)) if reverse else joins,
+        loops=(),
+    )
+    limits = DynamicLimits(
+        max_maps=2,
+        max_joins=2,
+        max_loops=0,
+        max_children_per_map=1,
+        max_iterations_per_loop=0,
+        max_dynamic_depth=1,
+        max_activation_occurrences=5,
+    )
+    with pytest.raises(ContractViolation) as raised:
+        admit_activation_workflow(workflow=static, scopes=(scope,), limits=limits)
+    assert raised.value.code is ValidationCode.DUPLICATE
+
+
 def test_loop_admits_consecutive_iterations_and_releases_join_on_exit() -> None:
     workflow, starter, member, join = _loop_workflow(2)
     invocation = InvocationId.new(plan=PlanId.new())
