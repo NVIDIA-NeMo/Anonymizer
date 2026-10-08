@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import fields, replace
+from dataclasses import dataclass, fields, replace
 from typing import cast
 
 import pytest
@@ -38,6 +38,7 @@ from anonymizer.engine.graph_sdk.executor import (
     ExecutionResult,
     ExecutionServices,
     ImplementationHandle,
+    LocalCompleted,
     OperationExecutionPolicy,
     RequestTransport,
     admit_execution_plan,
@@ -51,7 +52,12 @@ from anonymizer.engine.graph_sdk.preparation import (
     prepare,
 )
 from anonymizer.engine.graph_sdk.records import AbsenceRef, CandidateRef, DecisionRef
-from anonymizer.engine.graph_sdk.requests import PhysicalRequestPolicy
+from anonymizer.engine.graph_sdk.requests import (
+    AssociationInput,
+    PhysicalRequestPolicy,
+    PortArtifact,
+    TextArtifactValue,
+)
 from anonymizer.engine.graph_sdk.resources import ResourceLease
 from anonymizer.graph._values import ArtifactRef, InvocationId
 from anonymizer.graph.activation import ActivationLimits
@@ -87,11 +93,38 @@ def _qualification_limits(**changes: int) -> QualificationLimits:
     return QualificationLimits(**{item.name: changes.get(item.name, 16) for item in fields(QualificationLimits)})
 
 
+@dataclass
+class _AssessmentWithAuxiliaryOutput:
+    assessor: _AssessingLocal
+
+    async def run(self, request: tuple[AssociationInput, ...]) -> LocalCompleted:
+        completed = await self.assessor.run(request)
+        result = completed.results[0]
+        return replace(
+            completed,
+            results=(
+                replace(
+                    result,
+                    outputs=(
+                        *result.outputs,
+                        PortArtifact(
+                            port="metadata",
+                            artifact_type=request[0].inputs[0].artifact_type,
+                            artifact=None,
+                            value=TextArtifactValue(text="auxiliary"),
+                        ),
+                    ),
+                ),
+            ),
+        )
+
+
 async def _execute_assessment(
     *,
     environment: bool = False,
     candidate_input: bool = False,
     alias_output: bool = False,
+    auxiliary_output: bool = False,
     decision_input: bool = False,
     coverage: frozenset[CoverageAtom] = frozenset(),
     target_count: int = 1,
@@ -104,6 +137,7 @@ async def _execute_assessment(
     external: tuple[RequestTransport, ResourceLease] | None = None,
 ) -> tuple[AdmittedExecutionPlan, ExecutionResult]:
     assert not (decision_input and external is not None)
+    assert not (auxiliary_output and (rename_ports or nested or decision_input or external is not None))
     predecessor = decision_input or external is not None
     request_policy = (
         PhysicalRequestPolicy(
@@ -133,6 +167,18 @@ async def _execute_assessment(
             for outcome in raw.interface.outcomes
         ),
     )
+    if auxiliary_output:
+        operation = replace(
+            operation,
+            outputs=(*operation.outputs, replace(operation.outputs[0], name="metadata")),
+            output_dependencies=(
+                *operation.output_dependencies,
+                replace(operation.output_dependencies[0], output="metadata", identity_input=None),
+            ),
+            outcomes=tuple(
+                replace(outcome, produced_ports=outcome.produced_ports | {"metadata"}) for outcome in operation.outcomes
+            ),
+        )
     decision_node = NodeId.new(workflow=raw.workflow)
     nodes = (OperationNode(id=node, operation=operation),)
     bindings = tuple(raw.input_bindings)
@@ -224,6 +270,15 @@ async def _execute_assessment(
         input_bindings=bindings,
         output_bindings=tuple(
             replace(binding, destination=WorkflowOutputRef(port=root_output)) for binding in raw.output_bindings
+        )
+        + (
+            (
+                OutputBinding(
+                    source=NodeOutputRef(node=node, port="metadata"), destination=WorkflowOutputRef(port="metadata")
+                ),
+            )
+            if auxiliary_output
+            else ()
         ),
         outcome_bindings=tuple(raw.outcome_bindings),
         sequence=(SequenceEdge(before=decision_node, after=node),) if predecessor else (),
@@ -382,8 +437,8 @@ async def _execute_assessment(
             max_finding_code_bytes=20,
             max_absence_queries=1 if environment else 0,
             max_assessment_facts=target_count,
-            max_port_facts=(3 + 2 * int(predecessor) + int(nested)) * target_count,
-            max_provenance_edges=(2 + int(predecessor) + int(nested)) * target_count,
+            max_port_facts=(3 + 2 * int(predecessor) + int(nested) + int(auxiliary_output)) * target_count,
+            max_provenance_edges=(2 + int(predecessor) + int(nested) + int(auxiliary_output)) * target_count,
         ),
     )
     services = ExecutionServices(
@@ -396,6 +451,12 @@ async def _execute_assessment(
                 if external is not None and item.id == decision_node
                 else _Callback(decision=True)
                 if item.id == decision_node
+                else _AssessmentWithAuxiliaryOutput(
+                    _AssessingLocal(
+                        finding=finding, evidence_port=evidence_port, alias_evidence=candidate_input or alias_output
+                    )
+                )
+                if auxiliary_output
                 else _AssessingLocal(
                     finding=finding, evidence_port=evidence_port, alias_evidence=candidate_input or alias_output
                 ),
@@ -408,7 +469,7 @@ async def _execute_assessment(
         limits=ExecutionLimits(
             max_local_in_flight=1,
             max_remote_outstanding=1 if external is not None else 0,
-            max_runtime_artifacts=2 * target_count,
+            max_runtime_artifacts=(2 + int(auxiliary_output)) * target_count,
             max_runtime_artifact_bytes=100,
             max_collection_items=0,
         ),
@@ -872,3 +933,25 @@ def test_consumed_decision_is_derived_from_an_actual_resumed_producer() -> None:
             state=fact.environment.state,
         )
         assert evidence_validity(evidence=verified, current=current) == ("unknown" if missing else "current")
+
+
+@pytest.mark.parametrize("nested", [False, True])
+@pytest.mark.parametrize("role", ["artifact", "decision"])
+def test_evidence_occurrence_authenticates_executor_role_precedence(nested: bool, role: str) -> None:
+    execution, result = asyncio.run(_execute_assessment(candidate_input=True, nested=nested))
+    admitted = admit_qualification(
+        execution=execution, productions=execution.assessment_productions, limits=_qualification_limits()
+    )
+    fact = result.assessments[0]
+    evidence = next(item for item in result.ports if item.activation == fact.activation and item.port == "assessment")
+    assert evidence.role == ("evidence" if nested else "candidate")
+    submissions = (AssessmentSubmission(fact=fact),)
+    assert len(verify_evidence(admitted=admitted, result=result, submissions=submissions)) == 1
+    original = evidence.role
+    object.__setattr__(evidence, "role", role)
+    try:
+        with pytest.raises(EffectRejected) as error:
+            verify_evidence(admitted=admitted, result=result, submissions=submissions)
+        assert error.value.code is EffectCode.CONTRADICTORY
+    finally:
+        object.__setattr__(evidence, "role", original)

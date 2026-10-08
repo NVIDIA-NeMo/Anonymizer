@@ -110,6 +110,18 @@ class AdmittedQualification(PrivateValue):
             if name not in {"self", "_key"}:
                 object.__setattr__(self, name, value)
 
+    def _subject_outputs(self, outcome: str) -> frozenset[str]:
+        """Return final ports that carry this outcome's protection subjects."""
+        workflow = self.execution.context.prepared.workflow.workflow
+        if self.execution.context.prepared.configuration.purpose == "execution_only":
+            return frozenset(port.name for port in workflow.interface.outputs)
+        subjects = {item.subject_port for item in workflow.protection_requirements if item.outcome == outcome}
+        return frozenset(
+            dependency.output
+            for dependency in workflow.interface.output_dependencies
+            if dependency.output in subjects or dependency.identity_input in subjects
+        )
+
 
 @dataclass(frozen=True, slots=True, kw_only=True, repr=False, init=False)
 class VerifiedEvidence(PrivateValue):
@@ -230,7 +242,8 @@ class _EvidenceFacts:
         execution = admitted.execution
         prepared = execution.context.prepared
         if (
-            len(result.ports) > min(limits.max_port_facts, execution.assessment_limits.max_port_facts)
+            max(len(result.ports), len(result._input_parents))
+            > min(limits.max_port_facts, execution.assessment_limits.max_port_facts)
             or len(result.assessments) > execution.assessment_limits.max_assessment_facts
             or sum(len(item.parents) for item in result.provenance)
             > min(limits.max_provenance_edges, execution.assessment_limits.max_provenance_edges)
@@ -294,7 +307,8 @@ class _EvidenceFacts:
         subject = self.port(fact, production.promise.subject_port)
         if evidence.target != target or subject.target != target:
             reject(EffectCode.FOREIGN_OWNER)
-        if evidence.artifact != fact.evidence_artifact or subject.role != "candidate":
+        expected_role = self.admitted.execution._output_role(fact.node, production.outcome, evidence.port)
+        if evidence.artifact != fact.evidence_artifact or subject.role != "candidate" or evidence.role != expected_role:
             reject(EffectCode.CONTRADICTORY)
         consumed: list[tuple[str, ConsumedRef]] = []
         input_names = {item.name for item in production.operation.inputs}
@@ -453,7 +467,11 @@ def evidence_revision_view(
     _EvidenceFacts.from_result(admitted, result)
     _validate_current_revisions(admitted, result, artifacts, absences, configurations, state)
     selected = frozenset(artifacts)
-    candidates = frozenset(item.candidate for item in result.final_outputs if item.candidate.artifact in selected)
+    candidates = frozenset(
+        item.candidate
+        for item in result.final_outputs
+        if item.port in admitted._subject_outputs(item.outcome) and item.candidate.artifact in selected
+    )
     if len({item.target for item in candidates}) != len(candidates):
         reject(EffectCode.CONTRADICTORY)
     prepared = admitted.execution.context.prepared

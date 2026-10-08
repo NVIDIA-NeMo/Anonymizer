@@ -367,6 +367,109 @@ def test_recovery_does_not_erase_accounting_or_cleanup_defects(defect: str) -> N
     assert transport.calls == 2 and transport.closes == 1
     assert result.assessments[0].finding.status == "satisfied"
     assert not output.qualified
+    assert output.record.statuses[0].qualification == ("unknown" if defect == "unknown-usage" else "unmet")
     assert output.targets[0].withholding == frozenset(
         {"request_accounting" if defect == "unknown-usage" else "cleanup_accounting"}
     )
+
+
+@pytest.mark.parametrize("input_subject", [False, True])
+def test_auxiliary_final_output_does_not_replace_the_assessed_candidate(input_subject: bool) -> None:
+    execution, result = asyncio.run(_execute_assessment(auxiliary_output=True, candidate_input=input_subject))
+    assert len(result.final_outputs) == 2
+    admitted, current, submissions = _inputs(execution, result)
+    output = qualify(admitted=admitted, result=result, current=current, submissions=submissions)
+    assert len(output.qualified) == 1
+    subject = next(item.candidate for item in result.final_outputs if item.port != "metadata")
+    assert output.qualified[0].candidate == subject
+    assert current.candidates == frozenset({subject})
+    assert output.record.statuses[0].qualification == "met"
+
+
+def test_transport_only_cleanup_can_have_no_affected_targets() -> None:
+    transport = _RecoveringTransport(fail_close=True)
+    lease = ResourceLease.create(owner="sdk", safe_detachment="forbidden", handle=transport)
+    execution, result = asyncio.run(_execute_assessment(external=(transport, lease)))
+    admitted, current, submissions = _inputs(execution, result)
+    association = result.cleanup_associations[0]
+    original = association.targets, association.purpose
+    # Exercise the D08 transport-only extension point; current P5 emits accounting here.
+    object.__setattr__(association, "targets", frozenset())
+    object.__setattr__(association, "purpose", "transport_only")
+    try:
+        output = qualify(admitted=admitted, result=result, current=current, submissions=submissions)
+        assert len(output.qualified) == 1
+        assert output.record.statuses[0].qualification == "met"
+    finally:
+        object.__setattr__(association, "targets", original[0])
+        object.__setattr__(association, "purpose", original[1])
+
+
+@pytest.mark.parametrize("mutation", ["missing", "extra", "aliased-occurrence"])
+def test_output_provenance_requires_exact_executed_input_occurrences(mutation: str) -> None:
+    execution, result = asyncio.run(_execute_assessment(decision_input=True))
+    admitted, current, submissions = _inputs(execution, result)
+    output = next(item for item in result.provenance if item.key == result.final_outputs[0].producer)
+    decision = next(item for item in result.provenance if item.decision)
+    root = next(item for item in result.provenance if not item.parents)
+    assert root.artifact == decision.artifact and root.key != decision.key
+    original = output.parents
+    changed = (
+        frozenset()
+        if mutation == "missing"
+        else original | {root.key}
+        if mutation == "extra"
+        else frozenset({root.key})
+    )
+    object.__setattr__(output, "parents", changed)
+    try:
+        with pytest.raises(EffectRejected) as error:
+            qualify(admitted=admitted, result=result, current=current, submissions=submissions)
+        assert error.value.code is EffectCode.CONTRADICTORY
+    finally:
+        object.__setattr__(output, "parents", original)
+
+
+def test_fully_settled_exhausted_failure_is_unmet_not_unknown() -> None:
+    transport = _RecoveringTransport(failure="permanent")
+    lease = ResourceLease.create(owner="sdk", safe_detachment="forbidden", handle=transport)
+    execution, result = asyncio.run(_execute_assessment(external=(transport, lease)))
+    admitted, current, submissions = _inputs(execution, result)
+    output = qualify(admitted=admitted, result=result, current=current, submissions=submissions)
+    assert transport.calls == 1 and transport.closes == 1
+    assert not output.qualified
+    assert output.record.statuses[0].qualification == "unmet"
+    assert "request_accounting" in output.targets[0].withholding
+
+
+@pytest.mark.parametrize(("count", "mode", "status"), [(2, "valid", "overflow"), (1, "missing", "failed")])
+def test_failed_expansion_reconciles_actual_members(count: int, mode: str, status: str) -> None:
+    from anonymizer.graph._values import ActivationKey
+    from tests.graph_sdk.test_effects_map_production_conformance import _execute_membership
+
+    _, result, _ = asyncio.run(_execute_membership(count, response_mode=mode, max_children=1, outward_scalar="join"))
+    execution = result._execution
+    admitted = admit_qualification(execution=execution, productions=(), limits=_qualification_limits())
+    current = evidence_revision_view(
+        admitted=admitted,
+        result=result,
+        artifacts=(),
+        absences=(),
+        configurations=(),
+        state=execution.context.prepared.state,
+    )
+    expansion = next(iter(result.states[0].expansions))
+    assert expansion.status == status and not expansion.members
+    output = qualify(admitted=admitted, result=result, current=current, submissions=())
+    assert output.record.statuses[0].completion == "closed"
+    original = expansion.members
+    missing = ActivationKey(
+        invocation=result.record.invocation, occurrence=100, parent=expansion.parent, iteration=None
+    )
+    object.__setattr__(expansion, "members", frozenset({missing}))
+    try:
+        output = qualify(admitted=admitted, result=result, current=current, submissions=())
+        assert output.record.statuses[0].completion == "pending"
+        assert "incomplete_membership" in output.targets[0].withholding
+    finally:
+        object.__setattr__(expansion, "members", original)

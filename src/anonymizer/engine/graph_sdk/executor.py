@@ -130,6 +130,7 @@ from anonymizer.graph.workflow import (
     OperationNode,
     OperationSpec,
     OutcomeClass,
+    OutcomeSpec,
     OutputDependency,
     SubgraphNode,
     WorkflowId,
@@ -552,6 +553,21 @@ class AdmittedExecutionPlan(PrivateValue):
         for name, value in values.items():
             object.__setattr__(self, name, value)
 
+    def _output_role(self, node: NodeId, outcome: OutcomeSpec, port: str) -> ArtifactRole:
+        """Apply admitted occurrence-role precedence to an operation output."""
+        if any(item.node == node for item in self.decisions):
+            return "decision"
+        productions = [
+            item for item in self.assessment_productions if item.node == node and item.outcome == outcome.name
+        ]
+        promises = {item.name: item for item in outcome.evidence}
+        if any(promises[item.promise].subject_port == port for item in productions) or any(
+            isinstance(item.source, NodeOutputRef) and item.source.node == node and item.source.port == port
+            for item in self.context.prepared.workflow.workflow.output_bindings
+        ):
+            return "candidate"
+        return "evidence" if any(item.evidence_port == port for item in productions) else "artifact"
+
 
 @runtime_checkable
 class RequestTransport(Protocol):
@@ -690,6 +706,7 @@ _RESULT_KEY = object()
 @dataclass(frozen=True, slots=True, kw_only=True, repr=False, init=False)
 class ExecutionResult(PrivateValue):
     _execution: AdmittedExecutionPlan
+    _input_parents: tuple[tuple[DatumId, ActivationKey, str, ProvenanceKey], ...]
     record: CanonicalRecord
     states: tuple[ActivationState, ...]
     requests: RequestReceipt
@@ -1108,6 +1125,7 @@ class _ExecutionFacts:
     provenance: list[ArtifactProvenanceFact] = field(default_factory=list)
     ports: list[ExecutionPortFact] = field(default_factory=list)
     assessments: list[ExecutionAssessmentFact] = field(default_factory=list)
+    input_parents: list[tuple[DatumId, ActivationKey, str, ProvenanceKey]] = field(default_factory=list)
     next_artifact: int = 0
 
     def checkpoint(self) -> _FactCheckpoint:
@@ -1641,6 +1659,9 @@ class _InvocationRuntime:
         self._launch_job(job, external_jobs, remote_capacity_stalled)
 
     def _record_input_ports(self, job: _ExecutionJob) -> None:
+        self.facts.input_parents.extend(
+            (job.target, job.activation, port, parent) for port, parent in job.input_parents.items()
+        )
         for input_artifact in job.inputs[0].inputs:
             if input_artifact.artifact is None:
                 reject(EffectCode.CONTRADICTORY)
@@ -1950,6 +1971,7 @@ class _InvocationRuntime:
         return ExecutionResult(
             _key=_RESULT_KEY,
             _execution=self.admitted,
+            _input_parents=tuple(self.facts.input_parents),
             record=record,
             states=tuple(self.states),
             requests=request_receipt(self.request_authority.state),
@@ -3303,12 +3325,6 @@ def _accept_outputs(
         return "limit", ()
     created: list[ArtifactRef] = []
     decision_output = any(item.node == node for item in admitted.decisions)
-    productions = [
-        item for item in admitted.assessment_productions if item.node == node and item.outcome == mapping.outcome
-    ]
-    promises = {item.name: item for item in outcome.evidence}
-    subject_ports = {promises[item.promise].subject_port for item in productions}
-    evidence_ports = {item.evidence_port for item in productions}
     for output in outputs:
         identity_input = dependencies[output.port].identity_input
         if identity_input is None:
@@ -3338,22 +3354,7 @@ def _accept_outputs(
                 port=output.port,
                 artifact=reference,
                 artifact_type=output.artifact_type,
-                role=(
-                    "decision"
-                    if decision_output
-                    else "candidate"
-                    if output.port in subject_ports
-                    else "candidate"
-                    if any(
-                        isinstance(item.source, NodeOutputRef)
-                        and item.source.node == node
-                        and item.source.port == output.port
-                        for item in admitted.context.prepared.workflow.workflow.output_bindings
-                    )
-                    else "evidence"
-                    if output.port in evidence_ports
-                    else "artifact"
-                ),
+                role=admitted._output_role(node, outcome, output.port),
             )
         )
     return "valid", tuple(created)

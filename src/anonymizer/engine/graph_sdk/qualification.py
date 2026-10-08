@@ -28,6 +28,7 @@ from anonymizer.engine.graph_sdk.executor import (
     OperationOutputKey,
     ProvenanceKey,
     RootInputKey,
+    _source_activation,
 )
 from anonymizer.engine.graph_sdk.records import CandidateRef, CanonicalRecord, DecisionRef, EvidenceRef, TargetStatus
 from anonymizer.engine.graph_sdk.requests import (
@@ -195,10 +196,12 @@ class _Qualification:
         self.owners: dict[ActivationKey, DatumId] = {}
         self.withholding: dict[DatumId, set[WithholdingCode]] = {target: set() for target in self.order}
         self.closed = {target: True for target in self.order}
+        self.uncertain: set[DatumId] = set()
         self.candidates: dict[DatumId, CandidateRef] = {}
         self.supporting: dict[DatumId, set[VerifiedEvidence]] = {target: set() for target in self.order}
         self.outputs: dict[DatumId, tuple[FinalOutputFact, ...]] = {}
         self.provenance: dict[ProvenanceKey, ArtifactProvenanceFact] = {}
+        self.input_parents: dict[tuple[DatumId, ActivationKey, str], ProvenanceKey] = {}
 
     def incomplete(self, target: DatumId) -> None:
         self.closed[target] = False
@@ -252,7 +255,7 @@ class _Qualification:
                     reject(EffectCode.MISSING)
                 expected.setdefault(expansion.parent, set())
                 closed[expansion.parent] = expansion.status != "pending"
-                if expansion.status == "closed" and expansion.members != frozenset(expected[expansion.parent]):
+                if expansion.members != frozenset(expected[expansion.parent]):
                     self.incomplete(self.owners[expansion.parent])
                 if not expansion.members and expansion.status == "closed":
                     parent = self.entries[expansion.parent]
@@ -339,6 +342,7 @@ class _Qualification:
             if fact.artifact not in self.result.record.artifacts:
                 reject(EffectCode.MISSING)
             self.provenance[fact.key] = fact
+        self._validate_input_parents()
         for fact in self.result.provenance:
             if not fact.parents <= self.provenance.keys():
                 reject(EffectCode.MISSING)
@@ -391,6 +395,32 @@ class _Qualification:
             }:
                 reject(EffectCode.CONTRADICTORY)
 
+    def _validate_input_parents(self) -> None:
+        for target, activation, port, parent in self.result._input_parents:
+            if activation not in self.entries or target != self.owners[activation] or parent.target != target:
+                reject(EffectCode.FOREIGN_OWNER)
+            key = (target, activation, port)
+            if key in self.input_parents:
+                reject(EffectCode.DUPLICATE)
+            self.input_parents[key] = parent
+        expected = {
+            (fact.target, fact.activation, fact.port)
+            for fact in self.result.ports
+            if fact.activation in self.entries
+            and not isinstance(self.nodes[self.entries[fact.activation].template], SubgraphNode)
+            and fact.port in {item.name for item in self.nodes[self.entries[fact.activation].template].operation.inputs}
+        }
+        if expected - self.input_parents.keys():
+            reject(EffectCode.MISSING)
+        if self.input_parents.keys() - expected:
+            reject(EffectCode.CONTRADICTORY)
+        for (_, activation, port), parent in self.input_parents.items():
+            source = self.provenance.get(parent)
+            if source is None:
+                reject(EffectCode.MISSING)
+            if source.artifact != self.facts.ports[activation, port].artifact:
+                reject(EffectCode.CONTRADICTORY)
+
     def _provenance_acyclic(self) -> None:
         remaining = {key: len(fact.parents) for key, fact in self.provenance.items()}
         children: dict[ProvenanceKey, list[ProvenanceKey]] = {key: [] for key in remaining}
@@ -436,17 +466,29 @@ class _Qualification:
                 parent = self.provenance[next(iter(fact.parents))]
                 if not isinstance(parent.key, OperationOutputKey):
                     reject(EffectCode.CONTRADICTORY)
+                state = self.result.states[self.order.index(key.target)]
+                expected_activation = _source_activation(state, key.activation, source.node)
                 source_entry = self.entries.get(parent.key.activation)
                 if (
                     source_entry is None
+                    or parent.key.activation != expected_activation
+                    or parent.key.target != key.target
                     or source_entry.template != source.node
                     or parent.key.port != source.port
                     or parent.artifact != fact.artifact
                     or fact.decision != parent.decision
                 ):
                     reject(EffectCode.CONTRADICTORY)
-            elif fact.decision != any(item.node == entry.template for item in self.admitted.execution.decisions):
-                reject(EffectCode.CONTRADICTORY)
+            else:
+                dependency = next(item for item in node.operation.output_dependencies if item.output == key.port)
+                input_keys = [(key.target, key.activation, name) for name in dependency.inputs]
+                if any(item not in self.input_parents for item in input_keys):
+                    reject(EffectCode.MISSING)
+                expected = frozenset(self.input_parents[item] for item in input_keys)
+                if fact.parents != expected or fact.decision != any(
+                    item.node == entry.template for item in self.admitted.execution.decisions
+                ):
+                    reject(EffectCode.CONTRADICTORY)
         elif isinstance(key, RootInputKey):
             if (
                 fact.parents
@@ -588,7 +630,8 @@ class _Qualification:
             affected = {item for item in targets if item is not None}
             terminals = [item for item in receipt.terminals if item.request == dispatch.request]
             settlements = [item for item in receipt.settlements if item.request == dispatch.request]
-            bad = len(terminals) != 1 or len(settlements) != 1
+            uncertain = len(terminals) != 1 or len(settlements) != 1
+            bad = uncertain
             bad |= dispatch.policy not in receipt.policies
             bad |= any(
                 not any(
@@ -597,13 +640,16 @@ class _Qualification:
                 )
                 for association in dispatch.associations
             )
-            bad |= any(item.request == dispatch.request for item in receipt.defects)
-            bad |= dispatch.request in receipt.local_in_flight or dispatch.request in receipt.remote_outstanding
+            uncertain |= any(item.request == dispatch.request for item in receipt.defects)
+            uncertain |= dispatch.request in receipt.local_in_flight or dispatch.request in receipt.remote_outstanding
             if settlements:
-                bad |= not isinstance(settlements[0].usage, ExactUsage) or settlements[0].remote_stopped is not True
+                uncertain |= (
+                    not isinstance(settlements[0].usage, ExactUsage) or settlements[0].remote_stopped is not True
+                )
             if terminals:
                 terminal = terminals[0]
                 bad |= terminal.category in {"lost", "inconsistent", "cancelled"}
+                uncertain |= terminal.category in {"lost", "inconsistent"}
                 if terminal.category == "success":
                     associations = [item.association for item in terminal.results]
                     bad |= (
@@ -634,7 +680,9 @@ class _Qualification:
                     ):
                         bad = True
             previous.update((association, dispatch) for association in dispatch.associations)
-            if bad:
+            if uncertain:
+                self.uncertain.update(affected)
+            if bad or uncertain:
                 for target in affected:
                     self.withholding[target].add("request_accounting")
         if unlocalized:
@@ -693,6 +741,7 @@ class _Qualification:
             association = associations[resource]
             if (
                 not association.targets
+                and association.purpose != "transport_only"
                 or not association.targets <= self.prepared.data.targets
                 or association.purpose not in {"verification", "accounting", "transport_only"}
                 or fact.disposition == "left_open"
@@ -722,7 +771,11 @@ class _Qualification:
         return tuple(reversed(path))
 
     def select_candidate(self, target: DatumId) -> None:
-        outputs = tuple(item for item in self.result.final_outputs if item.target == target)
+        outputs = tuple(
+            item
+            for item in self.result.final_outputs
+            if item.target == target and item.port in self.admitted._subject_outputs(item.outcome)
+        )
         self.outputs[target] = outputs
         candidates = {item.candidate for item in outputs}
         outcomes = {item.outcome for item in outputs}
@@ -871,7 +924,7 @@ class _Qualification:
                 available = candidate is not None and candidate.artifact in self.result.record.artifacts
                 if not codes:
                     status = "met"
-                elif codes & {"assessment_unknown", "inconsistent_attribution"}:
+                elif target in self.uncertain or codes & {"assessment_unknown", "inconsistent_attribution"}:
                     status = "unknown"
                 else:
                     status = "unmet"
