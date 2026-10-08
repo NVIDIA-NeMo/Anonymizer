@@ -7,6 +7,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Literal, Never, SupportsIndex, TypeAlias
 
+from anonymizer.engine.graph_sdk._workflow import reachable_workflows
 from anonymizer.engine.graph_sdk.capabilities import (
     ImplementationCapability,
     ImplementationSelection,
@@ -284,7 +285,8 @@ def prepare(
     if any(not isinstance(capability, ImplementationCapability) for capability in capabilities):
         _reject(PreparationCode.INVALID_TYPE)
 
-    reachable, operation_nodes = _reachable_operations(workflow)
+    reachable = reachable_workflows(workflow)
+    operation_nodes = {node.id: node for body in reachable for node in body.nodes if isinstance(node, OperationNode)}
     recipe, map_expanders = _reservation_recipe(workflow)
     target_occurrences = tuple(
         TargetOccurrenceMap(
@@ -439,27 +441,6 @@ def _validate_outer_types(
         or not isinstance(limits, PreparationLimits)
     ):
         _reject(PreparationCode.INVALID_TYPE)
-
-
-def _reachable_operations(
-    workflow: AdmittedActivationWorkflow,
-) -> tuple[tuple[AdmittedWorkflow, ...], dict[NodeId, OperationNode]]:
-    reachable: list[AdmittedWorkflow] = []
-    operations: dict[NodeId, OperationNode] = {}
-    pending = [workflow.workflow]
-    seen: set[int] = set()
-    while pending:
-        current = pending.pop()
-        if id(current) in seen:
-            continue
-        seen.add(id(current))
-        reachable.append(current)
-        for node in current.nodes:
-            if isinstance(node, OperationNode):
-                operations[node.id] = node
-            else:
-                pending.append(node.body)
-    return tuple(reachable), operations
 
 
 def _reservation_recipe(

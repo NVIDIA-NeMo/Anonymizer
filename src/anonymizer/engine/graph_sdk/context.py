@@ -16,6 +16,7 @@ from anonymizer.engine.graph_sdk._effect_values import (
     require_literal,
     require_text,
 )
+from anonymizer.engine.graph_sdk._workflow import reachable_workflows
 from anonymizer.engine.graph_sdk.data import ValidatedDataGraph
 from anonymizer.engine.graph_sdk.preparation import PreparedPlan
 from anonymizer.engine.graph_sdk.requests import (
@@ -40,8 +41,6 @@ from anonymizer.graph.workflow import (
     Node,
     NodeId,
     NodeInputRef,
-    OperationNode,
-    SubgraphNode,
 )
 
 ContextRequirement: TypeAlias = Literal["required", "optional"]
@@ -461,7 +460,7 @@ def admit_context_plan(
         reject(EffectCode.INVALID_TYPE)
     if len(context_capabilities) != len(set(context_capabilities)):
         reject(EffectCode.DUPLICATE)
-    nodes = _reachable_operations(prepared.workflow)
+    nodes = {node.id: node for body in reachable_workflows(prepared.workflow) for node in body.nodes}
     context_destinations = {
         (binding.destination.node, binding.destination.port)
         for binding in prepared.workflow.workflow.input_bindings
@@ -667,21 +666,3 @@ def _create_binding_result(
         else None
     )
     return BindingResult(_key=_RESULT_KEY, receipt=receipt, context=context)
-
-
-def _reachable_operations(workflow: AdmittedActivationWorkflow) -> dict[NodeId, Node]:
-    operations: dict[NodeId, Node] = {}
-    pending = [workflow.workflow]
-    seen: set[int] = set()
-    while pending:
-        current = pending.pop()
-        if id(current) in seen:
-            continue
-        seen.add(id(current))
-        for node in current.nodes:
-            operations[node.id] = node
-            if isinstance(node, OperationNode):
-                continue
-            elif isinstance(node, SubgraphNode):
-                pending.append(node.body)
-    return operations

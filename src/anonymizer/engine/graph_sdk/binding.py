@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 from anonymizer.engine.graph_sdk._effect_values import EffectCode, EffectRejected, reject, require_instance
+from anonymizer.engine.graph_sdk._workflow import reachable_workflows
 from anonymizer.engine.graph_sdk.context import (
     BindingArtifactRef,
     BindingLimits,
@@ -58,11 +59,7 @@ from anonymizer.engine.graph_sdk.resources import CleanupFact, ResourceLease, cl
 from anonymizer.graph.workflow import (
     AdmittedActivationWorkflow,
     ContextInputRef,
-    Node,
-    NodeId,
     NodeInputRef,
-    OperationNode,
-    SubgraphNode,
     WorkflowInputRef,
 )
 
@@ -483,7 +480,7 @@ def _validate_binding(
         if existing is not None and existing != candidate:
             reject(EffectCode.CONTRADICTORY)
         schemas[declaration.artifact_type] = candidate
-    nodes = _reachable_operations(workflow)
+    nodes = {node.id: node for body in reachable_workflows(workflow) for node in body.nodes}
     workflow_owners = {item.workflow for item in nodes}
     for declaration in declarations:
         if declaration.target not in data.targets:
@@ -586,21 +583,3 @@ def _binding_terminal(facts: list[SourceBindingFact]) -> BindingTerminal:
     if any(item.terminal != "bound" for item in facts):
         return "partial"
     return "success"
-
-
-def _reachable_operations(workflow: AdmittedActivationWorkflow) -> dict[NodeId, Node]:
-    operations: dict[NodeId, Node] = {}
-    pending = [workflow.workflow]
-    seen: set[int] = set()
-    while pending:
-        current = pending.pop()
-        if id(current) in seen:
-            continue
-        seen.add(id(current))
-        for node in current.nodes:
-            operations[node.id] = node
-            if isinstance(node, OperationNode):
-                continue
-            elif isinstance(node, SubgraphNode):
-                pending.append(node.body)
-    return operations
