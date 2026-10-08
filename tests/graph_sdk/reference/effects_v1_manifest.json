@@ -3,9 +3,9 @@
   "case_count": 296,
   "contract_sha256": "9b0ab07b8c0212ffd954dc37eb37540141da6899753fc778ad26238494aeaeca",
   "corpus_path": "tests/graph_sdk/reference/effects_v1_cases.json",
-  "corpus_sha256": "780b648b7dc3fb0f4200edccdbb0b772c64485ee43f2cfa595f56d1d3691ff0d",
-  "corrected_predecessor_prefix_sha256": "029a12d97f7ff2e02d35c8cd894ab39817d661217a027e6b205daabf693a385d",
-  "event_count": 1009,
+  "corpus_sha256": "90c35f44f83e04a5072e88c18d4abaa165111c761974d3d0860347ab7628e994",
+  "corrected_predecessor_prefix_sha256": "5b896a6308f7f71d0414815b7fbf3aa5469f64969219992d9d97eeb91a916b71",
+  "event_count": 1022,
   "family_counts": {
     "admission": 23,
     "binding": 39,
@@ -20,7 +20,7 @@
     "resources": 8,
     "retry": 24
   },
-  "generator_version": "effects-v1-generator-8-binding-map",
+  "generator_version": "effects-v1-generator-10-binding-map",
   "historical_base_case_count": 156,
   "historical_base_corpus_sha256": "c62f2cc7e7237ea030451ac8d35a3c30b39f71766b4275348597949d560a7a6a",
   "map_execution_addendum_sha256": "9563fd44c040d546352853de03e57bcc94a6e34b7772ca2d9239f84074bef41d",
@@ -29,6 +29,6 @@
   "predecessor_case_count": 214,
   "predecessor_corpus_sha256": "b509a2e1dc697ae5e16c8f2f9652aac74d862e4b449f64958fbba99abda87e93",
   "request_boundary_addendum_sha256": "6344f7f1bdbb14a4c9e08f546928d31c89f26d3ed26e0c50362d9537d891c3a5",
-  "self_test_version": "effects-v1-self-test-8-binding-map",
+  "self_test_version": "effects-v1-self-test-10-binding-map",
   "trace_count": 301
 }

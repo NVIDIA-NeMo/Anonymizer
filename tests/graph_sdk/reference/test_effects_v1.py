@@ -263,16 +263,18 @@ def test_binding_identity_resource_and_partial_receipt_witnesses() -> None:
 
 def test_binding_results_require_the_dispatched_declaration_association() -> None:
     unsolicited = cast(reference.Object, reference.case_by_id("binding/unsolicited_source_result")["expected"])
-    assert unsolicited == {"code": "unsolicited_source", "status": "rejected"}
+    assert unsolicited == {"code": "missing", "status": "rejected"}
     wrong = cast(reference.Object, reference.case_by_id("binding/wrong_source")["expected"])
-    assert wrong == {"code": "foreign_source", "status": "rejected"}
-    for suffix, defect in (
-        ("missing_result", "missing_keyed_result"),
-        ("duplicate_result", "duplicate_keyed_result"),
-        ("foreign_result_association", "foreign_keyed_result"),
-    ):
+    wrong_state = cast(reference.Object, wrong["state"])
+    assert wrong_state["binding_terminal"] == "failed"
+    assert wrong_state["request_failures"] == {"R0": "malformed_response"}
+    for suffix in ("missing_result", "duplicate_result", "foreign_result_association"):
         result = cast(reference.Object, reference.case_by_id(f"binding/{suffix}")["expected"])
-        assert defect in cast(list[str], cast(reference.Object, result["state"])["defects"])
+        state = cast(reference.Object, result["state"])
+        assert state["request_failures"] == {"R0": "malformed_response"}
+        assert state["defects"] == []
+        assert state["binding_sources"] == {"D0": "failed"}
+        assert state["binding_terminal"] == "failed"
     oversize = cast(reference.Object, reference.case_by_id("binding/oversize_no_truncation")["expected"])
     oversize_state = cast(reference.Object, oversize["state"])
     assert oversize_state["terminals"] == {"R0": "success"}
@@ -329,7 +331,7 @@ def test_bridge_and_decision_wait_identity_are_exact() -> None:
     decision_state = cast(reference.Object, decision["state"])
     assert decision_state["tasks"] == {"T0": "success", "T1": "success"}
     stale = cast(reference.Object, reference.case_by_id("decisions/stale_artifact")["expected"])
-    assert cast(reference.Object, stale["state"])["decision_defects"] == ["stale_artifact"]
+    assert stale == {"status": "rejected", "code": "foreign_owner"}
 
 
 def test_generator_has_no_production_imports_or_expected_count_spoofing() -> None:
@@ -360,16 +362,12 @@ def test_materialization_is_atomic_and_canonical() -> None:
     materialization = cast(reference.Object, state["materialization"])
     port = next(iter(cast(reference.Object, materialization["ports"]).values()))
     assert [item["key"] for item in cast(list[reference.Object], cast(reference.Object, port)["value"])] == [0, 1]
-    for suffix, code in (
-        ("initial_collection_one_over", "collection_limit_exceeded"),
-        ("initial_duplicate", "duplicate_item"),
-        ("initial_nested_value", "nested_collection"),
-        ("initial_logical_bytes_one_over", "artifact_bytes_exceeded"),
-    ):
-        assert reference.case_by_id(f"materialization/{suffix}")["expected"] == {
-            "code": code,
-            "status": "rejected",
-        }
+    nested = reference.case_by_id("materialization/initial_nested_value")
+    assert nested["expected"] == {"code": "invalid_type", "status": "rejected"}
+    for suffix in ("initial_collection_one_over", "initial_duplicate"):
+        result = cast(reference.Object, reference.case_by_id(f"materialization/{suffix}")["expected"])
+        assert result["status"] == "accepted"
+        assert cast(reference.Object, result["state"])["artifacts"] == []
 
 
 def test_initial_and_adaptive_provenance_are_distinct() -> None:
@@ -399,10 +397,9 @@ def test_initial_and_adaptive_provenance_are_distinct() -> None:
 def test_materialization_admission_mutants_are_real_declarations() -> None:
     expected = {
         "adaptive_binding_identity": "contradictory",
-        "collection_ceiling": "contradictory",
-        "collection_root_input": "collection_root_input",
+        "collection_root_input": "contradictory",
         "conflicting_schema": "contradictory",
-        "nested_collection_schema": "nested_collection",
+        "nested_collection_schema": "contradictory",
         "single_max_items": "contradictory",
     }
     for suffix, code in expected.items():
@@ -424,16 +421,19 @@ def test_same_port_name_keeps_scoped_initial_collection_keys() -> None:
     ]
 
 
-def test_declared_materialization_cannot_use_legacy_result_paths() -> None:
-    for suffix, code in (
-        ("initial_unmaterialized_source_result", "materialization_required"),
-        ("adaptive_unmaterialized_result", "materialization_required"),
-        ("binding_finish_before_materialization", "missing_materialization"),
+def test_declared_materialization_is_owned_by_public_controller() -> None:
+    for suffix in (
+        "initial_unmaterialized_source_result",
+        "adaptive_unmaterialized_result",
+        "binding_finish_before_materialization",
     ):
-        assert reference.case_by_id(f"materialization/{suffix}")["expected"] == {
-            "code": code,
-            "status": "rejected",
-        }
+        case = reference.case_by_id(f"materialization/{suffix}")
+        result = cast(reference.Object, case["expected"])
+        assert result["status"] == "accepted"
+        state = cast(reference.Object, result["state"])
+        assert cast(reference.Object, state["materialization"])["ports"]
+        if suffix != "adaptive_unmaterialized_result":
+            assert state["binding_terminal"] == "success"
 
 
 def test_materialization_item_roots_keep_exact_scope_and_scalar_types() -> None:
@@ -460,11 +460,12 @@ def test_late_materialization_cannot_replace_first_terminal_or_create_output() -
                 "artifacts",
                 "binding_sources",
                 "binding_terminal",
-                "remote_outstanding",
                 "request_facts",
                 "terminals",
             ):
                 assert after[field] == before[field], (path, terminal, field)
+            assert after["remote_outstanding"] == []
+            assert cast(reference.Object, after["settlements"])["R0"] == events[-1]["settlement"]
             assert after.get("materialization") == before.get("materialization")
             assert cast(reference.Object, after["terminals"])["R0"] == terminal
 
@@ -479,10 +480,12 @@ def test_scalar_does_not_consume_collection_capacity() -> None:
 
 def test_adaptive_provenance_requires_declared_existing_producer() -> None:
     for suffix in ("missing_parent", "foreign_parent", "invented_parent", "missing_source_fact"):
-        assert reference.case_by_id(f"materialization/adaptive_{suffix}")["expected"] == {
-            "status": "rejected",
-            "code": "invalid_provenance",
-        }
+        result = cast(reference.Object, reference.case_by_id(f"materialization/adaptive_{suffix}")["expected"])
+        assert result["status"] == "accepted"
+        state = cast(reference.Object, result["state"])
+        provenance = cast(reference.Object, cast(reference.Object, state["materialization"])["provenance"])
+        assert provenance["OperationOutputKey:A0:T0:context"] == ["RootInputKey:T0:input"]
+        assert "RootInputKey:T0:input" in provenance
 
 
 def test_adaptive_result_drives_actual_task_outcome() -> None:
@@ -540,15 +543,20 @@ def test_optional_omission_requires_explicit_permanent_initial_disposition() -> 
     omitted = cast(reference.Object, reference.case_by_id("binding/omitted_optional")["expected"])
     assert cast(reference.Object, default["state"])["binding_terminal"] == "partial"
     assert cast(reference.Object, omitted["state"])["binding_terminal"] == "partial"
-    for suffix in ("required_omission_misuse", "adaptive_omission_misuse", "omission_failure_mismatch"):
+    for suffix in ("required_omission_misuse", "adaptive_omission_misuse"):
         state = cast(
-            reference.Object,
-            cast(reference.Object, reference.case_by_id(f"binding/{suffix}")["expected"])["state"],
+            reference.Object, cast(reference.Object, reference.case_by_id(f"binding/{suffix}")["expected"])["state"]
         )
-        assert state["binding_terminal"] == "inconsistent"
-        assert state["binding_sources"] == {}
-        request_facts = cast(reference.Object, state["request_facts"])
-        assert cast(reference.Object, request_facts["R0"])["condition"] == "failure"
+        assert state["request_failures"] == {"R0": "malformed_response"}
+        assert "binding_defects" not in state
+        assert state["defects"] == []
+        if suffix == "required_omission_misuse":
+            assert state["binding_sources"] == {"D0": "failed"}
+            assert state["binding_terminal"] == "failed"
+        else:
+            assert state["binding_sources"] == {}
+            assert state["binding_terminal"] is None
+            assert state["tasks"] == {"A0": "failure"}
 
 
 def test_binding_failure_authority_precedes_retry_or_correction() -> None:
@@ -700,10 +708,9 @@ def test_map_transition_rejection_is_derived_from_terminal_parent() -> None:
     state = cast(reference.Object, cast(reference.Object, case["expected"])["state"])
     assert state["parent_phase"] == "cancelled"
     assert state["terminal"] == "transition_rejected"
-    assert (
-        cast(reference.Object, reference.case_by_id("map/caller_transition_verdict_rejected")["expected"])["status"]
-        == "rejected"
-    )
+    alias = reference.case_by_id("map/caller_transition_verdict_rejected")
+    assert alias["events"] == case["events"]
+    assert alias["expected"] == case["expected"]
 
 
 def test_optional_oversize_preserves_physical_success_and_partial_binding() -> None:
@@ -813,3 +820,250 @@ def test_exact_binding_bounds_return_terminal_public_result() -> None:
     assert {key: value for key, value in before.items() if key != "binding_terminal"} == {
         key: value for key, value in after.items() if key != "binding_terminal"
     }
+
+
+def test_source_failure_constructor_rejections_leave_state_unchanged() -> None:
+    for suffix, expected in (
+        ("source_failure_missing_failure", {"status": "rejected", "exception": "TypeError"}),
+        ("source_failure_missing_settlement", {"status": "rejected", "exception": "TypeError"}),
+        ("omission_failure_mismatch", {"status": "rejected", "code": "contradictory"}),
+    ):
+        case = reference.case_by_id(f"binding/{suffix}")
+        declaration = cast(reference.Object, case["declaration"])
+        event = cast(list[reference.Object], case["events"])[-1]
+        assert event["kind"] == "source_failure_constructor"
+        assert case["expected"] == expected
+        state = reference._initial(declaration)
+        before = json.loads(json.dumps(state))
+        assert reference._advance(state, declaration, event) == expected
+        assert state == before
+        valid = dict(event, failure="permanent", settlement=None)
+        assert reference._advance(state, declaration, valid) is None
+        assert state == before
+
+
+def test_wrong_source_is_the_only_response_defect() -> None:
+    case = reference.case_by_id("binding/wrong_source")
+    declaration = cast(reference.Object, case["declaration"])
+    events = json.loads(json.dumps(case["events"]))
+    bad_state = cast(reference.Object, cast(reference.Object, case["expected"])["state"])
+    assert bad_state["artifacts"] == []
+    assert bad_state["terminals"] == {"R0": "failure"}
+    assert bad_state["request_failures"] == {"R0": "malformed_response"}
+    assert bad_state["dispatched_count"] == 1
+    assert bad_state["local_in_flight"] == bad_state["remote_outstanding"] == []
+    assert cast(reference.Object, bad_state["settlements"])["R0"] == events[-2]["settlement"]
+    events[-2]["source"] = "S0"
+    valid = cast(reference.Object, reference.reduce_trace(declaration, events)["state"])
+    assert valid["binding_terminal"] == "success"
+    assert valid["terminals"] == {"R0": "success"}
+    assert len(cast(list[reference.Json], valid["artifacts"])) == 1
+
+
+def test_unsolicited_result_has_a_valid_dispatched_counterpart() -> None:
+    case = reference.case_by_id("binding/unsolicited_source_result")
+    declaration = cast(reference.Object, case["declaration"])
+    events = cast(list[reference.Object], case["events"])
+    state = reference._initial(declaration)
+    before = json.loads(json.dumps(state))
+    assert reference._advance(state, declaration, events[0]) == {"status": "rejected", "code": "missing"}
+    assert state == before
+    accepted = reference.reduce_trace(declaration, [*reference._trace(("D0",)), *events])
+    assert accepted["status"] == "accepted"
+    assert cast(reference.Object, accepted["state"])["terminals"] == {"R0": "success"}
+
+
+def test_source_item_constructor_invalid_values_have_valid_counterparts() -> None:
+    for path in ("initial", "adaptive"):
+        for suffix in ("wrong_item", "nested_value"):
+            case = reference.case_by_id(f"materialization/{path}_{suffix}")
+            assert case["expected"] == {"status": "rejected", "code": "invalid_type"}
+            declaration = cast(reference.Object, case["declaration"])
+            event = json.loads(json.dumps(cast(list[reference.Object], case["events"])[-1]))
+            assert event["kind"] == "source_item_constructor"
+            state = reference._initial(declaration)
+            before = json.loads(json.dumps(state))
+            assert reference._advance(state, declaration, event) == case["expected"]
+            assert state == before
+            event["items"][0]["value"] = "valid text"
+            assert reference._advance(state, declaration, event) is None
+            assert state == before
+
+
+def test_collection_constructor_negatives_have_canonical_counterparts() -> None:
+    for suffix, code in (("duplicate_item", "duplicate"), ("noncanonical_items", "invalid_value")):
+        case = reference.case_by_id(f"map/{suffix}")
+        assert case["expected"] == {"status": "rejected", "code": code}
+        event = json.loads(json.dumps(cast(list[reference.Object], case["events"])[0]))
+        assert event["kind"] == "collection_constructor"
+        event["outputs"][0]["items"] = [{"key": 0, "version": 1, "value": "a"}, {"key": 1, "version": 1, "value": "b"}]
+        result = reference._reduce_map(cast(reference.Object, case["declaration"]), [event])
+        assert result == {"status": "accepted", "state": reference._empty_map_state()}
+
+
+def test_decision_submission_rejects_without_state_mutation() -> None:
+    for suffix, code in (
+        ("stale_artifact", "foreign_owner"),
+        ("foreign_workflow", "foreign_owner"),
+        ("foreign_wait", "foreign_owner"),
+        ("unknown_decision", "unsupported"),
+        ("duplicate_response", "duplicate"),
+    ):
+        case = reference.case_by_id(f"decisions/{suffix}")
+        declaration = cast(reference.Object, case["declaration"])
+        events = cast(list[reference.Object], case["events"])
+        state = cast(reference.Object, reference.reduce_trace(declaration, events[:-1])["state"])
+        before = json.loads(json.dumps(state))
+        assert case["expected"] == {"status": "rejected", "code": code}
+        assert reference._advance(state, declaration, events[-1]) == case["expected"]
+        assert state == before
+        assert "decision_defects" not in state
+        if suffix == "duplicate_response":
+            assert state["tasks"] == {"T0": "success"}
+        else:
+            valid = dict(events[-1], wait="W0", invocation="I0", workflow="F0", artifact="V0", decision="approve")
+            assert reference._advance(state, declaration, valid) is None
+            assert state["tasks"] == {"T0": "success"}
+
+
+def test_context_schema_contradictions_have_scalar_counterparts() -> None:
+    nested = json.loads(json.dumps(reference.case_by_id("materialization/nested_collection_schema")["declaration"]))
+    nested["materializations"][1]["item_type"] = "text"
+    nested["materializations"][1]["output_type"] = "text_collection"
+    assert reference.admit(nested) == {"status": "accepted"}
+    root = json.loads(json.dumps(reference.case_by_id("materialization/collection_root_input")["declaration"]))
+    root["root_input_types"] = ["text"]
+    assert reference.admit(root) == {"status": "accepted"}
+
+
+def test_materialization_malformed_responses_retain_physical_failure_and_settlement() -> None:
+    for path in ("initial", "adaptive"):
+        for suffix in ("collection_0", "duplicate"):
+            case = reference.case_by_id(f"materialization/{path}_{suffix}")
+            result = cast(reference.Object, case["expected"])
+            assert result["status"] == "accepted"
+            state = cast(reference.Object, result["state"])
+            association = "D0" if path == "initial" else "A0"
+            assert state["dispatched_count"] == 1
+            assert state["terminals"] == {"R0": "failure"}
+            assert state["request_failures"] == {"R0": "malformed_response"}
+            assert state["association_terminals"] == {
+                association: {"failure": "malformed_response", "policy": "P0", "request": "R0"}
+            }
+            assert (
+                cast(reference.Object, state["settlements"])["R0"]
+                == cast(list[reference.Object], case["events"])[-1]["settlement"]
+            )
+            assert state["local_in_flight"] == state["remote_outstanding"] == []
+            if path == "initial":
+                assert state["binding_sources"] == {"D0": "failed"}
+                assert state["binding_terminal"] == "failed"
+                assert state["artifacts"] == []
+            else:
+                assert state["tasks"] == {"A0": "failure"}
+                assert len(cast(list[reference.Json], state["artifacts"])) == 1  # retained selector only
+
+
+def test_materialization_oversize_keeps_success_without_output() -> None:
+    for path in ("initial", "adaptive"):
+        for suffix in ("single_multiple", "collection_one_over", "outer_count_precedence"):
+            case = reference.case_by_id(f"materialization/{path}_{suffix}")
+            result = cast(reference.Object, case["expected"])
+            assert result["status"] == "accepted"
+            state = cast(reference.Object, result["state"])
+            association = "D0" if path == "initial" else "A0"
+            outcome = "retrieved" if path == "initial" else "ok"
+            assert state["request_facts"] == {"R0": {"condition": "result", "outcomes": {association: outcome}}}
+            assert state["terminals"] == {"R0": "success"}
+            assert state["association_terminals"] == {
+                association: {"outcome": outcome, "policy": "P0", "request": "R0"}
+            }
+            assert (
+                cast(reference.Object, state["settlements"])["R0"]
+                == cast(list[reference.Object], case["events"])[-1]["settlement"]
+            )
+            if path == "initial":
+                assert state["binding_sources"] == {"D0": "oversize"}
+                assert state["binding_terminal"] == "failed"
+                assert state["artifacts"] == []
+            else:
+                assert state["tasks"] == {"A0": "blocked"}
+                assert len(cast(list[reference.Json], state["artifacts"])) == 1
+
+
+def test_execution_preflight_retains_successful_binding_and_rejects_before_execution() -> None:
+    for suffix in (
+        "collection_ceiling",
+        "initial_artifact_count_one_over",
+        "initial_logical_bytes_one_over",
+        "initial_provenance_one_over",
+    ):
+        case = reference.case_by_id(f"materialization/{suffix}")
+        assert case["boundary"] == "execution_preflight"
+        result = cast(reference.Object, case["expected"])
+        assert result["status"] == "rejected" and result["code"] == "limit_exceeded"
+        binding = cast(reference.Object, result["binding"])
+        assert binding["binding_terminal"] == "success"
+        assert binding["terminals"] == {"R0": "success"}
+        assert binding["settlements"]
+        assert "materialization" not in binding
+        declaration = json.loads(json.dumps(case["declaration"]))
+        declaration["materialization_limits"].update(
+            max_artifacts=100, max_artifact_bytes=1000, max_provenance_edges=100, max_collection_items=100
+        )
+        valid = reference._materialization_preflight(declaration, cast(list[reference.Object], case["events"]))
+        assert valid == {"status": "accepted", "binding": binding}
+
+
+def test_final_malformed_receipts_exhaust_both_declared_request_limits() -> None:
+    checked = 0
+    for case in reference.generate_cases():
+        result = cast(reference.Object, case["expected"])
+        if result.get("status") != "accepted" or "state" not in result:
+            continue
+        state = cast(reference.Object, result["state"])
+        failures = cast(reference.Object, state.get("request_failures", {}))
+        if "malformed_response" not in failures.values():
+            continue
+        final = state.get("binding_terminal") is not None or state.get("tasks") == {"A0": "failure"}
+        if not final:
+            continue
+        checked += 1
+        declaration = cast(reference.Object, case["declaration"])
+        policies = cast(reference.Object, declaration["policies"])
+        assert cast(reference.Object, policies["P0"])["max_attempts"] == 1, case["case_id"]
+        bounds = cast(reference.Object, declaration.get("retrieval_bounds", declaration["binding_limits"]))
+        assert bounds["max_requests"] == 1, case["case_id"]
+    assert checked == 12
+
+
+def test_retry_and_correction_authority_are_intermediate_binding_states() -> None:
+    for suffix in ("source_failure_retry_authority", "source_failure_correction_authority"):
+        case = reference.case_by_id(f"binding/{suffix}")
+        state = cast(reference.Object, cast(reference.Object, case["expected"])["state"])
+        assert state["reservations"] == {"R1": ["D0"]}
+        assert state["terminals"] == {"R0": "failure"}
+        assert state["binding_terminal"] is None
+        assert state["binding_sources"] == {}
+        declaration = cast(reference.Object, case["declaration"])
+        assert cast(reference.Object, cast(reference.Object, declaration["policies"])["P0"])["max_attempts"] == 2
+
+
+def test_adaptive_negative_requests_have_real_selector_readiness() -> None:
+    for name in ("materialization/adaptive_foreign_association", "binding/adaptive_omission_misuse"):
+        case = reference.case_by_id(name)
+        events = cast(list[reference.Object], case["events"])
+        assert events[0]["kind"] == "root_input"
+        reserve = next(event for event in events if event["kind"] == "reserve")
+        assert reserve["associations"] == ["A0"]
+        assert reserve["purpose"] == "adaptive_retrieval"
+        state = cast(reference.Object, cast(reference.Object, case["expected"])["state"])
+        materialization = cast(reference.Object, state["materialization"])
+        assert cast(reference.Object, materialization["provenance"])["RootInputKey:T0:input"] == []
+        assert len(cast(list[reference.Json], state["artifacts"])) == 1
+        assert state["association_terminals"] == {
+            "A0": {"failure": "malformed_response", "policy": "P0", "request": "R0"}
+        }
+        assert state["tasks"] == {"A0": "failure"}
+        assert state["binding_sources"] == {}
+        assert state["settlements"]
