@@ -15,7 +15,9 @@ from anonymizer.config.anonymizer_config import (
     Detect,
     Rewrite,
     infer_input_source_suffix,
+    resolve_effective_detection_labels,
 )
+from anonymizer.config.regex import BuiltinRegex, RegexCandidate, RegexRule
 from anonymizer.config.replace_strategies import (
     Annotate,
     Hash,
@@ -373,6 +375,38 @@ def test_excluded_entity_labels_covering_all_defaults_raises() -> None:
         )
 
 
+def test_enabled_custom_rule_keeps_default_scope_nonempty_when_all_defaults_are_excluded() -> None:
+    config = AnonymizerConfig(
+        detect={
+            "excluded_entity_labels": list(DEFAULT_ENTITY_LABELS),
+            "regex_rules": [{"label": "support_case", "pattern": r"CASE-[0-9]+"}],
+        },
+        replace=Redact(),
+    )
+
+    assert config.detect.entity_labels is None
+
+
+def test_disabled_custom_rule_does_not_keep_default_scope_nonempty_when_all_defaults_are_excluded() -> None:
+    with pytest.raises(ValidationError, match="empty effective detection set"):
+        AnonymizerConfig(
+            detect={
+                "excluded_entity_labels": list(DEFAULT_ENTITY_LABELS),
+                "regex_rules": [{"label": "support_case", "pattern": r"CASE-[0-9]+", "enabled": False}],
+            },
+            replace=Redact(),
+        )
+
+
+def test_disabled_custom_rule_does_not_require_an_explicit_entity_label() -> None:
+    config = Detect(
+        entity_labels=["email"],
+        regex_rules=[RegexRule(label="support_case", pattern=r"CASE-[0-9]+", enabled=False)],
+    )
+
+    assert config.entity_labels == ["email"]
+
+
 def test_excluded_entity_labels_partial_default_coverage_does_not_raise() -> None:
     """Excluding some — but not all — default labels is the documented common case."""
     config = AnonymizerConfig(
@@ -416,3 +450,352 @@ def test_entity_labels_superset_of_excluded_entity_labels_only_warns(
         )
     assert config.detect.entity_labels == ["bank_account", "city", "email"]
     assert "will never be detected" in caplog.text
+
+
+def test_detect_enables_builtin_regexes_by_default() -> None:
+    assert Detect().builtin_regexes is True
+
+
+def test_regex_rule_defaults_to_llm_validation() -> None:
+    rule = RegexRule(label="CASE_ID", pattern=r"CASE-[0-9]{8}")
+
+    assert rule.label == "case_id"
+    assert rule.validate_matches_with_llm is True
+    assert rule.detect_additional_matches is True
+
+
+def test_regex_rule_uses_canonical_unicode_label_identity() -> None:
+    assert RegexRule(label=" Straße ", pattern=r"ABC").label == "strasse"
+
+
+def test_regex_rule_accepts_direct_validator_callable() -> None:
+    def validate(candidate: RegexCandidate) -> bool:
+        return candidate.value != "CASE-00000000"
+
+    rule = RegexRule(label="case_id", pattern=r"CASE-[0-9]{8}", validator=validate)
+
+    assert rule.validator is validate
+
+
+def test_regex_rule_rejects_async_validator_function() -> None:
+    async def validate(candidate: RegexCandidate) -> bool:
+        return bool(candidate.value)
+
+    with pytest.raises(ValidationError, match="validators must be synchronous"):
+        RegexRule(label="case_id", pattern=r"CASE-[0-9]{8}", validator=validate)
+
+
+def test_regex_rule_rejects_async_callable_validator() -> None:
+    class AsyncValidator:
+        async def __call__(self, candidate: RegexCandidate) -> bool:
+            return bool(candidate.value)
+
+    with pytest.raises(ValidationError, match="validators must be synchronous"):
+        RegexRule(label="case_id", pattern=r"CASE-[0-9]{8}", validator=AsyncValidator())
+
+
+def test_regex_rule_rejects_invalid_and_zero_width_patterns() -> None:
+    with pytest.raises(ValidationError, match="Invalid regex pattern"):
+        RegexRule(label="case_id", pattern="[")
+    for pattern in (
+        ".*",
+        "(?=CASE)",
+        "(?<=A)",
+        r"(?<=Z{20})",
+        r"CASE-[0-9]+|(?=Z{20})",
+        r"(?=Z{20})(?:CASE)?",
+    ):
+        with pytest.raises(ValidationError, match="must not produce zero-width matches"):
+            RegexRule(label="case_id", pattern=pattern)
+
+
+@pytest.mark.parametrize(
+    "pattern",
+    [
+        r"CASE\K",
+        r"CASE(?:\K)",
+        r"(?:CASE(?:\K))",
+        r"(?=A\K)A",
+        r"(?=AB\K)A",
+        r"(?<=A\K)B",
+        r"(?!A\K)B",
+        r"(?<!A\K)B",
+        r"(?(?=A\K)A|B)",
+    ],
+)
+def test_regex_rule_rejects_match_reset_anywhere(pattern: str) -> None:
+    with pytest.raises(ValidationError, match=r"unsupported match reset \\K"):
+        RegexRule(label="case_id", pattern=pattern)
+
+
+def test_regex_rule_allows_escaped_literal_backslash_k() -> None:
+    rule = RegexRule(label="case_id", pattern=r"CASE\\K")
+
+    assert rule.pattern == r"CASE\\K"
+
+
+def test_regex_rule_allows_consuming_lookarounds() -> None:
+    lookahead = RegexRule(label="case_id", pattern=r"(?=CASE-[0-9]+)CASE-[0-9]+")
+    lookbehind = RegexRule(label="case_id", pattern=r"(?<=CASE-)[0-9]+")
+
+    assert lookahead.pattern == r"(?=CASE-[0-9]+)CASE-[0-9]+"
+    assert lookbehind.pattern == r"(?<=CASE-)[0-9]+"
+
+
+def test_regex_rule_width_analysis_supports_regex_dialect_and_inline_flags() -> None:
+    unicode_rule = RegexRule(label="unicode_word", pattern=r"\p{L}+")
+    insensitive_rule = RegexRule(label="case_id", pattern=r"(?i)case-[0-9]+")
+
+    assert unicode_rule.pattern == r"\p{L}+"
+    assert insensitive_rule.pattern == r"(?i)case-[0-9]+"
+
+
+def test_direct_callable_validator_cannot_be_serialized_to_json() -> None:
+    def validate(candidate: RegexCandidate) -> bool:
+        return bool(candidate.value)
+
+    rule = RegexRule(label="case_id", pattern=r"CASE-[0-9]+", validator=validate)
+
+    assert rule.model_dump()["validator"] is validate
+    with pytest.raises(ValueError, match="in-process only and cannot be serialized to JSON"):
+        rule.model_dump_json()
+
+
+def test_registered_validator_name_round_trips_through_json() -> None:
+    rule = RegexRule(label="case_id", pattern=r"CASE-[0-9]+", validator="acme.case-id.v1")
+    restored_rule = RegexRule.model_validate_json(rule.model_dump_json())
+    detect = Detect(entity_labels=["case_id"], regex_rules=[rule])
+    restored_detect = Detect.model_validate_json(detect.model_dump_json())
+
+    assert restored_rule == rule
+    assert restored_detect == detect
+
+
+def test_detect_rejects_custom_rule_missing_from_explicit_labels() -> None:
+    with pytest.raises(ValidationError, match="missing from explicit entity_labels"):
+        Detect(
+            entity_labels=["email"],
+            regex_rules=[RegexRule(label="case_id", pattern=r"CASE-[0-9]{8}")],
+        )
+
+
+def test_detect_accepts_builtin_regex_llm_override() -> None:
+    detect = Detect(regex_rules=[BuiltinRegex(label="credit_debit_card", validate_matches_with_llm=False)])
+
+    rule = detect.regex_rules[0]
+    assert isinstance(rule, BuiltinRegex)
+    assert rule.enabled is True
+    assert rule.validate_matches_with_llm is False
+    assert rule.detect_additional_matches is True
+
+
+def test_detect_accepts_builtin_regex_enabled_override() -> None:
+    detect = Detect(regex_rules=[BuiltinRegex(label="email", enabled=False)])
+
+    rule = detect.regex_rules[0]
+    assert isinstance(rule, BuiltinRegex)
+    assert rule.enabled is False
+    assert rule.validate_matches_with_llm is True
+    assert rule.detect_additional_matches is True
+
+
+@pytest.mark.parametrize(
+    "rule",
+    [
+        BuiltinRegex(label="email", validate_matches_with_llm=False, detect_additional_matches=False),
+        RegexRule(
+            label="support_case",
+            pattern=r"CASE-[0-9]+",
+            validate_matches_with_llm=False,
+            detect_additional_matches=False,
+        ),
+    ],
+)
+def test_rule_can_disable_llm_validation_and_additional_detection(rule: BuiltinRegex | RegexRule) -> None:
+    assert rule.validate_matches_with_llm is False
+    assert rule.detect_additional_matches is False
+
+
+@pytest.mark.parametrize(
+    ("validate_matches_with_llm", "detect_additional_matches"),
+    [(True, True), (False, True), (True, False), (False, False)],
+)
+def test_regex_rule_supports_all_validation_and_detection_combinations(
+    validate_matches_with_llm: bool,
+    detect_additional_matches: bool,
+) -> None:
+    rule = RegexRule(
+        label="support_case",
+        pattern=r"CASE-[0-9]+",
+        validate_matches_with_llm=validate_matches_with_llm,
+        detect_additional_matches=detect_additional_matches,
+    )
+
+    restored = RegexRule.model_validate_json(rule.model_dump_json())
+
+    assert restored.validate_matches_with_llm is validate_matches_with_llm
+    assert restored.detect_additional_matches is detect_additional_matches
+
+
+def test_enabled_rules_sharing_a_label_must_agree_on_additional_detection() -> None:
+    with pytest.raises(ValidationError, match="must use the same detect_additional_matches value"):
+        Detect(
+            entity_labels=["support_case"],
+            regex_rules=[
+                RegexRule(label="support_case", pattern=r"CASE-[0-9]+", detect_additional_matches=False),
+                RegexRule(label="support_case", pattern=r"SUP-[0-9]+"),
+            ],
+        )
+
+
+def test_equivalent_unicode_labels_must_agree_on_additional_detection() -> None:
+    with pytest.raises(ValidationError, match="must use the same detect_additional_matches value"):
+        Detect(
+            entity_labels=["straße"],
+            regex_rules=[
+                RegexRule(label="straße", pattern=r"ABC", detect_additional_matches=False),
+                RegexRule(label="STRASSE", pattern=r"DEF"),
+            ],
+        )
+
+
+@pytest.mark.parametrize("entity_labels", [None, ["Straße"]], ids=["implicit", "explicit"])
+def test_equivalent_unicode_custom_rule_labels_share_effective_scope(entity_labels: list[str] | None) -> None:
+    config = Detect(
+        entity_labels=entity_labels,
+        regex_rules=[
+            RegexRule(label="straße", pattern=r"ABC"),
+            RegexRule(label="STRASSE", pattern=r"DEF"),
+        ],
+    )
+
+    effective = resolve_effective_detection_labels(
+        config.entity_labels,
+        regex_rules=config.regex_rules,
+        excluded_entity_labels=config.excluded_entity_labels,
+    )
+
+    assert effective.count("strasse") == 1
+    assert [rule.label for rule in config.regex_rules] == ["strasse", "strasse"]
+
+    restored = Detect.model_validate_json(config.model_dump_json())
+    assert restored.entity_labels == config.entity_labels
+    assert [rule.label for rule in restored.regex_rules] == ["strasse", "strasse"]
+
+
+def test_equivalent_unicode_exclusion_removes_custom_rule_scope() -> None:
+    config = Detect(
+        excluded_entity_labels=["STRASSE"],
+        regex_rules=[RegexRule(label="straße", pattern=r"ABC")],
+    )
+
+    effective = resolve_effective_detection_labels(
+        config.entity_labels,
+        regex_rules=config.regex_rules,
+        excluded_entity_labels=config.excluded_entity_labels,
+    )
+
+    assert "strasse" not in effective
+
+
+def test_llm_validation_settings_can_differ_for_one_label() -> None:
+    config = Detect(
+        entity_labels=["support_case"],
+        regex_rules=[
+            RegexRule(label="support_case", pattern=r"CASE-[0-9]+", validate_matches_with_llm=False),
+            RegexRule(label="support_case", pattern=r"SUP-[0-9]+", validate_matches_with_llm=True),
+        ],
+    )
+
+    assert [rule.validate_matches_with_llm for rule in config.regex_rules] == [False, True]
+
+
+def test_disabled_rule_does_not_create_additional_detection_conflict() -> None:
+    config = Detect(
+        entity_labels=["support_case"],
+        regex_rules=[
+            RegexRule(label="support_case", pattern=r"CASE-[0-9]+", detect_additional_matches=False),
+            RegexRule(label="support_case", pattern=r"SUP-[0-9]+", enabled=False),
+        ],
+    )
+
+    assert config.regex_rules[0].detect_additional_matches is False
+
+
+def test_globally_disabled_builtin_does_not_create_additional_detection_conflict() -> None:
+    config = Detect(
+        builtin_regexes=False,
+        entity_labels=["email"],
+        regex_rules=[
+            BuiltinRegex(label="email", detect_additional_matches=False),
+            RegexRule(label="email", pattern=r"internal:[a-z]+"),
+        ],
+    )
+
+    assert config.builtin_regexes is False
+
+
+def test_detect_rejects_duplicate_builtin_regex_entries() -> None:
+    with pytest.raises(ValidationError, match="duplicate built-in labels"):
+        Detect(
+            regex_rules=[
+                BuiltinRegex(label="email", enabled=False),
+                BuiltinRegex(label="email", validate_matches_with_llm=False),
+            ]
+        )
+
+
+def test_detect_parses_builtin_and_custom_rules_from_serialized_config() -> None:
+    original = Detect(
+        regex_rules=[
+            BuiltinRegex(label="email", enabled=False),
+            RegexRule(label="support_case", pattern=r"CASE-\d+"),
+        ]
+    )
+
+    restored = Detect.model_validate_json(original.model_dump_json())
+
+    assert isinstance(restored.regex_rules[0], BuiltinRegex)
+    assert isinstance(restored.regex_rules[1], RegexRule)
+    assert restored == original
+
+
+@pytest.mark.parametrize(
+    "rule",
+    [
+        {"label": "email", "pattern": "("},
+        {"label": "email", "pattern": r"internal-[0-9]+", "validator": 123},
+    ],
+)
+def test_detect_rejects_malformed_custom_rule_dict_instead_of_falling_back_to_builtin(
+    rule: dict[str, object],
+) -> None:
+    with pytest.raises(ValidationError):
+        Detect.model_validate({"regex_rules": [rule]})
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        '{"regex_rules":[{"label":"email","pattern":"("}]}',
+        '{"regex_rules":[{"label":"email","pattern":"internal-[0-9]+","validator":123}]}',
+    ],
+)
+def test_detect_rejects_malformed_custom_rule_json_instead_of_falling_back_to_builtin(payload: str) -> None:
+    with pytest.raises(ValidationError):
+        Detect.model_validate_json(payload)
+
+
+def test_builtin_regex_rejects_unknown_fields() -> None:
+    with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
+        BuiltinRegex.model_validate({"label": "email", "pattern": r"custom-pattern"})
+
+
+def test_regex_rule_rejects_unknown_fields() -> None:
+    with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
+        RegexRule.model_validate({"label": "email", "pattern": r"custom-pattern", "unexpected": True})
+
+
+def test_builtin_regex_rejects_unknown_label() -> None:
+    with pytest.raises(ValidationError, match="Unsupported built-in regex label"):
+        BuiltinRegex(label="support_case")

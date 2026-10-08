@@ -6,14 +6,22 @@ from __future__ import annotations
 import json
 import logging
 
+import pandas as pd
 import pytest
 
+from anonymizer.config.replace_strategies import Redact
+from anonymizer.engine.constants import COL_FINAL_ENTITIES, COL_REPLACED_TEXT, COL_TEXT
 from anonymizer.engine.detection.postprocess import (
     EntitySpan,
+    TagNotation,
     apply_augmented_entities,
     apply_validation_decisions,
     build_tagged_text,
     build_validation_candidates,
+    build_validation_overlap_groups,
+    build_validation_tagged_text,
+    coalesce_exact_entity_candidates,
+    enforce_regex_constrained_evidence,
     expand_entity_occurrences,
     get_tag_notation,
     group_entities_by_value,
@@ -22,6 +30,7 @@ from anonymizer.engine.detection.postprocess import (
     parse_raw_entities,
     resolve_overlaps,
 )
+from anonymizer.engine.replace.strategies import apply_local_replace_strategy
 
 
 def test_normalize_label_strips_and_casefolds() -> None:
@@ -34,6 +43,29 @@ def test_normalize_labels_dedupes_and_drops_empty_entries() -> None:
 
 def test_normalize_labels_none_returns_empty_set() -> None:
     assert normalize_labels(None) == set()
+
+
+def test_regex_constrained_evidence_must_match_normalized_label_and_exact_span() -> None:
+    genuine = EntitySpan(
+        "ticket_0_7",
+        "TKT-123",
+        "Ticket",
+        0,
+        7,
+        1.0,
+        "regex_user:user:ticket:v1",
+    )
+    unsupported = EntitySpan("identifier_12_21", "OTHER-123", "ticket", 12, 21, 0.9, "detector")
+
+    result = enforce_regex_constrained_evidence(
+        [genuine, unsupported],
+        regex_constrained_entity_labels=[" TICKET "],
+        regex_evidence=[genuine],
+    )
+
+    assert len(result) == 1
+    assert result[0].entity_id == genuine.entity_id
+    assert result[0].propagate_occurrences is False
 
 
 def test_parse_raw_entities_parses_valid_spans() -> None:
@@ -62,6 +94,27 @@ def test_apply_validation_decisions_drops_entities() -> None:
         validation_output={"decisions": [{"id": "id1", "decision": "keep"}, {"id": "id2", "decision": "drop"}]},
     )
     assert [item.entity_id for item in validated] == ["id1"]
+
+
+def test_apply_validation_decisions_preserves_occurrence_permission_on_reclassification() -> None:
+    entity = EntitySpan(
+        "id1",
+        "ABC",
+        "token",
+        0,
+        3,
+        1.0,
+        "regex_user:user:token:v1",
+        propagate_occurrences=False,
+    )
+
+    validated = apply_validation_decisions(
+        entities=[entity],
+        validation_output={"decisions": [{"id": "id1", "decision": "reclass", "proposed_label": "account_number"}]},
+    )
+
+    assert validated[0].label == "account_number"
+    assert validated[0].propagate_occurrences is False
 
 
 def test_apply_validation_decisions_reclassifies_label() -> None:
@@ -185,6 +238,28 @@ def test_augmented_splits_full_name_into_parts() -> None:
     assert smiths[0].start_position == 35
 
 
+def test_name_split_does_not_escape_a_span_restricted_regex_full_name() -> None:
+    text = "allow:John Smith deny:John Smith and John"
+    merged = apply_augmented_entities(
+        text=text,
+        entities=[
+            EntitySpan(
+                "fn",
+                "John Smith",
+                "full_name",
+                6,
+                16,
+                1.0,
+                "regex_user:user:full_name:v1",
+                propagate_occurrences=False,
+            )
+        ],
+        augmented_output={"entities": []},
+    )
+
+    assert [(entity.value, entity.start_position, entity.end_position) for entity in merged] == [("John Smith", 6, 16)]
+
+
 def test_apply_augmented_entities_does_not_split_single_token_full_name() -> None:
     text = "Madonna performed tonight."
     merged = apply_augmented_entities(
@@ -227,6 +302,91 @@ def test_name_split_does_not_duplicate_existing_entities() -> None:
     smiths = [e for e in merged if e.value == "Smith"]
     assert len(smiths) == 1
     assert smiths[0].label == "last_name"
+
+
+@pytest.mark.parametrize("reverse_input", [False, True])
+def test_restricted_full_name_does_not_suppress_detector_name_parts(reverse_input: bool) -> None:
+    text = "allow:John Smith; John Doe; John"
+    restricted = EntitySpan(
+        "full_name_6_16",
+        "John Smith",
+        "full_name",
+        6,
+        16,
+        1.0,
+        "regex_user:user:full_name:v1",
+        propagate_occurrences=False,
+    )
+    detector = EntitySpan("full_name_18_26", "John Doe", "full_name", 18, 26, 0.9, "detector")
+    entities = [restricted, detector]
+    if reverse_input:
+        entities.reverse()
+
+    merged = apply_augmented_entities(
+        text=text,
+        entities=entities,
+        augmented_output={"entities": []},
+    )
+
+    assert [(entity.label, entity.start_position, entity.end_position) for entity in merged] == [
+        ("full_name", 6, 16),
+        ("full_name", 18, 26),
+        ("first_name", 28, 32),
+    ]
+
+    replaced = apply_local_replace_strategy(
+        pd.DataFrame(
+            {
+                COL_TEXT: [text],
+                COL_FINAL_ENTITIES: [{"entities": [entity.as_dict() for entity in merged]}],
+            }
+        ),
+        strategy=Redact(),
+    )
+    assert replaced[COL_REPLACED_TEXT].iloc[0] == (
+        "allow:[REDACTED_FULL_NAME]; [REDACTED_FULL_NAME]; [REDACTED_FIRST_NAME]"
+    )
+
+
+def test_name_split_upgrades_exact_existing_part_with_propagation_authority() -> None:
+    text = "John Doe met John"
+    merged = apply_augmented_entities(
+        text=text,
+        entities=[
+            EntitySpan("full_name_0_8", "John Doe", "full_name", 0, 8, 0.9, "detector"),
+            EntitySpan(
+                "first_name_13_17",
+                "John",
+                "first_name",
+                13,
+                17,
+                1.0,
+                "regex_user:user:first_name:v1",
+                propagate_occurrences=False,
+            ),
+        ],
+        augmented_output={"entities": []},
+    )
+
+    trailing = next(entity for entity in merged if entity.start_position == 13)
+    assert trailing.label == "first_name"
+    assert trailing.source == "regex_user:user:first_name:v1|name_split"
+    assert trailing.propagate_occurrences is True
+
+
+def test_name_split_preserves_existing_different_label_at_exact_bounds() -> None:
+    text = "John Doe met John"
+    merged = apply_augmented_entities(
+        text=text,
+        entities=[
+            EntitySpan("full_name_0_8", "John Doe", "full_name", 0, 8, 0.9, "detector"),
+            EntitySpan("user_name_13_17", "John", "user_name", 13, 17, 0.8, "detector"),
+        ],
+        augmented_output={"entities": []},
+    )
+
+    trailing = [entity for entity in merged if entity.start_position == 13]
+    assert [(entity.label, entity.source) for entity in trailing] == [("user_name", "detector")]
 
 
 def test_build_tagged_text_renders_xml_style_tags() -> None:
@@ -350,7 +510,7 @@ def test_parse_raw_entities_handles_non_numeric_score() -> None:
     assert result[0].score == 0.0
 
 
-def test_parse_raw_entities_resolves_overlapping_spans() -> None:
+def test_parse_raw_entities_preserves_overlapping_spans_for_validation() -> None:
     raw = json.dumps(
         {
             "entities": [
@@ -372,8 +532,10 @@ def test_parse_raw_entities_resolves_overlapping_spans() -> None:
         }
     )
     result = parse_raw_entities(raw_response=raw, text="John Doe went home")
-    assert len(result) == 1
-    assert result[0].value == "John Doe"
+    assert [(entity.value, entity.label) for entity in result] == [
+        ("John", "first_name"),
+        ("John Doe", "full_name"),
+    ]
 
 
 def test_resolve_overlaps_keeps_non_overlapping_spans() -> None:
@@ -422,8 +584,7 @@ def test_resolve_overlaps_default_uses_label_not_score() -> None:
     assert resolved[0].label == "aaa_label"
 
 
-def test_parse_raw_entities_prefers_higher_score_on_same_gliner_span() -> None:
-    """Regression: relationship (0.941) should beat last_name (0.719) on same span."""
+def test_parse_raw_entities_preserves_same_span_label_alternatives() -> None:
     text = "She called Mum every day."
     raw = json.dumps(
         {
@@ -434,9 +595,56 @@ def test_parse_raw_entities_prefers_higher_score_on_same_gliner_span() -> None:
         }
     )
     result = parse_raw_entities(raw_response=raw, text=text)
+    assert [(entity.label, entity.score) for entity in result] == [
+        ("last_name", 0.719),
+        ("relationship", 0.941),
+    ]
+
+
+def test_coalesce_exact_candidates_keeps_best_duplicate_and_all_origins() -> None:
+    regex_entity = EntitySpan(
+        "email_0_17",
+        "alice@example.com",
+        "email",
+        0,
+        17,
+        1.0,
+        "regex_builtin:nemo-anonymizer.email.v1",
+        propagate_occurrences=False,
+    )
+    detector_entity = EntitySpan("email_0_17", "alice@example.com", "email", 0, 17, 0.9, "detector")
+
+    result = coalesce_exact_entity_candidates([regex_entity], [detector_entity])
+
+    assert result == [
+        EntitySpan(
+            "email_0_17",
+            "alice@example.com",
+            "email",
+            0,
+            17,
+            1.0,
+            "regex_builtin:nemo-anonymizer.email.v1|detector",
+        )
+    ]
+    assert result[0].propagate_occurrences is True
+
+
+def test_parse_raw_entities_keeps_highest_score_for_an_exact_duplicate() -> None:
+    text = "Alice"
+    raw = json.dumps(
+        {
+            "entities": [
+                {"text": text, "label": "first_name", "start": 0, "end": 5, "score": 0.7},
+                {"text": text, "label": "first_name", "start": 0, "end": 5, "score": 0.9},
+            ]
+        }
+    )
+
+    result = parse_raw_entities(raw_response=raw, text=text)
+
     assert len(result) == 1
-    assert result[0].label == "relationship"
-    assert result[0].score == 0.941
+    assert result[0].score == 0.9
 
 
 def test_augmented_entities_does_not_use_synthetic_score_precedence() -> None:
@@ -490,6 +698,24 @@ def test_validation_decisions_skips_non_dict_decision_items() -> None:
         validation_output={"decisions": ["not a dict", {"id": "id1", "decision": "keep"}]},
     )
     assert len(result) == 1
+
+
+def test_validation_decisions_preserve_valid_entries_beside_malformed_siblings() -> None:
+    entities = [
+        EntitySpan("id1", "Alice", "first_name", 0, 5, 1.0, "detector"),
+        EntitySpan("id2", "Seattle", "city", 10, 17, 1.0, "detector"),
+    ]
+    result = apply_validation_decisions(
+        entities=entities,
+        validation_output={
+            "decisions": [
+                {"id": "id1", "decision": "drop"},
+                {"id": "broken", "decision": "not-a-choice"},
+            ]
+        },
+    )
+
+    assert [entity.entity_id for entity in result] == ["id2"]
 
 
 def test_augmented_entities_from_json_string() -> None:
@@ -586,6 +812,36 @@ def test_build_tagged_text_skips_overlapping_entity() -> None:
     tagged = build_tagged_text(text=text, entities=entities)
     assert "full_name" in tagged
     assert "last_name" not in tagged
+
+
+def test_validation_tagged_text_groups_crossing_spans_without_repeating_text() -> None:
+    text = "abcdefghij"
+    entities = [
+        EntitySpan("left", "abcdef", "account_number", 0, 6, 1.0, "detector"),
+        EntitySpan("right", "efghij", "unique_id", 4, 10, 1.0, "detector"),
+    ]
+    groups = build_validation_overlap_groups(entities, {"left", "right"})
+
+    tagged = build_validation_tagged_text(text, entities, groups)
+
+    assert tagged == '<candidate_group id="overlap_0_10">abcdefghij</candidate_group>'
+    assert tagged.count(text) == 1
+    assert groups[0].candidate_ids == ("left", "right")
+
+
+def test_validation_overlap_group_can_include_non_validation_span() -> None:
+    text = "token-42 is active"
+    entities = [
+        EntitySpan("accepted", "token-42", "unique_id", 0, 8, 1.0, "regex_builtin"),
+        EntitySpan("candidate", "42", "age", 6, 8, 0.8, "detector"),
+        EntitySpan("status", "active", "status", 12, 18, 0.8, "detector"),
+    ]
+    groups = build_validation_overlap_groups(entities, {"candidate", "status"})
+
+    tagged = build_validation_tagged_text(text, entities, groups, notation=TagNotation.bracket)
+
+    assert groups[0].candidate_ids == ("candidate",)
+    assert tagged == "[[token-42|CANDIDATE_GROUP:overlap_0_8]] is [[active|status]]"
 
 
 def test_build_tagged_text_uses_paren_notation_when_xml_and_bracket_conflict() -> None:
