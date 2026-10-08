@@ -9,7 +9,6 @@ from typing import Literal, get_args
 
 from anonymizer.engine.graph_sdk._effect_values import EffectCode, PrivateValue, reject, require_instance
 from anonymizer.engine.graph_sdk._qualification_provenance import _ProvenanceValidator
-from anonymizer.engine.graph_sdk._workflow import reachable_workflows
 from anonymizer.engine.graph_sdk.evidence import (
     AdmittedQualification,
     AssessmentSubmission,
@@ -194,7 +193,7 @@ class _Qualification:
         self.facts = facts
         self.prepared = admitted.execution.context.prepared
         self.order = tuple(item.target for item in self.prepared.target_occurrences)
-        self.nodes = {node.id: node for body in reachable_workflows(self.prepared.workflow) for node in body.nodes}
+        self.nodes = admitted.execution.nodes
         self.entries: dict[ActivationKey, ActivationEntry] = {}
         self.owners: dict[ActivationKey, DatumId] = {}
         self.withholding: dict[DatumId, set[WithholdingCode]] = {target: set() for target in self.order}

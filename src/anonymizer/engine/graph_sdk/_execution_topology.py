@@ -29,7 +29,6 @@ from anonymizer.graph.workflow import (
     NodeId,
     NodeInputRef,
     NodeOutputRef,
-    OperationNode,
     OperationSpec,
     SubgraphNode,
     WorkflowId,
@@ -208,22 +207,6 @@ def _source_activation(
     return parent_context[0] if len(parent_context) == 1 else None
 
 
-def _operation_owner(root: AdmittedWorkflow, node: NodeId) -> tuple[AdmittedWorkflow, OperationNode]:
-    pending = [root]
-    seen: set[int] = set()
-    while pending:
-        current = pending.pop()
-        if id(current) in seen:
-            continue
-        seen.add(id(current))
-        for candidate in current.nodes:
-            if isinstance(candidate, OperationNode) and candidate.id == node:
-                return current, candidate
-            if isinstance(candidate, SubgraphNode):
-                pending.append(candidate.body)
-    reject(EffectCode.MISSING)
-
-
 def _workflow_owners(root: AdmittedWorkflow) -> frozenset[WorkflowId]:
     owners: set[WorkflowId] = set()
     pending = [root]
@@ -250,37 +233,5 @@ def _node_operation(root: AdmittedWorkflow, node: NodeId) -> OperationSpec:
             if candidate.id == node:
                 return candidate.operation
             if isinstance(candidate, SubgraphNode):
-                pending.append(candidate.body)
-    reject(EffectCode.MISSING)
-
-
-def _is_subgraph_node(root: AdmittedWorkflow, node: NodeId) -> bool:
-    pending = [root]
-    seen: set[int] = set()
-    while pending:
-        current = pending.pop()
-        if id(current) in seen:
-            continue
-        seen.add(id(current))
-        for candidate in current.nodes:
-            if isinstance(candidate, SubgraphNode):
-                if candidate.id == node:
-                    return True
-                pending.append(candidate.body)
-    return False
-
-
-def _subgraph_owner(root: AdmittedWorkflow, node: NodeId) -> tuple[AdmittedWorkflow, SubgraphNode]:
-    pending = [root]
-    seen: set[int] = set()
-    while pending:
-        current = pending.pop()
-        if id(current) in seen:
-            continue
-        seen.add(id(current))
-        for candidate in current.nodes:
-            if isinstance(candidate, SubgraphNode):
-                if candidate.id == node:
-                    return current, candidate
                 pending.append(candidate.body)
     reject(EffectCode.MISSING)

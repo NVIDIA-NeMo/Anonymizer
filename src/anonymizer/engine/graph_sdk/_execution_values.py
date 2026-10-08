@@ -4,7 +4,9 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, field
+from types import MappingProxyType
 from typing import Literal, Protocol, TypeAlias, runtime_checkable
 
 from anonymizer.engine.graph_sdk._effect_values import (
@@ -18,6 +20,7 @@ from anonymizer.engine.graph_sdk._effect_values import (
     require_literal,
     require_text,
 )
+from anonymizer.engine.graph_sdk._workflow import reachable_workflows
 from anonymizer.engine.graph_sdk.capabilities import (
     FrozenConfig,
     ImplementationCapability,
@@ -64,12 +67,16 @@ from anonymizer.graph.activation import (
 )
 from anonymizer.graph.workflow import (
     ArtifactType,
+    ContextInputRef,
+    Node,
     NodeId,
+    NodeInputRef,
     NodeOutputRef,
     OperationSpec,
     OutcomeClass,
     OutcomeSpec,
     WorkflowId,
+    WorkflowInputRef,
 )
 
 ExecutionKind: TypeAlias = Literal["local", "external", "decision"]
@@ -476,12 +483,50 @@ class AdmittedExecutionPlan(PrivateValue):
     map_expansions: tuple[MapExpansionDecl, ...]
     assessment_productions: tuple[EvidenceProductionDecl, ...]
     assessment_limits: AssessmentLimits
+    nodes: Mapping[NodeId, Node] = field(compare=False)
+    input_sources: Mapping[NodeInputRef, WorkflowInputRef | ContextInputRef | NodeOutputRef] = field(compare=False)
+    materialization_schemas: Mapping[ArtifactType, Literal["scalar", "collection"]] = field(compare=False)
 
     def __init__(self, *, _key: object, **values: object) -> None:
         if _key is not _PLAN_KEY:
             raise TypeError("execution plans are created by admission")
         for name, value in values.items():
             object.__setattr__(self, name, value)
+        bodies = reachable_workflows(self.context.prepared.workflow)
+        object.__setattr__(self, "nodes", MappingProxyType({node.id: node for body in bodies for node in body.nodes}))
+        object.__setattr__(
+            self,
+            "input_sources",
+            MappingProxyType(
+                {binding.destination: binding.source for body in bodies for binding in body.input_bindings}
+            ),
+        )
+        object.__setattr__(self, "materialization_schemas", MappingProxyType(self._compile_materialization_schemas()))
+
+    def _compile_materialization_schemas(self) -> dict[ArtifactType, Literal["scalar", "collection"]]:
+        schemas: dict[ArtifactType, Literal["scalar", "collection"]] = {}
+        context = self.context.bound_context
+        if context is not None:
+            for fact in context.receipt.sources:
+                schemas[fact.declaration.materialization.item_type] = "scalar"
+                schemas[fact.declaration.artifact_type] = (
+                    "scalar" if fact.declaration.materialization.kind == "single" else "collection"
+                )
+        for declaration in self.context.adaptive_retrievals:
+            operation = self.nodes[declaration.node].operation
+            artifact_type = next(
+                item.artifact_type for item in operation.outputs if item.name == declaration.output_port
+            )
+            schemas[declaration.materialization.item_type] = "scalar"
+            schemas[artifact_type] = "scalar" if declaration.materialization.kind == "single" else "collection"
+        for expansion in self.map_expansions:
+            operation = self.nodes[expansion.expander].operation
+            artifact_type = next(
+                item.artifact_type for item in operation.outputs if item.name == expansion.membership_port
+            )
+            schemas[expansion.item_type] = "scalar"
+            schemas[artifact_type] = "collection"
+        return schemas
 
     def _output_role(self, node: NodeId, outcome: OutcomeSpec, port: str) -> ArtifactRole:
         """Apply admitted occurrence-role precedence to an operation output."""

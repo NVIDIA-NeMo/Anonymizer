@@ -442,7 +442,7 @@ async def _execute_assessment(
             _capability(workflow, external=external is not None and item.id == decision_node),
             operation=item.operation,
             max_physical_requests_per_activation=2 if external is not None and item.id == decision_node else 0,
-            resource_lifetime="executor_owned"
+            resource_lifetime=("caller_owned" if external[1].owner == "caller" else "executor_owned")
             if external is not None and item.id == decision_node
             else "stateless"
             if resource is None

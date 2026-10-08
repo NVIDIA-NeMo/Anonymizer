@@ -13,9 +13,6 @@ from anonymizer.engine.graph_sdk._effect_values import (
 from anonymizer.engine.graph_sdk._execution_materialization import _artifact_bytes
 from anonymizer.engine.graph_sdk._execution_state import _ExecutionFacts
 from anonymizer.engine.graph_sdk._execution_topology import (
-    _is_subgraph_node,
-    _node_operation,
-    _operation_owner,
     _source_activation,
 )
 from anonymizer.engine.graph_sdk._execution_values import (
@@ -63,10 +60,10 @@ from anonymizer.graph.activation import (
     ActivationState,
 )
 from anonymizer.graph.workflow import (
-    ArtifactType,
     NodeId,
     OperationSpec,
     OutputDependency,
+    SubgraphNode,
     WorkflowInputRef,
 )
 
@@ -184,7 +181,12 @@ def _validate_output_shape(
     expected = {item.name: item.artifact_type for item in operation.outputs if item.name in outcome.produced_ports}
     outputs = results[0].outputs
     present_inputs = {item.port for item in inputs[0].inputs}
-    schemas = _materialization_schemas(admitted)
+    schemas = admitted.materialization_schemas
+    try:
+        for output in outputs:
+            _artifact_bytes(output.value)
+    except UnicodeEncodeError:
+        return False
     return (
         len(outputs) == len(expected)
         and {item.port for item in outputs} == set(expected)
@@ -208,33 +210,6 @@ def _identity_input(dependency: OutputDependency) -> str:
     if value is None:
         reject(EffectCode.CONTRADICTORY)
     return value
-
-
-def _materialization_schemas(admitted: AdmittedExecutionPlan) -> dict[ArtifactType, Literal["scalar", "collection"]]:
-    schemas: dict[ArtifactType, Literal["scalar", "collection"]] = {}
-    context = admitted.context.bound_context
-    if context is not None:
-        for fact in context.receipt.sources:
-            schemas[fact.declaration.materialization.item_type] = "scalar"
-            schemas[fact.declaration.artifact_type] = (
-                "scalar" if fact.declaration.materialization.kind == "single" else "collection"
-            )
-    for declaration in admitted.context.adaptive_retrievals:
-        operation = _operation_owner(
-            admitted.context.prepared.workflow.workflow,
-            declaration.node,
-        )[1].operation
-        artifact_type = next(item.artifact_type for item in operation.outputs if item.name == declaration.output_port)
-        schemas[declaration.materialization.item_type] = "scalar"
-        schemas[artifact_type] = "scalar" if declaration.materialization.kind == "single" else "collection"
-    for declaration in admitted.map_expansions:
-        operation = _node_operation(admitted.context.prepared.workflow.workflow, declaration.expander)
-        artifact_type = next(
-            item.artifact_type for item in operation.outputs if item.name == declaration.membership_port
-        )
-        schemas[declaration.item_type] = "scalar"
-        schemas[artifact_type] = "collection"
-    return schemas
 
 
 def _capture_assessments(
@@ -318,7 +293,7 @@ def _mark_assessment_subjects(
     ]
     if not declarations:
         return
-    operation = _node_operation(admitted.context.prepared.workflow.workflow, node)
+    operation = admitted.nodes[node].operation
     outcome = next(item for item in operation.outcomes if item.name == mapping.outcome)
     promises = {item.name: item for item in outcome.evidence}
     for port in {promises[item.promise].subject_port for item in declarations}:
@@ -452,7 +427,7 @@ def _final_outputs(
 
 
 def _canonical_record(
-    prepared: PreparedPlan,
+    admitted: AdmittedExecutionPlan,
     invocation: InvocationId,
     states: tuple[ActivationState, ...],
     target_keys: dict[DatumId, dict[int, ActivationKey]],
@@ -461,6 +436,7 @@ def _canonical_record(
     cancelled_unstarted: frozenset[ActivationKey],
 ) -> CanonicalRecord:
     del target_keys
+    prepared = admitted.context.prepared
     all_entries = [entry for state in states for entry in state.entries]
     root_members = frozenset(entry.activation for entry in all_entries if entry.activation.parent is None)
     memberships: list[ExpectedMembership] = [
@@ -497,7 +473,7 @@ def _canonical_record(
         for entry in state.entries:
             if entry.status not in {"success", "failure", "cancelled", "lost", "blocked", "inconsistent"}:
                 continue
-            structural = _is_subgraph_node(prepared.workflow.workflow, entry.template)
+            structural = isinstance(admitted.nodes[entry.template], SubgraphNode)
             reasons = {
                 "failure": frozenset({"execution_failed"}),
                 "cancelled": frozenset({"cancel_requested"}),

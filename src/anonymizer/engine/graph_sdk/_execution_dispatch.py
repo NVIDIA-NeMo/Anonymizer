@@ -107,7 +107,14 @@ async def _run_local(
         return _mapping(policy, "failure", None, "implementation_exception"), (), ()
     if not isinstance(result, LocalCompleted):
         return _mapping(policy, "failure", None, "implementation_exception"), (), ()
-    if len(result.results) != 1 or result.results[0].association != association:
+    if (
+        not isinstance(result.results, tuple)
+        or len(result.results) != 1
+        or not isinstance(result.results[0], AssociationResult)
+        or result.results[0].association != association
+        or not isinstance(result.assessments, tuple)
+        or any(not isinstance(item, LocalAssessmentResult) for item in result.assessments)
+    ):
         return _mapping(policy, "failure", None, "malformed_response"), (), ()
     reported = result.results[0].outcome
     if reported not in policy.result_outcomes:

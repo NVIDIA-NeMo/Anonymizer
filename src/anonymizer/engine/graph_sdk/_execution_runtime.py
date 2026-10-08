@@ -52,7 +52,6 @@ from anonymizer.engine.graph_sdk._execution_state import (
 )
 from anonymizer.engine.graph_sdk._execution_topology import (
     _inherited_artifact_role,
-    _is_subgraph_node,
     _operation_has_omitted_context,
 )
 from anonymizer.engine.graph_sdk._execution_values import (
@@ -106,6 +105,7 @@ from anonymizer.graph.activation import (
 )
 from anonymizer.graph.workflow import (
     AdmittedWorkflow,
+    SubgraphNode,
 )
 
 
@@ -282,7 +282,7 @@ class _InvocationRuntime:
         return True
 
     def _start_subgraph(self, state_index: int, target: DatumId, entry: ActivationEntry) -> bool:
-        if _is_subgraph_node(self.prepared.workflow.workflow, entry.template):
+        if isinstance(self.admitted.nodes[entry.template], SubgraphNode):
             try:
                 _materialize_subgraph_inputs(
                     self.admitted,
@@ -634,7 +634,7 @@ class _InvocationRuntime:
         try:
             while True:
                 _materialize_subgraph_outputs(
-                    self.prepared.workflow.workflow,
+                    self.admitted,
                     job.target,
                     candidate_state,
                     self.facts,
@@ -675,7 +675,7 @@ class _InvocationRuntime:
             self.request_resources,
         )
         record = _canonical_record(
-            self.prepared,
+            self.admitted,
             self.invocation,
             tuple(self.states),
             self.target_keys,

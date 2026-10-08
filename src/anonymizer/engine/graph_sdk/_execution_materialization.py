@@ -6,17 +6,13 @@ from __future__ import annotations
 
 from anonymizer.engine.graph_sdk._effect_values import (
     EffectCode,
-    EffectRejected,
     reject,
 )
 from anonymizer.engine.graph_sdk._execution_state import _ExecutionFacts
 from anonymizer.engine.graph_sdk._execution_topology import (
     _is_mapped_item_input,
-    _is_subgraph_node,
     _loop_input_source,
-    _operation_owner,
     _source_activation,
-    _subgraph_owner,
 )
 from anonymizer.engine.graph_sdk._execution_values import (
     _FACT_KEY,
@@ -60,11 +56,11 @@ from anonymizer.graph.activation import (
     advance_activation,
 )
 from anonymizer.graph.workflow import (
-    AdmittedWorkflow,
     ContextInputRef,
     NodeId,
     NodeInputRef,
     NodeOutputRef,
+    SubgraphNode,
     WorkflowInputRef,
 )
 
@@ -83,19 +79,11 @@ def _operation_inputs(
     values: dict[ArtifactRef, ArtifactValue],
     provenance: list[ArtifactProvenanceFact],
 ) -> tuple[tuple[AssociationInput, ...], dict[str, ProvenanceKey]]:
-    workflow, operation_node = _operation_owner(admitted.context.prepared.workflow.workflow, node)
-    operation = operation_node.operation
+    operation = admitted.nodes[node].operation
     ports: list[PortArtifact] = []
     parents: dict[str, ProvenanceKey] = {}
     for port in operation.inputs:
-        source = next(
-            (
-                binding.source
-                for binding in workflow.input_bindings
-                if binding.destination == NodeInputRef(node=node, port=port.name)
-            ),
-            None,
-        )
+        source = admitted.input_sources.get(NodeInputRef(node=node, port=port.name))
         source = _loop_input_source(admitted, state, node, activation, port.name, source)
         reference: ArtifactRef | None = produced.get((target, activation, port.name))
         if reference is not None:
@@ -305,16 +293,9 @@ def _materialize_subgraph_inputs(
     produced: dict[tuple[DatumId, ActivationKey | NodeId, str], ArtifactRef],
     provenance: list[ArtifactProvenanceFact],
 ) -> None:
-    owner, declaration = _subgraph_owner(admitted.context.prepared.workflow.workflow, node)
+    declaration = admitted.nodes[node]
     for port in declaration.operation.inputs:
-        source = next(
-            (
-                binding.source
-                for binding in owner.input_bindings
-                if binding.destination == NodeInputRef(node=node, port=port.name)
-            ),
-            None,
-        )
+        source = admitted.input_sources.get(NodeInputRef(node=node, port=port.name))
         reference: ArtifactRef | None = produced.get((target, activation, port.name))
         parent: ProvenanceKey | None = None
         if reference is None and isinstance(source, ContextInputRef):
@@ -360,7 +341,7 @@ def _materialize_subgraph_inputs(
 
 
 def _materialize_subgraph_outputs(
-    root: AdmittedWorkflow,
+    admitted: AdmittedExecutionPlan,
     target: DatumId,
     state: ActivationState,
     facts: _ExecutionFacts,
@@ -371,9 +352,8 @@ def _materialize_subgraph_outputs(
     ):
         if entry.status not in {"success", "failure", "cancelled", "lost", "blocked", "inconsistent"}:
             continue
-        try:
-            _, declaration = _subgraph_owner(root, entry.template)
-        except EffectRejected:
+        declaration = admitted.nodes[entry.template]
+        if not isinstance(declaration, SubgraphNode):
             continue
         if entry.outcome is None:
             continue
@@ -444,7 +424,7 @@ def _materialize_subgraph_outputs(
                             isinstance(output.source, NodeOutputRef)
                             and output.source.node == entry.template
                             and output.source.port == binding.destination.port
-                            for output in root.output_bindings
+                            for output in admitted.context.prepared.workflow.workflow.output_bindings
                         )
                         else "artifact"
                     ),
@@ -459,9 +439,12 @@ def _bridge_structural_map_membership(
     facts: _ExecutionFacts,
     limits: ExecutionLimits,
 ) -> tuple[ActivationState, bool]:
-    root = admitted.context.prepared.workflow.workflow
     for entry in sorted(state.entries, key=lambda item: item.activation.occurrence):
-        if entry.status != "success" or entry.outcome is None or not _is_subgraph_node(root, entry.template):
+        if (
+            entry.status != "success"
+            or entry.outcome is None
+            or not isinstance(admitted.nodes[entry.template], SubgraphNode)
+        ):
             continue
         dynamic_map = next(
             (
