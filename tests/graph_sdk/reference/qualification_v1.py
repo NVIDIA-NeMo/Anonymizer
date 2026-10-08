@@ -18,9 +18,9 @@ CONTRACT_SHA256 = "239bdaf97eda6b90caeb13d29826abead08e2beff6297460c26409b3e1f5d
 STRUCTURAL_CONTRACT_SHA256 = "88c0ef075b225847f1b2668d2a749307c220eceb50215718db722119d828dc6b"
 MATERIALIZED_VERSION_CONTRACT_SHA256 = "165c7c95bce31a7c5808860f28d012bbe1986bf0712cebdc86fb08ad07afcb21"
 MAP_ITEM_EVIDENCE_CONTRACT_SHA256 = "d5e270fe413f4f5632b522e3ce57e0c913a143060997d63b7673268ae9acfbd8"
-GENERATOR_VERSION = "qualification-v1-generator-27-canonical-verified-v8"
-SELF_TEST_VERSION = "qualification-v1-self-test-27-canonical-verified-v8"
-CORPUS_PATH = "future-contracts/r3-map-item-v8/qualification_v1_cases.json"
+GENERATOR_VERSION = "qualification-v1-generator-28-admission-owners-v9"
+SELF_TEST_VERSION = "qualification-v1-self-test-28-admission-owners-v9"
+CORPUS_PATH = "future-contracts/r3-map-item-v9/qualification_v1_cases.json"
 V10_IDS_SHA256 = "043c433056b1ecb21d17ef48efa8bcca6a678fd6b722e7a91ea2e1b3a05c9544"
 
 TERMINAL_CATEGORIES = {"blocked", "cancelled", "failure", "inconsistent", "lost", "success"}
@@ -299,6 +299,22 @@ def admit(d: Obj) -> Obj:
                 if any(production.get("outcome") == r.get("outcome") for production in ps)
                 else "missing"
             )
+        matching_nodes = {(cast(str, production["node"]), cast(str, production["outcome"])) for production in matches}
+        declared_inputs = {
+            cast(str, port)
+            for dependency in map(obj, arr(d["output_dependencies"]))
+            if (cast(str, dependency.get("node")), cast(str, dependency.get("outcome"))) in matching_nodes
+            for port in arr(dependency["inputs"])
+        }
+        declared_ports = declared_inputs | {
+            cast(str, dependency["port"])
+            for dependency in map(obj, arr(d["output_dependencies"]))
+            if (cast(str, dependency.get("node")), cast(str, dependency.get("outcome"))) in matching_nodes
+        }
+        if r.get("subject_port") not in declared_ports or not set(
+            cast(str, port) for port in arr(r["consumed_ports"])
+        ).issubset(declared_inputs):
+            return reject("missing")
         eligible = [
             p
             for p in matches
@@ -317,13 +333,20 @@ def admit(d: Obj) -> Obj:
         return reject("foreign_owner")
     if any(not arr(group) for group in arr(d["atomic"])):
         return reject("invalid_value")
-    flat = [cast(str, x) for g in arr(d["atomic"]) for x in arr(g)]
+    groups = [[cast(str, x) for x in arr(group)] for group in arr(d["atomic"])]
+    flat = [x for group in groups for x in group]
     if any(x not in targets for x in flat):
         return reject("foreign_owner")
-    if len(flat) != len(set(flat)):
-        return reject("contradictory")
-    if set(flat) != set(targets):
-        return reject("contradictory")
+    if any(len(group) != len(set(group)) for group in groups):
+        return reject("duplicate")
+    unique_groups = {frozenset(group) for group in groups}
+    if any(left & right for left in unique_groups for right in unique_groups if left != right):
+        return reject("overlap")
+    mentioned = set(flat)
+    normalized_atomic = sorted(
+        [sorted(group) for group in unique_groups] + [[target] for target in targets if target not in mentioned],
+        key=lambda group: tuple(group),
+    )
     binding_fields = {
         "declaration",
         "materialization",
@@ -611,7 +634,10 @@ def admit(d: Obj) -> Obj:
         for x in arr(d["subgraphs"])
     ):
         return reject("foreign_owner")
-    return {"status": "accepted"}
+    accepted: Obj = {"status": "accepted"}
+    if mentioned != set(targets):
+        accepted["atomic"] = normalized_atomic
+    return accepted
 
 
 def initial(d: Obj) -> Obj:
@@ -3212,6 +3238,10 @@ def case(
         "traces": [],
     }
     neutral_only = {
+        "admission/binding_foreign_node",
+        "admission/duplicate_binding_declaration",
+        "admission/foreign_dependency",
+        "admission/initial_collection_without_binding",
         "assessment/consumed_port",
         "assessment/duplicate_coverage",
         "assessment/extra_coverage",

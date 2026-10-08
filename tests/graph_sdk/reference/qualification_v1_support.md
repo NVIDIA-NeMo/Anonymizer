@@ -1,7 +1,41 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# Qualification v1 R3 map-item evidence reference extension v8
+# Qualification v1 R3 map-item evidence reference extension v9
+
+## Public admission ownership corrections
+
+V9 aligns the remaining finite admission rows with their first public owner.
+A requirement naming an absent subject or consumed port rejects `missing`
+before promise compatibility is inspected. Nonidentical intersecting atomic
+groups reject `overlap`. An omitted atomic singleton is normalized rather than
+rejected: `admission/incomplete_atomic_partition` explicitly returns
+`{"status":"accepted","atomic":[["A","B"],["C"]]}`. Inner groups and the
+outer partition use lexical order only in this finite symbolic projection;
+runtime opaque identities are not sorted to establish semantics.
+
+Four neutral rows do not carry enough typed public-owner information for a
+direct product comparison and are `neutral_only`:
+
+- `admission/foreign_dependency` does not distinguish a foreign-graph datum,
+  a missing same-graph datum, and an existing but unselected datum. Production
+  witnesses must cover `foreign_owner`, `missing`, and `invalid_value`
+  separately at `DataGraph.validate`.
+- `admission/binding_foreign_node` does not distinguish a foreign-workflow
+  node from an unknown node owned by a reachable workflow. Production
+  witnesses must cover `foreign_owner` and `missing` with real `NodeId` owners.
+- `admission/duplicate_binding_declaration` mutates a declaration identity
+  that the SDK allocates only after validation. Production must instead prove
+  duplicate public destinations reject and distinct same-source declarations
+  receive distinct bounded identities.
+- `admission/initial_collection_without_binding` appends a derived collection
+  declaration that has no public constructor. Production must prove collection
+  schema admission through `InitialContextDecl` and retained collection and
+  provenance integrity after binding.
+
+These classifications do not add SDK fields or weaken the closed neutral
+model. The rows retain their IDs and neutral verdicts where their mutation is
+not publicly constructible.
 
 ## Canonical verified-evidence order
 
@@ -292,7 +326,7 @@ The finite alphabet has targets A/B/C, invocation I0 plus foreign I1, plan P0, g
 | Finding | Reference rule | Direct families |
 | --- | --- | --- |
 | 1. Exact assessment authentication | Authentication joins a started entry, exact success terminal node/target/outcome, subject/evidence/consumed port occurrences, artifact target/invocation, declared absence queries, selected configuration, and read-state projection. | `authentication/*`, `joins/*`, `final_output/producer_*` |
-| 2. Requirement projection | Admission requires the projected subject port and every required consumed port to occur in the matching production. Qualification requires the same fields on supporting verified evidence. | `admission/requirement_subject_port`, `requirement_consumed_port`; `selective/*` |
+| 2. Requirement projection | Static admission first requires every subject and consumed port to exist. Preparation then compares the admitted requirement with projected promises. Qualification requires the same fields on supporting verified evidence. | `admission/requirement_subject_port`, `requirement_consumed_port`; `selective/*` |
 | 3. Causal request and cleanup facts | Recovery requires the failure-specific purpose (`retryable→retry`, `malformed→correction`, `permanent→failover`), the same policy and association, known settlement, and a successful latest authority. SDK verification/accounting resources must close; only caller-owned `left_open` and transport-only cleanup are nonblocking. | `request/*`, `cleanup/*` |
 | 4. Expansion reconciliation | A closed membership requires its expander terminal's exact declared expansion outcome. Entries, reservations, members and terminals retain distinct identities. | `membership/closed_0|1|2`, `nested_closed`, `wrong_expansion_outcome`, open/nested-open, selected/unselected, duplicate/foreign, and four terminal categories |
 | 5. Decision ownership | A collected decision must be a retained same-invocation decision artifact and belong to the traversed target or shared identity. A withheld target contributes nothing unless a released candidate has its own occurrence of that decision in producer ancestry. | `decisions/direct`, `transitive`, `consumed`, `shared_deduplicated`, `missing_artifact`, `foreign_target`, `withheld_unrelated`, `withheld_linked` |
@@ -324,7 +358,7 @@ The provenance event is a closed discriminated representation of the five accept
 
 Clarification297 retracts global candidate/decision artifact disjointness. `roles/candidate_decision_distinct_occurrence_alias` proves that one artifact may carry decision authority at one occurrence and become the final candidate at a later distinct occurrence. `roles/subject_decision_collision` continues to reject a decision role on the exact assessment subject occurrence.
 
-Atomic declarations are stored as P1's exact partition. The constructor adds singleton groups for every target absent from an explicit multi-target group; admission rejects missing, overlapping or foreign partition members. Singleton groups add no peer withholding. `propagation/atomic_ab` and `atomic_bc` expose their normalized singleton complements, and `admission/incomplete_atomic_partition` rejects an unnormalized declaration.
+Atomic declarations are stored as P1's normalized partition. The constructor adds singleton groups for every target absent from an explicit multi-target group; admission rejects overlapping or foreign members, while omitted singleton members are normalized. Singleton groups add no peer withholding. `propagation/atomic_ab` and `atomic_bc` expose their normalized singleton complements, and `admission/incomplete_atomic_partition` exposes the accepted normalized partition.
 
 ## Review299 closure
 

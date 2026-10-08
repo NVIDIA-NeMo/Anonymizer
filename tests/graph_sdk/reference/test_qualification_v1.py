@@ -82,7 +82,7 @@ def test_exact_execution_joins_and_environment() -> None:
 
 def test_requirement_and_assessment_authority() -> None:
     for name in ("requirement_subject_port", "requirement_consumed_port"):
-        assert result(f"admission/{name}") == {"code": "contradictory", "status": "rejected"}
+        assert result(f"admission/{name}") == {"code": "missing", "status": "rejected"}
     assert result("assessment/wrong_kind_coverage")["code"] == "unsupported"
     for name in ("foreign_target", "foreign_evidence", "foreign_subject"):
         assert result(f"assessment/{name}")["status"] == "rejected"
@@ -895,7 +895,11 @@ def test_propagation_and_true_commutation() -> None:
     assert "atomic_group" in cast(list[str], row("propagation/atomic_ab", "B")["withholding"])
     assert case("propagation/atomic_ab")["declaration"]["atomic"] == [["A", "B"], ["C"]]
     assert case("propagation/atomic_bc")["declaration"]["atomic"] == [["B", "C"], ["A"]]
-    assert result("admission/incomplete_atomic_partition") == {"code": "contradictory", "status": "rejected"}
+    assert result("admission/overlapping_atomic") == {"code": "overlap", "status": "rejected"}
+    assert result("admission/incomplete_atomic_partition") == {
+        "atomic": [["A", "B"], ["C"]],
+        "status": "accepted",
+    }
     assert result("admission/binding_foreign_node") == {"code": "foreign_owner", "status": "rejected"}
     assert result("admission/initial_collection_without_binding") == {"code": "missing", "status": "rejected"}
     assert result("admission/duplicate_map_input") == {"code": "duplicate", "status": "rejected"}
@@ -911,6 +915,45 @@ def test_propagation_and_true_commutation() -> None:
         for x in commuted["events"]
         if x.get("kind") == "revision" and x.get("collection") == "artifacts"
     )
+
+
+def test_v9_admission_scope_tracks_public_owner_representability() -> None:
+    for name in (
+        "foreign_dependency",
+        "binding_foreign_node",
+        "duplicate_binding_declaration",
+        "initial_collection_without_binding",
+    ):
+        assert case(f"admission/{name}")["comparison_scope"] == "neutral_only"
+    for name in (
+        "requirement_subject_port",
+        "requirement_consumed_port",
+        "overlapping_atomic",
+        "incomplete_atomic_partition",
+        "empty_atomic_group",
+    ):
+        assert case(f"admission/{name}")["comparison_scope"] == "production_boundary"
+
+
+def test_v9_admission_precedence_and_atomic_normalization_are_semantic() -> None:
+    baseline: reference.Obj = json.loads(json.dumps(case("release/protection_success")["declaration"]))
+    requirement = cast(list[reference.Obj], baseline["requirements"])[0]
+    requirement["subject_port"] = "context"
+    assert reference.admit(baseline) == {"code": "contradictory", "status": "rejected"}
+
+    baseline = json.loads(json.dumps(case("release/protection_success")["declaration"]))
+    requirement = cast(list[reference.Obj], baseline["requirements"])[0]
+    requirement["consumed_ports"] = ["subject"]
+    assert reference.admit(baseline) == {"code": "contradictory", "status": "rejected"}
+
+    incomplete: reference.Obj = json.loads(json.dumps(case("admission/incomplete_atomic_partition")["declaration"]))
+    incomplete["atomic"] = [["B", "A"]]
+    assert reference.admit(incomplete) == {"atomic": [["A", "B"], ["C"]], "status": "accepted"}
+
+    incomplete["atomic"] = [["A", "B"], ["B", "C"]]
+    assert reference.admit(incomplete) == {"code": "overlap", "status": "rejected"}
+    incomplete["atomic"] = [["A", "A"], ["B"], ["C"]]
+    assert reference.admit(incomplete) == {"code": "duplicate", "status": "rejected"}
 
 
 def test_root_partition_revision_and_stray_terminal_negatives() -> None:

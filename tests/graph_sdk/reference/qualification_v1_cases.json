@@ -139691,7 +139691,7 @@
     },
     "events": [],
     "expected": {
-      "code": "contradictory",
+      "code": "missing",
       "status": "rejected"
     },
     "family": "admission",
@@ -139837,7 +139837,7 @@
     },
     "events": [],
     "expected": {
-      "code": "contradictory",
+      "code": "missing",
       "status": "rejected"
     },
     "family": "admission",
@@ -216577,7 +216577,7 @@
   {
     "boundary": "admission",
     "case_id": "admission/foreign_dependency",
-    "comparison_scope": "production_boundary",
+    "comparison_scope": "neutral_only",
     "declaration": {
       "atomic": [
         [
@@ -217056,7 +217056,7 @@
     },
     "events": [],
     "expected": {
-      "code": "contradictory",
+      "code": "overlap",
       "status": "rejected"
     },
     "family": "admission",
@@ -217535,8 +217535,16 @@
     },
     "events": [],
     "expected": {
-      "code": "contradictory",
-      "status": "rejected"
+      "atomic": [
+        [
+          "A",
+          "B"
+        ],
+        [
+          "C"
+        ]
+      ],
+      "status": "accepted"
     },
     "family": "admission",
     "traces": []
@@ -217544,7 +217552,7 @@
   {
     "boundary": "admission",
     "case_id": "admission/binding_foreign_node",
-    "comparison_scope": "production_boundary",
+    "comparison_scope": "neutral_only",
     "declaration": {
       "atomic": [
         [
@@ -217700,7 +217708,7 @@
   {
     "boundary": "admission",
     "case_id": "admission/initial_collection_without_binding",
-    "comparison_scope": "production_boundary",
+    "comparison_scope": "neutral_only",
     "declaration": {
       "atomic": [
         [
@@ -218152,7 +218160,7 @@
   {
     "boundary": "admission",
     "case_id": "admission/duplicate_binding_declaration",
-    "comparison_scope": "production_boundary",
+    "comparison_scope": "neutral_only",
     "declaration": {
       "atomic": [
         [
