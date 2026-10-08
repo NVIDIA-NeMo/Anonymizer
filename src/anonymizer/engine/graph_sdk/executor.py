@@ -707,6 +707,7 @@ _RESULT_KEY = object()
 class ExecutionResult(PrivateValue):
     _execution: AdmittedExecutionPlan
     _input_parents: tuple[tuple[DatumId, ActivationKey, str, ProvenanceKey], ...]
+    _passthrough_parents: tuple[tuple[DatumId, ActivationKey, str, ProvenanceKey], ...]
     record: CanonicalRecord
     states: tuple[ActivationState, ...]
     requests: RequestReceipt
@@ -1113,6 +1114,7 @@ class _FactCheckpoint:
     values: dict[ArtifactRef, ArtifactValue]
     produced: dict[tuple[DatumId, ActivationKey | NodeId, str], ArtifactRef]
     provenance_count: int
+    passthrough_parents: dict[tuple[DatumId, ActivationKey, str], ProvenanceKey]
     ports: tuple[ExecutionPortFact, ...]
     assessment_count: int
     next_artifact: int
@@ -1126,6 +1128,7 @@ class _ExecutionFacts:
     ports: list[ExecutionPortFact] = field(default_factory=list)
     assessments: list[ExecutionAssessmentFact] = field(default_factory=list)
     input_parents: list[tuple[DatumId, ActivationKey, str, ProvenanceKey]] = field(default_factory=list)
+    passthrough_parents: dict[tuple[DatumId, ActivationKey, str], ProvenanceKey] = field(default_factory=dict)
     next_artifact: int = 0
 
     def checkpoint(self) -> _FactCheckpoint:
@@ -1133,6 +1136,7 @@ class _ExecutionFacts:
             values=self.values.copy(),
             produced=self.produced.copy(),
             provenance_count=len(self.provenance),
+            passthrough_parents=self.passthrough_parents.copy(),
             ports=tuple(self.ports),
             assessment_count=len(self.assessments),
             next_artifact=self.next_artifact,
@@ -1144,6 +1148,8 @@ class _ExecutionFacts:
         self.produced.clear()
         self.produced.update(checkpoint.produced)
         del self.provenance[checkpoint.provenance_count :]
+        self.passthrough_parents.clear()
+        self.passthrough_parents.update(checkpoint.passthrough_parents)
         self.ports.clear()
         self.ports.extend(checkpoint.ports)
         del self.assessments[checkpoint.assessment_count :]
@@ -1923,7 +1929,13 @@ class _InvocationRuntime:
                 )
         try:
             while True:
-                _materialize_subgraph_outputs(self.prepared.workflow.workflow, job.target, candidate_state, self.facts)
+                _materialize_subgraph_outputs(
+                    self.prepared.workflow.workflow,
+                    job.target,
+                    candidate_state,
+                    self.facts,
+                    self.subgraph_input_parents,
+                )
                 candidate_state, bridged = _bridge_structural_map_membership(
                     self.admitted, candidate_state, job.target, self.facts, self.services.limits
                 )
@@ -1972,6 +1984,10 @@ class _InvocationRuntime:
             _key=_RESULT_KEY,
             _execution=self.admitted,
             _input_parents=tuple(self.facts.input_parents),
+            _passthrough_parents=tuple(
+                (target, activation, port, parent)
+                for (target, activation, port), parent in self.facts.passthrough_parents.items()
+            ),
             record=record,
             states=tuple(self.states),
             requests=request_receipt(self.request_authority.state),
@@ -2526,6 +2542,7 @@ def _materialize_subgraph_outputs(
     target: DatumId,
     state: ActivationState,
     facts: _ExecutionFacts,
+    input_parents: dict[tuple[DatumId, ActivationKey, str], ProvenanceKey],
 ) -> None:
     for entry in state.entries:
         if entry.status not in {"success", "failure", "cancelled", "lost", "blocked", "inconsistent"}:
@@ -2537,31 +2554,38 @@ def _materialize_subgraph_outputs(
         if entry.outcome is None:
             continue
         for binding in declaration.body.output_bindings:
-            if not isinstance(binding.source, NodeOutputRef):
-                continue
             destination = (target, entry.activation, binding.destination.port)
             if destination in facts.produced:
                 continue
-            source_activation = _source_activation(state, entry.activation, binding.source.node)
-            source_entry = next(
-                (
-                    child
-                    for child in state.entries
-                    if child.activation == source_activation and child.status == "success"
-                ),
-                None,
-            )
-            if source_entry is None:
-                continue
-            source_key = OperationOutputKey(
-                activation=source_entry.activation,
-                target=target,
-                port=binding.source.port,
-            )
+            source_key: ProvenanceKey
+            if isinstance(binding.source, WorkflowInputRef):
+                parent = input_parents.get((target, entry.activation, binding.source.port))
+                if parent is None:
+                    continue
+                source_key = parent
+            else:
+                source_activation = _source_activation(state, entry.activation, binding.source.node)
+                source_entry = next(
+                    (
+                        child
+                        for child in state.entries
+                        if child.activation == source_activation and child.status == "success"
+                    ),
+                    None,
+                )
+                if source_entry is None:
+                    continue
+                source_key = OperationOutputKey(
+                    activation=source_entry.activation,
+                    target=target,
+                    port=binding.source.port,
+                )
             source_fact = next((item for item in facts.provenance if item.key == source_key), None)
             if source_fact is None:
                 continue
             facts.produced[destination] = source_fact.artifact
+            if isinstance(binding.source, WorkflowInputRef):
+                facts.passthrough_parents[destination] = source_key
             key = OperationOutputKey(
                 activation=entry.activation,
                 target=target,

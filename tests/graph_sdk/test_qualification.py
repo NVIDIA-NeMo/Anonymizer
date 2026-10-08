@@ -475,15 +475,41 @@ def test_failed_expansion_reconciles_actual_members(count: int, mode: str, statu
         object.__setattr__(expansion, "members", original)
 
 
-def test_direct_root_input_output_retains_its_actual_producer_and_qualifies() -> None:
-    from anonymizer.engine.graph_sdk.executor import RootInputKey
+@pytest.mark.parametrize("nested", [False, True])
+def test_direct_root_input_output_retains_its_actual_producer_and_qualifies(nested: bool) -> None:
+    from anonymizer.engine.graph_sdk.executor import OperationOutputKey, RootInputKey
 
-    execution, result = asyncio.run(_execute_assessment(candidate_input=True, root_passthrough=True))
+    execution, result = asyncio.run(_execute_assessment(candidate_input=True, root_passthrough=True, nested=nested))
     assert len(result.final_outputs) == 1
-    assert isinstance(result.final_outputs[0].producer, RootInputKey)
+    assert isinstance(result.final_outputs[0].producer, OperationOutputKey if nested else RootInputKey)
     admitted, current, submissions = _inputs(execution, result)
     output = qualify(admitted=admitted, result=result, current=current, submissions=submissions)
     assert len(output.qualified) == 1
     assert output.qualified[0].candidate == result.final_outputs[0].candidate
     assert not output.required_decisions
     assert output.record.statuses[0].qualification == "met"
+
+
+@pytest.mark.parametrize("mutation", ["missing", "aliased-occurrence"])
+def test_nested_passthrough_provenance_preserves_the_resolved_input_source(mutation: str) -> None:
+    from anonymizer.engine.graph_sdk.executor import OperationOutputKey
+
+    execution, result = asyncio.run(_execute_assessment(candidate_input=True, root_passthrough=True, nested=True))
+    admitted, current, submissions = _inputs(execution, result)
+    output = next(item for item in result.provenance if item.key == result.final_outputs[0].producer)
+    assessment = result.assessments[0]
+    alias = next(
+        item
+        for item in result.provenance
+        if isinstance(item.key, OperationOutputKey) and item.key.activation == assessment.activation
+    )
+    assert alias.artifact == output.artifact
+    assert alias.key not in output.parents
+    original = output.parents
+    object.__setattr__(output, "parents", frozenset() if mutation == "missing" else frozenset({alias.key}))
+    try:
+        with pytest.raises(EffectRejected) as error:
+            qualify(admitted=admitted, result=result, current=current, submissions=submissions)
+        assert error.value.code is EffectCode.CONTRADICTORY
+    finally:
+        object.__setattr__(output, "parents", original)

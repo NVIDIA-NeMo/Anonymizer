@@ -137,7 +137,7 @@ async def _execute_assessment(
     resource: ResourceLease | None = None,
     external: tuple[RequestTransport, ResourceLease] | None = None,
 ) -> tuple[AdmittedExecutionPlan, ExecutionResult]:
-    assert not root_passthrough or (candidate_input and not nested)
+    assert not root_passthrough or candidate_input
     assert not (decision_input and external is not None)
     assert not (auxiliary_output and (rename_ports or nested or decision_input or external is not None))
     predecessor = decision_input or external is not None

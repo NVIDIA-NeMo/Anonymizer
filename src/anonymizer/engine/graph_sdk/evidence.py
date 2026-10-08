@@ -242,7 +242,7 @@ class _EvidenceFacts:
         execution = admitted.execution
         prepared = execution.context.prepared
         if (
-            max(len(result.ports), len(result._input_parents))
+            max(len(result.ports), len(result._input_parents), len(result._passthrough_parents))
             > min(limits.max_port_facts, execution.assessment_limits.max_port_facts)
             or len(result.assessments) > execution.assessment_limits.max_assessment_facts
             or sum(len(item.parents) for item in result.provenance)

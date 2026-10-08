@@ -202,6 +202,7 @@ class _Qualification:
         self.outputs: dict[DatumId, tuple[FinalOutputFact, ...]] = {}
         self.provenance: dict[ProvenanceKey, ArtifactProvenanceFact] = {}
         self.input_parents: dict[tuple[DatumId, ActivationKey, str], ProvenanceKey] = {}
+        self.passthrough_parents: dict[tuple[DatumId, ActivationKey, str], ProvenanceKey] = {}
 
     def incomplete(self, target: DatumId) -> None:
         self.closed[target] = False
@@ -343,6 +344,7 @@ class _Qualification:
                 reject(EffectCode.MISSING)
             self.provenance[fact.key] = fact
         self._validate_input_parents()
+        self._validate_passthrough_parents()
         for fact in self.result.provenance:
             if not fact.parents <= self.provenance.keys():
                 reject(EffectCode.MISSING)
@@ -421,6 +423,32 @@ class _Qualification:
             if source.artifact != self.facts.ports[activation, port].artifact:
                 reject(EffectCode.CONTRADICTORY)
 
+    def _validate_passthrough_parents(self) -> None:
+        for target, activation, port, parent in self.result._passthrough_parents:
+            if activation not in self.entries or target != self.owners[activation] or parent.target != target:
+                reject(EffectCode.FOREIGN_OWNER)
+            key = (target, activation, port)
+            if key in self.passthrough_parents:
+                reject(EffectCode.DUPLICATE)
+            self.passthrough_parents[key] = parent
+        expected = set()
+        for fact in self.result.provenance:
+            key = fact.key
+            if not isinstance(key, OperationOutputKey) or key.activation not in self.entries:
+                continue
+            node = self.nodes[self.entries[key.activation].template]
+            if isinstance(node, SubgraphNode) and any(
+                binding.destination.port == key.port and isinstance(binding.source, WorkflowInputRef)
+                for binding in node.body.output_bindings
+            ):
+                expected.add((key.target, key.activation, key.port))
+        if expected - self.passthrough_parents.keys():
+            reject(EffectCode.MISSING)
+        if self.passthrough_parents.keys() - expected:
+            reject(EffectCode.CONTRADICTORY)
+        if any(parent not in self.provenance for parent in self.passthrough_parents.values()):
+            reject(EffectCode.MISSING)
+
     def _provenance_acyclic(self) -> None:
         remaining = {key: len(fact.parents) for key, fact in self.provenance.items()}
         children: dict[ProvenanceKey, list[ProvenanceKey]] = {key: [] for key in remaining}
@@ -458,26 +486,29 @@ class _Qualification:
             node = self.nodes[entry.template]
             if isinstance(node, SubgraphNode):
                 bindings = [item for item in node.body.output_bindings if item.destination.port == key.port]
-                if len(bindings) != 1 or not isinstance(bindings[0].source, NodeOutputRef):
+                if len(bindings) != 1 or len(fact.parents) != 1:
                     reject(EffectCode.CONTRADICTORY)
                 source = bindings[0].source
-                if len(fact.parents) != 1:
-                    reject(EffectCode.CONTRADICTORY)
                 parent = self.provenance[next(iter(fact.parents))]
-                if not isinstance(parent.key, OperationOutputKey):
-                    reject(EffectCode.CONTRADICTORY)
-                state = self.result.states[self.order.index(key.target)]
-                expected_activation = _source_activation(state, key.activation, source.node)
-                source_entry = self.entries.get(parent.key.activation)
-                if (
-                    source_entry is None
-                    or parent.key.activation != expected_activation
-                    or parent.key.target != key.target
-                    or source_entry.template != source.node
-                    or parent.key.port != source.port
-                    or parent.artifact != fact.artifact
-                    or fact.decision != parent.decision
-                ):
+                if isinstance(source, WorkflowInputRef):
+                    expected_key = self.passthrough_parents[key.target, key.activation, key.port]
+                    if parent.key != expected_key:
+                        reject(EffectCode.CONTRADICTORY)
+                else:
+                    if not isinstance(parent.key, OperationOutputKey):
+                        reject(EffectCode.CONTRADICTORY)
+                    state = self.result.states[self.order.index(key.target)]
+                    expected_activation = _source_activation(state, key.activation, source.node)
+                    source_entry = self.entries.get(parent.key.activation)
+                    if (
+                        source_entry is None
+                        or parent.key.activation != expected_activation
+                        or parent.key.target != key.target
+                        or source_entry.template != source.node
+                        or parent.key.port != source.port
+                    ):
+                        reject(EffectCode.CONTRADICTORY)
+                if parent.artifact != fact.artifact or fact.decision != parent.decision:
                     reject(EffectCode.CONTRADICTORY)
             else:
                 dependency = next(item for item in node.operation.output_dependencies if item.output == key.port)
