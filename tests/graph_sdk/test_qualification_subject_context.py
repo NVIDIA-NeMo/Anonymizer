@@ -14,12 +14,14 @@ from anonymizer.engine.graph_sdk.context import admit_context_plan
 from anonymizer.engine.graph_sdk.data import DataGraph, DataLimits
 from anonymizer.engine.graph_sdk.evidence import AssessmentSubmission, admit_qualification, evidence_revision_view
 from anonymizer.engine.graph_sdk.executor import (
+    AdmittedExecutionPlan,
     AssessmentFinding,
     AssessmentLimits,
     DecisionLimits,
     EvidenceProductionDecl,
     ExecutionImplementation,
     ExecutionLimits,
+    ExecutionResult,
     ExecutionServices,
     ImplementationHandle,
     LocalAssessmentResult,
@@ -28,7 +30,12 @@ from anonymizer.engine.graph_sdk.executor import (
     admit_execution_plan,
     start_execution,
 )
-from anonymizer.engine.graph_sdk.preparation import BoundInput, PreparationConfiguration
+from anonymizer.engine.graph_sdk.preparation import (
+    BoundInput,
+    PreparationConfiguration,
+    StateRevision,
+    StateRevisionView,
+)
 from anonymizer.engine.graph_sdk.qualification import qualify
 from anonymizer.engine.graph_sdk.requests import (
     AssociationInput,
@@ -50,6 +57,7 @@ from anonymizer.graph.workflow import (
     OutputDependency,
     OutputPort,
     ProtectionRequirement,
+    StateEffect,
     WorkflowInputRef,
     WorkflowOutputRef,
     admit_activation_workflow,
@@ -62,7 +70,7 @@ from tests.graph_sdk.test_preparation import _capability, _prepare, _workflow
 
 @dataclass
 class _SeparateAssessment:
-    finding: AssessmentFinding
+    finding: AssessmentFinding | None
     calls: int = 0
 
     async def run(self, request: tuple[AssociationInput, ...]) -> LocalCompleted:
@@ -89,7 +97,9 @@ class _SeparateAssessment:
                     consumed_context_ports=frozenset(),
                 ),
             ),
-            assessments=(
+            assessments=()
+            if self.finding is None
+            else (
                 LocalAssessmentResult(
                     association=item.association, promise="checked", evidence_port="evidence", finding=self.finding
                 ),
@@ -97,10 +107,20 @@ class _SeparateAssessment:
         )
 
 
-async def _execute_separate_subject_context(*, extra_evidence_dependency: bool = False):
+async def _execute_separate_subject_context(
+    *,
+    extra_evidence_dependency: bool = False,
+    coverage: frozenset[CoverageAtom] | None = None,
+    requirement_coverage: frozenset[CoverageAtom] | None = None,
+    environment: bool = False,
+    finding: AssessmentFinding | None = None,
+    execution_only: bool = False,
+    expose_evidence: bool = True,
+) -> tuple[AdmittedExecutionPlan, ExecutionResult]:
     base, node, artifact = _workflow(with_input=True)
     raw = base.workflow
-    coverage = frozenset({CoverageAtom(kind="field", name="text")})
+    coverage = coverage if coverage is not None else frozenset({CoverageAtom(kind="field", name="text")})
+    read = StateEffect(kind="read", name="read")
     operation = replace(
         raw.interface,
         inputs=tuple(InputPort(name=name, artifact_type=artifact) for name in ("subject", "context")),
@@ -117,6 +137,7 @@ async def _execute_separate_subject_context(*, extra_evidence_dependency: bool =
             replace(
                 raw.interface.outcomes[0],
                 produced_ports=frozenset({"result", "evidence"}),
+                state_effects=frozenset({read}) if environment else frozenset(),
                 evidence=frozenset(
                     {
                         EvidencePromise(
@@ -134,7 +155,14 @@ async def _execute_separate_subject_context(*, extra_evidence_dependency: bool =
     )
     static = admit_static_workflow(
         workflow=raw.workflow,
-        interface=operation,
+        interface=operation
+        if expose_evidence
+        else replace(
+            operation,
+            outputs=tuple(port for port in operation.outputs if port.name == "result"),
+            output_dependencies=tuple(dep for dep in operation.output_dependencies if dep.output == "result"),
+            outcomes=tuple(replace(outcome, produced_ports=frozenset({"result"})) for outcome in operation.outcomes),
+        ),
         nodes=(OperationNode(id=node, operation=operation),),
         input_bindings=tuple(
             InputBinding(source=WorkflowInputRef(port=name), destination=NodeInputRef(node=node, port=name))
@@ -142,7 +170,7 @@ async def _execute_separate_subject_context(*, extra_evidence_dependency: bool =
         ),
         output_bindings=tuple(
             OutputBinding(source=NodeOutputRef(node=node, port=name), destination=WorkflowOutputRef(port=name))
-            for name in ("result", "evidence")
+            for name in (("result", "evidence") if expose_evidence else ("result",))
         ),
         outcome_bindings=tuple(raw.outcome_bindings),
         sequence=(),
@@ -153,7 +181,7 @@ async def _execute_separate_subject_context(*, extra_evidence_dependency: bool =
                 meaning="test assessment",
                 subject_port="subject",
                 consumed_ports=frozenset({"context"}),
-                coverage=coverage,
+                coverage=coverage if requirement_coverage is None else requirement_coverage,
             ),
         ),
         limits=replace(raw.limits, max_bindings=5),
@@ -180,14 +208,19 @@ async def _execute_separate_subject_context(*, extra_evidence_dependency: bool =
         capability=capability,
         data=data,
         configuration=PreparationConfiguration(
-            purpose="protection", required_protection_outcomes=frozenset({"ok"}), hard_request_limit=None
+            purpose="execution_only" if execution_only else "protection",
+            required_protection_outcomes=frozenset() if execution_only else frozenset({"ok"}),
+            hard_request_limit=None,
         ),
         bound_inputs=tuple(
             BoundInput(target=target, source=source, port=name, artifact_type=artifact)
             for name, source in (("subject", target), ("context", context_source))
         ),
+        state=StateRevisionView(
+            revisions=frozenset({StateRevision(effect=read, revision=1)}) if environment else frozenset()
+        ),
     )
-    finding = AssessmentFinding(status="satisfied", code="observed")
+    finding = finding if finding is not None else AssessmentFinding(status="satisfied", code="observed")
     admitted = admit_execution_plan(
         context=admit_context_plan(
             prepared=prepared, bound_context=None, adaptive_retrievals=(), context_capabilities=()
@@ -212,13 +245,15 @@ async def _execute_separate_subject_context(*, extra_evidence_dependency: bool =
             ),
         ),
         decisions=(),
-        assessment_productions=(
+        assessment_productions=()
+        if execution_only
+        else (
             EvidenceProductionDecl(
                 node=node,
                 outcome="ok",
                 promise="checked",
                 evidence_port="evidence",
-                absence_queries=frozenset(),
+                absence_queries=frozenset({0}) if environment else frozenset(),
                 supported_findings=frozenset({finding}),
             ),
         ),
@@ -226,13 +261,13 @@ async def _execute_separate_subject_context(*, extra_evidence_dependency: bool =
             max_productions=1,
             max_findings_per_production=1,
             max_finding_code_bytes=16,
-            max_absence_queries=0,
+            max_absence_queries=1 if environment else 0,
             max_assessment_facts=1,
             max_port_facts=4,
             max_provenance_edges=3,
         ),
     )
-    callback = _SeparateAssessment(finding)
+    callback = _SeparateAssessment(None if execution_only else finding)
     running = await start_execution(
         admitted=admitted,
         capabilities=(capability,),
@@ -257,6 +292,7 @@ async def _execute_separate_subject_context(*, extra_evidence_dependency: bool =
             ),
             decision_limits=DecisionLimits(max_pending=0, max_lifetime_ns=0),
             clock=_ZeroClock(),
+            absence_revisions=((0, 1),) if environment and not execution_only else (),
         ),
     )
     result = await running.wait()
@@ -302,3 +338,25 @@ def test_evidence_dependency_must_equal_the_promised_consumed_ports() -> None:
     with pytest.raises(EffectRejected) as error:
         asyncio.run(_execute_separate_subject_context(extra_evidence_dependency=True))
     assert error.value.code is EffectCode.CONTRADICTORY
+
+
+def test_execution_only_has_no_assessment_production_or_callback_result() -> None:
+    execution, result = asyncio.run(_execute_separate_subject_context(execution_only=True, expose_evidence=False))
+    assert execution.assessment_productions == ()
+    assert result.assessments == ()
+    admitted = admit_qualification(execution=execution, productions=(), limits=_qualification_limits())
+    current = evidence_revision_view(
+        admitted=admitted,
+        result=result,
+        artifacts=(),
+        absences=(),
+        configurations=(),
+        state=StateRevisionView(revisions=frozenset()),
+    )
+    output = qualify(admitted=admitted, result=result, current=current, submissions=())
+    assert output.qualified == output.verified == ()
+    assert output.targets[0].candidate is None
+    assert output.targets[0].withholding == frozenset({"execution_only"})
+    assert output.record.statuses[0].qualification == "not_assessed"
+    assert output.record.statuses[0].artifact_available
+    assert not output.record.statuses[0].protection_available
