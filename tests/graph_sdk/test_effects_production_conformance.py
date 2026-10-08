@@ -279,10 +279,16 @@ def _admit_case(case: dict[str, Any]) -> None:
     capabilities = [primary]
     catalog = cast(list[dict[str, Any]], admitted_declaration.get("capability_catalog", []))
     if not execution_policies and catalog:
-        capabilities.extend(
-            replace(primary, implementation=ImplementationRef(name=f"catalog-{index}", revision=1))
-            for index in range(1, len(catalog))
-        )
+        catalog_implementations: dict[str, ImplementationRef] = {
+            cast(str, catalog[0]["implementation"]): primary.implementation
+        }
+        for item in catalog[1:]:
+            name = cast(str, item["implementation"])
+            implementation = catalog_implementations.setdefault(
+                name,
+                ImplementationRef(name=f"catalog-{len(catalog_implementations)}", revision=1),
+            )
+            capabilities.append(replace(primary, implementation=implementation))
 
     if execution_policies == "invalid":
         policies: Any = execution_policies
@@ -413,6 +419,72 @@ def test_admission_corpus_case_through_production(case: dict[str, Any]) -> None:
     expected = cast(dict[str, str], case["expected"])
     assert ("rejected" if rejected else "accepted") == expected["status"]
     assert rejected == expected.get("code")
+
+
+@pytest.mark.parametrize(
+    ("duplicate", "expected"),
+    ((False, None), (True, "duplicate")),
+)
+def test_admission_capability_identity_survives_a_raised_limit(duplicate: bool, expected: str | None) -> None:
+    workflow, node, _ = _workflow(requests=3)
+    primary = replace(_capability(workflow, external=True), max_physical_requests_per_activation=2)
+    alternate = (
+        primary
+        if duplicate
+        else replace(
+            primary,
+            implementation=ImplementationRef(name="alternate", revision=1),
+        )
+    )
+    prepared = _prepare(
+        data=_data(2),
+        workflow=workflow,
+        capability=primary,
+        limits=_limits(capabilities=2),
+    )
+    context = admit_context_plan(
+        prepared=prepared,
+        bound_context=None,
+        adaptive_retrievals=(),
+        context_capabilities=(),
+    )
+    request = PhysicalRequestPolicy(
+        visibility="dispatch_and_settlement",
+        pre_dispatch_control="executor",
+        retry_owner="executor",
+        replay="idempotent",
+        max_attempts=2,
+    )
+    policy = OperationExecutionPolicy(
+        node=node,
+        kind="external",
+        request=request,
+        safe_detachment="forbidden",
+        implementations=tuple(
+            ExecutionImplementation(
+                implementation=item.implementation,
+                configuration=item.configuration,
+                capability=item,
+                request=request,
+            )
+            for item in (primary, alternate)
+        ),
+        result_outcomes=frozenset({"ok"}),
+        runtime_outcomes=_valid_runtime_rows("external", frozenset({"ok"})),
+    )
+    rejected: str | None = None
+    try:
+        admit_execution_plan(
+            context=context,
+            capabilities=(primary, alternate),
+            policies=(policy,),
+            decisions=(),
+            assessment_productions=(),
+            assessment_limits=_assessment_limits(),
+        )
+    except EffectRejected as exc:
+        rejected = exc.code.value
+    assert rejected == expected
 
 
 class _CaseProvider:
