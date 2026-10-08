@@ -19,6 +19,7 @@ from anonymizer.engine.graph_sdk.capabilities import ImplementationRef, Preparat
 from anonymizer.engine.graph_sdk.context import (
     AdaptiveRetrievalDecl,
     BindingLimits,
+    BindingReceipt,
     ContextMaterialization,
     ContextResource,
     ContextSelector,
@@ -42,6 +43,7 @@ from anonymizer.engine.graph_sdk.executor import (
     DecisionWaitId,
     ExecutionImplementation,
     ExecutionLimits,
+    ExecutionResult,
     ExecutionServices,
     ImplementationHandle,
     InitialCollectionKey,
@@ -50,6 +52,7 @@ from anonymizer.engine.graph_sdk.executor import (
     LocalFailure,
     OperationExecutionPolicy,
     OperationOutputKey,
+    ProvenanceKey,
     RootInputKey,
     RuntimeOutcome,
     admit_execution_plan,
@@ -99,9 +102,13 @@ from anonymizer.graph.workflow import (
     DynamicScope,
     InputPort,
     NodeId,
+    NodeOutputRef,
     OperationNode,
+    OutputBinding,
+    OutputDependency,
     OutputPort,
     WorkflowId,
+    WorkflowOutputRef,
     admit_activation_workflow,
     admit_static_workflow,
 )
@@ -189,6 +196,15 @@ ADMISSION_CASES = tuple(
     if case["family"] == "admission" or case["case_id"] == "retry/implementation_owner_rejected"
 )
 REAL_BINDING_CASE_IDS = {
+    "materialization/latest_one_version",
+    "materialization/latest_two_versions",
+    "materialization/latest_reordered_versions",
+    "materialization/latest_version_gap",
+    "materialization/latest_items_exact",
+    "materialization/latest_bytes_exact",
+    "materialization/latest_retry",
+    "materialization/latest_correction",
+    "materialization/latest_caller_cleanup",
     "materialization/latest_duplicate_pair",
     "materialization/latest_multiple_keys",
     "materialization/latest_items_one_over",
@@ -1298,17 +1314,23 @@ class _LateBindingCaseProvider:
 @dataclass
 class _ContextConsumer:
     port: str
+    outputs: tuple[PortArtifact, ...] = ()
+    expected_input: str | None = None
     calls: int = 0
 
     async def run(self, request: tuple[AssociationInput, ...]) -> LocalCompleted:
         self.calls += 1
         assert len(request) == 1
+        if self.expected_input is not None:
+            (item,) = request[0].inputs
+            assert isinstance(item.value, TextArtifactValue)
+            assert item.value.text == self.expected_input
         return LocalCompleted(
             results=(
                 AssociationResult(
                     association=request[0].association,
                     outcome="ok",
-                    outputs=(),
+                    outputs=self.outputs,
                     consumed_context_ports=frozenset({self.port}),
                 ),
             )
@@ -1336,6 +1358,8 @@ async def _assert_binding_corpus_case(case: dict[str, Any]) -> None:
         ),
     )
     materializations = cast(list[dict[str, Any]], raw.get("materializations", []))
+    publication = materializations[0].get("publication") if materializations else None
+    latest = bool(materializations and materializations[0].get("version_selection") == "latest")
     materialization_kind = cast(str, materializations[0]["kind"]) if materializations else None
     declared_max_items = cast(int, materializations[0]["max_items"]) if materializations else max_response_items
     item_type = artifact_type
@@ -1357,6 +1381,28 @@ async def _assert_binding_corpus_case(case: dict[str, Any]) -> None:
                 for outcome in operation_node.operation.outcomes
             ),
         )
+        if publication is not None:
+            assert materializations[0]["output_type"] == item_type.name
+            assert publication["artifact_type"] == item_type.name
+            assert publication["activation"] == f"OP:{materializations[0]['association']}"
+            assert publication["node"] == materializations[0]["node"] == "N0"
+            (published_outcome,) = operation.outcomes
+            assert publication["outcome"] == published_outcome.name == "ok"
+            operation = replace(
+                operation,
+                outputs=(OutputPort(name=publication["output_port"], artifact_type=item_type),),
+                output_dependencies=(
+                    OutputDependency(
+                        output=publication["output_port"],
+                        inputs=frozenset(publication["inputs"]),
+                        identity_input=None,
+                    ),
+                ),
+                outcomes=tuple(
+                    replace(outcome, produced_ports=frozenset({publication["output_port"]}))
+                    for outcome in operation.outcomes
+                ),
+            )
         rebuilt = admit_static_workflow(
             workflow=static.workflow,
             interface=replace(operation, inputs=(InputPort(name=context_port, artifact_type=input_type),)),
@@ -1369,12 +1415,19 @@ async def _assert_binding_corpus_case(case: dict[str, Any]) -> None:
                 )
                 for binding in static.input_bindings
             ),
-            output_bindings=tuple(static.output_bindings),
+            output_bindings=(
+                OutputBinding(
+                    source=NodeOutputRef(node=node, port=publication["output_port"]),
+                    destination=WorkflowOutputRef(port=publication["output_port"]),
+                ),
+            )
+            if publication is not None
+            else tuple(static.output_bindings),
             outcome_bindings=tuple(static.outcome_bindings),
             sequence=tuple(static.sequence),
             choices=tuple(static.choices),
             protection=(),
-            limits=static.limits,
+            limits=replace(static.limits, max_bindings=static.limits.max_bindings + int(publication is not None)),
         )
         workflow = admit_activation_workflow(
             workflow=rebuilt,
@@ -1537,14 +1590,14 @@ async def _assert_binding_corpus_case(case: dict[str, Any]) -> None:
         "binding_sources"
     ]
     assert result.receipt.terminal == expected["binding_terminal"]
-    if materializations and materializations[0].get("version_selection") == "latest":
-        # These binding failures never produce a context or allocate execution state.
-        assert result.context is None
-        assert not result.receipt.artifacts
-        assert expected["binding_artifacts"] == expected["artifacts"] == []
-        assert expected["allocator_next"] == 0
-        assert expected["lineage_allocations"] == expected["operation_occurrences"] == {}
-        assert "materialization" not in expected
+    if latest:
+        if result.context is None:
+            # Binding failure prevents execution and all publication allocation.
+            assert not result.receipt.artifacts
+            assert expected["binding_artifacts"] == expected["artifacts"] == []
+            assert expected["allocator_next"] == 0
+            assert expected["lineage_allocations"] == expected["operation_occurrences"] == {}
+            assert "materialization" not in expected
         resource_names = {
             association.resource: f"Q:{label}"
             for association in result.receipt.cleanup_associations
@@ -1570,8 +1623,20 @@ async def _assert_binding_corpus_case(case: dict[str, Any]) -> None:
                 "owner": cleanup_owners[association.resource],
             }
         assert actual_cleanup == expected["binding_cleanup_associations"]
-        assert all(provider.closes == 1 for provider in providers.values())
-    if materializations and not preflight_rejection:
+        assert all(provider.closes == int(owners[name] == "sdk") for name, provider in providers.items())
+    if latest:
+        expected_artifacts = expected["binding_artifacts"]
+        actual_artifacts = [
+            {
+                "association": source_names[item.reference.declaration],
+                "key": item.reference.key,
+                "version": item.reference.version,
+                "source": item.source.name,
+                "text": item.text,
+            }
+            for item in result.receipt.artifacts
+        ]
+    elif materializations and not preflight_rejection:
         target_names = {target: f"T{index}" for index, target in enumerate(targets)}
         expected_artifacts = [
             item for item in expected["artifacts"] if cast(str, item["identity"]).startswith("BoundInputKey:")
@@ -1602,8 +1667,8 @@ async def _assert_binding_corpus_case(case: dict[str, Any]) -> None:
             }
             for item in result.receipt.artifacts
         ]
-    assert sorted(actual_artifacts, key=lambda item: item["identity"]) == sorted(
-        expected_artifacts, key=lambda item: item["identity"]
+    assert sorted(actual_artifacts, key=lambda item: json.dumps(item, sort_keys=True)) == sorted(
+        expected_artifacts, key=lambda item: json.dumps(item, sort_keys=True)
     )
     request_actual = _normalize(
         result.receipt.requests,
@@ -1681,6 +1746,12 @@ async def _assert_binding_corpus_case(case: dict[str, Any]) -> None:
             declaration_names=source_names,
             target_names=target_names,
             limits=cast(dict[str, int], raw["materialization_limits"]),
+            publication={
+                **publication,
+                "value": next(event["value"] for event in event_values if event["kind"] == "operation_publish"),
+            }
+            if publication is not None
+            else None,
         )
 
 
@@ -1697,6 +1768,7 @@ async def _assert_initial_execution_projection(
     target_names: Mapping[Any, str],
     limits: dict[str, int],
     expected_rejection: str | None = None,
+    publication: dict[str, Any] | None = None,
 ) -> None:
     capability = _capability(workflow)
     prepared = _prepare(
@@ -1729,7 +1801,22 @@ async def _assert_initial_execution_projection(
         runtime_outcomes=_valid_runtime_rows("local", frozenset({"ok"})),
     )
     context_port = bound_context.receipt.sources[0].declaration.port
-    consumer = _ContextConsumer(port=context_port)
+    consumer = _ContextConsumer(
+        port=context_port,
+        outputs=()
+        if publication is None
+        else (
+            PortArtifact(
+                port=publication["output_port"],
+                artifact_type=item_type,
+                artifact=None,
+                value=TextArtifactValue(text=publication["value"]),
+            ),
+        ),
+        expected_input=None
+        if publication is None
+        else next(iter(expected["materialization"]["ports"].values()))["value"],
+    )
     admitted = admit_execution_plan(
         context=context,
         capabilities=(capability,),
@@ -1780,6 +1867,10 @@ async def _assert_initial_execution_projection(
         return
     assert expected_rejection is None, "execution preflight unexpectedly admitted"
     execution = await running.wait()
+    if publication is not None:
+        assert consumer.calls == 1
+        _assert_latest_publication(execution, bound_context.receipt, expected, declaration_names, target_names)
+        return
     values = dict(execution.artifacts)
     bound_receipts = {item.reference: item for item in bound_context.receipt.artifacts}
     expected_by_identity = {item["identity"]: item for item in expected["artifacts"]}
@@ -1868,6 +1959,133 @@ async def _assert_initial_execution_projection(
         "artifact",
     )
     assert not execution.final_outputs
+
+
+def _assert_latest_publication(
+    execution: ExecutionResult,
+    receipt: BindingReceipt,
+    expected: dict[str, Any],
+    declaration_names: dict[BindingDeclarationId, str],
+    target_names: Mapping[Any, str],
+) -> None:
+    """Compare version retention, selected input and fresh output from a real run."""
+    (state,) = execution.states
+    (entry,) = tuple(state.entries)
+    (source,) = receipt.sources
+    declaration = declaration_names[source.identity]
+    target = source.declaration.target
+    target_name = target_names[target]
+    node = source.declaration.node
+    context_port = source.declaration.port
+    assert entry.template == node and state.complete
+    assert execution.record.targets == frozenset({target})
+    assert not execution.assessments and not execution.pending_decisions
+    assert not execution.requests.dispatches and not execution.cleanup
+    values = dict(execution.artifacts)
+    assert len(values) == len(execution.artifacts) == len(execution.provenance)
+    assert execution.record.artifacts == frozenset(values)
+    assert {fact.artifact for fact in execution.provenance} == set(values)
+    bound_artifacts = {item.reference: item for item in receipt.artifacts}
+    identities: dict[ProvenanceKey, str] = {}
+    artifacts = []
+    lineages: dict[str, set[int]] = {}
+
+    def artifact_name(reference: ArtifactRef) -> str:
+        assert reference.invocation == execution.record.invocation
+        return f"ArtifactRef:I0:K{reference.key}:{reference.version}"
+
+    for fact in execution.provenance:
+        key = fact.key
+        value = values[fact.artifact]
+        assert isinstance(value, TextArtifactValue)
+        if isinstance(key, BoundInputKey):
+            assert key.node == node and key.target == target and key.port == context_port
+            binding = key.binding_artifact
+            assert binding.declaration == source.identity
+            assert fact.artifact.version == binding.version
+            identity = f"BoundInputKey:{target_name}:N0:{context_port}:{declaration}:{binding.key}:{binding.version}"
+            source_name = bound_artifacts[binding].source.name
+            assert value.text == bound_artifacts[binding].text
+            lineages.setdefault(f"{declaration}:{binding.key}", set()).add(fact.artifact.key)
+        else:
+            assert isinstance(key, OperationOutputKey)
+            assert key.target == target and key.activation == entry.activation
+            assert entry.outcome == "ok"
+            identity = f"OperationOutputKey:OP:{declaration}:{target_name}:N0:{entry.outcome}:{key.port}"
+            source_name = "operation:N0"
+            assert fact.artifact.version == 1
+        identities[key] = identity
+        artifacts.append(
+            {
+                "identity": artifact_name(fact.artifact),
+                "artifact_type": source.declaration.artifact_type.name,
+                "source": source_name,
+                "text": value.text,
+            }
+        )
+    assert sorted(artifacts, key=lambda item: item["identity"]) == sorted(
+        expected["artifacts"], key=lambda item: item["identity"]
+    )
+    assert all(len(keys) == 1 for keys in lineages.values())
+    assert {name: f"K{next(iter(keys))}" for name, keys in lineages.items()} == expected["lineage_allocations"]
+    runtime_keys = {reference.key for reference in values}
+    assert runtime_keys == set(range(expected["allocator_next"]))
+    assert len(execution.ports) == 2
+    (input_port,) = tuple(port for port in execution.ports if port.port == context_port)
+    (output_port,) = tuple(port for port in execution.ports if port.port != context_port)
+    assert input_port.node == output_port.node == node
+    assert input_port.target == output_port.target == target
+    assert input_port.activation == output_port.activation == entry.activation
+    assert input_port.role == "artifact" and output_port.role == "candidate"
+    assert input_port.artifact_type == output_port.artifact_type == source.declaration.artifact_type
+    (selected,) = tuple(fact for fact in execution.provenance if fact.artifact == input_port.artifact)
+    assert isinstance(selected.key, BoundInputKey)
+    assert input_port.artifact.version == max(item.reference.version for item in receipt.artifacts)
+    assert execution._input_parents == ((target, entry.activation, context_port, selected.key),)
+    materialization = {
+        "artifact_bytes": sum(
+            len(value.text.encode()) for value in values.values() if isinstance(value, TextArtifactValue)
+        ),
+        "artifact_count": len(values),
+        "ports": {
+            f"initial:{target_name}:N0:{context_port}:{declaration}": {
+                "artifact_type": input_port.artifact_type.name,
+                "key": artifact_name(input_port.artifact),
+                "value": next(
+                    item["text"] for item in artifacts if item["identity"] == artifact_name(input_port.artifact)
+                ),
+            }
+        },
+        "provenance": {
+            identities[fact.key]: {
+                "artifact": artifact_name(fact.artifact),
+                "parents": sorted(identities[parent] for parent in fact.parents),
+            }
+            for fact in execution.provenance
+        },
+        "provenance_edges": sum(len(fact.parents) for fact in execution.provenance),
+    }
+    assert materialization == expected["materialization"]
+    (terminal,) = execution.record.terminals
+    assert terminal.activation == entry.activation and terminal.attempt is not None
+    assert terminal.attempt.activation == entry.activation
+    assert terminal.category == entry.status == "success"
+    assert not terminal.structural and not terminal.reasons
+    assert {
+        f"OP:{declaration}:TASK:OP:{declaration}": {
+            "activation": f"OP:{declaration}",
+            "attempt": f"TASK:OP:{declaration}",
+            "binding_declaration": declaration,
+            "node": "N0",
+            "target": target_name,
+            "published_ports": [output_port.port],
+            "terminal": {"category": terminal.category, "outcome": entry.outcome},
+        }
+    } == expected["operation_occurrences"]
+    (final,) = execution.final_outputs
+    assert final.target == target and final.outcome == entry.outcome and final.port == output_port.port
+    assert final.candidate.artifact == output_port.artifact
+    assert final.producer in identities and identities[final.producer].startswith("OperationOutputKey:")
 
 
 @pytest.mark.parametrize("case", LATE_INITIAL_CASES, ids=lambda case: cast(str, case["case_id"]))
