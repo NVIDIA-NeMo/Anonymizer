@@ -29,6 +29,7 @@ from anonymizer.engine.graph_sdk.requests import (
     PhysicalRequestPolicy,
     SemanticAssociation,
     StopConfirmed,
+    TransportFailure,
     TransportSuccess,
 )
 from anonymizer.graph._values import ActivationKey, InvocationId, PlanId, TaskAttemptId
@@ -41,18 +42,30 @@ from tests.graph_sdk.test_effects_production_conformance import (
 )
 from tests.graph_sdk.test_preparation import _capability, _data, _limits, _prepare, _workflow
 
-CASES = tuple(case for case in json.loads(CORPUS.read_bytes()) if case["case_id"].startswith("bridges/shared_request_"))
+CASES = tuple(
+    case
+    for case in json.loads(CORPUS.read_bytes())
+    if case["case_id"].startswith("bridges/shared_request_")
+    or case["case_id"]
+    in {
+        "bridges/retry_uses_latest_physical_request",
+        "bridges/inconsistent_request_cannot_emit_success",
+        "bridges/valid_request_cannot_emit_inconsistent",
+    }
+)
 
 
 @dataclass
 class _SharedTransport:
-    event: dict[str, Any]
+    events: list[dict[str, Any]]
+    target_count: int
     tasks: dict[str, SemanticAssociation] = field(default_factory=dict)
     envelopes: list[DispatchEnvelope] = field(default_factory=list)
 
-    async def dispatch(self, request: DispatchEnvelope) -> TransportSuccess:
+    async def dispatch(self, request: DispatchEnvelope) -> TransportSuccess | TransportFailure:
+        event = self.events[len(self.envelopes)]
         self.envelopes.append(request)
-        assert len(request.associations) == 2
+        assert len(request.associations) == self.target_count
         for index, item in enumerate(request.associations):
             assert isinstance(item.association, SemanticAssociation)
             self.tasks[f"T{index}"] = item.association
@@ -62,15 +75,17 @@ class _SharedTransport:
             invocation=InvocationId.new(plan=PlanId.new()), occurrence=0, parent=None, iteration=None
         )
         self.tasks["X0"] = SemanticAssociation(task=TaskAttemptId.new(activation=foreign))
+        if event["kind"] == "failure":
+            return TransportFailure(failure=event["failure"], settlement=None)
         return TransportSuccess(
             results=tuple(
                 AssociationResult(
                     association=self.tasks[name],
-                    outcome=self.event["outcomes"].get(name, "ok"),
+                    outcome=event["outcomes"].get(name, "ok"),
                     outputs=(),
                     consumed_context_ports=frozenset(),
                 )
-                for name in self.event["returned"]
+                for name in event["returned"]
             ),
             settlement=None,
         )
@@ -89,6 +104,7 @@ def test_frozen_shared_case_through_executor(case: dict[str, Any]) -> None:
 
 async def _assert_shared_case(case: dict[str, Any]) -> None:
     declaration = case["declaration"]
+    target_count = len(next(event["associations"] for event in case["events"] if event["kind"] == "reserve"))
     policies = {
         name: PhysicalRequestPolicy(
             visibility="dispatch_and_settlement",
@@ -108,7 +124,7 @@ async def _assert_shared_case(case: dict[str, Any]) -> None:
         max_physical_requests_per_activation=request_policy.max_attempts,
     )
     prepared = _prepare(
-        data=_data(2),
+        data=_data(target_count),
         workflow=workflow,
         capability=capability,
         configuration=PreparationConfiguration(
@@ -148,7 +164,9 @@ async def _assert_shared_case(case: dict[str, Any]) -> None:
         assessment_productions=(),
         assessment_limits=_assessment_limits(),
     )
-    transport = _SharedTransport(event=next(event for event in case["events"] if event["kind"] == "result"))
+    transport = _SharedTransport(
+        events=[event for event in case["events"] if event["kind"] in {"result", "failure"}], target_count=target_count
+    )
     result = await (
         await start_execution(
             admitted=admitted,
@@ -177,10 +195,28 @@ async def _assert_shared_case(case: dict[str, Any]) -> None:
             ),
         )
     ).wait()
-    assert len(transport.envelopes) == 1
-    envelope = transport.envelopes[0]
-    assert envelope.purpose == "initial"
-    actual = _normalize(result.requests, transport.tasks, {"R0": envelope.request}, policies)
+    assert len(transport.envelopes) == len(transport.events)
+    assert [envelope.purpose for envelope in transport.envelopes] == [
+        event["purpose"] for event in case["events"] if event["kind"] == "reserve"
+    ]
+    actual = _normalize(
+        result.requests,
+        transport.tasks,
+        {f"R{index}": envelope.request for index, envelope in enumerate(transport.envelopes)},
+        policies,
+    )
+    if case["expected"]["status"] == "rejected":
+        # The public executor derives the bridge condition. There is no API to
+        # inject the contradictory bridge_condition used by the reducer case.
+        assert case["expected"]["code"] == "request_causality"
+        inconsistent = case["case_id"] == "bridges/inconsistent_request_cannot_emit_success"
+        category = "inconsistent" if inconsistent else "success"
+        assert actual["terminals"] == {"R0": category}
+        assert len(result.record.terminals) == 2
+        assert all(terminal.category == category for terminal in result.record.terminals)
+        assert all(state.complete for state in result.states)
+        assert not result.artifacts and not result.ports and not result.final_outputs
+        return
     expected = case["expected"]["state"]
     for key, value in actual.items():
         assert value == expected[key], key
@@ -191,7 +227,8 @@ async def _assert_shared_case(case: dict[str, Any]) -> None:
     assert all(state.complete for state in result.states)
     # Task/request joins are derived from the dispatched semantic keys, not result order.
     task_requests = {
-        names[item.attempt]: "R0"
+        names[item.attempt]: f"R{index}"
+        for index, envelope in enumerate(transport.envelopes)
         for item in result.record.terminals
         if item.attempt is not None
         and any(
@@ -209,7 +246,9 @@ async def _assert_shared_case(case: dict[str, Any]) -> None:
     assert context.bound_context is None
     assert expected["binding_declarations"] == expected["binding_sources"] == {}
     assert expected["binding_terminal"] is None
-    assert len(result.record.terminals) == 2 and all(item.attempt is not None for item in result.record.terminals)
+    assert len(result.record.terminals) == target_count and all(
+        item.attempt is not None for item in result.record.terminals
+    )
     assert expected["closed_unstarted"] == {}
     assert {
         name: {
