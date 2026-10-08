@@ -848,6 +848,12 @@ def _validate_assessments(
         promise = next((value for value in outcome.evidence if value.name == item.promise), None)
         if promise is None or promise.subject_port != item.evidence_port:
             reject(EffectCode.UNSUPPORTED)
+        dependency = next(
+            (value for value in operation.output_dependencies if value.output == item.evidence_port),
+            None,
+        )
+        if dependency is None or dependency.inputs != promise.consumed_ports:
+            reject(EffectCode.CONTRADICTORY)
         if (
             len(item.supported_findings) > limits.max_findings_per_production
             or len(item.absence_queries) > limits.max_absence_queries
@@ -2675,15 +2681,12 @@ def _final_outputs(
             artifact = produced.get((target_map.target, terminal.activation, output_binding.source.port))
             if artifact is None:
                 continue
-            producer = next(
-                (
-                    fact.key
-                    for fact in provenance
-                    if fact.artifact == artifact and isinstance(fact.key, OperationOutputKey)
-                ),
-                None,
+            producer = OperationOutputKey(
+                activation=terminal.activation,
+                target=target_map.target,
+                port=output_binding.source.port,
             )
-            if producer is None:
+            if not any(fact.key == producer and fact.artifact == artifact for fact in provenance):
                 reject(EffectCode.MISSING)
             workflow_outcome = next(
                 (

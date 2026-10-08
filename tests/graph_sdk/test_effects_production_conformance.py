@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 from typing import Any, cast
@@ -35,6 +36,7 @@ from anonymizer.engine.graph_sdk.requests import (
     bind_request_policies,
     initialize_requests,
 )
+from anonymizer.engine.graph_sdk.resources import ResourceLease, close_resource
 from anonymizer.graph._values import ActivationKey, InvocationId, PlanId, TaskAttemptId
 
 CORPUS = Path(__file__).parent / "reference" / "effects_v1_cases.json"
@@ -57,6 +59,42 @@ CASES = tuple(
         for trace in case["traces"]
     ]
 )
+RESOURCE_CASES = tuple(
+    case
+    for case in json.loads(CORPUS.read_bytes())
+    if case["case_id"]
+    in {
+        "resources/caller_left_open",
+        "resources/sdk_closed",
+        "resources/sdk_close_failed",
+        "resources/sdk_close_unknown",
+    }
+)
+
+
+class _Closable:
+    def __init__(self, disposition: str) -> None:
+        self.disposition = disposition
+
+    async def close(self) -> None:
+        if self.disposition == "close_failed":
+            raise RuntimeError("close failed")
+
+
+@pytest.mark.parametrize("case", RESOURCE_CASES, ids=lambda case: cast(str, case["case_id"]))
+def test_resource_corpus_case_through_production(case: dict[str, Any]) -> None:
+    events = cast(list[dict[str, Any]], case["events"])
+    resource = events[0]
+    close_event = events[1]
+    disposition = cast(str, close_event.get("disposition", "closed"))
+    lease = ResourceLease.create(
+        owner=resource["owner"],
+        safe_detachment=resource["safe_detachment"],
+        handle=object() if disposition == "close_unknown" else _Closable(disposition),
+    )
+    fact = asyncio.run(close_resource(lease))
+    expected = cast(dict[str, Any], case["expected"])["state"]["cleanup"]["Q0"]
+    assert fact.disposition == expected
 
 
 def _policy(value: dict[str, Any]) -> PhysicalRequestPolicy:
