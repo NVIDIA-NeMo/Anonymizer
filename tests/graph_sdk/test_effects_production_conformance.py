@@ -209,6 +209,11 @@ REAL_BINDING_CASE_IDS = {
     "binding/required_omission_misuse",
     "binding/empty_optional_response_malformed",
     "materialization/initial_single_exact",
+    "materialization/collection_ceiling",
+    "materialization/initial_artifact_count_one_over",
+    "materialization/initial_logical_bytes_one_over",
+    "materialization/initial_provenance_one_over",
+    "materialization/binding_finish_before_materialization",
     "materialization/initial_single_multiple",
     "materialization/initial_collection_1",
     "materialization/initial_collection_2",
@@ -1284,8 +1289,10 @@ class _LateBindingCaseProvider:
 @dataclass
 class _ContextConsumer:
     port: str
+    calls: int = 0
 
     async def run(self, request: tuple[AssociationInput, ...]) -> LocalCompleted:
+        self.calls += 1
         assert len(request) == 1
         return LocalCompleted(
             results=(
@@ -1502,13 +1509,14 @@ async def _assert_binding_corpus_case(case: dict[str, Any]) -> None:
             ),
         )
     ).wait()
-    expected = cast(dict[str, Any], case["expected"])["state"]
+    preflight_rejection = case["boundary"] == "execution_preflight"
+    expected = cast(dict[str, Any], case["expected"])["binding" if preflight_rejection else "state"]
     source_names = {fact.identity: label for label, fact in zip(order, result.receipt.sources, strict=True)}
     assert {source_names[fact.identity]: fact.terminal for fact in result.receipt.sources} == expected[
         "binding_sources"
     ]
     assert result.receipt.terminal == expected["binding_terminal"]
-    if materializations:
+    if materializations and not preflight_rejection:
         target_names = {target: f"T{index}" for index, target in enumerate(targets)}
         expected_artifacts = [
             item for item in expected["artifacts"] if cast(str, item["identity"]).startswith("BoundInputKey:")
@@ -1589,7 +1597,24 @@ async def _assert_binding_corpus_case(case: dict[str, Any]) -> None:
         actual_value = sorted(cast(list[str], request_actual[key])) if key == "dispatched" else request_actual[key]
         expected_value = sorted(cast(list[str], expected[key])) if key == "dispatched" else expected[key]
         assert actual_value == expected_value, (case["case_id"], key)
-    if materializations and result.context is not None and expected.get("materialization") is not None:
+    if preflight_rejection:
+        assert result.context is not None
+        before = result.receipt
+        await _assert_initial_execution_projection(
+            data=data,
+            workflow=workflow,
+            node=node,
+            item_type=item_type,
+            input_type=artifact_type,
+            bound_context=result.context,
+            expected=expected,
+            declaration_names=source_names,
+            target_names={target: f"T{index}" for index, target in enumerate(targets)},
+            limits=cast(dict[str, int], raw["materialization_limits"]),
+            expected_rejection=case["expected"]["code"],
+        )
+        assert result.receipt is before
+    elif materializations and result.context is not None and expected.get("materialization") is not None:
         await _assert_initial_execution_projection(
             data=data,
             workflow=workflow,
@@ -1616,6 +1641,7 @@ async def _assert_initial_execution_projection(
     declaration_names: dict[BindingDeclarationId, str],
     target_names: Mapping[Any, str],
     limits: dict[str, int],
+    expected_rejection: str | None = None,
 ) -> None:
     capability = _capability(workflow)
     prepared = _prepare(
@@ -1647,6 +1673,8 @@ async def _assert_initial_execution_projection(
         result_outcomes=frozenset({"ok"}),
         runtime_outcomes=_valid_runtime_rows("local", frozenset({"ok"})),
     )
+    context_port = bound_context.receipt.sources[0].declaration.port
+    consumer = _ContextConsumer(port=context_port)
     admitted = admit_execution_plan(
         context=context,
         capabilities=(capability,),
@@ -1663,9 +1691,8 @@ async def _assert_initial_execution_projection(
             max_provenance_edges=limits["max_provenance_edges"],
         ),
     )
-    context_port = bound_context.receipt.sources[0].declaration.port
-    execution = await (
-        await start_execution(
+    try:
+        running = await start_execution(
             admitted=admitted,
             capabilities=(capability,),
             services=ExecutionServices(
@@ -1674,7 +1701,7 @@ async def _assert_initial_execution_projection(
                         implementation=capability.implementation,
                         operation=capability.operation,
                         configuration=capability.configuration,
-                        local=_ContextConsumer(port=context_port),
+                        local=consumer,
                         transport=None,
                         resource=None,
                     ),
@@ -1691,7 +1718,13 @@ async def _assert_initial_execution_projection(
                 clock=_Clock(),
             ),
         )
-    ).wait()
+    except EffectRejected as exc:
+        assert expected_rejection is not None
+        assert exc.code.value == expected_rejection
+        assert consumer.calls == 0
+        return
+    assert expected_rejection is None, "execution preflight unexpectedly admitted"
+    execution = await running.wait()
     values = dict(execution.artifacts)
     bound_receipts = {item.reference: item for item in bound_context.receipt.artifacts}
     expected_by_identity = {item["identity"]: item for item in expected["artifacts"]}
@@ -2855,3 +2888,27 @@ def test_decision_runtime_terminal_cases(case_id: str) -> None:
 @pytest.mark.parametrize("pending_limit", [1, 2])
 def test_decision_capacity_includes_callbacks_before_wait_publication(pending_limit: int) -> None:
     asyncio.run(_assert_decision_submission("capacity", "", pending_limit=pending_limit))
+
+
+@pytest.mark.parametrize(
+    ("admission_id", "runtime_id"),
+    [
+        ("materialization/admit_initial_single", "materialization/initial_single_exact"),
+        ("materialization/admit_initial_collection", "materialization/initial_collection_1"),
+        ("materialization/admit_adaptive_single", "materialization/adaptive_single_exact"),
+        ("materialization/admit_adaptive_collection", "materialization/adaptive_collection_1"),
+    ],
+)
+def test_materialization_admission_matches_executed_declaration(admission_id: str, runtime_id: str) -> None:
+    corpus = json.loads(CORPUS.read_bytes())
+    admission = next(case for case in corpus if case["case_id"] == admission_id)
+    runtime = next(case for case in corpus if case["case_id"] == runtime_id)
+    assert admission["expected"] == {"status": "accepted"}
+    for key, value in admission["declaration"].items():
+        assert runtime["declaration"][key] == value, key
+    # The same declarations are admitted on the real path. Initial provider
+    # binding supplies setup facts before pure context/execution admission.
+    if "initial" in admission_id:
+        asyncio.run(_assert_binding_corpus_case(runtime))
+    else:
+        asyncio.run(_assert_adaptive_materialization_case(runtime))
