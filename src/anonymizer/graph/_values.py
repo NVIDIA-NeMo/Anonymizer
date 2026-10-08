@@ -15,6 +15,7 @@ class ValidationCode(str, Enum):
     INVALID_TYPE = "invalid_type"
     INVALID_VALUE = "invalid_value"
     LIMIT_EXCEEDED = "limit_exceeded"
+    ANALYSIS_LIMIT_EXCEEDED = "analysis_limit_exceeded"
     FOREIGN_OWNER = "foreign_owner"
     DUPLICATE = "duplicate"
     MISSING = "missing"

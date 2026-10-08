@@ -8,6 +8,15 @@ import itertools
 from typing import TypeAlias
 
 from anonymizer.graph._values import ValidationCode
+from anonymizer.graph._workflow_analysis import (
+    _bounded_analysis,
+    _difference,
+    _equal,
+    _subset,
+    _union,
+    _visited_pop,
+    _visits,
+)
 from anonymizer.graph._workflow_values import (
     AdmittedWorkflow,
     ChoiceDecl,
@@ -30,6 +39,7 @@ from anonymizer.graph._workflow_values import (
     SubgraphNode,
     WorkflowId,
     WorkflowInputRef,
+    _analysis_limit,
     _reject,
     _tuple_of,
 )
@@ -44,18 +54,18 @@ def _walk_endpoints(
     seen: set[Vertex] = set()
     endpoints: set[str] = set()
     while pending:
-        current = pending.pop()
+        current = _visited_pop(pending)
         if current in seen:
             continue
         seen.add(current)
-        if current[0] == endpoint_kind:
+        if _equal(current[0], endpoint_kind):
             endpoints.add(current[2])
-        for source, destination in edges:
-            if backward and destination == current:
+        for source, destination in _visits(edges):
+            if backward and _equal(destination, current):
                 pending.append(source)
-            elif not backward and source == current:
+            elif not backward and _equal(source, current):
                 pending.append(destination)
-    return frozenset(endpoints)
+    return frozenset(_visits(endpoints))
 
 
 def _project_one(endpoints: frozenset[str]) -> str:
@@ -67,43 +77,52 @@ def _project_one(endpoints: frozenset[str]) -> str:
 
 
 def _walk_interface_inputs(start: Vertex, edges: set[tuple[Vertex, Vertex]], *, backward: bool) -> frozenset[str]:
-    return _walk_endpoints(start, edges, backward=backward, endpoint_kind="wi") | _walk_endpoints(
-        start, edges, backward=backward, endpoint_kind="ci"
+    return frozenset(
+        _visits(
+            _union(
+                _walk_endpoints(start, edges, backward=backward, endpoint_kind="wi"),
+                _walk_endpoints(start, edges, backward=backward, endpoint_kind="ci"),
+            )
+        )
     )
 
 
 def _has_cycle(selected: frozenset[NodeId], edges: frozenset[SequenceEdge]) -> bool:
-    remaining = set(selected)
+    remaining = set(_visits(selected))
     while remaining:
-        roots = {
-            node for node in remaining if not any(edge.after == node and edge.before in remaining for edge in edges)
-        }
+        blocked = {edge.after for edge in _visits(edges) if edge.before in remaining}
+        roots = _difference(remaining, blocked)
         if not roots:
             return True
-        remaining -= roots
+        remaining.difference_update(_visits(roots))
     return False
 
 
 def _selected_nodes(
     node_ids: frozenset[NodeId], choices: tuple[ChoiceDecl, ...], assignment: dict[NodeId, OutcomeSpec]
 ) -> frozenset[NodeId]:
-    branch_members = {member for choice in choices for branch in choice.branches for member in branch.members}
-    selected = set(node_ids - branch_members)
-    changed = True
-    while changed:
-        changed = False
-        for choice in choices:
-            if choice.selector not in selected:
-                continue
-            outcome = assignment[choice.selector].name
-            for branch in choice.branches:
-                if outcome in branch.outcomes:
-                    before = len(selected)
-                    selected.update(branch.members)
-                    changed |= len(selected) != before
-    return frozenset(selected)
+    branch_members = {
+        member
+        for choice in _visits(choices)
+        for branch in _visits(choice.branches)
+        for member in _visits(branch.members)
+    }
+    selected = set(_visits(_difference(node_ids, branch_members)))
+    while True:
+        additions = {
+            member
+            for choice in _visits(choices)
+            if choice.selector in selected
+            for branch in _visits(choice.branches)
+            if assignment[choice.selector].name in branch.outcomes
+            for member in _visits(branch.members)
+        }
+        if _subset(additions, selected):
+            return frozenset(_visits(selected))
+        selected.update(_visits(additions))
 
 
+@_bounded_analysis(_analysis_limit)
 def validate_dynamic_input_summaries(
     workflow: AdmittedWorkflow,
     replacements: tuple[InputBinding, ...],
@@ -112,46 +131,48 @@ def validate_dynamic_input_summaries(
     if not isinstance(workflow, AdmittedWorkflow):
         _reject(ValidationCode.INVALID_TYPE)
     _tuple_of(replacements, InputBinding)
-    destinations = [item.destination for item in replacements]
-    if len(destinations) != len(set(destinations)):
+    destinations = [item.destination for item in _visits(replacements)]
+    if not _equal(len(destinations), len(set(_visits(destinations)))):
         _reject(ValidationCode.DUPLICATE)
     reachable: list[AdmittedWorkflow] = []
     pending = [workflow]
     seen: set[int] = set()
     while pending:
-        current = pending.pop()
+        current = _visited_pop(pending)
         if id(current) in seen:
             continue
         seen.add(id(current))
         reachable.append(current)
-        pending.extend(item.body for item in current.nodes if isinstance(item, SubgraphNode))
-    owners = {item.workflow: item for item in reachable}
+        pending.extend(item.body for item in _visits(current.nodes) if isinstance(item, SubgraphNode))
+    owners = {item.workflow: item for item in _visits(reachable)}
     grouped: dict[WorkflowId, list[InputBinding]] = {}
-    for replacement in replacements:
+    for replacement in _visits(replacements):
         if replacement.destination.node.workflow not in owners:
             _reject(ValidationCode.FOREIGN_OWNER)
         grouped.setdefault(replacement.destination.node.workflow, []).append(replacement)
-    for owner, values in grouped.items():
+    for owner, values in _visits(grouped.items()):
         current = owners[owner]
-        replaced = {item.destination for item in values}
+        replaced = {item.destination for item in _visits(values)}
         if any(
-            sum(binding.destination == destination for binding in current.input_bindings) != 1
-            for destination in replaced
+            not _equal(
+                sum((_equal(binding.destination, destination) for binding in _visits(current.input_bindings))), 1
+            )
+            for destination in _visits(replaced)
         ):
             _reject(ValidationCode.MISSING)
-        inputs = tuple(binding for binding in current.input_bindings if binding.destination not in replaced) + tuple(
-            values
-        )
+        inputs = tuple(
+            binding for binding in _visits(current.input_bindings) if binding.destination not in replaced
+        ) + tuple(_visits(values))
         _validate_paths(
             current.interface,
-            tuple(current.nodes),
+            tuple(_visits(current.nodes)),
             inputs,
-            tuple(current.output_bindings),
-            tuple(current.outcome_bindings),
-            tuple(current.sequence),
-            tuple(current.choices),
+            tuple(_visits(current.output_bindings)),
+            tuple(_visits(current.outcome_bindings)),
+            tuple(_visits(current.sequence)),
+            tuple(_visits(current.choices)),
             check_cycles=False,
-            nonidentity_destinations=frozenset(replaced),
+            nonidentity_destinations=frozenset(_visits(replaced)),
         )
 
 
@@ -167,60 +188,63 @@ def _validate_paths(
     check_cycles: bool = True,
     nonidentity_destinations: frozenset[NodeInputRef] = frozenset(),
 ) -> None:
-    operations = {node.id: node.operation for node in nodes}
-    node_ids = frozenset(operations)
-    edges = frozenset(sequence)
+    operations = {node.id: node.operation for node in _visits(nodes)}
+    node_ids = frozenset(_visits(operations))
+    edges = frozenset(_visits(sequence))
     if check_cycles and _has_cycle(node_ids, edges):
         _reject(ValidationCode.CYCLE)
-    outcome_options = [operation.outcomes for operation in operations.values()]
-    ids = tuple(operations)
+    outcome_options = _outcome_options(nodes, outcome_bindings, choices, interface)
+    ids = tuple(_visits(operations))
     reached_interface_outcomes: set[str] = set()
-    for outcomes in itertools.product(*outcome_options):
-        assignment = dict(zip(ids, outcomes, strict=True))
+    for outcomes in _visits(itertools.product(*_visits(outcome_options))):
+        assignment = dict(_visits(zip(ids, outcomes, strict=True)))
         selected = _selected_nodes(node_ids, choices, assignment)
-        selected_edges = frozenset(edge for edge in edges if edge.before in selected and edge.after in selected)
+        selected_edges = frozenset(
+            edge for edge in _visits(edges) if edge.before in selected and edge.after in selected
+        )
         if check_cycles and _has_cycle(selected, selected_edges):
             _reject(ValidationCode.CYCLE)
         reachable: set[NodeId] = set()
-        changed = True
-        while changed:
-            changed = False
-            for node in selected - reachable:
-                predecessors = {edge.before for edge in selected_edges if edge.after == node}
-                if not predecessors <= reachable:
+        while True:
+            additions: set[NodeId] = set()
+            for node in _visits(_difference(selected, reachable)):
+                predecessors = {edge.before for edge in _visits(selected_edges) if _equal(edge.after, node)}
+                if not _subset(predecessors, reachable):
                     continue
-                bindings = [binding for binding in input_bindings if binding.destination.node == node]
-                if all(
+                bindings = [binding for binding in _visits(input_bindings) if _equal(binding.destination.node, node)]
+                available = [
                     isinstance(binding.source, (WorkflowInputRef, ContextInputRef))
                     or (
                         binding.source.node in reachable
                         and binding.source.port in assignment[binding.source.node].produced_ports
                     )
-                    for binding in bindings
-                ):
-                    reachable.add(node)
-                    changed = True
-        if reachable != set(selected):
+                    for binding in _visits(bindings)
+                ]
+                if all(available):
+                    additions.add(node)
+            if not additions:
+                break
+            reachable.update(_visits(additions))
+        if not _equal(reachable, set(_visits(selected))):
             _reject(ValidationCode.MISSING)
-        sinks = {
-            node
-            for node in reachable
-            if not any(edge.before == node and edge.after in reachable for edge in selected_edges)
-        }
-        if len(sinks) != 1:
+        outgoing = {edge.before for edge in _visits(selected_edges) if edge.after in reachable}
+        sinks = _difference(reachable, outgoing)
+        if not _equal(len(sinks), 1):
             _reject(ValidationCode.MISSING)
         sink = next(iter(sinks))
         sink_outcome = assignment[sink]
         mappings = [
             binding
-            for binding in outcome_bindings
-            if binding.source.node == sink and binding.source.outcome == sink_outcome.name
+            for binding in _visits(outcome_bindings)
+            if _equal(binding.source.node, sink) and _equal(binding.source.outcome, sink_outcome.name)
         ]
-        if len(mappings) != 1:
+        if not _equal(len(mappings), 1):
             _reject(ValidationCode.MISSING)
         external_outcome_name = mappings[0].destination.outcome
         reached_interface_outcomes.add(external_outcome_name)
-        external_outcome = next(outcome for outcome in interface.outcomes if outcome.name == external_outcome_name)
+        external_outcome = next(
+            outcome for outcome in _visits(interface.outcomes) if _equal(outcome.name, external_outcome_name)
+        )
         _validate_composition_path(
             interface,
             external_outcome,
@@ -231,7 +255,7 @@ def _validate_paths(
             output_bindings,
             nonidentity_destinations,
         )
-    if reached_interface_outcomes != {outcome.name for outcome in interface.outcomes}:
+    if not _equal(reached_interface_outcomes, {outcome.name for outcome in _visits(interface.outcomes)}):
         _reject(ValidationCode.MISSING)
 
 
@@ -250,22 +274,22 @@ def _project_evidence_port(
         return port.lifted(node)
     dynamic = {
         endpoint
-        for endpoint in declared
+        for endpoint in _visits(declared)
         if not endpoint.path
-        and endpoint.member == node
-        and endpoint.item_input == port
+        and _equal(endpoint.member, node)
+        and _equal(endpoint.item_input, port)
         and endpoint.expander in assignment
-        and assignment[endpoint.expander].name == endpoint.expansion_outcome
+        and _equal(assignment[endpoint.expander].name, endpoint.expansion_outcome)
     }
     if dynamic:
-        if len(dynamic) != 1 or not input_port:
+        if not _equal(len(dynamic), 1) or not input_port:
             _reject(ValidationCode.CONTRADICTORY)
         return next(iter(dynamic))
     if input_port:
         inputs = _walk_interface_inputs(("in", node, port), edges, backward=True)
         if inputs or not allow_output_alias:
             return _project_one(inputs)
-        identity = edges | {(destination, source) for source, destination in edges}
+        identity = _union(edges, {(destination, source) for source, destination in _visits(edges)})
         return _project_one(_walk_endpoints(("in", node, port), identity, backward=False, endpoint_kind="wo"))
     return _project_one(_walk_endpoints(("out", node, port), edges, backward=False, endpoint_kind="wo"))
 
@@ -282,7 +306,7 @@ def _validate_composition_path(
 ) -> None:
     identity_edges: set[tuple[Vertex, Vertex]] = set()
     dependency_edges: set[tuple[Vertex, Vertex]] = set()
-    for binding in input_bindings:
+    for binding in _visits(input_bindings):
         if binding.destination.node not in reachable:
             continue
         source = (
@@ -299,7 +323,7 @@ def _validate_composition_path(
             identity_edges.add((source, destination))
         dependency_edges.add((source, destination))
     produced_external: set[str] = set()
-    for binding in output_bindings:
+    for binding in _visits(output_bindings):
         if isinstance(binding.source, WorkflowInputRef):
             source = ("wi", None, binding.source.port)
             exists = True
@@ -314,14 +338,14 @@ def _validate_composition_path(
             identity_edges.add((source, destination))
             dependency_edges.add((source, destination))
             produced_external.add(binding.destination.port)
-    for node in reachable:
+    for node in _visits(reachable):
         operation = operations[node]
         produced = assignment[node].produced_ports
-        for dependency in operation.output_dependencies:
+        for dependency in _visits(operation.output_dependencies):
             if dependency.output not in produced:
                 continue
             output_vertex = ("out", node, dependency.output)
-            for input_port in dependency.inputs:
+            for input_port in _visits(dependency.inputs):
                 dependency_edges.add((("in", node, input_port), output_vertex))
             if dependency.identity_input is not None:
                 identity_edges.add((("in", node, dependency.identity_input), output_vertex))
@@ -332,15 +356,15 @@ def _validate_composition_path(
     ceiling = [0, 0, 0, 0]
     declared_items = frozenset(
         port
-        for promise in external_outcome.evidence
-        for port in (promise.subject_port, *promise.consumed_ports)
+        for promise in _visits(external_outcome.evidence)
+        for port in _visits((promise.subject_port, *_visits(promise.consumed_ports)))
         if isinstance(port, MapItemPort)
     )
-    for node in reachable:
+    for node in _visits(reachable):
         operation = operations[node]
         outcome = assignment[node]
-        input_names = {port.name for port in operation.inputs}
-        for use in outcome.context:
+        input_names = {port.name for port in _visits(operation.inputs)}
+        for use in _visits(outcome.context):
             endpoint = _project_one(
                 _walk_interface_inputs(
                     ("in" if use.port in input_names else "out", node, use.port),
@@ -349,7 +373,7 @@ def _validate_composition_path(
                 )
             )
             contexts.add(ContextUse(port=endpoint, meaning=use.meaning, capture=use.capture))
-        for promise in outcome.evidence:
+        for promise in _visits(outcome.evidence):
             consumed = frozenset(
                 _project_evidence_port(
                     port,
@@ -359,7 +383,7 @@ def _validate_composition_path(
                     declared=declared_items,
                     assignment=assignment,
                 )
-                for port in promise.consumed_ports
+                for port in _visits(promise.consumed_ports)
             )
             subject = _project_evidence_port(
                 promise.subject_port,
@@ -379,15 +403,15 @@ def _validate_composition_path(
                     coverage=promise.coverage,
                 )
             )
-        state_effects.update(outcome.state_effects)
-        models.update(outcome.model_requirements)
+        state_effects.update(_visits(outcome.state_effects))
+        models.update(_visits(outcome.model_requirements))
         values = outcome.ceiling
         ceiling[0] += values.max_activations
         ceiling[1] += values.max_model_requests
         ceiling[2] += values.max_input_bytes
         ceiling[3] += values.max_output_bytes
-    dependencies = {item.output: item for item in interface.output_dependencies}
-    for output in produced_external:
+    dependencies = {item.output: item for item in _visits(interface.output_dependencies)}
+    for output in _visits(produced_external):
         vertex = ("wo", None, output)
         influence = _walk_interface_inputs(vertex, dependency_edges, backward=True)
         identity = _walk_interface_inputs(vertex, identity_edges, backward=True)
@@ -395,14 +419,14 @@ def _validate_composition_path(
             _reject(ValidationCode.CONTRADICTORY)
         derived_identity = next(iter(identity)) if identity else None
         declared = dependencies[output]
-        if declared.inputs != influence or declared.identity_input != derived_identity:
+        if not _equal(declared.inputs, influence) or not _equal(declared.identity_input, derived_identity):
             _reject(ValidationCode.CONTRADICTORY)
     if (
-        external_outcome.produced_ports != produced_external
-        or external_outcome.context != contexts
-        or external_outcome.evidence != evidence
-        or external_outcome.state_effects != state_effects
-        or external_outcome.model_requirements != models
+        not _equal(external_outcome.produced_ports, produced_external)
+        or not _equal(external_outcome.context, contexts)
+        or not _equal(external_outcome.evidence, evidence)
+        or not _equal(external_outcome.state_effects, state_effects)
+        or not _equal(external_outcome.model_requirements, models)
     ):
         _reject(ValidationCode.CONTRADICTORY)
     actual = external_outcome.ceiling
@@ -415,3 +439,63 @@ def _validate_composition_path(
         )
     ):
         _reject(ValidationCode.CONTRADICTORY)
+
+
+def _outcome_options(
+    nodes: tuple[Node, ...],
+    mappings: tuple[OutcomeBinding, ...],
+    choices: tuple[ChoiceDecl, ...],
+    interface: OperationSpec,
+) -> list[tuple[OutcomeSpec, ...]]:
+    """Quotient only names that no path consumer can observe.
+
+    Selectors, exposed outcomes and subgraph interfaces retain all names.
+    Dynamic evidence endpoints can observe an expander's name; these graphs
+    conservatively retain the complete product. All remaining outcome fields
+    participate in the signature, including failure labels and resource cost.
+    """
+    observed = _union(
+        {binding.source.node for binding in _visits(mappings)}, {choice.selector for choice in _visits(choices)}
+    )
+    operations = [interface, *_visits((node.operation for node in _visits(nodes)))]
+    dynamic_endpoints = [
+        isinstance(port, MapItemPort)
+        for operation in _visits(operations)
+        for outcome in _visits(operation.outcomes)
+        for promise in _visits(outcome.evidence)
+        for port in _visits((promise.subject_port, *_visits(promise.consumed_ports)))
+    ]
+    dynamic = any(dynamic_endpoints)
+    options: list[tuple[OutcomeSpec, ...]] = []
+    for node in _visits(nodes):
+        if dynamic or isinstance(node, SubgraphNode) or node.id in observed:
+            options.append(node.operation.outcomes)
+            continue
+        representatives: dict[tuple[object, ...], OutcomeSpec] = {}
+        for outcome in _visits(node.operation.outcomes):
+            key = _outcome_signature(outcome)
+            representatives.setdefault(key, outcome)
+        options.append(tuple(_visits(representatives.values())))
+    return options
+
+
+def _outcome_signature(outcome: OutcomeSpec) -> tuple[object, ...]:
+    """Build a metered key retaining every outcome field except its name."""
+    return (
+        outcome.category,
+        frozenset(port for port in _visits(outcome.produced_ports)),
+        frozenset((use.port, use.meaning, use.capture) for use in _visits(outcome.context)),
+        frozenset(
+            (
+                promise.name,
+                promise.meaning,
+                promise.subject_port,
+                frozenset(port for port in _visits(promise.consumed_ports)),
+                frozenset((atom.kind, atom.name) for atom in _visits(promise.coverage)),
+            )
+            for promise in _visits(outcome.evidence)
+        ),
+        frozenset((effect.kind, effect.name) for effect in _visits(outcome.state_effects)),
+        frozenset((model.capability, model.revision) for model in _visits(outcome.model_requirements)),
+        outcome.ceiling,
+    )

@@ -8,6 +8,7 @@ from dataclasses import dataclass, replace
 from typing import Any, Literal, Never, SupportsIndex, TypeAlias
 
 from anonymizer.graph._values import ContractViolation, ValidationCode
+from anonymizer.graph._workflow_analysis import _visits
 
 OutcomeClass: TypeAlias = Literal["success", "failure", "cancelled", "lost", "blocked", "inconsistent"]
 
@@ -71,12 +72,12 @@ def _validate_scalars(
 
 
 def _tuple_of(value: object, member_type: type[Any] | tuple[type[Any], ...]) -> None:
-    if not isinstance(value, tuple) or any(not isinstance(member, member_type) for member in value):
+    if not isinstance(value, tuple) or any(not isinstance(member, member_type) for member in _visits(value)):
         _reject(ValidationCode.INVALID_TYPE)
 
 
 def _frozenset_of(value: object, member_type: type[Any] | tuple[type[Any], ...]) -> None:
-    if not isinstance(value, frozenset) or any(not isinstance(member, member_type) for member in value):
+    if not isinstance(value, frozenset) or any(not isinstance(member, member_type) for member in _visits(value)):
         _reject(ValidationCode.INVALID_TYPE)
 
 
@@ -194,7 +195,11 @@ class OutputDependency(_PrivateValue):
         if self.identity_input is not None and not isinstance(self.identity_input, str):
             _reject(ValidationCode.INVALID_TYPE)
         _validate_scalars(
-            strings=(self.output, *self.inputs, *((self.identity_input,) if self.identity_input is not None else ()))
+            strings=(
+                self.output,
+                *_visits(self.inputs),
+                *(_visits((self.identity_input,) if self.identity_input is not None else ())),
+            )
         )
 
 
@@ -251,8 +256,8 @@ class MapItemPort(_PrivateValue):
     def validate_in(self, *, workflow: WorkflowId, nodes: tuple[Node, ...]) -> None:
         """Validate the static route; dynamic admission binds its map declaration."""
         owner = workflow
-        current = {node.id: node for node in nodes}
-        for container in self.path:
+        current = {node.id: node for node in _visits(nodes)}
+        for container in _visits(self.path):
             if container.workflow != owner:
                 _reject(ValidationCode.FOREIGN_OWNER)
             node = current.get(container)
@@ -261,18 +266,20 @@ class MapItemPort(_PrivateValue):
             if not isinstance(node, SubgraphNode):
                 _reject(ValidationCode.UNSUPPORTED)
             owner = node.body.workflow
-            current = {child.id: child for child in node.body.nodes}
+            current = {child.id: child for child in _visits(node.body.nodes)}
         if self.expander.workflow != owner:
             _reject(ValidationCode.FOREIGN_OWNER)
         expander = current.get(self.expander)
         member = current.get(self.member)
         if expander is None or member is None:
             _reject(ValidationCode.MISSING)
-        outcome = next((item for item in expander.operation.outcomes if item.name == self.expansion_outcome), None)
+        outcome = next(
+            (item for item in _visits(expander.operation.outcomes) if item.name == self.expansion_outcome), None
+        )
         if (
             outcome is None
             or self.membership_port not in outcome.produced_ports
-            or self.item_input not in {port.name for port in member.operation.inputs}
+            or self.item_input not in {port.name for port in _visits(member.operation.inputs)}
         ):
             _reject(ValidationCode.MISSING)
 
@@ -297,7 +304,13 @@ class EvidencePromise(_PrivateValue):
             strings=(
                 self.name,
                 self.meaning,
-                *(port for port in (self.subject_port, *self.consumed_ports) if isinstance(port, str)),
+                *_visits(
+                    (
+                        port
+                        for port in _visits((self.subject_port, *_visits(self.consumed_ports)))
+                        if isinstance(port, str)
+                    )
+                ),
             )
         )
 
@@ -359,7 +372,7 @@ class OutcomeSpec(_PrivateValue):
         _frozenset_of(self.model_requirements, ModelRequirement)
         if not isinstance(self.ceiling, ResourceCeiling):
             _reject(ValidationCode.INVALID_TYPE)
-        _validate_scalars(strings=(self.name, self.category, *self.produced_ports))
+        _validate_scalars(strings=(self.name, self.category, *_visits(self.produced_ports)))
         if self.category not in _OUTCOME_CLASSES:
             _reject(ValidationCode.INVALID_VALUE)
 
@@ -378,26 +391,27 @@ class OperationSpec(_PrivateValue):
         _tuple_of(self.output_dependencies, OutputDependency)
         _tuple_of(self.outcomes, OutcomeSpec)
         _validate_scalars(strings=(self.name,))
-        input_names = [port.name for port in self.inputs]
-        output_names = [port.name for port in self.outputs]
-        outcome_names = [outcome.name for outcome in self.outcomes]
-        dependency_outputs = [dependency.output for dependency in self.output_dependencies]
+        input_names = [port.name for port in _visits(self.inputs)]
+        output_names = [port.name for port in _visits(self.outputs)]
+        outcome_names = [outcome.name for outcome in _visits(self.outcomes)]
+        dependency_outputs = [dependency.output for dependency in _visits(self.output_dependencies)]
         if any(
             len(values) != len(set(values))
-            for values in (input_names + output_names, outcome_names, dependency_outputs)
+            for values in _visits((input_names + output_names, outcome_names, dependency_outputs))
         ):
             _reject(ValidationCode.DUPLICATE)
         if any(
-            len(outcome.evidence) != len({promise.name for promise in outcome.evidence}) for outcome in self.outcomes
+            len(outcome.evidence) != len({promise.name for promise in _visits(outcome.evidence)})
+            for outcome in _visits(self.outcomes)
         ):
             _reject(ValidationCode.DUPLICATE)
         inputs = set(input_names)
         outputs = set(output_names)
         if set(dependency_outputs) != outputs:
             _reject(ValidationCode.MISSING)
-        input_types = {port.name: port.artifact_type for port in self.inputs}
-        output_types = {port.name: port.artifact_type for port in self.outputs}
-        for dependency in self.output_dependencies:
+        input_types = {port.name: port.artifact_type for port in _visits(self.inputs)}
+        output_types = {port.name: port.artifact_type for port in _visits(self.outputs)}
+        for dependency in _visits(self.output_dependencies):
             if dependency.output not in outputs or not dependency.inputs <= inputs:
                 _reject(ValidationCode.MISSING)
             if dependency.identity_input is not None:
@@ -407,17 +421,17 @@ class OperationSpec(_PrivateValue):
                     _reject(ValidationCode.CONTRADICTORY)
         all_ports = inputs | outputs
         produced_any: set[str] = set()
-        for outcome in self.outcomes:
+        for outcome in _visits(self.outcomes):
             if not outcome.produced_ports <= outputs:
                 _reject(ValidationCode.MISSING)
-            produced_any.update(outcome.produced_ports)
-            if any(use.port not in all_ports for use in outcome.context):
+            produced_any.update(_visits(outcome.produced_ports))
+            if any(use.port not in all_ports for use in _visits(outcome.context)):
                 _reject(ValidationCode.MISSING)
-            for promise in outcome.evidence:
+            for promise in _visits(outcome.evidence):
                 if (
                     isinstance(promise.subject_port, str)
                     and promise.subject_port not in all_ports
-                    or any(isinstance(port, str) and port not in inputs for port in promise.consumed_ports)
+                    or any(isinstance(port, str) and port not in inputs for port in _visits(promise.consumed_ports))
                 ):
                     _reject(ValidationCode.MISSING)
         if produced_any != outputs:
@@ -434,9 +448,9 @@ class OperationNode(_PrivateValue):
             _reject(ValidationCode.INVALID_TYPE)
         if any(
             isinstance(port, MapItemPort)
-            for outcome in self.operation.outcomes
-            for promise in outcome.evidence
-            for port in (promise.subject_port, *promise.consumed_ports)
+            for outcome in _visits(self.operation.outcomes)
+            for promise in _visits(outcome.evidence)
+            for port in _visits((promise.subject_port, *_visits(promise.consumed_ports)))
         ):
             _reject(ValidationCode.UNSUPPORTED)
 
@@ -632,7 +646,7 @@ class KeyedJoinDecl(_PrivateValue):
         if not isinstance(self.source, NodeId) or not isinstance(self.join, NodeId):
             _reject(ValidationCode.INVALID_TYPE)
         _frozenset_of(self.accepted_categories, str)
-        _validate_scalars(strings=(*self.accepted_categories, self.reduction))
+        _validate_scalars(strings=(*_visits(self.accepted_categories), self.reduction))
         if not self.accepted_categories:
             _reject(ValidationCode.INVALID_VALUE)
         if not self.accepted_categories <= _OUTCOME_CLASSES or self.reduction != "all_by_key":
@@ -675,13 +689,15 @@ class LoopDecl(_PrivateValue):
     max_iterations: int
 
     def __post_init__(self) -> None:
-        if not all(isinstance(node, NodeId) for node in (self.starter, self.member, self.join)):
+        if not all(isinstance(node, NodeId) for node in _visits((self.starter, self.member, self.join))):
             _reject(ValidationCode.INVALID_TYPE)
-        for outcomes in (
-            self.enter_outcomes,
-            self.bypass_outcomes,
-            self.continue_outcomes,
-            self.exit_outcomes,
+        for outcomes in _visits(
+            (
+                self.enter_outcomes,
+                self.bypass_outcomes,
+                self.continue_outcomes,
+                self.exit_outcomes,
+            )
         ):
             _frozenset_of(outcomes, str)
             _validate_scalars(strings=tuple(outcomes))
@@ -762,7 +778,13 @@ class ProtectionRequirement(_PrivateValue):
             strings=(
                 self.outcome,
                 self.meaning,
-                *(port for port in (self.subject_port, *self.consumed_ports) if isinstance(port, str)),
+                *_visits(
+                    (
+                        port
+                        for port in _visits((self.subject_port, *_visits(self.consumed_ports)))
+                        if isinstance(port, str)
+                    )
+                ),
             )
         )
         if self.candidate_port is not None:
@@ -771,7 +793,7 @@ class ProtectionRequirement(_PrivateValue):
             _reject(ValidationCode.MISSING)
         domains = {
             (port.path, port.expander, port.member, port.item_input, port.expansion_outcome, port.membership_port)
-            for port in (self.subject_port, *self.consumed_ports)
+            for port in _visits((self.subject_port, *_visits(self.consumed_ports)))
             if isinstance(port, MapItemPort)
         }
         if len(domains) > 1:
@@ -780,6 +802,14 @@ class ProtectionRequirement(_PrivateValue):
 
 @dataclass(frozen=True, slots=True, kw_only=True, repr=False)
 class WorkflowLimits(_PrivateValue):
+    """Declaration bounds and a separate visit budget for compiler analysis.
+
+    ``max_choice_states`` bounds declared selector combinations. The positive
+    exact integer ``max_analysis_work`` bounds declaration and relation visits
+    across one compilation, including nested/replacement analysis. Exhaustion
+    raises ``ANALYSIS_LIMIT_EXCEEDED`` before an admitted plan is returned.
+    """
+
     max_nodes: int
     max_bindings: int
     max_sequence_edges: int
@@ -787,8 +817,11 @@ class WorkflowLimits(_PrivateValue):
     max_branch_members: int
     max_subgraph_depth: int
     max_choice_states: int
+    max_analysis_work: int = 1_000_000
 
     def __post_init__(self) -> None:
+        if type(self.max_analysis_work) is not int:
+            _reject(ValidationCode.INVALID_TYPE)
         _validate_scalars(
             nonnegative_integers=(
                 self.max_bindings,
@@ -796,7 +829,7 @@ class WorkflowLimits(_PrivateValue):
                 self.max_choices,
                 self.max_branch_members,
             ),
-            positive_integers=(self.max_nodes, self.max_subgraph_depth, self.max_choice_states),
+            positive_integers=(self.max_nodes, self.max_subgraph_depth, self.max_choice_states, self.max_analysis_work),
         )
 
 
@@ -822,13 +855,15 @@ class AdmittedWorkflow(_PrivateValue):
     def map_item_ports(self) -> frozenset[MapItemPort]:
         """Retained static endpoints that dynamic admission must resolve."""
         declarations = (
-            *(promise for outcome in self.interface.outcomes for promise in outcome.evidence),
-            *self.protection_requirements,
+            *_visits(
+                (promise for outcome in _visits(self.interface.outcomes) for promise in _visits(outcome.evidence))
+            ),
+            *_visits(self.protection_requirements),
         )
         return frozenset(
             port
-            for declaration in declarations
-            for port in (declaration.subject_port, *declaration.consumed_ports)
+            for declaration in _visits(declarations)
+            for port in _visits((declaration.subject_port, *_visits(declaration.consumed_ports)))
             if isinstance(port, MapItemPort)
         )
 
@@ -892,16 +927,16 @@ class AdmittedWorkflow(_PrivateValue):
             key = id(workflow)
             if key in hashes:
                 continue
-            children = [node.body for node in workflow.nodes if isinstance(node, SubgraphNode)]
+            children = [node.body for node in _visits(workflow.nodes) if isinstance(node, SubgraphNode)]
             if not children_visited:
                 pending.append((workflow, True))
-                pending.extend((child, False) for child in children if id(child) not in hashes)
+                pending.extend((child, False) for child in _visits(children) if id(child) not in hashes)
                 continue
             node_hashes = frozenset(
                 hash((type(node), node.id, node.operation, hashes[id(node.body)]))
                 if isinstance(node, SubgraphNode)
                 else hash((type(node), node.id, node.operation))
-                for node in workflow.nodes
+                for node in _visits(workflow.nodes)
             )
             hashes[key] = hash((_workflow_local_state(workflow), node_hashes))
         return hashes[id(self)]
@@ -951,3 +986,16 @@ class AdmittedActivationWorkflow(_PrivateValue):
         object.__setattr__(self, "limits", limits)
         object.__setattr__(self, "activation_upper_bound", activation_upper_bound)
         object.__setattr__(self, "dynamic_depth", dynamic_depth)
+
+
+def _analysis_limit(*args: object, **kwargs: object) -> int | None:
+    """Resolve the compiler envelope only from SDK-owned admission values."""
+    owner = kwargs.get("workflow", args[0] if args else None)
+    limits = kwargs.get("limits")
+    if isinstance(limits, WorkflowLimits):
+        return limits.max_analysis_work
+    if isinstance(owner, AdmittedActivationWorkflow):
+        return owner.workflow.limits.max_analysis_work
+    if isinstance(owner, AdmittedWorkflow):
+        return owner.limits.max_analysis_work
+    return None
