@@ -89,24 +89,33 @@ class _MapFixture:
     join: NodeId
     text_type: ArtifactType
     collection_type: ArtifactType
+    other_type: ArtifactType
     capabilities: tuple[Any, ...]
 
 
-def _map_fixture(*, max_children: int = 2, control_only: bool = False) -> _MapFixture:
+def _map_fixture(*, max_children: int = 2, control_only: bool = False, other_count: int = 0) -> _MapFixture:
     owner = WorkflowId.new()
     expander, member, join = (NodeId.new(workflow=owner) for _ in range(3))
     text_type = ArtifactType(name="text", revision=1)
     collection_type = ArtifactType(name="members_t", revision=1)
+    other_type = ArtifactType(name="other_t", revision=1)
+    other_ports = tuple(OutputPort(name=f"other{index}", artifact_type=other_type) for index in range(other_count))
     expander_operation = OperationSpec(
         name="expander",
         inputs=(InputPort(name="default", artifact_type=text_type),),
-        outputs=(OutputPort(name="members", artifact_type=collection_type),),
-        output_dependencies=(OutputDependency(output="members", inputs=frozenset({"default"}), identity_input=None),),
+        outputs=(OutputPort(name="members", artifact_type=collection_type), *other_ports),
+        output_dependencies=(
+            OutputDependency(output="members", inputs=frozenset({"default"}), identity_input=None),
+            *(
+                OutputDependency(output=port.name, inputs=frozenset({"default"}), identity_input=None)
+                for port in other_ports
+            ),
+        ),
         outcomes=(
             replace(
                 _outcome(
                     "expand",
-                    produced=frozenset({"members"}),
+                    produced=frozenset({"members", *(port.name for port in other_ports)}),
                     max_activations=max_children + 2,
                     max_output_bytes=128,
                 ),
@@ -245,7 +254,7 @@ def _map_fixture(*, max_children: int = 2, control_only: bool = False) -> _MapFi
     )
     operations = (expander_operation, member_operation, join_operation)
     capabilities = tuple(_capability(operation, index) for index, operation in enumerate(operations))
-    return _MapFixture(workflow, expander, member, join, text_type, collection_type, capabilities)
+    return _MapFixture(workflow, expander, member, join, text_type, collection_type, other_type, capabilities)
 
 
 @dataclass
@@ -256,6 +265,8 @@ class _MapCallback:
     item_values: tuple[str, ...] | None
     collection_type: ArtifactType
     text_type: ArtifactType
+    other_type: ArtifactType
+    other_count: int
     calls: list[tuple[AssociationInput, ...]] = field(default_factory=list)
 
     async def run(self, request: tuple[AssociationInput, ...]) -> LocalCompleted:
@@ -283,7 +294,21 @@ class _MapCallback:
                     )
                 ),
             )
-            outputs = (membership, membership) if self.response_mode == "duplicate" else (membership,)
+            other_outputs = tuple(
+                PortArtifact(
+                    port=f"other{index}",
+                    artifact_type=self.other_type,
+                    artifact=None,
+                    value=TextCollectionValue(items=()),
+                )
+                for index in range(self.other_count)
+            )
+            if self.response_mode == "missing":
+                outputs = other_outputs
+            elif self.response_mode == "duplicate":
+                outputs = (membership, membership, *other_outputs)
+            else:
+                outputs = (membership, *other_outputs)
         return LocalCompleted(
             results=(
                 AssociationResult(
@@ -405,8 +430,9 @@ async def _execute_membership(
     artifact_byte_headroom: int = 32,
     max_collection_items: int = 4,
     control_only: bool = False,
+    other_count: int = 0,
 ):
-    fixture = _map_fixture(control_only=control_only)
+    fixture = _map_fixture(control_only=control_only, other_count=other_count)
     admitted = _admit_fixture(fixture)
     by_node = dict(zip((fixture.expander, fixture.member, fixture.join), fixture.capabilities, strict=True))
     callbacks = {
@@ -417,6 +443,8 @@ async def _execute_membership(
             item_values=item_values,
             collection_type=fixture.collection_type,
             text_type=fixture.text_type,
+            other_type=fixture.other_type,
+            other_count=other_count,
         )
         for node in by_node
     }
@@ -530,19 +558,19 @@ async def _assert_map_membership(item_count: int) -> None:
 
 
 @pytest.mark.parametrize(
-    ("case_id", "response_mode"),
+    ("case_id", "response_mode", "other_count"),
     (
-        ("map/wrong_membership_type", "wrong_type"),
-        ("map/duplicate_membership_port", "duplicate"),
+        ("map/wrong_membership_type", "wrong_type", 0),
+        ("map/duplicate_membership_port", "duplicate", 0),
     ),
 )
-def test_malformed_map_results_publish_no_partial_facts(case_id: str, response_mode: str) -> None:
-    asyncio.run(_assert_malformed_map_result(case_id, response_mode))
+def test_malformed_map_results_publish_no_partial_facts(case_id: str, response_mode: str, other_count: int) -> None:
+    asyncio.run(_assert_malformed_map_result(case_id, response_mode, other_count))
 
 
-async def _assert_malformed_map_result(case_id: str, response_mode: str) -> None:
+async def _assert_malformed_map_result(case_id: str, response_mode: str, other_count: int) -> None:
     case = MAP_CASES[case_id]
-    fixture, result, _ = await _execute_membership(1, response_mode=response_mode)
+    fixture, result, _ = await _execute_membership(1, response_mode=response_mode, other_count=other_count)
     expander = next(entry for entry in result.states[0].entries if entry.template == fixture.expander)
     assert expander.status == "failure"
     assert expander.outcome is None
@@ -590,13 +618,14 @@ async def _assert_control_only_map() -> None:
 
 
 @pytest.mark.parametrize(
-    ("case_id", "values", "artifact_headroom", "artifact_byte_headroom"),
+    ("case_id", "values", "artifact_headroom", "artifact_byte_headroom", "other_count"),
     (
-        ("map/membership_0", (), 8, 32),
-        ("map/membership_1", ("a",), 8, 32),
-        ("map/membership_2", ("a", "b"), 8, 32),
-        ("map/collection_items_exact", ("a", "b"), 8, 32),
-        ("map/bounds_exact", ("aa", "bb"), 3, 8),
+        ("map/membership_0", (), 8, 32, 0),
+        ("map/membership_1", ("a",), 8, 32, 0),
+        ("map/membership_2", ("a", "b"), 8, 32, 0),
+        ("map/membership_with_0_other_outputs", ("a", "b"), 8, 32, 0),
+        ("map/collection_items_exact", ("a", "b"), 8, 32, 0),
+        ("map/bounds_exact", ("aa", "bb"), 3, 8, 0),
     ),
 )
 def test_map_result_publication_matches_frozen_case(
@@ -604,6 +633,7 @@ def test_map_result_publication_matches_frozen_case(
     values: tuple[str, ...],
     artifact_headroom: int,
     artifact_byte_headroom: int,
+    other_count: int,
 ) -> None:
     asyncio.run(
         _assert_map_result_publication(
@@ -611,6 +641,7 @@ def test_map_result_publication_matches_frozen_case(
             values,
             artifact_headroom,
             artifact_byte_headroom,
+            other_count,
         )
     )
 
@@ -620,6 +651,7 @@ async def _assert_map_result_publication(
     values: tuple[str, ...],
     artifact_headroom: int,
     artifact_byte_headroom: int,
+    other_count: int,
 ) -> None:
     case = MAP_CASES[case_id]
     fixture, result, _ = await _execute_membership(
@@ -627,6 +659,7 @@ async def _assert_map_result_publication(
         item_values=values,
         artifact_headroom=artifact_headroom,
         artifact_byte_headroom=artifact_byte_headroom,
+        other_count=other_count,
     )
     expected = case["expected"]["state"]["publication"]
     root = next(fact for fact in result.provenance if isinstance(fact.key, RootInputKey))
