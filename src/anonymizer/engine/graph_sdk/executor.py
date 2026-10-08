@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 from contextlib import suppress
 from dataclasses import dataclass
+from itertools import product
 from typing import Literal, Protocol, TypeAlias, runtime_checkable
 
 from anonymizer.engine.graph_sdk._effect_values import (
@@ -772,7 +773,7 @@ def admit_execution_plan(
             if any(item.capability.attribution != "per_task" for item in policy.implementations):
                 reject(EffectCode.UNSUPPORTED)
     _validate_assessments(prepared, policies, assessment_productions, assessment_limits)
-    _validate_execution_fact_capacity(prepared, assessment_limits)
+    _validate_execution_fact_capacity(prepared, assessment_productions, assessment_limits)
     return AdmittedExecutionPlan(
         _key=_PLAN_KEY,
         context=context,
@@ -821,7 +822,7 @@ def _validate_map_expansions(
             adaptive.materialization.kind,
             1,
         )
-    replacements: list[InputBinding] = []
+    replacement_choices: list[tuple[InputBinding, ...]] = []
     by_key = {(item.expander, item.outcome): item for item in declarations}
     for dynamic_map in maps:
         member_operation = _node_operation(workflow.workflow, dynamic_map.member)
@@ -831,6 +832,7 @@ def _validate_map_expansions(
             for fact in (() if bound is None else bound.receipt.sources)
         ):
             reject(EffectCode.CONTRADICTORY)
+        map_replacements: list[InputBinding] = []
         for outcome_name in dynamic_map.expansion_outcomes:
             declaration = by_key[(dynamic_map.expander, outcome_name)]
             operation = _node_operation(workflow.workflow, dynamic_map.expander)
@@ -844,19 +846,22 @@ def _validate_map_expansions(
             if dynamic_map.item_input is not None:
                 if member_inputs.get(dynamic_map.item_input) != declaration.item_type:
                     reject(EffectCode.CONTRADICTORY)
-                replacements.append(
+                map_replacements.append(
                     InputBinding(
                         source=NodeOutputRef(node=dynamic_map.expander, port=declaration.membership_port),
                         destination=NodeInputRef(node=dynamic_map.member, port=dynamic_map.item_input),
                     )
                 )
             _add_materialization_schema(schemas, collection_type, declaration.item_type, "collection", 0)
-    if replacements:
-        validate_dynamic_input_summaries(workflow.workflow, tuple(replacements))
+        if map_replacements:
+            replacement_choices.append(tuple(map_replacements))
+    for replacements in product(*replacement_choices):
+        validate_dynamic_input_summaries(workflow.workflow, replacements)
 
 
 def _validate_execution_fact_capacity(
     prepared: PreparedPlan,
+    productions: tuple[EvidenceProductionDecl, ...],
     limits: AssessmentLimits,
 ) -> None:
     """Prove structural and operation fact storage from the finite reservation recipe."""
@@ -878,29 +883,38 @@ def _validate_execution_fact_capacity(
                 pending.append(node.body)
     port_facts = 0
     provenance_edges = 0
-    for slot in prepared.reservation_recipe:
-        operation = operation_nodes.get(slot.template)
-        if operation is not None:
-            port_facts += len(operation.inputs)
-            produced = max((outcome.produced_ports for outcome in operation.outcomes), key=len)
-            port_facts += len(produced)
-            dependencies = {item.output: item for item in operation.output_dependencies}
-            provenance_edges += sum(len(dependencies[port].inputs) for port in produced)
-            continue
-        interface = subgraph_nodes[slot.template]
-        projected = max((outcome.produced_ports for outcome in interface.outcomes), key=len)
-        port_facts += len(projected)
-        provenance_edges += len(projected)
-    map_item_edges = sum(
-        declaration.max_children
+    assessment_facts = 0
+    mapped_expanders = {
+        declaration.expander: declaration.max_children
         for scope in prepared.workflow.scopes
         for declaration in scope.maps
         if declaration.item_input is not None
-    )
+    }
+    for slot in prepared.reservation_recipe:
+        provenance_edges += mapped_expanders.get(slot.template, 0)
+        operation = operation_nodes.get(slot.template)
+        if operation is not None:
+            port_facts += len(operation.inputs)
+            port_facts += max(len(outcome.produced_ports) for outcome in operation.outcomes)
+            dependencies = {item.output: item for item in operation.output_dependencies}
+            provenance_edges += max(
+                sum(len(dependencies[port].inputs) for port in outcome.produced_ports) for outcome in operation.outcomes
+            )
+            assessment_facts += max(
+                sum(item.node == slot.template and item.outcome == outcome.name for item in productions)
+                for outcome in operation.outcomes
+            )
+            continue
+        interface = subgraph_nodes[slot.template]
+        projected_count = max(len(outcome.produced_ports) for outcome in interface.outcomes)
+        port_facts += projected_count
+        provenance_edges += projected_count
     target_count = len(prepared.target_occurrences)
     if port_facts * target_count > limits.max_port_facts:
         reject(EffectCode.LIMIT_EXCEEDED)
-    if (provenance_edges + map_item_edges) * target_count > limits.max_provenance_edges:
+    if provenance_edges * target_count > limits.max_provenance_edges:
+        reject(EffectCode.LIMIT_EXCEEDED)
+    if assessment_facts * target_count > limits.max_assessment_facts:
         reject(EffectCode.LIMIT_EXCEEDED)
 
 
@@ -1662,20 +1676,27 @@ async def _run_execution(
             )
             if staged_result:
                 try:
-                    candidate_state, next_artifact = _observe_dynamic_membership(
+                    membership = _dynamic_membership_value(
                         admitted,
-                        candidate_state,
-                        job.target,
-                        job.activation,
                         job.node,
-                        mapping,
+                        mapping.outcome,
                         results,
-                        artifact_values,
-                        produced,
-                        provenance,
-                        next_artifact,
-                        services.limits,
                     )
+                    if membership is not None:
+                        candidate_state, next_artifact = _observe_dynamic_membership(
+                            admitted,
+                            candidate_state,
+                            job.target,
+                            job.activation,
+                            job.node,
+                            mapping.outcome,
+                            membership,
+                            artifact_values,
+                            produced,
+                            provenance,
+                            next_artifact,
+                            services.limits,
+                        )
                 except (ContractViolation, EffectRejected) as exc:
                     assert prior_values is not None and prior_produced is not None
                     artifact_values.clear()
@@ -1705,6 +1726,58 @@ async def _run_execution(
                             category=mapping.category,
                         ),
                     )
+            try:
+                while True:
+                    _materialize_subgraph_outputs(
+                        prepared.workflow.workflow,
+                        job.target,
+                        candidate_state,
+                        produced,
+                        provenance,
+                        port_facts,
+                    )
+                    candidate_state, next_artifact, bridged = _bridge_structural_map_membership(
+                        admitted,
+                        candidate_state,
+                        job.target,
+                        artifact_values,
+                        produced,
+                        provenance,
+                        next_artifact,
+                        services.limits,
+                    )
+                    if not bridged:
+                        break
+            except (ContractViolation, EffectRejected) as exc:
+                if not staged_result or prior_values is None or prior_produced is None:
+                    raise
+                artifact_values.clear()
+                artifact_values.update(prior_values)
+                produced.clear()
+                produced.update(prior_produced)
+                del provenance[prior_provenance_count:]
+                del port_facts[prior_port_count:]
+                del assessment_facts[prior_assessment_count:]
+                next_artifact = prior_next_artifact
+                condition = (
+                    "artifact_limit_exhausted"
+                    if isinstance(exc, EffectRejected) and exc.code == EffectCode.LIMIT_EXCEEDED
+                    else "failure"
+                )
+                mapping = _mapping(
+                    job.policy,
+                    condition,
+                    None,
+                    None if condition == "artifact_limit_exhausted" else "malformed_response",
+                )
+                candidate_state = advance_activation(
+                    state=prior_state,
+                    event=ObserveTerminal(
+                        activation=job.activation,
+                        outcome=mapping.outcome,
+                        category=mapping.category,
+                    ),
+                )
             states[job.state_index] = candidate_state
             if deferred is not None:
                 if mapping.condition == "result":
@@ -1713,14 +1786,6 @@ async def _run_execution(
                     request_authority.apply(AcceptFailure(request=deferred.request, failure="malformed_response"))
                 if deferred.settlement is not None:
                     request_authority.apply(ObserveSettlement(settlement=deferred.settlement))
-            _materialize_subgraph_outputs(
-                prepared.workflow.workflow,
-                job.target,
-                states[job.state_index],
-                produced,
-                provenance,
-                port_facts,
-            )
     if control.cancelled:
         request_authority.apply(ScopeCancel())
     cleanup, cleanup_associations = await _cleanup_execution(
@@ -2008,8 +2073,8 @@ def _observe_dynamic_membership(
     target: DatumId,
     activation: ActivationKey,
     node: NodeId,
-    mapping: RuntimeOutcome,
-    results: tuple[AssociationResult, ...],
+    outcome: str | None,
+    collection: ArtifactValue,
     values: dict[ArtifactRef, ArtifactValue],
     produced: dict[tuple[DatumId, ActivationKey | NodeId, str], ArtifactRef],
     provenance: list[ArtifactProvenanceFact],
@@ -2018,14 +2083,11 @@ def _observe_dynamic_membership(
 ) -> tuple[ActivationState, int]:
     scope = next(item for item in state.workflow.scopes if node.workflow == item.workflow.workflow)
     declaration = next((item for item in scope.maps if item.expander == node), None)
-    if declaration is None or mapping.outcome not in declaration.expansion_outcomes:
+    if declaration is None or outcome not in declaration.expansion_outcomes:
         return state, next_artifact
-    expansion = next(
-        item for item in admitted.map_expansions if item.expander == node and item.outcome == mapping.outcome
-    )
-    output = next(output for result in results for output in result.outputs if output.port == expansion.membership_port)
-    assert isinstance(output.value, TextCollectionValue)
-    collection = output.value
+    expansion = next(item for item in admitted.map_expansions if item.expander == node and item.outcome == outcome)
+    if not isinstance(collection, TextCollectionValue):
+        reject(EffectCode.INVALID_TYPE)
     observed_count = len(collection.items)
     if observed_count > declaration.max_children:
         return (
@@ -2117,6 +2179,26 @@ def _valid_dynamic_membership_result(
     )
     selected = [output for result in results for output in result.outputs if output.port == declaration.membership_port]
     return len(selected) == 1 and isinstance(selected[0].value, TextCollectionValue)
+
+
+def _dynamic_membership_value(
+    admitted: AdmittedExecutionPlan,
+    node: NodeId,
+    outcome: str | None,
+    results: tuple[AssociationResult, ...],
+) -> ArtifactValue | None:
+    declaration = next(
+        (item for item in admitted.map_expansions if item.expander == node and item.outcome == outcome),
+        None,
+    )
+    if declaration is None:
+        return None
+    selected = [
+        output.value for result in results for output in result.outputs if output.port == declaration.membership_port
+    ]
+    if len(selected) != 1:
+        reject(EffectCode.MISSING)
+    return selected[0]
 
 
 def _operation_owner(root: AdmittedWorkflow, node: NodeId) -> tuple[AdmittedWorkflow, OperationNode]:
@@ -2265,16 +2347,22 @@ def _materialize_subgraph_outputs(
             destination = (target, entry.activation, binding.destination.port)
             if destination in produced:
                 continue
-            candidates = [
-                child.activation
-                for child in state.entries
-                if child.template == binding.source.node
-                and child.activation.parent == entry.activation
-                and child.status == "success"
-            ]
-            if len(candidates) != 1:
+            source_activation = _source_activation(state, entry.activation, binding.source.node)
+            source_entry = next(
+                (
+                    child
+                    for child in state.entries
+                    if child.activation == source_activation and child.status == "success"
+                ),
+                None,
+            )
+            if source_entry is None:
                 continue
-            source_key = OperationOutputKey(activation=candidates[0], target=target, port=binding.source.port)
+            source_key = OperationOutputKey(
+                activation=source_entry.activation,
+                target=target,
+                port=binding.source.port,
+            )
             source_fact = next((item for item in provenance if item.key == source_key), None)
             if source_fact is None:
                 continue
@@ -2308,6 +2396,63 @@ def _materialize_subgraph_outputs(
                     role="decision" if source_fact.decision else "artifact",
                 )
             )
+
+
+def _bridge_structural_map_membership(
+    admitted: AdmittedExecutionPlan,
+    state: ActivationState,
+    target: DatumId,
+    values: dict[ArtifactRef, ArtifactValue],
+    produced: dict[tuple[DatumId, ActivationKey | NodeId, str], ArtifactRef],
+    provenance: list[ArtifactProvenanceFact],
+    next_artifact: int,
+    limits: ExecutionLimits,
+) -> tuple[ActivationState, int, bool]:
+    root = admitted.context.prepared.workflow.workflow
+    for entry in sorted(state.entries, key=lambda item: item.activation.occurrence):
+        if entry.status != "success" or entry.outcome is None or not _is_subgraph_node(root, entry.template):
+            continue
+        dynamic_map = next(
+            (
+                declaration
+                for scope in state.workflow.scopes
+                for declaration in scope.maps
+                if declaration.expander == entry.template and entry.outcome in declaration.expansion_outcomes
+            ),
+            None,
+        )
+        if dynamic_map is None:
+            continue
+        expansion_state = next(
+            (item for item in state.expansions if item.parent == entry.activation),
+            None,
+        )
+        if expansion_state is not None and expansion_state.status != "pending":
+            continue
+        expansion = next(
+            item
+            for item in admitted.map_expansions
+            if item.expander == entry.template and item.outcome == entry.outcome
+        )
+        reference = produced.get((target, entry.activation, expansion.membership_port))
+        if reference is None or reference not in values:
+            reject(EffectCode.MISSING)
+        updated, next_artifact = _observe_dynamic_membership(
+            admitted,
+            state,
+            target,
+            entry.activation,
+            entry.template,
+            entry.outcome,
+            values[reference],
+            values,
+            produced,
+            provenance,
+            next_artifact,
+            limits,
+        )
+        return updated, next_artifact, True
+    return state, next_artifact, False
 
 
 async def _run_local(

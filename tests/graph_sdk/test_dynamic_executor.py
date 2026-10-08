@@ -21,8 +21,8 @@ from anonymizer.engine.graph_sdk.executor import (
     ExecutionServices,
     ImplementationHandle,
     LocalCompleted,
-    MapItemKey,
     MapExpansionDecl,
+    MapItemKey,
     OperationExecutionPolicy,
     RuntimeOutcome,
     admit_execution_plan,
@@ -46,18 +46,19 @@ from anonymizer.graph.workflow import (
     InputBinding,
     InputPort,
     KeyedJoinDecl,
-    LoopDecl,
     LoopCarriedBinding,
+    LoopDecl,
     LoopInitialBinding,
     MapDecl,
     NodeId,
+    NodeInputRef,
     NodeOutcomeRef,
     NodeOutputRef,
-    NodeInputRef,
     OperationNode,
     OperationSpec,
     OutcomeBinding,
     OutcomeSpec,
+    OutputBinding,
     OutputDependency,
     OutputPort,
     ResourceCeiling,
@@ -67,6 +68,7 @@ from anonymizer.graph.workflow import (
     WorkflowInputRef,
     WorkflowLimits,
     WorkflowOutcomeRef,
+    WorkflowOutputRef,
     admit_activation_workflow,
     admit_static_workflow,
 )
@@ -127,9 +129,7 @@ def _rows(outcomes: frozenset[str]) -> tuple[RuntimeOutcome, ...]:
         for name in sorted(outcomes)
     ]
     values.extend(
-        RuntimeOutcome(
-            condition="failure", reported_outcome=None, failure=failure, outcome=None, category="failure"
-        )
+        RuntimeOutcome(condition="failure", reported_outcome=None, failure=failure, outcome=None, category="failure")
         for failure in (
             "rejected_before_acceptance",
             "retryable",
@@ -248,18 +248,14 @@ async def _assert_nested_two_by_two() -> None:
         name="starter",
         inputs=(InputPort(name="item", artifact_type=text_type),),
         outputs=(OutputPort(name="value", artifact_type=text_type),),
-        output_dependencies=(
-            OutputDependency(output="value", inputs=frozenset({"item"}), identity_input="item"),
-        ),
+        output_dependencies=(OutputDependency(output="value", inputs=frozenset({"item"}), identity_input="item"),),
         outcomes=control,
     )
     member_operation = OperationSpec(
         name="loop-member",
         inputs=(InputPort(name="previous", artifact_type=text_type),),
         outputs=(OutputPort(name="value", artifact_type=text_type),),
-        output_dependencies=(
-            OutputDependency(output="value", inputs=frozenset({"previous"}), identity_input=None),
-        ),
+        output_dependencies=(OutputDependency(output="value", inputs=frozenset({"previous"}), identity_input=None),),
         outcomes=control,
     )
     join_operation = _operation("loop-join", (_outcome("ok"),))
@@ -359,19 +355,72 @@ async def _assert_nested_two_by_two() -> None:
             OutputDependency(output="items", inputs=frozenset(), identity_input=None),
             OutputDependency(output="default", inputs=frozenset(), identity_input=None),
         ),
-        outcomes=(
-            _outcome("expand", produced=frozenset({"items", "default"}), max_output_bytes=120),
+        outcomes=(_outcome("expand", produced=frozenset({"items", "default"}), max_output_bytes=120),),
+    )
+    expand_body_owner = WorkflowId.new()
+    expand_child = NodeId.new(workflow=expand_body_owner)
+    expand_interface = OperationSpec(
+        name="expand-body",
+        inputs=expand_operation.inputs,
+        outputs=expand_operation.outputs,
+        output_dependencies=expand_operation.output_dependencies,
+        outcomes=tuple(
+            OutcomeSpec(
+                name=outcome.name,
+                category=outcome.category,
+                produced_ports=outcome.produced_ports,
+                context=outcome.context,
+                evidence=outcome.evidence,
+                state_effects=outcome.state_effects,
+                model_requirements=outcome.model_requirements,
+                ceiling=ResourceCeiling(
+                    max_activations=2,
+                    max_model_requests=outcome.ceiling.max_model_requests,
+                    max_input_bytes=outcome.ceiling.max_input_bytes,
+                    max_output_bytes=outcome.ceiling.max_output_bytes,
+                ),
+            )
+            for outcome in expand_operation.outcomes
+        ),
+    )
+    expand_body = admit_static_workflow(
+        workflow=expand_body_owner,
+        interface=expand_interface,
+        nodes=(OperationNode(id=expand_child, operation=expand_operation),),
+        input_bindings=(),
+        output_bindings=tuple(
+            OutputBinding(
+                source=NodeOutputRef(node=expand_child, port=port.name),
+                destination=WorkflowOutputRef(port=port.name),
+            )
+            for port in expand_operation.outputs
+        ),
+        outcome_bindings=(
+            OutcomeBinding(
+                source=NodeOutcomeRef(node=expand_child, outcome="expand"),
+                destination=WorkflowOutcomeRef(outcome="expand"),
+            ),
+        ),
+        sequence=(),
+        choices=(),
+        protection=(),
+        limits=WorkflowLimits(
+            max_nodes=1,
+            max_bindings=3,
+            max_sequence_edges=0,
+            max_choices=0,
+            max_branch_members=0,
+            max_subgraph_depth=1,
+            max_choice_states=1,
         ),
     )
     root_join_operation = _operation("root-join", (_outcome("ok"),))
-    root_interface = _operation(
-        "root", (_outcome("ok", max_activations=12, max_output_bytes=400),)
-    )
+    root_interface = _operation("root", (_outcome("ok", max_activations=13, max_output_bytes=400),))
     root = admit_static_workflow(
         workflow=root_owner,
         interface=root_interface,
         nodes=(
-            OperationNode(id=expander, operation=expand_operation),
+            SubgraphNode(id=expander, operation=expand_interface, body=expand_body),
             SubgraphNode(id=member, operation=body.interface, body=body),
             OperationNode(id=root_join, operation=root_join_operation),
         ),
@@ -392,7 +441,7 @@ async def _assert_nested_two_by_two() -> None:
         choices=(),
         protection=(),
         limits=WorkflowLimits(
-            max_nodes=7,
+            max_nodes=8,
             max_bindings=2,
             max_sequence_edges=2,
             max_choices=0,
@@ -426,6 +475,7 @@ async def _assert_nested_two_by_two() -> None:
                 loops=(),
             ),
             body_scope,
+            DynamicScope(workflow=expand_body, maps=(), joins=(), loops=()),
         ),
         limits=DynamicLimits(
             max_maps=1,
@@ -434,11 +484,11 @@ async def _assert_nested_two_by_two() -> None:
             max_children_per_map=2,
             max_iterations_per_loop=2,
             max_dynamic_depth=2,
-            max_activation_occurrences=12,
+            max_activation_occurrences=13,
         ),
     )
     operations = {
-        expander: expand_operation,
+        expand_child: expand_operation,
         root_join: root_join_operation,
         starter: starter_operation,
         loop_member: member_operation,
@@ -457,7 +507,7 @@ async def _assert_nested_two_by_two() -> None:
     prepared = prepare(
         data=_data(1),
         workflow=workflow,
-        activation_limits=ActivationLimits(max_events=40, max_entries=12, max_parent_depth=4),
+        activation_limits=ActivationLimits(max_events=44, max_entries=13, max_parent_depth=4),
         bound_inputs=(),
         configuration=PreparationConfiguration(
             purpose="execution_only", required_protection_outcomes=frozenset(), hard_request_limit=None
@@ -465,11 +515,9 @@ async def _assert_nested_two_by_two() -> None:
         state=StateRevisionView(revisions=frozenset()),
         selections=selections,
         capabilities=capabilities,
-        limits=_limits(capabilities=5, slots=12),
+        limits=_limits(capabilities=5, slots=13),
     )
-    context = admit_context_plan(
-        prepared=prepared, bound_context=None, adaptive_retrievals=(), context_capabilities=()
-    )
+    context = admit_context_plan(prepared=prepared, bound_context=None, adaptive_retrievals=(), context_capabilities=())
     implementations = {
         node: ExecutionImplementation(
             implementation=capability.implementation,
@@ -516,7 +564,7 @@ async def _assert_nested_two_by_two() -> None:
         ),
     )
     modes = {
-        expander: "expand",
+        expand_child: "expand",
         root_join: "root_join",
         starter: "starter",
         loop_member: "loop",
@@ -560,8 +608,24 @@ async def _assert_nested_two_by_two() -> None:
             ),
         )
     ).wait()
-    assert result.states[0].complete
-    assert callbacks[expander].calls == 1
+    assert result.states[0].complete, [
+        (
+            {
+                expander: "expander",
+                expand_child: "expand-child",
+                member: "member",
+                root_join: "root-join",
+                starter: "starter",
+                loop_member: "loop-member",
+                loop_join: "loop-join",
+            }.get(entry.template, "unknown"),
+            entry.activation.occurrence,
+            entry.status,
+            entry.outcome,
+        )
+        for entry in sorted(result.states[0].entries, key=lambda item: item.activation.occurrence)
+    ]
+    assert callbacks[expand_child].calls == 1
     assert callbacks[starter].calls == 2
     assert callbacks[loop_member].calls == 4
     assert callbacks[loop_join].calls == 2
@@ -572,5 +636,5 @@ async def _assert_nested_two_by_two() -> None:
     assert len(map_items) == 2
     assert {fact.key.item_key for fact in map_items if isinstance(fact.key, MapItemKey)} == {0, 1}
     assert all(len(fact.parents) == 1 for fact in map_items)
-    assert len(result.states[0].entries) == 12
-    assert len({item.activation for item in result.states[0].entries}) == 12
+    assert len(result.states[0].entries) == 13
+    assert len({item.activation for item in result.states[0].entries}) == 13
