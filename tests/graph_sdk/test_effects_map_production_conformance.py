@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, cast
 
@@ -16,12 +16,15 @@ from anonymizer.engine.graph_sdk._effect_values import EffectCode, EffectRejecte
 from anonymizer.engine.graph_sdk.capabilities import ImplementationSelection
 from anonymizer.engine.graph_sdk.context import admit_context_plan
 from anonymizer.engine.graph_sdk.executor import (
+    AssessmentFinding,
     AssessmentLimits,
     DecisionLimits,
+    EvidenceProductionDecl,
     ExecutionImplementation,
     ExecutionLimits,
     ExecutionServices,
     ImplementationHandle,
+    LocalAssessmentResult,
     LocalCompleted,
     MapExpansionDecl,
     MapItemKey,
@@ -46,6 +49,7 @@ from anonymizer.graph.workflow import (
     ArtifactType,
     DynamicLimits,
     DynamicScope,
+    EvidencePromise,
     InputBinding,
     InputPort,
     KeyedJoinDecl,
@@ -53,9 +57,11 @@ from anonymizer.graph.workflow import (
     NodeId,
     NodeInputRef,
     NodeOutcomeRef,
+    NodeOutputRef,
     OperationNode,
     OperationSpec,
     OutcomeBinding,
+    OutputBinding,
     OutputDependency,
     OutputPort,
     SequenceEdge,
@@ -63,6 +69,7 @@ from anonymizer.graph.workflow import (
     WorkflowInputRef,
     WorkflowLimits,
     WorkflowOutcomeRef,
+    WorkflowOutputRef,
     admit_activation_workflow,
     admit_static_workflow,
 )
@@ -96,11 +103,24 @@ def _map_fixture(*, max_children: int = 2) -> _MapFixture:
         outputs=(OutputPort(name="members", artifact_type=collection_type),),
         output_dependencies=(OutputDependency(output="members", inputs=frozenset({"default"}), identity_input=None),),
         outcomes=(
-            _outcome(
-                "expand",
-                produced=frozenset({"members"}),
-                max_activations=max_children + 2,
-                max_output_bytes=128,
+            replace(
+                _outcome(
+                    "expand",
+                    produced=frozenset({"members"}),
+                    max_activations=max_children + 2,
+                    max_output_bytes=128,
+                ),
+                evidence=frozenset(
+                    {
+                        EvidencePromise(
+                            name="assessment0",
+                            meaning="map membership accepted",
+                            subject_port="members",
+                            consumed_ports=frozenset({"default"}),
+                            coverage=frozenset(),
+                        )
+                    }
+                ),
             ),
         ),
     )
@@ -115,9 +135,29 @@ def _map_fixture(*, max_children: int = 2) -> _MapFixture:
     interface = OperationSpec(
         name="map-root",
         inputs=(InputPort(name="default", artifact_type=text_type),),
-        outputs=(),
-        output_dependencies=(),
-        outcomes=(_outcome("ok", max_activations=max_children + 4, max_output_bytes=128),),
+        outputs=(OutputPort(name="members", artifact_type=collection_type),),
+        output_dependencies=(OutputDependency(output="members", inputs=frozenset({"default"}), identity_input=None),),
+        outcomes=(
+            replace(
+                _outcome(
+                    "ok",
+                    produced=frozenset({"members"}),
+                    max_activations=max_children + 4,
+                    max_output_bytes=128,
+                ),
+                evidence=frozenset(
+                    {
+                        EvidencePromise(
+                            name="assessment0",
+                            meaning="map membership accepted",
+                            subject_port="members",
+                            consumed_ports=frozenset({"default"}),
+                            coverage=frozenset(),
+                        )
+                    }
+                ),
+            ),
+        ),
     )
     static = admit_static_workflow(
         workflow=owner,
@@ -137,7 +177,12 @@ def _map_fixture(*, max_children: int = 2) -> _MapFixture:
                 destination=NodeInputRef(node=expander, port="default"),
             ),
         ),
-        output_bindings=(),
+        output_bindings=(
+            OutputBinding(
+                source=NodeOutputRef(node=expander, port="members"),
+                destination=WorkflowOutputRef(port="members"),
+            ),
+        ),
         outcome_bindings=(
             OutcomeBinding(
                 source=NodeOutcomeRef(node=join, outcome="ok"),
@@ -149,7 +194,7 @@ def _map_fixture(*, max_children: int = 2) -> _MapFixture:
         protection=(),
         limits=WorkflowLimits(
             max_nodes=3,
-            max_bindings=3,
+            max_bindings=4,
             max_sequence_edges=2,
             max_choices=0,
             max_branch_members=0,
@@ -202,12 +247,15 @@ class _MapCallback:
     mode: str
     response_mode: str
     item_count: int
+    item_values: tuple[str, ...] | None
     collection_type: ArtifactType
     text_type: ArtifactType
     calls: list[tuple[AssociationInput, ...]] = field(default_factory=list)
 
     async def run(self, request: tuple[AssociationInput, ...]) -> LocalCompleted:
         self.calls.append(request)
+        association = request[0].association
+        assert isinstance(association, SemanticAssociation)
         outputs: tuple[PortArtifact, ...] = ()
         outcome = "ok"
         if self.mode == "expander":
@@ -221,7 +269,9 @@ class _MapCallback:
                         TextCollectionItem(
                             key=index,
                             version=1,
-                            value=TextArtifactValue(text=f"item-{index}"),
+                            value=TextArtifactValue(
+                                text=(self.item_values[index] if self.item_values is not None else f"item-{index}")
+                            ),
                         )
                         for index in range(self.item_count)
                     )
@@ -231,12 +281,22 @@ class _MapCallback:
         return LocalCompleted(
             results=(
                 AssociationResult(
-                    association=request[0].association,
+                    association=association,
                     outcome=outcome,
                     outputs=outputs,
                     consumed_context_ports=frozenset(),
                 ),
+            ),
+            assessments=(
+                LocalAssessmentResult(
+                    association=association,
+                    promise="assessment0",
+                    evidence_port="members",
+                    finding=AssessmentFinding(status="satisfied", code="assessment0"),
+                ),
             )
+            if self.mode == "expander"
+            else (),
         )
 
 
@@ -298,13 +358,22 @@ def _admit_fixture(
         capabilities=fixture.capabilities,
         policies=policies,
         decisions=(),
-        assessment_productions=(),
+        assessment_productions=(
+            EvidenceProductionDecl(
+                node=fixture.expander,
+                outcome="expand",
+                promise="assessment0",
+                evidence_port="members",
+                absence_queries=frozenset(),
+                supported_findings=frozenset({AssessmentFinding(status="satisfied", code="assessment0")}),
+            ),
+        ),
         assessment_limits=AssessmentLimits(
-            max_productions=0,
-            max_findings_per_production=0,
-            max_finding_code_bytes=0,
+            max_productions=1,
+            max_findings_per_production=1,
+            max_finding_code_bytes=16,
             max_absence_queries=0,
-            max_assessment_facts=0,
+            max_assessment_facts=1,
             max_port_facts=8,
             max_provenance_edges=4,
         ),
@@ -325,7 +394,9 @@ async def _execute_membership(
     item_count: int,
     *,
     response_mode: str = "valid",
-    max_artifacts: int = 8,
+    item_values: tuple[str, ...] | None = None,
+    artifact_headroom: int = 8,
+    artifact_byte_headroom: int = 32,
     max_collection_items: int = 4,
 ):
     fixture = _map_fixture()
@@ -336,6 +407,7 @@ async def _execute_membership(
             mode="expander" if node == fixture.expander else "operation",
             response_mode=response_mode,
             item_count=item_count,
+            item_values=item_values,
             collection_type=fixture.collection_type,
             text_type=fixture.text_type,
         )
@@ -362,8 +434,8 @@ async def _execute_membership(
                 limits=ExecutionLimits(
                     max_local_in_flight=4,
                     max_remote_outstanding=0,
-                    max_runtime_artifacts=max_artifacts,
-                    max_runtime_artifact_bytes=128,
+                    max_runtime_artifacts=1 + artifact_headroom,
+                    max_runtime_artifact_bytes=len("target-0".encode()) + artifact_byte_headroom,
                     max_collection_items=max_collection_items,
                 ),
                 decision_limits=DecisionLimits(max_pending=0, max_lifetime_ns=0),
@@ -471,6 +543,7 @@ async def _assert_malformed_map_result(case_id: str, response_mode: str) -> None
     assert not any(isinstance(fact.key, (OperationOutputKey, MapItemKey)) for fact in result.provenance)
     assert all(fact.node != fixture.expander or fact.port == "default" for fact in result.ports)
     assert len(result.artifacts) == 1
+    assert not result.assessments
 
 
 def test_map_overflow_publishes_collection_without_item_facts() -> None:
@@ -489,30 +562,99 @@ async def _assert_map_overflow() -> None:
     assert outputs[0].key.port == "members"
     assert not any(isinstance(fact.key, MapItemKey) for fact in result.provenance)
     assert len(result.artifacts) == 2  # one captured root plus the accepted collection
+    assert len(result.assessments) == 1
 
 
 @pytest.mark.parametrize(
-    ("case_id", "max_artifacts", "max_collection_items"),
+    ("case_id", "values", "artifact_headroom", "artifact_byte_headroom"),
     (
-        ("map/artifact_count_one_over", 3, 4),
-        ("map/collection_items_one_over", 9, 1),
-        ("map/overflow_collection_storage_one_over", 9, 2),
+        ("map/membership_0", (), 8, 32),
+        ("map/membership_1", ("a",), 8, 32),
+        ("map/membership_2", ("a", "b"), 8, 32),
+        ("map/collection_items_exact", ("a", "b"), 8, 32),
+        ("map/bounds_exact", ("aa", "bb"), 3, 8),
+    ),
+)
+def test_map_result_publication_matches_frozen_case(
+    case_id: str,
+    values: tuple[str, ...],
+    artifact_headroom: int,
+    artifact_byte_headroom: int,
+) -> None:
+    asyncio.run(
+        _assert_map_result_publication(
+            case_id,
+            values,
+            artifact_headroom,
+            artifact_byte_headroom,
+        )
+    )
+
+
+async def _assert_map_result_publication(
+    case_id: str,
+    values: tuple[str, ...],
+    artifact_headroom: int,
+    artifact_byte_headroom: int,
+) -> None:
+    case = MAP_CASES[case_id]
+    fixture, result, _ = await _execute_membership(
+        len(values),
+        item_values=values,
+        artifact_headroom=artifact_headroom,
+        artifact_byte_headroom=artifact_byte_headroom,
+    )
+    expected = case["expected"]["state"]["publication"]
+    root = next(fact for fact in result.provenance if isinstance(fact.key, RootInputKey))
+    staged_provenance = [fact for fact in result.provenance if not isinstance(fact.key, RootInputKey)]
+    staged_artifacts = [(artifact, value) for artifact, value in result.artifacts if artifact != root.artifact]
+    collection = next(value for _, value in staged_artifacts if isinstance(value, TextCollectionValue))
+    items = [value for _, value in staged_artifacts if isinstance(value, TextArtifactValue)]
+    assert [item.value.text for item in collection.items] == list(values)
+    assert sorted(item.text for item in items) == sorted(values)
+    assert len(staged_artifacts) == len(expected["artifacts"])
+    assert len(result.assessments) == len(expected["assessments"]) == 1
+    assert result.assessments[0].finding.code == "assessment0"
+    staged_ports = [fact for fact in result.ports if fact.port != "default"]
+    assert len(staged_ports) == len(expected["ports"])
+    assert len(staged_provenance) == len(expected["provenance"])
+    output = next(fact for fact in staged_provenance if isinstance(fact.key, OperationOutputKey))
+    assert output.parents == frozenset({root.key})
+    map_items = [fact for fact in staged_provenance if isinstance(fact.key, MapItemKey)]
+    assert all(fact.parents == frozenset({output.key}) for fact in map_items)
+    expansion = next(iter(result.states[0].expansions))
+    assert expansion.status == "closed"
+    assert len(expansion.members) == len(values)
+    expander = next(entry for entry in result.states[0].entries if entry.template == fixture.expander)
+    assert expander.status == "success"
+
+
+@pytest.mark.parametrize(
+    ("case_id", "artifact_headroom", "max_collection_items"),
+    (
+        ("map/artifact_count_one_over", 2, 4),
+        ("map/collection_items_one_over", 8, 1),
+        ("map/overflow_collection_storage_one_over", 8, 2),
+        ("map/artifact_bytes_one_over", 8, 4),
     ),
 )
 def test_map_storage_limits_rollback_publication(
     case_id: str,
-    max_artifacts: int,
+    artifact_headroom: int,
     max_collection_items: int,
 ) -> None:
-    asyncio.run(_assert_map_storage_limit(case_id, max_artifacts, max_collection_items))
+    asyncio.run(_assert_map_storage_limit(case_id, artifact_headroom, max_collection_items))
 
 
-async def _assert_map_storage_limit(case_id: str, max_artifacts: int, max_collection_items: int) -> None:
+async def _assert_map_storage_limit(case_id: str, artifact_headroom: int, max_collection_items: int) -> None:
     case = MAP_CASES[case_id]
     item_count = 3 if case_id == "map/overflow_collection_storage_one_over" else 2
+    item_values = ("aa", "bb") if case_id == "map/artifact_bytes_one_over" else None
     fixture, result, _ = await _execute_membership(
         item_count,
-        max_artifacts=max_artifacts,
+        item_values=item_values,
+        artifact_headroom=artifact_headroom,
+        artifact_byte_headroom=7 if case_id == "map/artifact_bytes_one_over" else 32,
         max_collection_items=max_collection_items,
     )
     expander = next(entry for entry in result.states[0].entries if entry.template == fixture.expander)
@@ -521,3 +663,4 @@ async def _assert_map_storage_limit(case_id: str, max_artifacts: int, max_collec
     assert case["expected"]["state"]["terminal"] == "artifact_limit"
     assert not any(isinstance(fact.key, (OperationOutputKey, MapItemKey)) for fact in result.provenance)
     assert len(result.artifacts) == 1
+    assert not result.assessments
