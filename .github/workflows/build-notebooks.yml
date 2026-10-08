@@ -14,7 +14,7 @@ jobs:
       OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v2
+        uses: actions/checkout@v7
       - name: Install uv
         uses: astral-sh/setup-uv@v6
         with:
@@ -22,7 +22,7 @@ jobs:
       - name: Set up Python
         run: uv python install 3.11
       - name: Cache pinned GLiNER2 model
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ~/.cache/huggingface/hub
@@ -37,7 +37,7 @@ jobs:
           test -n "$wheel"
           make convert-notebooks ANONYMIZER_NOTEBOOK_PACKAGE="${wheel}[notebooks]"
       - name: Upload notebooks as artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: notebooks
           path: docs/notebooks
