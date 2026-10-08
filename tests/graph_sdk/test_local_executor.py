@@ -114,9 +114,14 @@ class _Immediate:
 @dataclass
 class _Decision:
     calls: int = 0
+    block_before_wait: bool = False
+    started: asyncio.Event = field(default_factory=asyncio.Event)
 
     async def run(self, request: tuple[AssociationInput, ...]) -> LocalDecisionWait:
         self.calls += 1
+        self.started.set()
+        if self.block_before_wait:
+            await asyncio.Event().wait()
         artifact = request[0].inputs[0].artifact
         assert artifact is not None
         assert isinstance(request[0].association, SemanticAssociation)
@@ -244,7 +249,11 @@ def test_decision_execution_exposes_exact_wait_and_resumes_one_activation() -> N
     asyncio.run(_assert_decision_execution())
 
 
-async def _assert_decision_execution() -> None:
+def test_decision_callback_can_be_cancelled_before_it_returns_a_wait() -> None:
+    asyncio.run(_assert_decision_execution(cancel_before_wait=True))
+
+
+async def _assert_decision_execution(*, cancel_before_wait: bool = False) -> None:
     workflow, node, artifact_type = _workflow(with_input=True)
     static = workflow.workflow
     raw_node = next(item for item in static.nodes if isinstance(item, OperationNode))
@@ -346,7 +355,7 @@ async def _assert_decision_execution() -> None:
             max_provenance_edges=1,
         ),
     )
-    callback = _Decision()
+    callback = _Decision(block_before_wait=cancel_before_wait)
     services = ExecutionServices(
         handles=(
             ImplementationHandle(
@@ -370,6 +379,15 @@ async def _assert_decision_execution() -> None:
         clock=_Clock(),
     )
     running = await start_execution(admitted=admitted, capabilities=(capability,), services=services)
+    if cancel_before_wait:
+        await callback.started.wait()
+        running.request_cancel()
+        result = await running.wait()
+        assert callback.calls == 1
+        assert result.states[0].complete
+        assert result.record.terminals[0].category == "cancelled"
+        assert not result.pending_decisions
+        return
     while not running.pending_decisions():
         await asyncio.sleep(0)
     wait = running.pending_decisions()[0]

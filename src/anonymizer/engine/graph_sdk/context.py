@@ -228,6 +228,7 @@ class SourceFailure(PrivateValue):
     source: ContextSourceRef
     failure: FailureClass
     settlement: ExternalSettlement | None
+    disposition: Literal["failed", "omitted_optional"] = "failed"
 
     def __post_init__(self) -> None:
         require_instance(self.source, ContextSourceRef)
@@ -246,6 +247,9 @@ class SourceFailure(PrivateValue):
         )
         if self.settlement is not None:
             require_instance(self.settlement, ExternalSettlement)
+        require_literal(self.disposition, frozenset({"failed", "omitted_optional"}))
+        if self.disposition == "omitted_optional" and self.failure != "permanent":
+            reject(EffectCode.CONTRADICTORY)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True, repr=False)

@@ -502,12 +502,15 @@ class MapDecl(_PrivateValue):
     member: NodeId
     expansion_outcomes: frozenset[str]
     max_children: int
+    item_input: str | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.expander, NodeId) or not isinstance(self.member, NodeId):
             _reject(ValidationCode.INVALID_TYPE)
         _frozenset_of(self.expansion_outcomes, str)
         _validate_scalars(strings=tuple(self.expansion_outcomes), nonnegative_integers=(self.max_children,))
+        if self.item_input is not None:
+            _validate_scalars(strings=(self.item_input,))
         if not self.expansion_outcomes:
             _reject(ValidationCode.INVALID_VALUE)
 
@@ -850,7 +853,8 @@ def admit_activation_workflow(
         nodes = {node.id: node for node in scope.workflow.nodes}
         owned = set(nodes)
         declared_joins = [join.join for join in scope.joins]
-        sources = {item.expander for item in scope.maps} | {item.starter for item in scope.loops}
+        aggregate_sources = [item.expander for item in scope.maps] + [item.starter for item in scope.loops]
+        sources = set(aggregate_sources)
         members = [item.member for item in scope.maps] + [item.member for item in scope.loops]
         aggregate_joins = declared_joins
         referenced = (
@@ -860,7 +864,11 @@ def admit_activation_workflow(
         )
         if any(node.workflow != scope.workflow.workflow for node in referenced):
             _reject(ValidationCode.FOREIGN_OWNER)
-        if len(members) != len(set(members)) or len(aggregate_joins) != len(set(aggregate_joins)):
+        if (
+            len(members) != len(set(members))
+            or len(aggregate_joins) != len(set(aggregate_joins))
+            or len(aggregate_sources) != len(sources)
+        ):
             _reject(ValidationCode.DUPLICATE)
         if not referenced <= owned:
             _reject(ValidationCode.MISSING)
@@ -875,6 +883,32 @@ def admit_activation_workflow(
         outcomes = {node_id: {outcome.name for outcome in node.operation.outcomes} for node_id, node in nodes.items()}
         if any(not item.expansion_outcomes <= outcomes[item.expander] for item in scope.maps):
             _reject(ValidationCode.MISSING)
+        for item in scope.maps:
+            if item.max_children > 1:
+                outward_inputs = any(
+                    isinstance(binding.source, NodeOutputRef)
+                    and binding.source.node == item.member
+                    and binding.destination.node != item.member
+                    for binding in scope.workflow.input_bindings
+                )
+                outward_outputs = any(
+                    isinstance(binding.source, NodeOutputRef) and binding.source.node == item.member
+                    for binding in scope.workflow.output_bindings
+                )
+                if outward_inputs or outward_outputs:
+                    _reject(ValidationCode.CONTRADICTORY)
+            if item.item_input is None:
+                continue
+            member_inputs = {port.name for port in nodes[item.member].operation.inputs}
+            if item.item_input not in member_inputs:
+                _reject(ValidationCode.MISSING)
+            bindings = [
+                binding
+                for binding in scope.workflow.input_bindings
+                if binding.destination == NodeInputRef(node=item.member, port=item.item_input)
+            ]
+            if len(bindings) != 1:
+                _reject(ValidationCode.MISSING)
         for item in scope.loops:
             if item.enter_outcomes | item.bypass_outcomes != outcomes[item.starter]:
                 _reject(ValidationCode.MISSING)
@@ -1423,6 +1457,57 @@ def _selected_nodes(
     return frozenset(selected)
 
 
+def validate_dynamic_input_summaries(
+    workflow: AdmittedWorkflow,
+    replacements: tuple[InputBinding, ...],
+) -> None:
+    """Recheck retained interface summaries after nonidentity dynamic input replacement."""
+    if not isinstance(workflow, AdmittedWorkflow):
+        _reject(ValidationCode.INVALID_TYPE)
+    _tuple_of(replacements, InputBinding)
+    destinations = [item.destination for item in replacements]
+    if len(destinations) != len(set(destinations)):
+        _reject(ValidationCode.DUPLICATE)
+    reachable: list[AdmittedWorkflow] = []
+    pending = [workflow]
+    seen: set[int] = set()
+    while pending:
+        current = pending.pop()
+        if id(current) in seen:
+            continue
+        seen.add(id(current))
+        reachable.append(current)
+        pending.extend(item.body for item in current.nodes if isinstance(item, SubgraphNode))
+    owners = {item.workflow: item for item in reachable}
+    grouped: dict[WorkflowId, list[InputBinding]] = {}
+    for replacement in replacements:
+        if replacement.destination.node.workflow not in owners:
+            _reject(ValidationCode.FOREIGN_OWNER)
+        grouped.setdefault(replacement.destination.node.workflow, []).append(replacement)
+    for owner, values in grouped.items():
+        current = owners[owner]
+        replaced = {item.destination for item in values}
+        if any(
+            sum(binding.destination == destination for binding in current.input_bindings) != 1
+            for destination in replaced
+        ):
+            _reject(ValidationCode.MISSING)
+        inputs = tuple(binding for binding in current.input_bindings if binding.destination not in replaced) + tuple(
+            values
+        )
+        _validate_paths(
+            current.interface,
+            tuple(current.nodes),
+            inputs,
+            tuple(current.output_bindings),
+            tuple(current.outcome_bindings),
+            tuple(current.sequence),
+            tuple(current.choices),
+            check_cycles=False,
+            nonidentity_destinations=frozenset(replaced),
+        )
+
+
 def _validate_paths(
     interface: OperationSpec,
     nodes: tuple[Node, ...],
@@ -1433,6 +1518,7 @@ def _validate_paths(
     choices: tuple[ChoiceDecl, ...],
     *,
     check_cycles: bool = True,
+    nonidentity_destinations: frozenset[NodeInputRef] = frozenset(),
 ) -> None:
     operations = {node.id: node.operation for node in nodes}
     node_ids = frozenset(operations)
@@ -1496,6 +1582,7 @@ def _validate_paths(
             operations,
             input_bindings,
             output_bindings,
+            nonidentity_destinations,
         )
     if reached_interface_outcomes != {outcome.name for outcome in interface.outcomes}:
         _reject(ValidationCode.MISSING)
@@ -1509,6 +1596,7 @@ def _validate_composition_path(
     operations: dict[NodeId, OperationSpec],
     input_bindings: tuple[InputBinding, ...],
     output_bindings: tuple[OutputBinding, ...],
+    nonidentity_destinations: frozenset[NodeInputRef] = frozenset(),
 ) -> None:
     identity_edges: set[tuple[Vertex, Vertex]] = set()
     dependency_edges: set[tuple[Vertex, Vertex]] = set()
@@ -1521,7 +1609,8 @@ def _validate_composition_path(
             else ("out", binding.source.node, binding.source.port)
         )
         destination = ("in", binding.destination.node, binding.destination.port)
-        identity_edges.add((source, destination))
+        if binding.destination not in nonidentity_destinations:
+            identity_edges.add((source, destination))
         dependency_edges.add((source, destination))
     produced_external: set[str] = set()
     for binding in output_bindings:

@@ -281,21 +281,21 @@ async def _bind_declaration(
                 or total_items + len(result.items) > work.limits.max_items
                 or total_bytes + item_bytes > work.limits.max_bytes
             )
-            state = advance_requests(
+            accepted = advance_requests(
                 state=state,
                 event=AcceptResult(
                     request=request,
                     results=(
                         AssociationResult(
                             association=association,
-                            outcome="bound",
+                            outcome="retrieved",
                             outputs=(),
                             consumed_context_ports=frozenset(),
                         ),
                     ),
                 ),
             )
-            state = advance_requests(state=state, event=ObserveSettlement(settlement=result.settlement))
+            state = advance_requests(state=accepted, event=ObserveSettlement(settlement=result.settlement))
             if oversize:
                 return state, _source_fact(identity, declaration, "oversize"), (), 0, 0
             retained = tuple(
@@ -312,10 +312,18 @@ async def _bind_declaration(
             )
             return state, _source_fact(identity, declaration, "bound"), retained, len(result.items), item_bytes
         if isinstance(result, SourceFailure):
-            failure = result.failure if result.source == declaration.source else "malformed_response"
+            valid_owner = result.source == declaration.source and (
+                result.settlement is None or result.settlement.request == request
+            )
+            valid_omission = result.disposition == "failed" or (
+                declaration.requirement == "optional" and result.failure == "permanent"
+            )
+            failure = result.failure if valid_owner and valid_omission else "malformed_response"
             state = advance_requests(state=state, event=AcceptFailure(request=request, failure=failure))
             if result.settlement is not None and result.settlement.request == request:
                 state = advance_requests(state=state, event=ObserveSettlement(settlement=result.settlement))
+            if failure != "malformed_response" and result.disposition == "omitted_optional":
+                return state, _source_fact(identity, declaration, "omitted_optional"), (), 0, 0
             purpose = "correction" if failure == "malformed_response" else "retry"
             if _can_retry(capability, declaration, state, association, failure):
                 continue
@@ -338,7 +346,8 @@ def _source_fact(
 
 
 def _failed_terminal(declaration: InitialContextDecl) -> SourceTerminal:
-    return "omitted_optional" if declaration.requirement == "optional" else "failed"
+    del declaration
+    return "failed"
 
 
 def _can_retry(

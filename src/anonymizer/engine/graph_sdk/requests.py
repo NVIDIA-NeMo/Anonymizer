@@ -198,8 +198,6 @@ class TextCollectionValue(PrivateValue):
     def __post_init__(self) -> None:
         if not isinstance(self.items, tuple) or any(not isinstance(item, TextCollectionItem) for item in self.items):
             reject(EffectCode.INVALID_TYPE)
-        if not self.items:
-            reject(EffectCode.INVALID_VALUE)
         keys = [(item.key, item.version) for item in self.items]
         if len(keys) != len(set(keys)):
             reject(EffectCode.DUPLICATE)
