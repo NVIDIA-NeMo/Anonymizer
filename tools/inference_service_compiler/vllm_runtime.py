@@ -120,7 +120,7 @@ def build_server_arguments(parameters: VllmServerParameters) -> Namespace:
     """Construct vLLM frontend and async-engine configs through its Python API."""
     arg_utils = importlib.import_module("vllm.engine.arg_utils")
     mamba_config = importlib.import_module("vllm.config.mamba")
-    cli_args = importlib.import_module("vllm.entrypoints.openai.cli_args")
+    cli_args = importlib.import_module("vllm.entrypoints.launchers.cli_args")
     model_protocol = importlib.import_module("vllm.entrypoints.openai.models.protocol")
 
     lora_modules = None
@@ -249,7 +249,7 @@ def configure_flashinfer_toolchain() -> None:
 def prepare_runtime_environment(parameters: VllmServerParameters) -> VllmServerParameters:
     """Prepare the selected stock vLLM or vLLM Factory runtime."""
     if sys.version_info < MINIMUM_VLLM_PYTHON:
-        raise RuntimeError("vLLM 0.27.1 local serving requires Python 3.12 or later")
+        raise RuntimeError("vLLM 0.29.0 local serving requires Python 3.12 or later")
     expose_interpreter_tools()
     os.environ.setdefault("VLLM_USE_FLASHINFER_SAMPLER", "0")
     if parameters.mamba_backend == "flashinfer":
@@ -279,7 +279,7 @@ def run_server(argv: Sequence[str]) -> None:
     """Construct and run vLLM's Python-owned server lifecycle."""
     parameters = prepare_runtime_environment(parse_server_parameters(argv))
     uvloop = importlib.import_module("uvloop")
-    api_server = importlib.import_module("vllm.entrypoints.openai.api_server")
+    api_server = importlib.import_module("vllm.entrypoints.launchers.api_server.entry")
     api_utils = importlib.import_module("vllm.entrypoints.serve.utils.api_utils")
 
     api_utils.cli_env_setup()

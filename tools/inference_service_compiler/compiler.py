@@ -29,7 +29,7 @@ from inference_service_compiler.vllm_factory_integration import (
 )
 
 VLLM_API_KEY_ENV = "VLLM_API_KEY"
-VLLM_DEPENDENCY = "vllm==0.27.1"
+VLLM_DEPENDENCY = "vllm==0.29.0"
 FLASHINFER_CUDA_TOOLCHAIN_DEPENDENCIES = (
     "nvidia-cuda-nvcc==13.0.88",
     "nvidia-cuda-crt==13.0.88",

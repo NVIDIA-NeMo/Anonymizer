@@ -113,7 +113,7 @@ uv run --python 3.12 python -m vllm_factory.compat.doctor
 nvidia-smi
 ```
 
-The lockfile pins vLLM 0.27.1, vLLM Factory, and the CUDA compiler wheels used
+The lockfile pins vLLM 0.29.0, vLLM Factory, and the CUDA compiler wheels used
 by the Nemotron FlashInfer profile.
 
 ### Compile and launch

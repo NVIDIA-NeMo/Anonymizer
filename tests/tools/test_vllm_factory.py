@@ -23,7 +23,7 @@ def test_local_models_group_pins_vllm_and_external_factory_source() -> None:
     project = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
 
     assert project["dependency-groups"]["local-models"] == [
-        "vllm==0.27.1; sys_platform == 'linux' and python_version >= '3.12'",
+        "vllm==0.29.0; sys_platform == 'linux' and python_version >= '3.12'",
         (
             "vllm-factory[gliner] @ git+https://github.com/latenceainew/vllm-factory.git@"
             "7d6ff68ce68f9f7c0a9d72f9645bcf6d335d02f0; sys_platform == 'linux' "
@@ -160,11 +160,11 @@ def test_factory_constructs_pooling_server_for_external_gliner_plugin() -> None:
     assert arguments.middleware == [factory.LAUNCH_OWNERSHIP_MIDDLEWARE, factory.ANONYMIZER_CHAT_MIDDLEWARE]
 
 
-def test_run_server_uses_the_vllm_0_27_lifecycle_boundary() -> None:
-    """The process runner imports and invokes vLLM 0.27's lifecycle API."""
+def test_run_server_uses_the_vllm_0_29_lifecycle_boundary() -> None:
+    """The process runner imports and invokes vLLM 0.29's lifecycle API."""
     pytest.importorskip("vllm")
     uvloop = importlib.import_module("uvloop")
-    api_server = importlib.import_module("vllm.entrypoints.openai.api_server")
+    api_server = importlib.import_module("vllm.entrypoints.launchers.api_server.entry")
     api_utils = importlib.import_module("vllm.entrypoints.serve.utils.api_utils")
 
     arguments = mock.sentinel.arguments
