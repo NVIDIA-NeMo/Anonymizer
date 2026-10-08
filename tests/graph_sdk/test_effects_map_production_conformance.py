@@ -13,17 +13,29 @@ from typing import Any, cast
 import pytest
 
 from anonymizer.engine.graph_sdk._effect_values import EffectCode, EffectRejected
+from anonymizer.engine.graph_sdk.binding import start_initial_binding
 from anonymizer.engine.graph_sdk.capabilities import ImplementationSelection
-from anonymizer.engine.graph_sdk.context import admit_context_plan
+from anonymizer.engine.graph_sdk.context import (
+    BindingLimits,
+    ContextMaterialization,
+    ContextResource,
+    ContextSelector,
+    ContextSourceCapability,
+    InitialContextDecl,
+    RetrievalBounds,
+    admit_context_plan,
+)
 from anonymizer.engine.graph_sdk.executor import (
     AssessmentFinding,
     AssessmentLimits,
+    BoundInputKey,
     DecisionLimits,
     EvidenceProductionDecl,
     ExecutionImplementation,
     ExecutionLimits,
     ExecutionServices,
     ImplementationHandle,
+    InitialCollectionKey,
     LocalAssessmentResult,
     LocalCompleted,
     MapExpansionDecl,
@@ -38,15 +50,19 @@ from anonymizer.engine.graph_sdk.preparation import BoundInput, PreparationConfi
 from anonymizer.engine.graph_sdk.requests import (
     AssociationInput,
     AssociationResult,
+    PhysicalRequestPolicy,
     PortArtifact,
     SemanticAssociation,
     TextArtifactValue,
     TextCollectionItem,
     TextCollectionValue,
 )
+from anonymizer.engine.graph_sdk.resources import ResourceLease
 from anonymizer.graph.activation import ActivationLimits
 from anonymizer.graph.workflow import (
     ArtifactType,
+    ContextInputRef,
+    ContextUse,
     DynamicLimits,
     DynamicScope,
     EvidencePromise,
@@ -73,6 +89,7 @@ from anonymizer.graph.workflow import (
     admit_activation_workflow,
     admit_static_workflow,
 )
+from tests.graph_sdk.test_context_source_execution import SOURCE, _ContextProvider
 from tests.graph_sdk.test_dynamic_executor import _capability, _operation, _outcome, _rows
 from tests.graph_sdk.test_local_executor import _Clock
 from tests.graph_sdk.test_preparation import _data, _limits
@@ -102,7 +119,10 @@ def _map_fixture(*, max_children: int = 2, control_only: bool = False, other_cou
     other_ports = tuple(OutputPort(name=f"other{index}", artifact_type=other_type) for index in range(other_count))
     expander_operation = OperationSpec(
         name="expander",
-        inputs=(InputPort(name="default", artifact_type=text_type),),
+        inputs=(
+            InputPort(name="default", artifact_type=text_type),
+            *((InputPort(name="schema", artifact_type=other_type),) if other_count else ()),
+        ),
         outputs=(OutputPort(name="members", artifact_type=collection_type), *other_ports),
         output_dependencies=(
             OutputDependency(output="members", inputs=frozenset({"default"}), identity_input=None),
@@ -130,6 +150,11 @@ def _map_fixture(*, max_children: int = 2, control_only: bool = False, other_cou
                         )
                     }
                 ),
+                context=(
+                    frozenset({ContextUse(port="schema", meaning="retrieved", capture="whole_artifact")})
+                    if other_count
+                    else frozenset()
+                ),
             ),
         ),
     )
@@ -143,7 +168,10 @@ def _map_fixture(*, max_children: int = 2, control_only: bool = False, other_cou
     join_operation = _operation("join", (_outcome("ok"),))
     interface = OperationSpec(
         name="map-root",
-        inputs=(InputPort(name="default", artifact_type=text_type),),
+        inputs=(
+            InputPort(name="default", artifact_type=text_type),
+            *((InputPort(name="schema", artifact_type=other_type),) if other_count else ()),
+        ),
         outputs=(OutputPort(name="members", artifact_type=collection_type),),
         output_dependencies=(OutputDependency(output="members", inputs=frozenset({"default"}), identity_input=None),),
         outcomes=(
@@ -164,6 +192,11 @@ def _map_fixture(*, max_children: int = 2, control_only: bool = False, other_cou
                             coverage=frozenset(),
                         )
                     }
+                ),
+                context=(
+                    frozenset({ContextUse(port="schema", meaning="retrieved", capture="whole_artifact")})
+                    if other_count
+                    else frozenset()
                 ),
             ),
         ),
@@ -191,6 +224,16 @@ def _map_fixture(*, max_children: int = 2, control_only: bool = False, other_cou
                 source=WorkflowInputRef(port="default"),
                 destination=NodeInputRef(node=expander, port="default"),
             ),
+            *(
+                (
+                    InputBinding(
+                        source=ContextInputRef(port="schema"),
+                        destination=NodeInputRef(node=expander, port="schema"),
+                    ),
+                )
+                if other_count
+                else ()
+            ),
         ),
         output_bindings=(
             OutputBinding(
@@ -209,7 +252,7 @@ def _map_fixture(*, max_children: int = 2, control_only: bool = False, other_cou
         protection=(),
         limits=WorkflowLimits(
             max_nodes=3,
-            max_bindings=4,
+            max_bindings=5 if other_count else 4,
             max_sequence_edges=2,
             max_choices=0,
             max_branch_members=0,
@@ -323,7 +366,7 @@ class _MapCallback:
                     association=association,
                     outcome=outcome,
                     outputs=outputs,
-                    consumed_context_ports=frozenset(),
+                    consumed_context_ports=frozenset({"schema"}) if self.other_count else frozenset(),
                 ),
             ),
             assessments=(
@@ -344,6 +387,11 @@ def _admit_fixture(
     *,
     map_expansions: tuple[MapExpansionDecl, ...] | None = None,
     data: Any | None = None,
+    bound_context: Any | None = None,
+    baseline_port_facts: int = 1,
+    baseline_provenance_edges: int = 0,
+    port_fact_headroom: int = 8,
+    provenance_edge_headroom: int = 8,
 ):
     by_node = dict(zip((fixture.expander, fixture.member, fixture.join), fixture.capabilities, strict=True))
     data = _data(1) if data is None else data
@@ -370,7 +418,7 @@ def _admit_fixture(
     )
     context = admit_context_plan(
         prepared=prepared,
-        bound_context=None,
+        bound_context=bound_context,
         adaptive_retrievals=(),
         context_capabilities=(),
     )
@@ -414,8 +462,8 @@ def _admit_fixture(
             max_finding_code_bytes=16,
             max_absence_queries=0,
             max_assessment_facts=1,
-            max_port_facts=8,
-            max_provenance_edges=4,
+            max_port_facts=baseline_port_facts + port_fact_headroom,
+            max_provenance_edges=baseline_provenance_edges + provenance_edge_headroom,
         ),
         map_expansions=(
             MapExpansionDecl(
@@ -444,9 +492,83 @@ async def _execute_membership(
 ):
     fixture = _map_fixture(control_only=control_only, other_count=other_count)
     data = _data(1)
-    admitted = _admit_fixture(fixture, data=data)
-    baseline_artifacts = len(data.targets)
-    baseline_bytes = sum(len(datum.text.encode()) for datum in data.datums if datum.id in data.targets)
+    bound_context = None
+    if other_count:
+        target = next(iter(data.targets))
+        policy = PhysicalRequestPolicy(
+            visibility="dispatch_and_settlement",
+            pre_dispatch_control="executor",
+            retry_owner="executor",
+            replay="idempotent",
+            max_attempts=1,
+        )
+        capability = ContextSourceCapability(
+            source=SOURCE,
+            artifact_type=fixture.text_type,
+            uses=frozenset({"initial_binding"}),
+            execution="async",
+            resource_owner="caller",
+            cancellation="cooperative_ack",
+            settlement="explicit_ack",
+            usage="exact",
+            request=policy,
+            safe_detachment="forbidden",
+        )
+        provider = _ContextProvider(items=("schema",))
+        binding = await (
+            await start_initial_binding(
+                data=data,
+                workflow=fixture.workflow,
+                declarations=(
+                    InitialContextDecl(
+                        target=target,
+                        node=fixture.expander,
+                        port="schema",
+                        artifact_type=fixture.other_type,
+                        source=SOURCE,
+                        selector=ContextSelector(fields=()),
+                        requirement="required",
+                        bounds=RetrievalBounds(max_items=1, max_bytes=6, max_requests=1),
+                        materialization=ContextMaterialization(kind="collection", item_type=fixture.text_type),
+                    ),
+                ),
+                capabilities=(capability,),
+                resources=(
+                    ContextResource(
+                        source=SOURCE,
+                        capability=capability,
+                        lease=ResourceLease.create(owner="caller", safe_detachment="forbidden", handle=provider),
+                        factory=None,
+                    ),
+                ),
+                limits=BindingLimits(
+                    max_declarations=1,
+                    max_sources=1,
+                    max_capabilities=1,
+                    max_selector_fields=0,
+                    max_selector_bytes=0,
+                    max_items=1,
+                    max_bytes=6,
+                    max_requests=1,
+                    max_resources=1,
+                ),
+            )
+        ).wait()
+        assert binding.context is not None
+        bound_context = binding.context
+    baseline_port_facts = 1 + (1 if bound_context is not None else 0)
+    baseline_provenance_edges = 1 if bound_context is not None else 0
+    admitted = _admit_fixture(
+        fixture,
+        data=data,
+        bound_context=bound_context,
+        baseline_port_facts=baseline_port_facts,
+        baseline_provenance_edges=baseline_provenance_edges,
+    )
+    baseline_artifacts = len(data.targets) + (len(bound_context.artifacts) if bound_context is not None else 0)
+    baseline_bytes = sum(len(datum.text.encode()) for datum in data.datums if datum.id in data.targets) + (
+        6 if bound_context is not None else 0
+    )
     by_node = dict(zip((fixture.expander, fixture.member, fixture.join), fixture.capabilities, strict=True))
     started = asyncio.Event() if cancel_before_result else None
     release = asyncio.Event() if cancel_before_result else None
@@ -592,6 +714,7 @@ async def _assert_map_membership(item_count: int) -> None:
 @pytest.mark.parametrize(
     ("case_id", "response_mode", "other_count"),
     (
+        ("map/missing_membership_port", "missing", 1),
         ("map/wrong_membership_type", "wrong_type", 0),
         ("map/duplicate_membership_port", "duplicate", 0),
     ),
@@ -681,6 +804,8 @@ async def _assert_control_only_map() -> None:
         ("map/membership_1", ("a",), 8, 32, 0),
         ("map/membership_2", ("a", "b"), 8, 32, 0),
         ("map/membership_with_0_other_outputs", ("a", "b"), 8, 32, 0),
+        ("map/membership_with_1_other_outputs", ("a", "b"), 8, 32, 1),
+        ("map/membership_with_2_other_outputs", ("a", "b"), 8, 32, 2),
         ("map/collection_items_exact", ("a", "b"), 8, 32, 0),
         ("map/bounds_exact", ("aa", "bb"), 3, 8, 0),
     ),
@@ -720,8 +845,12 @@ async def _assert_map_result_publication(
     )
     expected = case["expected"]["state"]["publication"]
     root = next(fact for fact in result.provenance if isinstance(fact.key, RootInputKey))
-    staged_provenance = [fact for fact in result.provenance if not isinstance(fact.key, RootInputKey)]
-    staged_artifacts = [(artifact, value) for artifact, value in result.artifacts if artifact != root.artifact]
+    baseline_provenance = [
+        fact for fact in result.provenance if isinstance(fact.key, (RootInputKey, BoundInputKey, InitialCollectionKey))
+    ]
+    baseline_artifacts = {fact.artifact for fact in baseline_provenance}
+    staged_provenance = [fact for fact in result.provenance if fact not in baseline_provenance]
+    staged_artifacts = [(artifact, value) for artifact, value in result.artifacts if artifact not in baseline_artifacts]
     collection = next(value for _, value in staged_artifacts if isinstance(value, TextCollectionValue))
     items = [value for _, value in staged_artifacts if isinstance(value, TextArtifactValue)]
     assert [item.value.text for item in collection.items] == list(values)
@@ -729,7 +858,7 @@ async def _assert_map_result_publication(
     assert len(staged_artifacts) == len(expected["artifacts"])
     assert len(result.assessments) == len(expected["assessments"]) == 1
     assert result.assessments[0].finding.code == "assessment0"
-    staged_ports = [fact for fact in result.ports if fact.port != "default"]
+    staged_ports = [fact for fact in result.ports if fact.port not in {"default", "schema"}]
     assert len(staged_ports) == len(expected["ports"])
     assert len(staged_provenance) == len(expected["provenance"])
     output = next(fact for fact in staged_provenance if isinstance(fact.key, OperationOutputKey))
@@ -810,17 +939,12 @@ async def _assert_cancelled_map_result(case_id: str) -> None:
 
 
 def _assert_only_setup_baseline(fixture: _MapFixture, result: Any) -> None:
-    assert len(result.artifacts) == 1
     assert not result.assessments
-    assert len(result.provenance) == 1
-    root = result.provenance[0]
-    assert isinstance(root.key, RootInputKey)
-    assert not root.parents
-    assert len(result.ports) == 1
-    port = result.ports[0]
-    assert port.node == fixture.expander
-    assert port.port == "default"
-    assert port.artifact == root.artifact
+    assert all(isinstance(fact.key, (RootInputKey, BoundInputKey, InitialCollectionKey)) for fact in result.provenance)
+    assert not any(isinstance(fact.key, (OperationOutputKey, MapItemKey)) for fact in result.provenance)
+    assert {artifact for artifact, _ in result.artifacts} == {fact.artifact for fact in result.provenance}
+    assert all(port.node == fixture.expander and port.port in {"default", "schema"} for port in result.ports)
+    assert {port.artifact for port in result.ports} <= {fact.artifact for fact in result.provenance}
     requests = result.requests
     assert requests.dispatched_count == 0
     assert not requests.dispatches
