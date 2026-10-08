@@ -11,7 +11,7 @@ model_id = "nvidia/gliner-pii"
 revision = "bd23e8ef4425fd04e34c5204ab49ffaa706eae79"
 
 [vllm]
-python_executable = ".venv/bin/python"
+python_executable = "tools/inference-service-runtime/.venv/bin/python"
 gpu_memory_utilization = 0.85
 max_model_len = 512
 

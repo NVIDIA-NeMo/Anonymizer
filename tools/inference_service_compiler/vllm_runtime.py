@@ -240,7 +240,9 @@ def configure_flashinfer_toolchain() -> None:
         return
     cuda_root = _packaged_cuda_root()
     if cuda_root is None:
-        raise RuntimeError("FlashInfer Mamba requires a CUDA compiler; install the local-models group or set CUDA_HOME")
+        raise RuntimeError(
+            "FlashInfer Mamba requires a CUDA compiler; sync tools/inference-service-runtime or set CUDA_HOME"
+        )
     os.environ["CUDA_HOME"] = str(cuda_root)
     _prepend_environment_path("LIBRARY_PATH", _cudart_link_directory(cuda_root))
     _prepend_environment_path("LD_LIBRARY_PATH", cuda_root / "lib")

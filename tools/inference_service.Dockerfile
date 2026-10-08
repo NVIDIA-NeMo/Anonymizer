@@ -9,18 +9,22 @@ COPY --from=ghcr.io/astral-sh/uv:0.11.31 /uv /uvx /bin/
 ENV DEBIAN_FRONTEND=noninteractive \
     HF_HOME=/models/huggingface \
     UV_LINK_MODE=copy \
-    UV_PROJECT_ENVIRONMENT=/opt/anonymizer/.venv \
+    UV_PROJECT_ENVIRONMENT=/opt/anonymizer/tools/inference-service-runtime/.venv \
     UV_PYTHON_INSTALL_DIR=/opt/uv-python \
-    PATH=/opt/anonymizer/.venv/bin:$PATH
+    PATH=/opt/anonymizer/tools/inference-service-runtime/.venv/bin:$PATH
 
 RUN apt-get update \
     && apt-get install --yes --no-install-recommends ca-certificates git \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /opt/anonymizer
-COPY . .
+COPY tools/inference-service-runtime/ tools/inference-service-runtime/
 
 RUN uv python install 3.12 \
-    && uv sync --frozen --python 3.12 --no-default-groups --group local-models
+    && uv sync --project tools/inference-service-runtime --locked --no-default-groups
+
+COPY tools/inference_service.py tools/inference_service.py
+COPY tools/inference_service_compiler/ tools/inference_service_compiler/
+COPY tools/inference_service_profiles/ tools/inference_service_profiles/
 
 CMD ["sleep", "infinity"]

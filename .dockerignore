@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 .git
-.venv
+**/.venv
 .cache
 .pytest_cache
 .ruff_cache

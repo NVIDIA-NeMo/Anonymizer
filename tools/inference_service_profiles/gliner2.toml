@@ -11,7 +11,7 @@ model_id = "fastino/gliner2-privacy-filter-PII-multi"
 revision = "59894c087cb2923b01f337d4ee72f6ff84d5bdd6"
 
 [vllm]
-python_executable = ".venv/bin/python"
+python_executable = "tools/inference-service-runtime/.venv/bin/python"
 gpu_memory_utilization = 0.85
 max_model_len = 512
 
