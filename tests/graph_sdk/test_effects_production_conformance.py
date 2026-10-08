@@ -223,6 +223,19 @@ LATE_ADAPTIVE_CASES = tuple(
     for case in json.loads(CORPUS.read_bytes())
     if case["case_id"] in {"materialization/adaptive_late_lost", "materialization/adaptive_late_cancelled"}
 )
+LATE_INITIAL_CASES = tuple(
+    case
+    for case in json.loads(CORPUS.read_bytes())
+    if case["case_id"]
+    in {
+        "binding/cancelled_late_source_failure",
+        "binding/cancelled_late_source_result",
+        "binding/lost_late_source_failure",
+        "binding/lost_late_source_result",
+        "materialization/initial_late_cancelled",
+        "materialization/initial_late_lost",
+    }
+)
 
 
 def _selector_data():
@@ -1011,6 +1024,27 @@ class _LateAdaptiveProvider:
 
 
 @dataclass
+class _LateBindingCaseProvider:
+    delegate: _CaseProvider
+    acknowledge_stop: bool
+    started: asyncio.Event = field(default_factory=asyncio.Event)
+
+    async def retrieve(self, **kwargs: Any) -> SourceResponse | SourceFailure:
+        self.started.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            pass
+        return await self.delegate.retrieve(**kwargs)
+
+    async def cancel(self, request: PhysicalRequestId) -> StopConfirmed:
+        del request
+        if not self.acknowledge_stop:
+            raise RuntimeError("stop not acknowledged")
+        return StopConfirmed(usage=UnknownUsage())
+
+
+@dataclass
 class _ContextConsumer:
     port: str
 
@@ -1509,6 +1543,160 @@ async def _assert_initial_execution_projection(
         "artifact",
     )
     assert not execution.final_outputs
+
+
+@pytest.mark.parametrize("case", LATE_INITIAL_CASES, ids=lambda case: cast(str, case["case_id"]))
+def test_late_initial_provider_facts_through_running_binding(case: dict[str, Any]) -> None:
+    asyncio.run(_assert_late_initial_provider_case(case))
+
+
+async def _assert_late_initial_provider_case(case: dict[str, Any]) -> None:
+    raw = cast(dict[str, Any], case["declaration"])
+    workflow, node, artifact_type = _context_workflow()
+    materializations = cast(list[dict[str, Any]], raw.get("materializations", []))
+    context_port = cast(str, materializations[0]["port"]) if materializations else "input"
+    if context_port != "input":
+        static = workflow.workflow
+        operation_node = next(item for item in static.nodes if isinstance(item, OperationNode))
+        operation = replace(
+            operation_node.operation,
+            inputs=(InputPort(name=context_port, artifact_type=artifact_type),),
+            outcomes=tuple(
+                replace(
+                    outcome,
+                    context=frozenset(replace(use, port=context_port) for use in outcome.context),
+                )
+                for outcome in operation_node.operation.outcomes
+            ),
+        )
+        rebuilt = admit_static_workflow(
+            workflow=static.workflow,
+            interface=replace(operation, inputs=(InputPort(name=context_port, artifact_type=artifact_type),)),
+            nodes=(OperationNode(id=node, operation=operation),),
+            input_bindings=tuple(
+                replace(
+                    binding,
+                    source=ContextInputRef(port=context_port),
+                    destination=replace(binding.destination, port=context_port),
+                )
+                for binding in static.input_bindings
+            ),
+            output_bindings=tuple(static.output_bindings),
+            outcome_bindings=tuple(static.outcome_bindings),
+            sequence=tuple(static.sequence),
+            choices=tuple(static.choices),
+            protection=(),
+            limits=static.limits,
+        )
+        workflow = admit_activation_workflow(
+            workflow=rebuilt,
+            scopes=(DynamicScope(workflow=rebuilt, maps=(), joins=(), loops=()),),
+            limits=workflow.limits,
+        )
+    data = _data(1)
+    target = next(iter(data.targets))
+    source = ContextSourceRef(name="S0", revision=1)
+    policy = _policy(cast(dict[str, dict[str, Any]], raw["policies"])["P0"])
+    association_names: dict[object, str] = {}
+    request_names: dict[PhysicalRequestId, str] = {}
+    response_events = [
+        item
+        for item in cast(list[dict[str, Any]], case["events"])
+        if item["kind"] in {"source_result", "source_failure", "materialize_result"}
+    ]
+    delegate = _CaseProvider(
+        events=response_events,
+        sources={"S0": source},
+        association_names=association_names,
+        request_names=request_names,
+        fallback_associations=["D0"],
+        default_source=source,
+    )
+    acknowledge_stop = any(item["kind"] == "stop" for item in cast(list[dict[str, Any]], case["events"]))
+    provider = _LateBindingCaseProvider(delegate=delegate, acknowledge_stop=acknowledge_stop)
+    capability = ContextSourceCapability(
+        source=source,
+        artifact_type=artifact_type,
+        uses=frozenset({"initial_binding"}),
+        execution="async",
+        resource_owner="caller",
+        cancellation="cooperative_ack",
+        settlement="explicit_ack",
+        usage="exact",
+        request=policy,
+        safe_detachment="forbidden",
+    )
+    declaration = InitialContextDecl(
+        target=target,
+        node=node,
+        port=context_port,
+        artifact_type=artifact_type,
+        source=source,
+        selector=ContextSelector(fields=()),
+        requirement="required",
+        bounds=RetrievalBounds(max_items=1, max_bytes=12, max_requests=policy.max_attempts),
+        materialization=ContextMaterialization(kind="single", item_type=artifact_type),
+    )
+    binding_limits = cast(dict[str, int], raw["binding_limits"])
+    running = await start_initial_binding(
+        data=data,
+        workflow=workflow,
+        declarations=(declaration,),
+        capabilities=(capability,),
+        resources=(
+            ContextResource(
+                source=source,
+                capability=capability,
+                lease=ResourceLease.create(owner="caller", safe_detachment="forbidden", handle=provider),
+                factory=None,
+            ),
+        ),
+        limits=BindingLimits(
+            max_declarations=1,
+            max_sources=1,
+            max_capabilities=1,
+            max_selector_fields=0,
+            max_selector_bytes=0,
+            max_items=binding_limits["max_items"],
+            max_bytes=binding_limits["max_bytes"],
+            max_requests=cast(int, raw["hard_limit"]),
+            max_resources=1,
+        ),
+    )
+    await provider.started.wait()
+    running.request_cancel()
+    result = await running.wait()
+    expected = cast(dict[str, Any], case["expected"])["state"]
+    actual = _normalize(
+        result.receipt.requests,
+        cast(Any, {name: association for association, name in association_names.items()}),
+        {name: request for request, name in request_names.items()},
+        {"P0": policy},
+    )
+    for key in (
+        "bindings",
+        "dispatched",
+        "dispatched_count",
+        "terminals",
+        "settlements",
+        "request_facts",
+        "attempts",
+        "request_failures",
+        "request_associations",
+        "request_policies",
+        "cancel_requested",
+        "local_in_flight",
+        "remote_outstanding",
+        "defects",
+        "denials",
+        "association_requests",
+    ):
+        assert actual[key] == expected[key], (case["case_id"], key)
+    expected_source = "cancelled" if acknowledge_stop else "lost"
+    assert result.receipt.sources[0].terminal == expected_source
+    assert result.receipt.terminal == ("failed" if acknowledge_stop else "lost")
+    assert result.context is None
+    assert not result.receipt.artifacts
 
 
 def test_binding_foreign_target_admission_case_through_production() -> None:

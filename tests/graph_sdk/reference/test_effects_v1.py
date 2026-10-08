@@ -1081,3 +1081,22 @@ def test_adaptive_late_loss_retains_causal_cancel_and_terminal_conflict() -> Non
     assert state["terminals"] == {"R0": "lost"}
     assert state["defects"] == ["conflicting_terminal"]
     assert cast(reference.Object, state["materialization"])["ports"] == {}
+
+
+def test_initial_late_loss_records_cancel_for_both_provider_result_kinds() -> None:
+    cases = {case["case_id"]: case for case in reference.generate_cases()}
+    for name in (
+        "materialization/initial_late_lost",
+        "binding/lost_late_source_result",
+        "binding/lost_late_source_failure",
+    ):
+        case = cases[name]
+        events = cast(list[reference.Object], case["events"])
+        kinds = [event["kind"] for event in events]
+        assert kinds.index("cancel") < kinds.index("lost")
+        expected = cast(reference.Object, case["expected"])
+        state = cast(reference.Object, expected["state"])
+        assert state["cancel_requested"] == ["R0"]
+        assert state["terminals"] == {"R0": "lost"}
+        assert "conflicting_terminal" in cast(list[str], state["defects"])
+        assert state["artifacts"] == []

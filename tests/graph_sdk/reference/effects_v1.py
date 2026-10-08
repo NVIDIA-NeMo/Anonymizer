@@ -2115,7 +2115,7 @@ def _materialization_specs() -> list[Object]:
                 if terminal == "lost"
                 else [{"kind": "cancel", "request": "R0"}, {"kind": "stop", "request": "R0", "usage": "unknown"}]
             )
-            if path == "adaptive" and terminal == "lost":
+            if terminal == "lost":
                 terminals.insert(0, {"kind": "cancel", "request": "R0"})
             cases.append(
                 _case(
@@ -3760,6 +3760,8 @@ def _generate_specs() -> tuple[Object, ...]:
                 {"kind": "stop", "request": "R0", "usage": "unknown"},
             ]
         )
+        if terminal == "lost":
+            closure.insert(0, {"kind": "cancel", "request": "R0"})
         for response in late_binding_responses:
             late_events = [*_trace(("D0",)), *closure, response]
             c.append(

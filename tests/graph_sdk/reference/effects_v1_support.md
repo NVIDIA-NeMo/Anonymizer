@@ -1,3 +1,9 @@
+# R2 v12 causal initial-binding late-loss traces
+
+Public RunningBinding reaches these Lost-plus-late-response races by cancellation, failed stop and a provider that subsequently returns. Add cancel before Lost for materialization/initial_late_lost and binding/lost_late_source_result/failure, including their settlement traces. Preserve the first terminal, conflicting_terminal defect, valid settlement, and absence of artifacts or rewritten source terminal. No comparator override is permitted. Other v11 cases remain unchanged. Production must cover both late SourceResponse and SourceFailure. Review pending.
+
+## Retained v11 history
+
 # R2 v11 causal adaptive late-loss trace
 
 The real public executor reaches Lost here after cancellation and a failed stop. Add the missing cancel event before Lost in materialization/adaptive_late_lost. Preserve the immutable lost terminal, conflicting_terminal defect, valid late settlement and absence of materialized output. No comparator may override expected cancellation or defect facts. Only this case changes; all other v10 declarations and expectations remain unchanged. Independent review and production comparison are pending.
