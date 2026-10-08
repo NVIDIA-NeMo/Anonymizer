@@ -6,7 +6,11 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, replace
+from typing import Any, cast
 
+import pytest
+
+from anonymizer.engine.graph_sdk._effect_values import EffectRejected
 from anonymizer.engine.graph_sdk.binding import start_initial_binding
 from anonymizer.engine.graph_sdk.context import (
     BindingLimits,
@@ -99,6 +103,30 @@ class _RetryProvider:
 
 SOURCE = ContextSourceRef(name="test-source", revision=1)
 OTHER_SOURCE = ContextSourceRef(name="other-source", revision=1)
+
+
+def test_source_failure_rejects_incomplete_and_contradictory_values_at_construction() -> None:
+    with pytest.raises(TypeError):
+        cast(Any, SourceFailure)(source=SOURCE)
+    with pytest.raises(TypeError):
+        cast(Any, SourceFailure)(source=SOURCE, failure="permanent")
+    with pytest.raises(EffectRejected) as rejected:
+        SourceFailure(
+            source=SOURCE,
+            failure="retryable",
+            settlement=None,
+            disposition="omitted_optional",
+        )
+    assert rejected.value.code.value == "contradictory"
+    assert (
+        SourceFailure(
+            source=SOURCE,
+            failure="permanent",
+            settlement=None,
+            disposition="omitted_optional",
+        ).disposition
+        == "omitted_optional"
+    )
 
 
 @dataclass

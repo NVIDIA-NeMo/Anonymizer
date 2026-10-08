@@ -250,6 +250,8 @@ class SourceFailure(PrivateValue):
         require_literal(self.disposition, frozenset({"failed", "omitted_optional"}))
         if self.disposition == "omitted_optional" and self.failure != "permanent":
             reject(EffectCode.CONTRADICTORY)
+        if self.disposition == "omitted_optional" and self.failure != "permanent":
+            reject(EffectCode.CONTRADICTORY)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True, repr=False)
