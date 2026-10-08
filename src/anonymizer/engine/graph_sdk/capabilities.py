@@ -174,7 +174,9 @@ class FrozenConfig(_PrivateValue):
             _reject(PreparationCode.INVALID_VALUE)
 
 
-ConfigValue: TypeAlias = ConfigNull | ConfigBoolean | ConfigInteger | ConfigText | ConfigNumber | ConfigSequence | FrozenConfig
+ConfigValue: TypeAlias = (
+    ConfigNull | ConfigBoolean | ConfigInteger | ConfigText | ConfigNumber | ConfigSequence | FrozenConfig
+)
 
 
 def _is_config_value(value: object) -> bool:
@@ -315,9 +317,7 @@ def validate_capability(capability: ImplementationCapability) -> None:
         _reject(PreparationCode.CONTRADICTORY)
 
 
-def validate_catalog(
-    capabilities: object, *, maximum: int
-) -> tuple[ImplementationCapability, ...]:
+def validate_catalog(capabilities: object, *, maximum: int) -> tuple[ImplementationCapability, ...]:
     """Validate a bounded capability catalog with the D05 precheck ordering."""
     if not isinstance(capabilities, tuple):
         _reject(PreparationCode.INVALID_TYPE)

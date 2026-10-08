@@ -15,10 +15,8 @@ from anonymizer.engine.graph_sdk.capabilities import (
     ConfigBoolean,
     ConfigField,
     ConfigInteger,
-    ConfigNull,
     ConfigNumber,
     ConfigSequence,
-    ConfigText,
     FrozenConfig,
     ImplementationCapability,
     ImplementationRef,
@@ -118,8 +116,10 @@ def _workflow(*, requests: int = 0, read: StateEffect | None = None, with_input:
         outcomes=(outcome,),
     )
     bindings = (
-        InputBinding(source=WorkflowInputRef(port="input"), destination=NodeInputRef(node=node, port="input")),
-    ) if with_input else ()
+        (InputBinding(source=WorkflowInputRef(port="input"), destination=NodeInputRef(node=node, port="input")),)
+        if with_input
+        else ()
+    )
     static = admit_static_workflow(
         workflow=owner,
         interface=operation,
@@ -222,7 +222,9 @@ def _prepare(
     bound_inputs: tuple[BoundInput, ...] = (),
     limits: PreparationLimits | None = None,
 ) -> PreparedPlan:
-    actual_workflow, node, _ = _workflow() if workflow is None else (workflow, next(iter(workflow.workflow.nodes)).id, None)
+    actual_workflow, node, _ = (
+        _workflow() if workflow is None else (workflow, next(iter(workflow.workflow.nodes)).id, None)
+    )
     actual_capability = capability or _capability(actual_workflow)
     return prepare(
         data=data or _data(2),
@@ -248,6 +250,60 @@ def _prepare(
     )
 
 
+@pytest.mark.parametrize(
+    "earlier_code",
+    [
+        PreparationCode.MISSING_STATE,
+        PreparationCode.UNSUPPORTED_CAPABILITY,
+        PreparationCode.HARD_BUDGET_INCOMPATIBLE,
+        PreparationCode.PROTECTION_INELIGIBLE,
+    ],
+)
+def test_prepare_prioritizes_admission_failures_over_contradictory_input(
+    earlier_code: PreparationCode, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    read = StateEffect(kind="read", name="memory")
+    workflow, _, _ = _workflow(requests=1, read=read, with_input=True)
+    data = _data(1)
+    target = next(iter(data.targets))
+    capability = _capability(workflow, external=True)
+    configuration = PreparationConfiguration(
+        purpose="execution_only", required_protection_outcomes=frozenset(), hard_request_limit=None
+    )
+    state = StateRevisionView(revisions=frozenset({StateRevision(effect=read, revision=1)}))
+    if earlier_code is PreparationCode.MISSING_STATE:
+        state = StateRevisionView(revisions=frozenset())
+    elif earlier_code is PreparationCode.UNSUPPORTED_CAPABILITY:
+        capability = replace(capability, attribution="aggregate_only")
+    elif earlier_code is PreparationCode.HARD_BUDGET_INCOMPATIBLE:
+        capability = replace(capability, pre_dispatch_control="none")
+        configuration = replace(configuration, hard_request_limit=0)
+    else:
+        configuration = replace(configuration, purpose="protection")
+
+    def unexpected_identity() -> None:
+        pytest.fail("rejected preparation allocated a plan identity")
+
+    monkeypatch.setattr(PlanId, "new", unexpected_identity)
+    with pytest.raises(PreparationRejected) as error:
+        _prepare(
+            data=data,
+            workflow=workflow,
+            capability=capability,
+            state=state,
+            configuration=configuration,
+            bound_inputs=(
+                BoundInput(
+                    target=target,
+                    source=target,
+                    port="input",
+                    artifact_type=ArtifactType(name="wrong", revision=1),
+                ),
+            ),
+        )
+    assert error.value.code is earlier_code
+
+
 def test_prepare_two_targets_builds_real_p3_reservations() -> None:
     plan = _prepare()
     assert plan.activation_slots_per_target == 1
@@ -265,8 +321,7 @@ def test_prepare_two_targets_builds_real_p3_reservations() -> None:
             for slot in plan.reservation_recipe
         }
         reservations = frozenset(
-            ActivationSeed(template=slot.template, activation=keys[slot.index])
-            for slot in plan.reservation_recipe
+            ActivationSeed(template=slot.template, activation=keys[slot.index]) for slot in plan.reservation_recipe
         )
         state = initialize_activation(
             workflow=plan.workflow,
@@ -375,8 +430,7 @@ def test_shared_subgraph_body_is_selected_once_and_reserved_per_parent() -> None
         workflow=workflow,
         invocation=invocation,
         reservations=frozenset(
-            ActivationSeed(template=slot.template, activation=keys[slot.index])
-            for slot in plan.reservation_recipe
+            ActivationSeed(template=slot.template, activation=keys[slot.index]) for slot in plan.reservation_recipe
         ),
         limits=plan.activation_limits,
     )
@@ -447,9 +501,7 @@ def test_prepare_binds_exact_root_input_and_read_revision() -> None:
             capability=_capability(workflow),
             bound_inputs=(bound,),
             state=StateRevisionView(
-                revisions=frozenset(
-                    {StateRevision(effect=read, revision=1), StateRevision(effect=extra, revision=1)}
-                )
+                revisions=frozenset({StateRevision(effect=read, revision=1), StateRevision(effect=extra, revision=1)})
             ),
         )
     assert raised.value.code is PreparationCode.MISSING_STATE
@@ -466,11 +518,14 @@ def test_hard_budget_zero_is_allowed_only_for_controllable_external_work() -> No
     plan = _prepare(workflow=workflow, capability=capability, configuration=configuration)
     assert plan.configuration.hard_request_limit == 0
     for budget in (1, plan.declared_request_upper_bound, plan.declared_request_upper_bound + 1):
-        assert _prepare(
-            workflow=workflow,
-            capability=capability,
-            configuration=replace(configuration, hard_request_limit=budget),
-        ).configuration.hard_request_limit == budget
+        assert (
+            _prepare(
+                workflow=workflow,
+                capability=capability,
+                configuration=replace(configuration, hard_request_limit=budget),
+            ).configuration.hard_request_limit
+            == budget
+        )
     incompatible = replace(capability, retry_owner="implementation")
     with pytest.raises(PreparationRejected) as raised:
         _prepare(workflow=workflow, capability=incompatible, configuration=configuration)

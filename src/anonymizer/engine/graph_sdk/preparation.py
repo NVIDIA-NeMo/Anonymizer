@@ -8,9 +8,7 @@ from dataclasses import dataclass
 from typing import Any, Literal, Never, SupportsIndex, TypeAlias
 
 from anonymizer.engine.graph_sdk.capabilities import (
-    FrozenConfig,
     ImplementationCapability,
-    ImplementationRef,
     ImplementationSelection,
     PreparationCode,
     PreparationRejected,
@@ -25,7 +23,6 @@ from anonymizer.graph.workflow import (
     AdmittedActivationWorkflow,
     AdmittedWorkflow,
     ArtifactType,
-    DynamicScope,
     NodeId,
     OperationNode,
     ProtectionRequirement,
@@ -286,7 +283,7 @@ def prepare(
     if any(not isinstance(capability, ImplementationCapability) for capability in capabilities):
         _reject(PreparationCode.INVALID_TYPE)
 
-    reachable, operation_nodes, node_scope = _reachable_operations(workflow)
+    reachable, operation_nodes = _reachable_operations(workflow)
     recipe, map_expanders = _reservation_recipe(workflow)
     target_occurrences = tuple(
         TargetOccurrenceMap(
@@ -337,9 +334,6 @@ def prepare(
     observed_inputs = set(input_keys)
     if observed_inputs != expected_inputs or any(item.source not in datum_ids for item in bound_inputs):
         _reject(PreparationCode.MISSING_INPUT)
-    if any(item.artifact_type != root_inputs[item.port] for item in bound_inputs):
-        _reject(PreparationCode.CONTRADICTORY)
-
     reads = {
         effect
         for node in operation_nodes.values()
@@ -349,12 +343,7 @@ def prepare(
     }
     if set(revision_effects) != reads:
         _reject(PreparationCode.MISSING_STATE)
-    if any(revision.effect.kind != "read" for revision in state.revisions):
-        _reject(PreparationCode.CONTRADICTORY)
-
     implementations = _select_implementations(operation_nodes, selections, capabilities)
-    for capability in capabilities:
-        validate_capability(capability)
     if configuration.hard_request_limit is not None and any(
         selected.capability.effect == "external"
         and (
@@ -367,12 +356,20 @@ def prepare(
         _reject(PreparationCode.HARD_BUDGET_INCOMPATIBLE)
 
     eligibility = _eligibility(workflow.workflow, configuration)
+    if any(item.artifact_type != root_inputs[item.port] for item in bound_inputs) or any(
+        revision.effect.kind != "read" for revision in state.revisions
+    ):
+        _reject(PreparationCode.CONTRADICTORY)
+    for capability in capabilities:
+        validate_capability(capability)
     request_per_target = sum(
-        max((outcome.ceiling.max_model_requests for outcome in operation_nodes[slot.template].operation.outcomes), default=0)
+        max(
+            (outcome.ceiling.max_model_requests for outcome in operation_nodes[slot.template].operation.outcomes),
+            default=0,
+        )
         for slot in recipe
         if slot.template in operation_nodes
     )
-    del node_scope
     return PreparedPlan(
         _key=_PREPARED_KEY,
         plan=PlanId.new(),
@@ -438,10 +435,9 @@ def _validate_outer_types(
 
 def _reachable_operations(
     workflow: AdmittedActivationWorkflow,
-) -> tuple[tuple[AdmittedWorkflow, ...], dict[NodeId, OperationNode], dict[NodeId, AdmittedWorkflow]]:
+) -> tuple[tuple[AdmittedWorkflow, ...], dict[NodeId, OperationNode]]:
     reachable: list[AdmittedWorkflow] = []
     operations: dict[NodeId, OperationNode] = {}
-    owners: dict[NodeId, AdmittedWorkflow] = {}
     pending = [workflow.workflow]
     seen: set[int] = set()
     while pending:
@@ -451,12 +447,11 @@ def _reachable_operations(
         seen.add(id(current))
         reachable.append(current)
         for node in current.nodes:
-            owners[node.id] = current
             if isinstance(node, OperationNode):
                 operations[node.id] = node
             else:
                 pending.append(node.body)
-    return tuple(reachable), operations, owners
+    return tuple(reachable), operations
 
 
 def _reservation_recipe(
@@ -530,15 +525,17 @@ def _select_implementations(
             and capability.configuration == selection.configuration
             and capability.operation == node.operation
         ]
-        if len(matches) != 1 or matches[0].attribution == "aggregate_only" or matches[0].error_reporting != "typed_terminal":
+        if (
+            len(matches) != 1
+            or matches[0].attribution == "aggregate_only"
+            or matches[0].error_reporting != "typed_terminal"
+        ):
             _reject(PreparationCode.UNSUPPORTED_CAPABILITY)
         selected.append(SelectedImplementation(node=node_id, capability=matches[0]))
     return tuple(selected)
 
 
-def _eligibility(
-    workflow: AdmittedWorkflow, configuration: PreparationConfiguration
-) -> ProtectionEligibility:
+def _eligibility(workflow: AdmittedWorkflow, configuration: PreparationConfiguration) -> ProtectionEligibility:
     declared = workflow.protection_eligible_outcomes
     required = configuration.required_protection_outcomes
     eligible = bool(required) and required <= declared
