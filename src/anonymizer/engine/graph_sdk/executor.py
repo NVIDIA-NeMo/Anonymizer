@@ -1499,7 +1499,8 @@ async def _run_execution(
                         )
                         scheduled = True
                     continue
-                if policy.kind == "decision" and len(control.pending) >= services.decision_limits.max_pending:
+                decision_jobs = sum(item.policy.kind == "decision" for item in jobs.values())
+                if policy.kind == "decision" and decision_jobs >= services.decision_limits.max_pending:
                     if services.decision_limits.max_pending == 0:
                         reject(EffectCode.PENDING_LIMIT)
                     continue

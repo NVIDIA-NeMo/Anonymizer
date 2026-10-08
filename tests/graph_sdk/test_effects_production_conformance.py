@@ -547,24 +547,45 @@ class _ZeroClock:
         return 0
 
 
+@dataclass
 class _DecisionProvider:
+    mode: str = "wait"
+    started: asyncio.Event = field(default_factory=asyncio.Event)
+    calls: int = 0
+
     async def run(self, request: tuple[AssociationInput, ...]) -> LocalDecisionWait:
+        self.calls += 1
+        self.started.set()
+        if self.mode == "cancel":
+            await asyncio.Event().wait()
+        if self.mode == "failure":
+            raise RuntimeError("decision implementation failed")
         artifact = request[0].inputs[0].artifact
         assert artifact is not None
         assert isinstance(request[0].association, SemanticAssociation)
         return LocalDecisionWait(association=request[0].association, artifact=artifact)
 
 
-async def _assert_decision_submission(case_id: str, expected: str) -> None:
+@dataclass
+class _DecisionClock:
+    now: int = 0
+
+    def now_ns(self) -> int:
+        return self.now
+
+
+async def _assert_decision_submission(case_id: str, expected: str, *, pending_limit: int | None = None) -> None:
     workflow, node, artifact_type = _workflow(with_input=True)
-    data = _data(1)
-    target = next(iter(data.targets))
+    data = _data(2 if pending_limit is not None else 1)
     capability = _capability(workflow)
     prepared = _prepare(
         data=data,
         workflow=workflow,
         capability=capability,
-        bound_inputs=(BoundInput(target=target, source=target, port="input", artifact_type=artifact_type),),
+        bound_inputs=tuple(
+            BoundInput(target=target, source=target, port="input", artifact_type=artifact_type)
+            for target in data.targets
+        ),
     )
     context = admit_context_plan(
         prepared=prepared,
@@ -599,7 +620,7 @@ async def _assert_decision_submission(case_id: str, expected: str) -> None:
                 ("cancel_before_start", None, "blocked"),
                 ("cancel_after_start", None, "cancelled"),
                 ("artifact_limit_exhausted", None, "blocked"),
-                ("deadline_exhausted", None, "blocked"),
+                ("deadline_exhausted", None, "failure"),
             )
         ),
     )
@@ -611,13 +632,23 @@ async def _assert_decision_submission(case_id: str, expected: str) -> None:
             DecisionDeclaration(
                 node=node,
                 artifact_port="input",
-                outcomes=(DecisionOutcome(decision="approve", outcome="ok"),),
+                outcomes=(
+                    DecisionOutcome(decision="approve", outcome="ok"),
+                    DecisionOutcome(decision="reject", outcome="ok"),
+                ),
                 max_lifetime_ns=10,
             ),
         ),
         assessment_productions=(),
         assessment_limits=_assessment_limits(),
     )
+    callback = _DecisionProvider(
+        mode={
+            "decisions/cancel_condition": "cancel",
+            "decisions/implementation_failure": "failure",
+        }.get(case_id, "wait")
+    )
+    clock = _DecisionClock()
     running = await start_execution(
         admitted=admitted,
         capabilities=(capability,),
@@ -627,23 +658,73 @@ async def _assert_decision_submission(case_id: str, expected: str) -> None:
                     implementation=capability.implementation,
                     operation=capability.operation,
                     configuration=capability.configuration,
-                    local=_DecisionProvider(),
+                    local=callback,
                     transport=None,
                     resource=None,
                 ),
             ),
             context_resources=(),
             limits=ExecutionLimits(
-                max_local_in_flight=1,
+                max_local_in_flight=2,
                 max_remote_outstanding=0,
-                max_runtime_artifacts=1,
+                max_runtime_artifacts=2,
                 max_runtime_artifact_bytes=100,
                 max_collection_items=1,
             ),
-            decision_limits=DecisionLimits(max_pending=1, max_lifetime_ns=10),
-            clock=_ZeroClock(),
+            decision_limits=DecisionLimits(
+                max_pending=pending_limit if pending_limit is not None else 1, max_lifetime_ns=10
+            ),
+            clock=clock,
         ),
     )
+    if pending_limit is not None:
+        await callback.started.wait()
+        for _ in range(20):
+            await asyncio.sleep(0)
+        assert len(running.pending_decisions()) == pending_limit
+        assert callback.calls == pending_limit
+        first = running.pending_decisions()
+        for wait in first:
+            running.submit_decision(
+                DecisionResponse(wait=wait.wait, workflow=wait.workflow, artifact=wait.artifact, decision="approve")
+            )
+        if pending_limit == 1:
+            while not running.pending_decisions() or running.pending_decisions()[0].wait == first[0].wait:
+                await asyncio.sleep(0)
+            assert callback.calls == 2
+            wait = running.pending_decisions()[0]
+            assert wait.wait != first[0].wait and wait.artifact != first[0].artifact
+            running.submit_decision(
+                DecisionResponse(wait=wait.wait, workflow=wait.workflow, artifact=wait.artifact, decision="approve")
+            )
+        result = await running.wait()
+        assert len(result.record.terminals) == 2
+        assert all(item.category == "success" for item in result.record.terminals)
+        assert not result.pending_decisions
+        return
+    if case_id in {"decisions/cancel_condition", "decisions/implementation_failure", "decisions/deadline"}:
+        case = next(item for item in json.loads(CORPUS.read_bytes()) if item["case_id"] == case_id)
+        if case_id == "decisions/cancel_condition":
+            await callback.started.wait()
+            running.request_cancel()
+        elif case_id == "decisions/deadline":
+            while not running.pending_decisions():
+                await asyncio.sleep(0)
+            wait = running.pending_decisions()[0]
+            assert wait.allowed_decisions == frozenset(case["events"][1]["allowed"])
+            clock.now = wait.deadline_ns
+        result = await running.wait()
+        assert callback.calls == 1
+        assert [item.category for item in result.record.terminals] == list(case["expected"]["state"]["tasks"].values())
+        assert not result.pending_decisions
+        assert result.requests.dispatched_count == 0
+        assert not result.final_outputs and not result.assessments
+        assert len(result.artifacts) == len(result.ports) == len(result.provenance) == 1
+        assert isinstance(result.provenance[0].key, RootInputKey)
+        assert not result.provenance[0].parents and not result.provenance[0].decision
+        assert result.provenance[0].artifact == result.artifacts[0][0]
+        assert all(state.complete for state in result.states)
+        return
     while not running.pending_decisions():
         await asyncio.sleep(0)
     wait = running.pending_decisions()[0]
@@ -2751,3 +2832,15 @@ def _normalize(
             for association in item.associations
         },
     }
+
+
+@pytest.mark.parametrize(
+    "case_id", ["decisions/cancel_condition", "decisions/implementation_failure", "decisions/deadline"]
+)
+def test_decision_runtime_terminal_cases(case_id: str) -> None:
+    asyncio.run(_assert_decision_submission(case_id, ""))
+
+
+@pytest.mark.parametrize("pending_limit", [1, 2])
+def test_decision_capacity_includes_callbacks_before_wait_publication(pending_limit: int) -> None:
+    asyncio.run(_assert_decision_submission("capacity", "", pending_limit=pending_limit))
