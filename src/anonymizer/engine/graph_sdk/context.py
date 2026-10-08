@@ -480,6 +480,7 @@ def admit_context_plan(
         capability = selected.get(declaration.node)
         if capability is None or capability.attribution != "per_task":
             reject(EffectCode.UNSUPPORTED)
+    _validate_materialization_schema(prepared, bound_context, adaptive_retrievals, nodes)
     return AdmittedContextPlan(
         _key=_CONTEXT_KEY,
         prepared=prepared,
@@ -487,6 +488,42 @@ def admit_context_plan(
         adaptive_retrievals=adaptive_retrievals,
         context_capabilities=context_capabilities,
     )
+
+
+def _validate_materialization_schema(
+    prepared: PreparedPlan,
+    bound_context: BoundContext | None,
+    adaptive: tuple[AdaptiveRetrievalDecl, ...],
+    nodes: dict[NodeId, OperationNode],
+) -> None:
+    schemas: dict[ArtifactType, tuple[str, ArtifactType]] = {}
+    initial = () if bound_context is None else tuple(item.declaration for item in bound_context.receipt.sources)
+    declarations: list[tuple[ArtifactType, ContextMaterialization]] = [
+        (item.artifact_type, item.materialization) for item in initial
+    ]
+    declarations.extend(
+        (
+            next(
+                output.artifact_type for output in nodes[item.node].operation.outputs if output.name == item.output_port
+            ),
+            item.materialization,
+        )
+        for item in adaptive
+    )
+    for output_type, materialization in declarations:
+        item_type = materialization.item_type
+        item_schema = schemas.get(item_type)
+        if item_schema is not None and item_schema[0] == "collection":
+            reject(EffectCode.CONTRADICTORY)
+        schemas.setdefault(item_type, ("scalar", item_type))
+        candidate = ("scalar" if materialization.kind == "single" else "collection", item_type)
+        existing = schemas.get(output_type)
+        if existing is not None and existing != candidate:
+            reject(EffectCode.CONTRADICTORY)
+        schemas[output_type] = candidate
+    collection_types = {item for item, schema in schemas.items() if schema[0] == "collection"}
+    if any(item.artifact_type in collection_types for item in prepared.bound_inputs):
+        reject(EffectCode.CONTRADICTORY)
 
 
 def create_binding_result(

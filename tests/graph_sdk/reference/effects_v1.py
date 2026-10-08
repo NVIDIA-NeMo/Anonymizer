@@ -15,8 +15,10 @@ Json: TypeAlias = str | int | bool | None | list["Json"] | dict[str, "Json"]
 Object: TypeAlias = dict[str, Json]
 MappingKey: TypeAlias = tuple[str, str | None, str | None]
 CONTRACT_SHA256 = "9b0ab07b8c0212ffd954dc37eb37540141da6899753fc778ad26238494aeaeca"
-GENERATOR_VERSION = "effects-v1-generator-1"
-SELF_TEST_VERSION = "effects-v1-self-test-1"
+GENERATOR_VERSION = "effects-v1-generator-2-materialization"
+SELF_TEST_VERSION = "effects-v1-self-test-2-materialization"
+MATERIALIZATION_ADDENDUM_SHA256 = "b1a5651ee2649b01c89e80bd1442e3f03209292b48ce846d27714698f57eb07c"
+BASE_CORPUS_SHA256 = "c62f2cc7e7237ea030451ac8d35a3c30b39f71766b4275348597949d560a7a6a"
 CORPUS_PATH = "tests/graph_sdk/reference/effects_v1_cases.json"
 FAMILIES = (
     "budgets",
@@ -29,6 +31,7 @@ FAMILIES = (
     "bridges",
     "decisions",
     "admission",
+    "materialization",
 )
 FAILURE_CLASSES = (
     "rejected_before_acceptance",
@@ -195,6 +198,135 @@ def _valid_usage(value: Json) -> bool:
     return all(isinstance(item, int) and not isinstance(item, bool) and item >= 0 for item in value.values())
 
 
+def _natural(value: Json, *, positive: bool = False) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value >= (1 if positive else 0)
+
+
+def _materialization_declaration(declaration: Object, event: Object) -> Object | None:
+    declarations = declaration.get("materializations", [])
+    if not isinstance(declarations, list):
+        return None
+    identity = tuple(event.get(key) for key in ("path", "target", "node", "port", "declaration"))
+    matches = [
+        _object(raw)
+        for raw in declarations
+        if isinstance(raw, dict)
+        and tuple(raw.get(key) for key in ("path", "target", "node", "port", "declaration")) == identity
+    ]
+    return matches[0] if len(matches) == 1 else None
+
+
+def _requires_materialization(declaration: Object, path: str, association: str) -> bool:
+    raw_specs = declaration.get("materializations", [])
+    return isinstance(raw_specs, list) and any(
+        isinstance(raw, dict) and raw.get("path") == path and raw.get("association") == association for raw in raw_specs
+    )
+
+
+def _materialize(state: Object, declaration: Object, event: Object) -> Object | None:
+    spec = _materialization_declaration(declaration, event)
+    if spec is None:
+        return _reject("missing_materialization")
+    raw_items = event.get("items")
+    if not isinstance(raw_items, list):
+        return _reject("invalid_type")
+    limits = _object(declaration.get("materialization_limits", {}))
+    binding_limits = _object(declaration.get("binding_limits", {}))
+    path = cast(str, spec["path"])
+    # Count bounds are checked before member scans.  A rejected collection is atomic.
+    initial_item_limit = (
+        binding_limits.get("max_items", len(raw_items)) if spec["path"] == "initial" else len(raw_items)
+    )
+    collection_limit = (
+        limits.get("max_collection_items", len(raw_items)) if spec["kind"] == "collection" else len(raw_items)
+    )
+    if len(raw_items) > min(cast(int, collection_limit), cast(int, initial_item_limit)):
+        return _reject("collection_limit_exceeded")
+    if spec.get("kind") == "single" and len(raw_items) != 1:
+        return _reject("single_cardinality")
+    if spec.get("kind") == "collection" and (not raw_items or len(raw_items) > cast(int, spec["max_items"])):
+        return _reject("collection_cardinality")
+    typed: list[Object] = []
+    pairs: list[tuple[int, int]] = []
+    for raw in raw_items:
+        if not isinstance(raw, dict) or set(raw) != {"key", "value", "version"}:
+            return _reject("invalid_item")
+        item = _object(raw)
+        if not _natural(item["key"]) or not _natural(item["version"], positive=True):
+            return _reject("invalid_item")
+        if not isinstance(item["value"], str):
+            return _reject("nested_collection" if isinstance(item["value"], (list, dict)) else "wrong_item_type")
+        typed.append(item)
+        pairs.append((cast(int, item["key"]), cast(int, item["version"])))
+    if len(pairs) != len(set(pairs)):
+        return _reject("duplicate_item")
+    typed.sort(key=lambda item: (cast(int, item["key"]), cast(int, item["version"])))
+    byte_count = sum(len(cast(str, item["value"]).encode()) for item in typed)
+    initial_byte_limit = binding_limits.get("max_bytes", byte_count) if path == "initial" else byte_count
+    if byte_count > min(cast(int, spec["max_bytes"]), cast(int, initial_byte_limit)):
+        return _reject("materialization_bytes_exceeded")
+    logical_artifacts = len(typed) + 1 if path == "initial" and spec["kind"] == "collection" else 1
+    logical_bytes = byte_count * 2 if path == "initial" and spec["kind"] == "collection" else byte_count
+    parents = (
+        [
+            f"BoundInputKey:{spec['target']}:{spec['node']}:{spec['port']}:{spec['declaration']}:{item['key']}:{item['version']}"
+            for item in typed
+        ]
+        if path == "initial" and spec["kind"] == "collection"
+        else _strings(event.get("parents", []))
+    )
+    current = _object(state.get("materialization", {}))
+    if path == "adaptive":
+        expected_parents = _strings(spec.get("selector_inputs", []))
+        if parents != expected_parents or any(
+            parent not in _object(current.get("provenance", {})) for parent in parents
+        ):
+            return _reject("invalid_provenance")
+    elif event.get("parents") != []:
+        return _reject("invalid_provenance")
+    if cast(int, current.get("artifact_count", 0)) + logical_artifacts > cast(int, limits["max_artifacts"]):
+        return _reject("artifact_count_exceeded")
+    if cast(int, current.get("artifact_bytes", 0)) + logical_bytes > cast(int, limits["max_artifact_bytes"]):
+        return _reject("artifact_bytes_exceeded")
+    if cast(int, current.get("provenance_edges", 0)) + len(parents) > cast(int, limits["max_provenance_edges"]):
+        return _reject("provenance_limit_exceeded")
+    materialization = current or {
+        "artifact_bytes": 0,
+        "artifact_count": 0,
+        "ports": {},
+        "provenance": {},
+        "provenance_edges": 0,
+    }
+    key = (
+        f"InitialCollectionKey:{spec['target']}:{spec['node']}:{spec['port']}:{spec['declaration']}"
+        if path == "initial" and spec["kind"] == "collection"
+        else f"OperationOutputKey:{event.get('activation')}:{spec['target']}:{spec['port']}"
+        if path == "adaptive"
+        else f"BoundInputKey:{spec['target']}:{spec['node']}:{spec['port']}:{spec['declaration']}:{typed[0]['key']}:{typed[0]['version']}"
+    )
+    port_key = f"{path}:{spec['target']}:{spec['node']}:{spec['port']}:{spec.get('declaration')}"
+    value: Json = typed[0]["value"] if spec["kind"] == "single" else typed
+    _object(materialization["ports"])[port_key] = {"artifact_type": spec["output_type"], "key": key, "value": value}
+    _object(materialization["provenance"])[key] = parents
+    materialization["artifact_count"] = cast(int, materialization["artifact_count"]) + logical_artifacts
+    materialization["artifact_bytes"] = cast(int, materialization["artifact_bytes"]) + logical_bytes
+    materialization["provenance_edges"] = cast(int, materialization["provenance_edges"]) + len(parents)
+    state["materialization"] = materialization
+    if path == "initial" and spec["kind"] == "collection":
+        for item, parent in zip(typed, parents, strict=True):
+            _object(materialization["provenance"])[parent] = []
+            _array(state["artifacts"]).append(
+                {
+                    "artifact_type": spec["item_type"],
+                    "identity": parent,
+                    "source": spec["source"],
+                    "text": item["value"],
+                }
+            )
+    _array(state["artifacts"]).append({"artifact_type": spec["output_type"], "identity": key, "value": value})
+    return None
+
+
 def _advance(state: Object, declaration: Object, event: Object) -> Object | None:
     kind = cast(str, event.get("kind"))
     reservations = _object(state["reservations"])
@@ -292,6 +424,8 @@ def _advance(state: Object, declaration: Object, event: Object) -> Object | None
         if request not in dispatched:
             return _reject("not_dispatched")
         expected = set(_strings(_object(state["request_associations"])[request]))
+        if any(_requires_materialization(declaration, "adaptive", association) for association in expected):
+            return _reject("materialization_required")
         returned = _strings(event["returned"])
         outcomes_value = event.get("outcomes")
         if not isinstance(outcomes_value, dict) or any(not isinstance(value, str) for value in outcomes_value.values()):
@@ -413,6 +547,8 @@ def _advance(state: Object, declaration: Object, event: Object) -> Object | None
         if len(expected) != 1:
             return _reject("binding_request_shape")
         identity, source = expected[0], cast(str, event["source"])
+        if _requires_materialization(declaration, "initial", identity):
+            return _reject("materialization_required")
         if _object(state["binding_declarations"]).get(identity) != source:
             return _reject("foreign_source")
         if request in _object(state["terminals"]):
@@ -482,7 +618,73 @@ def _advance(state: Object, declaration: Object, event: Object) -> Object | None
         _terminal(state, request, "failure")
         _remove(state, "local_in_flight", request)
         _remove(state, "remote_outstanding", request)
+    elif kind == "root_input":
+        key = f"RootInputKey:{event.get('target')}:{event.get('port')}"
+        specs = [_object(raw) for raw in _array(declaration.get("materializations", []))]
+        if not any(key in _strings(spec.get("selector_inputs", [])) for spec in specs):
+            return _reject("invalid_provenance")
+        if event.get("artifact_type") not in _strings(declaration.get("root_input_types", [])) or not isinstance(
+            event.get("value"), str
+        ):
+            return _reject("invalid_type")
+        materialization = _object(state.get("materialization", {})) or {
+            "artifact_bytes": 0,
+            "artifact_count": 0,
+            "ports": {},
+            "provenance": {},
+            "provenance_edges": 0,
+        }
+        if key in _object(materialization["provenance"]):
+            return _reject("duplicate")
+        limits = _object(declaration["materialization_limits"])
+        byte_count = len(cast(str, event["value"]).encode())
+        if cast(int, materialization["artifact_count"]) + 1 > cast(int, limits["max_artifacts"]):
+            return _reject("artifact_count_exceeded")
+        if cast(int, materialization["artifact_bytes"]) + byte_count > cast(int, limits["max_artifact_bytes"]):
+            return _reject("artifact_bytes_exceeded")
+        _object(materialization["provenance"])[key] = []
+        materialization["artifact_count"] = cast(int, materialization["artifact_count"]) + 1
+        materialization["artifact_bytes"] = cast(int, materialization["artifact_bytes"]) + byte_count
+        state["materialization"] = materialization
+        _array(state["artifacts"]).append(
+            {"identity": key, "artifact_type": event["artifact_type"], "value": event["value"]}
+        )
+    elif kind == "materialize_result":
+        request = cast(str, event.get("request"))
+        if request not in dispatched or request not in _object(state["request_associations"]):
+            return _reject("unsolicited_materialization")
+        spec = _materialization_declaration(declaration, event)
+        if spec is None:
+            return _reject("missing_materialization")
+        expected = _strings(_object(state["request_associations"])[request])
+        association = cast(str, event.get("association"))
+        if expected != [association] or spec.get("association") != association:
+            return _reject("foreign_association")
+        if spec["path"] == "initial" and _object(state["binding_declarations"]).get(association) != spec.get("source"):
+            return _reject("foreign_source")
+        if request in _object(state["terminals"]):
+            _terminal(state, request, "success")
+            return None
+        if spec["path"] == "adaptive" and not isinstance(event.get("reported_outcome"), str):
+            return _reject("invalid_result")
+        rejected = _materialize(state, declaration, event)
+        if rejected is not None:
+            return rejected
+        if spec["path"] == "initial":
+            _object(state["binding_sources"])[association] = "bound"
+        else:
+            _request_fact(state, request, {"condition": "result", "outcomes": {association: event["reported_outcome"]}})
+        _terminal(state, request, "success")
+        _remove(state, "local_in_flight", request)
+        _remove(state, "remote_outstanding", request)
     elif kind == "binding_finish":
+        required = [
+            cast(str, _object(raw)["association"])
+            for raw in _array(declaration.get("materializations", []))
+            if isinstance(raw, dict) and raw.get("path") == "initial"
+        ]
+        if any(_object(state["binding_sources"]).get(association) != "bound" for association in required):
+            return _reject("missing_materialization")
         if state["binding_terminal"] is None:
             state["binding_terminal"] = "success"
     elif kind == "resource":
@@ -611,6 +813,111 @@ def reduce_trace(declaration: Object, events: Sequence[Object]) -> Object:
     return {"state": state, "status": "accepted"}
 
 
+def _admit_materializations(declaration: Object) -> Object | None:
+    raw_declarations = declaration.get("materializations", [])
+    if not isinstance(raw_declarations, list):
+        return _reject("invalid_type")
+    if not raw_declarations:
+        return None
+    raw_limits = declaration.get("materialization_limits")
+    required_limits = {
+        "max_artifact_bytes",
+        "max_artifacts",
+        "max_collection_items",
+        "max_declarations",
+        "max_provenance_edges",
+    }
+    if not isinstance(raw_limits, dict) or set(raw_limits) != required_limits:
+        return _reject("invalid_type")
+    limits = _object(raw_limits)
+    if any(not _natural(limits[key]) for key in required_limits):
+        return _reject("invalid_type")
+    if len(raw_declarations) > cast(int, limits["max_declarations"]):
+        return _reject("limit_exceeded")
+    if any(not isinstance(raw, dict) for raw in raw_declarations):
+        return _reject("invalid_type")
+    specs = [_object(raw) for raw in raw_declarations]
+    base_fields = {
+        "association",
+        "declaration",
+        "item_type",
+        "kind",
+        "max_bytes",
+        "max_items",
+        "node",
+        "output_type",
+        "path",
+        "port",
+        "source",
+        "target",
+        "selector_inputs",
+    }
+    if any(set(spec) != base_fields for spec in specs):
+        return _reject("invalid_value")
+    if any(
+        spec["path"] not in ("initial", "adaptive") or spec["kind"] not in ("single", "collection") for spec in specs
+    ):
+        return _reject("invalid_value")
+    if any(
+        not all(
+            isinstance(spec[key], str) and spec[key]
+            for key in ("association", "item_type", "node", "output_type", "port", "target")
+        )
+        or not _natural(spec["max_items"])
+        or not _natural(spec["max_bytes"])
+        for spec in specs
+    ):
+        return _reject("invalid_type")
+    if any(
+        spec["path"] == "initial" and (not isinstance(spec["declaration"], str) or not isinstance(spec["source"], str))
+        for spec in specs
+    ):
+        return _reject("missing")
+    if any(
+        spec["path"] == "adaptive" and (spec["declaration"] is not None or spec["source"] is not None) for spec in specs
+    ):
+        return _reject("contradictory")
+    if any(
+        spec.get("selector_inputs") != ([f"RootInputKey:{spec['target']}:input"] if spec["path"] == "adaptive" else [])
+        for spec in specs
+    ):
+        return _reject("invalid_provenance")
+    identities = [tuple(spec[key] for key in ("path", "target", "node", "port", "declaration")) for spec in specs]
+    if len(identities) != len(set(identities)):
+        return _reject("duplicate")
+    if any(
+        spec["kind"] == "single" and (spec["output_type"] != spec["item_type"] or spec["max_items"] != 1)
+        for spec in specs
+    ):
+        return _reject("contradictory")
+    if any(
+        spec["kind"] == "collection"
+        and (
+            spec["output_type"] == spec["item_type"]
+            or cast(int, spec["max_items"]) < 1
+            or cast(int, spec["max_items"]) > cast(int, limits["max_collection_items"])
+        )
+        for spec in specs
+    ):
+        return _reject("contradictory")
+    schemas: dict[str, tuple[Json, Json]] = {}
+    for spec in specs:
+        shape = (spec["kind"], spec["item_type"])
+        output = cast(str, spec["output_type"])
+        if output in schemas and schemas[output] != shape:
+            return _reject("contradictory")
+        schemas[output] = shape
+    collection_types = {cast(str, spec["output_type"]) for spec in specs if spec["kind"] == "collection"}
+    if any(spec["item_type"] in collection_types for spec in specs):
+        return _reject("nested_collection")
+    roots = declaration.get("root_input_types", [])
+    if not isinstance(roots, list) or any(not isinstance(value, str) for value in roots):
+        return _reject("invalid_type")
+    if collection_types & set(cast(list[str], roots)):
+        return _reject("collection_root_input")
+    return None
+
+
 def admit(declaration: Object) -> Object:
     allowed = {
         "admission_limits",
@@ -621,9 +928,15 @@ def admit(declaration: Object) -> Object:
         "required_runtime_conditions",
         "runtime_mappings",
         "targets",
+        "materializations",
+        "materialization_limits",
+        "root_input_types",
     }
     if set(declaration) - allowed:
         return _reject("invalid_value")
+    materialized = _admit_materializations(declaration)
+    if materialized is not None:
+        return materialized
     policies_value = declaration.get("execution_policies", [])
     if not isinstance(policies_value, list):
         return _reject("invalid_type")
@@ -868,6 +1181,356 @@ def _case(
         for index, trace in enumerate(traces or [])
     ]
     return case
+
+
+def _materialization_limits(**changes: int) -> Object:
+    limits: Object = {
+        "max_artifact_bytes": 64,
+        "max_artifacts": 8,
+        "max_collection_items": 3,
+        "max_declarations": 4,
+        "max_provenance_edges": 8,
+    }
+    limits.update(changes)
+    return limits
+
+
+def _materialization_spec(
+    path: str,
+    kind: str,
+    *,
+    association: str | None = None,
+    declaration: str | None = None,
+    item_type: str = "text",
+    node: str = "N0",
+    output_type: str | None = None,
+    port: str = "context",
+    target: str = "T0",
+) -> Object:
+    identity = association or (declaration if path == "initial" else "A0") or "A0"
+    return {
+        "association": identity,
+        "declaration": declaration if path == "initial" else None,
+        "item_type": item_type,
+        "kind": kind,
+        "max_bytes": 12,
+        "max_items": 1 if kind == "single" else 3,
+        "node": node,
+        "output_type": output_type or (item_type if kind == "single" else f"{item_type}_collection"),
+        "path": path,
+        "port": port,
+        "source": "S0" if path == "initial" else None,
+        "target": target,
+        "selector_inputs": [f"RootInputKey:{target}:input"] if path == "adaptive" else [],
+    }
+
+
+def _materialization_decl(
+    *specs: Object,
+    admission: bool = False,
+    limit_changes: Mapping[str, int] | None = None,
+) -> Object:
+    sources = {cast(str, spec["association"]): cast(str, spec["source"]) for spec in specs if spec["path"] == "initial"}
+    max_items = max((cast(int, spec["max_items"]) for spec in specs if spec["path"] == "initial"), default=0)
+    max_bytes = max((cast(int, spec["max_bytes"]) for spec in specs if spec["path"] == "initial"), default=0)
+    declaration: Object = {} if admission else _binding_decl(sources, max_bytes=max_bytes, max_items=max_items)
+    declaration["materializations"] = list(specs)
+    declaration["materialization_limits"] = _materialization_limits(**dict(limit_changes or {}))
+    declaration["root_input_types"] = ["text"]
+    return declaration
+
+
+def _materialization_event(spec: Object, items: Sequence[Object], *, request: str = "R0") -> Object:
+    return {
+        "activation": "A0" if spec["path"] == "adaptive" else None,
+        "association": spec["association"],
+        "declaration": spec["declaration"],
+        "items": list(items),
+        "kind": "materialize_result",
+        "node": spec["node"],
+        "parents": spec["selector_inputs"],
+        "reported_outcome": "ok" if spec["path"] == "adaptive" else None,
+        "path": spec["path"],
+        "port": spec["port"],
+        "request": request,
+        "target": spec["target"],
+    }
+
+
+def _items(*values: str) -> list[Object]:
+    return [{"key": index, "value": value, "version": 1} for index, value in enumerate(values)]
+
+
+def _materialization_trace(spec: Object, items: Sequence[Object], *, request: str = "R0") -> list[Object]:
+    association = cast(str, spec["association"])
+    roots: list[Object] = (
+        [
+            {
+                "kind": "root_input",
+                "target": spec["target"],
+                "port": "input",
+                "artifact_type": "text",
+                "value": "selector",
+            }
+        ]
+        if spec["path"] == "adaptive"
+        else []
+    )
+    return [*roots, *_trace((association,), request), _materialization_event(spec, items, request=request)]
+
+
+def _materialization_specs() -> list[Object]:
+    cases: list[Object] = []
+    initial_single = _materialization_spec("initial", "single", declaration="D0")
+    initial_collection = _materialization_spec("initial", "collection", declaration="D0")
+    adaptive_single = _materialization_spec("adaptive", "single")
+    adaptive_collection = _materialization_spec("adaptive", "collection")
+    for name, spec in (
+        ("admit_initial_single", initial_single),
+        ("admit_initial_collection", initial_collection),
+        ("admit_adaptive_single", adaptive_single),
+        ("admit_adaptive_collection", adaptive_collection),
+    ):
+        cases.append(_case("materialization", name, _materialization_decl(spec, admission=True), [], "admission"))
+    admission_mutants: tuple[tuple[str, Object, Object], ...] = (
+        ("single_output_mismatch", initial_single, {"output_type": "text_collection"}),
+        ("single_max_items", initial_single, {"max_items": 2}),
+        ("collection_scalar_output", initial_collection, {"output_type": "text"}),
+        ("collection_zero_max", initial_collection, {"max_items": 0}),
+        ("collection_ceiling", initial_collection, {"max_items": 4}),
+        ("adaptive_binding_identity", adaptive_collection, {"declaration": "D0"}),
+    )
+    for name, base, changes in admission_mutants:
+        mutant = dict(base)
+        mutant.update(changes)
+        cases.append(_case("materialization", name, _materialization_decl(mutant, admission=True), [], "admission"))
+    text_collection = _materialization_spec("initial", "collection", declaration="D0")
+    nested = _materialization_spec(
+        "adaptive", "collection", association="A1", item_type="text_collection", output_type="nested_collection"
+    )
+    cases.extend(
+        [
+            _case(
+                "materialization",
+                "conflicting_schema",
+                _materialization_decl(
+                    text_collection,
+                    dict(text_collection, association="D1", declaration="D1", item_type="bytes"),
+                    admission=True,
+                ),
+                [],
+                "admission",
+            ),
+            _case(
+                "materialization",
+                "nested_collection_schema",
+                _materialization_decl(text_collection, nested, admission=True),
+                [],
+                "admission",
+            ),
+            _case(
+                "materialization",
+                "collection_root_input",
+                dict(_materialization_decl(text_collection, admission=True), root_input_types=["text_collection"]),
+                [],
+                "admission",
+            ),
+        ]
+    )
+    for label, spec in (("initial", initial_single), ("adaptive", adaptive_single)):
+        cases.append(
+            _case(
+                "materialization",
+                f"{label}_single_exact",
+                _materialization_decl(spec),
+                _materialization_trace(spec, _items("one")),
+            )
+        )
+        cases.append(
+            _case(
+                "materialization",
+                f"{label}_single_multiple",
+                _materialization_decl(spec),
+                _materialization_trace(spec, _items("one", "two")),
+            )
+        )
+    for label, spec in (("initial", initial_collection), ("adaptive", adaptive_collection)):
+        for size in (1, 2, 3, 4, 0):
+            values = tuple(f"v{index}" for index in range(size))
+            cases.append(
+                _case(
+                    "materialization",
+                    f"{label}_collection_{'one_over' if size == 4 else size}",
+                    _materialization_decl(spec),
+                    _materialization_trace(spec, _items(*values)),
+                )
+            )
+        reordered = list(reversed(_items("zero", "one")))
+        cases.append(
+            _case(
+                "materialization",
+                f"{label}_canonical_reorder",
+                _materialization_decl(spec),
+                _materialization_trace(spec, reordered),
+            )
+        )
+        malformed: tuple[tuple[str, list[Object]], ...] = (
+            ("duplicate", [{"key": 0, "value": "a", "version": 1}, {"key": 0, "value": "b", "version": 1}]),
+            ("wrong_item", [{"key": 0, "value": 7, "version": 1}]),
+            ("nested_value", [{"key": 0, "value": {"items": []}, "version": 1}]),
+        )
+        for suffix, values in malformed:
+            cases.append(
+                _case(
+                    "materialization",
+                    f"{label}_{suffix}",
+                    _materialization_decl(spec),
+                    _materialization_trace(spec, values),
+                )
+            )
+        one_over_malformed = _items("a", "b", "c", "d")
+        one_over_malformed[0]["value"] = {"items": []}
+        cases.append(
+            _case(
+                "materialization",
+                f"{label}_outer_count_precedence",
+                _materialization_decl(spec),
+                _materialization_trace(spec, one_over_malformed),
+            )
+        )
+    for suffix, limits in (
+        ("artifact_count_one_over", {"max_artifacts": 2}),
+        ("logical_bytes_one_over", {"max_artifact_bytes": 7}),
+        ("provenance_one_over", {"max_provenance_edges": 1}),
+    ):
+        cases.append(
+            _case(
+                "materialization",
+                f"initial_{suffix}",
+                _materialization_decl(initial_collection, limit_changes=limits),
+                _materialization_trace(initial_collection, _items("aa", "bb")),
+            )
+        )
+    for suffix, maximum in (("declared_bytes_exact", 4), ("declared_bytes_one_over", 3)):
+        byte_spec = dict(initial_collection, max_bytes=maximum)
+        cases.append(
+            _case(
+                "materialization",
+                f"initial_{suffix}",
+                _materialization_decl(byte_spec),
+                _materialization_trace(byte_spec, _items("aa", "bb")),
+            )
+        )
+    cases.append(
+        _case(
+            "materialization",
+            "adaptive_foreign_association",
+            _materialization_decl(adaptive_collection),
+            [*_trace(("A0",)), dict(_materialization_event(adaptive_collection, _items("a")), association="A1")],
+        )
+    )
+    cases.extend(
+        [
+            _case(
+                "materialization",
+                "initial_unmaterialized_source_result",
+                _materialization_decl(initial_collection),
+                [
+                    *_trace(("D0",)),
+                    {
+                        "items": [{"association": "D0", "key": 0, "text": "a", "version": 1}],
+                        "kind": "source_result",
+                        "request": "R0",
+                        "source": "S0",
+                    },
+                ],
+            ),
+            _case(
+                "materialization",
+                "adaptive_unmaterialized_result",
+                _materialization_decl(adaptive_collection),
+                [*_trace(("A0",)), _result("R0", ("A0",), ("A0",))],
+            ),
+            _case(
+                "materialization",
+                "binding_finish_before_materialization",
+                _materialization_decl(initial_collection),
+                [{"kind": "binding_finish"}],
+            ),
+        ]
+    )
+    first = _materialization_spec("initial", "collection", declaration="D0", node="N0")
+    second = _materialization_spec("initial", "collection", declaration="D1", node="N1")
+    cases.append(
+        _case(
+            "materialization",
+            "same_port_distinct_nodes",
+            _materialization_decl(first, second),
+            [
+                *_materialization_trace(first, _items("a")),
+                *_materialization_trace(second, _items("b"), request="R1"),
+            ],
+        )
+    )
+    for path, spec in (("initial", initial_single), ("adaptive", adaptive_single)):
+        cases.append(
+            _case(
+                "materialization",
+                f"{path}_single_zero_collection_limit",
+                _materialization_decl(spec, limit_changes={"max_collection_items": 0}),
+                _materialization_trace(spec, _items("one")),
+            )
+        )
+        for terminal in ("lost", "cancelled"):
+            prefix = _materialization_trace(spec, _items("one"))[:-1]
+            terminals: list[Object] = (
+                [{"kind": "lost", "request": "R0"}]
+                if terminal == "lost"
+                else [{"kind": "cancel", "request": "R0"}, {"kind": "stop", "request": "R0", "usage": "unknown"}]
+            )
+            cases.append(
+                _case(
+                    "materialization",
+                    f"{path}_late_{terminal}",
+                    _materialization_decl(spec),
+                    [*prefix, *terminals, _materialization_event(spec, _items("late"))],
+                )
+            )
+    for suffix, parents in (
+        ("missing_parent", []),
+        ("foreign_parent", ["RootInputKey:T1:input"]),
+        ("invented_parent", ["OperationInputKey:A0:input"]),
+    ):
+        events = _materialization_trace(adaptive_collection, _items("one"))
+        events[-1] = dict(events[-1], parents=parents)
+        cases.append(_case("materialization", f"adaptive_{suffix}", _materialization_decl(adaptive_collection), events))
+    cases.append(
+        _case(
+            "materialization",
+            "adaptive_missing_source_fact",
+            _materialization_decl(adaptive_collection),
+            _materialization_trace(adaptive_collection, _items("one"))[1:],
+        )
+    )
+    bridge_decl = _materialization_decl(adaptive_collection)
+    bridge_decl["runtime_mappings"] = [
+        {"condition": "result", "failure": None, "reported_outcome": "ok", "outcome": "ok", "category": "success"}
+    ]
+    bridge_decl["outcome_categories"] = {"ok": "success"}
+    cases.append(
+        _case(
+            "materialization",
+            "adaptive_result_bridge",
+            bridge_decl,
+            [
+                {"kind": "bridge_start", "task": "A0"},
+                *_materialization_trace(adaptive_collection, _items("one")),
+                {"kind": "bridge_condition", "task": "A0", "condition": "result", "reported_outcome": "ok"},
+                {"kind": "bridge_emit", "task": "A0", "outcome": "ok", "category": "success"},
+            ],
+        )
+    )
+    return cases
 
 
 def _generate_specs() -> tuple[Object, ...]:
@@ -2037,6 +2700,7 @@ def _generate_specs() -> tuple[Object, ...]:
                 [*retry_prefix, *terminal_events, _reserve("R2", ["T0"], purpose=continuation)],
             )
         )
+    c.extend(_materialization_specs())
     return tuple(c)
 
 
@@ -2067,7 +2731,10 @@ def build_manifest(cases: Sequence[Object]) -> Object:
     corpus = canonical_bytes(cases)
     return {
         "case_count": len(cases),
+        "base_case_count": 156,
+        "base_corpus_sha256": BASE_CORPUS_SHA256,
         "contract_sha256": CONTRACT_SHA256,
+        "materialization_addendum_sha256": MATERIALIZATION_ADDENDUM_SHA256,
         "corpus_path": CORPUS_PATH,
         "corpus_sha256": hashlib.sha256(corpus).hexdigest(),
         "event_count": event_count(cases),

@@ -1,9 +1,11 @@
 {
-  "case_count": 156,
+  "base_case_count": 156,
+  "base_corpus_sha256": "c62f2cc7e7237ea030451ac8d35a3c30b39f71766b4275348597949d560a7a6a",
+  "case_count": 214,
   "contract_sha256": "9b0ab07b8c0212ffd954dc37eb37540141da6899753fc778ad26238494aeaeca",
   "corpus_path": "tests/graph_sdk/reference/effects_v1_cases.json",
-  "corpus_sha256": "c62f2cc7e7237ea030451ac8d35a3c30b39f71766b4275348597949d560a7a6a",
-  "event_count": 679,
+  "corpus_sha256": "b509a2e1dc697ae5e16c8f2f9652aac74d862e4b449f64958fbba99abda87e93",
+  "event_count": 888,
   "family_counts": {
     "admission": 23,
     "binding": 22,
@@ -12,11 +14,13 @@
     "decisions": 11,
     "inflight": 5,
     "keyed": 8,
+    "materialization": 58,
     "races": 24,
     "resources": 8,
     "retry": 24
   },
-  "generator_version": "effects-v1-generator-1",
-  "self_test_version": "effects-v1-self-test-1",
-  "trace_count": 161
+  "generator_version": "effects-v1-generator-2-materialization",
+  "materialization_addendum_sha256": "b1a5651ee2649b01c89e80bd1442e3f03209292b48ce846d27714698f57eb07c",
+  "self_test_version": "effects-v1-self-test-2-materialization",
+  "trace_count": 219
 }

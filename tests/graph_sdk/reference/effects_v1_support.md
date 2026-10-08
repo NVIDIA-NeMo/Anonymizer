@@ -80,6 +80,52 @@ responses after Lost or cancellation create no artifacts or binding state.
 A whole oversize binding response still closes
 the charged physical request while failing the binding without truncation.
 
+## Materialization extension
+
+The extension implements the adopted context-materialization addendum identified
+by SHA-256
+`b1a5651ee2649b01c89e80bd1442e3f03209292b48ce846d27714698f57eb07c`.
+The first 156 cases, 161 traces, and 679 events are the accepted R2 corpus in
+their original order and bytes. Its corpus SHA-256 is
+`c62f2cc7e7237ea030451ac8d35a3c30b39f71766b4275348597949d560a7a6a`.
+
+The added finite universe has initial and adaptive paths, single and collection
+shapes, collection sizes `0/1/2/3/4` against an admitted maximum of three, two
+nodes sharing the port name `context`, a scalar selector root, and bounded UTF-8 values.
+Single results enumerate exact-one success and multiple-result rejection.
+Collection results enumerate one, two, exact-three, one-over-four, empty,
+duplicate key/version, wrong scalar type, nested value, and reversed input
+order. Reversed input is normalized by ascending numeric `(key, version)`.
+
+Admission derives one artifact-type schema from all initial and adaptive
+declarations. It rejects single/output mismatch, a single maximum other than
+one, empty or over-ceiling collection bounds, a scalar output reused as a
+collection, conflicting item types for one collection type, a collection type
+used as an item type, a collection-typed root input, duplicate declaration
+identity, and binding identity on an adaptive declaration. These are mutated
+declarations evaluated by the admission function; there is no fixture-provided
+error label.
+
+Every result is tied to one dispatched physical request and its exact admitted
+association. Initial collections retain `N` scalar items plus one collection
+artifact, count each item byte once in the scalar and once in the collection,
+and record `N` edges from one scoped `InitialCollectionKey` to exact
+`BoundInputKey(target,node,port,declaration,key,version)` parents. Each scalar
+item retains its item type and an empty-parent root fact. Adaptive traces first
+retain and count the selector root through a separate `root_input` event.
+The materialization adds exactly one output and its bytes, using
+`OperationOutputKey(activation,target,port)` with the declared existing
+`RootInputKey(target,port)` as parent; it never introduces a binding identity.
+Missing, foreign, and invented parents reject. A late result after Lost or
+trusted cancellation cannot create output, replace the first terminal, or clear
+remote uncertainty. Scalar materialization succeeds with zero collection
+capacity. Adaptive success retains the exact reported request outcome, and an
+integrated bridge witness closes the semantic task through that fact. Whole-response rejection occurs before any materialization
+state is committed. Separate witnesses exercise collection, artifact-count,
+logical-byte, and provenance-edge ceilings and two nodes with the same port.
+The dispatched-attribution addendum changes no neutral R2 event: adaptive
+results use the association already recorded by reserve and dispatch.
+
 Only causal sequences are emitted. Policy binding precedes reservation;
 reservation precedes dispatch; dispatch precedes terminal and settlement;
 trusted stop follows cancellation; decision submit/deadline follows open; and

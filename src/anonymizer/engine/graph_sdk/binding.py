@@ -237,7 +237,7 @@ async def _run_binding(work: _BindingWork) -> BindingResult:
                     node=declaration.node,
                     port=declaration.port,
                     source=declaration.source,
-                    artifact_type=declaration.artifact_type,
+                    artifact_type=declaration.materialization.item_type,
                     text=item.text,
                 )
                 for item in result.items
@@ -310,6 +310,20 @@ def _validate_binding(
         reject(EffectCode.DUPLICATE)
     if {item.source for item in resources} != sources:
         reject(EffectCode.MISSING)
+    schemas: dict[object, tuple[str, object]] = {}
+    for declaration in declarations:
+        item_type = declaration.materialization.item_type
+        if schemas.get(item_type, ("scalar", item_type))[0] == "collection":
+            reject(EffectCode.CONTRADICTORY)
+        schemas.setdefault(item_type, ("scalar", item_type))
+        candidate = (
+            "scalar" if declaration.materialization.kind == "single" else "collection",
+            item_type,
+        )
+        existing = schemas.get(declaration.artifact_type)
+        if existing is not None and existing != candidate:
+            reject(EffectCode.CONTRADICTORY)
+        schemas[declaration.artifact_type] = candidate
     nodes = _reachable_operations(workflow)
     for declaration in declarations:
         if declaration.target not in data.targets:
@@ -364,7 +378,7 @@ def _capability(
     return next(
         item
         for item in capabilities
-        if item.source == declaration.source and item.artifact_type == declaration.artifact_type
+        if item.source == declaration.source and item.artifact_type == declaration.materialization.item_type
     )
 
 

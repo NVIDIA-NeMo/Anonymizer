@@ -339,3 +339,159 @@ def test_generator_has_no_production_imports_or_expected_count_spoofing() -> Non
     source = GENERATOR.read_text()
     assert "EXPECTED_CASE_COUNT" not in source
     assert "EXPECTED_EVENT_COUNT" not in source
+
+
+def test_materialization_preserves_history_and_covers_both_paths() -> None:
+    cases = reference.generate_cases()
+    assert hashlib.sha256(reference.canonical_bytes(cases[:156])).hexdigest() == reference.BASE_CORPUS_SHA256
+    for path in ("initial", "adaptive"):
+        single = cast(reference.Object, reference.case_by_id(f"materialization/{path}_single_exact")["expected"])
+        collection = cast(reference.Object, reference.case_by_id(f"materialization/{path}_collection_3")["expected"])
+        assert single["status"] == collection["status"] == "accepted"
+        assert "materialization" in cast(reference.Object, collection["state"])
+
+
+def test_materialization_is_atomic_and_canonical() -> None:
+    reordered = cast(reference.Object, reference.case_by_id("materialization/initial_canonical_reorder")["expected"])
+    state = cast(reference.Object, reordered["state"])
+    materialization = cast(reference.Object, state["materialization"])
+    port = next(iter(cast(reference.Object, materialization["ports"]).values()))
+    assert [item["key"] for item in cast(list[reference.Object], cast(reference.Object, port)["value"])] == [0, 1]
+    for suffix, code in (
+        ("initial_collection_one_over", "collection_limit_exceeded"),
+        ("initial_duplicate", "duplicate_item"),
+        ("initial_nested_value", "nested_collection"),
+        ("initial_logical_bytes_one_over", "artifact_bytes_exceeded"),
+    ):
+        assert reference.case_by_id(f"materialization/{suffix}")["expected"] == {
+            "code": code,
+            "status": "rejected",
+        }
+
+
+def test_initial_and_adaptive_provenance_are_distinct() -> None:
+    initial = cast(reference.Object, reference.case_by_id("materialization/initial_collection_2")["expected"])
+    initial_state = cast(reference.Object, initial["state"])
+    initial_materialization = cast(reference.Object, initial_state["materialization"])
+    initial_key = next(iter(cast(reference.Object, initial_materialization["provenance"])))
+    assert initial_key.startswith("InitialCollectionKey:")
+    assert initial_materialization["artifact_count"] == 3
+    assert initial_materialization["artifact_bytes"] == 8
+    adaptive = cast(reference.Object, reference.case_by_id("materialization/adaptive_collection_2")["expected"])
+    adaptive_state = cast(reference.Object, adaptive["state"])
+    adaptive_materialization = cast(reference.Object, adaptive_state["materialization"])
+    adaptive_key = next(
+        key
+        for key in cast(reference.Object, adaptive_materialization["provenance"])
+        if key.startswith("OperationOutputKey:")
+    )
+    assert adaptive_key.startswith("OperationOutputKey:")
+    assert "Binding" not in adaptive_key
+    assert adaptive_key == "OperationOutputKey:A0:T0:context"
+    assert adaptive_materialization["artifact_count"] == 2  # selector root + one output
+    assert adaptive_materialization["artifact_bytes"] == 12  # selector bytes + collection bytes
+    assert cast(reference.Object, adaptive_materialization["provenance"])[adaptive_key] == ["RootInputKey:T0:input"]
+
+
+def test_materialization_admission_mutants_are_real_declarations() -> None:
+    expected = {
+        "adaptive_binding_identity": "contradictory",
+        "collection_ceiling": "contradictory",
+        "collection_root_input": "collection_root_input",
+        "conflicting_schema": "contradictory",
+        "nested_collection_schema": "nested_collection",
+        "single_max_items": "contradictory",
+    }
+    for suffix, code in expected.items():
+        case = reference.case_by_id(f"materialization/{suffix}")
+        assert case["boundary"] == "admission"
+        assert case["expected"] == {"code": code, "status": "rejected"}
+        assert "admission_error" not in cast(reference.Object, case["declaration"])
+
+
+def test_same_port_name_keeps_scoped_initial_collection_keys() -> None:
+    result = cast(reference.Object, reference.case_by_id("materialization/same_port_distinct_nodes")["expected"])
+    state = cast(reference.Object, result["state"])
+    provenance = cast(reference.Object, cast(reference.Object, state["materialization"])["provenance"])
+    assert sorted(provenance) == [
+        "BoundInputKey:T0:N0:context:D0:0:1",
+        "BoundInputKey:T0:N1:context:D1:0:1",
+        "InitialCollectionKey:T0:N0:context:D0",
+        "InitialCollectionKey:T0:N1:context:D1",
+    ]
+
+
+def test_declared_materialization_cannot_use_legacy_result_paths() -> None:
+    for suffix, code in (
+        ("initial_unmaterialized_source_result", "materialization_required"),
+        ("adaptive_unmaterialized_result", "materialization_required"),
+        ("binding_finish_before_materialization", "missing_materialization"),
+    ):
+        assert reference.case_by_id(f"materialization/{suffix}")["expected"] == {
+            "code": code,
+            "status": "rejected",
+        }
+
+
+def test_materialization_item_roots_keep_exact_scope_and_scalar_types() -> None:
+    result = cast(reference.Object, reference.case_by_id("materialization/initial_collection_2")["expected"])
+    state = cast(reference.Object, result["state"])
+    provenance = cast(reference.Object, cast(reference.Object, state["materialization"])["provenance"])
+    parents = ["BoundInputKey:T0:N0:context:D0:0:1", "BoundInputKey:T0:N0:context:D0:1:1"]
+    assert provenance["InitialCollectionKey:T0:N0:context:D0"] == parents
+    artifacts = cast(list[reference.Object], state["artifacts"])
+    for parent in parents:
+        assert provenance[parent] == []
+        assert next(item for item in artifacts if item["identity"] == parent)["artifact_type"] == "text"
+
+
+def test_late_materialization_cannot_replace_first_terminal_or_create_output() -> None:
+    for path in ("initial", "adaptive"):
+        for terminal in ("lost", "cancelled"):
+            case = reference.case_by_id(f"materialization/{path}_late_{terminal}")
+            declaration = cast(reference.Object, case["declaration"])
+            events = cast(list[reference.Object], case["events"])
+            before = cast(reference.Object, reference.reduce_trace(declaration, events[:-1])["state"])
+            after = cast(reference.Object, cast(reference.Object, case["expected"])["state"])
+            for field in (
+                "artifacts",
+                "binding_sources",
+                "binding_terminal",
+                "remote_outstanding",
+                "request_facts",
+                "terminals",
+            ):
+                assert after[field] == before[field], (path, terminal, field)
+            assert after.get("materialization") == before.get("materialization")
+            assert cast(reference.Object, after["terminals"])["R0"] == terminal
+
+
+def test_scalar_does_not_consume_collection_capacity() -> None:
+    for path in ("initial", "adaptive"):
+        result = cast(
+            reference.Object, reference.case_by_id(f"materialization/{path}_single_zero_collection_limit")["expected"]
+        )
+        assert result["status"] == "accepted"
+
+
+def test_adaptive_provenance_requires_declared_existing_producer() -> None:
+    for suffix in ("missing_parent", "foreign_parent", "invented_parent", "missing_source_fact"):
+        assert reference.case_by_id(f"materialization/adaptive_{suffix}")["expected"] == {
+            "status": "rejected",
+            "code": "invalid_provenance",
+        }
+
+
+def test_adaptive_result_drives_actual_task_outcome() -> None:
+    case = reference.case_by_id("materialization/adaptive_result_bridge")
+    result = cast(reference.Object, case["expected"])
+    assert result["status"] == "accepted"
+    state = cast(reference.Object, result["state"])
+    assert state["tasks"] == {"A0": "success"}
+    assert state["request_facts"] == {"R0": {"condition": "result", "outcomes": {"A0": "ok"}}}
+    events = cast(list[reference.Object], json.loads(json.dumps(case["events"])))
+    events[-2]["reported_outcome"] = "other"
+    assert reference.reduce_trace(cast(reference.Object, case["declaration"]), events) == {
+        "status": "rejected",
+        "code": "request_causality",
+    }
