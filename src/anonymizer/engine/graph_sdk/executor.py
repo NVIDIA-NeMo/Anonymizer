@@ -119,6 +119,9 @@ from anonymizer.graph.activation import (
     advance_activation,
     initialize_activation,
 )
+from anonymizer.graph.activation import (
+    _depth as _activation_depth,
+)
 from anonymizer.graph.workflow import (
     AdmittedWorkflow,
     ArtifactType,
@@ -2544,7 +2547,9 @@ def _materialize_subgraph_outputs(
     facts: _ExecutionFacts,
     input_parents: dict[tuple[DatumId, ActivationKey, str], ProvenanceKey],
 ) -> None:
-    for entry in state.entries:
+    for entry in sorted(
+        state.entries, key=lambda item: (-_activation_depth(item.activation), item.activation.occurrence)
+    ):
         if entry.status not in {"success", "failure", "cancelled", "lost", "blocked", "inconsistent"}:
             continue
         try:

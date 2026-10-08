@@ -513,3 +513,17 @@ def test_nested_passthrough_provenance_preserves_the_resolved_input_source(mutat
         assert error.value.code is EffectCode.CONTRADICTORY
     finally:
         object.__setattr__(output, "parents", original)
+
+
+@pytest.mark.parametrize("depth", [2, 3, 4])
+@pytest.mark.parametrize("passthrough", [False, True])
+def test_deep_nested_outputs_close_before_their_parent_outputs(depth: int, passthrough: bool) -> None:
+    execution, result = asyncio.run(
+        _execute_assessment(nested_depth=depth, candidate_input=passthrough, root_passthrough=passthrough)
+    )
+    assert len(result.final_outputs) == 1
+    assert sum(item.structural for item in result.record.terminals) == depth
+    admitted, current, submissions = _inputs(execution, result)
+    output = qualify(admitted=admitted, result=result, current=current, submissions=submissions)
+    assert len(output.qualified) == 1
+    assert output.record.statuses[0].qualification == "met"

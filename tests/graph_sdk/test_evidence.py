@@ -130,6 +130,7 @@ async def _execute_assessment(
     coverage: frozenset[CoverageAtom] = frozenset(),
     target_count: int = 1,
     nested: bool = False,
+    nested_depth: int = 0,
     rename_ports: bool = False,
     data: ValidatedDataGraph | None = None,
     execution_only: bool = False,
@@ -137,6 +138,8 @@ async def _execute_assessment(
     resource: ResourceLease | None = None,
     external: tuple[RequestTransport, ResourceLease] | None = None,
 ) -> tuple[AdmittedExecutionPlan, ExecutionResult]:
+    depth = nested_depth or int(nested)
+    nested = depth > 0
     assert not root_passthrough or candidate_input
     assert not (decision_input and external is not None)
     assert not (auxiliary_output and (rename_ports or nested or decision_input or external is not None))
@@ -302,7 +305,7 @@ async def _execute_assessment(
         limits=replace(raw.limits, max_nodes=len(nodes), max_bindings=4, max_sequence_edges=1),
     )
     scopes = (DynamicScope(workflow=static, maps=(), loops=(), joins=()),)
-    if nested:
+    for level in range(depth):
         body = static
         owner = WorkflowId.new()
         container = NodeId.new(workflow=owner)
@@ -338,14 +341,14 @@ async def _execute_assessment(
             sequence=(),
             choices=(),
             protection=tuple(body.protection_requirements),
-            limits=replace(body.limits, max_nodes=len(nodes) + 1, max_subgraph_depth=2),
+            limits=replace(body.limits, max_nodes=len(nodes) + level + 1, max_subgraph_depth=level + 2),
         )
         scopes = (*scopes, DynamicScope(workflow=static, maps=(), loops=(), joins=()))
-    count = len(nodes) + int(nested)
+    count = len(nodes) + depth
     workflow = admit_activation_workflow(
         workflow=static,
         scopes=scopes,
-        limits=replace(base.limits, max_activation_occurrences=count, max_dynamic_depth=2 if nested else 1),
+        limits=replace(base.limits, max_activation_occurrences=count, max_dynamic_depth=depth + 1),
     )
     data = data if data is not None else _data(target_count)
     target_count = len(data.targets)
@@ -369,9 +372,7 @@ async def _execute_assessment(
         data=data,
         workflow=workflow,
         capabilities=capabilities,
-        activation_limits=ActivationLimits(
-            max_events=3 * count, max_entries=count, max_parent_depth=2 if nested else 1
-        ),
+        activation_limits=ActivationLimits(max_events=3 * count, max_entries=count, max_parent_depth=depth + 1),
         selections=tuple(
             ImplementationSelection(
                 node=item.id, implementation=capability.implementation, configuration=capability.configuration
@@ -444,8 +445,8 @@ async def _execute_assessment(
             max_finding_code_bytes=20,
             max_absence_queries=1 if environment else 0,
             max_assessment_facts=target_count,
-            max_port_facts=(3 + 2 * int(predecessor) + int(nested) + int(auxiliary_output)) * target_count,
-            max_provenance_edges=(2 + int(predecessor) + int(nested) + int(auxiliary_output)) * target_count,
+            max_port_facts=(3 + 2 * int(predecessor) + depth + int(auxiliary_output)) * target_count,
+            max_provenance_edges=(2 + int(predecessor) + depth + int(auxiliary_output)) * target_count,
         ),
     )
     services = ExecutionServices(
