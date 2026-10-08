@@ -899,6 +899,7 @@ class _Qualification:
         self.candidates[target] = candidate
         if candidate not in self.current.candidates or candidate.artifact not in self.result.record.artifacts:
             self.withholding[target].add("missing_candidate")
+            self.uncertain.add(target)
 
     def assess(self, target: DatumId, verified: tuple[VerifiedEvidence, ...]) -> None:
         candidate = self.candidates.get(target)
@@ -1032,7 +1033,11 @@ class _Qualification:
                     for item in self.result.final_outputs
                 )
             else:
-                available = candidate is not None and candidate.artifact in self.result.record.artifacts
+                available = (
+                    candidate is not None
+                    and candidate in self.current.candidates
+                    and candidate.artifact in self.result.record.artifacts
+                )
                 if not codes:
                     status = "met"
                 elif target in self.uncertain or codes & {"assessment_unknown", "inconsistent_attribution"}:

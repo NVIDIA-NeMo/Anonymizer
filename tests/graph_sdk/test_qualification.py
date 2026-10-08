@@ -947,6 +947,11 @@ def test_latest_candidate_sibling_is_unavailable_and_cannot_replace_final_output
     output = qualify(admitted=admitted, result=result, current=current, submissions=submissions)
     assert not output.qualified
     assert "missing_candidate" in output.targets[0].withholding
+    assert output.record.statuses[0].qualification == "unknown"
+    assert not output.record.statuses[0].artifact_available
+    without_assessment = qualify(admitted=admitted, result=result, current=current, submissions=())
+    assert without_assessment.record.statuses[0].qualification == "unknown"
+    assert not without_assessment.record.statuses[0].artifact_available
     final = result.final_outputs[0]
     original = final.candidate
     object.__setattr__(final, "candidate", CandidateRef(artifact=older, target=original.target))
