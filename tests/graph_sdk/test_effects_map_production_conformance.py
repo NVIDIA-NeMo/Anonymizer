@@ -297,7 +297,16 @@ def _map_fixture(*, max_children: int = 2, control_only: bool = False, other_cou
     )
     operations = (expander_operation, member_operation, join_operation)
     capabilities = tuple(_capability(operation, index) for index, operation in enumerate(operations))
-    return _MapFixture(workflow, expander, member, join, text_type, collection_type, other_type, capabilities)
+    return _MapFixture(
+        workflow,
+        expander,
+        member,
+        join,
+        text_type,
+        collection_type,
+        other_type,
+        capabilities,
+    )
 
 
 @dataclass
@@ -399,7 +408,11 @@ def _admit_fixture(
     prepared = prepare(
         data=data,
         workflow=fixture.workflow,
-        activation_limits=ActivationLimits(max_events=20, max_entries=4, max_parent_depth=2),
+        activation_limits=ActivationLimits(
+            max_events=20,
+            max_entries=fixture.workflow.limits.max_activation_occurrences,
+            max_parent_depth=2,
+        ),
         bound_inputs=(BoundInput(target=target, source=target, port="default", artifact_type=fixture.text_type),),
         configuration=PreparationConfiguration(
             purpose="execution_only", required_protection_outcomes=frozenset(), hard_request_limit=None
@@ -414,7 +427,10 @@ def _admit_fixture(
             for node, capability in by_node.items()
         ),
         capabilities=fixture.capabilities,
-        limits=_limits(capabilities=3, slots=4),
+        limits=_limits(
+            capabilities=len(fixture.capabilities),
+            slots=fixture.workflow.limits.max_activation_occurrences,
+        ),
     )
     context = admit_context_plan(
         prepared=prepared,
@@ -489,6 +505,7 @@ async def _execute_membership(
     control_only: bool = False,
     other_count: int = 0,
     cancel_before_result: bool = False,
+    provenance_edge_headroom: int = 8,
 ):
     fixture = _map_fixture(control_only=control_only, other_count=other_count)
     data = _data(1)
@@ -557,17 +574,23 @@ async def _execute_membership(
         assert binding.context is not None
         bound_context = binding.context
     baseline_port_facts = 1 + (1 if bound_context is not None else 0)
-    baseline_provenance_edges = 1 if bound_context is not None else 0
+    baseline_provenance_edges = (1 if bound_context is not None else 0) + 1 + other_count
     admitted = _admit_fixture(
         fixture,
         data=data,
         bound_context=bound_context,
         baseline_port_facts=baseline_port_facts,
         baseline_provenance_edges=baseline_provenance_edges,
+        provenance_edge_headroom=provenance_edge_headroom,
     )
-    baseline_artifacts = len(data.targets) + (len(bound_context.artifacts) if bound_context is not None else 0)
-    baseline_bytes = sum(len(datum.text.encode()) for datum in data.datums if datum.id in data.targets) + (
-        6 if bound_context is not None else 0
+    context_item_bytes = (
+        sum(len(artifact.text.encode()) for artifact in bound_context.artifacts) if bound_context is not None else 0
+    )
+    baseline_artifacts = len(data.targets) + (len(bound_context.artifacts) + 1 if bound_context is not None else 0)
+    baseline_bytes = (
+        sum(len(datum.text.encode()) for datum in data.datums if datum.id in data.targets)
+        + context_item_bytes
+        + (context_item_bytes if bound_context is not None else 0)
     )
     by_node = dict(zip((fixture.expander, fixture.member, fixture.join), fixture.capabilities, strict=True))
     started = asyncio.Event() if cancel_before_result else None
@@ -671,6 +694,24 @@ def test_map_expansion_admission_rejections(
     assert case["expected"] == {"status": "rejected", "code": code.value}
 
 
+def test_map_provenance_capacity_rejects_before_execution_at_one_over() -> None:
+    rejected = MAP_CASES["map/provenance_one_over"]
+    accepted = MAP_CASES["map/bounds_exact"]
+    fixture = _map_fixture()
+
+    with pytest.raises(EffectRejected) as error:
+        _admit_fixture(fixture, baseline_provenance_edges=1, provenance_edge_headroom=1)
+
+    assert error.value.code == EffectCode.LIMIT_EXCEEDED
+    assert rejected["boundary"] == "map_execution_preflight"
+    assert rejected["events"] == []
+    assert rejected["expected"] == {"status": "rejected", "code": error.value.code.value}
+
+    plan = _admit_fixture(fixture, baseline_provenance_edges=1, provenance_edge_headroom=2)
+    assert plan.assessment_limits.max_provenance_edges == 3
+    assert accepted["expected"]["status"] == "accepted"
+
+
 @pytest.mark.parametrize("item_count", (0, 1, 2))
 def test_map_harness_publishes_real_occurrences(item_count: int) -> None:
     asyncio.run(_assert_map_membership(item_count))
@@ -725,12 +766,12 @@ def test_malformed_map_results_publish_no_partial_facts(case_id: str, response_m
 
 async def _assert_malformed_map_result(case_id: str, response_mode: str, other_count: int) -> None:
     case = MAP_CASES[case_id]
-    fixture, result, _ = await _execute_membership(1, response_mode=response_mode, other_count=other_count)
+    fixture, result, callbacks = await _execute_membership(1, response_mode=response_mode, other_count=other_count)
     expander = next(entry for entry in result.states[0].entries if entry.template == fixture.expander)
     assert expander.status == "failure"
     assert expander.outcome is None
     assert case["expected"]["state"]["terminal"] == "malformed_response"
-    _assert_only_setup_baseline(fixture, result)
+    _assert_only_setup_baseline(fixture, result, callbacks)
 
 
 def test_map_overflow_publishes_collection_without_item_facts() -> None:
@@ -842,6 +883,7 @@ async def _assert_map_result_publication(
         artifact_headroom=artifact_headroom,
         artifact_byte_headroom=artifact_byte_headroom,
         other_count=other_count,
+        provenance_edge_headroom=cast(dict[str, int], case["declaration"]["limits"])["max_provenance_edges"],
     )
     expected = case["expected"]["state"]["publication"]
     root = next(fact for fact in result.provenance if isinstance(fact.key, RootInputKey))
@@ -861,8 +903,15 @@ async def _assert_map_result_publication(
     staged_ports = [fact for fact in result.ports if fact.port not in {"default", "schema"}]
     assert len(staged_ports) == len(expected["ports"])
     assert len(staged_provenance) == len(expected["provenance"])
-    output = next(fact for fact in staged_provenance if isinstance(fact.key, OperationOutputKey))
+    outputs = {fact.key.port: fact for fact in staged_provenance if isinstance(fact.key, OperationOutputKey)}
+    assert set(outputs) == {"members", *(f"other{index}" for index in range(other_count))}
+    output = outputs["members"]
     assert output.parents == frozenset({root.key})
+    values_by_artifact = dict(staged_artifacts)
+    for index in range(other_count):
+        other = outputs[f"other{index}"]
+        assert other.parents == frozenset({root.key})
+        assert values_by_artifact[other.artifact] == TextCollectionValue(items=())
     map_items = [fact for fact in staged_provenance if isinstance(fact.key, MapItemKey)]
     assert all(fact.parents == frozenset({output.key}) for fact in map_items)
     item_artifacts = {fact.key.member: fact.artifact for fact in map_items}
@@ -873,9 +922,9 @@ async def _assert_map_result_publication(
         and item.inputs[0].artifact == item_artifacts[item.association.task.activation]
         for item in member_inputs
     )
-    output_port = next(fact for fact in staged_ports if fact.node == fixture.expander)
-    assert output_port.port == "members"
-    assert output_port.artifact == output.artifact
+    expander_ports = {fact.port: fact for fact in staged_ports if fact.node == fixture.expander}
+    assert set(expander_ports) == set(outputs)
+    assert all(expander_ports[port].artifact == fact.artifact for port, fact in outputs.items())
     item_ports = [fact for fact in staged_ports if fact.node == fixture.member]
     assert {fact.activation: fact.artifact for fact in item_ports} == item_artifacts
     assert all(fact.port == "item" and fact.artifact_type == fixture.text_type for fact in item_ports)
@@ -907,7 +956,7 @@ async def _assert_map_storage_limit(case_id: str, artifact_headroom: int, max_co
     case = MAP_CASES[case_id]
     item_count = 3 if case_id == "map/overflow_collection_storage_one_over" else 2
     item_values = ("aa", "bb") if case_id == "map/artifact_bytes_one_over" else None
-    fixture, result, _ = await _execute_membership(
+    fixture, result, callbacks = await _execute_membership(
         item_count,
         item_values=item_values,
         artifact_headroom=artifact_headroom,
@@ -918,7 +967,7 @@ async def _assert_map_storage_limit(case_id: str, artifact_headroom: int, max_co
     assert expander.status == "blocked"
     assert expander.outcome is None
     assert case["expected"]["state"]["terminal"] == "artifact_limit"
-    _assert_only_setup_baseline(fixture, result)
+    _assert_only_setup_baseline(fixture, result, callbacks)
 
 
 @pytest.mark.parametrize(
@@ -931,14 +980,18 @@ def test_map_result_after_parent_cancellation_is_not_published(case_id: str) -> 
 
 async def _assert_cancelled_map_result(case_id: str) -> None:
     case = MAP_CASES[case_id]
-    fixture, result, _ = await _execute_membership(1, cancel_before_result=True)
+    fixture, result, callbacks = await _execute_membership(1, cancel_before_result=True)
     expander = next(entry for entry in result.states[0].entries if entry.template == fixture.expander)
     assert expander.status == "cancelled"
     assert case["expected"]["state"]["terminal"] == "transition_rejected"
-    _assert_only_setup_baseline(fixture, result)
+    _assert_only_setup_baseline(fixture, result, callbacks)
 
 
-def _assert_only_setup_baseline(fixture: _MapFixture, result: Any) -> None:
+def _assert_only_setup_baseline(
+    fixture: _MapFixture,
+    result: Any,
+    callbacks: dict[NodeId, _MapCallback],
+) -> None:
     assert not result.assessments
     assert all(isinstance(fact.key, (RootInputKey, BoundInputKey, InitialCollectionKey)) for fact in result.provenance)
     assert not any(isinstance(fact.key, (OperationOutputKey, MapItemKey)) for fact in result.provenance)
@@ -955,3 +1008,5 @@ def _assert_only_setup_baseline(fixture: _MapFixture, result: Any) -> None:
     assert not requests.local_in_flight
     assert not requests.remote_outstanding
     assert not requests.cancel_requested
+    assert all(not expansion.members and expansion.status != "closed" for expansion in result.states[0].expansions)
+    assert not callbacks[fixture.member].calls

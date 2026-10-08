@@ -1292,8 +1292,26 @@ def _materialization_preflight(declaration: Object, events: Sequence[Object]) ->
     return result
 
 
+def _map_execution_preflight(declaration: Object) -> Object:
+    admitted = _admit_map(declaration)
+    if admitted["status"] != "accepted":
+        return admitted
+    # External output dependencies are added to both the public capacity and
+    # structural requirement; this local projection retains only item edges.
+    required = sum(
+        cast(int, item["max_children"])
+        for item in (_object(raw) for raw in _array(declaration["maps"]))
+        if item["item_input"] is not None
+    )
+    if required > cast(int, _object(declaration["limits"])["max_provenance_edges"]):
+        return _reject("limit_exceeded")
+    return {"status": "accepted"}
+
+
 def evaluate_case(case: Mapping[str, Json]) -> Object:
     declaration = _object(case["declaration"])
+    if case["boundary"] == "map_execution_preflight":
+        return _map_execution_preflight(declaration)
     if case["boundary"] == "execution_preflight":
         return _materialization_preflight(declaration, [_object(raw) for raw in _array(case["events"])])
     if case["boundary"] == "pre_execution":
@@ -2356,7 +2374,10 @@ def _map_specs() -> list[Object]:
     ):
         declaration = _map_decl()
         _object(declaration["limits"])[limit] = value
-        cases.append(_case("map", name, declaration, [_map_event(("aa", "bb"))]))
+        if name == "provenance_one_over":
+            cases.append(_case("map", name, declaration, [], "map_execution_preflight"))
+        else:
+            cases.append(_case("map", name, declaration, [_map_event(("aa", "bb"))]))
     exact = _map_decl()
     _object(exact["limits"]).update({"max_artifacts": 3, "max_artifact_bytes": 8, "max_provenance_edges": 2})
     cases.append(_case("map", "bounds_exact", exact, [_map_event(("aa", "bb"))]))

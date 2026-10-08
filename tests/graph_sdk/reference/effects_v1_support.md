@@ -1,3 +1,11 @@
+# R2 v13 map provenance admission correction
+
+Only map/provenance_one_over changes: public execution admission rejects LIMIT_EXCEEDED before callbacks or publication because declared maximum item provenance exceeds capacity. Its runtime event is removed. The paired bounds_exact case remains unchanged and accepted.
+
+Actual provenance capacity equals captured setup edges plus exact external output-dependency edges omitted from this publication-local projection plus frozen edge headroom. Thus bounds_exact admits with 0+1+2=3 edges; provenance_one_over supplies 0+1+1=2 against structural requirement 3. Initial collection setup and extra output parents must be counted exactly. No arbitrary allowance, production preflight bypass, or runtime artifact-limit substitution is permitted. The production comparator must assert zero callback effects at admission rejection. Independent review pending.
+
+## Retained v12 history
+
 # R2 v12 causal initial-binding late-loss traces
 
 Public RunningBinding reaches these Lost-plus-late-response races by cancellation, failed stop and a provider that subsequently returns. Add cancel before Lost for materialization/initial_late_lost and binding/lost_late_source_result/failure, including their settlement traces. Preserve the first terminal, conflicting_terminal defect, valid settlement, and absence of artifacts or rewritten source terminal. No comparator override is permitted. Other v11 cases remain unchanged. Production must cover both late SourceResponse and SourceFailure. Review pending.

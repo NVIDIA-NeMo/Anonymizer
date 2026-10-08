@@ -38252,7 +38252,7 @@
     "traces": []
   },
   {
-    "boundary": "runtime",
+    "boundary": "map_execution_preflight",
     "case_id": "map/provenance_one_over",
     "declaration": {
       "expansions": [
@@ -38324,50 +38324,10 @@
         }
       ]
     },
-    "events": [
-      {
-        "assessments": [
-          "assessment0"
-        ],
-        "kind": "map_result",
-        "outputs": [
-          {
-            "artifact_type": "members_t",
-            "items": [
-              {
-                "key": 0,
-                "value": "aa",
-                "version": 1
-              },
-              {
-                "key": 1,
-                "value": "bb",
-                "version": 1
-              }
-            ],
-            "port": "members"
-          }
-        ],
-        "parent": "E0"
-      }
-    ],
+    "events": [],
     "expected": {
-      "state": {
-        "parent_phase": "running",
-        "publication": {
-          "artifacts": [],
-          "assessments": [],
-          "inputs": [],
-          "membership": null,
-          "ports": [],
-          "provenance": [],
-          "request_success": false
-        },
-        "resolution": null,
-        "terminal": "artifact_limit",
-        "transition": null
-      },
-      "status": "accepted"
+      "code": "limit_exceeded",
+      "status": "rejected"
     },
     "family": "map",
     "traces": []

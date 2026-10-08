@@ -624,7 +624,6 @@ def test_map_publication_is_atomic_after_transition_and_bounds() -> None:
         "prospective_transition_rejected",
         "artifact_count_one_over",
         "artifact_bytes_one_over",
-        "provenance_one_over",
     ):
         state = cast(
             reference.Object,
@@ -1100,3 +1099,13 @@ def test_initial_late_loss_records_cancel_for_both_provider_result_kinds() -> No
         assert state["terminals"] == {"R0": "lost"}
         assert "conflicting_terminal" in cast(list[str], state["defects"])
         assert state["artifacts"] == []
+
+
+def test_map_provenance_capacity_rejects_before_execution() -> None:
+    case = reference.case_by_id("map/provenance_one_over")
+    assert case["boundary"] == "map_execution_preflight"
+    assert case["events"] == []
+    assert case["expected"] == {"status": "rejected", "code": "limit_exceeded"}
+    exact = reference.case_by_id("map/bounds_exact")
+    assert reference._map_execution_preflight(cast(reference.Object, exact["declaration"])) == {"status": "accepted"}
+    assert cast(reference.Object, exact["expected"])["status"] == "accepted"
