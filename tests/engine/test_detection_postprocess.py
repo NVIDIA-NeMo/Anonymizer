@@ -6,8 +6,11 @@ from __future__ import annotations
 import json
 import logging
 
+import pandas as pd
 import pytest
 
+from anonymizer.config.replace_strategies import Redact
+from anonymizer.engine.constants import COL_FINAL_ENTITIES, COL_REPLACED_TEXT, COL_TEXT
 from anonymizer.engine.detection.postprocess import (
     EntitySpan,
     TagNotation,
@@ -27,6 +30,7 @@ from anonymizer.engine.detection.postprocess import (
     parse_raw_entities,
     resolve_overlaps,
 )
+from anonymizer.engine.replace.strategies import apply_local_replace_strategy
 
 
 def test_normalize_label_strips_and_casefolds() -> None:
@@ -298,6 +302,91 @@ def test_name_split_does_not_duplicate_existing_entities() -> None:
     smiths = [e for e in merged if e.value == "Smith"]
     assert len(smiths) == 1
     assert smiths[0].label == "last_name"
+
+
+@pytest.mark.parametrize("reverse_input", [False, True])
+def test_restricted_full_name_does_not_suppress_detector_name_parts(reverse_input: bool) -> None:
+    text = "allow:John Smith; John Doe; John"
+    restricted = EntitySpan(
+        "full_name_6_16",
+        "John Smith",
+        "full_name",
+        6,
+        16,
+        1.0,
+        "regex_user:user:full_name:v1",
+        propagate_occurrences=False,
+    )
+    detector = EntitySpan("full_name_18_26", "John Doe", "full_name", 18, 26, 0.9, "detector")
+    entities = [restricted, detector]
+    if reverse_input:
+        entities.reverse()
+
+    merged = apply_augmented_entities(
+        text=text,
+        entities=entities,
+        augmented_output={"entities": []},
+    )
+
+    assert [(entity.label, entity.start_position, entity.end_position) for entity in merged] == [
+        ("full_name", 6, 16),
+        ("full_name", 18, 26),
+        ("first_name", 28, 32),
+    ]
+
+    replaced = apply_local_replace_strategy(
+        pd.DataFrame(
+            {
+                COL_TEXT: [text],
+                COL_FINAL_ENTITIES: [{"entities": [entity.as_dict() for entity in merged]}],
+            }
+        ),
+        strategy=Redact(),
+    )
+    assert replaced[COL_REPLACED_TEXT].iloc[0] == (
+        "allow:[REDACTED_FULL_NAME]; [REDACTED_FULL_NAME]; [REDACTED_FIRST_NAME]"
+    )
+
+
+def test_name_split_upgrades_exact_existing_part_with_propagation_authority() -> None:
+    text = "John Doe met John"
+    merged = apply_augmented_entities(
+        text=text,
+        entities=[
+            EntitySpan("full_name_0_8", "John Doe", "full_name", 0, 8, 0.9, "detector"),
+            EntitySpan(
+                "first_name_13_17",
+                "John",
+                "first_name",
+                13,
+                17,
+                1.0,
+                "regex_user:user:first_name:v1",
+                propagate_occurrences=False,
+            ),
+        ],
+        augmented_output={"entities": []},
+    )
+
+    trailing = next(entity for entity in merged if entity.start_position == 13)
+    assert trailing.label == "first_name"
+    assert trailing.source == "regex_user:user:first_name:v1|name_split"
+    assert trailing.propagate_occurrences is True
+
+
+def test_name_split_preserves_existing_different_label_at_exact_bounds() -> None:
+    text = "John Doe met John"
+    merged = apply_augmented_entities(
+        text=text,
+        entities=[
+            EntitySpan("full_name_0_8", "John Doe", "full_name", 0, 8, 0.9, "detector"),
+            EntitySpan("user_name_13_17", "John", "user_name", 13, 17, 0.8, "detector"),
+        ],
+        augmented_output={"entities": []},
+    )
+
+    trailing = [entity for entity in merged if entity.start_position == 13]
+    assert [(entity.label, entity.source) for entity in trailing] == [("user_name", "detector")]
 
 
 def test_build_tagged_text_renders_xml_style_tags() -> None:

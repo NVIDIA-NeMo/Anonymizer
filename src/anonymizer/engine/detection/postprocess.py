@@ -365,7 +365,11 @@ def _split_full_names(
     separate ``first_name``/``last_name``/``middle_name`` entities for
     each part. Parts expand to standalone occurrences only when the parent
     entity permits occurrence propagation; span-restricted parents derive
-    parts only inside their accepted span.
+    parts only inside their accepted span. Existing entities suppress a
+    derived part only at the same character bounds, never merely because the
+    same value appears elsewhere. An exact same-label entity inherits the
+    derived part's propagation permission, while an exact different-label
+    entity remains authoritative for those bounds.
     """
     regex_constrained = normalize_labels(regex_constrained_entity_labels)
     regex_evidence = {
@@ -373,7 +377,12 @@ def _split_full_names(
         for entity in entities
         if entity_has_source_prefix(entity, "regex_user:") or entity_has_source_prefix(entity, "regex_builtin:")
     }
-    existing_values: set[str] = {entity.value.lower() for entity in entities}
+    resolved_entities = list(entities)
+    original_by_identity = {
+        (normalize_label(entity.label), entity.start_position, entity.end_position): index
+        for index, entity in enumerate(resolved_entities)
+    }
+    original_bounds = {(entity.start_position, entity.end_position) for entity in resolved_entities}
     extra: list[EntitySpan] = []
 
     for entity in entities:
@@ -383,7 +392,7 @@ def _split_full_names(
         if len(parts) < 2:
             continue
         for idx, part in enumerate(parts):
-            if len(part) <= 1 or part.lower() in existing_values:
+            if len(part) <= 1:
                 continue
             if idx == 0:
                 part_label = "first_name"
@@ -412,22 +421,32 @@ def _split_full_names(
                     not in regex_evidence
                 ):
                     continue
-                entity_id = _build_entity_id(label=part_label, start=start, end=end)
-                extra.append(
-                    EntitySpan(
-                        entity_id=entity_id,
-                        value=part,
-                        label=part_label,
-                        start_position=start,
-                        end_position=end,
-                        score=entity.score,
-                        source="name_split",
-                        propagate_occurrences=entity.propagate_occurrences,
-                    )
+                candidate = EntitySpan(
+                    entity_id=_build_entity_id(label=part_label, start=start, end=end),
+                    value=part,
+                    label=part_label,
+                    start_position=start,
+                    end_position=end,
+                    score=entity.score,
+                    source="name_split",
+                    propagate_occurrences=entity.propagate_occurrences,
                 )
-            existing_values.add(part.lower())
+                identity = (normalize_label(part_label), start, end)
+                original_index = original_by_identity.get(identity)
+                if original_index is not None:
+                    original = resolved_entities[original_index]
+                    if candidate.propagate_occurrences and not original.propagate_occurrences:
+                        normalized_candidate = replace(candidate, label=original.label)
+                        resolved_entities[original_index] = coalesce_exact_entity_candidates(
+                            [original],
+                            [normalized_candidate],
+                        )[0]
+                    continue
+                if (start, end) in original_bounds:
+                    continue
+                extra.append(candidate)
 
-    return [*entities, *extra]
+    return [*resolved_entities, *coalesce_exact_entity_candidates(extra)]
 
 
 def resolve_overlaps(entities: list[EntitySpan], *, prefer_highest_score: bool = False) -> list[EntitySpan]:
