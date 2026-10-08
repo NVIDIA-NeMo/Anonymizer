@@ -218,14 +218,15 @@ def _advance(state: Object, declaration: Object, event: Object) -> Object | None
         maximum = cast(int, _object(_object(state["policies"])[policy])["max_attempts"])
         if event.get("purpose") in ("retry", "correction", "failover"):
             replay = _object(_object(state["policies"])[policy])["replay"]
-            terminals = _object(state["association_terminals"])
             for item in associations:
-                if item not in terminals:
+                request_id = cast(str, _object(state["association_requests"]).get(item))
+                facts = _object(state["request_facts"])
+                if request_id not in facts:
                     return _reject("missing_predecessor")
-                predecessor = _object(terminals[item])
-                if predecessor["policy"] != policy:
+                predecessor = _object(facts[request_id])
+                if _object(state["request_policies"])[request_id] != policy:
                     return _reject("predecessor_policy")
-                failure = predecessor["failure"]
+                failure = predecessor.get("failure")
                 purpose = event.get("purpose")
                 if purpose == "retry":
                     if failure not in ("rejected_before_acceptance", "retryable", "transport_unknown"):
@@ -331,7 +332,7 @@ def _advance(state: Object, declaration: Object, event: Object) -> Object | None
             _request_fact(state, request, {"condition": "failure", "failure": event["failure"]})
             for association in _strings(_object(state["request_associations"])[request]):
                 terminals = _object(state["association_terminals"])
-                if association not in terminals:
+                if _object(state["association_requests"]).get(association) == request:
                     terminals[association] = {
                         "failure": event["failure"],
                         "policy": _object(state["request_policies"])[request],
@@ -2015,6 +2016,27 @@ def _generate_specs() -> tuple[Object, ...]:
                     traces=[[*late_events, settlement]],
                 )
             )
+    retry_prefix: list[Object] = [
+        *_trace(),
+        {"kind": "failure", "request": "R0", "failure": "retryable"},
+        _reserve("R1", ["T0"], purpose="retry"),
+        _dispatch("R1"),
+    ]
+    latest_cases: tuple[tuple[str, str, list[Object]], ...] = (
+        ("pending", "retry", []),
+        ("success", "retry", [_result("R1", ("T0",), ("T0",))]),
+        ("permanent", "retry", [{"kind": "failure", "request": "R1", "failure": "permanent"}]),
+        ("malformed", "correction", [{"kind": "failure", "request": "R1", "failure": "malformed_response"}]),
+    )
+    for latest, continuation, terminal_events in latest_cases:
+        c.append(
+            _case(
+                "retry",
+                f"latest_request_{latest}",
+                _decl(limit=3, attempts=3),
+                [*retry_prefix, *terminal_events, _reserve("R2", ["T0"], purpose=continuation)],
+            )
+        )
     return tuple(c)
 
 

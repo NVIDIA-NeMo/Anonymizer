@@ -10,7 +10,7 @@ SDK module, and derives every committed expectation by reducing the committed
 declaration and event sequence.
 
 The finite identity universe is two semantic tasks (`T0`, `T1`), two physical
-requests (`R0`, `R1`), two binding declarations (`D0`, `D1`), two sources
+requests plus one follow-up (`R0`, `R1`, `R2`), two binding declarations (`D0`, `D1`), two sources
 (`S0`, `S1`), two implementation policies (`P0`, `P1`), two workflow nodes,
 two artifacts, two waits, and one resource. Hard budgets are `0`, `1`, and `2`;
 request attempt bounds are `1`, `2`, and `3`.
@@ -25,8 +25,10 @@ The generator enumerates these declared products and named boundary families:
   plus correction, repair, failover, cross-policy use, cumulative attempt
   exhaustion, mixed exhausted/eligible sharing, graph-budget denial, and a
   cross-association predecessor negative. Retry, correction, and failover use
-  the first immutable terminal fact for each exact association and its bound
-  policy. Their permitted failure classes are separate, with cross-purpose and
+  the immutable terminal of the latest dispatched request for each exact
+  association and its bound policy. A prior failure cannot authorize another
+  attempt while the latest request is pending or after it succeeded. Their
+  permitted failure classes are separate, with cross-purpose and
   late-conflicting-terminal negatives;
 - failover also crosses replay authority: an eligible failure class still
   requires idempotent replay, or before-acceptance replay when that exact

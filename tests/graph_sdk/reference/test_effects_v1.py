@@ -128,6 +128,22 @@ def test_failover_requires_replay_authority_after_failure_class_check() -> None:
             assert result == {"code": "replay_forbidden", "status": "rejected"}
 
 
+def test_followup_requests_use_the_latest_request_terminal() -> None:
+    for latest, code in (
+        ("pending", "missing_predecessor"),
+        ("success", "invalid_retry"),
+        ("permanent", "invalid_retry"),
+    ):
+        result = reference.evaluate_case(reference.case_by_id(f"retry/latest_request_{latest}"))
+        assert result == {"status": "rejected", "code": code}
+    result = reference.evaluate_case(reference.case_by_id("retry/latest_request_malformed"))
+    assert result["status"] == "accepted"
+    state = cast(reference.Object, result["state"])
+    assert state["reservations"] == {"R2": ["T0"]}
+    assert state["dispatched_count"] == 2
+    assert cast(reference.Object, state["request_failures"]) == {"R0": "retryable", "R1": "malformed_response"}
+
+
 def test_late_binding_responses_cannot_create_outputs_or_change_terminal() -> None:
     for terminal in ("lost", "cancelled"):
         for response in ("source_result", "source_failure"):

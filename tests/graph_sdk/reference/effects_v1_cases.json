@@ -18046,5 +18046,453 @@
         "name": "alternate_0"
       }
     ]
+  },
+  {
+    "boundary": "runtime",
+    "case_id": "retry/latest_request_pending",
+    "declaration": {
+      "hard_limit": 3,
+      "policies": {
+        "P0": {
+          "failover_failures": [
+            "permanent",
+            "implementation_exception"
+          ],
+          "max_attempts": 3,
+          "replay": "idempotent",
+          "retry_owner": "executor"
+        },
+        "P1": {
+          "failover_failures": [
+            "permanent",
+            "implementation_exception"
+          ],
+          "max_attempts": 3,
+          "replay": "idempotent",
+          "retry_owner": "executor"
+        }
+      }
+    },
+    "events": [
+      {
+        "association": "T0",
+        "kind": "bind_policy",
+        "policies": [
+          "P0"
+        ]
+      },
+      {
+        "associations": [
+          "T0"
+        ],
+        "kind": "reserve",
+        "policy": "P0",
+        "purpose": "initial",
+        "request": "R0"
+      },
+      {
+        "kind": "dispatch",
+        "request": "R0"
+      },
+      {
+        "failure": "retryable",
+        "kind": "failure",
+        "request": "R0"
+      },
+      {
+        "associations": [
+          "T0"
+        ],
+        "kind": "reserve",
+        "policy": "P0",
+        "purpose": "retry",
+        "request": "R1"
+      },
+      {
+        "kind": "dispatch",
+        "request": "R1"
+      },
+      {
+        "associations": [
+          "T0"
+        ],
+        "kind": "reserve",
+        "policy": "P0",
+        "purpose": "retry",
+        "request": "R2"
+      }
+    ],
+    "expected": {
+      "code": "missing_predecessor",
+      "status": "rejected"
+    },
+    "family": "retry",
+    "traces": []
+  },
+  {
+    "boundary": "runtime",
+    "case_id": "retry/latest_request_success",
+    "declaration": {
+      "hard_limit": 3,
+      "policies": {
+        "P0": {
+          "failover_failures": [
+            "permanent",
+            "implementation_exception"
+          ],
+          "max_attempts": 3,
+          "replay": "idempotent",
+          "retry_owner": "executor"
+        },
+        "P1": {
+          "failover_failures": [
+            "permanent",
+            "implementation_exception"
+          ],
+          "max_attempts": 3,
+          "replay": "idempotent",
+          "retry_owner": "executor"
+        }
+      }
+    },
+    "events": [
+      {
+        "association": "T0",
+        "kind": "bind_policy",
+        "policies": [
+          "P0"
+        ]
+      },
+      {
+        "associations": [
+          "T0"
+        ],
+        "kind": "reserve",
+        "policy": "P0",
+        "purpose": "initial",
+        "request": "R0"
+      },
+      {
+        "kind": "dispatch",
+        "request": "R0"
+      },
+      {
+        "failure": "retryable",
+        "kind": "failure",
+        "request": "R0"
+      },
+      {
+        "associations": [
+          "T0"
+        ],
+        "kind": "reserve",
+        "policy": "P0",
+        "purpose": "retry",
+        "request": "R1"
+      },
+      {
+        "kind": "dispatch",
+        "request": "R1"
+      },
+      {
+        "kind": "result",
+        "outcomes": {
+          "T0": "ok"
+        },
+        "request": "R1",
+        "returned": [
+          "T0"
+        ]
+      },
+      {
+        "associations": [
+          "T0"
+        ],
+        "kind": "reserve",
+        "policy": "P0",
+        "purpose": "retry",
+        "request": "R2"
+      }
+    ],
+    "expected": {
+      "code": "invalid_retry",
+      "status": "rejected"
+    },
+    "family": "retry",
+    "traces": []
+  },
+  {
+    "boundary": "runtime",
+    "case_id": "retry/latest_request_permanent",
+    "declaration": {
+      "hard_limit": 3,
+      "policies": {
+        "P0": {
+          "failover_failures": [
+            "permanent",
+            "implementation_exception"
+          ],
+          "max_attempts": 3,
+          "replay": "idempotent",
+          "retry_owner": "executor"
+        },
+        "P1": {
+          "failover_failures": [
+            "permanent",
+            "implementation_exception"
+          ],
+          "max_attempts": 3,
+          "replay": "idempotent",
+          "retry_owner": "executor"
+        }
+      }
+    },
+    "events": [
+      {
+        "association": "T0",
+        "kind": "bind_policy",
+        "policies": [
+          "P0"
+        ]
+      },
+      {
+        "associations": [
+          "T0"
+        ],
+        "kind": "reserve",
+        "policy": "P0",
+        "purpose": "initial",
+        "request": "R0"
+      },
+      {
+        "kind": "dispatch",
+        "request": "R0"
+      },
+      {
+        "failure": "retryable",
+        "kind": "failure",
+        "request": "R0"
+      },
+      {
+        "associations": [
+          "T0"
+        ],
+        "kind": "reserve",
+        "policy": "P0",
+        "purpose": "retry",
+        "request": "R1"
+      },
+      {
+        "kind": "dispatch",
+        "request": "R1"
+      },
+      {
+        "failure": "permanent",
+        "kind": "failure",
+        "request": "R1"
+      },
+      {
+        "associations": [
+          "T0"
+        ],
+        "kind": "reserve",
+        "policy": "P0",
+        "purpose": "retry",
+        "request": "R2"
+      }
+    ],
+    "expected": {
+      "code": "invalid_retry",
+      "status": "rejected"
+    },
+    "family": "retry",
+    "traces": []
+  },
+  {
+    "boundary": "runtime",
+    "case_id": "retry/latest_request_malformed",
+    "declaration": {
+      "hard_limit": 3,
+      "policies": {
+        "P0": {
+          "failover_failures": [
+            "permanent",
+            "implementation_exception"
+          ],
+          "max_attempts": 3,
+          "replay": "idempotent",
+          "retry_owner": "executor"
+        },
+        "P1": {
+          "failover_failures": [
+            "permanent",
+            "implementation_exception"
+          ],
+          "max_attempts": 3,
+          "replay": "idempotent",
+          "retry_owner": "executor"
+        }
+      }
+    },
+    "events": [
+      {
+        "association": "T0",
+        "kind": "bind_policy",
+        "policies": [
+          "P0"
+        ]
+      },
+      {
+        "associations": [
+          "T0"
+        ],
+        "kind": "reserve",
+        "policy": "P0",
+        "purpose": "initial",
+        "request": "R0"
+      },
+      {
+        "kind": "dispatch",
+        "request": "R0"
+      },
+      {
+        "failure": "retryable",
+        "kind": "failure",
+        "request": "R0"
+      },
+      {
+        "associations": [
+          "T0"
+        ],
+        "kind": "reserve",
+        "policy": "P0",
+        "purpose": "retry",
+        "request": "R1"
+      },
+      {
+        "kind": "dispatch",
+        "request": "R1"
+      },
+      {
+        "failure": "malformed_response",
+        "kind": "failure",
+        "request": "R1"
+      },
+      {
+        "associations": [
+          "T0"
+        ],
+        "kind": "reserve",
+        "policy": "P0",
+        "purpose": "correction",
+        "request": "R2"
+      }
+    ],
+    "expected": {
+      "state": {
+        "artifacts": [],
+        "association_requests": {
+          "T0": "R1"
+        },
+        "association_terminals": {
+          "T0": {
+            "failure": "malformed_response",
+            "policy": "P0",
+            "request": "R1"
+          }
+        },
+        "attempts": {
+          "T0": 2
+        },
+        "binding_declarations": {},
+        "binding_sources": {},
+        "binding_terminal": null,
+        "bindings": {
+          "T0": [
+            "P0"
+          ]
+        },
+        "cancel_requested": [],
+        "cleanup": {},
+        "closed_unstarted": {},
+        "decision_defects": [],
+        "decisions": {},
+        "defects": [],
+        "denials": {},
+        "dispatched": [
+          "R0",
+          "R1"
+        ],
+        "dispatched_count": 2,
+        "local_in_flight": [],
+        "policies": {
+          "P0": {
+            "failover_failures": [
+              "permanent",
+              "implementation_exception"
+            ],
+            "max_attempts": 3,
+            "replay": "idempotent",
+            "retry_owner": "executor"
+          },
+          "P1": {
+            "failover_failures": [
+              "permanent",
+              "implementation_exception"
+            ],
+            "max_attempts": 3,
+            "replay": "idempotent",
+            "retry_owner": "executor"
+          }
+        },
+        "remote_outstanding": [],
+        "request_associations": {
+          "R0": [
+            "T0"
+          ],
+          "R1": [
+            "T0"
+          ]
+        },
+        "request_facts": {
+          "R0": {
+            "condition": "failure",
+            "failure": "retryable"
+          },
+          "R1": {
+            "condition": "failure",
+            "failure": "malformed_response"
+          }
+        },
+        "request_failures": {
+          "R0": "retryable",
+          "R1": "malformed_response"
+        },
+        "request_policies": {
+          "R0": "P0",
+          "R1": "P0"
+        },
+        "reservation_policies": {
+          "R2": "P0"
+        },
+        "reservations": {
+          "R2": [
+            "T0"
+          ]
+        },
+        "resource_count": 0,
+        "resources": {},
+        "settlements": {},
+        "task_requests": {},
+        "tasks": {},
+        "terminals": {
+          "R0": "failure",
+          "R1": "failure"
+        }
+      },
+      "status": "accepted"
+    },
+    "family": "retry",
+    "traces": []
   }
 ]
