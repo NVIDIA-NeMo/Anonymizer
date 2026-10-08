@@ -1153,11 +1153,28 @@ class _ExecutionJob:
     association: SemanticAssociation
 
 
-@dataclass(frozen=True, slots=True)
+def _group_external_jobs(jobs: list[_ExecutionJob]) -> list[list[_ExecutionJob]]:
+    groups: list[list[_ExecutionJob]] = []
+    for job in jobs:
+        shared = all(item.capability.attribution == "keyed_shared_request" for item in job.policy.implementations)
+        group = next(
+            (group for group in groups if shared and group[0].node == job.node and group[0].policy == job.policy),
+            None,
+        )
+        if group is None:
+            groups.append([job])
+        else:
+            group.append(job)
+    return groups
+
+
+@dataclass(slots=True)
 class _DeferredAcceptance:
     request: PhysicalRequestId
     results: tuple[AssociationResult, ...]
     settlement: ExternalSettlement | None
+    remaining: set[SemanticAssociation] = field(default_factory=set)
+    failed: bool = False
 
 
 class RunningExecution:
@@ -1444,8 +1461,10 @@ async def _run_execution(
         asyncio.Task[tuple[RuntimeOutcome, tuple[AssociationResult, ...], tuple[LocalAssessmentResult, ...]]],
         _ExecutionJob,
     ] = {}
+    physical_jobs: dict[asyncio.Task[object], asyncio.Task[object]] = {}
     while True:
         scheduled = False
+        external_jobs: list[_ExecutionJob] = []
         for state_index, (target_map, state) in enumerate(zip(prepared.target_occurrences, states, strict=True)):
             ready = sorted(
                 (item for item in state.entries if item.status == "ready"),
@@ -1494,7 +1513,12 @@ async def _run_execution(
                     )
                     continue
                 local_jobs = sum(item.policy.kind != "external" for item in jobs.values())
-                remote_jobs = sum(item.policy.kind == "external" for item in jobs.values())
+                remote_jobs = len(
+                    {physical_jobs.get(task, task) for task, item in jobs.items() if item.policy.kind == "external"}
+                ) + len(_group_external_jobs(external_jobs))
+                joins_pending_batch = any(
+                    item.node == entry.template and item.policy == policy for item in external_jobs
+                ) and all(item.capability.attribution == "keyed_shared_request" for item in policy.implementations)
                 if policy.kind != "external":
                     if services.limits.max_local_in_flight == 0:
                         reject(EffectCode.LIMIT_EXCEEDED)
@@ -1502,6 +1526,7 @@ async def _run_execution(
                         continue
                 remote_capacity_stalled = (
                     policy.kind == "external"
+                    and not joins_pending_batch
                     and max(len(request_authority.state.remote_outstanding), remote_jobs)
                     >= services.limits.max_remote_outstanding
                 )
@@ -1596,18 +1621,20 @@ async def _run_execution(
                         None,
                     )
                     if adaptive is None:
-                        coroutine = _run_external(
-                            admitted,
-                            policy,
-                            handles,
-                            association,
-                            inputs,
-                            request_authority,
-                            control,
-                            services.limits,
-                            deferred_acceptances,
-                            request_resources,
+                        external_jobs.append(
+                            _ExecutionJob(
+                                state_index=state_index,
+                                target=target_map.target,
+                                activation=entry.activation,
+                                node=entry.template,
+                                policy=policy,
+                                implementation=implementation,
+                                inputs=inputs,
+                                input_parents=input_parents,
+                                association=association,
+                            )
                         )
+                        continue
                     else:
                         if adaptive.source in failed_context_sources:
                             coroutine = _immediate_execution_result(
@@ -1652,6 +1679,25 @@ async def _run_execution(
                     input_parents=input_parents,
                     association=association,
                 )
+        groups = _group_external_jobs(external_jobs)
+        for group in groups:
+            physical = asyncio.create_task(
+                _run_external_batch(
+                    admitted,
+                    group[0].policy,
+                    handles,
+                    tuple(value for job in group for value in job.inputs),
+                    request_authority,
+                    control,
+                    services.limits,
+                    deferred_acceptances,
+                    request_resources,
+                )
+            )
+            for job in group:
+                task = asyncio.create_task(_external_association_result(physical, job.association))
+                jobs[task] = job
+                physical_jobs[task] = physical
         if all(state.complete for state in states) and not jobs:
             break
         if not jobs:
@@ -1661,6 +1707,7 @@ async def _run_execution(
         completed, _ = await asyncio.wait(jobs, return_when=asyncio.FIRST_COMPLETED)
         for task in completed:
             job = jobs.pop(task)
+            physical_jobs.pop(task, None)
             mapping, results, assessments = task.result()
             deferred = deferred_acceptances.pop(job.association, None)
             staged_result = False
@@ -1828,12 +1875,15 @@ async def _run_execution(
                 )
             states[job.state_index] = candidate_state
             if deferred is not None:
-                if mapping.condition == "result":
-                    request_authority.apply(AcceptResult(request=deferred.request, results=deferred.results))
-                else:
-                    request_authority.apply(AcceptFailure(request=deferred.request, failure="malformed_response"))
-                if deferred.settlement is not None:
-                    request_authority.apply(ObserveSettlement(settlement=deferred.settlement))
+                deferred.failed |= mapping.condition != "result"
+                deferred.remaining.discard(job.association)
+                if not deferred.remaining:
+                    if deferred.failed:
+                        request_authority.apply(AcceptFailure(request=deferred.request, failure="malformed_response"))
+                    else:
+                        request_authority.apply(AcceptResult(request=deferred.request, results=deferred.results))
+                    if deferred.settlement is not None:
+                        request_authority.apply(ObserveSettlement(settlement=deferred.settlement))
     if control.cancelled:
         request_authority.apply(ScopeCancel())
     cleanup, cleanup_associations = await _cleanup_execution(
@@ -2675,26 +2725,51 @@ async def _run_decision(
     )
 
 
-async def _run_external(
+async def _external_association_result(
+    physical: asyncio.Task[
+        dict[
+            SemanticAssociation, tuple[RuntimeOutcome, tuple[AssociationResult, ...], tuple[LocalAssessmentResult, ...]]
+        ]
+    ],
+    association: SemanticAssociation,
+) -> tuple[RuntimeOutcome, tuple[AssociationResult, ...], tuple[LocalAssessmentResult, ...]]:
+    return (await physical)[association]
+
+
+async def _run_external_batch(
     admitted: AdmittedExecutionPlan,
     policy: OperationExecutionPolicy,
     handles: dict[tuple[ImplementationRef, OperationSpec, FrozenConfig], ImplementationHandle],
-    association: SemanticAssociation,
     inputs: tuple[AssociationInput, ...],
     authority: _RequestAuthority,
     control: _ExecutionControl,
     limits: ExecutionLimits,
     deferred_acceptances: dict[SemanticAssociation, _DeferredAcceptance],
     request_resources: dict[PhysicalRequestId, ResourceId],
-) -> tuple[RuntimeOutcome, tuple[AssociationResult, ...], tuple[LocalAssessmentResult, ...]]:
+) -> dict[SemanticAssociation, tuple[RuntimeOutcome, tuple[AssociationResult, ...], tuple[LocalAssessmentResult, ...]]]:
     if policy.request is None:
         reject(EffectCode.MISSING)
-    authority.bind(RequestPolicyBinding.create(association=association, policies=frozenset({policy.request})))
+    semantic: set[SemanticAssociation] = set()
+    for value in inputs:
+        if not isinstance(value.association, SemanticAssociation):
+            reject(EffectCode.CONTRADICTORY)
+        semantic.add(value.association)
+    associations = frozenset(semantic)
+    for association in associations:
+        authority.bind(RequestPolicyBinding.create(association=association, policies=frozenset({policy.request})))
+
+    def failed(
+        mapping: RuntimeOutcome,
+    ) -> dict[
+        SemanticAssociation, tuple[RuntimeOutcome, tuple[AssociationResult, ...], tuple[LocalAssessmentResult, ...]]
+    ]:
+        return {association: (mapping, (), ()) for association in associations}
+
     implementation_index = 0
     purpose: Literal["initial", "retry", "correction", "failover"] = "initial"
     while True:
         if len(authority.state.remote_outstanding) >= limits.max_remote_outstanding:
-            return _mapping(policy, "request_limit_exhausted", None, None), (), ()
+            return failed(_mapping(policy, "request_limit_exhausted", None, None))
         implementation = policy.implementations[implementation_index]
         handle = handles[
             (implementation.implementation, implementation.capability.operation, implementation.configuration)
@@ -2706,14 +2781,14 @@ async def _run_external(
             Reserve(
                 request=request,
                 purpose=purpose,
-                associations=frozenset({association}),
+                associations=associations,
                 policy=policy.request,
             ),
         )
         if not any(item.request == request for item in authority.state.reserved):
             denial = next(item for item in reversed(authority.state.denials) if item.request == request)
             condition = "budget_exhausted" if denial.category == "budget_stopped" else "request_limit_exhausted"
-            return _mapping(policy, condition, None, None), (), ()
+            return failed(_mapping(policy, condition, None, None))
         authority.apply(Dispatch(request=request))
         if handle.resource is not None:
             request_resources[request] = handle.resource.resource
@@ -2737,9 +2812,9 @@ async def _run_external(
                 await dispatch
             if isinstance(stopped, StopConfirmed):
                 authority.apply(StopAcknowledged(request=request, usage=stopped.usage))
-                return _mapping(policy, "cancel_after_dispatch", None, None), (), ()
+                return failed(_mapping(policy, "cancel_after_dispatch", None, None))
             authority.apply(MarkLost(request=request))
-            return _mapping(policy, "lost", None, None), (), ()
+            return failed(_mapping(policy, "lost", None, None))
         try:
             result = dispatch.result()
         except Exception:
@@ -2751,36 +2826,51 @@ async def _run_external(
                 if can_reserve_followup(
                     state=authority.state,
                     purpose="correction",
-                    associations=frozenset({association}),
+                    associations=associations,
                     policy=policy.request,
                 ):
                     purpose = "correction"
                     continue
-                return _mapping(policy, "failure", None, failure), (), ()
-            keyed = len(result.results) == 1 and result.results[0].association == association
-            reported = result.results[0].outcome if keyed else None
-            candidate_mapping = (
-                _mapping(policy, "result", reported, None) if keyed and reported in policy.result_outcomes else None
-            )
-            if candidate_mapping is not None and _validate_output_shape(
-                admitted,
-                handle.operation,
-                candidate_mapping,
-                association,
-                inputs,
-                result.results,
-            ):
-                deferred_acceptances[association] = _DeferredAcceptance(
+                return failed(_mapping(policy, "failure", None, failure))
+            returned = [value.association for value in result.results]
+            keyed = len(returned) == len(associations) and set(returned) == associations
+            mappings: dict[SemanticAssociation, RuntimeOutcome] = {}
+            if keyed:
+                for row in result.results:
+                    if (
+                        not isinstance(row.association, SemanticAssociation)
+                        or row.outcome not in policy.result_outcomes
+                    ):
+                        break
+                    mapping = _mapping(policy, "result", row.outcome, None)
+                    row_inputs = tuple(value for value in inputs if value.association == row.association)
+                    if not _validate_output_shape(
+                        admitted, handle.operation, mapping, row.association, row_inputs, (row,)
+                    ):
+                        break
+                    mappings[row.association] = mapping
+            if keyed and len(mappings) == len(associations):
+                deferred = _DeferredAcceptance(
                     request=request,
                     results=result.results,
                     settlement=result.settlement,
+                    remaining=set(associations),
                 )
-                return candidate_mapping, result.results, ()
+                for association in associations:
+                    deferred_acceptances[association] = deferred
+                return {
+                    association: (
+                        mappings[association],
+                        tuple(row for row in result.results if row.association == association),
+                        (),
+                    )
+                    for association in associations
+                }
             if not keyed:
                 authority.apply(AcceptResult(request=request, results=result.results))
                 if result.settlement is not None:
                     authority.apply(ObserveSettlement(settlement=result.settlement))
-                return _mapping(policy, "request_inconsistent", None, None), (), ()
+                return failed(_mapping(policy, "request_inconsistent", None, None))
             failure: FailureClass = "malformed_response"
             authority.apply(AcceptFailure(request=request, failure=failure))
             if result.settlement is not None and result.settlement.request == request:
@@ -2792,12 +2882,12 @@ async def _run_external(
                 if can_reserve_followup(
                     state=authority.state,
                     purpose="correction",
-                    associations=frozenset({association}),
+                    associations=associations,
                     policy=policy.request,
                 ):
                     purpose = "correction"
                     continue
-                return _mapping(policy, "failure", None, failure), (), ()
+                return failed(_mapping(policy, "failure", None, failure))
             failure = result.failure
             authority.apply(AcceptFailure(request=request, failure=failure))
             if result.settlement is not None:
@@ -2810,12 +2900,12 @@ async def _run_external(
                 and result.settlement.request == request
             ):
                 authority.apply(ObserveSettlement(settlement=result.settlement))
-            return _mapping(policy, "lost", None, None), (), ()
+            return failed(_mapping(policy, "lost", None, None))
 
         if failure == "malformed_response" and can_reserve_followup(
             state=authority.state,
             purpose="correction",
-            associations=frozenset({association}),
+            associations=associations,
             policy=policy.request,
         ):
             purpose = "correction"
@@ -2825,7 +2915,7 @@ async def _run_external(
             and can_reserve_followup(
                 state=authority.state,
                 purpose="failover",
-                associations=frozenset({association}),
+                associations=associations,
                 policy=policy.request,
             )
         ):
@@ -2834,12 +2924,12 @@ async def _run_external(
         elif policy.request.retry_owner == "executor" and can_reserve_followup(
             state=authority.state,
             purpose="retry",
-            associations=frozenset({association}),
+            associations=associations,
             policy=policy.request,
         ):
             purpose = "retry"
         else:
-            return _mapping(policy, "failure", None, failure), (), ()
+            return failed(_mapping(policy, "failure", None, failure))
 
 
 async def _run_adaptive(

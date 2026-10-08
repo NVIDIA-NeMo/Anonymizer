@@ -5,7 +5,9 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
+
+import pytest
 
 from anonymizer.engine.graph_sdk.capabilities import ImplementationCapability
 from anonymizer.engine.graph_sdk.context import admit_context_plan
@@ -27,7 +29,9 @@ from anonymizer.engine.graph_sdk.requests import (
     ExactUsage,
     ExternalSettlement,
     PhysicalRequestPolicy,
+    SemanticAssociation,
     StopConfirmed,
+    TaskAttemptId,
     TransportLost,
     TransportResult,
     TransportSuccess,
@@ -62,22 +66,42 @@ class _DelayedSuccessTransport:
     release: asyncio.Event
     first_dispatched: asyncio.Event
     calls: int = 0
+    mode: str = "valid"
+    envelopes: list[DispatchEnvelope] = field(default_factory=list)
 
     async def dispatch(self, request: DispatchEnvelope) -> TransportResult:
         self.calls += 1
+        self.envelopes.append(request)
         if self.calls == 1:
             self.first_dispatched.set()
             await self.release.wait()
+        rows = tuple(
+            AssociationResult(
+                association=item.association,
+                outcome="ok",
+                outputs=(),
+                consumed_context_ports=frozenset(),
+            )
+            for item in reversed(request.associations)
+        )
+        if self.mode == "missing":
+            rows = rows[:1]
+        elif self.mode == "duplicate":
+            rows = (rows[0], rows[0])
+        elif self.mode == "extra":
+            rows = (*rows, rows[0])
+        elif self.mode == "foreign":
+            association = rows[0].association
+            assert isinstance(association, SemanticAssociation)
+            rows = (
+                replace(
+                    rows[0],
+                    association=SemanticAssociation(task=TaskAttemptId.new(activation=association.task.activation)),
+                ),
+                rows[1],
+            )
         return TransportSuccess(
-            results=tuple(
-                AssociationResult(
-                    association=item.association,
-                    outcome="ok",
-                    outputs=(),
-                    consumed_context_ports=frozenset(),
-                )
-                for item in request.associations
-            ),
+            results=rows,
             settlement=ExternalSettlement(
                 request=request.request,
                 disposition="completed",
@@ -201,9 +225,11 @@ def test_remote_capacity_waits_for_settlement_before_dispatching_later_work() ->
     asyncio.run(_assert_transient_remote_capacity())
 
 
-async def _assert_transient_remote_capacity() -> None:
+async def _assert_transient_remote_capacity(*, shared: bool = False, mode: str = "valid") -> None:
     workflow, node, _ = _workflow(requests=1)
     capability: ImplementationCapability = _capability(workflow, external=True)
+    if shared:
+        capability = replace(capability, attribution="keyed_shared_request")
     prepared = _prepare(
         data=_data(2),
         workflow=workflow,
@@ -262,7 +288,7 @@ async def _assert_transient_remote_capacity() -> None:
     )
     release = asyncio.Event()
     first_dispatched = asyncio.Event()
-    transport = _DelayedSuccessTransport(release=release, first_dispatched=first_dispatched)
+    transport = _DelayedSuccessTransport(release=release, first_dispatched=first_dispatched, mode=mode)
     running = await start_execution(
         admitted=admitted,
         capabilities=(capability,),
@@ -298,6 +324,19 @@ async def _assert_transient_remote_capacity() -> None:
     assert transport.calls == 1
     release.set()
     result = await running.wait()
-    assert transport.calls == 2
+    assert transport.calls == (1 if shared else 2)
+    assert [len(envelope.associations) for envelope in transport.envelopes] == ([2] if shared else [1, 1])
     assert all(state.complete for state in result.states)
-    assert all(item.category == "success" for item in result.record.terminals)
+    if mode == "valid":
+        assert all(item.category == "success" for item in result.record.terminals)
+    else:
+        assert all(item.category == "inconsistent" for item in result.record.terminals)
+    assert result.requests.dispatched_count == (1 if shared else 2)
+    assert len(result.requests.terminals) == result.requests.dispatched_count
+    assert len(result.requests.settlements) == result.requests.dispatched_count
+    assert not result.requests.remote_outstanding
+
+
+@pytest.mark.parametrize("mode", ["valid", "missing", "duplicate", "extra", "foreign"])
+def test_shared_request_dispatches_once_and_bridges_each_key(mode: str) -> None:
+    asyncio.run(_assert_transient_remote_capacity(shared=True, mode=mode))
