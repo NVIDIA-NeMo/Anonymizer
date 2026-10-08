@@ -34,9 +34,13 @@ from anonymizer.engine.graph_sdk.executor import (
     DecisionDeclaration,
     DecisionLimits,
     DecisionOutcome,
+    DecisionResponse,
+    DecisionWaitId,
     ExecutionImplementation,
     ExecutionLimits,
     ExecutionServices,
+    ImplementationHandle,
+    LocalDecisionWait,
     OperationExecutionPolicy,
     RuntimeOutcome,
     admit_execution_plan,
@@ -46,6 +50,7 @@ from anonymizer.engine.graph_sdk.preparation import BoundInput
 from anonymizer.engine.graph_sdk.requests import (
     AcceptFailure,
     AcceptResult,
+    AssociationInput,
     AssociationResult,
     BindingAssociation,
     BindingDeclarationId,
@@ -74,7 +79,7 @@ from anonymizer.engine.graph_sdk.requests import (
     initialize_requests,
 )
 from anonymizer.engine.graph_sdk.resources import ResourceLease, close_resource
-from anonymizer.graph._values import ActivationKey, InvocationId, PlanId, TaskAttemptId
+from anonymizer.graph._values import ActivationKey, ArtifactRef, InvocationId, PlanId, TaskAttemptId
 from anonymizer.graph.workflow import (
     ArtifactType,
     DynamicScope,
@@ -407,6 +412,158 @@ def _admit_case(case: dict[str, Any]) -> None:
 class _ZeroClock:
     def now_ns(self) -> int:
         return 0
+
+
+class _DecisionProvider:
+    async def run(self, request: tuple[AssociationInput, ...]) -> LocalDecisionWait:
+        artifact = request[0].inputs[0].artifact
+        assert artifact is not None
+        assert isinstance(request[0].association, SemanticAssociation)
+        return LocalDecisionWait(association=request[0].association, artifact=artifact)
+
+
+async def _assert_decision_submission(case_id: str, expected: str) -> None:
+    workflow, node, artifact_type = _workflow(with_input=True)
+    data = _data(1)
+    target = next(iter(data.targets))
+    capability = _capability(workflow)
+    prepared = _prepare(
+        data=data,
+        workflow=workflow,
+        capability=capability,
+        bound_inputs=(BoundInput(target=target, source=target, port="input", artifact_type=artifact_type),),
+    )
+    context = admit_context_plan(
+        prepared=prepared,
+        bound_context=None,
+        adaptive_retrievals=(),
+        context_capabilities=(),
+    )
+    implementation = ExecutionImplementation(
+        implementation=capability.implementation,
+        configuration=capability.configuration,
+        capability=capability,
+        request=None,
+    )
+    policy = OperationExecutionPolicy(
+        node=node,
+        kind="decision",
+        request=None,
+        safe_detachment="forbidden",
+        implementations=(implementation,),
+        result_outcomes=frozenset(),
+        runtime_outcomes=tuple(
+            RuntimeOutcome(
+                condition=condition,
+                reported_outcome=None,
+                failure=failure,
+                outcome=None,
+                category=category,
+            )
+            for condition, failure, category in (
+                ("failure", "permanent", "failure"),
+                ("failure", "implementation_exception", "failure"),
+                ("cancel_before_start", None, "blocked"),
+                ("cancel_after_start", None, "cancelled"),
+                ("artifact_limit_exhausted", None, "blocked"),
+                ("deadline_exhausted", None, "blocked"),
+            )
+        ),
+    )
+    admitted = admit_execution_plan(
+        context=context,
+        capabilities=(capability,),
+        policies=(policy,),
+        decisions=(
+            DecisionDeclaration(
+                node=node,
+                artifact_port="input",
+                outcomes=(DecisionOutcome(decision="approve", outcome="ok"),),
+                max_lifetime_ns=10,
+            ),
+        ),
+        assessment_productions=(),
+        assessment_limits=_assessment_limits(),
+    )
+    running = await start_execution(
+        admitted=admitted,
+        capabilities=(capability,),
+        services=ExecutionServices(
+            handles=(
+                ImplementationHandle(
+                    implementation=capability.implementation,
+                    operation=capability.operation,
+                    configuration=capability.configuration,
+                    local=_DecisionProvider(),
+                    transport=None,
+                    resource=None,
+                ),
+            ),
+            context_resources=(),
+            limits=ExecutionLimits(
+                max_local_in_flight=1,
+                max_remote_outstanding=0,
+                max_runtime_artifacts=1,
+                max_runtime_artifact_bytes=100,
+                max_collection_items=1,
+            ),
+            decision_limits=DecisionLimits(max_pending=1, max_lifetime_ns=10),
+            clock=_ZeroClock(),
+        ),
+    )
+    while not running.pending_decisions():
+        await asyncio.sleep(0)
+    wait = running.pending_decisions()[0]
+    response = DecisionResponse(
+        wait=wait.wait,
+        workflow=wait.workflow,
+        artifact=wait.artifact,
+        decision="approve",
+    )
+    if case_id == "decisions/stale_artifact":
+        response = replace(response, artifact=ArtifactRef(invocation=wait.artifact.invocation, key=1, version=1))
+    elif case_id == "decisions/foreign_workflow":
+        response = replace(response, workflow=WorkflowId.new())
+    elif case_id == "decisions/foreign_wait":
+        response = replace(
+            response,
+            wait=DecisionWaitId.new(invocation=InvocationId.new(plan=wait.activation.invocation.plan)),
+        )
+    elif case_id == "decisions/unknown_decision":
+        response = replace(response, decision="deny")
+    elif case_id == "decisions/duplicate_response":
+        running.submit_decision(response)
+    before = running.pending_decisions()
+    with pytest.raises(EffectRejected) as rejected:
+        running.submit_decision(response)
+    assert rejected.value.code.value == expected
+    assert running.pending_decisions() == before
+    if case_id != "decisions/duplicate_response":
+        running.submit_decision(
+            DecisionResponse(
+                wait=wait.wait,
+                workflow=wait.workflow,
+                artifact=wait.artifact,
+                decision="approve",
+            )
+        )
+    result = await running.wait()
+    assert result.record.terminals[0].category == "success"
+    assert not result.pending_decisions
+
+
+@pytest.mark.parametrize(
+    ("case_id", "expected"),
+    (
+        ("decisions/stale_artifact", "foreign_owner"),
+        ("decisions/foreign_workflow", "foreign_owner"),
+        ("decisions/foreign_wait", "foreign_owner"),
+        ("decisions/unknown_decision", "unsupported"),
+        ("decisions/duplicate_response", "duplicate"),
+    ),
+)
+def test_decision_submission_rejections_use_public_running_execution(case_id: str, expected: str) -> None:
+    asyncio.run(_assert_decision_submission(case_id, expected))
 
 
 @pytest.mark.parametrize("case", ADMISSION_CASES, ids=lambda case: cast(str, case["case_id"]))
