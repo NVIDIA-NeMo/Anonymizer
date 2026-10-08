@@ -168,6 +168,7 @@ def qualify(
     for target in qualification.order:
         qualification.select_candidate(target)
     verified = verify_evidence(admitted=admitted, result=result, submissions=submissions)
+    qualification.validate_assessment_inventory()
     qualification.request_accounting()
     qualification.cleanup_accounting()
     for target in qualification.order:
@@ -339,6 +340,32 @@ class _Qualification:
                 reject(EffectCode.CONTRADICTORY)
             if entry.status != "success":
                 self.withholding[target].add("terminal_failure")
+
+    def validate_assessment_inventory(self) -> None:
+        """Require one retained fact per successful assessment-producing occurrence."""
+        terminals = {item.activation: item for item in self.result.record.terminals}
+        possible = {
+            (activation, entry.template, entry.outcome, production.promise)
+            for activation, entry in self.entries.items()
+            if entry.status == "success" and not isinstance(self.nodes[entry.template], SubgraphNode)
+            for production in self.admitted.execution.assessment_productions
+            if production.node == entry.template and production.outcome == entry.outcome
+        }
+        expected = {owner for owner in possible if owner[0] in terminals}
+        retained = [(fact.activation, fact.node, fact.outcome, fact.promise) for fact in self.result.assessments]
+        observed = set(retained)
+        if len(retained) != len(observed):
+            reject(EffectCode.DUPLICATE)
+        if any(fact.activation.invocation != self.result.record.invocation for fact in self.result.assessments):
+            reject(EffectCode.FOREIGN_OWNER)
+        if any(fact.activation not in self.entries for fact in self.result.assessments):
+            reject(EffectCode.MISSING)
+        if expected - observed:
+            reject(EffectCode.MISSING)
+        # Missing terminals already withhold release. Unsubmitted facts remain
+        # unauthenticated history until terminal accounting is complete.
+        if observed - possible:
+            reject(EffectCode.UNSUPPORTED)
 
     def validate_provenance(self) -> None:
         if len(self.result.provenance) > self.admitted.limits.max_port_facts:

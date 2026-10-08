@@ -85,6 +85,7 @@ from anonymizer.graph.workflow import (
     OutputBinding,
     OutputDependency,
     OutputPort,
+    ProtectionRequirement,
     SequenceEdge,
     SubgraphNode,
     WorkflowId,
@@ -118,6 +119,7 @@ class _MapFixture:
     other_type: ArtifactType
     implementation_nodes: tuple[NodeId, ...]
     capabilities: tuple[Any, ...]
+    member_assessment: bool = False
 
 
 def _map_fixture(
@@ -132,6 +134,7 @@ def _map_fixture(
     outward_identity: bool = True,
     outward_value_depends_on_default: bool = True,
     context_item_override: bool = False,
+    member_assessment: bool = False,
 ) -> _MapFixture:
     owner = WorkflowId.new()
     expander, member, join = (NodeId.new(workflow=owner) for _ in range(3))
@@ -211,6 +214,34 @@ def _map_fixture(
             ),
         ),
     )
+    if member_assessment:
+        assert not control_only and not outward_scalar and not member_subgraph
+        member_operation = replace(
+            member_operation,
+            inputs=(*member_operation.inputs, InputPort(name="subject", artifact_type=text_type)),
+            outputs=(OutputPort(name="evidence", artifact_type=text_type),),
+            output_dependencies=(
+                OutputDependency(output="evidence", inputs=frozenset({"subject"}), identity_input=None),
+            ),
+            outcomes=(
+                replace(
+                    member_operation.outcomes[0],
+                    produced_ports=frozenset({"evidence"}),
+                    ceiling=replace(member_operation.outcomes[0].ceiling, max_output_bytes=32),
+                    evidence=frozenset(
+                        {
+                            EvidencePromise(
+                                name="member_checked",
+                                meaning="member accepted",
+                                subject_port="subject",
+                                consumed_ports=frozenset({"subject"}),
+                                coverage=frozenset(),
+                            )
+                        }
+                    ),
+                ),
+            ),
+        )
     member_node: OperationNode | SubgraphNode = OperationNode(id=member, operation=member_operation)
     member_implementation = member
     if member_subgraph:
@@ -300,7 +331,7 @@ def _map_fixture(
                     "ok",
                     produced=frozenset({"members", *(("value",) if outward_scalar == "workflow_output" else ())}),
                     max_activations=max_children + (8 if default_source is not None or outward_scalar else 4),
-                    max_output_bytes=512 if default_source is not None or outward_scalar else 128,
+                    max_output_bytes=512 if default_source is not None or outward_scalar or member_assessment else 128,
                 ),
                 evidence=frozenset(
                     {
@@ -310,7 +341,20 @@ def _map_fixture(
                             subject_port="members",
                             consumed_ports=frozenset({"default"}),
                             coverage=frozenset(),
-                        )
+                        ),
+                        *(
+                            (
+                                EvidencePromise(
+                                    name="member_checked",
+                                    meaning="member accepted",
+                                    subject_port="default",
+                                    consumed_ports=frozenset({"default"}),
+                                    coverage=frozenset(),
+                                ),
+                            )
+                            if member_assessment
+                            else ()
+                        ),
                     }
                 ),
                 context=(
@@ -343,6 +387,15 @@ def _map_fixture(
             *((OperationNode(id=ordinary, operation=ordinary_operation),) if ordinary is not None else ()),
         ),
         input_bindings=(
+            *(
+                (
+                    InputBinding(
+                        source=WorkflowInputRef(port="default"), destination=NodeInputRef(node=member, port="subject")
+                    ),
+                )
+                if member_assessment
+                else ()
+            ),
             *(
                 ()
                 if control_only
@@ -420,10 +473,27 @@ def _map_fixture(
             ),
         ),
         choices=(),
-        protection=(),
+        protection=(
+            ProtectionRequirement(
+                outcome="ok",
+                meaning="map membership accepted",
+                subject_port="members",
+                consumed_ports=frozenset({"default"}),
+                coverage=frozenset(),
+            ),
+            ProtectionRequirement(
+                outcome="ok",
+                meaning="member accepted",
+                subject_port="default",
+                consumed_ports=frozenset({"default"}),
+                coverage=frozenset(),
+            ),
+        )
+        if member_assessment
+        else (),
         limits=WorkflowLimits(
             max_nodes=3 + int(default_source is not None) + int(ordinary is not None) + int(member_subgraph),
-            max_bindings=(5 if other_count else 4) + int(outward_scalar is not None),
+            max_bindings=(5 if other_count else 4) + int(outward_scalar is not None) + int(member_assessment),
             max_sequence_edges=2 + int(default_source is not None) + (2 if ordinary is not None else 0),
             max_choices=0,
             max_branch_members=0,
@@ -501,6 +571,7 @@ def _map_fixture(
         other_type,
         implementation_nodes,
         capabilities,
+        member_assessment,
     )
 
 
@@ -522,6 +593,7 @@ class _MapCallback:
     passthrough: bool = False
     same_key_versions: bool = False
     item_counts: tuple[int, ...] | None = None
+    member_assessment: bool = False
 
     async def run(self, request: tuple[AssociationInput, ...]) -> LocalCompleted | LocalFailure:
         self.calls.append(request)
@@ -580,6 +652,15 @@ class _MapCallback:
                 outputs = (membership, membership, *other_outputs)
             else:
                 outputs = (membership, *other_outputs)
+        elif self.member_assessment:
+            outputs = (
+                PortArtifact(
+                    port="evidence",
+                    artifact_type=self.text_type,
+                    artifact=None,
+                    value=TextArtifactValue(text="checked"),
+                ),
+            )
         elif self.passthrough:
             value = request[0].inputs[0]
             outputs = (
@@ -608,7 +689,18 @@ class _MapCallback:
                 ),
             )
             if self.mode == "expander"
-            else (),
+            else (
+                (
+                    LocalAssessmentResult(
+                        association=association,
+                        promise="member_checked",
+                        evidence_port="evidence",
+                        finding=AssessmentFinding(status="satisfied", code="member_checked"),
+                    ),
+                )
+                if self.member_assessment
+                else ()
+            ),
         )
 
 
@@ -683,7 +775,9 @@ def _admit_fixture(
             for target in data.targets
         ),
         configuration=PreparationConfiguration(
-            purpose="execution_only", required_protection_outcomes=frozenset(), hard_request_limit=None
+            purpose="protection" if fixture.member_assessment else "execution_only",
+            required_protection_outcomes=frozenset({"ok"}) if fixture.member_assessment else frozenset(),
+            hard_request_limit=None,
         ),
         state=StateRevisionView(revisions=frozenset()),
         selections=tuple(
@@ -739,13 +833,28 @@ def _admit_fixture(
                 absence_queries=frozenset(),
                 supported_findings=frozenset({AssessmentFinding(status="satisfied", code="assessment0")}),
             ),
+            *(
+                (
+                    EvidenceProductionDecl(
+                        node=fixture.member_implementation,
+                        outcome="ok",
+                        promise="member_checked",
+                        evidence_port="evidence",
+                        absence_queries=frozenset(),
+                        supported_findings=frozenset({AssessmentFinding(status="satisfied", code="member_checked")}),
+                    ),
+                )
+                if fixture.member_assessment
+                else ()
+            ),
         ),
         assessment_limits=AssessmentLimits(
-            max_productions=1,
+            max_productions=1 + fixture.member_assessment,
             max_findings_per_production=1,
             max_finding_code_bytes=16,
             max_absence_queries=0,
-            max_assessment_facts=len(data.targets),
+            max_assessment_facts=len(data.targets)
+            * (fixture.workflow.limits.max_activation_occurrences if fixture.member_assessment else 1),
             max_port_facts=baseline_port_facts + port_fact_headroom,
             max_provenance_edges=baseline_provenance_edges + provenance_edge_headroom,
         ),
@@ -784,6 +893,7 @@ async def _execute_membership(
     outward_identity: bool = True,
     same_key_versions: bool = False,
     item_counts: tuple[int, ...] | None = None,
+    member_assessment: bool = False,
 ):
     fixture = _map_fixture(
         control_only=control_only,
@@ -794,6 +904,7 @@ async def _execute_membership(
         max_children=max_children,
         outward_scalar=outward_scalar,
         outward_identity=outward_identity,
+        member_assessment=member_assessment,
     )
     data = _data(target_count)
     bound_context = None
@@ -906,6 +1017,7 @@ async def _execute_membership(
             release=release if node == fixture.expander else None,
             cross_ready=asyncio.Event() if node == fixture.expander and response_mode == "cross_association" else None,
             passthrough=node == fixture.member_implementation and outward_scalar is not None,
+            member_assessment=member_assessment and node == fixture.member_implementation,
         )
         for node in by_node
     }
