@@ -742,6 +742,24 @@ def advance_requests(*, state: RequestState, event: RequestEvent) -> RequestStat
     return _accept_results(state, event)
 
 
+def can_reserve_followup(
+    *,
+    state: RequestState,
+    purpose: Literal["retry", "correction", "failover"],
+    associations: frozenset[RequestAssociation],
+    policy: PhysicalRequestPolicy,
+) -> bool:
+    """Return whether the request authority would admit this follow-up relationship."""
+    require_instance(state, RequestState)
+    require_literal(purpose, frozenset({"retry", "correction", "failover"}))
+    if not isinstance(associations, frozenset) or any(
+        not isinstance(item, (SemanticAssociation, BindingAssociation)) for item in associations
+    ):
+        reject(EffectCode.INVALID_TYPE)
+    require_instance(policy, PhysicalRequestPolicy)
+    return _followup_rejection(state, purpose, associations, policy) is None
+
+
 def _reserve(state: RequestState, event: Reserve) -> RequestState:
     require_instance(event.request, PhysicalRequestId)
     require_literal(event.purpose, _PURPOSES)
@@ -901,50 +919,60 @@ def _accept_results(state: RequestState, event: AcceptResult) -> RequestState:
 def _validate_followup(state: RequestState, event: Reserve) -> None:
     if event.purpose not in {"retry", "correction", "failover"}:
         return
-    for association in event.associations:
+    rejection = _followup_rejection(state, event.purpose, event.associations, event.policy)
+    if rejection is not None:
+        reject(rejection)
+
+
+def _followup_rejection(
+    state: RequestState,
+    purpose: Literal["retry", "correction", "failover"],
+    associations: frozenset[RequestAssociation],
+    policy: PhysicalRequestPolicy,
+) -> EffectCode | None:
+    for association in associations:
         latest = next(
             (reservation for reservation in reversed(state.dispatches) if association in reservation.associations),
             None,
         )
         if latest is None:
-            reject(EffectCode.MISSING_PREDECESSOR)
+            return EffectCode.MISSING_PREDECESSOR
         terminal = next((item for item in state.terminals if item.request == latest.request), None)
         if terminal is None:
-            reject(EffectCode.MISSING_PREDECESSOR)
+            return EffectCode.MISSING_PREDECESSOR
         if terminal.failure is None:
             code = {
                 "retry": EffectCode.INVALID_RETRY,
                 "correction": EffectCode.INVALID_CORRECTION,
                 "failover": EffectCode.INVALID_FAILOVER,
-            }[event.purpose]
-            reject(code)
+            }[purpose]
+            return code
         failure = terminal.failure
-        if event.purpose == "retry":
+        if purpose == "retry":
             if failure not in {"rejected_before_acceptance", "retryable", "transport_unknown"}:
-                reject(EffectCode.INVALID_RETRY)
-            permitted = failure == "rejected_before_acceptance" and event.policy.replay in {
+                return EffectCode.INVALID_RETRY
+            permitted = failure == "rejected_before_acceptance" and policy.replay in {
                 "before_acceptance",
                 "idempotent",
             }
-            permitted = (
-                permitted or failure in {"retryable", "transport_unknown"} and event.policy.replay == "idempotent"
-            )
-        elif event.purpose == "correction":
+            permitted = permitted or failure in {"retryable", "transport_unknown"} and policy.replay == "idempotent"
+        elif purpose == "correction":
             if failure != "malformed_response":
-                reject(EffectCode.INVALID_CORRECTION)
-            permitted = event.policy.replay == "idempotent"
+                return EffectCode.INVALID_CORRECTION
+            permitted = policy.replay == "idempotent"
         else:
             # Exact failover eligibility is admitted by the execution policy;
             # the reducer enforces predecessor and replay authority.
             if failure in {"malformed_response", "retryable", "transport_unknown"}:
-                reject(EffectCode.INVALID_FAILOVER)
-            permitted = event.policy.replay == "idempotent" or (
-                failure == "rejected_before_acceptance" and event.policy.replay == "before_acceptance"
+                return EffectCode.INVALID_FAILOVER
+            permitted = policy.replay == "idempotent" or (
+                failure == "rejected_before_acceptance" and policy.replay == "before_acceptance"
             )
-        if latest.policy != event.policy:
-            reject(EffectCode.CROSS_POLICY)
+        if latest.policy != policy:
+            return EffectCode.CROSS_POLICY
         if not permitted:
-            reject(EffectCode.REPLAY_FORBIDDEN)
+            return EffectCode.REPLAY_FORBIDDEN
+    return None
 
 
 def _dispatched_reservation(state: RequestState, request: PhysicalRequestId) -> RequestReservation:

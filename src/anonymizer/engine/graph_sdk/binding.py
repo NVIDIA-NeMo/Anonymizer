@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 from contextlib import suppress
 from dataclasses import dataclass
+from typing import Literal
 
 from anonymizer.engine.graph_sdk._effect_values import EffectCode, EffectRejected, reject, require_instance
 from anonymizer.engine.graph_sdk.context import (
@@ -50,6 +51,7 @@ from anonymizer.engine.graph_sdk.requests import (
     StopConfirmed,
     advance_requests,
     bind_request_policies,
+    can_reserve_followup,
     initialize_requests,
     request_receipt,
 )
@@ -358,13 +360,17 @@ def _can_retry(
     failure: FailureClass,
 ) -> bool:
     attempts = sum(association in item.associations for item in state.dispatches)
-    if attempts >= declaration.bounds.max_requests or capability.request.retry_owner != "executor":
+    if attempts >= declaration.bounds.max_requests:
         return False
-    if failure == "malformed_response":
-        return True
-    if failure == "rejected_before_acceptance":
-        return capability.request.replay in {"before_acceptance", "idempotent"}
-    return failure in {"retryable", "transport_unknown"} and capability.request.replay == "idempotent"
+    purpose: Literal["retry", "correction"] = "correction" if failure == "malformed_response" else "retry"
+    if purpose == "retry" and capability.request.retry_owner != "executor":
+        return False
+    return can_reserve_followup(
+        state=state,
+        purpose=purpose,
+        associations=frozenset({association}),
+        policy=capability.request,
+    )
 
 
 def _validate_binding(

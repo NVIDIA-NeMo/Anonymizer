@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import suppress
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from itertools import product
 from typing import Literal, Protocol, TypeAlias, runtime_checkable
 
@@ -86,6 +86,7 @@ from anonymizer.engine.graph_sdk.requests import (
     TransportSuccess,
     advance_requests,
     bind_request_policies,
+    can_reserve_followup,
     initialize_requests,
     request_receipt,
 )
@@ -518,8 +519,8 @@ class CleanupAssociation(PrivateValue):
 def _init_fact(value: object, key: object, fields: dict[str, object]) -> None:
     if key is not _FACT_KEY:
         raise TypeError("execution facts are created by the executor")
-    for name, field in fields.items():
-        object.__setattr__(value, name, field)
+    for name, fact_value in fields.items():
+        object.__setattr__(value, name, fact_value)
 
 
 _PLAN_KEY = object()
@@ -1059,9 +1060,49 @@ def _validate_assessments(
 @dataclass(slots=True)
 class _ExecutionControl:
     cancelled: bool = False
-    pending: dict[DecisionWaitId, DecisionWait] | None = None
-    responses: dict[DecisionWaitId, DecisionResponse] | None = None
-    closed: set[DecisionWaitId] | None = None
+    pending: dict[DecisionWaitId, DecisionWait] = field(default_factory=dict)
+    responses: dict[DecisionWaitId, DecisionResponse] = field(default_factory=dict)
+    closed: set[DecisionWaitId] = field(default_factory=set)
+
+
+@dataclass(frozen=True, slots=True)
+class _FactCheckpoint:
+    values: dict[ArtifactRef, ArtifactValue]
+    produced: dict[tuple[DatumId, ActivationKey | NodeId, str], ArtifactRef]
+    provenance_count: int
+    port_count: int
+    assessment_count: int
+    next_artifact: int
+
+
+@dataclass(slots=True)
+class _ExecutionFacts:
+    values: dict[ArtifactRef, ArtifactValue] = field(default_factory=dict)
+    produced: dict[tuple[DatumId, ActivationKey | NodeId, str], ArtifactRef] = field(default_factory=dict)
+    provenance: list[ArtifactProvenanceFact] = field(default_factory=list)
+    ports: list[ExecutionPortFact] = field(default_factory=list)
+    assessments: list[ExecutionAssessmentFact] = field(default_factory=list)
+    next_artifact: int = 0
+
+    def checkpoint(self) -> _FactCheckpoint:
+        return _FactCheckpoint(
+            values=self.values.copy(),
+            produced=self.produced.copy(),
+            provenance_count=len(self.provenance),
+            port_count=len(self.ports),
+            assessment_count=len(self.assessments),
+            next_artifact=self.next_artifact,
+        )
+
+    def restore(self, checkpoint: _FactCheckpoint) -> None:
+        self.values.clear()
+        self.values.update(checkpoint.values)
+        self.produced.clear()
+        self.produced.update(checkpoint.produced)
+        del self.provenance[checkpoint.provenance_count :]
+        del self.ports[checkpoint.port_count :]
+        del self.assessments[checkpoint.assessment_count :]
+        self.next_artifact = checkpoint.next_artifact
 
 
 @dataclass(slots=True)
@@ -1111,26 +1152,22 @@ class RunningExecution:
         self._control.cancelled = True
 
     def pending_decisions(self) -> tuple[DecisionWait, ...]:
-        return tuple((self._control.pending or {}).values())
+        return tuple(self._control.pending.values())
 
     def submit_decision(self, decision: DecisionResponse) -> None:
         require_instance(decision, DecisionResponse)
         if decision.wait.invocation != self.invocation:
             reject(EffectCode.FOREIGN_OWNER)
-        pending = self._control.pending or {}
-        wait = pending.get(decision.wait)
+        wait = self._control.pending.get(decision.wait)
         if wait is None:
-            reject(EffectCode.DUPLICATE if decision.wait in (self._control.closed or set()) else EffectCode.MISSING)
+            reject(EffectCode.DUPLICATE if decision.wait in self._control.closed else EffectCode.MISSING)
         if decision.workflow != wait.workflow or decision.artifact != wait.artifact:
             reject(EffectCode.FOREIGN_OWNER)
         if decision.decision not in wait.allowed_decisions:
             reject(EffectCode.UNSUPPORTED)
-        responses = self._control.responses
-        if responses is None:
-            reject(EffectCode.CONTRADICTORY)
-        if decision.wait in responses:
+        if decision.wait in self._control.responses:
             reject(EffectCode.DUPLICATE)
-        responses[decision.wait] = decision
+        self._control.responses[decision.wait] = decision
 
     async def wait(self) -> ExecutionResult:
         return await asyncio.shield(self._task)
@@ -1156,7 +1193,7 @@ async def start_execution(
     _validate_services(admitted, services)
     _validate_absences(admitted, services)
     invocation = InvocationId.new(plan=prepared.plan)
-    control = _ExecutionControl(pending={}, responses={}, closed=set())
+    control = _ExecutionControl()
     task = asyncio.create_task(_run_execution(admitted, services, invocation, control))
     return RunningExecution(invocation, control, task)
 
@@ -1336,16 +1373,16 @@ async def _run_execution(
     )
     deferred_acceptances: dict[SemanticAssociation, _DeferredAcceptance] = {}
     request_resources: dict[PhysicalRequestId, ResourceId] = {}
-    artifact_values: dict[ArtifactRef, ArtifactValue] = {}
+    facts = _ExecutionFacts()
+    artifact_values = facts.values
     root_inputs: dict[tuple[DatumId, str], ArtifactRef] = {}
     subgraph_inputs: dict[tuple[DatumId, ActivationKey, str], ArtifactRef] = {}
     subgraph_input_parents: dict[tuple[DatumId, ActivationKey, str], ProvenanceKey] = {}
-    provenance: list[ArtifactProvenanceFact] = []
-    next_artifact = 0
+    provenance = facts.provenance
     datum_text = {item.id: item.text for item in prepared.data.datums}
     for bound in prepared.bound_inputs:
-        reference = ArtifactRef(invocation=invocation, key=next_artifact, version=1)
-        next_artifact += 1
+        reference = ArtifactRef(invocation=invocation, key=facts.next_artifact, version=1)
+        facts.next_artifact += 1
         artifact_values[reference] = TextArtifactValue(text=datum_text[bound.source])
         root_inputs[(bound.target, bound.port)] = reference
         provenance.append(
@@ -1357,19 +1394,19 @@ async def _run_execution(
                 decision=False,
             )
         )
-    produced: dict[tuple[DatumId, ActivationKey | NodeId, str], ArtifactRef] = {}
-    next_artifact = _materialize_bound_context(
+    produced = facts.produced
+    facts.next_artifact = _materialize_bound_context(
         admitted,
         invocation,
         artifact_values,
         produced,
         provenance,
-        next_artifact,
+        facts.next_artifact,
         services.limits,
     )
     attempts: dict[ActivationKey, TaskAttemptId] = {}
-    port_facts: list[ExecutionPortFact] = []
-    assessment_facts: list[ExecutionAssessmentFact] = []
+    port_facts = facts.ports
+    assessment_facts = facts.assessments
     cancelled_unstarted: set[ActivationKey] = set()
     jobs: dict[
         asyncio.Task[tuple[RuntimeOutcome, tuple[AssociationResult, ...], tuple[LocalAssessmentResult, ...]]],
@@ -1413,7 +1450,7 @@ async def _run_execution(
                         )
                         scheduled = True
                     continue
-                if policy.kind == "decision" and len(control.pending or {}) >= services.decision_limits.max_pending:
+                if policy.kind == "decision" and len(control.pending) >= services.decision_limits.max_pending:
                     if services.decision_limits.max_pending == 0:
                         reject(EffectCode.PENDING_LIMIT)
                     continue
@@ -1584,12 +1621,7 @@ async def _run_execution(
             mapping, results, assessments = task.result()
             deferred = deferred_acceptances.pop(job.association, None)
             staged_result = False
-            prior_values: dict[ArtifactRef, ArtifactValue] | None = None
-            prior_produced: dict[tuple[DatumId, ActivationKey | NodeId, str], ArtifactRef] | None = None
-            prior_provenance_count = len(provenance)
-            prior_port_count = len(port_facts)
-            prior_assessment_count = len(assessment_facts)
-            prior_next_artifact = next_artifact
+            checkpoint: _FactCheckpoint | None = None
             if mapping.condition == "result":
                 if job.policy.kind == "decision" and not results:
                     results = (
@@ -1616,9 +1648,8 @@ async def _run_execution(
                 ):
                     mapping = _mapping(job.policy, "failure", None, "malformed_response")
                 else:
-                    prior_values = artifact_values.copy()
-                    prior_produced = produced.copy()
-                    output_status, created, next_artifact = _accept_outputs(
+                    checkpoint = facts.checkpoint()
+                    output_status, created = _accept_outputs(
                         admitted,
                         invocation,
                         job.target,
@@ -1630,11 +1661,7 @@ async def _run_execution(
                         job.inputs,
                         job.input_parents,
                         results,
-                        artifact_values,
-                        produced,
-                        provenance,
-                        port_facts,
-                        next_artifact,
+                        facts,
                         services.limits,
                     )
                     if output_status != "valid":
@@ -1652,19 +1679,11 @@ async def _run_execution(
                         job.node,
                         mapping,
                         assessments,
-                        produced,
                         job.target,
                         services,
-                        assessment_facts,
+                        facts,
                     ):
-                        artifact_values.clear()
-                        artifact_values.update(prior_values)
-                        produced.clear()
-                        produced.update(prior_produced)
-                        del provenance[prior_provenance_count:]
-                        del port_facts[prior_port_count:]
-                        del assessment_facts[prior_assessment_count:]
-                        next_artifact = prior_next_artifact
+                        facts.restore(checkpoint)
                         mapping = _mapping(job.policy, "failure", None, "malformed_response")
                     else:
                         staged_result = True
@@ -1683,7 +1702,7 @@ async def _run_execution(
                         results,
                     )
                     if membership is not None:
-                        candidate_state, next_artifact = _observe_dynamic_membership(
+                        candidate_state = _observe_dynamic_membership(
                             admitted,
                             candidate_state,
                             job.target,
@@ -1691,22 +1710,12 @@ async def _run_execution(
                             job.node,
                             mapping.outcome,
                             membership,
-                            artifact_values,
-                            produced,
-                            provenance,
-                            next_artifact,
+                            facts,
                             services.limits,
                         )
                 except (ContractViolation, EffectRejected) as exc:
-                    assert prior_values is not None and prior_produced is not None
-                    artifact_values.clear()
-                    artifact_values.update(prior_values)
-                    produced.clear()
-                    produced.update(prior_produced)
-                    del provenance[prior_provenance_count:]
-                    del port_facts[prior_port_count:]
-                    del assessment_facts[prior_assessment_count:]
-                    next_artifact = prior_next_artifact
+                    assert checkpoint is not None
+                    facts.restore(checkpoint)
                     condition = (
                         "artifact_limit_exhausted"
                         if (isinstance(exc, EffectRejected) and exc.code == EffectCode.LIMIT_EXCEEDED)
@@ -1732,33 +1741,21 @@ async def _run_execution(
                         prepared.workflow.workflow,
                         job.target,
                         candidate_state,
-                        produced,
-                        provenance,
-                        port_facts,
+                        facts,
                     )
-                    candidate_state, next_artifact, bridged = _bridge_structural_map_membership(
+                    candidate_state, bridged = _bridge_structural_map_membership(
                         admitted,
                         candidate_state,
                         job.target,
-                        artifact_values,
-                        produced,
-                        provenance,
-                        next_artifact,
+                        facts,
                         services.limits,
                     )
                     if not bridged:
                         break
             except (ContractViolation, EffectRejected) as exc:
-                if not staged_result or prior_values is None or prior_produced is None:
+                if not staged_result or checkpoint is None:
                     raise
-                artifact_values.clear()
-                artifact_values.update(prior_values)
-                produced.clear()
-                produced.update(prior_produced)
-                del provenance[prior_provenance_count:]
-                del port_facts[prior_port_count:]
-                del assessment_facts[prior_assessment_count:]
-                next_artifact = prior_next_artifact
+                facts.restore(checkpoint)
                 condition = (
                     "artifact_limit_exhausted"
                     if isinstance(exc, EffectRejected) and exc.code == EffectCode.LIMIT_EXCEEDED
@@ -2075,27 +2072,21 @@ def _observe_dynamic_membership(
     node: NodeId,
     outcome: str | None,
     collection: ArtifactValue,
-    values: dict[ArtifactRef, ArtifactValue],
-    produced: dict[tuple[DatumId, ActivationKey | NodeId, str], ArtifactRef],
-    provenance: list[ArtifactProvenanceFact],
-    next_artifact: int,
+    facts: _ExecutionFacts,
     limits: ExecutionLimits,
-) -> tuple[ActivationState, int]:
+) -> ActivationState:
     scope = next(item for item in state.workflow.scopes if node.workflow == item.workflow.workflow)
     declaration = next((item for item in scope.maps if item.expander == node), None)
     if declaration is None or outcome not in declaration.expansion_outcomes:
-        return state, next_artifact
+        return state
     expansion = next(item for item in admitted.map_expansions if item.expander == node and item.outcome == outcome)
     if not isinstance(collection, TextCollectionValue):
         reject(EffectCode.INVALID_TYPE)
     observed_count = len(collection.items)
     if observed_count > declaration.max_children:
-        return (
-            advance_activation(
-                state=state,
-                event=ObserveOverflow(parent=activation, observed_count=observed_count),
-            ),
-            next_artifact,
+        return advance_activation(
+            state=state,
+            event=ObserveOverflow(parent=activation, observed_count=observed_count),
         )
     members = sorted(
         (
@@ -2107,15 +2098,15 @@ def _observe_dynamic_membership(
     )
     selected = members[:observed_count]
     if declaration.item_input is not None:
-        if len(values) + len(selected) > limits.max_runtime_artifacts:
+        if len(facts.values) + len(selected) > limits.max_runtime_artifacts:
             reject(EffectCode.LIMIT_EXCEEDED)
         if (
-            sum(_artifact_bytes(item) for item in values.values())
+            sum(_artifact_bytes(item) for item in facts.values.values())
             + sum(len(item.value.text.encode()) for item in collection.items)
             > limits.max_runtime_artifact_bytes
         ):
             reject(EffectCode.LIMIT_EXCEEDED)
-        if sum(len(item.parents) for item in provenance) + len(selected) > (
+        if sum(len(item.parents) for item in facts.provenance) + len(selected) > (
             admitted.assessment_limits.max_provenance_edges
         ):
             reject(EffectCode.LIMIT_EXCEEDED)
@@ -2124,13 +2115,17 @@ def _observe_dynamic_membership(
             target=target,
             port=expansion.membership_port,
         )
-        if not any(item.key == parent_key for item in provenance):
+        if not any(item.key == parent_key for item in facts.provenance):
             reject(EffectCode.MISSING)
         for member, item in zip(selected, collection.items, strict=True):
-            reference = ArtifactRef(invocation=activation.invocation, key=next_artifact, version=item.version)
-            next_artifact += 1
-            values[reference] = item.value
-            produced[(target, member, declaration.item_input)] = reference
+            reference = ArtifactRef(
+                invocation=activation.invocation,
+                key=facts.next_artifact,
+                version=item.version,
+            )
+            facts.next_artifact += 1
+            facts.values[reference] = item.value
+            facts.produced[(target, member, declaration.item_input)] = reference
             key = MapItemKey(
                 expander=activation,
                 member=member,
@@ -2139,7 +2134,7 @@ def _observe_dynamic_membership(
                 item_key=item.key,
                 item_version=item.version,
             )
-            provenance.append(
+            facts.provenance.append(
                 ArtifactProvenanceFact(
                     _key=_FACT_KEY,
                     key=key,
@@ -2148,12 +2143,9 @@ def _observe_dynamic_membership(
                     decision=False,
                 )
             )
-    return (
-        advance_activation(
-            state=state,
-            event=ObserveMembership(parent=activation, members=frozenset(selected), closed=True),
-        ),
-        next_artifact,
+    return advance_activation(
+        state=state,
+        event=ObserveMembership(parent=activation, members=frozenset(selected), closed=True),
     )
 
 
@@ -2328,9 +2320,7 @@ def _materialize_subgraph_outputs(
     root: AdmittedWorkflow,
     target: DatumId,
     state: ActivationState,
-    produced: dict[tuple[DatumId, ActivationKey | NodeId, str], ArtifactRef],
-    provenance: list[ArtifactProvenanceFact],
-    port_facts: list[ExecutionPortFact],
+    facts: _ExecutionFacts,
 ) -> None:
     for entry in state.entries:
         if entry.status not in {"success", "failure", "cancelled", "lost", "blocked", "inconsistent"}:
@@ -2345,7 +2335,7 @@ def _materialize_subgraph_outputs(
             if not isinstance(binding.source, NodeOutputRef):
                 continue
             destination = (target, entry.activation, binding.destination.port)
-            if destination in produced:
+            if destination in facts.produced:
                 continue
             source_activation = _source_activation(state, entry.activation, binding.source.node)
             source_entry = next(
@@ -2363,16 +2353,16 @@ def _materialize_subgraph_outputs(
                 target=target,
                 port=binding.source.port,
             )
-            source_fact = next((item for item in provenance if item.key == source_key), None)
+            source_fact = next((item for item in facts.provenance if item.key == source_key), None)
             if source_fact is None:
                 continue
-            produced[destination] = source_fact.artifact
+            facts.produced[destination] = source_fact.artifact
             key = OperationOutputKey(
                 activation=entry.activation,
                 target=target,
                 port=binding.destination.port,
             )
-            provenance.append(
+            facts.provenance.append(
                 ArtifactProvenanceFact(
                     _key=_FACT_KEY,
                     key=key,
@@ -2384,7 +2374,7 @@ def _materialize_subgraph_outputs(
             output_type = next(
                 item.artifact_type for item in declaration.operation.outputs if item.name == binding.destination.port
             )
-            port_facts.append(
+            facts.ports.append(
                 ExecutionPortFact(
                     _key=_FACT_KEY,
                     activation=entry.activation,
@@ -2402,12 +2392,9 @@ def _bridge_structural_map_membership(
     admitted: AdmittedExecutionPlan,
     state: ActivationState,
     target: DatumId,
-    values: dict[ArtifactRef, ArtifactValue],
-    produced: dict[tuple[DatumId, ActivationKey | NodeId, str], ArtifactRef],
-    provenance: list[ArtifactProvenanceFact],
-    next_artifact: int,
+    facts: _ExecutionFacts,
     limits: ExecutionLimits,
-) -> tuple[ActivationState, int, bool]:
+) -> tuple[ActivationState, bool]:
     root = admitted.context.prepared.workflow.workflow
     for entry in sorted(state.entries, key=lambda item: item.activation.occurrence):
         if entry.status != "success" or entry.outcome is None or not _is_subgraph_node(root, entry.template):
@@ -2434,25 +2421,22 @@ def _bridge_structural_map_membership(
             for item in admitted.map_expansions
             if item.expander == entry.template and item.outcome == entry.outcome
         )
-        reference = produced.get((target, entry.activation, expansion.membership_port))
-        if reference is None or reference not in values:
+        reference = facts.produced.get((target, entry.activation, expansion.membership_port))
+        if reference is None or reference not in facts.values:
             reject(EffectCode.MISSING)
-        updated, next_artifact = _observe_dynamic_membership(
+        updated = _observe_dynamic_membership(
             admitted,
             state,
             target,
             entry.activation,
             entry.template,
             entry.outcome,
-            values[reference],
-            values,
-            produced,
-            provenance,
-            next_artifact,
+            facts.values[reference],
+            facts,
             limits,
         )
-        return updated, next_artifact, True
-    return state, next_artifact, False
+        return updated, True
+    return state, False
 
 
 async def _run_local(
@@ -2546,8 +2530,6 @@ async def _run_decision(
     pending = control.pending
     responses = control.responses
     closed = control.closed
-    if pending is None or responses is None or closed is None:
-        reject(EffectCode.CONTRADICTORY)
     pending[wait.wait] = wait
     while True:
         if control.cancelled:
@@ -2673,8 +2655,15 @@ async def _run_external(
             if result.settlement is not None and result.settlement.request != request:
                 failure = "malformed_response"
                 authority.apply(AcceptFailure(request=request, failure=failure))
-                purpose = "correction"
-                continue
+                if can_reserve_followup(
+                    state=authority.state,
+                    purpose="correction",
+                    associations=frozenset({association}),
+                    policy=policy.request,
+                ):
+                    purpose = "correction"
+                    continue
+                return _mapping(policy, "failure", None, failure), (), ()
             keyed = len(result.results) == 1 and result.results[0].association == association
             reported = result.results[0].outcome if keyed else None
             candidate_mapping = (
@@ -2707,8 +2696,15 @@ async def _run_external(
             if result.settlement is not None and result.settlement.request != request:
                 failure = "malformed_response"
                 authority.apply(AcceptFailure(request=request, failure=failure))
-                purpose = "correction"
-                continue
+                if can_reserve_followup(
+                    state=authority.state,
+                    purpose="correction",
+                    associations=frozenset({association}),
+                    policy=policy.request,
+                ):
+                    purpose = "correction"
+                    continue
+                return _mapping(policy, "failure", None, failure), (), ()
             failure = result.failure
             authority.apply(AcceptFailure(request=request, failure=failure))
             if result.settlement is not None:
@@ -2723,16 +2719,30 @@ async def _run_external(
                 authority.apply(ObserveSettlement(settlement=result.settlement))
             return _mapping(policy, "lost", None, None), (), ()
 
-        if failure == "malformed_response":
+        if failure == "malformed_response" and can_reserve_followup(
+            state=authority.state,
+            purpose="correction",
+            associations=frozenset({association}),
+            policy=policy.request,
+        ):
             purpose = "correction"
-        elif failure in {"permanent", "implementation_exception"} and implementation_index + 1 < len(
-            policy.implementations
+        elif (
+            failure in {"permanent", "implementation_exception"}
+            and implementation_index + 1 < len(policy.implementations)
+            and can_reserve_followup(
+                state=authority.state,
+                purpose="failover",
+                associations=frozenset({association}),
+                policy=policy.request,
+            )
         ):
             implementation_index += 1
             purpose = "failover"
-        elif policy.request.retry_owner == "executor" and (
-            (failure == "rejected_before_acceptance" and policy.request.replay in {"before_acceptance", "idempotent"})
-            or (failure in {"retryable", "transport_unknown"} and policy.request.replay == "idempotent")
+        elif policy.request.retry_owner == "executor" and can_reserve_followup(
+            state=authority.state,
+            purpose="retry",
+            associations=frozenset({association}),
+            policy=policy.request,
         ):
             purpose = "retry"
         else:
@@ -2904,8 +2914,15 @@ async def _run_adaptive(
         else:
             if isinstance(result, SourceLost) and result.source != declaration.source:
                 authority.apply(AcceptFailure(request=request, failure="malformed_response"))
-                purpose = "correction"
-                continue
+                if can_reserve_followup(
+                    state=authority.state,
+                    purpose="correction",
+                    associations=frozenset({association}),
+                    policy=capability.request,
+                ):
+                    purpose = "correction"
+                    continue
+                return _mapping(policy, "failure", None, "malformed_response"), (), ()
             authority.apply(MarkLost(request=request))
             if (
                 isinstance(result, SourceLost)
@@ -2914,14 +2931,18 @@ async def _run_adaptive(
             ):
                 authority.apply(ObserveSettlement(settlement=result.settlement))
             return _mapping(policy, "lost", None, None), (), ()
-        if failure == "malformed_response":
+        if failure == "malformed_response" and can_reserve_followup(
+            state=authority.state,
+            purpose="correction",
+            associations=frozenset({association}),
+            policy=capability.request,
+        ):
             purpose = "correction"
-        elif capability.request.retry_owner == "executor" and (
-            (
-                failure == "rejected_before_acceptance"
-                and capability.request.replay in {"before_acceptance", "idempotent"}
-            )
-            or (failure in {"retryable", "transport_unknown"} and capability.request.replay == "idempotent")
+        elif capability.request.retry_owner == "executor" and can_reserve_followup(
+            state=authority.state,
+            purpose="retry",
+            associations=frozenset({association}),
+            policy=capability.request,
         ):
             purpose = "retry"
         else:
@@ -2967,72 +2988,68 @@ def _accept_outputs(
     inputs: tuple[AssociationInput, ...],
     input_parents: dict[str, ProvenanceKey],
     results: tuple[AssociationResult, ...],
-    values: dict[ArtifactRef, ArtifactValue],
-    produced: dict[tuple[DatumId, ActivationKey | NodeId, str], ArtifactRef],
-    provenance: list[ArtifactProvenanceFact],
-    port_facts: list[ExecutionPortFact],
-    next_artifact: int,
+    facts: _ExecutionFacts,
     limits: ExecutionLimits,
-) -> tuple[Literal["valid", "malformed", "limit"], tuple[ArtifactRef, ...], int]:
+) -> tuple[Literal["valid", "malformed", "limit"], tuple[ArtifactRef, ...]]:
     if not _validate_output_shape(admitted, operation, mapping, association, inputs, results):
-        return "malformed", (), next_artifact
+        return "malformed", ()
     assert mapping.outcome is not None
     outcome = next(item for item in operation.outcomes if item.name == mapping.outcome)
     expected = {item.name: item.artifact_type for item in operation.outputs if item.name in outcome.produced_ports}
     outputs = results[0].outputs
     if len(outputs) != len(expected) or {item.port for item in outputs} != set(expected):
-        return "malformed", (), next_artifact
+        return "malformed", ()
     if any(item.artifact is not None or item.artifact_type != expected[item.port] for item in outputs):
-        return "malformed", (), next_artifact
+        return "malformed", ()
     dependencies = {item.output: item for item in operation.output_dependencies if item.output in expected}
     new_outputs = [item for item in outputs if dependencies[item.port].identity_input is None]
-    if len(values) + len(new_outputs) > limits.max_runtime_artifacts:
-        return "limit", (), next_artifact
+    if len(facts.values) + len(new_outputs) > limits.max_runtime_artifacts:
+        return "limit", ()
     if any(
         isinstance(item.value, TextCollectionValue) and len(item.value.items) > limits.max_collection_items
         for item in outputs
     ):
-        return "limit", (), next_artifact
+        return "limit", ()
     if (
-        sum(_artifact_bytes(item) for item in values.values())
+        sum(_artifact_bytes(item) for item in facts.values.values())
         + sum(_artifact_bytes(item.value) for item in new_outputs)
         > limits.max_runtime_artifact_bytes
     ):
-        return "limit", (), next_artifact
+        return "limit", ()
     input_artifacts = {item.port: item.artifact for item in inputs[0].inputs if item.artifact is not None}
     planned_parents: dict[str, frozenset[ProvenanceKey]] = {}
     for output in outputs:
         dependency = dependencies[output.port]
         if not dependency.inputs <= input_artifacts.keys():
-            return "malformed", (), next_artifact
+            return "malformed", ()
         parent_keys = {input_parents[name] for name in dependency.inputs if name in input_parents}
         if len(parent_keys) != len(dependency.inputs):
-            return "malformed", (), next_artifact
+            return "malformed", ()
         planned_parents[output.port] = frozenset(parent_keys)
         if dependency.identity_input is not None:
             aliased = input_artifacts.get(dependency.identity_input)
-            if aliased is None or values[aliased] != output.value:
-                return "malformed", (), next_artifact
+            if aliased is None or facts.values[aliased] != output.value:
+                return "malformed", ()
     limits_assessment = admitted.assessment_limits
-    if len(port_facts) + len(outputs) > limits_assessment.max_port_facts:
-        return "limit", (), next_artifact
-    current_edges = sum(len(item.parents) for item in provenance)
+    if len(facts.ports) + len(outputs) > limits_assessment.max_port_facts:
+        return "limit", ()
+    current_edges = sum(len(item.parents) for item in facts.provenance)
     if current_edges + sum(len(item) for item in planned_parents.values()) > limits_assessment.max_provenance_edges:
-        return "limit", (), next_artifact
+        return "limit", ()
     created: list[ArtifactRef] = []
     decision_output = any(item.node == node for item in admitted.decisions)
     for output in outputs:
         identity_input = dependencies[output.port].identity_input
         if identity_input is None:
-            reference = ArtifactRef(invocation=invocation, key=next_artifact, version=1)
-            next_artifact += 1
-            values[reference] = output.value
+            reference = ArtifactRef(invocation=invocation, key=facts.next_artifact, version=1)
+            facts.next_artifact += 1
+            facts.values[reference] = output.value
             created.append(reference)
         else:
             reference = input_artifacts[identity_input]
-        produced[(target, activation, output.port)] = reference
+        facts.produced[(target, activation, output.port)] = reference
         key = OperationOutputKey(activation=activation, target=target, port=output.port)
-        provenance.append(
+        facts.provenance.append(
             ArtifactProvenanceFact(
                 _key=_FACT_KEY,
                 key=key,
@@ -3041,7 +3058,7 @@ def _accept_outputs(
                 decision=decision_output,
             )
         )
-        port_facts.append(
+        facts.ports.append(
             ExecutionPortFact(
                 _key=_FACT_KEY,
                 activation=activation,
@@ -3069,7 +3086,7 @@ def _accept_outputs(
                 ),
             )
         )
-    return "valid", tuple(created), next_artifact
+    return "valid", tuple(created)
 
 
 def _validate_output_shape(
@@ -3230,10 +3247,9 @@ def _capture_assessments(
     node: NodeId,
     mapping: RuntimeOutcome,
     returned: tuple[LocalAssessmentResult, ...],
-    produced: dict[tuple[DatumId, ActivationKey | NodeId, str], ArtifactRef],
     target: DatumId,
     services: ExecutionServices,
-    facts: list[ExecutionAssessmentFact],
+    facts: _ExecutionFacts,
 ) -> bool:
     if mapping.outcome is None:
         return not returned
@@ -3242,7 +3258,7 @@ def _capture_assessments(
     ]
     if len(returned) != len(declarations):
         return False
-    if len(facts) + len(declarations) > admitted.assessment_limits.max_assessment_facts:
+    if len(facts.assessments) + len(declarations) > admitted.assessment_limits.max_assessment_facts:
         return False
     absence_map = dict(services.absence_revisions)
     operation = implementation.capability.operation
@@ -3260,10 +3276,10 @@ def _capture_assessments(
             and item.evidence_port == declaration.evidence_port
             and item.finding in declaration.supported_findings
         ]
-        artifact = produced.get((target, activation, declaration.evidence_port))
+        artifact = facts.produced.get((target, activation, declaration.evidence_port))
         if len(matches) != 1 or artifact is None:
             return False
-        facts.append(
+        facts.assessments.append(
             ExecutionAssessmentFact(
                 _key=_FACT_KEY,
                 activation=activation,

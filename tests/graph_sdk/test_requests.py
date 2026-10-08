@@ -4,11 +4,16 @@
 
 from __future__ import annotations
 
+from typing import Literal
+
+import pytest
+
 from anonymizer.engine.graph_sdk.requests import (
     AcceptFailure,
     AcceptResult,
     AssociationResult,
     Dispatch,
+    FailureClass,
     InvocationRequestScope,
     PhysicalRequestId,
     PhysicalRequestPolicy,
@@ -17,6 +22,7 @@ from anonymizer.engine.graph_sdk.requests import (
     SemanticAssociation,
     advance_requests,
     bind_request_policies,
+    can_reserve_followup,
     initialize_requests,
     request_receipt,
 )
@@ -31,12 +37,16 @@ def _association(invocation: InvocationId, occurrence: int) -> SemanticAssociati
     )
 
 
-def _policy(*, attempts: int = 2) -> PhysicalRequestPolicy:
+def _policy(
+    *,
+    attempts: int = 2,
+    replay: Literal["never", "before_acceptance", "idempotent"] = "idempotent",
+) -> PhysicalRequestPolicy:
     return PhysicalRequestPolicy(
         visibility="dispatch_and_settlement",
         pre_dispatch_control="executor",
         retry_owner="executor",
-        replay="idempotent",
+        replay=replay,
         max_attempts=attempts,
     )
 
@@ -122,3 +132,47 @@ def test_zero_budget_denies_without_dispatch_or_charge() -> None:
     )
     assert not state.reserved and not state.dispatches
     assert state.denials[0].category == "budget_stopped"
+
+
+@pytest.mark.parametrize(
+    ("failure", "purpose", "replay", "expected"),
+    (
+        ("malformed_response", "correction", "never", False),
+        ("malformed_response", "correction", "before_acceptance", False),
+        ("malformed_response", "correction", "idempotent", True),
+        ("permanent", "failover", "never", False),
+        ("permanent", "failover", "before_acceptance", False),
+        ("permanent", "failover", "idempotent", True),
+    ),
+)
+def test_followup_eligibility_uses_the_request_authority_replay_rule(
+    failure: FailureClass,
+    purpose: Literal["correction", "failover"],
+    replay: Literal["never", "before_acceptance", "idempotent"],
+    expected: bool,
+) -> None:
+    invocation = InvocationId.new(plan=PlanId.new())
+    scope = InvocationRequestScope(invocation=invocation)
+    policy = _policy(replay=replay)
+    association = _association(invocation, 0)
+    state = initialize_requests(scope=scope, hard_limit=None, policies=frozenset({policy}))
+    state = bind_request_policies(
+        state=state,
+        binding=RequestPolicyBinding.create(association=association, policies=frozenset({policy})),
+    )
+    request = PhysicalRequestId.new(scope=scope)
+    state = advance_requests(
+        state=state,
+        event=Reserve(request=request, purpose="initial", associations=frozenset({association}), policy=policy),
+    )
+    state = advance_requests(state=state, event=Dispatch(request=request))
+    state = advance_requests(state=state, event=AcceptFailure(request=request, failure=failure))
+    assert (
+        can_reserve_followup(
+            state=state,
+            purpose=purpose,
+            associations=frozenset({association}),
+            policy=policy,
+        )
+        is expected
+    )
