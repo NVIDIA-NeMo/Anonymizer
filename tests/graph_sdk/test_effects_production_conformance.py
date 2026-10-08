@@ -47,6 +47,7 @@ from anonymizer.engine.graph_sdk.executor import (
     InitialCollectionKey,
     LocalCompleted,
     LocalDecisionWait,
+    LocalFailure,
     OperationExecutionPolicy,
     OperationOutputKey,
     RootInputKey,
@@ -155,6 +156,20 @@ RESOURCE_CASES = tuple(
         "resources/sdk_close_unknown",
     }
 )
+LOCAL_BRIDGE_CASES = tuple(
+    case
+    for case in json.loads(CORPUS.read_bytes())
+    if case["case_id"]
+    in {
+        "bridges/result",
+        "bridges/failure_rejected_before_acceptance",
+        "bridges/failure_retryable",
+        "bridges/failure_malformed_response",
+        "bridges/failure_permanent",
+        "bridges/failure_transport_unknown",
+        "bridges/failure_implementation_exception",
+    }
+)
 BINDING_RESULT_SHAPE_CASES = tuple(
     case
     for case in json.loads(CORPUS.read_bytes())
@@ -165,7 +180,11 @@ BINDING_RESULT_SHAPE_CASES = tuple(
         "binding/source_result_consumed_present",
     }
 )
-ADMISSION_CASES = tuple(case for case in json.loads(CORPUS.read_bytes()) if case["family"] == "admission")
+ADMISSION_CASES = tuple(
+    case
+    for case in json.loads(CORPUS.read_bytes())
+    if case["family"] == "admission" or case["case_id"] == "retry/implementation_owner_rejected"
+)
 REAL_BINDING_CASE_IDS = {
     "binding/two_sources_same_key",
     "binding/one_source_two_declarations",
@@ -222,6 +241,7 @@ ADAPTIVE_MATERIALIZATION_CASE_IDS = {
     "materialization/adaptive_invented_parent",
     "materialization/adaptive_missing_source_fact",
     "materialization/adaptive_result_bridge",
+    "binding/adaptive_omission_misuse",
 }
 ADAPTIVE_MATERIALIZATION_CASES = tuple(
     case for case in json.loads(CORPUS.read_bytes()) if case["case_id"] in ADAPTIVE_MATERIALIZATION_CASE_IDS
@@ -704,10 +724,11 @@ def test_map_collection_shape_rejects_at_typed_constructor(
     items: tuple[TextCollectionItem, ...],
     expected: str,
 ) -> None:
-    del case_id
+    case = next(item for item in json.loads(CORPUS.read_bytes()) if item["case_id"] == case_id)
+    assert case["expected"] == {"status": "rejected", "code": expected}
     with pytest.raises(EffectRejected) as rejected:
         TextCollectionValue(items=items)
-    assert rejected.value.code.value == expected
+    assert rejected.value.code.value == case["expected"]["code"]
     canonical = (
         TextCollectionItem(key=0, version=1, value=TextArtifactValue(text="a")),
         TextCollectionItem(key=1, version=1, value=TextArtifactValue(text="b")),
@@ -986,6 +1007,111 @@ class _CaseProvider:
     async def cancel(self, request: PhysicalRequestId) -> StopConfirmed:
         del request
         return StopConfirmed(usage=ExactUsage(input_units=0, output_units=0))
+
+
+@dataclass
+class _BridgeLocalCallback:
+    failure: str | None
+    calls: int = 0
+
+    async def run(self, request: tuple[AssociationInput, ...]) -> LocalCompleted | LocalFailure:
+        self.calls += 1
+        if self.failure is not None:
+            return LocalFailure(failure=cast(Any, self.failure))
+        return LocalCompleted(
+            results=tuple(
+                AssociationResult(
+                    association=item.association,
+                    outcome="ok",
+                    outputs=(),
+                    consumed_context_ports=frozenset(),
+                )
+                for item in request
+            )
+        )
+
+
+@pytest.mark.parametrize("case", LOCAL_BRIDGE_CASES, ids=lambda case: cast(str, case["case_id"]))
+def test_local_bridge_case_through_real_execution(case: dict[str, Any]) -> None:
+    asyncio.run(_assert_local_bridge_case(case))
+
+
+async def _assert_local_bridge_case(case: dict[str, Any]) -> None:
+    prepared = _prepare(data=_data(1))
+    context = admit_context_plan(
+        prepared=prepared,
+        bound_context=None,
+        adaptive_retrievals=(),
+        context_capabilities=(),
+    )
+    selected = next(iter(prepared.implementations))
+    implementation = ExecutionImplementation(
+        implementation=selected.capability.implementation,
+        configuration=selected.capability.configuration,
+        capability=selected.capability,
+        request=None,
+    )
+    policy = OperationExecutionPolicy(
+        node=selected.node,
+        kind="local",
+        request=None,
+        safe_detachment="forbidden",
+        implementations=(implementation,),
+        result_outcomes=frozenset({"ok"}),
+        runtime_outcomes=_valid_runtime_rows("local", frozenset({"ok"})),
+    )
+    admitted = admit_execution_plan(
+        context=context,
+        capabilities=(selected.capability,),
+        policies=(policy,),
+        decisions=(),
+        assessment_productions=(),
+        assessment_limits=_assessment_limits(),
+    )
+    condition = (
+        next(
+            cast(str, event["failure"])
+            for event in cast(list[dict[str, Any]], case["events"])
+            if event["kind"] == "bridge_condition" and event.get("failure") is not None
+        )
+        if "/failure_" in cast(str, case["case_id"])
+        else None
+    )
+    callback = _BridgeLocalCallback(failure=condition)
+    result = await (
+        await start_execution(
+            admitted=admitted,
+            capabilities=(selected.capability,),
+            services=ExecutionServices(
+                handles=(
+                    ImplementationHandle(
+                        implementation=implementation.implementation,
+                        operation=implementation.capability.operation,
+                        configuration=implementation.configuration,
+                        local=callback,
+                        transport=None,
+                        resource=None,
+                    ),
+                ),
+                context_resources=(),
+                limits=ExecutionLimits(
+                    max_local_in_flight=1,
+                    max_remote_outstanding=0,
+                    max_runtime_artifacts=4,
+                    max_runtime_artifact_bytes=64,
+                    max_collection_items=1,
+                ),
+                decision_limits=DecisionLimits(max_pending=0, max_lifetime_ns=0),
+                clock=_ZeroClock(),
+            ),
+        )
+    ).wait()
+    expected = cast(dict[str, Any], case["expected"])["state"]
+    assert callback.calls == 1
+    assert len(result.record.terminals) == 1
+    terminal = result.record.terminals[0]
+    assert terminal.category == expected["tasks"]["T0"]
+    assert terminal.attempt is not None
 
 
 @dataclass
@@ -2021,7 +2147,11 @@ async def _assert_adaptive_materialization_case(case: dict[str, Any], *, late_mo
             max_provenance_edges=materialization_limits["max_provenance_edges"],
         ),
     )
-    events = [event for event in cast(list[dict[str, Any]], case["events"]) if event["kind"] == "materialize_result"]
+    events = [
+        event
+        for event in cast(list[dict[str, Any]], case["events"])
+        if event["kind"] in {"materialize_result", "source_failure"}
+    ]
     association_names: dict[object, str] = {}
     request_names: dict[PhysicalRequestId, str] = {}
     provider: _CaseProvider | _LateAdaptiveProvider

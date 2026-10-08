@@ -702,8 +702,8 @@ def _normalize(
                     if prior is None and predecessor_map is not None:
                         expander_seed = _reservation_for(reservations, predecessor_map.expander, context)
                         expansion = expansions.get(expander_seed.activation) if expander_seed is not None else None
-                        if expansion is not None and expansion.status == "closed":
-                            if len(expansion.members) == 1:
+                        if expansion is not None and expansion.status != "pending":
+                            if expansion.status == "closed" and len(expansion.members) == 1:
                                 prior = entries.get(next(iter(expansion.members)))
                             else:
                                 impossible_prior = True
@@ -771,8 +771,8 @@ def _normalize(
                     if source_entry is None and source_map is not None:
                         expander_seed = _reservation_for(reservations, source_map.expander, context)
                         expansion = expansions.get(expander_seed.activation) if expander_seed is not None else None
-                        if expansion is not None and expansion.status == "closed":
-                            if len(expansion.members) == 1:
+                        if expansion is not None and expansion.status != "pending":
+                            if expansion.status == "closed" and len(expansion.members) == 1:
                                 source_entry = entries.get(next(iter(expansion.members)))
                             else:
                                 impossible = True

@@ -1747,6 +1747,25 @@ async def _assert_map_scalar_source_resolution(destination: str, maximum: int) -
     if destination == "workflow_output":
         values = [fact for fact in result.final_outputs if fact.port == "value"]
         assert len(values) == maximum
+        if maximum:
+            expansion = next(iter(result.states[0].expansions))
+            assert len(expansion.members) == 1
+            member_activation = next(iter(expansion.members))
+            member = next(
+                entry
+                for entry in result.states[0].entries
+                if entry.template == fixture.member and entry.activation == member_activation
+            )
+            output = next(
+                fact
+                for fact in result.provenance
+                if isinstance(fact.key, OperationOutputKey)
+                and fact.key.activation == member.activation
+                and fact.key.port == "value"
+            )
+            assert values[0].producer == output.key
+            assert values[0].candidate.artifact == output.artifact
+            assert values[0].outcome == "ok"
         assert expected_resolution == ("member:0" if maximum else "blocked:workflow_output")
         return
 
@@ -1805,6 +1824,43 @@ async def _assert_empty_max_one_map_scalar_resolution(destination: str) -> None:
         entry = next(item for item in result.states[0].entries if item.template == destination_node)
         assert entry.status == "blocked"
     assert case["expected"]["state"]["resolution"] == f"blocked:{destination}"
+
+
+@pytest.mark.parametrize("destination", ("join", "ordinary", "workflow_output"))
+@pytest.mark.parametrize(("item_count", "response_mode"), ((2, "valid"), (1, "missing")))
+def test_map_scalar_source_blocks_terminal_expansion_without_unique_member(
+    destination: str,
+    item_count: int,
+    response_mode: str,
+) -> None:
+    asyncio.run(_assert_terminal_map_without_scalar(destination, item_count, response_mode))
+
+
+async def _assert_terminal_map_without_scalar(destination: str, item_count: int, response_mode: str) -> None:
+    fixture, result, callbacks = await _execute_membership(
+        item_count,
+        response_mode=response_mode,
+        max_children=1,
+        outward_scalar=destination,
+        outward_identity=destination != "workflow_output",
+    )
+    expansion = next(iter(result.states[0].expansions))
+    assert expansion.status == ("overflow" if response_mode == "valid" else "failed")
+    assert not expansion.members
+    if destination == "workflow_output":
+        assert not any(fact.port == "value" for fact in result.final_outputs)
+        return
+    destination_node = fixture.join
+    if destination == "ordinary":
+        destination_node = next(
+            node
+            for node in fixture.implementation_nodes
+            if node not in {fixture.expander, fixture.member_implementation, fixture.join}
+        )
+    assert not callbacks[destination_node].calls
+    entry = next(item for item in result.states[0].entries if item.template == destination_node)
+    expected_status = "inconsistent" if destination == "join" and response_mode == "valid" else "blocked"
+    assert entry.status == expected_status
 
 
 def test_map_overflow_publishes_collection_without_item_facts() -> None:
