@@ -527,3 +527,28 @@ def test_deep_nested_outputs_close_before_their_parent_outputs(depth: int, passt
     output = qualify(admitted=admitted, result=result, current=current, submissions=submissions)
     assert len(output.qualified) == 1
     assert output.record.statuses[0].qualification == "met"
+
+
+@pytest.mark.parametrize("selected", ["partial", "checked", "both"])
+def test_current_partial_coverage_cannot_satisfy_a_complete_requirement(selected: str) -> None:
+    from anonymizer.engine.graph_sdk.evidence import evidence_validity
+    from anonymizer.graph.workflow import CoverageAtom
+
+    coverage = frozenset({CoverageAtom(kind="field", name="person")})
+    execution, result = asyncio.run(_execute_assessment(partial_assessment=True, coverage=coverage))
+    assert len(result.assessments) == 2
+    admitted, current, submissions = _inputs(execution, result)
+    selected_submissions = tuple(item for item in submissions if selected == "both" or item.fact.promise == selected)
+    output = qualify(admitted=admitted, result=result, current=current, submissions=selected_submissions)
+    assert all(evidence_validity(evidence=item, current=current) == "current" for item in output.verified)
+    assert all(item.finding.status == "satisfied" for item in output.verified)
+    if selected == "partial":
+        assert output.verified[0].coverage == frozenset()
+        assert not output.qualified
+        assert output.targets[0].withholding == frozenset({"incomplete_coverage"})
+        assert output.record.statuses[0].qualification == "unmet"
+    else:
+        assert len(output.qualified) == 1
+        supported = frozenset(item.reference for item in output.verified if item.promise.name == "checked")
+        assert output.qualified[0].evidence == supported
+        assert output.record.statuses[0].qualification == "met"

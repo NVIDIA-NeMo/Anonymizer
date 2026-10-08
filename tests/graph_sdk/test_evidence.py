@@ -38,6 +38,7 @@ from anonymizer.engine.graph_sdk.executor import (
     ExecutionResult,
     ExecutionServices,
     ImplementationHandle,
+    LocalAssessmentResult,
     LocalCompleted,
     OperationExecutionPolicy,
     RequestTransport,
@@ -96,12 +97,24 @@ def _qualification_limits(**changes: int) -> QualificationLimits:
 @dataclass
 class _AssessmentWithAuxiliaryOutput:
     assessor: _AssessingLocal
+    partial_assessment: bool = False
 
     async def run(self, request: tuple[AssociationInput, ...]) -> LocalCompleted:
         completed = await self.assessor.run(request)
         result = completed.results[0]
         return replace(
             completed,
+            assessments=(
+                *completed.assessments,
+                LocalAssessmentResult(
+                    association=completed.assessments[0].association,
+                    promise="partial",
+                    evidence_port="metadata",
+                    finding=self.assessor.finding,
+                ),
+            )
+            if self.partial_assessment
+            else completed.assessments,
             results=(
                 replace(
                     result,
@@ -125,6 +138,7 @@ async def _execute_assessment(
     candidate_input: bool = False,
     alias_output: bool = False,
     auxiliary_output: bool = False,
+    partial_assessment: bool = False,
     root_passthrough: bool = False,
     decision_input: bool = False,
     coverage: frozenset[CoverageAtom] = frozenset(),
@@ -138,6 +152,7 @@ async def _execute_assessment(
     resource: ResourceLease | None = None,
     external: tuple[RequestTransport, ResourceLease] | None = None,
 ) -> tuple[AdmittedExecutionPlan, ExecutionResult]:
+    auxiliary_output = auxiliary_output or partial_assessment
     depth = nested_depth or int(nested)
     nested = depth > 0
     assert not root_passthrough or candidate_input
@@ -181,7 +196,15 @@ async def _execute_assessment(
                 replace(operation.output_dependencies[0], output="metadata", identity_input=None),
             ),
             outcomes=tuple(
-                replace(outcome, produced_ports=outcome.produced_ports | {"metadata"}) for outcome in operation.outcomes
+                replace(
+                    outcome,
+                    produced_ports=outcome.produced_ports | {"metadata"},
+                    evidence=outcome.evidence
+                    | frozenset(replace(promise, name="partial", coverage=frozenset()) for promise in outcome.evidence)
+                    if partial_assessment
+                    else outcome.evidence,
+                )
+                for outcome in operation.outcomes
             ),
         )
     decision_node = NodeId.new(workflow=raw.workflow)
@@ -438,13 +461,15 @@ async def _execute_assessment(
         )
         if decision_input
         else (),
-        assessment_productions=(declaration,),
+        assessment_productions=(declaration, replace(declaration, promise="partial", evidence_port="metadata"))
+        if partial_assessment
+        else (declaration,),
         assessment_limits=AssessmentLimits(
-            max_productions=1,
+            max_productions=1 + int(partial_assessment),
             max_findings_per_production=1,
             max_finding_code_bytes=20,
             max_absence_queries=1 if environment else 0,
-            max_assessment_facts=target_count,
+            max_assessment_facts=(1 + int(partial_assessment)) * target_count,
             max_port_facts=(3 + 2 * int(predecessor) + depth + int(auxiliary_output)) * target_count,
             max_provenance_edges=(2 + int(predecessor) + depth + int(auxiliary_output)) * target_count,
         ),
@@ -462,7 +487,8 @@ async def _execute_assessment(
                 else _AssessmentWithAuxiliaryOutput(
                     _AssessingLocal(
                         finding=finding, evidence_port=evidence_port, alias_evidence=candidate_input or alias_output
-                    )
+                    ),
+                    partial_assessment=partial_assessment,
                 )
                 if auxiliary_output
                 else _AssessingLocal(
@@ -963,3 +989,46 @@ def test_evidence_occurrence_authenticates_executor_role_precedence(nested: bool
         assert error.value.code is EffectCode.CONTRADICTORY
     finally:
         object.__setattr__(evidence, "role", original)
+
+
+@pytest.mark.parametrize(
+    ("bound", "boundary"),
+    [
+        ("max_productions", "admit"),
+        ("max_submissions", "verify"),
+        ("max_verified_evidence", "verify"),
+        ("max_revision_entries", "view"),
+        ("max_absence_revisions", "view"),
+    ],
+)
+def test_actual_evidence_collections_accept_exact_limits_and_reject_one_over(bound: str, boundary: str) -> None:
+    execution, result = asyncio.run(_execute_assessment(environment=True))
+    fact = result.assessments[0]
+    artifacts = tuple(reference for reference, _ in result.artifacts)
+    configurations = ((fact.node, fact.environment.configuration),)
+    state = fact.environment.state
+    count = len(artifacts) + len(configurations) + len(state.revisions) if bound == "max_revision_entries" else 1
+
+    def invoke(limit: int) -> object:
+        admitted = admit_qualification(
+            execution=execution,
+            productions=execution.assessment_productions,
+            limits=_qualification_limits(**{bound: limit}),
+        )
+        if boundary == "admit":
+            return admitted
+        if boundary == "verify":
+            return verify_evidence(admitted=admitted, result=result, submissions=(AssessmentSubmission(fact=fact),))
+        return evidence_revision_view(
+            admitted=admitted,
+            result=result,
+            artifacts=artifacts,
+            absences=tuple(fact.environment.absences),
+            configurations=configurations,
+            state=state,
+        )
+
+    assert invoke(count) is not None
+    with pytest.raises(EffectRejected) as error:
+        invoke(count - 1)
+    assert error.value.code is EffectCode.LIMIT_EXCEEDED
