@@ -2450,7 +2450,18 @@ def _materialize_subgraph_outputs(
                     port=binding.destination.port,
                     artifact=source_fact.artifact,
                     artifact_type=output_type,
-                    role="decision" if source_fact.decision else "artifact",
+                    role=(
+                        "decision"
+                        if source_fact.decision
+                        else "candidate"
+                        if any(
+                            isinstance(output.source, NodeOutputRef)
+                            and output.source.node == entry.template
+                            and output.source.port == binding.destination.port
+                            for output in root.output_bindings
+                        )
+                        else "artifact"
+                    ),
                 )
             )
 

@@ -64,6 +64,7 @@ from anonymizer.graph.workflow import (
     NodeInputRef,
     OperationNode,
     SubgraphNode,
+    WorkflowInputRef,
 )
 
 
@@ -440,6 +441,13 @@ def _validate_binding(
         if existing is not None and existing != candidate:
             reject(EffectCode.CONTRADICTORY)
         schemas[declaration.artifact_type] = candidate
+    interface_types = {item.name: item.artifact_type for item in workflow.workflow.interface.inputs}
+    collection_types = {artifact_type for artifact_type, schema in schemas.items() if schema[0] == "collection"}
+    if any(
+        isinstance(binding.source, WorkflowInputRef) and interface_types[binding.source.port] in collection_types
+        for binding in workflow.workflow.input_bindings
+    ):
+        reject(EffectCode.CONTRADICTORY)
     nodes = _reachable_operations(workflow)
     workflow_owners = {item.workflow for item in nodes}
     for declaration in declarations:
