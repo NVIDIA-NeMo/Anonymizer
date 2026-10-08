@@ -39,6 +39,7 @@ from anonymizer.engine.graph_sdk.executor import (
     ExecutionServices,
     ImplementationHandle,
     OperationExecutionPolicy,
+    RequestTransport,
     admit_execution_plan,
     start_execution,
 )
@@ -50,6 +51,7 @@ from anonymizer.engine.graph_sdk.preparation import (
     prepare,
 )
 from anonymizer.engine.graph_sdk.records import AbsenceRef, CandidateRef, DecisionRef
+from anonymizer.engine.graph_sdk.requests import PhysicalRequestPolicy
 from anonymizer.engine.graph_sdk.resources import ResourceLease
 from anonymizer.graph._values import ArtifactRef, InvocationId
 from anonymizer.graph.activation import ActivationLimits
@@ -99,7 +101,21 @@ async def _execute_assessment(
     execution_only: bool = False,
     finding: AssessmentFinding | None = None,
     resource: ResourceLease | None = None,
+    external: tuple[RequestTransport, ResourceLease] | None = None,
 ) -> tuple[AdmittedExecutionPlan, ExecutionResult]:
+    assert not (decision_input and external is not None)
+    predecessor = decision_input or external is not None
+    request_policy = (
+        PhysicalRequestPolicy(
+            visibility="dispatch_and_settlement",
+            pre_dispatch_control="executor",
+            retry_owner="executor",
+            replay="idempotent",
+            max_attempts=2,
+        )
+        if external is not None
+        else None
+    )
     evidence_port = "assessment" if candidate_input else "context"
     base, node, artifact = _adaptive_workflow(
         assessment=True, requests=0, distinct_subject=candidate_input, alias_evidence=candidate_input or alias_output
@@ -120,12 +136,18 @@ async def _execute_assessment(
     decision_node = NodeId.new(workflow=raw.workflow)
     nodes = (OperationNode(id=node, operation=operation),)
     bindings = tuple(raw.input_bindings)
-    if decision_input:
+    if predecessor:
         decision_operation = replace(
             operation,
             name="approve-input",
             outcomes=tuple(
-                replace(outcome, evidence=frozenset(), state_effects=frozenset()) for outcome in operation.outcomes
+                replace(
+                    outcome,
+                    evidence=frozenset(),
+                    state_effects=frozenset(),
+                    ceiling=replace(outcome.ceiling, max_model_requests=2 if external is not None else 0),
+                )
+                for outcome in operation.outcomes
             ),
             output_dependencies=tuple(
                 replace(dependency, identity_input="input") for dependency in operation.output_dependencies
@@ -149,6 +171,7 @@ async def _execute_assessment(
                 ceiling=replace(
                     outcome.ceiling,
                     max_activations=len(nodes),
+                    max_model_requests=2 if external is not None else 0,
                     max_input_bytes=100 * len(nodes),
                     max_output_bytes=100 * len(nodes),
                 ),
@@ -203,7 +226,7 @@ async def _execute_assessment(
             replace(binding, destination=WorkflowOutputRef(port=root_output)) for binding in raw.output_bindings
         ),
         outcome_bindings=tuple(raw.outcome_bindings),
-        sequence=(SequenceEdge(before=decision_node, after=node),) if decision_input else (),
+        sequence=(SequenceEdge(before=decision_node, after=node),) if predecessor else (),
         choices=tuple(raw.choices),
         protection=(
             ProtectionRequirement(
@@ -266,9 +289,12 @@ async def _execute_assessment(
     target_count = len(data.targets)
     capabilities = tuple(
         replace(
-            _capability(workflow),
+            _capability(workflow, external=external is not None and item.id == decision_node),
             operation=item.operation,
-            resource_lifetime="stateless"
+            max_physical_requests_per_activation=2 if external is not None and item.id == decision_node else 0,
+            resource_lifetime="executor_owned"
+            if external is not None and item.id == decision_node
+            else "stateless"
             if resource is None
             else "caller_owned"
             if resource.owner == "caller"
@@ -294,7 +320,7 @@ async def _execute_assessment(
         configuration=PreparationConfiguration(
             purpose="execution_only" if execution_only else "protection",
             required_protection_outcomes=frozenset() if execution_only else frozenset({"ok"}),
-            hard_request_limit=None,
+            hard_request_limit=2 * target_count if external is not None else None,
         ),
         bound_inputs=tuple(
             BoundInput(target=target, source=target, port=root_input, artifact_type=artifact) for target in data.targets
@@ -320,21 +346,21 @@ async def _execute_assessment(
         policies=tuple(
             OperationExecutionPolicy(
                 node=item.id,
-                kind="decision" if item.id == decision_node else "local",
-                request=None,
+                kind=("external" if external is not None else "decision") if item.id == decision_node else "local",
+                request=request_policy if item.id == decision_node else None,
                 safe_detachment="forbidden",
                 implementations=(
                     ExecutionImplementation(
                         implementation=capability.implementation,
                         configuration=capability.configuration,
                         capability=capability,
-                        request=None,
+                        request=request_policy if item.id == decision_node else None,
                     ),
                 ),
-                result_outcomes=frozenset() if item.id == decision_node else frozenset({"ok"}),
+                result_outcomes=frozenset() if item.id == decision_node and decision_input else frozenset({"ok"}),
                 runtime_outcomes=_valid_runtime_rows(
-                    "decision" if item.id == decision_node else "local",
-                    frozenset() if item.id == decision_node else frozenset({"ok"}),
+                    ("external" if external is not None else "decision") if item.id == decision_node else "local",
+                    frozenset() if item.id == decision_node and decision_input else frozenset({"ok"}),
                 ),
             )
             for item, capability in zip(nodes, capabilities, strict=True)
@@ -356,8 +382,8 @@ async def _execute_assessment(
             max_finding_code_bytes=20,
             max_absence_queries=1 if environment else 0,
             max_assessment_facts=target_count,
-            max_port_facts=(3 + 2 * int(decision_input) + int(nested)) * target_count,
-            max_provenance_edges=(2 + int(decision_input) + int(nested)) * target_count,
+            max_port_facts=(3 + 2 * int(predecessor) + int(nested)) * target_count,
+            max_provenance_edges=(2 + int(predecessor) + int(nested)) * target_count,
         ),
     )
     services = ExecutionServices(
@@ -366,20 +392,22 @@ async def _execute_assessment(
                 implementation=capability.implementation,
                 operation=capability.operation,
                 configuration=capability.configuration,
-                local=_Callback(decision=True)
+                local=None
+                if external is not None and item.id == decision_node
+                else _Callback(decision=True)
                 if item.id == decision_node
                 else _AssessingLocal(
                     finding=finding, evidence_port=evidence_port, alias_evidence=candidate_input or alias_output
                 ),
-                transport=None,
-                resource=resource,
+                transport=external[0] if external is not None and item.id == decision_node else None,
+                resource=external[1] if external is not None and item.id == decision_node else resource,
             )
             for item, capability in zip(nodes, capabilities, strict=True)
         ),
         context_resources=(),
         limits=ExecutionLimits(
             max_local_in_flight=1,
-            max_remote_outstanding=0,
+            max_remote_outstanding=1 if external is not None else 0,
             max_runtime_artifacts=2 * target_count,
             max_runtime_artifact_bytes=100,
             max_collection_items=0,

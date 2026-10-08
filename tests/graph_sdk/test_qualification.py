@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from typing import cast
 
 import pytest
@@ -15,6 +15,20 @@ from anonymizer.engine.graph_sdk.data import AtomicGroup, CoherenceScope, DataGr
 from anonymizer.engine.graph_sdk.evidence import AssessmentSubmission, admit_qualification, evidence_revision_view
 from anonymizer.engine.graph_sdk.executor import AdmittedExecutionPlan, AssessmentFinding, ExecutionResult
 from anonymizer.engine.graph_sdk.qualification import qualify
+from anonymizer.engine.graph_sdk.requests import (
+    AssociationResult,
+    DispatchEnvelope,
+    ExactUsage,
+    ExternalSettlement,
+    FailureClass,
+    PortArtifact,
+    StopConfirmed,
+    TransportFailure,
+    TransportResult,
+    TransportSuccess,
+    UnknownUsage,
+)
+from anonymizer.engine.graph_sdk.resources import ResourceLease
 from tests.graph_sdk.test_evidence import _execute_assessment, _qualification_limits
 
 
@@ -270,3 +284,89 @@ def test_required_decision_bound_applies_to_union_across_released_targets() -> N
     with pytest.raises(EffectRejected) as error:
         qualify(admitted=admitted, result=result, current=current, submissions=submissions)
     assert error.value.code is EffectCode.LIMIT_EXCEEDED
+
+
+@dataclass
+class _RecoveringTransport:
+    failure: FailureClass | None = None
+    unknown_usage: bool = False
+    fail_close: bool = False
+    calls: int = 0
+    closes: int = 0
+
+    async def dispatch(self, request: DispatchEnvelope) -> TransportResult:
+        self.calls += 1
+        settlement = ExternalSettlement(
+            request=request.request,
+            disposition="completed",
+            remote_stopped=True,
+            usage=UnknownUsage()
+            if self.unknown_usage and self.calls == 1
+            else ExactUsage(input_units=1, output_units=1),
+        )
+        if self.calls == 1 and self.failure is not None:
+            return TransportFailure(failure=self.failure, settlement=settlement)
+        item = request.associations[0]
+        return TransportSuccess(
+            results=(
+                AssociationResult(
+                    association=item.association,
+                    outcome="ok",
+                    consumed_context_ports=frozenset(),
+                    outputs=(
+                        PortArtifact(
+                            port="context",
+                            artifact_type=item.inputs[0].artifact_type,
+                            artifact=None,
+                            value=item.inputs[0].value,
+                        ),
+                    ),
+                ),
+            ),
+            settlement=settlement,
+        )
+
+    async def cancel(self, request: object) -> StopConfirmed:
+        return StopConfirmed(usage=ExactUsage(input_units=0, output_units=0))
+
+    async def close(self) -> None:
+        self.closes += 1
+        if self.fail_close:
+            raise RuntimeError("test close failure")
+
+
+@pytest.mark.parametrize(
+    ("failure", "purpose"), [(None, None), ("retryable", "retry"), ("malformed_response", "correction")]
+)
+def test_settled_external_recovery_can_qualify_after_local_verification(failure, purpose) -> None:
+    transport = _RecoveringTransport(failure=failure)
+    lease = ResourceLease.create(owner="sdk", safe_detachment="forbidden", handle=transport)
+    execution, result = asyncio.run(_execute_assessment(external=(transport, lease)))
+    admitted, current, submissions = _inputs(execution, result)
+    output = qualify(admitted=admitted, result=result, current=current, submissions=submissions)
+    assert len(output.qualified) == 1
+    assert output.record.statuses[0].qualification == "met"
+    assert [item.purpose for item in result.requests.dispatches] == (
+        ["initial"] if purpose is None else ["initial", purpose]
+    )
+    assert transport.calls == (1 if purpose is None else 2)
+    assert transport.closes == 1
+    assert result.cleanup[0].disposition == "closed"
+    assert not output.required_decisions
+
+
+@pytest.mark.parametrize("defect", ["unknown-usage", "cleanup"])
+def test_recovery_does_not_erase_accounting_or_cleanup_defects(defect: str) -> None:
+    transport = _RecoveringTransport(
+        failure="retryable", unknown_usage=defect == "unknown-usage", fail_close=defect == "cleanup"
+    )
+    lease = ResourceLease.create(owner="sdk", safe_detachment="forbidden", handle=transport)
+    execution, result = asyncio.run(_execute_assessment(external=(transport, lease)))
+    admitted, current, submissions = _inputs(execution, result)
+    output = qualify(admitted=admitted, result=result, current=current, submissions=submissions)
+    assert transport.calls == 2 and transport.closes == 1
+    assert result.assessments[0].finding.status == "satisfied"
+    assert not output.qualified
+    assert output.targets[0].withholding == frozenset(
+        {"request_accounting" if defect == "unknown-usage" else "cleanup_accounting"}
+    )
