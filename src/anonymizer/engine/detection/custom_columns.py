@@ -254,7 +254,13 @@ def apply_validation_and_finalize(
     allowed_entity_labels: list[str] | None = None,
     regex_constrained_entity_labels: list[str] | None = None,
 ) -> dict[str, Any]:
-    """Apply keep/reclass/drop decisions, expand to all occurrences, and produce final outputs."""
+    """Apply final eligibility gates, expand permitted occurrences, and produce outputs.
+
+    Seed validation already consumed explicit detector decisions before route
+    coalescing. The resulting ``propagate_occurrences`` value is durable across
+    reclassification and representative-ID changes and must not be re-derived
+    from the original decision IDs here.
+    """
     text = str(row.get(COL_TEXT, ""))
     merged = _parse_entity_spans(row.get(COL_MERGED_ENTITIES, {}))
     validated = apply_validation_decisions(
@@ -262,11 +268,6 @@ def apply_validation_and_finalize(
         validation_output=row.get(COL_VALIDATED_ENTITIES, {}),
     )
     accepted_regex = _parse_entity_spans(row.get(COL_REGEX_ACCEPTED_ENTITIES, {}))
-    validated = _require_explicit_detector_acceptance_for_regex_duplicates(
-        validated,
-        accepted_regex=accepted_regex,
-        validation_output=row.get(COL_VALIDATED_ENTITIES, {}),
-    )
     regex_evidence = _validated_regex_evidence(row, accepted_regex=accepted_regex)
     accepted_regex = _admit_detection_candidates(
         accepted_regex,

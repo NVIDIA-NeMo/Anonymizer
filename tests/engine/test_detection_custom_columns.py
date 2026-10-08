@@ -381,6 +381,69 @@ def test_direct_regex_duplicate_requires_explicit_detector_acceptance(
     assert replaced[COL_REPLACED_TEXT].iloc[0] == expected_text
 
 
+@pytest.mark.parametrize(
+    "malformed_sibling",
+    [False, True],
+    ids=["reclass", "reclass-with-malformed-sibling"],
+)
+def test_reclassified_detector_acceptance_survives_regex_coalescing(malformed_sibling: bool) -> None:
+    """A real label-changing decision remains authoritative after the regex ID wins."""
+    text = "allow:ABC deny:ABC"
+    accepted = {
+        "id": "token_6_9",
+        "value": "ABC",
+        "label": "token",
+        "start_position": 6,
+        "end_position": 9,
+        "score": 1.0,
+        "source": "regex_user:user:token:v1",
+        "propagate_occurrences": False,
+    }
+    row: dict[str, Any] = {
+        COL_TEXT: text,
+        COL_RAW_DETECTED: _raw([{"text": "ABC", "label": "identifier", "start": 6, "end": 9, "score": 0.9}]),
+        COL_REGEX_ENTITIES: {"entities": []},
+        COL_REGEX_ACCEPTED_ENTITIES: {"entities": [accepted]},
+        COL_AUGMENTED_ENTITIES: {"entities": []},
+    }
+
+    parse_detected_entities(row)
+    prepare_validation_inputs(row)
+    assert [candidate["id"] for candidate in row[COL_SEED_VALIDATION_CANDIDATES]["candidates"]] == ["identifier_6_9"]
+    decisions: list[dict[str, Any]] = [
+        {
+            "id": "identifier_6_9",
+            "decision": "reclass",
+            "proposed_label": "token",
+            "reason": "token in this context",
+        }
+    ]
+    if malformed_sibling:
+        decisions.append({"id": "broken", "decision": "not-a-choice"})
+    row[COL_VALIDATED_ENTITIES] = {"decisions": decisions}
+
+    apply_validation_to_seed_entities(row)
+    seed_entity = row[COL_VALIDATED_SEED_ENTITIES]["entities"][0]
+    assert seed_entity["id"] == "token_6_9"
+    assert seed_entity["source"] == "regex_user:user:token:v1|detector"
+    assert "propagate_occurrences" not in seed_entity
+    assert _parse_entity_spans(row[COL_VALIDATED_SEED_ENTITIES])[0].propagate_occurrences is True
+
+    merge_and_build_candidates(row)
+    result = apply_validation_and_finalize(row)
+
+    entities = result[COL_DETECTED_ENTITIES]["entities"]
+    assert [(entity["start_position"], entity["end_position"]) for entity in entities] == [(6, 9), (15, 18)]
+    assert entities[0]["source"] == "regex_user:user:token:v1|detector"
+    assert entities[1]["source"] == "propagation"
+
+    replaced = apply_local_replace_strategy(
+        pd.DataFrame({COL_TEXT: [text], COL_FINAL_ENTITIES: [result[COL_DETECTED_ENTITIES]]}),
+        strategy=Redact(),
+    )
+    assert replaced[COL_REPLACED_TEXT].iloc[0] == "allow:[REDACTED_TOKEN] deny:[REDACTED_TOKEN]"
+
+
 def test_missing_detector_decision_retains_legacy_propagation_without_direct_regex() -> None:
     text = "allow:ABC deny:ABC"
     row: dict[str, Any] = {
