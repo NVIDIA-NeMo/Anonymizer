@@ -17,6 +17,7 @@ from anonymizer.engine.graph_sdk.context import (
     ContextSourceRef,
     InitialContextDecl,
     RetrievalBounds,
+    SourceFailure,
     SourceItem,
     SourceResponse,
 )
@@ -66,6 +67,32 @@ class _Provider:
         )
 
     async def cancel(self, request: object) -> StopConfirmed:
+        del request
+        return StopConfirmed(usage=ExactUsage(input_units=0, output_units=0))
+
+
+@dataclass
+class _RetryProvider:
+    calls: int = 0
+
+    async def retrieve(self, *, request, association, selector, bounds):
+        del selector, bounds
+        self.calls += 1
+        settlement = ExternalSettlement(
+            request=request,
+            disposition="completed",
+            usage=ExactUsage(input_units=1, output_units=1),
+            remote_stopped=True,
+        )
+        if self.calls == 1:
+            return SourceFailure(source=SOURCE, failure="retryable", settlement=settlement)
+        return SourceResponse(
+            source=SOURCE,
+            items=(SourceItem(association=association, key=0, version=1, text="retried"),),
+            settlement=settlement,
+        )
+
+    async def cancel(self, request):
         del request
         return StopConfirmed(usage=ExactUsage(input_units=0, output_units=0))
 
@@ -179,3 +206,74 @@ async def _assert_initial_binding() -> None:
     assert result.receipt.workflow is workflow
     assert result.receipt.requests.dispatched_count == 1
     assert result.receipt.cleanup[0].disposition == "left_open"
+
+
+def test_initial_binding_owns_retry_and_charges_each_request() -> None:
+    asyncio.run(_assert_initial_binding_retry())
+
+
+async def _assert_initial_binding_retry() -> None:
+    workflow, node, artifact = _context_workflow()
+    data = _data(1)
+    policy = PhysicalRequestPolicy(
+        visibility="dispatch_and_settlement",
+        pre_dispatch_control="executor",
+        retry_owner="executor",
+        replay="idempotent",
+        max_attempts=2,
+    )
+    capability = ContextSourceCapability(
+        source=SOURCE,
+        artifact_type=artifact,
+        uses=frozenset({"initial_binding"}),
+        execution="async",
+        resource_owner="caller",
+        cancellation="cooperative_ack",
+        settlement="explicit_ack",
+        usage="exact",
+        request=policy,
+        safe_detachment="forbidden",
+    )
+    declaration = InitialContextDecl(
+        target=next(iter(data.targets)),
+        node=node,
+        port="input",
+        artifact_type=artifact,
+        source=SOURCE,
+        selector=ContextSelector(fields=()),
+        requirement="required",
+        bounds=RetrievalBounds(max_items=1, max_bytes=20, max_requests=2),
+        materialization=ContextMaterialization(kind="single", item_type=artifact),
+    )
+    provider = _RetryProvider()
+    result = await (
+        await start_initial_binding(
+            data=data,
+            workflow=workflow,
+            declarations=(declaration,),
+            capabilities=(capability,),
+            resources=(
+                ContextResource(
+                    source=SOURCE,
+                    capability=capability,
+                    lease=ResourceLease.create(owner="caller", safe_detachment="forbidden", handle=provider),
+                    factory=None,
+                ),
+            ),
+            limits=BindingLimits(
+                max_declarations=1,
+                max_sources=1,
+                max_capabilities=1,
+                max_selector_fields=0,
+                max_selector_bytes=0,
+                max_items=1,
+                max_bytes=20,
+                max_requests=2,
+                max_resources=1,
+            ),
+        )
+    ).wait()
+    assert provider.calls == 2
+    assert result.receipt.terminal == "success"
+    assert result.context is not None and result.context.artifacts[0].text == "retried"
+    assert [item.purpose for item in result.receipt.requests.dispatches] == ["initial_binding", "retry"]

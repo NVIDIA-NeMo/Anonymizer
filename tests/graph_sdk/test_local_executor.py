@@ -37,14 +37,24 @@ from anonymizer.graph.activation import ActivationLimits
 from anonymizer.graph.workflow import (
     DynamicLimits,
     DynamicScope,
+    InputBinding,
+    InputPort,
     NodeId,
+    NodeInputRef,
     NodeOutcomeRef,
+    NodeOutputRef,
+    OperationNode,
     OutcomeBinding,
+    OutputBinding,
+    OutputDependency,
+    OutputPort,
     SequenceEdge,
     SubgraphNode,
     WorkflowId,
+    WorkflowInputRef,
     WorkflowLimits,
     WorkflowOutcomeRef,
+    WorkflowOutputRef,
     admit_activation_workflow,
     admit_static_workflow,
 )
@@ -236,6 +246,36 @@ def test_decision_execution_exposes_exact_wait_and_resumes_one_activation() -> N
 
 async def _assert_decision_execution() -> None:
     workflow, node, artifact_type = _workflow(with_input=True)
+    static = workflow.workflow
+    raw_node = next(item for item in static.nodes if isinstance(item, OperationNode))
+    decision_operation = replace(
+        raw_node.operation,
+        outputs=(OutputPort(name="decision", artifact_type=artifact_type),),
+        output_dependencies=(OutputDependency(output="decision", inputs=frozenset({"input"}), identity_input="input"),),
+        outcomes=(replace(raw_node.operation.outcomes[0], produced_ports=frozenset({"decision"})),),
+    )
+    rebuilt = admit_static_workflow(
+        workflow=static.workflow,
+        interface=decision_operation,
+        nodes=(OperationNode(id=node, operation=decision_operation),),
+        input_bindings=tuple(static.input_bindings),
+        output_bindings=(
+            OutputBinding(
+                source=NodeOutputRef(node=node, port="decision"),
+                destination=WorkflowOutputRef(port="decision"),
+            ),
+        ),
+        outcome_bindings=tuple(static.outcome_bindings),
+        sequence=(),
+        choices=(),
+        protection=(),
+        limits=replace(static.limits, max_bindings=3),
+    )
+    workflow = admit_activation_workflow(
+        workflow=rebuilt,
+        scopes=(DynamicScope(workflow=rebuilt, maps=(), joins=(), loops=()),),
+        limits=workflow.limits,
+    )
     data = _data(1)
     target = next(iter(data.targets))
     capability = _capability(workflow)
@@ -302,8 +342,8 @@ async def _assert_decision_execution() -> None:
             max_finding_code_bytes=0,
             max_absence_queries=0,
             max_assessment_facts=0,
-            max_port_facts=1,
-            max_provenance_edges=0,
+            max_port_facts=2,
+            max_provenance_edges=1,
         ),
     )
     callback = _Decision()
@@ -341,6 +381,8 @@ async def _assert_decision_execution() -> None:
     assert result.states[0].complete
     assert result.record.terminals[0].category == "success"
     assert not result.pending_decisions
+    assert result.final_outputs[0].candidate.artifact == result.provenance[-1].artifact
+    assert result.provenance[-1].decision
 
 
 def test_shared_nested_body_executes_each_real_occurrence() -> None:
@@ -348,13 +390,14 @@ def test_shared_nested_body_executes_each_real_occurrence() -> None:
 
 
 async def _assert_shared_nested_body() -> None:
-    body_dynamic, child, _ = _workflow()
+    body_dynamic, child, artifact_type = _workflow(with_input=True)
     body = body_dynamic.workflow
     owner = WorkflowId.new()
     first, second = (NodeId.new(workflow=owner) for _ in range(2))
     interface = replace(
         body.interface,
         name="shared-body-root",
+        inputs=(InputPort(name="outer", artifact_type=artifact_type),),
         outcomes=tuple(
             replace(outcome, ceiling=replace(outcome.ceiling, max_activations=4)) for outcome in body.interface.outcomes
         ),
@@ -366,7 +409,16 @@ async def _assert_shared_nested_body() -> None:
             SubgraphNode(id=first, operation=body.interface, body=body),
             SubgraphNode(id=second, operation=body.interface, body=body),
         ),
-        input_bindings=(),
+        input_bindings=(
+            InputBinding(
+                source=WorkflowInputRef(port="outer"),
+                destination=NodeInputRef(node=first, port="input"),
+            ),
+            InputBinding(
+                source=WorkflowInputRef(port="outer"),
+                destination=NodeInputRef(node=second, port="input"),
+            ),
+        ),
         output_bindings=(),
         outcome_bindings=tuple(
             OutcomeBinding(
@@ -380,7 +432,7 @@ async def _assert_shared_nested_body() -> None:
         protection=(),
         limits=WorkflowLimits(
             max_nodes=4,
-            max_bindings=1,
+            max_bindings=3,
             max_sequence_edges=1,
             max_choices=0,
             max_branch_members=0,
@@ -405,11 +457,13 @@ async def _assert_shared_nested_body() -> None:
         ),
     )
     capability = _capability(body_dynamic)
+    data = _data(1)
+    target = next(iter(data.targets))
     prepared = prepare(
-        data=_data(1),
+        data=data,
         workflow=workflow,
         activation_limits=ActivationLimits(max_events=12, max_entries=4, max_parent_depth=2),
-        bound_inputs=(),
+        bound_inputs=(BoundInput(target=target, source=target, port="outer", artifact_type=artifact_type),),
         configuration=PreparationConfiguration(
             purpose="execution_only", required_protection_outcomes=frozenset(), hard_request_limit=None
         ),
@@ -477,8 +531,8 @@ async def _assert_shared_nested_body() -> None:
                 limits=ExecutionLimits(
                     max_local_in_flight=2,
                     max_remote_outstanding=0,
-                    max_runtime_artifacts=0,
-                    max_runtime_artifact_bytes=0,
+                    max_runtime_artifacts=2,
+                    max_runtime_artifact_bytes=100,
                     max_collection_items=0,
                 ),
                 decision_limits=DecisionLimits(max_pending=0, max_lifetime_ns=0),
@@ -494,3 +548,6 @@ async def _assert_shared_nested_body() -> None:
     child_entries = [item for item in result.states[0].entries if item.template == child]
     assert len(child_entries) == 2
     assert len({item.activation.parent for item in child_entries}) == 2
+    child_inputs = [item for item in result.ports if item.node == child and item.port == "input"]
+    assert len(child_inputs) == 2
+    assert child_inputs[0].artifact == child_inputs[1].artifact

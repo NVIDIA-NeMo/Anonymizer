@@ -39,8 +39,24 @@ from anonymizer.graph._values import ActivationKey, InvocationId, PlanId, TaskAt
 
 CORPUS = Path(__file__).parent / "reference" / "effects_v1_cases.json"
 REQUEST_FAMILIES = {"budgets", "keyed", "retry", "races", "inflight"}
-CASES = tuple(case for case in json.loads(CORPUS.read_bytes()) if case["family"] in REQUEST_FAMILIES)
-CASES = tuple(case for case in CASES if case["boundary"] == "runtime")
+_BASE_CASES = tuple(
+    case
+    for case in json.loads(CORPUS.read_bytes())
+    if case["family"] in REQUEST_FAMILIES and case["boundary"] == "runtime"
+)
+CASES = tuple(
+    [*(_BASE_CASES)]
+    + [
+        {
+            **case,
+            "case_id": f"{case['case_id']}::{trace['name']}",
+            "events": trace["events"],
+            "expected": trace["expected"],
+        }
+        for case in _BASE_CASES
+        for trace in case["traces"]
+    ]
+)
 
 
 def _policy(value: dict[str, Any]) -> PhysicalRequestPolicy:
@@ -101,6 +117,8 @@ def test_request_corpus_case_through_production(case: dict[str, Any]) -> None:
     expected_state = cast(dict[str, Any], expected["state"])
     actual = _normalize(state, tasks, requests, policies)
     for key in (
+        "bindings",
+        "dispatched",
         "dispatched_count",
         "denials",
         "terminals",
@@ -111,6 +129,11 @@ def test_request_corpus_case_through_production(case: dict[str, Any]) -> None:
         "request_failures",
         "association_terminals",
         "reservations",
+        "request_associations",
+        "request_policies",
+        "reservation_policies",
+        "settlements",
+        "request_facts",
     ):
         assert actual[key] == expected_state[key], (case["case_id"], key)
 
@@ -213,12 +236,49 @@ def _normalize(
                     task_names[item]: {
                         "request": request_names[terminal.request],
                         "failure": terminal.failure,
-                        "policy": next(key for key, policy in policies.items() if policy == dispatch.policy),
+                        "policy": next(key for key, policy in policies.items() if policy is dispatch.policy),
                     }
                     for item in dispatch.associations
                 }
             )
+    bindings = {
+        task_names[item.association]: sorted(
+            key for key, policy in policies.items() if any(policy is retained for retained in item.policies)
+        )
+        for item in state.bindings
+    }
+    dispatches = {item.request: item for item in state.dispatches}
+    settlements = {
+        request_names[item.request]: {
+            "disposition": item.disposition,
+            "usage": (
+                "unknown"
+                if isinstance(item.usage, UnknownUsage)
+                else {"input": item.usage.input_units, "output": item.usage.output_units}
+            ),
+            "remote_stopped": item.remote_stopped,
+        }
+        for item in state.settlements
+    }
+    request_facts: dict[str, object] = {}
+    for terminal in state.terminals:
+        fact: dict[str, object] = {
+            "condition": "request_inconsistent" if terminal.category == "inconsistent" else terminal.category
+        }
+        if terminal.category == "success":
+            fact = {
+                "condition": "result",
+                "outcomes": {task_names[item.association]: item.outcome for item in terminal.results},
+            }
+        elif terminal.category == "failure" and terminal.failure is not None:
+            fact = {"condition": "failure", "failure": terminal.failure}
+        elif terminal.category == "cancelled" and terminal.request in state.dispatched:
+            fact = {"condition": "cancel_after_dispatch"}
+        if terminal.request in state.dispatched:
+            request_facts[request_names[terminal.request]] = fact
     return {
+        "bindings": bindings,
+        "dispatched": [request_names[item.request] for item in state.dispatches],
         "dispatched_count": len(state.dispatches),
         "denials": {task_names[item]: denial.category for denial in state.denials for item in denial.associations},
         "terminals": {request_names[item.request]: item.category for item in state.terminals},
@@ -232,4 +292,18 @@ def _normalize(
             request_names[item.request]: sorted(task_names[value] for value in item.associations)
             for item in state.reserved
         },
+        "request_associations": {
+            request_names[request]: sorted(task_names[item] for item in reservation.associations)
+            for request, reservation in dispatches.items()
+        },
+        "request_policies": {
+            request_names[request]: next(key for key, policy in policies.items() if policy is reservation.policy)
+            for request, reservation in dispatches.items()
+        },
+        "reservation_policies": {
+            request_names[item.request]: next(key for key, policy in policies.items() if policy is item.policy)
+            for item in state.reserved
+        },
+        "settlements": settlements,
+        "request_facts": request_facts,
     }

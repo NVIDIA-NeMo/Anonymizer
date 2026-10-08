@@ -707,19 +707,13 @@ def advance_requests(*, state: RequestState, event: RequestEvent) -> RequestStat
     if isinstance(event, StopAcknowledged):
         if request not in state.dispatched:
             reject(EffectCode.MISSING)
-        settlement = ExternalSettlement(
-            request=request,
-            disposition="stopped",
-            usage=event.usage,
-            remote_stopped=True,
-        )
-        state = _observe_settlement(state, settlement)
         terminals, defects = _terminal(state, _terminal_fact(request, "cancelled"))
         return replace(
             state,
             terminals=terminals,
             defects=defects,
             local_in_flight=state.local_in_flight - {request},
+            remote_outstanding=state.remote_outstanding - {request},
         )
     if isinstance(event, MarkLost):
         if request not in state.dispatched:

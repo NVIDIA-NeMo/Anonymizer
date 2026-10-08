@@ -487,6 +487,15 @@ def admit_context_plan(
         capability = selected.get(declaration.node)
         if capability is None or capability.attribution != "per_task":
             reject(EffectCode.UNSUPPORTED)
+        producing = [
+            outcome for outcome in node.operation.outcomes if declaration.output_port in outcome.produced_ports
+        ]
+        if not producing or any(
+            declaration.bounds.max_requests > outcome.ceiling.max_model_requests
+            or declaration.bounds.max_bytes > outcome.ceiling.max_output_bytes
+            for outcome in producing
+        ):
+            reject(EffectCode.LIMIT_EXCEEDED)
     _validate_materialization_schema(prepared, bound_context, adaptive_retrievals, nodes)
     return AdmittedContextPlan(
         _key=_CONTEXT_KEY,

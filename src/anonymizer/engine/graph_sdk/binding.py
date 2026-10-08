@@ -23,6 +23,7 @@ from anonymizer.engine.graph_sdk.context import (
     SourceFailure,
     SourceLost,
     SourceResponse,
+    SourceTerminal,
     _create_binding_result,
 )
 from anonymizer.engine.graph_sdk.data import ValidatedDataGraph
@@ -35,11 +36,14 @@ from anonymizer.engine.graph_sdk.requests import (
     BindingId,
     BindingRequestScope,
     Dispatch,
+    FailureClass,
     MarkLost,
     ObserveSettlement,
     PhysicalRequestId,
     RequestCancel,
     RequestPolicyBinding,
+    RequestPurpose,
+    RequestState,
     Reserve,
     ScopeCancel,
     StopAcknowledged,
@@ -160,36 +164,71 @@ async def _run_binding(work: _BindingWork) -> BindingResult:
     total_items = 0
     total_bytes = 0
     for identity, declaration in zip(work.identities, work.declarations, strict=True):
-        association = BindingAssociation(declaration=identity)
-        capability = _capability(work.capabilities, declaration)
-        state = bind_request_policies(
-            state=state,
-            binding=RequestPolicyBinding.create(
-                association=association,
-                policies=frozenset({capability.request}),
-            ),
+        state, fact, retained, item_count, byte_count = await _bind_declaration(
+            work,
+            scope,
+            state,
+            acquired,
+            identity,
+            declaration,
+            total_items,
+            total_bytes,
         )
+        facts.append(fact)
+        artifacts.extend(retained)
+        total_items += item_count
+        total_bytes += byte_count
+    cleanup.extend(await _cleanup(acquired))
+    terminal = _binding_terminal(facts)
+    return _create_binding_result(
+        binding=work.binding,
+        data=work.data,
+        workflow=work.workflow,
+        terminal=terminal,
+        sources=tuple(facts),
+        artifacts=tuple(artifacts),
+        requests=request_receipt(state),
+        cleanup=tuple(cleanup),
+    )
+
+
+async def _bind_declaration(
+    work: _BindingWork,
+    scope: BindingRequestScope,
+    state: RequestState,
+    acquired: dict[object, ResourceLease],
+    identity: BindingDeclarationId,
+    declaration: InitialContextDecl,
+    total_items: int,
+    total_bytes: int,
+) -> tuple[RequestState, SourceBindingFact, tuple[BoundTextArtifact, ...], int, int]:
+    association = BindingAssociation(declaration=identity)
+    capability = _capability(work.capabilities, declaration)
+    state = bind_request_policies(
+        state=state,
+        binding=RequestPolicyBinding.create(association=association, policies=frozenset({capability.request})),
+    )
+    provider = acquired[declaration.source].handle
+    if not isinstance(provider, ContextProvider):
+        reject(EffectCode.INVALID_TYPE)
+    purpose: RequestPurpose = "initial_binding"
+    while True:
         request = PhysicalRequestId.new(scope=scope)
         state = advance_requests(
             state=state,
             event=Reserve(
                 request=request,
-                purpose="initial_binding",
+                purpose=purpose,
                 associations=frozenset({association}),
                 policy=capability.request,
             ),
         )
         if not any(item.request == request for item in state.reserved):
-            facts.append(SourceBindingFact(identity=identity, declaration=declaration, terminal="failed"))
-            continue
+            return state, _source_fact(identity, declaration, "failed"), (), 0, 0
         if work.cancelled:
             state = advance_requests(state=state, event=RequestCancel(request=request))
-            facts.append(SourceBindingFact(identity=identity, declaration=declaration, terminal="cancelled"))
-            continue
+            return state, _source_fact(identity, declaration, "cancelled"), (), 0, 0
         state = advance_requests(state=state, event=Dispatch(request=request))
-        provider = acquired[declaration.source].handle
-        if not isinstance(provider, ContextProvider):
-            reject(EffectCode.INVALID_TYPE)
         retrieval = asyncio.create_task(
             provider.retrieve(
                 request=request,
@@ -209,44 +248,39 @@ async def _run_binding(work: _BindingWork) -> BindingResult:
             with suppress(asyncio.CancelledError):
                 await retrieval
             if isinstance(stopped, StopConfirmed):
-                state = advance_requests(
-                    state=state,
-                    event=StopAcknowledged(request=request, usage=stopped.usage),
-                )
-                terminal = "cancelled"
-            else:
-                state = advance_requests(state=state, event=MarkLost(request=request))
-                terminal = "lost"
-            facts.append(SourceBindingFact(identity=identity, declaration=declaration, terminal=terminal))
-            continue
+                state = advance_requests(state=state, event=StopAcknowledged(request=request, usage=stopped.usage))
+                return state, _source_fact(identity, declaration, "cancelled"), (), 0, 0
+            state = advance_requests(state=state, event=MarkLost(request=request))
+            return state, _source_fact(identity, declaration, "lost"), (), 0, 0
         try:
             result = retrieval.result()
         except Exception:
-            result = SourceLost(source=declaration.source, settlement=None)
+            state = advance_requests(state=state, event=MarkLost(request=request))
+            return state, _source_fact(identity, declaration, "lost"), (), 0, 0
         if isinstance(result, SourceResponse):
-            if result.source != declaration.source or result.settlement.request != request:
+            valid_settlement = result.settlement.request == request
+            valid_items = (
+                result.source == declaration.source
+                and all(item.association == association for item in result.items)
+                and len({(item.association, item.key, item.version) for item in result.items}) == len(result.items)
+                and bool(result.items)
+                and (declaration.materialization.kind != "single" or len(result.items) == 1)
+            )
+            if not valid_settlement or not valid_items:
                 state = advance_requests(
-                    state=state,
-                    event=AcceptFailure(request=request, failure="malformed_response"),
+                    state=state, event=AcceptFailure(request=request, failure="malformed_response")
                 )
-                facts.append(SourceBindingFact(identity=identity, declaration=declaration, terminal="failed"))
-                continue
-            byte_count = sum(len(item.text.encode("utf-8")) for item in result.items)
-            valid_associations = all(item.association == association for item in result.items)
-            unique = len({(item.association, item.key, item.version) for item in result.items}) == len(result.items)
+                purpose = "correction"
+                if _can_retry(capability, declaration, state, association, "malformed_response"):
+                    continue
+                return state, _source_fact(identity, declaration, _failed_terminal(declaration)), (), 0, 0
+            item_bytes = sum(len(item.text.encode("utf-8")) for item in result.items)
             oversize = (
                 len(result.items) > declaration.bounds.max_items
-                or byte_count > declaration.bounds.max_bytes
+                or item_bytes > declaration.bounds.max_bytes
                 or total_items + len(result.items) > work.limits.max_items
-                or total_bytes + byte_count > work.limits.max_bytes
+                or total_bytes + item_bytes > work.limits.max_bytes
             )
-            wrong_cardinality = not result.items or (
-                declaration.materialization.kind == "single" and len(result.items) != 1
-            )
-            if not valid_associations or not unique or wrong_cardinality:
-                state = advance_requests(state=state, event=MarkLost(request=request))
-                facts.append(SourceBindingFact(identity=identity, declaration=declaration, terminal="lost"))
-                continue
             state = advance_requests(
                 state=state,
                 event=AcceptResult(
@@ -263,11 +297,8 @@ async def _run_binding(work: _BindingWork) -> BindingResult:
             )
             state = advance_requests(state=state, event=ObserveSettlement(settlement=result.settlement))
             if oversize:
-                facts.append(SourceBindingFact(identity=identity, declaration=declaration, terminal="oversize"))
-                continue
-            total_items += len(result.items)
-            total_bytes += byte_count
-            artifacts.extend(
+                return state, _source_fact(identity, declaration, "oversize"), (), 0, 0
+            retained = tuple(
                 BoundTextArtifact(
                     reference=BindingArtifactRef(declaration=identity, key=item.key, version=item.version),
                     target=declaration.target,
@@ -279,41 +310,52 @@ async def _run_binding(work: _BindingWork) -> BindingResult:
                 )
                 for item in result.items
             )
-            facts.append(SourceBindingFact(identity=identity, declaration=declaration, terminal="bound"))
-        elif isinstance(result, SourceFailure):
+            return state, _source_fact(identity, declaration, "bound"), retained, len(result.items), item_bytes
+        if isinstance(result, SourceFailure):
             failure = result.failure if result.source == declaration.source else "malformed_response"
             state = advance_requests(state=state, event=AcceptFailure(request=request, failure=failure))
             if result.settlement is not None and result.settlement.request == request:
                 state = advance_requests(state=state, event=ObserveSettlement(settlement=result.settlement))
-            terminal = "omitted_optional" if declaration.requirement == "optional" else "failed"
-            facts.append(SourceBindingFact(identity=identity, declaration=declaration, terminal=terminal))
-        elif isinstance(result, SourceLost):
-            if result.source != declaration.source:
-                state = advance_requests(
-                    state=state,
-                    event=AcceptFailure(request=request, failure="malformed_response"),
-                )
-                facts.append(SourceBindingFact(identity=identity, declaration=declaration, terminal="failed"))
+            purpose = "correction" if failure == "malformed_response" else "retry"
+            if _can_retry(capability, declaration, state, association, failure):
                 continue
+            return state, _source_fact(identity, declaration, _failed_terminal(declaration)), (), 0, 0
+        if isinstance(result, SourceLost) and result.source == declaration.source:
             state = advance_requests(state=state, event=MarkLost(request=request))
             if result.settlement is not None and result.settlement.request == request:
                 state = advance_requests(state=state, event=ObserveSettlement(settlement=result.settlement))
-            facts.append(SourceBindingFact(identity=identity, declaration=declaration, terminal="lost"))
-        else:
-            state = advance_requests(state=state, event=MarkLost(request=request))
-            facts.append(SourceBindingFact(identity=identity, declaration=declaration, terminal="lost"))
-    cleanup.extend(await _cleanup(acquired))
-    terminal = _binding_terminal(facts)
-    return _create_binding_result(
-        binding=work.binding,
-        data=work.data,
-        workflow=work.workflow,
-        terminal=terminal,
-        sources=tuple(facts),
-        artifacts=tuple(artifacts),
-        requests=request_receipt(state),
-        cleanup=tuple(cleanup),
-    )
+            return state, _source_fact(identity, declaration, "lost"), (), 0, 0
+        state = advance_requests(state=state, event=AcceptFailure(request=request, failure="malformed_response"))
+        purpose = "correction"
+        if not _can_retry(capability, declaration, state, association, "malformed_response"):
+            return state, _source_fact(identity, declaration, _failed_terminal(declaration)), (), 0, 0
+
+
+def _source_fact(
+    identity: BindingDeclarationId, declaration: InitialContextDecl, terminal: SourceTerminal
+) -> SourceBindingFact:
+    return SourceBindingFact(identity=identity, declaration=declaration, terminal=terminal)
+
+
+def _failed_terminal(declaration: InitialContextDecl) -> SourceTerminal:
+    return "omitted_optional" if declaration.requirement == "optional" else "failed"
+
+
+def _can_retry(
+    capability: ContextSourceCapability,
+    declaration: InitialContextDecl,
+    state: RequestState,
+    association: BindingAssociation,
+    failure: FailureClass,
+) -> bool:
+    attempts = sum(association in item.associations for item in state.dispatches)
+    if attempts >= declaration.bounds.max_requests or capability.request.retry_owner != "executor":
+        return False
+    if failure == "malformed_response":
+        return True
+    if failure == "rejected_before_acceptance":
+        return capability.request.replay in {"before_acceptance", "idempotent"}
+    return failure in {"retryable", "transport_unknown"} and capability.request.replay == "idempotent"
 
 
 def _validate_binding(
