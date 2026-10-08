@@ -7,12 +7,15 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass
 
+import pytest
+
 from anonymizer.engine.graph_sdk.capabilities import (
     ImplementationCapability,
     ImplementationRef,
     ImplementationSelection,
 )
 from anonymizer.engine.graph_sdk.context import admit_context_plan
+from anonymizer.engine.graph_sdk.evidence import admit_qualification, evidence_revision_view
 from anonymizer.engine.graph_sdk.executor import (
     AssessmentLimits,
     DecisionLimits,
@@ -29,6 +32,7 @@ from anonymizer.engine.graph_sdk.executor import (
     start_execution,
 )
 from anonymizer.engine.graph_sdk.preparation import PreparationConfiguration, StateRevisionView, prepare
+from anonymizer.engine.graph_sdk.qualification import qualify
 from anonymizer.engine.graph_sdk.requests import (
     AssociationInput,
     AssociationResult,
@@ -72,6 +76,7 @@ from anonymizer.graph.workflow import (
     admit_activation_workflow,
     admit_static_workflow,
 )
+from tests.graph_sdk.test_evidence import _qualification_limits
 from tests.graph_sdk.test_local_executor import _Clock
 from tests.graph_sdk.test_preparation import _config, _data, _limits
 
@@ -158,6 +163,7 @@ class _DynamicCallback:
     text_type: ArtifactType
     calls: int = 0
     seen: list[str] | None = None
+    same_key_versions: bool = False
 
     async def run(self, request: tuple[AssociationInput, ...]) -> LocalCompleted:
         self.calls += 1
@@ -176,8 +182,8 @@ class _DynamicCallback:
                     value=TextCollectionValue(
                         items=tuple(
                             TextCollectionItem(
-                                key=index,
-                                version=1,
+                                key=7 if self.same_key_versions else index,
+                                version=index + 1 if self.same_key_versions else 1,
                                 value=TextArtifactValue(text=f"item-{index}"),
                             )
                             for index in range(2)
@@ -232,11 +238,12 @@ class _DynamicCallback:
         )
 
 
-def test_nested_two_by_two_map_loop_executes_all_occurrences() -> None:
-    asyncio.run(_assert_nested_two_by_two())
+@pytest.mark.parametrize("same_key_versions", [False, True])
+def test_nested_two_by_two_map_loop_executes_all_occurrences(same_key_versions: bool) -> None:
+    asyncio.run(_assert_nested_two_by_two(same_key_versions=same_key_versions))
 
 
-async def _assert_nested_two_by_two() -> None:
+async def _assert_nested_two_by_two(*, same_key_versions: bool = False) -> None:
     body_owner = WorkflowId.new()
     starter, loop_member, loop_join = (NodeId.new(workflow=body_owner) for _ in range(3))
     text_type = ArtifactType(name="text", revision=1)
@@ -571,7 +578,9 @@ async def _assert_nested_two_by_two() -> None:
         loop_join: "join",
     }
     callbacks = {
-        node: _DynamicCallback(mode=mode, collection_type=collection_type, text_type=text_type)
+        node: _DynamicCallback(
+            mode=mode, collection_type=collection_type, text_type=text_type, same_key_versions=same_key_versions
+        )
         for node, mode in modes.items()
     }
     observed_items: list[str] = []
@@ -634,7 +643,28 @@ async def _assert_nested_two_by_two() -> None:
     assert sorted(observed_carries) == ["item-0", "item-0:0", "item-1", "item-1:0"]
     map_items = [fact for fact in result.provenance if isinstance(fact.key, MapItemKey)]
     assert len(map_items) == 2
-    assert {fact.key.item_key for fact in map_items if isinstance(fact.key, MapItemKey)} == {0, 1}
+    assert {fact.key.item_key for fact in map_items if isinstance(fact.key, MapItemKey)} == (
+        {7} if same_key_versions else {0, 1}
+    )
+    assert len({fact.artifact.key for fact in map_items}) == (1 if same_key_versions else 2)
+    assert {fact.artifact.version for fact in map_items} == ({1, 2} if same_key_versions else {1})
     assert all(len(fact.parents) == 1 for fact in map_items)
+    qualification = admit_qualification(
+        execution=admitted, productions=(), limits=_qualification_limits(max_port_facts=32, max_provenance_edges=32)
+    )
+    latest = {ref.key: ref for ref, _ in sorted(result.artifacts, key=lambda pair: pair[0].version)}
+    current = evidence_revision_view(
+        admitted=qualification,
+        result=result,
+        artifacts=tuple(latest.values()),
+        absences=(),
+        configurations=(),
+        state=admitted.context.prepared.state,
+    )
+    qualified = qualify(admitted=qualification, result=result, current=current, submissions=())
+    assert all(status.qualification == "not_assessed" for status in qualified.record.statuses)
+    assert all(target.withholding == frozenset({"execution_only"}) for target in qualified.targets), [
+        target.withholding for target in qualified.targets
+    ]
     assert len(result.states[0].entries) == 13
     assert len({item.activation for item in result.states[0].entries}) == 13

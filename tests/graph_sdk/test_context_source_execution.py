@@ -29,6 +29,7 @@ from anonymizer.engine.graph_sdk.context import (
     SourceResponse,
     admit_context_plan,
 )
+from anonymizer.engine.graph_sdk.evidence import admit_qualification, evidence_revision_view
 from anonymizer.engine.graph_sdk.executor import (
     AssessmentLimits,
     BoundInputKey,
@@ -46,6 +47,7 @@ from anonymizer.engine.graph_sdk.executor import (
     start_execution,
 )
 from anonymizer.engine.graph_sdk.preparation import BoundInput, PreparationConfiguration, StateRevisionView, prepare
+from anonymizer.engine.graph_sdk.qualification import qualify
 from anonymizer.engine.graph_sdk.requests import (
     AssociationInput,
     AssociationResult,
@@ -97,6 +99,7 @@ from anonymizer.graph.workflow import (
     admit_static_workflow,
     substitute,
 )
+from tests.graph_sdk.test_evidence import _qualification_limits
 from tests.graph_sdk.test_local_executor import _Clock, _runtime_rows
 from tests.graph_sdk.test_preparation import _capability, _data, _limits
 
@@ -111,6 +114,7 @@ class _ContextProvider:
     items: tuple[str, ...]
     omit: bool = False
     calls: int = 0
+    same_key_versions: bool = False
 
     async def retrieve(
         self,
@@ -138,7 +142,12 @@ class _ContextProvider:
         return SourceResponse(
             source=SOURCE,
             items=tuple(
-                SourceItem(association=association, key=index, version=1, text=text)
+                SourceItem(
+                    association=association,
+                    key=7 if self.same_key_versions else index,
+                    version=index + 1 if self.same_key_versions else 1,
+                    text=text,
+                )
                 for index, text in enumerate(self.items)
             ),
             settlement=settlement,
@@ -1204,7 +1213,7 @@ async def _assert_collection_schema_rejects_caller_root() -> _ProviderFactory:
     return factory
 
 
-async def _assert_context_execution(mode: str) -> None:
+async def _assert_context_execution(mode: str, *, same_key_versions: bool = False, artifact_limit: int = 6) -> None:
     item_type = ArtifactType(name="text", revision=1)
     input_type = (
         ArtifactType(name="text_collection", revision=1)
@@ -1243,6 +1252,7 @@ async def _assert_context_execution(mode: str) -> None:
     provider = _ContextProvider(
         items=("ab", "cd") if mode in {"collection", "nested", "substitution"} else ("ab",),
         omit=mode == "omitted",
+        same_key_versions=same_key_versions,
     )
     declaration = InitialContextDecl(
         target=target,
@@ -1374,7 +1384,7 @@ async def _assert_context_execution(mode: str) -> None:
                 limits=ExecutionLimits(
                     max_local_in_flight=1,
                     max_remote_outstanding=0,
-                    max_runtime_artifacts=6,
+                    max_runtime_artifacts=artifact_limit,
                     max_runtime_artifact_bytes=32,
                     max_collection_items=2,
                 ),
@@ -1446,6 +1456,32 @@ async def _assert_context_execution(mode: str) -> None:
         assert logical_bytes == 8
         assert source_fact.parents == bound
         assert len(bound) == 2
+    if same_key_versions:
+        qualification = admit_qualification(
+            execution=admitted, productions=(), limits=_qualification_limits(max_port_facts=32, max_provenance_edges=32)
+        )
+        latest = {ref.key: ref for ref, _ in sorted(result.artifacts, key=lambda pair: pair[0].version)}
+        current = evidence_revision_view(
+            admitted=qualification,
+            result=result,
+            artifacts=tuple(latest.values()),
+            absences=(),
+            configurations=(),
+            state=admitted.context.prepared.state,
+        )
+        qualified = qualify(admitted=qualification, result=result, current=current, submissions=())
+        assert all(status.qualification == "not_assessed" for status in qualified.record.statuses)
+        assert all(target.withholding == frozenset({"execution_only"}) for target in qualified.targets)
+    if same_key_versions:
+        versioned = [fact for fact in materialized if isinstance(fact.key, BoundInputKey)]
+        assert len({fact.artifact.key for fact in versioned}) == 1
+        assert {fact.artifact.version for fact in versioned} == {1, 2}
+        assert all(
+            fact.artifact.version == fact.key.binding_artifact.version
+            for fact in versioned
+            if isinstance(fact.key, BoundInputKey)
+        )
+        assert source_artifact.key not in {fact.artifact.key for fact in versioned}
     input_fact = next(item for item in result.ports if item.node == implementation_node and item.port == "context")
     output_port_fact = next(item for item in result.ports if item.node == implementation_node and item.port == "output")
     assert input_fact.artifact == output_port_fact.artifact == source_artifact
@@ -1457,3 +1493,14 @@ async def _assert_context_execution(mode: str) -> None:
         assert sum(isinstance(fact.key, InitialCollectionKey) for fact in result.provenance) == 1
     else:
         assert output_port_fact.role == "candidate"
+
+
+@pytest.mark.parametrize("mode", ["collection", "nested", "substitution"])
+def test_initial_materialization_retains_versions_of_one_runtime_key(mode: str) -> None:
+    asyncio.run(_assert_context_execution(mode, same_key_versions=True, artifact_limit=3))
+
+
+def test_initial_materialization_counts_versions_against_artifact_limit() -> None:
+    with pytest.raises(EffectRejected) as rejected:
+        asyncio.run(_assert_context_execution("collection", same_key_versions=True, artifact_limit=2))
+    assert rejected.value.code.value == "limit_exceeded"

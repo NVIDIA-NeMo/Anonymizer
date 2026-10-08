@@ -2311,13 +2311,16 @@ def _observe_dynamic_membership(
         )
         if not any(item.key == parent_key for item in facts.provenance):
             reject(EffectCode.MISSING)
+        version_keys: dict[int, int] = {}
         for member, item in zip(selected, collection.items, strict=True):
+            if item.key not in version_keys:
+                version_keys[item.key] = facts.next_artifact
+                facts.next_artifact += 1
             reference = ArtifactRef(
                 invocation=activation.invocation,
-                key=facts.next_artifact,
+                key=version_keys[item.key],
                 version=item.version,
             )
-            facts.next_artifact += 1
             facts.values[reference] = item.value
             facts.produced[(target, member, declaration.item_input)] = reference
             key = MapItemKey(
@@ -3472,9 +3475,14 @@ def _materialize_bound_context(
             reject(EffectCode.LIMIT_EXCEEDED)
         item_refs: list[ArtifactRef] = []
         parents: set[ProvenanceKey] = set()
+        version_keys: dict[int, int] = {}
         for item in items:
-            reference = ArtifactRef(invocation=invocation, key=next_artifact, version=item.reference.version)
-            next_artifact += 1
+            if item.reference.key not in version_keys:
+                version_keys[item.reference.key] = next_artifact
+                next_artifact += 1
+            reference = ArtifactRef(
+                invocation=invocation, key=version_keys[item.reference.key], version=item.reference.version
+            )
             values[reference] = TextArtifactValue(text=item.text)
             key = BoundInputKey(
                 target=item.target,

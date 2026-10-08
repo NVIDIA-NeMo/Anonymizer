@@ -257,15 +257,21 @@ class _Qualification:
                     reject(EffectCode.MISSING)
                 expected.setdefault(expansion.parent, set())
                 closed[expansion.parent] = expansion.status != "pending"
-                if expansion.members != frozenset(expected[expansion.parent]):
+                parent = self.entries[expansion.parent]
+                scope = next(
+                    scope
+                    for scope in self.prepared.workflow.scopes
+                    if scope.workflow.workflow == parent.template.workflow
+                )
+                member_templates = {item.member for item in scope.maps if item.expander == parent.template} | {
+                    item.member for item in scope.loops if item.starter == parent.template
+                }
+                dynamic_members = frozenset(
+                    member for member in expected[expansion.parent] if self.entries[member].template in member_templates
+                )
+                if expansion.members != dynamic_members:
                     self.incomplete(self.owners[expansion.parent])
                 if not expansion.members and expansion.status == "closed":
-                    parent = self.entries[expansion.parent]
-                    scope = next(
-                        scope
-                        for scope in self.prepared.workflow.scopes
-                        if scope.workflow.workflow == parent.template.workflow
-                    )
                     admitted_outcomes = {
                         outcome
                         for item in scope.maps
@@ -350,6 +356,7 @@ class _Qualification:
             if not fact.parents <= self.provenance.keys():
                 reject(EffectCode.MISSING)
             self._producer(fact)
+        self._validate_materialized_versions()
         self._provenance_acyclic()
         outputs = [(item.target, item.port) for item in self.result.final_outputs]
         if len(outputs) != len(set(outputs)):
@@ -396,6 +403,26 @@ class _Qualification:
                 for item in self.prepared.workflow.workflow.interface.outcomes
                 if output.port in item.produced_ports
             }:
+                reject(EffectCode.CONTRADICTORY)
+
+    def _validate_materialized_versions(self) -> None:
+        allocated: dict[tuple[object, ...], int] = {}
+        owners: dict[int, tuple[object, ...]] = {}
+        for fact in self.result.provenance:
+            key = fact.key
+            if isinstance(key, BoundInputKey):
+                lineage = (BoundInputKey, key.binding_artifact.declaration, key.binding_artifact.key)
+                version = key.binding_artifact.version
+            elif isinstance(key, MapItemKey):
+                lineage = (MapItemKey, key.expander, key.target, key.item_key)
+                version = key.item_version
+            else:
+                continue
+            if (
+                fact.artifact.version != version
+                or allocated.setdefault(lineage, fact.artifact.key) != fact.artifact.key
+                or owners.setdefault(fact.artifact.key, lineage) != lineage
+            ):
                 reject(EffectCode.CONTRADICTORY)
 
     def _validate_input_parents(self) -> None:
