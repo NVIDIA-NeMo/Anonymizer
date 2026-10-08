@@ -731,3 +731,85 @@ def test_manifest_binds_request_boundary_addendum() -> None:
     assert (
         reference.REQUEST_BOUNDARY_ADDENDUM_SHA256 == "6344f7f1bdbb14a4c9e08f546928d31c89f26d3ed26e0c50362d9537d891c3a5"
     )
+
+
+def test_cancel_before_start_policy_matches_unstarted_bridge() -> None:
+    bridge = cast(reference.Object, reference.case_by_id("bridges/cancel_before_start")["expected"])
+    state = cast(reference.Object, bridge["state"])
+    category = cast(reference.Object, state["closed_unstarted"])["A0"]
+    assert category == "blocked"
+    assert state["tasks"] == {}
+    checked = 0
+    for case in reference.generate_cases():
+        if case["boundary"] != "admission" or case["expected"] != {"status": "accepted"}:
+            continue
+        declaration = cast(reference.Object, case["declaration"])
+        for index, raw in enumerate(cast(list[reference.Json], declaration.get("runtime_mappings", []))):
+            row = cast(reference.Object, raw)
+            if row["condition"] != "cancel_before_start":
+                continue
+            checked += 1
+            assert (row["outcome"], row["category"]) == (None, category)
+            for replacement in ({"category": "cancelled"}, {"outcome": "ok", "category": "success"}):
+                mutant = json.loads(json.dumps(declaration))
+                mutant["runtime_mappings"][index].update(replacement)
+                if "outcome" in replacement:
+                    mutant["declared_outcomes"] = ["ok"]
+                    mutant["outcome_categories"] = {"ok": "success"}
+                assert reference.admit(mutant) == {"status": "rejected", "code": "contradictory"}
+    assert checked >= 2
+
+
+def test_typed_admission_catalog_limits_precede_duplicates() -> None:
+    distinct = reference.case_by_id("admission/aggregate_limit")
+    duplicate = reference.case_by_id("admission/capability_one_over")
+    for case in (distinct, duplicate):
+        assert case["expected"] == {"status": "rejected", "code": "limit_exceeded"}
+    for case, expected in (
+        (distinct, {"status": "accepted"}),
+        (duplicate, {"status": "rejected", "code": "duplicate"}),
+    ):
+        declaration = json.loads(json.dumps(case["declaration"]))
+        declaration["admission_limits"]["max_capabilities"] = 2
+        assert reference.admit(declaration) == expected
+
+
+def test_runtime_duplicate_witnesses_preserve_key_kind_and_precedence() -> None:
+    for suffix, condition in (
+        ("duplicate_required_condition", "cancel_before_start"),
+        ("duplicate_result_outcome", "result"),
+    ):
+        case = reference.case_by_id(f"admission/{suffix}")
+        declaration = json.loads(json.dumps(case["declaration"]))
+        assert "required_runtime_conditions" not in declaration
+        rows = declaration["runtime_mappings"]
+        assert rows[-1]["condition"] == condition
+        assert case["expected"] == {"status": "rejected", "code": "duplicate"}
+        rows.pop()
+        assert reference.admit(declaration) == {"status": "accepted"}
+
+
+def test_failover_drift_is_rechecked_after_valid_admission() -> None:
+    case = reference.case_by_id("admission/changed_failover_policy")
+    assert case["boundary"] == "pre_execution"
+    declaration = json.loads(json.dumps(case["declaration"]))
+    assert reference.admit(declaration["admitted"]) == {"status": "accepted"}
+    assert reference.recheck_capabilities(declaration) == {"status": "rejected", "code": "changed_failover_policy"}
+    declaration["capability_catalog"] = declaration["admitted"]["capability_catalog"]
+    assert reference.recheck_capabilities(declaration) == {"status": "accepted"}
+    declaration["capability_catalog"] = declaration["capability_catalog"][:1]
+    assert reference.recheck_capabilities(declaration) == {"status": "rejected", "code": "changed_failover_policy"}
+
+
+def test_exact_binding_bounds_return_terminal_public_result() -> None:
+    case = reference.case_by_id("binding/exact_item_byte_bounds")
+    events = cast(list[reference.Object], case["events"])
+    assert events[-1] == {"kind": "binding_finish"}
+    declaration = cast(reference.Object, case["declaration"])
+    before = cast(reference.Object, reference.reduce_trace(declaration, events[:-1])["state"])
+    after = cast(reference.Object, reference.reduce_trace(declaration, events)["state"])
+    assert before["binding_terminal"] is None
+    assert after["binding_terminal"] == "success"
+    assert {key: value for key, value in before.items() if key != "binding_terminal"} == {
+        key: value for key, value in after.items() if key != "binding_terminal"
+    }

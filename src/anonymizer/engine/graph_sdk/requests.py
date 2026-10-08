@@ -72,8 +72,6 @@ class PhysicalRequestPolicy(PrivateValue):
         require_literal(self.retry_owner, frozenset({"none", "executor", "implementation"}))
         require_literal(self.replay, frozenset({"never", "before_acceptance", "idempotent"}))
         require_count(self.max_attempts)
-        if self.retry_owner == "implementation":
-            reject(EffectCode.CONTRADICTORY)
 
 
 class BindingId(OpaqueIdentity):

@@ -17,8 +17,8 @@ MappingKey: TypeAlias = tuple[str, str | None, str | None]
 CONTRACT_SHA256 = "9b0ab07b8c0212ffd954dc37eb37540141da6899753fc778ad26238494aeaeca"
 REQUEST_BOUNDARY_ADDENDUM_SHA256 = "6344f7f1bdbb14a4c9e08f546928d31c89f26d3ed26e0c50362d9537d891c3a5"
 
-GENERATOR_VERSION = "effects-v1-generator-6-binding-map"
-SELF_TEST_VERSION = "effects-v1-self-test-6-binding-map"
+GENERATOR_VERSION = "effects-v1-generator-8-binding-map"
+SELF_TEST_VERSION = "effects-v1-self-test-8-binding-map"
 MATERIALIZATION_ADDENDUM_SHA256 = "b1a5651ee2649b01c89e80bd1442e3f03209292b48ce846d27714698f57eb07c"
 BASE_CORPUS_SHA256 = "c62f2cc7e7237ea030451ac8d35a3c30b39f71766b4275348597949d560a7a6a"
 PREDECESSOR_CASE_COUNT = 214
@@ -1044,7 +1044,7 @@ def admit(declaration: Object) -> Object:
         "declared_outcomes",
         "execution_policies",
         "outcome_categories",
-        "required_runtime_conditions",
+        "capability_catalog",
         "runtime_mappings",
         "targets",
         "materializations",
@@ -1059,11 +1059,19 @@ def admit(declaration: Object) -> Object:
     policies_value = declaration.get("execution_policies", [])
     if not isinstance(policies_value, list):
         return _reject("invalid_type")
-    limits = declaration.get("admission_limits", {"max_policies": len(policies_value)})
-    if not isinstance(limits, dict) or not isinstance(limits.get("max_policies"), int):
+    catalog = declaration.get("capability_catalog", [])
+    if not isinstance(catalog, list):
         return _reject("invalid_type")
-    if len(policies_value) > cast(int, limits["max_policies"]):
+    limits = declaration.get("admission_limits", {"max_capabilities": len(catalog)})
+    if not isinstance(limits, dict) or not _natural(limits.get("max_capabilities")):
+        return _reject("invalid_type")
+    if len(catalog) > cast(int, limits["max_capabilities"]):
         return _reject("limit_exceeded")
+    if any(not isinstance(raw, dict) for raw in catalog):
+        return _reject("invalid_type")
+    catalog_ids = [_object(raw).get("implementation") for raw in catalog]
+    if len(catalog_ids) != len(set(cast(list[str], catalog_ids))):
+        return _reject("duplicate")
     if any(not isinstance(raw, dict) for raw in policies_value):
         return _reject("invalid_type")
     policies = [_object(raw) for raw in policies_value]
@@ -1074,8 +1082,10 @@ def admit(declaration: Object) -> Object:
     nodes = [policy.get("node") for policy in policies]
     if len(nodes) != len({json.dumps(node, sort_keys=True) for node in nodes}):
         return _reject("duplicate")
-    if any(not isinstance(policy.get("implementations"), list) or not policy["implementations"] for policy in policies):
-        return _reject("missing")
+    if any(not isinstance(policy.get("implementations"), list) for policy in policies):
+        return _reject("invalid_type")
+    if any(not policy["implementations"] for policy in policies):
+        return _reject("implementation_count")
     if any(policy.get("retry_owner") == "implementation" for policy in policies):
         return _reject("unsupported")
     declared_values = _strings(declaration.get("declared_outcomes", []))
@@ -1094,13 +1104,6 @@ def admit(declaration: Object) -> Object:
     mapping_keys = [_mapping_key(value) for value in typed_mappings]
     if len(mapping_keys) != len(set(mapping_keys)):
         return _reject("duplicate")
-    required_values = _strings(declaration.get("required_runtime_conditions", []))
-    if len(required_values) != len(set(required_values)):
-        return _reject("duplicate")
-    required_conditions = set(required_values)
-    actual_conditions = {cast(str, value.get("condition")) for value in typed_mappings}
-    if required_conditions and required_conditions != actual_conditions:
-        return _reject("missing")
     if any(value.get("outcome") not in declared_outcomes | {None} for value in typed_mappings):
         return _reject("unsupported")
     categories = _object(declaration.get("outcome_categories", {}))
@@ -1116,6 +1119,12 @@ def admit(declaration: Object) -> Object:
         for value in typed_mappings
     ):
         return _reject("contradictory")
+    if any(
+        value.get("condition") == "cancel_before_start"
+        and (value.get("outcome") is not None or value.get("category") != "blocked")
+        for value in typed_mappings
+    ):
+        return _reject("contradictory")
     targets = set(_strings(declaration.get("targets", [])))
     binding_targets = _strings(declaration.get("binding_targets", []))
     if any(target not in targets for target in binding_targets):
@@ -1128,8 +1137,6 @@ def admit(declaration: Object) -> Object:
             return _reject("retry_owner")
         if any(_object(item).get("physical_policy") != policy.get("physical_policy") for item in implementations):
             return _reject("changed_failover_policy")
-        if cast(int, policy.get("max_capabilities", len(implementations))) < len(implementations):
-            return _reject("capability_limit")
     if len(policies) == 1:
         policy = policies[0]
         outcomes_value = policy.get("result_outcomes", [])
@@ -1151,8 +1158,24 @@ def admit(declaration: Object) -> Object:
     return {"status": "accepted"}
 
 
+def recheck_capabilities(declaration: Object) -> Object:
+    admitted = _object(declaration["admitted"])
+    initial = admit(admitted)
+    if initial["status"] != "accepted":
+        return initial
+    supplied = _array(declaration["capability_catalog"])
+    current = {_object(raw)["implementation"]: _object(raw) for raw in supplied}
+    for raw in _array(admitted["capability_catalog"]):
+        expected = _object(raw)
+        if current.get(expected["implementation"]) != expected:
+            return _reject("changed_failover_policy")
+    return {"status": "accepted"}
+
+
 def evaluate_case(case: Mapping[str, Json]) -> Object:
     declaration = _object(case["declaration"])
+    if case["boundary"] == "pre_execution":
+        return recheck_capabilities(declaration)
     if case["family"] == "map":
         return (
             _admit_map(declaration)
@@ -1229,7 +1252,7 @@ def _policy_runtime_decl(kind: str, outcomes: Sequence[str] = ("ok",)) -> Object
         "budget_exhausted": "blocked",
         "cancel_after_dispatch": "cancelled",
         "cancel_after_start": "cancelled",
-        "cancel_before_start": "cancelled",
+        "cancel_before_start": "blocked",
         "deadline_exhausted": "failure",
         "lost": "lost",
         "request_inconsistent": "inconsistent",
@@ -1248,7 +1271,6 @@ def _policy_runtime_decl(kind: str, outcomes: Sequence[str] = ("ok",)) -> Object
     declaration: Object = {
         "declared_outcomes": list(result_outcomes),
         "outcome_categories": {outcome: "success" for outcome in result_outcomes},
-        "required_runtime_conditions": sorted({cast(str, _object(value)["condition"]) for value in mappings}),
         "runtime_mappings": mappings,
     }
     return declaration
@@ -2900,7 +2922,7 @@ def _generate_specs() -> tuple[Object, ...]:
             "binding",
             "exact_item_byte_bounds",
             exact_bounds,
-            [_bind("D0", "P0"), _reserve("R0", ["D0"]), _dispatch("R0"), two_items],
+            [_bind("D0", "P0"), _reserve("R0", ["D0"]), _dispatch("R0"), two_items, {"kind": "binding_finish"}],
         ),
         _case(
             "binding",
@@ -3281,11 +3303,29 @@ def _generate_specs() -> tuple[Object, ...]:
     result_mapping = _object(
         _array(_runtime_decl("result", "ok", "success", reported_outcome="ok")["runtime_mappings"])[0]
     )
+    missing_runtime = _policy_runtime_decl("external")
+    missing_runtime["execution_policies"] = [valid_policy]
+    missing_runtime["runtime_mappings"] = [
+        raw for raw in _array(missing_runtime["runtime_mappings"]) if _object(raw)["condition"] != "result"
+    ]
+    duplicate_condition = _policy_runtime_decl("external")
+    duplicate_condition["execution_policies"] = [valid_policy]
+    blocked_row = next(
+        _object(raw)
+        for raw in _array(duplicate_condition["runtime_mappings"])
+        if _object(raw)["condition"] == "cancel_before_start"
+    )
+    _array(duplicate_condition["runtime_mappings"]).append(dict(blocked_row, category="cancelled"))
+    primary_capability: Object = {"implementation": "C0", "physical_policy": "P0"}
+    alternate_capability: Object = {"implementation": "C1", "physical_policy": "P0"}
     admission_negatives: tuple[tuple[str, Object], ...] = (
         ("outer_type", {"execution_policies": "invalid"}),
         (
             "aggregate_limit",
-            {"admission_limits": {"max_policies": 0}, "execution_policies": [valid_policy]},
+            {
+                "admission_limits": {"max_capabilities": 1},
+                "capability_catalog": [primary_capability, alternate_capability],
+            },
         ),
         ("member_type", {"execution_policies": [0]}),
         ("invalid_value", {"execution_policies": [dict(valid_policy, kind="unknown")]}),
@@ -3303,7 +3343,7 @@ def _generate_specs() -> tuple[Object, ...]:
         ),
         (
             "runtime_mapping_missing",
-            {"required_runtime_conditions": ["result"], "runtime_mappings": []},
+            missing_runtime,
         ),
         (
             "wrong_category",
@@ -3330,7 +3370,7 @@ def _generate_specs() -> tuple[Object, ...]:
         ),
         (
             "duplicate_required_condition",
-            {"required_runtime_conditions": ["result", "result"], "runtime_mappings": [result_mapping]},
+            duplicate_condition,
         ),
     )
     for name, declaration in admission_negatives:
@@ -3345,7 +3385,6 @@ def _generate_specs() -> tuple[Object, ...]:
                     {
                         "implementations": [{"physical_policy": "P0"}, {"physical_policy": "P0"}],
                         "kind": "external",
-                        "max_capabilities": 2,
                         "node": "N0",
                         "physical_policy": "P0",
                         "result_outcomes": ["ok"],
@@ -3360,20 +3399,17 @@ def _generate_specs() -> tuple[Object, ...]:
             "admission",
             "changed_failover_policy",
             {
-                "execution_policies": [
-                    {
-                        "implementations": [{"physical_policy": "P0"}, {"physical_policy": "P1"}],
-                        "kind": "external",
-                        "max_capabilities": 2,
-                        "node": "N0",
-                        "physical_policy": "P0",
-                        "result_outcomes": ["ok"],
-                        "retry_owner": "executor",
-                    }
-                ]
+                "admitted": {
+                    **_policy_runtime_decl("external"),
+                    "execution_policies": [
+                        dict(valid_policy, implementations=[{"physical_policy": "P0"}, {"physical_policy": "P0"}])
+                    ],
+                    "capability_catalog": [primary_capability, alternate_capability],
+                },
+                "capability_catalog": [primary_capability, dict(alternate_capability, physical_policy="P1")],
             },
             [],
-            "admission",
+            "pre_execution",
         ),
         _case(
             "admission",
@@ -3383,7 +3419,6 @@ def _generate_specs() -> tuple[Object, ...]:
                     {
                         "implementations": [{"physical_policy": None}, {"physical_policy": None}],
                         "kind": "local",
-                        "max_capabilities": 2,
                         "node": "N0",
                         "physical_policy": None,
                         "result_outcomes": ["ok"],
@@ -3398,17 +3433,8 @@ def _generate_specs() -> tuple[Object, ...]:
             "admission",
             "capability_one_over",
             {
-                "execution_policies": [
-                    {
-                        "implementations": [{"physical_policy": "P0"}, {"physical_policy": "P0"}],
-                        "kind": "external",
-                        "max_capabilities": 1,
-                        "node": "N0",
-                        "physical_policy": "P0",
-                        "result_outcomes": ["ok"],
-                        "retry_owner": "executor",
-                    }
-                ]
+                "admission_limits": {"max_capabilities": 1},
+                "capability_catalog": [primary_capability, primary_capability],
             },
             [],
             "admission",
@@ -3480,12 +3506,9 @@ def _generate_specs() -> tuple[Object, ...]:
         *_array(extra_product["runtime_mappings"]),
         _object(_array(_runtime_decl("lost", None, "lost")["runtime_mappings"])[0]),
     ]
-    extra_product["required_runtime_conditions"] = [
-        *_strings(extra_product["required_runtime_conditions"]),
-        "lost",
-    ]
     duplicate_outcome = _policy_runtime_decl("external")
-    duplicate_outcome["execution_policies"] = [dict(external_policy, result_outcomes=["ok", "ok"])]
+    duplicate_outcome["execution_policies"] = [external_policy]
+    _array(duplicate_outcome["runtime_mappings"]).append(dict(result_mapping, category="failure"))
     c += [
         _case("admission", "runtime_product_missing_result", missing_product, [], "admission"),
         _case("admission", "runtime_product_extra_local_condition", extra_product, [], "admission"),

@@ -726,6 +726,9 @@ def admit_execution_plan(
     if not isinstance(decisions, tuple) or any(not isinstance(item, DecisionDeclaration) for item in decisions):
         reject(EffectCode.INVALID_TYPE)
     _validate_map_expansions(context, map_expansions)
+    workflow_owners = _workflow_owners(prepared.workflow.workflow)
+    if any(item.node.workflow not in workflow_owners for item in policies):
+        reject(EffectCode.FOREIGN_OWNER)
     selected = {item.node: item.capability for item in prepared.implementations}
     if {item.node for item in policies} != set(selected):
         reject(EffectCode.MISSING)
@@ -939,6 +942,8 @@ def _add_materialization_schema(
 
 
 def _validate_policy(policy: OperationExecutionPolicy, has_decision: bool) -> None:
+    if policy.request is not None and policy.request.retry_owner == "implementation":
+        reject(EffectCode.UNSUPPORTED)
     capabilities = [item.capability for item in policy.implementations]
     operation = capabilities[0].operation
     if any(item.operation != operation for item in capabilities):
@@ -965,6 +970,8 @@ def _validate_policy(policy: OperationExecutionPolicy, has_decision: bool) -> No
         reject(EffectCode.CONTRADICTORY)
     outcomes = {item.name: item.category for item in operation.outcomes}
     if policy.kind != "decision" and (not policy.result_outcomes or not policy.result_outcomes <= outcomes.keys()):
+        reject(EffectCode.UNSUPPORTED)
+    if any(item.outcome is not None and item.outcome not in outcomes for item in policy.runtime_outcomes):
         reject(EffectCode.UNSUPPORTED)
     keys = [(item.condition, item.reported_outcome, item.failure) for item in policy.runtime_outcomes]
     if len(keys) != len(set(keys)):
@@ -2207,6 +2214,20 @@ def _operation_owner(root: AdmittedWorkflow, node: NodeId) -> tuple[AdmittedWork
             if isinstance(candidate, SubgraphNode):
                 pending.append(candidate.body)
     reject(EffectCode.MISSING)
+
+
+def _workflow_owners(root: AdmittedWorkflow) -> frozenset[WorkflowId]:
+    owners: set[WorkflowId] = set()
+    pending = [root]
+    seen: set[int] = set()
+    while pending:
+        current = pending.pop()
+        if id(current) in seen:
+            continue
+        seen.add(id(current))
+        owners.add(current.workflow)
+        pending.extend(candidate.body for candidate in current.nodes if isinstance(candidate, SubgraphNode))
+    return frozenset(owners)
 
 
 def _node_operation(root: AdmittedWorkflow, node: NodeId) -> OperationSpec:

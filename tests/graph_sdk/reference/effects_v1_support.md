@@ -155,3 +155,89 @@ Of the 214 materialization-v2 predecessor cases, 20 are corrected and 194 unchan
 - binding/optional_oversize_partial
 
 Checks before freeze: 44 isolated self-tests, Ruff, and ty passed; two final regenerations matched bytes. No product files changed. Independent review and production comparison remain pending.
+
+## V7 cancellation-before-start correction
+
+D06 v4 requires an unstarted cancellation to close as blocked, without an outcome or TaskAttemptId. Independent review281 confirmed this correction before reference edits. The policy generator now uses blocked and neutral admission rejects other category/outcome combinations. The regression checks all accepted admission policies against the existing unstarted bridge witness and mutates both protected fields.
+
+Ownership: stay; owner=neutral reference admission and policy generator; evidence=_policy_runtime_decl generates the declaration consumed by admit; reason=the correction belongs to the independent contract model, not production or its comparator.
+
+All 296 case IDs, 301 traces and 1008 events are preserved. Six declarations change; all expected verdicts remain unchanged. No product files changed. Broader admission-to-typed-API discrepancies remain under independent review and are not resolved by this correction.
+
+| Case | V6 digest | V7 digest |
+| --- | --- | --- |
+| admission/valid_external_failover | 82ebe3ae01e4edbe89faed657272321937f7460a5cdfd09845a17bffc79de101 | 52af72554b06193ba6721cb806ac9ac624dfd32d282710e0029363c9cce9d785 |
+| admission/valid_local_runtime_product | 3b4dfa9a8a6e49fbc055d7caa6620e3f1857cdc4f1ef17e459d7343c46e228de | 7fcd1c3fb294643f147c69446711ddddee3693d4b50999f9c336dcd525121c07 |
+| admission/valid_decision_runtime_product | d53b6f79100dc374fb922bac04db5e9d018bc2bcf68b0292b155804b2034dca3 | 9cd6045658be301e34fef87a611387ca7db52a9bbd36693a2a903430cdaa70af |
+| admission/runtime_product_missing_result | 335a2dd69a09ad6fff9b015029c4a6bb4f83c1ce3c2a63bec9eb5981d08b8aff | 97a7b41808a948ac0f616954ecff183d38c07e75ea575da116592b587ce49472 |
+| admission/runtime_product_extra_local_condition | 2d232d168992b7027b8e664a4e4c12f67b3a9308c12aa1639f5c24162514b15c | 712a2ef8eccaf4cc95533529a8abd42ec17912cc22ee528773dca5fefb62b7db |
+| admission/duplicate_result_outcome | 5334d62fcc67457bc5bf18b2a9e296eea375218088ce7a676a53a80e0749f8a1 | f18963f1073aa33bb0be8c6b557c09af5478d342cca2025ce0c2a4c4e4dd9900 |
+
+Validation: 47 isolated self-tests pass; Ruff lint and repository-config formatting pass; ty passes; two final regenerations reproduce identical corpus and manifest bytes. Independent adoption review is pending.
+
+## V8 typed admission and completed binding boundaries
+
+This correction follows reviewer281's per-case disposition in
+/tmp/anonymizer-pr1-r2-admission-disposition-281.md
+(SHA-256 0756773ddbf17e626e6aad50b2bc54995374688a601fcad6beb3831a07d63961).
+All prior reference versions remain retained. The reference is independent of
+product author276 and contains no production imports.
+
+The capability catalog is a bounded neutral projection of typed descriptors:
+implementation labels C0/C1 identify the corresponding implementation in policy
+order; physical_policy labels identify the actual immutable policy descriptors.
+Admission limits use prepared.max_capabilities. aggregate_limit supplies two
+distinct valid catalog members at limit1. capability_one_over supplies a duplicate
+at the same limit, so LIMIT_EXCEEDED must precede member duplicate validation.
+Raising the limit accepts the distinct catalog and rejects the duplicate one.
+No max_policies or per-policy max_capabilities input is invented.
+
+The missing runtime mapping now has a complete external policy scaffold and
+omits its result row. Required runtime keys derive from policy kind and declared
+result outcomes; required_runtime_conditions is removed. The two historical
+duplicate case IDs now carry conflicting duplicate RuntimeOutcome rows: one for
+a non-result condition and one for result/ok. Identical-row duplication remains
+its separate case. Removing the extra row admits both conflicting-row witnesses.
+No duplicate frozenset member or unrelated DecisionDeclaration is substituted.
+
+The empty implementations tuple reports IMPLEMENTATION_COUNT. Foreign-owner,
+unknown-outcome, and implementation-owned-retry expectations remain unchanged;
+the independent review identified production validation/order defects there.
+
+changed_failover_policy now uses boundary=pre_execution. Its admitted declaration
+and original catalog must first pass admission. The supplied alternate then changes
+physical policy, or a self-test removes it; the recheck rejects before invocation
+allocation, factories, or execution effects. Supplying the original catalog passes.
+The production adapter must exercise that actual recheck and establish zero effects.
+It must not map this case to a fabricated initial-admission error.
+
+binding/exact_item_byte_bounds now appends binding_finish and returns success at
+the public completed BindingResult boundary. Its other state fields are unchanged.
+The author inventoried the other binding examples: their complete operational
+cases already have terminal dispositions; cancellation/race/adaptive traces with
+no terminal remain explicitly lower-boundary or intermediate witnesses.
+
+Ownership: stay; owner=independent effects reference module; evidence=admit,
+_policy_runtime_decl and recheck_capabilities consume neutral contract declarations;
+reason=validation and projection expectations belong to the independent model,
+not the product adapter or production implementation.
+
+Validation: 51 isolated self-tests, repository-config Ruff lint/format and ty pass;
+two final regenerations produce identical bytes. Independent review remains pending.
+
+| Changed case | V7 digest | V8 digest |
+| --- | --- | --- |
+| binding/exact_item_byte_bounds | 2c82276ca41eddfb6f02041cee297d6becd6ea94e64dd6163b5d03a19e165674 | fd24cc5bf2c98c50a78c55bbb982675b2c1cd1579131e50e68ab78e31afe99a7 |
+| admission/aggregate_limit | 254f9d3bba9238cc3b16387929af087b9bb63e126006410ec1f8df07286dacc4 | ace7c07ba3c9db2a0c3acd950325cbc2aa2dd622f39755170a4c5cc10f0bfbf4 |
+| admission/missing | ad1e847303fc82f7b0cbc06c6a7b3b90798edda81779323e73b9935181f8fbad | 715deb7f7ba5babec1aa330e55bac79c5e143d770bdc1efad600542df0c7bf3e |
+| admission/runtime_mapping_missing | 5f68328945d445e25ff1b28679232d4e4348b824a38a19b5d493e8f30324765c | 82887d3ab7dc8e6ae6dd66f5b1449eb9653918c7b6bde8380837f1d5e017977e |
+| admission/duplicate_required_condition | 7d10de99d8a9daefb7a28172bb421f75c1c4c1a202775eba668a7b2b7b8756ac | f74ea27326850efe4fd912794f70cdfa0da3bbfd2bf9d056bf6728ed35a8be6c |
+| admission/valid_external_failover | 52af72554b06193ba6721cb806ac9ac624dfd32d282710e0029363c9cce9d785 | 7e52c99f8d3f5e79c7fe4d206b36c560256ab6204e9c33cdb63485829c8d5f59 |
+| admission/changed_failover_policy | 8143f04f738de254bc5d1b38b4d5312f5f641c4e49caa445b7763028321c4ff6 | 313c0f81c5a0104fefca4d530e682080db3bd386fac8d4bc820c1c6ff1f2c371 |
+| admission/local_multiple_implementations | de0e4eb286e92e6f57e319ac5ab929036adcc92e7c8adac98dc3db729af3ec52 | db2c637a6071a3d5d57a73469a6842c93671bd82965edfb191aa37d4743387f2 |
+| admission/capability_one_over | 718c35cb3312d3156cc46acb99c800bd6d7f946151f2e4b8e155e6db566fc48b | c39f31651967aa1caa17c003ac08f9ee35914c2bf17f2c38febe17f6da1fd783 |
+| admission/valid_local_runtime_product | 7fcd1c3fb294643f147c69446711ddddee3693d4b50999f9c336dcd525121c07 | a50c24b54c1cee4034006ece81ef1161651cccc5e2ad05dd9f8d4fb9d2c12f7e |
+| admission/valid_decision_runtime_product | 9cd6045658be301e34fef87a611387ca7db52a9bbd36693a2a903430cdaa70af | 493adf110ee4b8e972f5d44e534d9d1e5d03dd657074645df24adce02ec365b7 |
+| admission/runtime_product_missing_result | 97a7b41808a948ac0f616954ecff183d38c07e75ea575da116592b587ce49472 | 4406a3108554ff79147fb9c9096e458bf99812941c5581ede0f28dcb25125f6f |
+| admission/runtime_product_extra_local_condition | 712a2ef8eccaf4cc95533529a8abd42ec17912cc22ee528773dca5fefb62b7db | 07ade2eb7b2650287a8c23e59dc8918cba3b707acea1387e106be591968f4e3e |
+| admission/duplicate_result_outcome | f18963f1073aa33bb0be8c6b557c09af5478d342cca2025ce0c2a4c4e4dd9900 | ac63391bdf3df8e914d40f0d5b7e0da65f7f83e57752aa4950797ff4c8d223e4 |

@@ -9976,6 +9976,9 @@
           }
         },
         "source": "S0"
+      },
+      {
+        "kind": "binding_finish"
       }
     ],
     "expected": {
@@ -10011,7 +10014,7 @@
         "binding_sources": {
           "D0": "bound"
         },
-        "binding_terminal": null,
+        "binding_terminal": "success",
         "bindings": {
           "D0": [
             "P0"
@@ -15579,22 +15582,16 @@
     "case_id": "admission/aggregate_limit",
     "declaration": {
       "admission_limits": {
-        "max_policies": 0
+        "max_capabilities": 1
       },
-      "execution_policies": [
+      "capability_catalog": [
         {
-          "implementations": [
-            {
-              "physical_policy": "P0"
-            }
-          ],
-          "kind": "external",
-          "node": "N0",
-          "physical_policy": "P0",
-          "result_outcomes": [
-            "ok"
-          ],
-          "retry_owner": "executor"
+          "implementation": "C0",
+          "physical_policy": "P0"
+        },
+        {
+          "implementation": "C1",
+          "physical_policy": "P0"
         }
       ]
     },
@@ -15743,7 +15740,7 @@
     },
     "events": [],
     "expected": {
-      "code": "missing",
+      "code": "implementation_count",
       "status": "rejected"
     },
     "family": "admission",
@@ -15810,10 +15807,135 @@
     "boundary": "admission",
     "case_id": "admission/runtime_mapping_missing",
     "declaration": {
-      "required_runtime_conditions": [
-        "result"
+      "declared_outcomes": [
+        "ok"
       ],
-      "runtime_mappings": []
+      "execution_policies": [
+        {
+          "implementations": [
+            {
+              "physical_policy": "P0"
+            }
+          ],
+          "kind": "external",
+          "node": "N0",
+          "physical_policy": "P0",
+          "result_outcomes": [
+            "ok"
+          ],
+          "retry_owner": "executor"
+        }
+      ],
+      "outcome_categories": {
+        "ok": "success"
+      },
+      "runtime_mappings": [
+        {
+          "category": "failure",
+          "condition": "failure",
+          "failure": "rejected_before_acceptance",
+          "outcome": null,
+          "reported_outcome": null
+        },
+        {
+          "category": "failure",
+          "condition": "failure",
+          "failure": "retryable",
+          "outcome": null,
+          "reported_outcome": null
+        },
+        {
+          "category": "failure",
+          "condition": "failure",
+          "failure": "malformed_response",
+          "outcome": null,
+          "reported_outcome": null
+        },
+        {
+          "category": "failure",
+          "condition": "failure",
+          "failure": "permanent",
+          "outcome": null,
+          "reported_outcome": null
+        },
+        {
+          "category": "failure",
+          "condition": "failure",
+          "failure": "transport_unknown",
+          "outcome": null,
+          "reported_outcome": null
+        },
+        {
+          "category": "failure",
+          "condition": "failure",
+          "failure": "implementation_exception",
+          "outcome": null,
+          "reported_outcome": null
+        },
+        {
+          "category": "blocked",
+          "condition": "cancel_before_start",
+          "failure": null,
+          "outcome": null,
+          "reported_outcome": null
+        },
+        {
+          "category": "cancelled",
+          "condition": "cancel_after_start",
+          "failure": null,
+          "outcome": null,
+          "reported_outcome": null
+        },
+        {
+          "category": "cancelled",
+          "condition": "cancel_after_dispatch",
+          "failure": null,
+          "outcome": null,
+          "reported_outcome": null
+        },
+        {
+          "category": "lost",
+          "condition": "lost",
+          "failure": null,
+          "outcome": null,
+          "reported_outcome": null
+        },
+        {
+          "category": "inconsistent",
+          "condition": "request_inconsistent",
+          "failure": null,
+          "outcome": null,
+          "reported_outcome": null
+        },
+        {
+          "category": "blocked",
+          "condition": "budget_exhausted",
+          "failure": null,
+          "outcome": null,
+          "reported_outcome": null
+        },
+        {
+          "category": "blocked",
+          "condition": "request_limit_exhausted",
+          "failure": null,
+          "outcome": null,
+          "reported_outcome": null
+        },
+        {
+          "category": "blocked",
+          "condition": "artifact_limit_exhausted",
+          "failure": null,
+          "outcome": null,
+          "reported_outcome": null
+        },
+        {
+          "category": "failure",
+          "condition": "deadline_exhausted",
+          "failure": null,
+          "outcome": null,
+          "reported_outcome": null
+        }
+      ]
     },
     "events": [],
     "expected": {
@@ -15915,32 +16037,6 @@
     "boundary": "admission",
     "case_id": "admission/duplicate_required_condition",
     "declaration": {
-      "required_runtime_conditions": [
-        "result",
-        "result"
-      ],
-      "runtime_mappings": [
-        {
-          "category": "success",
-          "condition": "result",
-          "failure": null,
-          "outcome": "ok",
-          "reported_outcome": "ok"
-        }
-      ]
-    },
-    "events": [],
-    "expected": {
-      "code": "duplicate",
-      "status": "rejected"
-    },
-    "family": "admission",
-    "traces": []
-  },
-  {
-    "boundary": "admission",
-    "case_id": "admission/valid_external_failover",
-    "declaration": {
       "declared_outcomes": [
         "ok"
       ],
@@ -15949,13 +16045,9 @@
           "implementations": [
             {
               "physical_policy": "P0"
-            },
-            {
-              "physical_policy": "P0"
             }
           ],
           "kind": "external",
-          "max_capabilities": 2,
           "node": "N0",
           "physical_policy": "P0",
           "result_outcomes": [
@@ -15967,19 +16059,6 @@
       "outcome_categories": {
         "ok": "success"
       },
-      "required_runtime_conditions": [
-        "artifact_limit_exhausted",
-        "budget_exhausted",
-        "cancel_after_dispatch",
-        "cancel_after_start",
-        "cancel_before_start",
-        "deadline_exhausted",
-        "failure",
-        "lost",
-        "request_inconsistent",
-        "request_limit_exhausted",
-        "result"
-      ],
       "runtime_mappings": [
         {
           "category": "success",
@@ -16031,7 +16110,166 @@
           "reported_outcome": null
         },
         {
+          "category": "blocked",
+          "condition": "cancel_before_start",
+          "failure": null,
+          "outcome": null,
+          "reported_outcome": null
+        },
+        {
           "category": "cancelled",
+          "condition": "cancel_after_start",
+          "failure": null,
+          "outcome": null,
+          "reported_outcome": null
+        },
+        {
+          "category": "cancelled",
+          "condition": "cancel_after_dispatch",
+          "failure": null,
+          "outcome": null,
+          "reported_outcome": null
+        },
+        {
+          "category": "lost",
+          "condition": "lost",
+          "failure": null,
+          "outcome": null,
+          "reported_outcome": null
+        },
+        {
+          "category": "inconsistent",
+          "condition": "request_inconsistent",
+          "failure": null,
+          "outcome": null,
+          "reported_outcome": null
+        },
+        {
+          "category": "blocked",
+          "condition": "budget_exhausted",
+          "failure": null,
+          "outcome": null,
+          "reported_outcome": null
+        },
+        {
+          "category": "blocked",
+          "condition": "request_limit_exhausted",
+          "failure": null,
+          "outcome": null,
+          "reported_outcome": null
+        },
+        {
+          "category": "blocked",
+          "condition": "artifact_limit_exhausted",
+          "failure": null,
+          "outcome": null,
+          "reported_outcome": null
+        },
+        {
+          "category": "failure",
+          "condition": "deadline_exhausted",
+          "failure": null,
+          "outcome": null,
+          "reported_outcome": null
+        },
+        {
+          "category": "cancelled",
+          "condition": "cancel_before_start",
+          "failure": null,
+          "outcome": null,
+          "reported_outcome": null
+        }
+      ]
+    },
+    "events": [],
+    "expected": {
+      "code": "duplicate",
+      "status": "rejected"
+    },
+    "family": "admission",
+    "traces": []
+  },
+  {
+    "boundary": "admission",
+    "case_id": "admission/valid_external_failover",
+    "declaration": {
+      "declared_outcomes": [
+        "ok"
+      ],
+      "execution_policies": [
+        {
+          "implementations": [
+            {
+              "physical_policy": "P0"
+            },
+            {
+              "physical_policy": "P0"
+            }
+          ],
+          "kind": "external",
+          "node": "N0",
+          "physical_policy": "P0",
+          "result_outcomes": [
+            "ok"
+          ],
+          "retry_owner": "executor"
+        }
+      ],
+      "outcome_categories": {
+        "ok": "success"
+      },
+      "runtime_mappings": [
+        {
+          "category": "success",
+          "condition": "result",
+          "failure": null,
+          "outcome": "ok",
+          "reported_outcome": "ok"
+        },
+        {
+          "category": "failure",
+          "condition": "failure",
+          "failure": "rejected_before_acceptance",
+          "outcome": null,
+          "reported_outcome": null
+        },
+        {
+          "category": "failure",
+          "condition": "failure",
+          "failure": "retryable",
+          "outcome": null,
+          "reported_outcome": null
+        },
+        {
+          "category": "failure",
+          "condition": "failure",
+          "failure": "malformed_response",
+          "outcome": null,
+          "reported_outcome": null
+        },
+        {
+          "category": "failure",
+          "condition": "failure",
+          "failure": "permanent",
+          "outcome": null,
+          "reported_outcome": null
+        },
+        {
+          "category": "failure",
+          "condition": "failure",
+          "failure": "transport_unknown",
+          "outcome": null,
+          "reported_outcome": null
+        },
+        {
+          "category": "failure",
+          "condition": "failure",
+          "failure": "implementation_exception",
+          "outcome": null,
+          "reported_outcome": null
+        },
+        {
+          "category": "blocked",
           "condition": "cancel_before_start",
           "failure": null,
           "outcome": null,
@@ -16103,27 +16341,168 @@
     "traces": []
   },
   {
-    "boundary": "admission",
+    "boundary": "pre_execution",
     "case_id": "admission/changed_failover_policy",
     "declaration": {
-      "execution_policies": [
+      "admitted": {
+        "capability_catalog": [
+          {
+            "implementation": "C0",
+            "physical_policy": "P0"
+          },
+          {
+            "implementation": "C1",
+            "physical_policy": "P0"
+          }
+        ],
+        "declared_outcomes": [
+          "ok"
+        ],
+        "execution_policies": [
+          {
+            "implementations": [
+              {
+                "physical_policy": "P0"
+              },
+              {
+                "physical_policy": "P0"
+              }
+            ],
+            "kind": "external",
+            "node": "N0",
+            "physical_policy": "P0",
+            "result_outcomes": [
+              "ok"
+            ],
+            "retry_owner": "executor"
+          }
+        ],
+        "outcome_categories": {
+          "ok": "success"
+        },
+        "runtime_mappings": [
+          {
+            "category": "success",
+            "condition": "result",
+            "failure": null,
+            "outcome": "ok",
+            "reported_outcome": "ok"
+          },
+          {
+            "category": "failure",
+            "condition": "failure",
+            "failure": "rejected_before_acceptance",
+            "outcome": null,
+            "reported_outcome": null
+          },
+          {
+            "category": "failure",
+            "condition": "failure",
+            "failure": "retryable",
+            "outcome": null,
+            "reported_outcome": null
+          },
+          {
+            "category": "failure",
+            "condition": "failure",
+            "failure": "malformed_response",
+            "outcome": null,
+            "reported_outcome": null
+          },
+          {
+            "category": "failure",
+            "condition": "failure",
+            "failure": "permanent",
+            "outcome": null,
+            "reported_outcome": null
+          },
+          {
+            "category": "failure",
+            "condition": "failure",
+            "failure": "transport_unknown",
+            "outcome": null,
+            "reported_outcome": null
+          },
+          {
+            "category": "failure",
+            "condition": "failure",
+            "failure": "implementation_exception",
+            "outcome": null,
+            "reported_outcome": null
+          },
+          {
+            "category": "blocked",
+            "condition": "cancel_before_start",
+            "failure": null,
+            "outcome": null,
+            "reported_outcome": null
+          },
+          {
+            "category": "cancelled",
+            "condition": "cancel_after_start",
+            "failure": null,
+            "outcome": null,
+            "reported_outcome": null
+          },
+          {
+            "category": "cancelled",
+            "condition": "cancel_after_dispatch",
+            "failure": null,
+            "outcome": null,
+            "reported_outcome": null
+          },
+          {
+            "category": "lost",
+            "condition": "lost",
+            "failure": null,
+            "outcome": null,
+            "reported_outcome": null
+          },
+          {
+            "category": "inconsistent",
+            "condition": "request_inconsistent",
+            "failure": null,
+            "outcome": null,
+            "reported_outcome": null
+          },
+          {
+            "category": "blocked",
+            "condition": "budget_exhausted",
+            "failure": null,
+            "outcome": null,
+            "reported_outcome": null
+          },
+          {
+            "category": "blocked",
+            "condition": "request_limit_exhausted",
+            "failure": null,
+            "outcome": null,
+            "reported_outcome": null
+          },
+          {
+            "category": "blocked",
+            "condition": "artifact_limit_exhausted",
+            "failure": null,
+            "outcome": null,
+            "reported_outcome": null
+          },
+          {
+            "category": "failure",
+            "condition": "deadline_exhausted",
+            "failure": null,
+            "outcome": null,
+            "reported_outcome": null
+          }
+        ]
+      },
+      "capability_catalog": [
         {
-          "implementations": [
-            {
-              "physical_policy": "P0"
-            },
-            {
-              "physical_policy": "P1"
-            }
-          ],
-          "kind": "external",
-          "max_capabilities": 2,
-          "node": "N0",
-          "physical_policy": "P0",
-          "result_outcomes": [
-            "ok"
-          ],
-          "retry_owner": "executor"
+          "implementation": "C0",
+          "physical_policy": "P0"
+        },
+        {
+          "implementation": "C1",
+          "physical_policy": "P1"
         }
       ]
     },
@@ -16150,7 +16529,6 @@
             }
           ],
           "kind": "local",
-          "max_capabilities": 2,
           "node": "N0",
           "physical_policy": null,
           "result_outcomes": [
@@ -16172,30 +16550,23 @@
     "boundary": "admission",
     "case_id": "admission/capability_one_over",
     "declaration": {
-      "execution_policies": [
+      "admission_limits": {
+        "max_capabilities": 1
+      },
+      "capability_catalog": [
         {
-          "implementations": [
-            {
-              "physical_policy": "P0"
-            },
-            {
-              "physical_policy": "P0"
-            }
-          ],
-          "kind": "external",
-          "max_capabilities": 1,
-          "node": "N0",
-          "physical_policy": "P0",
-          "result_outcomes": [
-            "ok"
-          ],
-          "retry_owner": "executor"
+          "implementation": "C0",
+          "physical_policy": "P0"
+        },
+        {
+          "implementation": "C0",
+          "physical_policy": "P0"
         }
       ]
     },
     "events": [],
     "expected": {
-      "code": "capability_limit",
+      "code": "limit_exceeded",
       "status": "rejected"
     },
     "family": "admission",
@@ -16227,14 +16598,6 @@
       "outcome_categories": {
         "ok": "success"
       },
-      "required_runtime_conditions": [
-        "artifact_limit_exhausted",
-        "cancel_after_start",
-        "cancel_before_start",
-        "deadline_exhausted",
-        "failure",
-        "result"
-      ],
       "runtime_mappings": [
         {
           "category": "success",
@@ -16286,7 +16649,7 @@
           "reported_outcome": null
         },
         {
-          "category": "cancelled",
+          "category": "blocked",
           "condition": "cancel_before_start",
           "failure": null,
           "outcome": null,
@@ -16342,13 +16705,6 @@
         }
       ],
       "outcome_categories": {},
-      "required_runtime_conditions": [
-        "artifact_limit_exhausted",
-        "cancel_after_start",
-        "cancel_before_start",
-        "deadline_exhausted",
-        "failure"
-      ],
       "runtime_mappings": [
         {
           "category": "failure",
@@ -16365,7 +16721,7 @@
           "reported_outcome": null
         },
         {
-          "category": "cancelled",
+          "category": "blocked",
           "condition": "cancel_before_start",
           "failure": null,
           "outcome": null,
@@ -16427,19 +16783,6 @@
       "outcome_categories": {
         "ok": "success"
       },
-      "required_runtime_conditions": [
-        "artifact_limit_exhausted",
-        "budget_exhausted",
-        "cancel_after_dispatch",
-        "cancel_after_start",
-        "cancel_before_start",
-        "deadline_exhausted",
-        "failure",
-        "lost",
-        "request_inconsistent",
-        "request_limit_exhausted",
-        "result"
-      ],
       "runtime_mappings": [
         {
           "category": "failure",
@@ -16484,7 +16827,7 @@
           "reported_outcome": null
         },
         {
-          "category": "cancelled",
+          "category": "blocked",
           "condition": "cancel_before_start",
           "failure": null,
           "outcome": null,
@@ -16582,15 +16925,6 @@
       "outcome_categories": {
         "ok": "success"
       },
-      "required_runtime_conditions": [
-        "artifact_limit_exhausted",
-        "cancel_after_start",
-        "cancel_before_start",
-        "deadline_exhausted",
-        "failure",
-        "result",
-        "lost"
-      ],
       "runtime_mappings": [
         {
           "category": "success",
@@ -16642,7 +16976,7 @@
           "reported_outcome": null
         },
         {
-          "category": "cancelled",
+          "category": "blocked",
           "condition": "cancel_before_start",
           "failure": null,
           "outcome": null,
@@ -16704,7 +17038,6 @@
           "node": "N0",
           "physical_policy": "P0",
           "result_outcomes": [
-            "ok",
             "ok"
           ],
           "retry_owner": "executor"
@@ -16713,19 +17046,6 @@
       "outcome_categories": {
         "ok": "success"
       },
-      "required_runtime_conditions": [
-        "artifact_limit_exhausted",
-        "budget_exhausted",
-        "cancel_after_dispatch",
-        "cancel_after_start",
-        "cancel_before_start",
-        "deadline_exhausted",
-        "failure",
-        "lost",
-        "request_inconsistent",
-        "request_limit_exhausted",
-        "result"
-      ],
       "runtime_mappings": [
         {
           "category": "success",
@@ -16777,7 +17097,7 @@
           "reported_outcome": null
         },
         {
-          "category": "cancelled",
+          "category": "blocked",
           "condition": "cancel_before_start",
           "failure": null,
           "outcome": null,
@@ -16838,6 +17158,13 @@
           "failure": null,
           "outcome": null,
           "reported_outcome": null
+        },
+        {
+          "category": "failure",
+          "condition": "result",
+          "failure": null,
+          "outcome": "ok",
+          "reported_outcome": "ok"
         }
       ]
     },
