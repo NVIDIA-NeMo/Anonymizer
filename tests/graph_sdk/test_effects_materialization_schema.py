@@ -7,15 +7,21 @@ from __future__ import annotations
 import asyncio
 import json
 from dataclasses import dataclass, replace
+from typing import Any
 
 import pytest
 
 from anonymizer.engine.graph_sdk._effect_values import EffectRejected
 from anonymizer.engine.graph_sdk.binding import start_initial_binding
-from anonymizer.engine.graph_sdk.capabilities import ImplementationRef, ImplementationSelection
+from anonymizer.engine.graph_sdk.capabilities import (
+    ImplementationCapability,
+    ImplementationRef,
+    ImplementationSelection,
+)
 from anonymizer.engine.graph_sdk.context import (
     AdaptiveRetrievalDecl,
     BindingLimits,
+    BindingResult,
     ContextMaterialization,
     ContextResource,
     ContextSelector,
@@ -27,11 +33,13 @@ from anonymizer.engine.graph_sdk.context import (
     SourceResponse,
     admit_context_plan,
 )
+from anonymizer.engine.graph_sdk.data import ValidatedDataGraph
 from anonymizer.engine.graph_sdk.executor import (
     BoundInputKey,
     DecisionLimits,
     ExecutionImplementation,
     ExecutionLimits,
+    ExecutionResult,
     ExecutionServices,
     ImplementationHandle,
     InitialCollectionKey,
@@ -40,7 +48,13 @@ from anonymizer.engine.graph_sdk.executor import (
     admit_execution_plan,
     start_execution,
 )
-from anonymizer.engine.graph_sdk.preparation import BoundInput, PreparationConfiguration, StateRevisionView, prepare
+from anonymizer.engine.graph_sdk.preparation import (
+    BoundInput,
+    PreparationConfiguration,
+    PreparedPlan,
+    StateRevisionView,
+    prepare,
+)
 from anonymizer.engine.graph_sdk.requests import (
     AssociationInput,
     BindingAssociation,
@@ -56,6 +70,7 @@ from anonymizer.engine.graph_sdk.requests import (
 from anonymizer.engine.graph_sdk.resources import ResourceLease
 from anonymizer.graph.activation import ActivationLimits
 from anonymizer.graph.workflow import (
+    AdmittedActivationWorkflow,
     ArtifactType,
     ContextInputRef,
     ContextUse,
@@ -156,11 +171,45 @@ def test_materialization_schema_and_sites(case_id: str, monkeypatch: pytest.Monk
     asyncio.run(_assert_schema_case(case_id, allocations))
 
 
+@dataclass
+class _SchemaFixture:
+    case: dict[str, Any]
+    workflow: AdmittedActivationWorkflow
+    data: ValidatedDataGraph
+    nodes: tuple[NodeId, ...]
+    types: dict[str, ArtifactType]
+    policy: PhysicalRequestPolicy
+    source_caps: tuple[ContextSourceCapability, ...]
+    initial_caps: tuple[ContextSourceCapability, ...]
+    providers: dict[ContextSourceRef, _Provider]
+    declarations: tuple[InitialContextDecl, ...]
+    capabilities: tuple[ImplementationCapability, ...]
+
+
 async def _assert_schema_case(case_id: str, allocations: list[BindingId]) -> None:
     case = next(item for item in json.loads(CORPUS.read_bytes()) if item["case_id"] == case_id)
+    fixture = _build_schema_fixture(case)
+    if case_id == "materialization/conflicting_schema":
+        # Distinct sites isolate schema union from duplicate-site precedence.
+        with pytest.raises(EffectRejected) as rejected:
+            await _bind_schema_fixture(fixture)
+        assert rejected.value.code.value == case["expected"]["code"] == "contradictory"
+        assert not allocations and all(provider.calls == 0 for provider in fixture.providers.values())
+        return
+    bound = await _bind_schema_fixture(fixture)
+    assert bound.context is not None and len(allocations) == 1
+    prepared = _prepare_schema_fixture(fixture)
+    if case_id == "materialization/nested_collection_schema":
+        _assert_nested_rejection(fixture, bound, prepared)
+        return
+    result = await _execute_distinct_sites(fixture, bound, prepared)
+    _assert_distinct_site_result(fixture, bound, result)
+
+
+def _build_schema_fixture(case: dict[str, Any]) -> _SchemaFixture:
     raw = case["declaration"]["materializations"]
-    nested = case_id == "materialization/nested_collection_schema"
-    conflict = case_id == "materialization/conflicting_schema"
+    nested = case["case_id"] == "materialization/nested_collection_schema"
+    conflict = case["case_id"] == "materialization/conflicting_schema"
     types = {
         name: ArtifactType(name=name, revision=1)
         for name in {"text", *(item["item_type"] for item in raw), *(item["output_type"] for item in raw)}
@@ -311,46 +360,6 @@ async def _assert_schema_case(case_id: str, allocations: list[BindingId]) -> Non
         for index, (node, source, item) in enumerate(zip(nodes, sources, raw, strict=True))
         if not nested or index == 0
     )
-    # The conflict corpus duplicates one site. Distinct sites isolate its schema
-    # obligation, allowing schema union rather than duplicate-site precedence.
-    try:
-        binding = await start_initial_binding(
-            data=data,
-            workflow=workflow,
-            declarations=declarations,
-            capabilities=initial_caps,
-            resources=tuple(
-                ContextResource(
-                    source=cap.source,
-                    capability=cap,
-                    lease=ResourceLease.create(
-                        owner="caller", safe_detachment="forbidden", handle=providers[cap.source]
-                    ),
-                    factory=None,
-                )
-                for cap in initial_caps
-            ),
-            limits=BindingLimits(
-                max_declarations=4,
-                max_sources=2,
-                max_capabilities=2,
-                max_selector_fields=0,
-                max_selector_bytes=0,
-                max_items=3,
-                max_bytes=12,
-                max_requests=2,
-                max_resources=2,
-            ),
-        )
-    except EffectRejected as exc:
-        assert conflict
-        assert exc.code.value == case["expected"]["code"] == "contradictory"
-        assert not allocations and all(provider.calls == 0 for provider in providers.values())
-        return
-    assert not conflict, "conflicting collection schemas were admitted"
-    bound = await binding.wait()
-    assert bound.context is not None
-    assert len(allocations) == 1
     capabilities = tuple(
         replace(
             _capability(workflow, external=nested and index == 1),
@@ -360,7 +369,49 @@ async def _assert_schema_case(case_id: str, allocations: list[BindingId]) -> Non
         )
         for index, operation in enumerate(operations)
     )
-    prepared = prepare(
+    return _SchemaFixture(
+        case, workflow, data, nodes, types, policy, source_caps, initial_caps, providers, declarations, capabilities
+    )
+
+
+async def _bind_schema_fixture(fixture: _SchemaFixture) -> BindingResult:
+    data, workflow, declarations = fixture.data, fixture.workflow, fixture.declarations
+    initial_caps, providers = fixture.initial_caps, fixture.providers
+    binding = await start_initial_binding(
+        data=data,
+        workflow=workflow,
+        declarations=declarations,
+        capabilities=initial_caps,
+        resources=tuple(
+            ContextResource(
+                source=cap.source,
+                capability=cap,
+                lease=ResourceLease.create(owner="caller", safe_detachment="forbidden", handle=providers[cap.source]),
+                factory=None,
+            )
+            for cap in initial_caps
+        ),
+        limits=BindingLimits(
+            max_declarations=4,
+            max_sources=2,
+            max_capabilities=2,
+            max_selector_fields=0,
+            max_selector_bytes=0,
+            max_items=3,
+            max_bytes=12,
+            max_requests=2,
+            max_resources=2,
+        ),
+    )
+    return await binding.wait()
+
+
+def _prepare_schema_fixture(fixture: _SchemaFixture) -> PreparedPlan:
+    data, workflow, nodes, types = fixture.data, fixture.workflow, fixture.nodes, fixture.types
+    capabilities = fixture.capabilities
+    target = next(iter(data.targets))
+    nested = fixture.case["case_id"] == "materialization/nested_collection_schema"
+    return prepare(
         data=data,
         workflow=workflow,
         activation_limits=ActivationLimits(max_events=6, max_entries=2, max_parent_depth=1),
@@ -378,31 +429,38 @@ async def _assert_schema_case(case_id: str, allocations: list[BindingId]) -> Non
         capabilities=capabilities,
         limits=_limits(capabilities=2, slots=2),
     )
+
+
+def _assert_nested_rejection(fixture: _SchemaFixture, bound: BindingResult, prepared: PreparedPlan) -> None:
+    case, nodes, types = fixture.case, fixture.nodes, fixture.types
+    raw = case["declaration"]["materializations"]
+    source_caps, providers = fixture.source_caps, fixture.providers
+    sources = tuple(cap.source for cap in source_caps)
     adaptive = (
-        (
-            AdaptiveRetrievalDecl(
-                node=nodes[1],
-                source=sources[1],
-                selector_ports=("input",),
-                output_port="context",
-                bounds=RetrievalBounds(max_items=raw[1]["max_items"], max_bytes=raw[1]["max_bytes"], max_requests=2),
-                materialization=ContextMaterialization(kind=raw[1]["kind"], item_type=types[raw[1]["item_type"]]),
-            ),
-        )
-        if nested
-        else ()
+        AdaptiveRetrievalDecl(
+            node=nodes[1],
+            source=sources[1],
+            selector_ports=("input",),
+            output_port="context",
+            bounds=RetrievalBounds(max_items=raw[1]["max_items"], max_bytes=raw[1]["max_bytes"], max_requests=2),
+            materialization=ContextMaterialization(kind=raw[1]["kind"], item_type=types[raw[1]["item_type"]]),
+        ),
     )
-    if nested:
-        with pytest.raises(EffectRejected) as rejected:
-            admit_context_plan(
-                prepared=prepared,
-                bound_context=bound.context,
-                adaptive_retrievals=adaptive,
-                context_capabilities=(source_caps[1],),
-            )
-        assert rejected.value.code.value == case["expected"]["code"] == "contradictory"
-        assert sum(provider.calls for provider in providers.values()) == 1
-        return
+    with pytest.raises(EffectRejected) as rejected:
+        admit_context_plan(
+            prepared=prepared,
+            bound_context=bound.context,
+            adaptive_retrievals=adaptive,
+            context_capabilities=(source_caps[1],),
+        )
+    assert rejected.value.code.value == case["expected"]["code"] == "contradictory"
+    assert sum(provider.calls for provider in providers.values()) == 1
+
+
+async def _execute_distinct_sites(
+    fixture: _SchemaFixture, bound: BindingResult, prepared: PreparedPlan
+) -> ExecutionResult:
+    case, nodes, capabilities = fixture.case, fixture.nodes, fixture.capabilities
     context = admit_context_plan(
         prepared=prepared, bound_context=bound.context, adaptive_retrievals=(), context_capabilities=()
     )
@@ -463,7 +521,13 @@ async def _assert_schema_case(case_id: str, allocations: list[BindingId]) -> Non
     assert [consumer.calls for consumer in consumers] == [1, 1]
     assert all(state.complete for state in result.states)
     assert all(terminal.category == "success" for terminal in result.record.terminals)
+    return result
+
+
+def _assert_distinct_site_result(fixture: _SchemaFixture, bound: BindingResult, result: ExecutionResult) -> None:
+    case, nodes, policy = fixture.case, fixture.nodes, fixture.policy
     expected = case["expected"]["state"]
+    bound_artifacts = {item.reference: item for item in bound.receipt.artifacts}
     names = {node: f"N{index}" for index, node in enumerate(nodes)}
     declarations_by_id = {fact.identity: f"D{index}" for index, fact in enumerate(bound.receipt.sources)}
     values = dict(result.artifacts)
@@ -475,7 +539,14 @@ async def _assert_schema_case(case_id: str, allocations: list[BindingId]) -> Non
             identity = f"BoundInputKey:T0:{names[key.node]}:context:{declarations_by_id[key.binding_artifact.declaration]}:{key.binding_artifact.key}:{key.binding_artifact.version}"
             value = values[fact.artifact]
             assert isinstance(value, TextArtifactValue)
-            artifacts.append({"identity": identity, "artifact_type": "text", "source": "S0", "text": value.text})
+            artifacts.append(
+                {
+                    "identity": identity,
+                    "artifact_type": "text",
+                    "source": bound_artifacts[key.binding_artifact].source.name,
+                    "text": value.text,
+                }
+            )
         else:
             assert isinstance(key, InitialCollectionKey)
             identity = f"InitialCollectionKey:T0:{names[key.node]}:context:{declarations_by_id[key.declaration]}"
@@ -544,3 +615,6 @@ async def _assert_schema_case(case_id: str, allocations: list[BindingId]) -> Non
     assert {declarations_by_id[fact.identity]: fact.terminal for fact in bound.receipt.sources} == expected[
         "binding_sources"
     ]
+    assert {
+        declarations_by_id[fact.identity]: fact.declaration.source.name for fact in bound.receipt.sources
+    } == expected["binding_declarations"]
