@@ -56,7 +56,15 @@ from anonymizer.engine.graph_sdk.requests import (
     request_receipt,
 )
 from anonymizer.engine.graph_sdk.resources import CleanupFact, ResourceLease, close_resource
-from anonymizer.graph.workflow import AdmittedActivationWorkflow, NodeId, OperationNode, SubgraphNode
+from anonymizer.graph.workflow import (
+    AdmittedActivationWorkflow,
+    ContextInputRef,
+    Node,
+    NodeId,
+    NodeInputRef,
+    OperationNode,
+    SubgraphNode,
+)
 
 
 class BindingRejected(EffectRejected):
@@ -433,16 +441,29 @@ def _validate_binding(
             reject(EffectCode.CONTRADICTORY)
         schemas[declaration.artifact_type] = candidate
     nodes = _reachable_operations(workflow)
+    workflow_owners = {item.workflow for item in nodes}
     for declaration in declarations:
         if declaration.target not in data.targets:
             reject(EffectCode.FOREIGN_OWNER)
         node = nodes.get(declaration.node)
         if node is None:
-            reject(EffectCode.FOREIGN_OWNER)
+            reject(EffectCode.MISSING if declaration.node.workflow in workflow_owners else EffectCode.FOREIGN_OWNER)
         inputs = {item.name: item.artifact_type for item in node.operation.inputs}
         context_ports = {use.port for outcome in node.operation.outcomes for use in outcome.context}
-        if declaration.port not in context_ports or inputs.get(declaration.port) != declaration.artifact_type:
-            reject(EffectCode.UNSUPPORTED)
+        if declaration.port not in inputs:
+            reject(EffectCode.MISSING)
+        if declaration.port not in context_ports or inputs[declaration.port] != declaration.artifact_type:
+            reject(EffectCode.CONTRADICTORY)
+        binding = next(
+            (
+                item
+                for item in workflow.workflow.input_bindings
+                if item.destination == NodeInputRef(node=declaration.node, port=declaration.port)
+            ),
+            None,
+        )
+        if binding is None or not isinstance(binding.source, ContextInputRef):
+            reject(EffectCode.CONTRADICTORY)
         matches = [
             item
             for item in capabilities
@@ -455,6 +476,17 @@ def _validate_binding(
         resource = next(item for item in resources if item.source == declaration.source)
         if resource.capability != matches[0]:
             reject(EffectCode.CONTRADICTORY)
+    context_destinations = {
+        (binding.destination.node, binding.destination.port)
+        for binding in workflow.workflow.input_bindings
+        if isinstance(binding.source, ContextInputRef)
+    }
+    expected = {(target, node, port) for target in data.targets for node, port in context_destinations}
+    observed = {(item.target, item.node, item.port) for item in declarations}
+    if observed < expected:
+        reject(EffectCode.MISSING)
+    if observed > expected:
+        reject(EffectCode.EXTRA)
 
 
 def _acquire_resources(work: _BindingWork) -> tuple[dict[object, ResourceLease], list[CleanupFact]]:
@@ -506,8 +538,8 @@ def _binding_terminal(facts: list[SourceBindingFact]) -> BindingTerminal:
     return "success"
 
 
-def _reachable_operations(workflow: AdmittedActivationWorkflow) -> dict[NodeId, OperationNode]:
-    operations: dict[NodeId, OperationNode] = {}
+def _reachable_operations(workflow: AdmittedActivationWorkflow) -> dict[NodeId, Node]:
+    operations: dict[NodeId, Node] = {}
     pending = [workflow.workflow]
     seen: set[int] = set()
     while pending:
@@ -516,8 +548,9 @@ def _reachable_operations(workflow: AdmittedActivationWorkflow) -> dict[NodeId, 
             continue
         seen.add(id(current))
         for node in current.nodes:
+            operations[node.id] = node
             if isinstance(node, OperationNode):
-                operations[node.id] = node
+                continue
             elif isinstance(node, SubgraphNode):
                 pending.append(node.body)
     return operations

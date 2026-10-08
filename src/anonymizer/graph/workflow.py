@@ -370,6 +370,14 @@ class WorkflowInputRef(_PrivateValue):
 
 
 @dataclass(frozen=True, slots=True, kw_only=True, repr=False)
+class ContextInputRef(_PrivateValue):
+    port: str
+
+    def __post_init__(self) -> None:
+        _validate_scalars(strings=(self.port,))
+
+
+@dataclass(frozen=True, slots=True, kw_only=True, repr=False)
 class NodeOutputRef(_PrivateValue):
     node: NodeId
     port: str
@@ -420,11 +428,11 @@ class WorkflowOutcomeRef(_PrivateValue):
 
 @dataclass(frozen=True, slots=True, kw_only=True, repr=False)
 class InputBinding(_PrivateValue):
-    source: WorkflowInputRef | NodeOutputRef
+    source: WorkflowInputRef | ContextInputRef | NodeOutputRef
     destination: NodeInputRef
 
     def __post_init__(self) -> None:
-        if not isinstance(self.source, (WorkflowInputRef, NodeOutputRef)) or not isinstance(
+        if not isinstance(self.source, (WorkflowInputRef, ContextInputRef, NodeOutputRef)) or not isinstance(
             self.destination, NodeInputRef
         ):
             _reject(ValidationCode.INVALID_TYPE)
@@ -1264,6 +1272,9 @@ def _validate_duplicates(
     if (
         _duplicates([node.id for node in nodes])
         or _duplicates([binding.destination for binding in input_bindings])
+        or _duplicates(
+            [binding.source.port for binding in input_bindings if isinstance(binding.source, ContextInputRef)]
+        )
         or _duplicates([binding.destination for binding in output_bindings])
         or _duplicates([binding.source for binding in outcome_bindings])
         or _duplicates(list(sequence))
@@ -1281,9 +1292,11 @@ def _port_type(operation: OperationSpec, port: str, *, output: bool) -> Artifact
 
 
 def _source_type(
-    source: WorkflowInputRef | NodeOutputRef, interface: OperationSpec, nodes: dict[NodeId, OperationSpec]
+    source: WorkflowInputRef | ContextInputRef | NodeOutputRef,
+    interface: OperationSpec,
+    nodes: dict[NodeId, OperationSpec],
 ) -> ArtifactType | None:
-    if isinstance(source, WorkflowInputRef):
+    if isinstance(source, (WorkflowInputRef, ContextInputRef)):
         return _port_type(interface, source.port, output=False)
     operation = nodes.get(source.node)
     return None if operation is None else _port_type(operation, source.port, output=True)
@@ -1313,6 +1326,17 @@ def _validate_references(
             _reject(ValidationCode.MISSING)
         if source_type != destination_type:
             incompatible_binding = True
+    workflow_ports = {binding.source.port for binding in input_bindings if isinstance(binding.source, WorkflowInputRef)}
+    context_ports = {binding.source.port for binding in input_bindings if isinstance(binding.source, ContextInputRef)}
+    if workflow_ports & context_ports:
+        _reject(ValidationCode.CONTRADICTORY)
+    for binding in input_bindings:
+        if not isinstance(binding.source, ContextInputRef):
+            continue
+        destination = operations[binding.destination.node]
+        marked = {use.port for outcome in destination.outcomes for use in outcome.context}
+        if binding.destination.port not in marked:
+            _reject(ValidationCode.CONTRADICTORY)
     for binding in output_bindings:
         source_type = _source_type(binding.source, interface, operations)
         destination_type = _port_type(interface, binding.destination.port, output=True)
@@ -1418,6 +1442,12 @@ def _project_one(endpoints: frozenset[str]) -> str:
     if len(endpoints) > 1:
         _reject(ValidationCode.CONTRADICTORY)
     return next(iter(endpoints))
+
+
+def _walk_interface_inputs(start: Vertex, edges: set[tuple[Vertex, Vertex]], *, backward: bool) -> frozenset[str]:
+    return _walk_endpoints(start, edges, backward=backward, endpoint_kind="wi") | _walk_endpoints(
+        start, edges, backward=backward, endpoint_kind="ci"
+    )
 
 
 def _has_cycle(selected: frozenset[NodeId], edges: frozenset[SequenceEdge]) -> bool:
@@ -1544,7 +1574,7 @@ def _validate_paths(
                     continue
                 bindings = [binding for binding in input_bindings if binding.destination.node == node]
                 if all(
-                    isinstance(binding.source, WorkflowInputRef)
+                    isinstance(binding.source, (WorkflowInputRef, ContextInputRef))
                     or (
                         binding.source.node in reachable
                         and binding.source.port in assignment[binding.source.node].produced_ports
@@ -1606,7 +1636,11 @@ def _validate_composition_path(
         source = (
             ("wi", None, binding.source.port)
             if isinstance(binding.source, WorkflowInputRef)
-            else ("out", binding.source.node, binding.source.port)
+            else (
+                ("ci", None, binding.source.port)
+                if isinstance(binding.source, ContextInputRef)
+                else ("out", binding.source.node, binding.source.port)
+            )
         )
         destination = ("in", binding.destination.node, binding.destination.port)
         if binding.destination not in nonidentity_destinations:
@@ -1650,24 +1684,21 @@ def _validate_composition_path(
         input_names = {port.name for port in operation.inputs}
         for use in outcome.context:
             endpoint = _project_one(
-                _walk_endpoints(
+                _walk_interface_inputs(
                     ("in" if use.port in input_names else "out", node, use.port),
                     identity_edges,
                     backward=True,
-                    endpoint_kind="wi",
                 )
             )
             contexts.add(ContextUse(port=endpoint, meaning=use.meaning, capture=use.capture))
         for promise in outcome.evidence:
             consumed = frozenset(
-                _project_one(_walk_endpoints(("in", node, port), identity_edges, backward=True, endpoint_kind="wi"))
+                _project_one(_walk_interface_inputs(("in", node, port), identity_edges, backward=True))
                 for port in promise.consumed_ports
             )
             if promise.subject_port in input_names:
                 subject = _project_one(
-                    _walk_endpoints(
-                        ("in", node, promise.subject_port), identity_edges, backward=True, endpoint_kind="wi"
-                    )
+                    _walk_interface_inputs(("in", node, promise.subject_port), identity_edges, backward=True)
                 )
             else:
                 subject = _project_one(
@@ -1694,8 +1725,8 @@ def _validate_composition_path(
     dependencies = {item.output: item for item in interface.output_dependencies}
     for output in produced_external:
         vertex = ("wo", None, output)
-        influence = _walk_endpoints(vertex, dependency_edges, backward=True, endpoint_kind="wi")
-        identity = _walk_endpoints(vertex, identity_edges, backward=True, endpoint_kind="wi")
+        influence = _walk_interface_inputs(vertex, dependency_edges, backward=True)
+        identity = _walk_interface_inputs(vertex, identity_edges, backward=True)
         if len(identity) > 1:
             _reject(ValidationCode.CONTRADICTORY)
         derived_identity = next(iter(identity)) if identity else None

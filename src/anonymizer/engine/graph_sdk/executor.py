@@ -113,6 +113,7 @@ from anonymizer.graph.activation import (
 from anonymizer.graph.workflow import (
     AdmittedWorkflow,
     ArtifactType,
+    ContextInputRef,
     InputBinding,
     NodeId,
     NodeInputRef,
@@ -1951,8 +1952,8 @@ def _loop_input_source(
     node: NodeId,
     activation: ActivationKey,
     port: str,
-    default: WorkflowInputRef | NodeOutputRef | None,
-) -> WorkflowInputRef | NodeOutputRef | None:
+    default: WorkflowInputRef | ContextInputRef | NodeOutputRef | None,
+) -> WorkflowInputRef | ContextInputRef | NodeOutputRef | None:
     if activation.parent is None or activation.iteration is None:
         return default
     parent = next(
@@ -2321,8 +2322,15 @@ def _materialize_subgraph_inputs(
         )
         reference: ArtifactRef | None = produced.get((target, activation, port.name))
         parent: ProvenanceKey | None = None
+        if reference is None and isinstance(source, ContextInputRef):
+            reference = produced.get((target, node, port.name))
+            if reference is not None:
+                parent = next(
+                    (fact.key for fact in provenance if fact.artifact == reference),
+                    None,
+                )
         if reference is not None:
-            parent = next(
+            parent = parent or next(
                 (
                     fact.key
                     for fact in provenance
@@ -2336,11 +2344,11 @@ def _materialize_subgraph_inputs(
         mapped_item = _is_mapped_item_input(admitted, state, node, activation, port.name)
         if reference is None and mapped_item:
             reject(EffectCode.MISSING)
-        if reference is None and isinstance(source, WorkflowInputRef):
+        if reference is None and isinstance(source, (WorkflowInputRef, ContextInputRef)):
             if activation.parent is not None:
                 reference = subgraph_inputs.get((target, activation.parent, source.port))
                 parent = subgraph_input_parents.get((target, activation.parent, source.port))
-            if reference is None:
+            if reference is None and isinstance(source, WorkflowInputRef):
                 reference = root_inputs.get((target, source.port))
                 if reference is not None:
                     parent = RootInputKey(target=target, port=source.port)

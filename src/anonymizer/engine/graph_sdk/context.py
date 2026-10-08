@@ -33,7 +33,16 @@ from anonymizer.engine.graph_sdk.requests import (
 )
 from anonymizer.engine.graph_sdk.resources import CleanupFact, ResourceLease
 from anonymizer.graph._values import DatumId
-from anonymizer.graph.workflow import AdmittedActivationWorkflow, ArtifactType, NodeId, OperationNode, SubgraphNode
+from anonymizer.graph.workflow import (
+    AdmittedActivationWorkflow,
+    ArtifactType,
+    ContextInputRef,
+    Node,
+    NodeId,
+    NodeInputRef,
+    OperationNode,
+    SubgraphNode,
+)
 
 ContextRequirement: TypeAlias = Literal["required", "optional"]
 ProviderExecution: TypeAlias = Literal["async", "blocking"]
@@ -453,6 +462,13 @@ def admit_context_plan(
     if len(context_capabilities) != len(set(context_capabilities)):
         reject(EffectCode.DUPLICATE)
     nodes = _reachable_operations(prepared.workflow)
+    context_destinations = {
+        (binding.destination.node, binding.destination.port)
+        for binding in prepared.workflow.workflow.input_bindings
+        if isinstance(binding.source, ContextInputRef)
+    }
+    if context_destinations and bound_context is None:
+        reject(EffectCode.MISSING)
     if bound_context is not None:
         _validate_bound_context(prepared, bound_context, nodes)
     selected = {item.node: item.capability for item in prepared.implementations}
@@ -515,7 +531,7 @@ def admit_context_plan(
 def _validate_bound_context(
     prepared: PreparedPlan,
     context: BoundContext,
-    nodes: dict[NodeId, OperationNode],
+    nodes: dict[NodeId, Node],
 ) -> None:
     receipt = context.receipt
     if receipt.terminal not in {"success", "partial"} or context.artifacts != receipt.artifacts:
@@ -524,6 +540,7 @@ def _validate_bound_context(
     if len(identities) != len(set(identities)):
         reject(EffectCode.DUPLICATE)
     targets = {item.target for item in prepared.target_occurrences}
+    workflow_owners = {item.workflow for item in nodes}
     by_identity = {item.identity: item for item in receipt.sources}
     artifact_refs = [item.reference for item in context.artifacts]
     if len(artifact_refs) != len(set(artifact_refs)):
@@ -531,11 +548,25 @@ def _validate_bound_context(
     for fact in receipt.sources:
         declaration = fact.declaration
         operation_node = nodes.get(declaration.node)
-        if declaration.target not in targets or operation_node is None:
+        if declaration.target not in targets:
             reject(EffectCode.FOREIGN_OWNER)
+        if operation_node is None:
+            reject(EffectCode.MISSING if declaration.node.workflow in workflow_owners else EffectCode.FOREIGN_OWNER)
         port = next((item for item in operation_node.operation.inputs if item.name == declaration.port), None)
         context_ports = {use.port for outcome in operation_node.operation.outcomes for use in outcome.context}
-        if port is None or port.artifact_type != declaration.artifact_type or declaration.port not in context_ports:
+        if port is None:
+            reject(EffectCode.MISSING)
+        if port.artifact_type != declaration.artifact_type or declaration.port not in context_ports:
+            reject(EffectCode.CONTRADICTORY)
+        binding = next(
+            (
+                item
+                for item in prepared.workflow.workflow.input_bindings
+                if item.destination == NodeInputRef(node=declaration.node, port=declaration.port)
+            ),
+            None,
+        )
+        if binding is None or not isinstance(binding.source, ContextInputRef):
             reject(EffectCode.CONTRADICTORY)
         retained = [item for item in context.artifacts if item.reference.declaration == fact.identity]
         if fact.terminal == "bound":
@@ -558,13 +589,24 @@ def _validate_bound_context(
             or artifact.artifact_type != declaration.materialization.item_type
         ):
             reject(EffectCode.CONTRADICTORY)
+    destinations = {
+        (binding.destination.node, binding.destination.port)
+        for binding in prepared.workflow.workflow.input_bindings
+        if isinstance(binding.source, ContextInputRef)
+    }
+    expected = {(target, node, port) for target in targets for node, port in destinations}
+    observed = {(fact.declaration.target, fact.declaration.node, fact.declaration.port) for fact in receipt.sources}
+    if observed < expected:
+        reject(EffectCode.MISSING)
+    if observed > expected:
+        reject(EffectCode.EXTRA)
 
 
 def _validate_materialization_schema(
     prepared: PreparedPlan,
     bound_context: BoundContext | None,
     adaptive: tuple[AdaptiveRetrievalDecl, ...],
-    nodes: dict[NodeId, OperationNode],
+    nodes: dict[NodeId, Node],
 ) -> None:
     schemas: dict[ArtifactType, tuple[str, ArtifactType]] = {}
     initial = () if bound_context is None else tuple(item.declaration for item in bound_context.receipt.sources)
@@ -627,8 +669,8 @@ def _create_binding_result(
     return BindingResult(_key=_RESULT_KEY, receipt=receipt, context=context)
 
 
-def _reachable_operations(workflow: AdmittedActivationWorkflow) -> dict[NodeId, OperationNode]:
-    operations: dict[NodeId, OperationNode] = {}
+def _reachable_operations(workflow: AdmittedActivationWorkflow) -> dict[NodeId, Node]:
+    operations: dict[NodeId, Node] = {}
     pending = [workflow.workflow]
     seen: set[int] = set()
     while pending:
@@ -637,8 +679,9 @@ def _reachable_operations(workflow: AdmittedActivationWorkflow) -> dict[NodeId, 
             continue
         seen.add(id(current))
         for node in current.nodes:
+            operations[node.id] = node
             if isinstance(node, OperationNode):
-                operations[node.id] = node
+                continue
             elif isinstance(node, SubgraphNode):
                 pending.append(node.body)
     return operations

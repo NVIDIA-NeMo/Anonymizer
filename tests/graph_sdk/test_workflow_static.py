@@ -22,6 +22,7 @@ from anonymizer.graph.workflow import (
     CaptureMode,
     ChoiceBranch,
     ChoiceDecl,
+    ContextInputRef,
     ContextUse,
     CoverageAtom,
     CoverageKind,
@@ -409,9 +410,11 @@ class _Adapter:
             "subject_port": value.subject_port,
         }
 
-    def source_json(self, value: WorkflowInputRef | NodeOutputRef) -> Object:
+    def source_json(self, value: WorkflowInputRef | ContextInputRef | NodeOutputRef) -> Object:
         if isinstance(value, WorkflowInputRef):
             return {"kind": "workflow_input", "port": value.port}
+        if isinstance(value, ContextInputRef):
+            return {"kind": "context_input", "port": value.port}
         return {"kind": "node_output", "node": self.identity(value.node), "port": value.port}
 
     def requirement_json(self, value: ProtectionRequirement) -> Object:
@@ -665,6 +668,98 @@ def test_factories_share_the_same_pure_admission_boundary() -> None:
     assert effects == 1
     assert external.interface == built_in_shaped.interface
     assert external.expanded_node_count == built_in_shaped.expanded_node_count == 1
+
+
+def test_context_input_is_a_checked_distinct_interface_endpoint() -> None:
+    artifact = ArtifactType(name="context", revision=1)
+    ceiling = ResourceCeiling(max_activations=1, max_model_requests=0, max_input_bytes=8, max_output_bytes=0)
+    outcome = OutcomeSpec(
+        name="ok",
+        category="success",
+        produced_ports=frozenset(),
+        context=frozenset({ContextUse(port="context", meaning="retrieved", capture="whole_artifact")}),
+        evidence=frozenset(),
+        state_effects=frozenset(),
+        model_requirements=frozenset(),
+        ceiling=ceiling,
+    )
+    operation = OperationSpec(
+        name="context-consumer",
+        inputs=(InputPort(name="context", artifact_type=artifact),),
+        outputs=(),
+        output_dependencies=(),
+        outcomes=(outcome,),
+    )
+    workflow = WorkflowId.new()
+    node = NodeId.new(workflow=workflow)
+
+    admitted = admit_static_workflow(
+        workflow=workflow,
+        interface=operation,
+        nodes=(OperationNode(id=node, operation=operation),),
+        input_bindings=(
+            InputBinding(
+                source=ContextInputRef(port="context"),
+                destination=NodeInputRef(node=node, port="context"),
+            ),
+        ),
+        output_bindings=(),
+        outcome_bindings=(
+            OutcomeBinding(
+                source=NodeOutcomeRef(node=node, outcome="ok"),
+                destination=WorkflowOutcomeRef(outcome="ok"),
+            ),
+        ),
+        sequence=(),
+        choices=(),
+        protection=(),
+        limits=WorkflowLimits(
+            max_nodes=1,
+            max_bindings=2,
+            max_sequence_edges=0,
+            max_choices=0,
+            max_branch_members=0,
+            max_subgraph_depth=1,
+            max_choice_states=1,
+        ),
+    )
+    assert isinstance(next(iter(admitted.input_bindings)).source, ContextInputRef)
+
+    unmarked = replace(operation, outcomes=(replace(outcome, context=frozenset()),))
+    unmarked_workflow = WorkflowId.new()
+    unmarked_node = NodeId.new(workflow=unmarked_workflow)
+    with pytest.raises(ContractViolation) as rejected:
+        admit_static_workflow(
+            workflow=unmarked_workflow,
+            interface=unmarked,
+            nodes=(OperationNode(id=unmarked_node, operation=unmarked),),
+            input_bindings=(
+                InputBinding(
+                    source=ContextInputRef(port="context"),
+                    destination=NodeInputRef(node=unmarked_node, port="context"),
+                ),
+            ),
+            output_bindings=(),
+            outcome_bindings=(
+                OutcomeBinding(
+                    source=NodeOutcomeRef(node=unmarked_node, outcome="ok"),
+                    destination=WorkflowOutcomeRef(outcome="ok"),
+                ),
+            ),
+            sequence=(),
+            choices=(),
+            protection=(),
+            limits=WorkflowLimits(
+                max_nodes=1,
+                max_bindings=2,
+                max_sequence_edges=0,
+                max_choices=0,
+                max_branch_members=0,
+                max_subgraph_depth=1,
+                max_choice_states=1,
+            ),
+        )
+    assert rejected.value.code is ValidationCode.CONTRADICTORY
 
 
 def test_malformed_values_reach_real_boundaries_and_errors_are_private() -> None:

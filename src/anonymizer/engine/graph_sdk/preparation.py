@@ -23,6 +23,7 @@ from anonymizer.graph.workflow import (
     AdmittedActivationWorkflow,
     AdmittedWorkflow,
     ArtifactType,
+    ContextInputRef,
     NodeId,
     OperationNode,
     ProtectionRequirement,
@@ -329,7 +330,14 @@ def prepare(
     ):
         _reject(PreparationCode.DUPLICATE)
 
-    root_inputs = {port.name: port.artifact_type for port in workflow.workflow.interface.inputs}
+    context_inputs = {
+        binding.source.port
+        for binding in workflow.workflow.input_bindings
+        if isinstance(binding.source, ContextInputRef)
+    }
+    root_inputs = {
+        port.name: port.artifact_type for port in workflow.workflow.interface.inputs if port.name not in context_inputs
+    }
     expected_inputs = {(target, port) for target in data.targets for port in root_inputs}
     observed_inputs = set(input_keys)
     if observed_inputs != expected_inputs or any(item.source not in datum_ids for item in bound_inputs):

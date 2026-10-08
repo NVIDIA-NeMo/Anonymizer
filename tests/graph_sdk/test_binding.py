@@ -24,6 +24,7 @@ from anonymizer.engine.graph_sdk.context import (
     SourceFailure,
     SourceItem,
     SourceResponse,
+    admit_context_plan,
 )
 from anonymizer.engine.graph_sdk.requests import (
     BindingAssociation,
@@ -35,14 +36,17 @@ from anonymizer.engine.graph_sdk.requests import (
 )
 from anonymizer.engine.graph_sdk.resources import ResourceLease
 from anonymizer.graph.workflow import (
+    ContextInputRef,
     ContextUse,
     DynamicLimits,
     DynamicScope,
+    NodeId,
     OperationNode,
+    WorkflowId,
     admit_activation_workflow,
     admit_static_workflow,
 )
-from tests.graph_sdk.test_preparation import _data, _workflow
+from tests.graph_sdk.test_preparation import _capability, _data, _prepare, _workflow
 
 
 @dataclass
@@ -176,7 +180,9 @@ def _context_workflow():
         workflow=static.workflow,
         interface=operation,
         nodes=(OperationNode(id=node, operation=operation),),
-        input_bindings=tuple(static.input_bindings),
+        input_bindings=tuple(
+            replace(binding, source=ContextInputRef(port=binding.source.port)) for binding in static.input_bindings
+        ),
         output_bindings=tuple(static.output_bindings),
         outcome_bindings=tuple(static.outcome_bindings),
         sequence=tuple(static.sequence),
@@ -205,6 +211,94 @@ def _context_workflow():
 
 def test_initial_binding_preserves_provider_text_and_receipt() -> None:
     asyncio.run(_assert_initial_binding())
+
+
+def test_context_source_requires_exact_initial_declaration_before_provider_effects() -> None:
+    asyncio.run(_assert_context_source_requires_exact_initial_declaration())
+
+
+async def _assert_context_source_requires_exact_initial_declaration() -> None:
+    workflow, node, artifact = _context_workflow()
+    data = _data(1)
+    target = next(iter(data.targets))
+    policy = PhysicalRequestPolicy(
+        visibility="dispatch_and_settlement",
+        pre_dispatch_control="executor",
+        retry_owner="executor",
+        replay="idempotent",
+        max_attempts=1,
+    )
+    capability = ContextSourceCapability(
+        source=SOURCE,
+        artifact_type=artifact,
+        uses=frozenset({"initial_binding"}),
+        execution="async",
+        resource_owner="caller",
+        cancellation="cooperative_ack",
+        settlement="explicit_ack",
+        usage="exact",
+        request=policy,
+        safe_detachment="forbidden",
+    )
+    provider = _Provider()
+    base = InitialContextDecl(
+        target=target,
+        node=node,
+        port="input",
+        artifact_type=artifact,
+        source=SOURCE,
+        selector=ContextSelector(fields=()),
+        requirement="required",
+        bounds=RetrievalBounds(max_items=1, max_bytes=20, max_requests=1),
+        materialization=ContextMaterialization(kind="single", item_type=artifact),
+    )
+    absent = NodeId.new(workflow=node.workflow)
+    cases = (
+        ((), "missing"),
+        ((base, base), "duplicate"),
+        ((replace(base, port="absent"),), "missing"),
+        ((replace(base, node=absent),), "missing"),
+        ((replace(base, node=NodeId.new(workflow=WorkflowId.new())),), "foreign_owner"),
+    )
+    for declarations, code in cases:
+        with pytest.raises(EffectRejected) as rejected:
+            await start_initial_binding(
+                data=data,
+                workflow=workflow,
+                declarations=declarations,
+                capabilities=(capability,),
+                resources=(
+                    ContextResource(
+                        source=SOURCE,
+                        capability=capability,
+                        lease=ResourceLease.create(owner="caller", safe_detachment="forbidden", handle=provider),
+                        factory=None,
+                    ),
+                ),
+                limits=BindingLimits(
+                    max_declarations=2,
+                    max_sources=1,
+                    max_capabilities=1,
+                    max_selector_fields=0,
+                    max_selector_bytes=0,
+                    max_items=1,
+                    max_bytes=20,
+                    max_requests=1,
+                    max_resources=1,
+                ),
+            )
+        assert rejected.value.code.value == code
+    assert provider.calls == 0
+
+    prepared = _prepare(data=data, workflow=workflow, capability=_capability(workflow), bound_inputs=())
+    with pytest.raises(EffectRejected) as rejected:
+        admit_context_plan(
+            prepared=prepared,
+            bound_context=None,
+            adaptive_retrievals=(),
+            context_capabilities=(),
+        )
+    assert rejected.value.code.value == "missing"
 
 
 async def _assert_initial_binding() -> None:
