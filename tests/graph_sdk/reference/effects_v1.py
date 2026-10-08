@@ -15,10 +15,15 @@ Json: TypeAlias = str | int | bool | None | list["Json"] | dict[str, "Json"]
 Object: TypeAlias = dict[str, Json]
 MappingKey: TypeAlias = tuple[str, str | None, str | None]
 CONTRACT_SHA256 = "9b0ab07b8c0212ffd954dc37eb37540141da6899753fc778ad26238494aeaeca"
-GENERATOR_VERSION = "effects-v1-generator-2-materialization"
-SELF_TEST_VERSION = "effects-v1-self-test-2-materialization"
+GENERATOR_VERSION = "effects-v1-generator-4-binding-map"
+SELF_TEST_VERSION = "effects-v1-self-test-4-binding-map"
 MATERIALIZATION_ADDENDUM_SHA256 = "b1a5651ee2649b01c89e80bd1442e3f03209292b48ce846d27714698f57eb07c"
 BASE_CORPUS_SHA256 = "c62f2cc7e7237ea030451ac8d35a3c30b39f71766b4275348597949d560a7a6a"
+PREDECESSOR_CASE_COUNT = 214
+PREDECESSOR_CORPUS_SHA256 = "b509a2e1dc697ae5e16c8f2f9652aac74d862e4b449f64958fbba99abda87e93"
+OPTIONAL_OMISSION_ADDENDUM_SHA256 = "543d46e66988e11e6386ecdc686a77207b74e42211b8b164bc1decbb96e5d93e"
+MAP_EXECUTION_ADDENDUM_SHA256 = "9563fd44c040d546352853de03e57bcc94a6e34b7772ca2d9239f84074bef41d"
+BINDING_SUCCESS_ADDENDUM_SHA256 = "c6689c78f712837072235ad8343de8bd8240ea2c7e8580d1594e055de2e017cd"
 CORPUS_PATH = "tests/graph_sdk/reference/effects_v1_cases.json"
 FAMILIES = (
     "budgets",
@@ -32,6 +37,7 @@ FAMILIES = (
     "decisions",
     "admission",
     "materialization",
+    "map",
 )
 FAILURE_CLASSES = (
     "rejected_before_acceptance",
@@ -196,6 +202,85 @@ def _valid_usage(value: Json) -> bool:
     if not isinstance(value, dict) or set(value) != {"input", "output"}:
         return False
     return all(isinstance(item, int) and not isinstance(item, bool) and item >= 0 for item in value.values())
+
+
+def _valid_settlement(value: Json, *, optional: bool) -> bool:
+    if value is None:
+        return optional
+    if not isinstance(value, dict) or set(value) != {"disposition", "remote_stopped", "usage"}:
+        return False
+    disposition = value.get("disposition")
+    remote_stopped = value.get("remote_stopped")
+    return (
+        disposition in ("completed", "rejected", "stopped", "unknown")
+        and (remote_stopped is None or isinstance(remote_stopped, bool))
+        and (disposition == "unknown") == (remote_stopped is not True)
+        and _valid_usage(cast(Json, value.get("usage")))
+    )
+
+
+def _embedded_settlement() -> Object:
+    return {
+        "disposition": "completed",
+        "remote_stopped": True,
+        "usage": {"input": 0, "output": 0},
+    }
+
+
+def _apply_embedded_settlement(state: Object, request: str, value: Json) -> None:
+    if value is None:
+        return
+    settlement = _object(value)
+    settlements = _object(state["settlements"])
+    if request in settlements and settlements[request] != settlement:
+        _unique(_array(state["defects"]), "conflicting_settlement")
+    else:
+        settlements[request] = settlement
+        if settlement["remote_stopped"] is True:
+            _remove(state, "remote_outstanding", request)
+
+
+def _record_request_failure(state: Object, request: str, failure: str) -> bool:
+    first_terminal = request not in _object(state["terminals"])
+    if first_terminal:
+        _object(state["request_failures"])[request] = failure
+        _request_fact(state, request, {"condition": "failure", "failure": failure})
+        for association in _strings(_object(state["request_associations"])[request]):
+            if _object(state["association_requests"]).get(association) == request:
+                _object(state["association_terminals"])[association] = {
+                    "failure": failure,
+                    "policy": _object(state["request_policies"])[request],
+                    "request": request,
+                }
+    else:
+        fact = _object(_object(state["request_facts"]).get(request, {}))
+        if fact.get("condition") != "failure" or fact.get("failure") != failure:
+            _unique(_array(state["defects"]), "conflicting_terminal")
+    _terminal(state, request, "failure")
+    _remove(state, "local_in_flight", request)
+    if first_terminal:
+        _remove(state, "remote_outstanding", request)
+    return first_terminal
+
+
+def _record_binding_success(state: Object, request: str, association: str) -> None:
+    first_terminal = request not in _object(state["terminals"])
+    if first_terminal:
+        outcomes: Object = {association: "retrieved"}
+        _request_fact(state, request, {"condition": "result", "outcomes": outcomes})
+        _object(state["association_terminals"])[association] = {
+            "outcome": "retrieved",
+            "policy": _object(state["request_policies"])[request],
+            "request": request,
+        }
+    else:
+        fact = _object(_object(state["request_facts"]).get(request, {}))
+        if fact.get("condition") != "result" or fact.get("outcomes") != {association: "retrieved"}:
+            _unique(_array(state["defects"]), "conflicting_terminal")
+    _terminal(state, request, "success")
+    _remove(state, "local_in_flight", request)
+    if first_terminal:
+        _remove(state, "remote_outstanding", request)
 
 
 def _natural(value: Json, *, positive: bool = False) -> bool:
@@ -460,26 +545,7 @@ def _advance(state: Object, declaration: Object, event: Object) -> Object | None
         request = cast(str, event["request"])
         if request not in dispatched:
             return _reject("not_dispatched")
-        first_terminal = request not in _object(state["terminals"])
-        if first_terminal:
-            _object(state["request_failures"])[request] = event["failure"]
-            _request_fact(state, request, {"condition": "failure", "failure": event["failure"]})
-            for association in _strings(_object(state["request_associations"])[request]):
-                terminals = _object(state["association_terminals"])
-                if _object(state["association_requests"]).get(association) == request:
-                    terminals[association] = {
-                        "failure": event["failure"],
-                        "policy": _object(state["request_policies"])[request],
-                        "request": request,
-                    }
-        else:
-            fact = _object(_object(state["request_facts"]).get(request, {}))
-            if fact.get("condition") != "failure" or fact.get("failure") != event["failure"]:
-                _unique(_array(state["defects"]), "conflicting_terminal")
-        _terminal(state, request, "failure")
-        _remove(state, "local_in_flight", request)
-        if first_terminal:
-            _remove(state, "remote_outstanding", request)
+        _record_request_failure(state, request, cast(str, event["failure"]))
     elif kind == "cancel":
         request = cast(str, event["request"])
         if request in _object(state["terminals"]):
@@ -551,42 +617,64 @@ def _advance(state: Object, declaration: Object, event: Object) -> Object | None
             return _reject("materialization_required")
         if _object(state["binding_declarations"]).get(identity) != source:
             return _reject("foreign_source")
-        if request in _object(state["terminals"]):
-            _terminal(state, request, "success")
+        if not _valid_settlement(event.get("settlement"), optional=False):
+            return _reject("invalid_settlement")
+        was_terminal = request in _object(state["terminals"])
+        if (
+            event.get("outcome") != "retrieved"
+            or event.get("outputs") != []
+            or event.get("consumed_context_ports") != []
+            or not isinstance(event.get("items"), list)
+        ):
+            _record_request_failure(state, request, "malformed_response")
+            _apply_embedded_settlement(state, request, event["settlement"])
+            if not was_terminal:
+                defects = state.setdefault("binding_defects", [])
+                _unique(_array(defects), "malformed_source_result")
+                state["binding_terminal"] = "inconsistent"
             return None
-        items = _array(event["items"])
-        returned = [cast(str, _object(item).get("association")) for item in items]
+        items = [_object(item) for item in _array(event["items"]) if isinstance(item, dict)]
+        returned = [cast(str, item.get("association")) for item in items]
         defects: list[str] = []
-        if not returned:
+        if len(items) != len(_array(event["items"])) or not returned:
             defects.append("missing_keyed_result")
         if any(item != identity for item in returned):
             defects.append("foreign_keyed_result")
-        item_keys = [
-            (cast(str, _object(item).get("association")), _object(item).get("key"), _object(item).get("version"))
-            for item in items
-        ]
+        item_keys = [(cast(str, item.get("association")), item.get("key"), item.get("version")) for item in items]
         if len(item_keys) != len(set(item_keys)):
             defects.append("duplicate_keyed_result")
+        if any(
+            not _natural(item.get("key"))
+            or not _natural(item.get("version"), positive=True)
+            or not isinstance(item.get("text"), str)
+            for item in items
+        ):
+            defects.append("malformed_source_item")
         if defects:
             for defect in defects:
                 _unique(_array(state["defects"]), defect)
-            _terminal(state, request, "inconsistent")
-            _remove(state, "local_in_flight", request)
-            _remove(state, "remote_outstanding", request)
+            _record_request_failure(state, request, "malformed_response")
+            _apply_embedded_settlement(state, request, event["settlement"])
+            if not was_terminal:
+                _object(state["binding_sources"])[identity] = "failed"
+                state["binding_terminal"] = "inconsistent"
+            return None
+        if request in _object(state["terminals"]):
+            _record_binding_success(state, request, identity)
+            _apply_embedded_settlement(state, request, event["settlement"])
             return None
         limits = _object(declaration.get("binding_limits", {}))
-        byte_count = sum(len(cast(str, _object(item)["text"]).encode()) for item in items)
+        byte_count = sum(len(cast(str, item["text"]).encode()) for item in items)
+        _record_binding_success(state, request, identity)
+        _apply_embedded_settlement(state, request, event["settlement"])
         if len(items) > cast(int, limits.get("max_items", len(items))) or byte_count > cast(
             int, limits.get("max_bytes", byte_count)
         ):
             _object(state["binding_sources"])[identity] = "oversize"
-            state["binding_terminal"] = "failed"
-            _terminal(state, request, "success")
-            _remove(state, "local_in_flight", request)
-            _remove(state, "remote_outstanding", request)
+            requirements = _object(declaration.get("binding_requirements", {}))
+            state["binding_terminal"] = "partial" if requirements.get(identity, "required") == "optional" else "failed"
             return None
-        for raw in items:
-            item = _object(raw)
+        for item in items:
             artifact: Object = {
                 "identity": f"{identity}:{item['key']}:{item['version']}",
                 "source": source,
@@ -597,9 +685,6 @@ def _advance(state: Object, declaration: Object, event: Object) -> Object | None
             else:
                 _array(state["artifacts"]).append(artifact)
         _object(state["binding_sources"])[identity] = "bound"
-        _terminal(state, request, "success")
-        _remove(state, "local_in_flight", request)
-        _remove(state, "remote_outstanding", request)
     elif kind == "source_failure":
         request = cast(str, event.get("request"))
         if request not in dispatched or request not in _object(state["request_associations"]):
@@ -610,14 +695,38 @@ def _advance(state: Object, declaration: Object, event: Object) -> Object | None
         identity = associations[0]
         if event.get("association") != identity:
             return _reject("foreign_association")
+        source = _object(state["binding_declarations"]).get(identity)
+        if event.get("source") != source:
+            return _reject("foreign_source")
+        failure = event.get("failure")
+        if failure not in FAILURE_CLASSES:
+            return _reject("invalid_failure")
+        if "settlement" not in event or not _valid_settlement(event.get("settlement"), optional=True):
+            return _reject("invalid_settlement")
         if request in _object(state["terminals"]):
             _terminal(state, request, "failure")
+            _apply_embedded_settlement(state, request, event.get("settlement"))
             return None
-        _object(state["binding_sources"])[identity] = event.get("terminal", "failed")
-        state["binding_terminal"] = "failed" if event.get("required", True) else "partial"
-        _terminal(state, request, "failure")
-        _remove(state, "local_in_flight", request)
-        _remove(state, "remote_outstanding", request)
+        _record_request_failure(state, request, cast(str, failure))
+        _apply_embedded_settlement(state, request, event.get("settlement"))
+        disposition = event.get("disposition", "failed")
+        requirements = _object(declaration.get("binding_requirements", {}))
+        paths = _object(declaration.get("binding_paths", {}))
+        valid_omission = (
+            disposition == "omitted_optional"
+            and requirements.get(identity, "required") == "optional"
+            and paths.get(identity, "initial") == "initial"
+            and failure == "permanent"
+        )
+        if disposition not in ("failed", "omitted_optional") or (
+            disposition == "omitted_optional" and not valid_omission
+        ):
+            defects = state.setdefault("binding_defects", [])
+            _unique(_array(defects), "malformed_source_disposition")
+            state["binding_terminal"] = "inconsistent"
+            return None
+        _object(state["binding_sources"])[identity] = disposition
+        state["binding_terminal"] = "partial" if requirements.get(identity, "required") == "optional" else "failed"
     elif kind == "root_input":
         key = f"RootInputKey:{event.get('target')}:{event.get('port')}"
         specs = [_object(raw) for raw in _array(declaration.get("materializations", []))]
@@ -1034,6 +1143,12 @@ def admit(declaration: Object) -> Object:
 
 def evaluate_case(case: Mapping[str, Json]) -> Object:
     declaration = _object(case["declaration"])
+    if case["family"] == "map":
+        return (
+            _admit_map(declaration)
+            if case["boundary"] == "admission"
+            else _reduce_map(declaration, [_object(value) for value in _array(case["events"])])
+        )
     return (
         admit(declaration)
         if case["boundary"] == "admission"
@@ -1129,11 +1244,61 @@ def _policy_runtime_decl(kind: str, outcomes: Sequence[str] = ("ok",)) -> Object
     return declaration
 
 
-def _binding_decl(sources: Mapping[str, str], *, max_bytes: int = 8, max_items: int = 2) -> Object:
+def _binding_decl(
+    sources: Mapping[str, str],
+    *,
+    max_bytes: int = 8,
+    max_items: int = 2,
+    optional: Sequence[str] = (),
+    adaptive: Sequence[str] = (),
+) -> Object:
     declaration = _decl()
     declaration["binding_declarations"] = dict(sources)
+    if optional:
+        declaration["binding_requirements"] = {
+            identity: "optional" if identity in optional else "required" for identity in sources
+        }
+    if adaptive:
+        declaration["binding_paths"] = {
+            identity: "adaptive" if identity in adaptive else "initial" for identity in sources
+        }
     declaration["binding_limits"] = {"max_bytes": max_bytes, "max_items": max_items}
     return declaration
+
+
+def _source_result(identity: str, source: str, items: Sequence[Object], *, request: str) -> Object:
+    return {
+        "consumed_context_ports": [],
+        "items": list(items),
+        "kind": "source_result",
+        "outcome": "retrieved",
+        "outputs": [],
+        "request": request,
+        "settlement": _embedded_settlement(),
+        "source": source,
+    }
+
+
+def _source_failure(
+    identity: str,
+    source: str,
+    *,
+    request: str,
+    failure: str = "permanent",
+    disposition: str | None = None,
+    settlement: Object | None = None,
+) -> Object:
+    event: Object = {
+        "association": identity,
+        "failure": failure,
+        "kind": "source_failure",
+        "request": request,
+        "settlement": _embedded_settlement() if settlement is None else settlement,
+        "source": source,
+    }
+    if disposition is not None:
+        event["disposition"] = disposition
+    return event
 
 
 def _bind(item: str, *policies: str) -> Object:
@@ -1156,6 +1321,269 @@ def _result(request: str, expected: Sequence[str], returned: Sequence[str]) -> O
 
 def _trace(items: Sequence[str] = ("T0",), request: str = "R0") -> list[Object]:
     return [*[_bind(item, "P0") for item in items], _reserve(request, items), _dispatch(request)]
+
+
+def _admit_map(declaration: Object) -> Object:
+    if set(declaration) != {"expansions", "limits", "loops", "maps", "schemas"}:
+        return _reject("invalid_value")
+    limits = declaration.get("limits")
+    maps_value, loops_value, expansions_value, schemas_value = (
+        declaration.get("maps"),
+        declaration.get("loops"),
+        declaration.get("expansions"),
+        declaration.get("schemas"),
+    )
+    if not isinstance(limits, dict) or not all(
+        isinstance(value, list) for value in (maps_value, loops_value, expansions_value, schemas_value)
+    ):
+        return _reject("invalid_type")
+    typed_limits = _object(limits)
+    if set(typed_limits) != {
+        "max_artifact_bytes",
+        "max_artifacts",
+        "max_declarations",
+        "max_collection_items",
+        "max_provenance_edges",
+        "max_schemas",
+    } or any(not _natural(value) for value in typed_limits.values()):
+        return _reject("invalid_type")
+    maps = [_object(value) for value in cast(list[Json], maps_value)]
+    loops = [_object(value) for value in cast(list[Json], loops_value)]
+    expansions = [_object(value) for value in cast(list[Json], expansions_value)]
+    schemas = [_object(value) for value in cast(list[Json], schemas_value)]
+    if len(maps) + len(loops) + len(expansions) > cast(int, typed_limits["max_declarations"]) or len(schemas) > cast(
+        int, typed_limits["max_schemas"]
+    ):
+        return _reject("limit_exceeded")
+    if any(item.get("owner") != "W0" for item in (*maps, *loops, *expansions)):
+        return _reject("foreign_owner")
+    aggregate_sources = [item.get("expander") for item in maps] + [item.get("starter") for item in loops]
+    if len(aggregate_sources) != len(set(aggregate_sources)):
+        return _reject("duplicate")
+    expansion_keys = [(item.get("scope"), item.get("expander"), item.get("outcome")) for item in expansions]
+    if len(expansion_keys) != len(set(expansion_keys)):
+        return _reject("duplicate")
+    required = {
+        (item.get("scope"), item.get("expander"), outcome)
+        for item in maps
+        for outcome in _strings(item.get("expansion_outcomes", []))
+    }
+    if set(expansion_keys) != required:
+        return _reject("missing")
+    schema_by_type: dict[str, tuple[Json, Json]] = {}
+    for schema in schemas:
+        if set(schema) != {"item_type", "kind", "minimum", "type"}:
+            return _reject("invalid_value")
+        artifact_type = schema.get("type")
+        value = (schema.get("kind"), schema.get("item_type"))
+        if not isinstance(artifact_type, str) or schema.get("kind") not in ("scalar", "collection"):
+            return _reject("invalid_type")
+        if artifact_type in schema_by_type and schema_by_type[artifact_type] != value:
+            return _reject("contradictory")
+        schema_by_type[artifact_type] = value
+    collection_types = {name for name, value in schema_by_type.items() if value[0] == "collection"}
+    if any(value[1] in collection_types for value in schema_by_type.values()):
+        return _reject("nested_collection")
+    for item in maps:
+        if item.get("member_kind") not in ("operation", "subgraph") or not _natural(item.get("max_children")):
+            return _reject("invalid_value")
+        if item.get("item_input") is not None and item.get("item_input") != "item":
+            return _reject("missing")
+        if item.get("item_input") is not None and item.get("context_override") is True:
+            return _reject("contradictory")
+        if cast(int, item["max_children"]) > 1 and item.get("outward_scalar") in (
+            "join",
+            "ordinary",
+            "workflow_output",
+        ):
+            return _reject("unsupported")
+        retained_dependencies = _strings(item.get("retained_dependencies", []))
+        expected_dependencies = sorted(set(_strings(item.get("membership_dependencies", []))))
+        if retained_dependencies != expected_dependencies or item.get("retained_identity") is not False:
+            return _reject("contradictory")
+    for expansion in expansions:
+        schema = schema_by_type.get(cast(str, expansion.get("collection_type")))
+        if (
+            schema != ("collection", expansion.get("item_type"))
+            or expansion.get("collection_type") == expansion.get("item_type")
+            or expansion.get("membership_port") != "members"
+        ):
+            return _reject("contradictory")
+        minimum = next(
+            schema_item.get("minimum")
+            for schema_item in schemas
+            if schema_item.get("type") == expansion.get("collection_type")
+        )
+        if minimum != 0:
+            return _reject("contradictory")
+        owner_map = next(item for item in maps if item.get("expander") == expansion.get("expander"))
+        if owner_map.get("item_input") is not None and owner_map.get("item_type") != expansion.get("item_type"):
+            return _reject("contradictory")
+    return {"status": "accepted"}
+
+
+def _empty_map_state() -> Object:
+    return {
+        "publication": {
+            "artifacts": [],
+            "assessments": [],
+            "inputs": [],
+            "membership": None,
+            "ports": [],
+            "provenance": [],
+            "request_success": False,
+        },
+        "resolution": None,
+        "parent_phase": "running",
+        "terminal": None,
+        "transition": None,
+    }
+
+
+def _reduce_map(declaration: Object, events: Sequence[Object]) -> Object:
+    state = _empty_map_state()
+    admitted = _admit_map(declaration)
+    if admitted.get("status") != "accepted":
+        return admitted
+    map_decl = _object(_array(declaration["maps"])[0]) if _array(declaration["maps"]) else {}
+    expansion = _object(_array(declaration["expansions"])[0]) if _array(declaration["expansions"]) else {}
+    for event in events:
+        if event.get("kind") == "close_parent":
+            if event.get("parent") != "E0" or event.get("category") != "cancelled":
+                return _reject("invalid_value")
+            state["parent_phase"] = "cancelled"
+            continue
+        if "p3_accept" in event:
+            return _reject("invalid_value")
+        if event.get("kind") == "resolve_scalar":
+            source_kind = event.get("source_kind")
+            if source_kind == "map":
+                count = event.get("member_count")
+                maximum = event.get("maximum")
+                destination = event.get("destination")
+                if not _natural(count) or not _natural(maximum):
+                    return _reject("invalid_type")
+                if cast(int, maximum) > 1:
+                    return _reject("unsupported")
+                state["resolution"] = (
+                    "member:0" if count == 1 else f"blocked:{destination}" if count == 0 else "overflow"
+                )
+            elif source_kind == "loop":
+                outcomes = _strings(event.get("outcomes", []))
+                if not outcomes:
+                    state["resolution"] = "blocked:bypass"
+                elif outcomes[-1] == "exit":
+                    state["resolution"] = f"member:{len(outcomes) - 1}:exit"
+                else:
+                    state["resolution"] = "blocked:no_exit"
+            else:
+                return _reject("invalid_value")
+            continue
+        if event.get("kind") != "map_result":
+            return _reject("unknown_event")
+        if event.get("parent") != "E0":
+            state["terminal"] = "wrong_parent"
+            continue
+        outputs_value = event.get("outputs")
+        if not isinstance(outputs_value, list) or any(not isinstance(value, dict) for value in outputs_value):
+            state["terminal"] = "malformed_response"
+            continue
+        outputs = [_object(value) for value in outputs_value]
+        selected = [value for value in outputs if value.get("port") == expansion.get("membership_port")]
+        if len(selected) != 1 or selected[0].get("artifact_type") != expansion.get("collection_type"):
+            state["terminal"] = "malformed_response"
+            continue
+        items_value = selected[0].get("items")
+        if not isinstance(items_value, list):
+            state["terminal"] = "malformed_response"
+            continue
+        items: list[Object] = []
+        pairs: list[tuple[int, int]] = []
+        malformed = False
+        for raw in items_value:
+            if not isinstance(raw, dict) or set(raw) != {"key", "value", "version"}:
+                malformed = True
+                break
+            item = _object(raw)
+            if (
+                not _natural(item["key"])
+                or not _natural(item["version"], positive=True)
+                or not isinstance(item["value"], str)
+            ):
+                malformed = True
+                break
+            items.append(item)
+            pairs.append((cast(int, item["key"]), cast(int, item["version"])))
+        if malformed or len(pairs) != len(set(pairs)) or pairs != sorted(pairs):
+            state["terminal"] = "malformed_response"
+            continue
+        count = len(items)
+        overflow = count > cast(int, map_decl["max_children"])
+        byte_count = sum(len(cast(str, item["value"]).encode()) for item in items)
+        other_outputs = [value for value in outputs if value is not selected[0]]
+        if any(value.get("artifact_type") != "other_t" or value.get("items") != [] for value in other_outputs):
+            state["terminal"] = "malformed_response"
+            continue
+        binds_items = map_decl.get("item_input") is not None and not overflow
+        artifact_count = 1 + len(other_outputs) + (count if binds_items else 0)
+        logical_bytes = byte_count * (2 if binds_items else 1)
+        provenance_edges = count if binds_items else 0
+        limits = _object(declaration["limits"])
+        if (
+            count > cast(int, limits["max_collection_items"])
+            or artifact_count > cast(int, limits.get("max_artifacts", artifact_count))
+            or logical_bytes > cast(int, limits.get("max_artifact_bytes", logical_bytes))
+            or provenance_edges > cast(int, limits.get("max_provenance_edges", provenance_edges))
+        ):
+            state["terminal"] = "artifact_limit"
+            continue
+        # Prospective transition: a terminal parent cannot publish a late manifest.
+        if state["parent_phase"] != "running":
+            state["terminal"] = "transition_rejected"
+            continue
+        members = [] if overflow else [f"M{index}" for index in range(count)]
+        collection_key = "OperationOutputKey:E0:T0:members"
+        artifacts: list[Json] = [{"artifact_type": expansion["collection_type"], "identity": "C0", "items": items}]
+        ports: list[Json] = [{"activation": "E0", "artifact": "C0", "port": "members"}]
+        for index, output in enumerate(other_outputs):
+            artifacts.append({"artifact_type": output["artifact_type"], "identity": f"O{index}", "items": []})
+            ports.append({"activation": "E0", "artifact": f"O{index}", "port": output["port"]})
+        inputs: list[Json] = []
+        provenance: list[Json] = [
+            {
+                "artifact": port["artifact"],
+                "decision": False,
+                "key": f"OperationOutputKey:E0:T0:{port['port']}",
+                "parents": [],
+            }
+            for port in cast(list[Object], ports)
+        ]
+        for member, item in zip(members, items[: len(members)], strict=True):
+            if not binds_items:
+                continue
+            artifact = f"I{member[1:]}"
+            key = f"MapItemKey:E0:{member}:T0:item:{item['key']}:{item['version']}"
+            artifacts.append({"artifact_type": expansion["item_type"], "identity": artifact, "value": item["value"]})
+            ports.append({"activation": member, "artifact": artifact, "port": "item"})
+            inputs.append({"activation": member, "artifact": artifact, "key": key, "port": "item"})
+            provenance.append({"artifact": artifact, "decision": False, "key": key, "parents": [collection_key]})
+        state["publication"] = {
+            "artifacts": artifacts,
+            "assessments": list(_array(event.get("assessments", []))),
+            "inputs": inputs,
+            "membership": None if overflow else {"closed": True, "members": members, "parent": "E0"},
+            "ports": ports,
+            "provenance": provenance,
+            "request_success": True,
+        }
+        state["parent_phase"] = "complete"
+        state["terminal"] = "overflow" if overflow else "published"
+        state["transition"] = (
+            {"count": count, "kind": "ObserveOverflow", "parent": "E0"}
+            if overflow
+            else {"kind": "ObserveMembership", "members": members, "parent": "E0"}
+        )
+    return {"state": state, "status": "accepted"}
 
 
 def _case(
@@ -1437,12 +1865,12 @@ def _materialization_specs() -> list[Object]:
                 _materialization_decl(initial_collection),
                 [
                     *_trace(("D0",)),
-                    {
-                        "items": [{"association": "D0", "key": 0, "text": "a", "version": 1}],
-                        "kind": "source_result",
-                        "request": "R0",
-                        "source": "S0",
-                    },
+                    _source_result(
+                        "D0",
+                        "S0",
+                        [{"association": "D0", "key": 0, "text": "a", "version": 1}],
+                        request="R0",
+                    ),
                 ],
             ),
             _case(
@@ -1527,6 +1955,446 @@ def _materialization_specs() -> list[Object]:
                 *_materialization_trace(adaptive_collection, _items("one")),
                 {"kind": "bridge_condition", "task": "A0", "condition": "result", "reported_outcome": "ok"},
                 {"kind": "bridge_emit", "task": "A0", "outcome": "ok", "category": "success"},
+            ],
+        )
+    )
+    return cases
+
+
+def _map_decl(
+    *,
+    max_children: int = 2,
+    item_input: str | None = "item",
+    member_kind: str = "operation",
+    outward_scalar: str | None = None,
+    **changes: Json,
+) -> Object:
+    map_value: Object = {
+        "context_override": False,
+        "default_dependencies": ["default_root"],
+        "expander": "E",
+        "expansion_outcomes": ["expand"],
+        "item_input": item_input,
+        "item_type": "text",
+        "join": "J",
+        "max_children": max_children,
+        "member": "M",
+        "member_kind": member_kind,
+        "membership_dependencies": ["actual_membership_root"],
+        "outward_scalar": outward_scalar,
+        "owner": "W0",
+        "retained_dependencies": ["actual_membership_root"],
+        "retained_identity": False,
+        "scope": "S0",
+    }
+    map_value.update(changes)
+    return {
+        "expansions": [
+            {
+                "collection_type": "members_t",
+                "expander": "E",
+                "item_type": "text",
+                "membership_port": "members",
+                "outcome": "expand",
+                "owner": "W0",
+                "scope": "S0",
+            }
+        ],
+        "limits": {
+            "max_artifact_bytes": 32,
+            "max_artifacts": 8,
+            "max_declarations": 8,
+            "max_collection_items": 4,
+            "max_provenance_edges": 8,
+            "max_schemas": 8,
+        },
+        "loops": [],
+        "maps": [map_value],
+        "schemas": [
+            {"item_type": None, "kind": "scalar", "minimum": 0, "type": "text"},
+            {"item_type": "text", "kind": "collection", "minimum": 0, "type": "members_t"},
+            {"item_type": "text", "kind": "collection", "minimum": 0, "type": "other_t"},
+        ],
+    }
+
+
+def _map_event(
+    values: Sequence[str],
+    *,
+    parent: str = "E0",
+    port: str = "members",
+    artifact_type: str = "members_t",
+    extra_outputs: int = 0,
+) -> Object:
+    outputs: list[Json] = [
+        {
+            "artifact_type": artifact_type,
+            "items": [{"key": index, "value": value, "version": 1} for index, value in enumerate(values)],
+            "port": port,
+        }
+    ]
+    outputs.extend({"artifact_type": "other_t", "items": [], "port": f"other{index}"} for index in range(extra_outputs))
+    return {
+        "assessments": ["assessment0"],
+        "kind": "map_result",
+        "outputs": outputs,
+        "parent": parent,
+    }
+
+
+def _map_specs() -> list[Object]:
+    cases: list[Object] = []
+    for name, declaration in (
+        ("admit_operation", _map_decl()),
+        ("admit_subgraph", _map_decl(member_kind="subgraph")),
+        ("admit_control_only", _map_decl(item_input=None)),
+        ("default_override_dependency", _map_decl(default_dependencies=["unavailable_default"])),
+        ("max_zero_scalar_join", _map_decl(max_children=0, outward_scalar="join")),
+        ("max_one_scalar_ordinary", _map_decl(max_children=1, outward_scalar="ordinary")),
+        ("max_one_scalar_workflow", _map_decl(max_children=1, outward_scalar="workflow_output")),
+    ):
+        cases.append(_case("map", name, declaration, [], "admission"))
+    for destination in ("join", "ordinary", "workflow_output"):
+        cases.append(
+            _case(
+                "map",
+                f"max_two_scalar_{destination}",
+                _map_decl(max_children=2, outward_scalar=destination),
+                [],
+                "admission",
+            )
+        )
+    admission_mutants: list[tuple[str, Object]] = []
+    missing_expansion = _map_decl()
+    missing_expansion["expansions"] = []
+    admission_mutants.append(("missing_expansion", missing_expansion))
+    duplicate_map = _map_decl()
+    _array(duplicate_map["maps"]).append(dict(_object(_array(duplicate_map["maps"])[0]), member="M1"))
+    admission_mutants.append(("duplicate_map_source", duplicate_map))
+    map_loop = _map_decl()
+    map_loop["loops"] = [{"join": "LJ", "member": "LM", "owner": "W0", "scope": "S0", "starter": "E"}]
+    admission_mutants.append(("map_loop_duplicate_source", map_loop))
+    duplicate_loop = _map_decl()
+    duplicate_loop["loops"] = [
+        {"join": "LJ0", "member": "LM0", "owner": "W0", "scope": "S0", "starter": "L"},
+        {"join": "LJ1", "member": "LM1", "owner": "W0", "scope": "S0", "starter": "L"},
+    ]
+    admission_mutants.append(("duplicate_loop_source", duplicate_loop))
+    minimum = _map_decl()
+    _object(_array(minimum["schemas"])[1])["minimum"] = 1
+    admission_mutants.append(("context_minimum_conflict", minimum))
+    schema_conflict = _map_decl()
+    _array(schema_conflict["schemas"]).append(
+        {"item_type": "bytes", "kind": "collection", "minimum": 0, "type": "members_t"}
+    )
+    admission_mutants.append(("collection_item_schema_conflict", schema_conflict))
+    item_mismatch = _map_decl()
+    _object(_array(item_mismatch["expansions"])[0])["item_type"] = "bytes"
+    admission_mutants.append(("item_type_mismatch", item_mismatch))
+    admission_mutants.append(("context_override_conflict", _map_decl(context_override=True)))
+    admission_mutants.append(("dependency_summary_mismatch", _map_decl(retained_dependencies=["default_root"])))
+    admission_mutants.append(("false_identity_summary", _map_decl(retained_identity=True)))
+    foreign = _map_decl()
+    _object(_array(foreign["maps"])[0])["owner"] = "W1"
+    _array(foreign["maps"]).append(dict(_object(_array(foreign["maps"])[0]), member="M1"))
+    admission_mutants.append(("foreign_before_duplicate", foreign))
+    for name, declaration in admission_mutants:
+        cases.append(_case("map", name, declaration, [], "admission"))
+    for extra in (0, 1, 2):
+        cases.append(
+            _case(
+                "map",
+                f"membership_with_{extra}_other_outputs",
+                _map_decl(),
+                [_map_event(("a", "b"), extra_outputs=extra)],
+            )
+        )
+    for size in (0, 1, 2, 3):
+        cases.append(
+            _case(
+                "map",
+                f"membership_{'one_over' if size == 3 else size}",
+                _map_decl(),
+                [_map_event(tuple(chr(97 + index) for index in range(size)))],
+            )
+        )
+    malformed_events: list[tuple[str, Object]] = [
+        ("missing_membership_port", _map_event(("a",), port="other")),
+        ("wrong_membership_type", _map_event(("a",), artifact_type="text")),
+        ("wrong_parent", _map_event(("a",), parent="E1")),
+    ]
+    duplicate_port = _map_event(("a",))
+    _array(duplicate_port["outputs"]).append(dict(_object(_array(duplicate_port["outputs"])[0])))
+    malformed_events.append(("duplicate_membership_port", duplicate_port))
+    duplicate_item = _map_event(("a", "b"))
+    _object(_array(_object(_array(duplicate_item["outputs"])[0])["items"])[1])["key"] = 0
+    malformed_events.append(("duplicate_item", duplicate_item))
+    noncanonical = _map_event(("a", "b"))
+    _array(_object(_array(noncanonical["outputs"])[0])["items"]).reverse()
+    malformed_events.append(("noncanonical_items", noncanonical))
+    for name, event in malformed_events:
+        cases.append(_case("map", name, _map_decl(), [event]))
+    cases.extend(
+        [
+            _case("map", "subgraph_item_binding", _map_decl(member_kind="subgraph"), [_map_event(("left", "right"))]),
+            _case("map", "control_only_members", _map_decl(item_input=None), [_map_event(("a", "b"))]),
+            _case(
+                "map",
+                "default_override_no_fallback",
+                _map_decl(default_dependencies=["unavailable_default"]),
+                [_map_event(("actual",))],
+            ),
+            _case(
+                "map",
+                "prospective_transition_rejected",
+                _map_decl(),
+                [{"kind": "close_parent", "parent": "E0", "category": "cancelled"}, _map_event(("a",))],
+            ),
+        ]
+    )
+    for name, limit, value in (
+        ("artifact_count_one_over", "max_artifacts", 2),
+        ("artifact_bytes_one_over", "max_artifact_bytes", 7),
+        ("provenance_one_over", "max_provenance_edges", 1),
+    ):
+        declaration = _map_decl()
+        _object(declaration["limits"])[limit] = value
+        cases.append(_case("map", name, declaration, [_map_event(("aa", "bb"))]))
+    exact = _map_decl()
+    _object(exact["limits"]).update({"max_artifacts": 3, "max_artifact_bytes": 8, "max_provenance_edges": 2})
+    cases.append(_case("map", "bounds_exact", exact, [_map_event(("aa", "bb"))]))
+    for maximum in (0, 1, 2):
+        for destination in ("join", "ordinary", "workflow_output"):
+            declaration = _map_decl(max_children=maximum, outward_scalar=destination)
+            count = 0 if maximum == 0 else 1
+            cases.append(
+                _case(
+                    "map",
+                    f"resolve_{destination}_max_{maximum}",
+                    declaration,
+                    [
+                        {
+                            "destination": destination,
+                            "kind": "resolve_scalar",
+                            "maximum": maximum,
+                            "member_count": count,
+                            "source_kind": "map",
+                        }
+                    ],
+                )
+            )
+    for destination in ("join", "ordinary", "workflow_output"):
+        cases.append(
+            _case(
+                "map",
+                f"resolve_{destination}_max_1_empty",
+                _map_decl(max_children=1, outward_scalar=destination),
+                [
+                    {
+                        "destination": destination,
+                        "kind": "resolve_scalar",
+                        "maximum": 1,
+                        "member_count": 0,
+                        "source_kind": "map",
+                    }
+                ],
+            )
+        )
+    for name, outcomes in (
+        ("loop_exit", ["again", "exit"]),
+        ("loop_bypass", []),
+        ("loop_prior_continue", ["again"]),
+        ("loop_failure", ["again", "failure"]),
+        ("loop_overflow", ["again", "again"]),
+    ):
+        cases.append(
+            _case(
+                "map",
+                name,
+                _map_decl(),
+                [{"kind": "resolve_scalar", "outcomes": outcomes, "source_kind": "loop"}],
+            )
+        )
+    for name, maximum, values in (
+        ("collection_items_exact", 2, ("a", "b")),
+        ("collection_items_one_over", 1, ("a", "b")),
+        ("overflow_collection_storage_one_over", 2, ("a", "b", "c")),
+        ("overflow_collection_storage_exact", 3, ("a", "b", "c")),
+    ):
+        declaration = _map_decl()
+        _object(declaration["limits"])["max_collection_items"] = maximum
+        cases.append(_case("map", name, declaration, [_map_event(values)]))
+    invalid_limit = _map_decl()
+    _object(invalid_limit["limits"])["max_collection_items"] = True
+    cases.append(_case("map", "collection_items_invalid_limit", invalid_limit, [], "admission"))
+    injected = _map_event(("a",))
+    injected["p3_accept"] = False
+    cases.append(_case("map", "caller_transition_verdict_rejected", _map_decl(), [injected]))
+    return cases
+
+
+def _binding_correction_specs() -> list[Object]:
+    cases: list[Object] = []
+    prior = [
+        _bind("D0", "P0"),
+        _reserve("R0", ["D0"], purpose="initial_binding"),
+        _dispatch("R0"),
+        _source_result(
+            "D0",
+            "S0",
+            [{"association": "D0", "key": 0, "text": "kept", "version": 1}],
+            request="R0",
+        ),
+    ]
+    cases.append(
+        _case(
+            "binding",
+            "explicit_omission_preserves_prior",
+            _binding_decl({"D0": "S0", "D1": "S1"}, optional=("D1",)),
+            [
+                *prior,
+                _bind("D1", "P0"),
+                _reserve("R1", ["D1"], purpose="initial_binding"),
+                _dispatch("R1"),
+                _source_failure("D1", "S1", request="R1", disposition="omitted_optional"),
+                {"kind": "binding_finish"},
+            ],
+        )
+    )
+    misuse: tuple[tuple[str, Object, Object], ...] = (
+        (
+            "required_omission_misuse",
+            _binding_decl({"D0": "S0"}),
+            _source_failure("D0", "S0", request="R0", disposition="omitted_optional"),
+        ),
+        (
+            "adaptive_omission_misuse",
+            _binding_decl({"D0": "S0"}, optional=("D0",), adaptive=("D0",)),
+            _source_failure("D0", "S0", request="R0", disposition="omitted_optional"),
+        ),
+        (
+            "omission_failure_mismatch",
+            _binding_decl({"D0": "S0"}, optional=("D0",)),
+            _source_failure("D0", "S0", request="R0", failure="retryable", disposition="omitted_optional"),
+        ),
+    )
+    for name, declaration, event in misuse:
+        cases.append(
+            _case(
+                "binding",
+                name,
+                declaration,
+                [*_trace(("D0",)), event],
+            )
+        )
+    for name, failure, purpose in (
+        ("source_failure_retry_authority", "retryable", "retry"),
+        ("source_failure_correction_authority", "malformed_response", "correction"),
+    ):
+        cases.append(
+            _case(
+                "binding",
+                name,
+                _binding_decl({"D0": "S0"}),
+                [
+                    *_trace(("D0",)),
+                    _source_failure("D0", "S0", request="R0", failure=failure),
+                    _reserve("R1", ["D0"], purpose=purpose),
+                ],
+            )
+        )
+    missing_failure = _source_failure("D0", "S0", request="R0")
+    missing_failure.pop("failure")
+    missing_settlement = _source_failure("D0", "S0", request="R0")
+    missing_settlement.pop("settlement")
+    cases.extend(
+        [
+            _case(
+                "binding",
+                "source_failure_missing_failure",
+                _binding_decl({"D0": "S0"}),
+                [*_trace(("D0",)), missing_failure],
+            ),
+            _case(
+                "binding",
+                "source_failure_missing_settlement",
+                _binding_decl({"D0": "S0"}),
+                [*_trace(("D0",)), missing_settlement],
+            ),
+        ]
+    )
+    no_settlement = _source_failure("D0", "S0", request="R0")
+    no_settlement["settlement"] = None
+    cases.append(
+        _case(
+            "binding",
+            "source_failure_explicit_no_settlement",
+            _binding_decl({"D0": "S0"}),
+            [*_trace(("D0",)), no_settlement],
+        )
+    )
+    base_result = _source_result(
+        "D0",
+        "S0",
+        [{"association": "D0", "key": 0, "text": "a", "version": 1}],
+        request="R0",
+    )
+    for name, changes in (
+        ("source_result_wrong_outcome", {"outcome": "ok"}),
+        ("source_result_outputs_present", {"outputs": [{"port": "x"}]}),
+        ("source_result_consumed_present", {"consumed_context_ports": ["x"]}),
+    ):
+        cases.append(
+            _case(
+                "binding",
+                name,
+                _binding_decl({"D0": "S0"}),
+                [*_trace(("D0",)), dict(base_result, **changes)],
+            )
+        )
+    cases.append(
+        _case(
+            "binding",
+            "empty_optional_response_malformed",
+            _binding_decl({"D0": "S0"}, optional=("D0",)),
+            [*_trace(("D0",)), _source_result("D0", "S0", [], request="R0")],
+        )
+    )
+    oversize = _source_result(
+        "D0",
+        "S0",
+        [{"association": "D0", "key": 0, "text": "too-big", "version": 1}],
+        request="R0",
+    )
+    _object(oversize["settlement"])["usage"] = {"input": 3, "output": 5}
+    cases.append(
+        _case(
+            "binding",
+            "oversize_retrieved_known_usage",
+            _binding_decl({"D0": "S0"}, max_bytes=1),
+            [*_trace(("D0",)), oversize],
+        )
+    )
+    cases.append(
+        _case(
+            "binding",
+            "success_after_failure_preserves_authority",
+            _binding_decl({"D0": "S0"}),
+            [
+                *_trace(("D0",)),
+                _source_failure("D0", "S0", request="R0", failure="retryable"),
+                base_result,
+            ],
+        )
+    )
+    cases.append(
+        _case(
+            "binding",
+            "adaptive_semantic_outcome_independent",
+            _decl(),
+            [
+                *_trace(("A0",)),
+                {"kind": "result", "outcomes": {"A0": "adaptive_ok"}, "request": "R0", "returned": ["A0"]},
             ],
         )
     )
@@ -1901,12 +2769,12 @@ def _generate_specs() -> tuple[Object, ...]:
             _bind(identity, "P0"),
             _reserve(request, [identity], purpose="initial_binding"),
             _dispatch(request),
-            {
-                "items": [{"association": identity, "key": 0, "text": text, "version": 1}],
-                "kind": "source_result",
-                "request": request,
-                "source": source,
-            },
+            _source_result(
+                identity,
+                source,
+                [{"association": identity, "key": 0, "text": text, "version": 1}],
+                request=request,
+            ),
         ]
 
     c += [
@@ -1936,36 +2804,30 @@ def _generate_specs() -> tuple[Object, ...]:
                 _bind("D1", "P0"),
                 _reserve("R1", ["D1"], purpose="initial_binding"),
                 _dispatch("R1"),
-                {"association": "D1", "kind": "source_failure", "request": "R1", "required": True},
+                _source_failure("D1", "S1", request="R1"),
             ],
         ),
         _case(
             "binding",
             "optional_failure_partial",
-            _binding_decl({"D0": "S0", "D1": "S1"}),
+            _binding_decl({"D0": "S0", "D1": "S1"}, optional=("D1",)),
             binding("D0", "S0", "R0", "a")
             + [
                 _bind("D1", "P0"),
                 _reserve("R1", ["D1"], purpose="initial_binding"),
                 _dispatch("R1"),
-                {"association": "D1", "kind": "source_failure", "request": "R1", "required": False},
+                _source_failure("D1", "S1", request="R1"),
             ],
         ),
         _case(
             "binding",
             "omitted_optional",
-            _binding_decl({"D0": "S0"}),
+            _binding_decl({"D0": "S0"}, optional=("D0",)),
             [
                 _bind("D0", "P0"),
                 _reserve("R0", ["D0"], purpose="initial_binding"),
                 _dispatch("R0"),
-                {
-                    "association": "D0",
-                    "kind": "source_failure",
-                    "request": "R0",
-                    "required": False,
-                    "terminal": "omitted_optional",
-                },
+                _source_failure("D0", "S0", request="R0", disposition="omitted_optional"),
                 {"kind": "binding_finish"},
             ],
         ),
@@ -2005,15 +2867,15 @@ def _generate_specs() -> tuple[Object, ...]:
     exact_bounds = _binding_decl({"D0": "S0"}, max_bytes=2, max_items=2)
     one_byte = _binding_decl({"D0": "S0"}, max_bytes=1, max_items=2)
     one_item = _binding_decl({"D0": "S0"}, max_bytes=2, max_items=1)
-    two_items: Object = {
-        "items": [
+    two_items = _source_result(
+        "D0",
+        "S0",
+        [
             {"association": "D0", "key": 0, "text": "a", "version": 1},
             {"association": "D0", "key": 1, "text": "b", "version": 1},
         ],
-        "kind": "source_result",
-        "request": "R0",
-        "source": "S0",
-    }
+        request="R0",
+    )
     c += [
         _case(
             "binding",
@@ -2037,7 +2899,7 @@ def _generate_specs() -> tuple[Object, ...]:
             "binding",
             "unsolicited_source_result",
             _binding_decl({"D0": "S0"}),
-            [{"items": [], "kind": "source_result", "request": "R0", "source": "S0"}],
+            [_source_result("D0", "S0", [], request="R0")],
         ),
         _case(
             "binding",
@@ -2047,7 +2909,7 @@ def _generate_specs() -> tuple[Object, ...]:
                 _bind("D0", "P0"),
                 _reserve("R0", ["D0"]),
                 _dispatch("R0"),
-                {"items": [], "kind": "source_result", "request": "R0", "source": "S1"},
+                _source_result("D0", "S1", [], request="R0"),
             ],
         ),
         _case(
@@ -2058,7 +2920,7 @@ def _generate_specs() -> tuple[Object, ...]:
                 _bind("D0", "P0"),
                 _reserve("R0", ["D0"]),
                 _dispatch("R0"),
-                {"items": [], "kind": "source_result", "request": "R0", "source": "S0"},
+                _source_result("D0", "S0", [], request="R0"),
             ],
         ),
         _case(
@@ -2069,15 +2931,15 @@ def _generate_specs() -> tuple[Object, ...]:
                 _bind("D0", "P0"),
                 _reserve("R0", ["D0"]),
                 _dispatch("R0"),
-                {
-                    "items": [
+                _source_result(
+                    "D0",
+                    "S0",
+                    [
                         {"association": "D0", "key": 0, "text": "a", "version": 1},
                         {"association": "D0", "key": 0, "text": "a", "version": 1},
                     ],
-                    "kind": "source_result",
-                    "request": "R0",
-                    "source": "S0",
-                },
+                    request="R0",
+                ),
             ],
         ),
         _case(
@@ -2088,12 +2950,12 @@ def _generate_specs() -> tuple[Object, ...]:
                 _bind("D0", "P0"),
                 _reserve("R0", ["D0"]),
                 _dispatch("R0"),
-                {
-                    "items": [{"association": "D1", "key": 0, "text": "a", "version": 1}],
-                    "kind": "source_result",
-                    "request": "R0",
-                    "source": "S0",
-                },
+                _source_result(
+                    "D0",
+                    "S0",
+                    [{"association": "D1", "key": 0, "text": "a", "version": 1}],
+                    request="R0",
+                ),
             ],
         ),
     ]
@@ -2651,13 +3513,13 @@ def _generate_specs() -> tuple[Object, ...]:
         )
     )
     late_binding_responses: tuple[Object, ...] = (
-        {
-            "kind": "source_result",
-            "request": "R0",
-            "source": "S0",
-            "items": [{"association": "D0", "key": 0, "version": 1, "text": "late"}],
-        },
-        {"kind": "source_failure", "request": "R0", "association": "D0", "required": True},
+        _source_result(
+            "D0",
+            "S0",
+            [{"association": "D0", "key": 0, "version": 1, "text": "late"}],
+            request="R0",
+        ),
+        _source_failure("D0", "S0", request="R0"),
     )
     for terminal in ("lost", "cancelled"):
         closure: list[Object] = (
@@ -2701,6 +3563,19 @@ def _generate_specs() -> tuple[Object, ...]:
             )
         )
     c.extend(_materialization_specs())
+    c.extend(_map_specs())
+    c.extend(_binding_correction_specs())
+    oversize = next(case for case in c if case["case_id"] == "binding/oversize_retrieved_known_usage")
+    optional_decl = dict(_object(oversize["declaration"]))
+    optional_decl["binding_requirements"] = {"D0": "optional"}
+    c.append(
+        _case(
+            "binding",
+            "optional_oversize_partial",
+            optional_decl,
+            [_object(event) for event in _array(oversize["events"])],
+        )
+    )
     return tuple(c)
 
 
@@ -2731,10 +3606,18 @@ def build_manifest(cases: Sequence[Object]) -> Object:
     corpus = canonical_bytes(cases)
     return {
         "case_count": len(cases),
-        "base_case_count": 156,
-        "base_corpus_sha256": BASE_CORPUS_SHA256,
+        "historical_base_case_count": 156,
+        "historical_base_corpus_sha256": BASE_CORPUS_SHA256,
+        "predecessor_case_count": PREDECESSOR_CASE_COUNT,
+        "predecessor_corpus_sha256": PREDECESSOR_CORPUS_SHA256,
+        "corrected_predecessor_prefix_sha256": hashlib.sha256(
+            canonical_bytes(cases[:PREDECESSOR_CASE_COUNT])
+        ).hexdigest(),
         "contract_sha256": CONTRACT_SHA256,
         "materialization_addendum_sha256": MATERIALIZATION_ADDENDUM_SHA256,
+        "optional_omission_addendum_sha256": OPTIONAL_OMISSION_ADDENDUM_SHA256,
+        "map_execution_addendum_sha256": MAP_EXECUTION_ADDENDUM_SHA256,
+        "binding_success_addendum_sha256": BINDING_SUCCESS_ADDENDUM_SHA256,
         "corpus_path": CORPUS_PATH,
         "corpus_sha256": hashlib.sha256(corpus).hexdigest(),
         "event_count": event_count(cases),

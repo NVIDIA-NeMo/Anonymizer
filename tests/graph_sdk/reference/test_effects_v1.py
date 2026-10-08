@@ -154,7 +154,7 @@ def test_late_binding_responses_cannot_create_outputs_or_change_terminal() -> No
             assert state["artifacts"] == []
             assert state["binding_sources"] == {}
             assert state["binding_terminal"] is None
-            assert state["remote_outstanding"] == (["R0"] if terminal == "lost" else [])
+            assert state["remote_outstanding"] == []
             if terminal == "lost":
                 events = cast(list[reference.Object], case["events"])
                 settled = reference.reduce_trace(
@@ -341,9 +341,12 @@ def test_generator_has_no_production_imports_or_expected_count_spoofing() -> Non
     assert "EXPECTED_EVENT_COUNT" not in source
 
 
-def test_materialization_preserves_history_and_covers_both_paths() -> None:
+def test_materialization_records_corrected_predecessor_and_covers_both_paths() -> None:
     cases = reference.generate_cases()
-    assert hashlib.sha256(reference.canonical_bytes(cases[:156])).hexdigest() == reference.BASE_CORPUS_SHA256
+    manifest = cast(dict[str, object], json.loads(MANIFEST.read_bytes()))
+    prefix = reference.canonical_bytes(cases[:214])
+    assert manifest["predecessor_corpus_sha256"] == "b509a2e1dc697ae5e16c8f2f9652aac74d862e4b449f64958fbba99abda87e93"
+    assert manifest["corrected_predecessor_prefix_sha256"] == hashlib.sha256(prefix).hexdigest()
     for path in ("initial", "adaptive"):
         single = cast(reference.Object, reference.case_by_id(f"materialization/{path}_single_exact")["expected"])
         collection = cast(reference.Object, reference.case_by_id(f"materialization/{path}_collection_3")["expected"])
@@ -495,3 +498,223 @@ def test_adaptive_result_drives_actual_task_outcome() -> None:
         "status": "rejected",
         "code": "request_causality",
     }
+
+
+def test_binding_success_records_physical_and_association_authority() -> None:
+    result = cast(reference.Object, reference.case_by_id("binding/two_sources_same_key")["expected"])
+    state = cast(reference.Object, result["state"])
+    assert state["request_facts"] == {
+        "R0": {"condition": "result", "outcomes": {"D0": "retrieved"}},
+        "R1": {"condition": "result", "outcomes": {"D1": "retrieved"}},
+    }
+    assert state["association_terminals"] == {
+        "D0": {"outcome": "retrieved", "policy": "P0", "request": "R0"},
+        "D1": {"outcome": "retrieved", "policy": "P0", "request": "R1"},
+    }
+    assert set(cast(reference.Object, state["settlements"])) == {"R0", "R1"}
+
+
+def test_binding_success_shape_and_oversize_are_closed() -> None:
+    for suffix in (
+        "source_result_wrong_outcome",
+        "source_result_outputs_present",
+        "source_result_consumed_present",
+        "empty_optional_response_malformed",
+    ):
+        state = cast(
+            reference.Object,
+            cast(reference.Object, reference.case_by_id(f"binding/{suffix}")["expected"])["state"],
+        )
+        assert cast(reference.Object, state["request_facts"])["R0"] == {
+            "condition": "failure",
+            "failure": "malformed_response",
+        }
+        assert state["artifacts"] == []
+    oversize = cast(reference.Object, reference.case_by_id("binding/oversize_retrieved_known_usage")["expected"])
+    state = cast(reference.Object, oversize["state"])
+    assert cast(reference.Object, state["request_facts"])["R0"] == {
+        "condition": "result",
+        "outcomes": {"D0": "retrieved"},
+    }
+    assert cast(reference.Object, state["binding_sources"])["D0"] == "oversize"
+    assert state["artifacts"] == []
+
+
+def test_optional_omission_requires_explicit_permanent_initial_disposition() -> None:
+    default = cast(reference.Object, reference.case_by_id("binding/optional_failure_partial")["expected"])
+    omitted = cast(reference.Object, reference.case_by_id("binding/omitted_optional")["expected"])
+    assert cast(reference.Object, default["state"])["binding_terminal"] == "partial"
+    assert cast(reference.Object, omitted["state"])["binding_terminal"] == "partial"
+    for suffix in ("required_omission_misuse", "adaptive_omission_misuse", "omission_failure_mismatch"):
+        state = cast(
+            reference.Object,
+            cast(reference.Object, reference.case_by_id(f"binding/{suffix}")["expected"])["state"],
+        )
+        assert state["binding_terminal"] == "inconsistent"
+        assert state["binding_sources"] == {}
+        request_facts = cast(reference.Object, state["request_facts"])
+        assert cast(reference.Object, request_facts["R0"])["condition"] == "failure"
+
+
+def test_binding_failure_authority_precedes_retry_or_correction() -> None:
+    for suffix, purpose, failure in (
+        ("source_failure_retry_authority", "retry", "retryable"),
+        ("source_failure_correction_authority", "correction", "malformed_response"),
+    ):
+        case = reference.case_by_id(f"binding/{suffix}")
+        state = cast(reference.Object, cast(reference.Object, case["expected"])["state"])
+        assert cast(reference.Object, state["request_facts"])["R0"] == {
+            "condition": "failure",
+            "failure": failure,
+        }
+        assert cast(reference.Object, state["reservations"])["R1"] == ["D0"]
+        events = cast(list[reference.Object], case["events"])
+        assert cast(reference.Object, events[-1])["purpose"] == purpose
+
+
+def test_adaptive_result_retains_its_admitted_semantic_outcome() -> None:
+    state = cast(
+        reference.Object,
+        cast(reference.Object, reference.case_by_id("binding/adaptive_semantic_outcome_independent")["expected"])[
+            "state"
+        ],
+    )
+    assert state["request_facts"] == {"R0": {"condition": "result", "outcomes": {"A0": "adaptive_ok"}}}
+
+
+def test_map_membership_materializes_exact_child_values_and_provenance() -> None:
+    result = cast(reference.Object, reference.case_by_id("map/membership_2")["expected"])
+    publication = cast(reference.Object, cast(reference.Object, result["state"])["publication"])
+    assert cast(reference.Object, publication["membership"])["members"] == ["M0", "M1"]
+    artifacts = cast(list[reference.Object], publication["artifacts"])
+    assert [(item["identity"], item.get("value")) for item in artifacts[1:]] == [("I0", "a"), ("I1", "b")]
+    assert [item["key"] for item in cast(list[reference.Object], publication["provenance"])] == [
+        "OperationOutputKey:E0:T0:members",
+        "MapItemKey:E0:M0:T0:item:0:1",
+        "MapItemKey:E0:M1:T0:item:1:1",
+    ]
+    provenance = cast(list[reference.Object], publication["provenance"])
+    assert all(item["decision"] is False for item in provenance)
+    assert provenance[0]["parents"] == []
+    assert all(item["parents"] == ["OperationOutputKey:E0:T0:members"] for item in provenance[1:])
+    assert [item["artifact"] for item in cast(list[reference.Object], publication["inputs"])] == ["I0", "I1"]
+
+
+def test_map_control_only_and_other_outputs_do_not_select_hidden_membership() -> None:
+    control = cast(reference.Object, reference.case_by_id("map/control_only_members")["expected"])
+    publication = cast(reference.Object, cast(reference.Object, control["state"])["publication"])
+    assert len(cast(list[object], publication["artifacts"])) == 1
+    assert publication["inputs"] == []
+    assert len(cast(list[object], publication["provenance"])) == 1
+    others = cast(reference.Object, reference.case_by_id("map/membership_with_2_other_outputs")["expected"])
+    other_publication = cast(reference.Object, cast(reference.Object, others["state"])["publication"])
+    assert cast(reference.Object, other_publication["membership"])["members"] == ["M0", "M1"]
+    assert [item["port"] for item in cast(list[reference.Object], other_publication["ports"])[:3]] == [
+        "members",
+        "other0",
+        "other1",
+    ]
+
+
+def test_map_publication_is_atomic_after_transition_and_bounds() -> None:
+    for suffix in (
+        "prospective_transition_rejected",
+        "artifact_count_one_over",
+        "artifact_bytes_one_over",
+        "provenance_one_over",
+    ):
+        state = cast(
+            reference.Object,
+            cast(reference.Object, reference.case_by_id(f"map/{suffix}")["expected"])["state"],
+        )
+        publication = cast(reference.Object, state["publication"])
+        assert publication == {
+            "artifacts": [],
+            "assessments": [],
+            "inputs": [],
+            "membership": None,
+            "ports": [],
+            "provenance": [],
+            "request_success": False,
+        }
+
+
+def test_map_static_and_runtime_products_are_explicit() -> None:
+    for suffix in (
+        "missing_expansion",
+        "duplicate_map_source",
+        "map_loop_duplicate_source",
+        "duplicate_loop_source",
+        "context_minimum_conflict",
+        "collection_item_schema_conflict",
+        "item_type_mismatch",
+        "context_override_conflict",
+        "dependency_summary_mismatch",
+        "false_identity_summary",
+    ):
+        assert cast(reference.Object, reference.case_by_id(f"map/{suffix}")["expected"])["status"] == "rejected"
+    for maximum in (0, 1):
+        for destination in ("join", "ordinary", "workflow_output"):
+            expected = cast(
+                reference.Object,
+                reference.case_by_id(f"map/resolve_{destination}_max_{maximum}")["expected"],
+            )
+            assert expected["status"] == "accepted"
+    assert (
+        cast(reference.Object, cast(reference.Object, reference.case_by_id("map/loop_exit")["expected"])["state"])[
+            "resolution"
+        ]
+        == "member:1:exit"
+    )
+
+
+def test_map_overflow_retains_success_but_storage_failure_publishes_nothing() -> None:
+    for suffix in ("membership_one_over", "overflow_collection_storage_exact"):
+        state = cast(
+            reference.Object, cast(reference.Object, reference.case_by_id(f"map/{suffix}")["expected"])["state"]
+        )
+        publication = cast(reference.Object, state["publication"])
+        assert state["terminal"] == "overflow"
+        assert publication["request_success"] is True
+        assert publication["assessments"] == ["assessment0"]
+        assert len(cast(list[object], publication["artifacts"])) == 1
+        assert len(cast(list[object], publication["provenance"])) == 1
+        assert publication["inputs"] == []
+        assert publication["membership"] is None
+    for suffix in ("collection_items_one_over", "overflow_collection_storage_one_over"):
+        state = cast(
+            reference.Object, cast(reference.Object, reference.case_by_id(f"map/{suffix}")["expected"])["state"]
+        )
+        assert state["terminal"] == "artifact_limit"
+        publication = cast(reference.Object, state["publication"])
+        assert publication["request_success"] is False
+        assert publication["artifacts"] == []
+    exact = cast(reference.Object, reference.case_by_id("map/collection_items_exact")["expected"])
+    assert cast(reference.Object, exact["state"])["terminal"] == "published"
+    assert (
+        cast(reference.Object, reference.case_by_id("map/collection_items_invalid_limit")["expected"])["status"]
+        == "rejected"
+    )
+
+
+def test_map_transition_rejection_is_derived_from_terminal_parent() -> None:
+    case = reference.case_by_id("map/prospective_transition_rejected")
+    events = cast(list[reference.Object], case["events"])
+    assert events[0] == {"kind": "close_parent", "parent": "E0", "category": "cancelled"}
+    assert all("p3_accept" not in event for event in events)
+    state = cast(reference.Object, cast(reference.Object, case["expected"])["state"])
+    assert state["parent_phase"] == "cancelled"
+    assert state["terminal"] == "transition_rejected"
+    assert (
+        cast(reference.Object, reference.case_by_id("map/caller_transition_verdict_rejected")["expected"])["status"]
+        == "rejected"
+    )
+
+
+def test_optional_oversize_preserves_physical_success_and_partial_binding() -> None:
+    case = reference.case_by_id("binding/optional_oversize_partial")
+    state = cast(reference.Object, cast(reference.Object, case["expected"])["state"])
+    assert state["binding_terminal"] == "partial"
+    assert state["binding_sources"] == {"D0": "oversize"}
+    assert state["request_facts"] == {"R0": {"condition": "result", "outcomes": {"D0": "retrieved"}}}
+    assert state["artifacts"] == []
