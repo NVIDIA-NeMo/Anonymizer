@@ -16,6 +16,7 @@ from anonymizer.engine.graph_sdk._effect_values import (
     require_literal,
     require_text,
 )
+from anonymizer.engine.graph_sdk.data import ValidatedDataGraph
 from anonymizer.engine.graph_sdk.preparation import PreparedPlan
 from anonymizer.engine.graph_sdk.requests import (
     BindingAssociation,
@@ -302,6 +303,8 @@ _RESULT_KEY = object()
 @dataclass(frozen=True, slots=True, kw_only=True, repr=False, init=False)
 class BindingReceipt(PrivateValue):
     binding: BindingId
+    data: ValidatedDataGraph
+    workflow: AdmittedActivationWorkflow
     terminal: BindingTerminal
     sources: tuple[SourceBindingFact, ...]
     artifacts: tuple[BoundTextArtifact, ...]
@@ -429,6 +432,8 @@ def admit_context_plan(
     require_instance(prepared, PreparedPlan)
     if bound_context is not None:
         require_instance(bound_context, BoundContext)
+        if bound_context.receipt.data is not prepared.data or bound_context.receipt.workflow is not prepared.workflow:
+            reject(EffectCode.FOREIGN_OWNER)
     if not isinstance(adaptive_retrievals, tuple) or any(
         not isinstance(item, AdaptiveRetrievalDecl) for item in adaptive_retrievals
     ):
@@ -442,6 +447,8 @@ def admit_context_plan(
     if len(context_capabilities) != len(set(context_capabilities)):
         reject(EffectCode.DUPLICATE)
     nodes = _reachable_operations(prepared.workflow)
+    if bound_context is not None:
+        _validate_bound_context(prepared, bound_context, nodes)
     selected = {item.node: item.capability for item in prepared.implementations}
     declared_nodes = [item.node for item in adaptive_retrievals]
     if len(declared_nodes) != len(set(declared_nodes)):
@@ -490,6 +497,54 @@ def admit_context_plan(
     )
 
 
+def _validate_bound_context(
+    prepared: PreparedPlan,
+    context: BoundContext,
+    nodes: dict[NodeId, OperationNode],
+) -> None:
+    receipt = context.receipt
+    if receipt.terminal not in {"success", "partial"} or context.artifacts != receipt.artifacts:
+        reject(EffectCode.CONTRADICTORY)
+    identities = [item.identity for item in receipt.sources]
+    if len(identities) != len(set(identities)):
+        reject(EffectCode.DUPLICATE)
+    targets = {item.target for item in prepared.target_occurrences}
+    by_identity = {item.identity: item for item in receipt.sources}
+    artifact_refs = [item.reference for item in context.artifacts]
+    if len(artifact_refs) != len(set(artifact_refs)):
+        reject(EffectCode.DUPLICATE)
+    for fact in receipt.sources:
+        declaration = fact.declaration
+        operation_node = nodes.get(declaration.node)
+        if declaration.target not in targets or operation_node is None:
+            reject(EffectCode.FOREIGN_OWNER)
+        port = next((item for item in operation_node.operation.inputs if item.name == declaration.port), None)
+        context_ports = {use.port for outcome in operation_node.operation.outcomes for use in outcome.context}
+        if port is None or port.artifact_type != declaration.artifact_type or declaration.port not in context_ports:
+            reject(EffectCode.CONTRADICTORY)
+        retained = [item for item in context.artifacts if item.reference.declaration == fact.identity]
+        if fact.terminal == "bound":
+            if not retained or (declaration.materialization.kind == "single" and len(retained) != 1):
+                reject(EffectCode.MISSING)
+        elif retained:
+            reject(EffectCode.EXTRA)
+        if declaration.requirement == "required" and fact.terminal != "bound":
+            reject(EffectCode.CONTRADICTORY)
+    for artifact in context.artifacts:
+        fact = by_identity.get(artifact.reference.declaration)
+        if fact is None:
+            reject(EffectCode.EXTRA)
+        declaration = fact.declaration
+        if (
+            artifact.target != declaration.target
+            or artifact.node != declaration.node
+            or artifact.port != declaration.port
+            or artifact.source != declaration.source
+            or artifact.artifact_type != declaration.materialization.item_type
+        ):
+            reject(EffectCode.CONTRADICTORY)
+
+
 def _validate_materialization_schema(
     prepared: PreparedPlan,
     bound_context: BoundContext | None,
@@ -526,9 +581,11 @@ def _validate_materialization_schema(
         reject(EffectCode.CONTRADICTORY)
 
 
-def create_binding_result(
+def _create_binding_result(
     *,
     binding: BindingId,
+    data: ValidatedDataGraph,
+    workflow: AdmittedActivationWorkflow,
     terminal: BindingTerminal,
     sources: tuple[SourceBindingFact, ...],
     artifacts: tuple[BoundTextArtifact, ...],
@@ -539,6 +596,8 @@ def create_binding_result(
     receipt = BindingReceipt(
         _key=_RESULT_KEY,
         binding=binding,
+        data=data,
+        workflow=workflow,
         terminal=terminal,
         sources=sources,
         artifacts=artifacts,

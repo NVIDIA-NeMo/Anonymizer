@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import suppress
 from dataclasses import dataclass
 from typing import Literal, Protocol, TypeAlias, runtime_checkable
 
@@ -28,6 +29,7 @@ from anonymizer.engine.graph_sdk.capabilities import (
 from anonymizer.engine.graph_sdk.context import (
     AdaptiveRetrievalDecl,
     AdmittedContextPlan,
+    BindingArtifactRef,
     BoundTextArtifact,
     ContextProvider,
     ContextResource,
@@ -62,12 +64,16 @@ from anonymizer.engine.graph_sdk.requests import (
     PhysicalRequestId,
     PhysicalRequestPolicy,
     PortArtifact,
+    RequestCancel,
+    RequestEvent,
     RequestPolicyBinding,
     RequestReceipt,
     RequestState,
     Reserve,
     ScopeCancel,
     SemanticAssociation,
+    StopAcknowledged,
+    StopConfirmed,
     StopResult,
     TextArtifactValue,
     TextCollectionItem,
@@ -93,6 +99,8 @@ from anonymizer.graph.activation import (
     ActivationSeed,
     ActivationState,
     CloseUnstarted,
+    ObserveMembership,
+    ObserveOverflow,
     ObserveTerminal,
     Select,
     Start,
@@ -379,12 +387,13 @@ class BoundInputKey(PrivateValue):
     target: DatumId
     node: NodeId
     port: str
-    binding_artifact: object
+    binding_artifact: BindingArtifactRef
 
     def __post_init__(self) -> None:
         require_instance(self.target, DatumId)
         require_instance(self.node, NodeId)
         require_text(self.port)
+        require_instance(self.binding_artifact, BindingArtifactRef)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True, repr=False)
@@ -392,12 +401,13 @@ class InitialCollectionKey(PrivateValue):
     target: DatumId
     node: NodeId
     port: str
-    declaration: object
+    declaration: BindingDeclarationId
 
     def __post_init__(self) -> None:
         require_instance(self.target, DatumId)
         require_instance(self.node, NodeId)
         require_text(self.port)
+        require_instance(self.declaration, BindingDeclarationId)
 
 
 ProvenanceKey: TypeAlias = OperationOutputKey | RootInputKey | BoundInputKey | InitialCollectionKey
@@ -633,7 +643,7 @@ class ExecutionResult(PrivateValue):
     requests: RequestReceipt
     cleanup: tuple[CleanupFact, ...]
     pending_decisions: tuple[DecisionWait, ...]
-    artifacts: tuple[tuple[ArtifactRef, TextArtifactValue], ...]
+    artifacts: tuple[tuple[ArtifactRef, ArtifactValue], ...]
     assessments: tuple[ExecutionAssessmentFact, ...]
     ports: tuple[ExecutionPortFact, ...]
     final_outputs: tuple[FinalOutputFact, ...]
@@ -681,6 +691,17 @@ def admit_execution_plan(
     decision_nodes = {item.node for item in decisions}
     if len(decisions) != len(decision_nodes):
         reject(EffectCode.DUPLICATE)
+    policy_by_node = {item.node: item for item in policies}
+    for declaration in decisions:
+        policy = policy_by_node.get(declaration.node)
+        if policy is None or policy.kind != "decision":
+            reject(EffectCode.UNSUPPORTED)
+        operation = policy.implementations[0].capability.operation
+        if declaration.artifact_port not in {item.name for item in operation.inputs}:
+            reject(EffectCode.MISSING)
+        declared_outcomes = {item.name for item in operation.outcomes}
+        if any(item.outcome not in declared_outcomes for item in declaration.outcomes):
+            reject(EffectCode.UNSUPPORTED)
     for policy in policies:
         if not policy.implementations:
             reject(EffectCode.IMPLEMENTATION_COUNT)
@@ -746,9 +767,13 @@ def _validate_policy(policy: OperationExecutionPolicy, has_decision: bool) -> No
             reject(EffectCode.CONTRADICTORY)
         if item.outcome is not None and outcomes.get(item.outcome) != item.category:
             reject(EffectCode.CONTRADICTORY)
+        if item.condition != "result" and item.outcome is not None and item.category == "success":
+            reject(EffectCode.CONTRADICTORY)
         if item.outcome is None and item.category == "success":
             reject(EffectCode.CONTRADICTORY)
         if item.condition == "cancel_before_start" and (item.outcome is not None or item.category != "blocked"):
+            reject(EffectCode.CONTRADICTORY)
+        if item.condition == "request_inconsistent" and item.category != "inconsistent":
             reject(EffectCode.CONTRADICTORY)
 
 
@@ -792,6 +817,9 @@ def _validate_assessments(
     require_instance(limits, AssessmentLimits)
     if len(productions) > limits.max_productions:
         reject(EffectCode.LIMIT_EXCEEDED)
+    production_keys = [(item.node, item.outcome, item.promise) for item in productions]
+    if len(production_keys) != len(set(production_keys)):
+        reject(EffectCode.DUPLICATE)
     policy_by_node = {item.node: item for item in policies}
     for item in productions:
         policy = policy_by_node.get(item.node)
@@ -801,8 +829,8 @@ def _validate_assessments(
         outcome = next((value for value in operation.outcomes if value.name == item.outcome), None)
         if outcome is None or item.evidence_port not in outcome.produced_ports:
             reject(EffectCode.UNSUPPORTED)
-        promises = {value.name for value in outcome.evidence}
-        if item.promise not in promises:
+        promise = next((value for value in outcome.evidence if value.name == item.promise), None)
+        if promise is None or promise.subject_port != item.evidence_port:
             reject(EffectCode.UNSUPPORTED)
         if (
             len(item.supported_findings) > limits.max_findings_per_production
@@ -819,6 +847,29 @@ class _ExecutionControl:
     pending: dict[DecisionWaitId, DecisionWait] | None = None
     responses: dict[DecisionWaitId, DecisionResponse] | None = None
     closed: set[DecisionWaitId] | None = None
+
+
+@dataclass(slots=True)
+class _RequestAuthority:
+    state: RequestState
+
+    def apply(self, event: RequestEvent) -> None:
+        self.state = advance_requests(state=self.state, event=event)
+
+    def bind(self, binding: RequestPolicyBinding) -> None:
+        self.state = bind_request_policies(state=self.state, binding=binding)
+
+
+@dataclass(frozen=True, slots=True)
+class _ExecutionJob:
+    state_index: int
+    target: DatumId
+    activation: ActivationKey
+    node: NodeId
+    policy: OperationExecutionPolicy
+    implementation: ExecutionImplementation
+    inputs: tuple[AssociationInput, ...]
+    association: SemanticAssociation
 
 
 class RunningExecution:
@@ -1055,10 +1106,12 @@ async def _run_execution(
             )
         )
     scope = InvocationRequestScope(invocation=invocation)
-    request_state = initialize_requests(
-        scope=scope,
-        hard_limit=prepared.configuration.hard_request_limit,
-        policies=frozenset(item.request for item in admitted.policies if item.request is not None),
+    request_authority = _RequestAuthority(
+        state=initialize_requests(
+            scope=scope,
+            hard_limit=prepared.configuration.hard_request_limit,
+            policies=frozenset(item.request for item in admitted.policies if item.request is not None),
+        )
     )
     artifact_values: dict[ArtifactRef, ArtifactValue] = {}
     root_inputs: dict[tuple[DatumId, str], ArtifactRef] = {}
@@ -1079,7 +1132,7 @@ async def _run_execution(
                 decision=False,
             )
         )
-    produced: dict[tuple[DatumId, NodeId, str], ArtifactRef] = {}
+    produced: dict[tuple[DatumId, ActivationKey | NodeId, str], ArtifactRef] = {}
     next_artifact = _materialize_bound_context(
         admitted,
         invocation,
@@ -1092,9 +1145,12 @@ async def _run_execution(
     attempts: dict[ActivationKey, TaskAttemptId] = {}
     port_facts: list[ExecutionPortFact] = []
     assessment_facts: list[ExecutionAssessmentFact] = []
-    made_progress = True
-    while made_progress:
-        made_progress = False
+    jobs: dict[
+        asyncio.Task[tuple[RuntimeOutcome, tuple[AssociationResult, ...], tuple[LocalAssessmentResult, ...]]],
+        _ExecutionJob,
+    ] = {}
+    while True:
+        scheduled = False
         for state_index, (target_map, state) in enumerate(zip(prepared.target_occurrences, states, strict=True)):
             ready = sorted(
                 (item for item in state.entries if item.status == "ready"),
@@ -1103,10 +1159,22 @@ async def _run_execution(
             for entry in ready:
                 policy = policies.get(entry.template)
                 if policy is None:
+                    if _is_subgraph_node(prepared.workflow.workflow, entry.template):
+                        states[state_index] = advance_activation(
+                            state=states[state_index], event=Start(activation=entry.activation)
+                        )
+                        attempts[entry.activation] = TaskAttemptId.new(activation=entry.activation)
+                        scheduled = True
                     continue
                 if policy.kind == "decision" and len(control.pending or {}) >= services.decision_limits.max_pending:
                     continue
-                made_progress = True
+                local_jobs = sum(item.policy.kind != "external" for item in jobs.values())
+                remote_jobs = sum(item.policy.kind == "external" for item in jobs.values())
+                if policy.kind == "external" and remote_jobs >= services.limits.max_remote_outstanding:
+                    continue
+                if policy.kind != "external" and local_jobs >= services.limits.max_local_in_flight:
+                    continue
+                scheduled = True
                 if control.cancelled:
                     states[state_index] = advance_activation(
                         state=states[state_index],
@@ -1123,6 +1191,8 @@ async def _run_execution(
                     admitted,
                     target_map.target,
                     entry.template,
+                    entry.activation,
+                    states[state_index],
                     association,
                     root_inputs,
                     produced,
@@ -1161,22 +1231,20 @@ async def _run_execution(
                         None,
                     )
                     if adaptive is None:
-                        mapping, results, request_state = await _run_external(
-                            policy, handles, association, inputs, request_state
-                        )
+                        coroutine = _run_external(policy, handles, association, inputs, request_authority, control)
                     else:
-                        mapping, results, request_state = await _run_adaptive(
+                        coroutine = _run_adaptive(
                             admitted,
                             policy,
                             adaptive,
                             association,
                             inputs,
-                            request_state,
+                            request_authority,
                             context_leases,
+                            control,
                         )
-                    assessments: tuple[LocalAssessmentResult, ...] = ()
                 elif policy.kind == "decision":
-                    mapping, results, assessments = await _run_decision(
+                    coroutine = _run_decision(
                         admitted,
                         policy,
                         handle,
@@ -1187,69 +1255,109 @@ async def _run_execution(
                         control,
                     )
                 else:
-                    mapping, results, assessments = await _run_local(policy, handle, association, inputs)
-                if mapping.condition == "result" and policy.kind != "decision":
-                    if not _validate_assessment_returns(
+                    coroutine = _run_local(policy, handle, association, inputs, control)
+                task = asyncio.create_task(coroutine)
+                jobs[task] = _ExecutionJob(
+                    state_index=state_index,
+                    target=target_map.target,
+                    activation=entry.activation,
+                    node=entry.template,
+                    policy=policy,
+                    implementation=implementation,
+                    inputs=inputs,
+                    association=association,
+                )
+        if all(state.complete for state in states) and not jobs:
+            break
+        if not jobs:
+            if not scheduled:
+                break
+            continue
+        completed, _ = await asyncio.wait(jobs, return_when=asyncio.FIRST_COMPLETED)
+        for task in completed:
+            job = jobs.pop(task)
+            mapping, results, assessments = task.result()
+            if mapping.condition == "result":
+                if job.policy.kind == "decision" and not results:
+                    results = (
+                        AssociationResult(
+                            association=job.association,
+                            outcome=mapping.outcome or "",
+                            outputs=(),
+                            consumed_context_ports=frozenset(),
+                        ),
+                    )
+                if not _validate_assessment_returns(
+                    admitted,
+                    job.association,
+                    job.node,
+                    mapping,
+                    assessments,
+                ):
+                    mapping = _mapping(job.policy, "failure", None, "malformed_response")
+                else:
+                    output_status, created, next_artifact = _accept_outputs(
                         admitted,
-                        association,
-                        entry.template,
+                        invocation,
+                        job.target,
+                        job.activation,
+                        job.node,
+                        job.implementation.capability.operation,
+                        mapping,
+                        job.association,
+                        job.inputs,
+                        results,
+                        artifact_values,
+                        produced,
+                        provenance,
+                        port_facts,
+                        next_artifact,
+                        services.limits,
+                    )
+                    if output_status != "valid":
+                        mapping = _mapping(
+                            job.policy,
+                            "artifact_limit_exhausted" if output_status == "limit" else "failure",
+                            None,
+                            None if output_status == "limit" else "malformed_response",
+                        )
+                    elif not _capture_assessments(
+                        admitted,
+                        job.implementation,
+                        job.association,
+                        job.activation,
+                        job.node,
                         mapping,
                         assessments,
+                        produced,
+                        job.target,
+                        services,
+                        assessment_facts,
                     ):
-                        mapping = _mapping(policy, "failure", None, "malformed_response")
-                    else:
-                        valid, created, next_artifact = _accept_outputs(
-                            admitted,
-                            invocation,
-                            target_map.target,
-                            entry.activation,
-                            entry.template,
-                            implementation.capability.operation,
-                            mapping,
-                            association,
-                            inputs,
-                            results,
-                            artifact_values,
-                            produced,
-                            provenance,
-                            port_facts,
-                            next_artifact,
-                            services.limits,
-                        )
-                        if not valid:
-                            mapping = _mapping(policy, "failure", None, "malformed_response")
-                        elif not _capture_assessments(
-                            admitted,
-                            implementation,
-                            association,
-                            entry.activation,
-                            entry.template,
-                            mapping,
-                            assessments,
-                            produced,
-                            target_map.target,
-                            services,
-                            assessment_facts,
-                        ):
-                            mapping = _mapping(policy, "failure", None, "malformed_response")
-                        del created
-                states[state_index] = advance_activation(
-                    state=states[state_index],
-                    event=ObserveTerminal(
-                        activation=entry.activation,
-                        outcome=mapping.outcome,
-                        category=mapping.category,
-                    ),
-                )
-        if all(state.complete for state in states):
-            break
+                        mapping = _mapping(job.policy, "failure", None, "malformed_response")
+                    del created
+            states[job.state_index] = advance_activation(
+                state=states[job.state_index],
+                event=ObserveTerminal(
+                    activation=job.activation,
+                    outcome=mapping.outcome,
+                    category=mapping.category,
+                ),
+            )
+            states[job.state_index] = _observe_dynamic_membership(
+                states[job.state_index],
+                job.activation,
+                job.node,
+                mapping,
+                results,
+            )
     if control.cancelled:
-        request_state = advance_requests(state=request_state, event=ScopeCancel())
+        request_authority.apply(ScopeCancel())
     cleanup, cleanup_associations = await _cleanup_execution(
         admitted,
         services.handles,
         context_leases,
-        request_state,
+        request_authority.state,
     )
     record = _canonical_record(
         prepared,
@@ -1264,7 +1372,7 @@ async def _run_execution(
         _key=_RESULT_KEY,
         record=record,
         states=tuple(states),
-        requests=request_receipt(request_state),
+        requests=request_receipt(request_authority.state),
         cleanup=cleanup,
         pending_decisions=(),
         artifacts=tuple(artifact_values.items()),
@@ -1277,8 +1385,7 @@ async def _run_execution(
 
 
 def _initial_seeds(workflow: AdmittedWorkflow, reservations: frozenset[ActivationSeed]) -> frozenset[ActivationSeed]:
-    blocked = {edge.after for edge in workflow.sequence}
-    blocked.update(member for choice in workflow.choices for branch in choice.branches for member in branch.members)
+    blocked = {member for choice in workflow.choices for branch in choice.branches for member in branch.members}
     return frozenset(seed for seed in reservations if seed.activation.parent is None and seed.template not in blocked)
 
 
@@ -1286,9 +1393,11 @@ def _operation_inputs(
     admitted: AdmittedExecutionPlan,
     target: DatumId,
     node: NodeId,
+    activation: ActivationKey,
+    state: ActivationState,
     association: SemanticAssociation,
     root_inputs: dict[tuple[DatumId, str], ArtifactRef],
-    produced: dict[tuple[DatumId, NodeId, str], ArtifactRef],
+    produced: dict[tuple[DatumId, ActivationKey | NodeId, str], ArtifactRef],
     values: dict[ArtifactRef, ArtifactValue],
 ) -> tuple[AssociationInput, ...]:
     workflow, operation_node = _operation_owner(admitted.context.prepared.workflow.workflow, node)
@@ -1307,8 +1416,12 @@ def _operation_inputs(
         if reference is None and isinstance(source, WorkflowInputRef):
             reference = root_inputs.get((target, source.port))
         elif reference is None and isinstance(source, NodeOutputRef):
-            reference = produced.get((target, source.node, source.port))
+            source_activation = _source_activation(state, activation, source.node)
+            if source_activation is not None:
+                reference = produced.get((target, source_activation, source.port))
         if reference is None:
+            if _optional_context_omitted(admitted, target, node, port.name):
+                continue
             reject(EffectCode.MISSING)
         ports.append(
             PortArtifact(
@@ -1319,6 +1432,89 @@ def _operation_inputs(
             )
         )
     return (AssociationInput(association=association, inputs=tuple(ports)),)
+
+
+def _optional_context_omitted(
+    admitted: AdmittedExecutionPlan,
+    target: DatumId,
+    node: NodeId,
+    port: str,
+) -> bool:
+    context = admitted.context.bound_context
+    if context is None:
+        return False
+    return any(
+        fact.declaration.target == target
+        and fact.declaration.node == node
+        and fact.declaration.port == port
+        and fact.declaration.requirement == "optional"
+        and fact.terminal == "omitted_optional"
+        for fact in context.receipt.sources
+    )
+
+
+def _source_activation(
+    state: ActivationState,
+    destination: ActivationKey,
+    source: NodeId,
+) -> ActivationKey | None:
+    candidates = [item.activation for item in state.entries if item.template == source]
+    if destination.iteration is not None:
+        previous = [
+            item
+            for item in candidates
+            if item.parent == destination.parent
+            and item.iteration is not None
+            and item.iteration == destination.iteration - 1
+        ]
+        if len(previous) == 1:
+            return previous[0]
+    same_context = [item for item in candidates if item.parent == destination.parent]
+    if len(same_context) == 1:
+        return same_context[0]
+    if destination.parent in candidates:
+        return destination.parent
+    parent_context = [item for item in candidates if item.parent == destination]
+    return parent_context[0] if len(parent_context) == 1 else None
+
+
+def _observe_dynamic_membership(
+    state: ActivationState,
+    activation: ActivationKey,
+    node: NodeId,
+    mapping: RuntimeOutcome,
+    results: tuple[AssociationResult, ...],
+) -> ActivationState:
+    scope = next(item for item in state.workflow.scopes if node.workflow == item.workflow.workflow)
+    declaration = next((item for item in scope.maps if item.expander == node), None)
+    if declaration is None or mapping.outcome not in declaration.expansion_outcomes:
+        return state
+    collections = [
+        output.value for result in results for output in result.outputs if isinstance(output.value, TextCollectionValue)
+    ]
+    if len(collections) != 1:
+        return advance_activation(
+            state=state,
+            event=ObserveOverflow(parent=activation, observed_count=declaration.max_children + 1),
+        )
+    observed_count = len(collections[0].items)
+    if observed_count > declaration.max_children:
+        return advance_activation(
+            state=state,
+            event=ObserveOverflow(parent=activation, observed_count=observed_count),
+        )
+    members = sorted(
+        (
+            seed.activation
+            for seed in state.reservations
+            if seed.template == declaration.member and seed.activation.parent == activation
+        ),
+        key=lambda item: item.occurrence,
+    )
+    return advance_activation(
+        state=state,
+        event=ObserveMembership(parent=activation, members=frozenset(members[:observed_count]), closed=True),
+    )
 
 
 def _operation_owner(root: AdmittedWorkflow, node: NodeId) -> tuple[AdmittedWorkflow, OperationNode]:
@@ -1337,16 +1533,41 @@ def _operation_owner(root: AdmittedWorkflow, node: NodeId) -> tuple[AdmittedWork
     reject(EffectCode.MISSING)
 
 
+def _is_subgraph_node(root: AdmittedWorkflow, node: NodeId) -> bool:
+    pending = [root]
+    seen: set[int] = set()
+    while pending:
+        current = pending.pop()
+        if id(current) in seen:
+            continue
+        seen.add(id(current))
+        for candidate in current.nodes:
+            if isinstance(candidate, SubgraphNode):
+                if candidate.id == node:
+                    return True
+                pending.append(candidate.body)
+    return False
+
+
 async def _run_local(
     policy: OperationExecutionPolicy,
     handle: ImplementationHandle,
     association: SemanticAssociation,
     inputs: tuple[AssociationInput, ...],
+    control: _ExecutionControl,
 ) -> tuple[RuntimeOutcome, tuple[AssociationResult, ...], tuple[LocalAssessmentResult, ...]]:
     if handle.local is None:
         reject(EffectCode.MISSING)
+    operation = asyncio.create_task(handle.local.run(inputs))
     try:
-        result = await handle.local.run(inputs)
+        while not operation.done():
+            if control.cancelled:
+                operation.cancel()
+                with suppress(asyncio.CancelledError):
+                    await operation
+                return _mapping(policy, "cancel_after_start", None, None), (), ()
+            await asyncio.sleep(0)
+        result = operation.result()
     except Exception:
         return _mapping(policy, "failure", None, "implementation_exception"), (), ()
     if isinstance(result, LocalFailure):
@@ -1438,14 +1659,12 @@ async def _run_external(
     handles: dict[tuple[ImplementationRef, OperationSpec, FrozenConfig], ImplementationHandle],
     association: SemanticAssociation,
     inputs: tuple[AssociationInput, ...],
-    state: RequestState,
-) -> tuple[RuntimeOutcome, tuple[AssociationResult, ...], RequestState]:
+    authority: _RequestAuthority,
+    control: _ExecutionControl,
+) -> tuple[RuntimeOutcome, tuple[AssociationResult, ...], tuple[LocalAssessmentResult, ...]]:
     if policy.request is None:
         reject(EffectCode.MISSING)
-    state = bind_request_policies(
-        state=state,
-        binding=RequestPolicyBinding.create(association=association, policies=frozenset({policy.request})),
-    )
+    authority.bind(RequestPolicyBinding.create(association=association, policies=frozenset({policy.request})))
     implementation_index = 0
     purpose: Literal["initial", "retry", "correction", "failover"] = "initial"
     while True:
@@ -1455,58 +1674,97 @@ async def _run_external(
         ]
         if handle.transport is None:
             reject(EffectCode.MISSING)
-        request = PhysicalRequestId.new(scope=state.scope)
-        state = advance_requests(
-            state=state,
-            event=Reserve(
+        request = PhysicalRequestId.new(scope=authority.state.scope)
+        authority.apply(
+            Reserve(
                 request=request,
                 purpose=purpose,
                 associations=frozenset({association}),
                 policy=policy.request,
             ),
         )
-        if not any(item.request == request for item in state.reserved):
-            denial = next(item for item in reversed(state.denials) if item.request == request)
+        if not any(item.request == request for item in authority.state.reserved):
+            denial = next(item for item in reversed(authority.state.denials) if item.request == request)
             condition = "budget_exhausted" if denial.category == "budget_stopped" else "request_limit_exhausted"
-            return _mapping(policy, condition, None, None), (), state
-        state = advance_requests(state=state, event=Dispatch(request=request))
+            return _mapping(policy, condition, None, None), (), ()
+        authority.apply(Dispatch(request=request))
         envelope = DispatchEnvelope(
             request=request,
             purpose=purpose,
             operation=handle.operation,
             associations=inputs,
         )
+        dispatch = asyncio.create_task(handle.transport.dispatch(envelope))
+        while not dispatch.done() and not control.cancelled:
+            await asyncio.sleep(0)
+        if control.cancelled and not dispatch.done():
+            authority.apply(RequestCancel(request=request))
+            try:
+                stopped = await handle.transport.cancel(request)
+            except Exception:
+                stopped = None
+            dispatch.cancel()
+            with suppress(asyncio.CancelledError):
+                await dispatch
+            if isinstance(stopped, StopConfirmed):
+                authority.apply(StopAcknowledged(request=request, usage=stopped.usage))
+                return _mapping(policy, "cancel_after_dispatch", None, None), (), ()
+            authority.apply(MarkLost(request=request))
+            return _mapping(policy, "lost", None, None), (), ()
         try:
-            result = await handle.transport.dispatch(envelope)
+            result = dispatch.result()
         except Exception:
             result = TransportLost(settlement=None)
         if isinstance(result, TransportSuccess):
+            if result.settlement is not None and result.settlement.request != request:
+                failure = "malformed_response"
+                authority.apply(AcceptFailure(request=request, failure=failure))
+                purpose = "correction"
+                continue
             keyed = len(result.results) == 1 and result.results[0].association == association
             reported = result.results[0].outcome if keyed else None
-            if keyed and reported in policy.result_outcomes:
-                state = advance_requests(state=state, event=AcceptResult(request=request, results=result.results))
+            candidate_mapping = (
+                _mapping(policy, "result", reported, None) if keyed and reported in policy.result_outcomes else None
+            )
+            if candidate_mapping is not None and _validate_output_shape(
+                handle.operation,
+                candidate_mapping,
+                association,
+                inputs,
+                result.results,
+            ):
+                authority.apply(AcceptResult(request=request, results=result.results))
                 if result.settlement is not None:
-                    state = advance_requests(state=state, event=ObserveSettlement(settlement=result.settlement))
-                return _mapping(policy, "result", reported, None), result.results, state
+                    authority.apply(ObserveSettlement(settlement=result.settlement))
+                return candidate_mapping, result.results, ()
             if not keyed:
-                state = advance_requests(state=state, event=AcceptResult(request=request, results=result.results))
+                authority.apply(AcceptResult(request=request, results=result.results))
                 if result.settlement is not None:
-                    state = advance_requests(state=state, event=ObserveSettlement(settlement=result.settlement))
-                return _mapping(policy, "request_inconsistent", None, None), (), state
+                    authority.apply(ObserveSettlement(settlement=result.settlement))
+                return _mapping(policy, "request_inconsistent", None, None), (), ()
             failure: FailureClass = "malformed_response"
-            state = advance_requests(state=state, event=AcceptFailure(request=request, failure=failure))
-            if result.settlement is not None:
-                state = advance_requests(state=state, event=ObserveSettlement(settlement=result.settlement))
+            authority.apply(AcceptFailure(request=request, failure=failure))
+            if result.settlement is not None and result.settlement.request == request:
+                authority.apply(ObserveSettlement(settlement=result.settlement))
         elif isinstance(result, TransportFailure):
+            if result.settlement is not None and result.settlement.request != request:
+                failure = "malformed_response"
+                authority.apply(AcceptFailure(request=request, failure=failure))
+                purpose = "correction"
+                continue
             failure = result.failure
-            state = advance_requests(state=state, event=AcceptFailure(request=request, failure=failure))
+            authority.apply(AcceptFailure(request=request, failure=failure))
             if result.settlement is not None:
-                state = advance_requests(state=state, event=ObserveSettlement(settlement=result.settlement))
+                authority.apply(ObserveSettlement(settlement=result.settlement))
         else:
-            state = advance_requests(state=state, event=MarkLost(request=request))
-            if isinstance(result, TransportLost) and result.settlement is not None:
-                state = advance_requests(state=state, event=ObserveSettlement(settlement=result.settlement))
-            return _mapping(policy, "lost", None, None), (), state
+            authority.apply(MarkLost(request=request))
+            if (
+                isinstance(result, TransportLost)
+                and result.settlement is not None
+                and result.settlement.request == request
+            ):
+                authority.apply(ObserveSettlement(settlement=result.settlement))
+            return _mapping(policy, "lost", None, None), (), ()
 
         if failure == "malformed_response":
             purpose = "correction"
@@ -1521,7 +1779,7 @@ async def _run_external(
         ):
             purpose = "retry"
         else:
-            return _mapping(policy, "failure", None, failure), (), state
+            return _mapping(policy, "failure", None, failure), (), ()
 
 
 async def _run_adaptive(
@@ -1530,9 +1788,10 @@ async def _run_adaptive(
     declaration: AdaptiveRetrievalDecl,
     association: SemanticAssociation,
     inputs: tuple[AssociationInput, ...],
-    state: RequestState,
+    authority: _RequestAuthority,
     leases: dict[object, ResourceLease],
-) -> tuple[RuntimeOutcome, tuple[AssociationResult, ...], RequestState]:
+    control: _ExecutionControl,
+) -> tuple[RuntimeOutcome, tuple[AssociationResult, ...], tuple[LocalAssessmentResult, ...]]:
     capability = next(
         item
         for item in admitted.context.context_capabilities
@@ -1542,42 +1801,57 @@ async def _run_adaptive(
     if lease is None or not isinstance(lease.handle, ContextProvider) or policy.request is None:
         reject(EffectCode.MISSING)
     provider = lease.handle
-    state = bind_request_policies(
-        state=state,
-        binding=RequestPolicyBinding.create(association=association, policies=frozenset({capability.request})),
-    )
+    authority.bind(RequestPolicyBinding.create(association=association, policies=frozenset({capability.request})))
     source_inputs = {item.port: item.value for item in inputs[0].inputs}
     fields: list[SelectorField] = []
     for port in declaration.selector_ports:
         value = source_inputs.get(port)
         if not isinstance(value, TextArtifactValue):
-            return _mapping(policy, "failure", None, "malformed_response"), (), state
+            return _mapping(policy, "failure", None, "malformed_response"), (), ()
         fields.append(SelectorField(name=port, value=value.text))
     selector = ContextSelector(fields=tuple(fields))
     purpose: Literal["adaptive_retrieval", "retry", "correction"] = "adaptive_retrieval"
     while True:
-        request = PhysicalRequestId.new(scope=state.scope)
-        state = advance_requests(
-            state=state,
-            event=Reserve(
+        request = PhysicalRequestId.new(scope=authority.state.scope)
+        authority.apply(
+            Reserve(
                 request=request,
                 purpose=purpose,
                 associations=frozenset({association}),
                 policy=capability.request,
             ),
         )
-        if not any(item.request == request for item in state.reserved):
-            denial = next(item for item in reversed(state.denials) if item.request == request)
+        if not any(item.request == request for item in authority.state.reserved):
+            denial = next(item for item in reversed(authority.state.denials) if item.request == request)
             condition = "budget_exhausted" if denial.category == "budget_stopped" else "request_limit_exhausted"
-            return _mapping(policy, condition, None, None), (), state
-        state = advance_requests(state=state, event=Dispatch(request=request))
-        try:
-            result = await provider.retrieve(
+            return _mapping(policy, condition, None, None), (), ()
+        authority.apply(Dispatch(request=request))
+        retrieval = asyncio.create_task(
+            provider.retrieve(
                 request=request,
                 association=association,
                 selector=selector,
                 bounds=declaration.bounds,
             )
+        )
+        while not retrieval.done() and not control.cancelled:
+            await asyncio.sleep(0)
+        if control.cancelled and not retrieval.done():
+            authority.apply(RequestCancel(request=request))
+            try:
+                stopped = await provider.cancel(request)
+            except Exception:
+                stopped = None
+            retrieval.cancel()
+            with suppress(asyncio.CancelledError):
+                await retrieval
+            if isinstance(stopped, StopConfirmed):
+                authority.apply(StopAcknowledged(request=request, usage=stopped.usage))
+                return _mapping(policy, "cancel_after_dispatch", None, None), (), ()
+            authority.apply(MarkLost(request=request))
+            return _mapping(policy, "lost", None, None), (), ()
+        try:
+            result = retrieval.result()
         except Exception:
             result = SourceLost(source=declaration.source, settlement=None)
         if isinstance(result, SourceResponse):
@@ -1589,9 +1863,27 @@ async def _run_adaptive(
                 and len({(item.key, item.version) for item in result.items}) == len(result.items)
             )
             byte_count = sum(len(item.text.encode()) for item in result.items)
-            valid = valid and len(result.items) <= declaration.bounds.max_items
-            valid = valid and byte_count <= declaration.bounds.max_bytes
-            valid = valid and (declaration.materialization.kind != "single" or len(result.items) == 1)
+            oversize = (
+                len(result.items) > declaration.bounds.max_items
+                or byte_count > declaration.bounds.max_bytes
+                or (declaration.materialization.kind == "single" and len(result.items) > 1)
+            )
+            if valid and oversize:
+                authority.apply(
+                    AcceptResult(
+                        request=request,
+                        results=(
+                            AssociationResult(
+                                association=association,
+                                outcome=_adaptive_success_outcome(policy),
+                                outputs=(),
+                                consumed_context_ports=frozenset(),
+                            ),
+                        ),
+                    )
+                )
+                authority.apply(ObserveSettlement(settlement=result.settlement))
+                return _mapping(policy, "artifact_limit_exhausted", None, None), (), ()
             if valid:
                 value: ArtifactValue
                 if declaration.materialization.kind == "single":
@@ -1625,22 +1917,36 @@ async def _run_adaptive(
                     ),
                     consumed_context_ports=frozenset(),
                 )
-                state = advance_requests(state=state, event=AcceptResult(request=request, results=(accepted,)))
-                state = advance_requests(state=state, event=ObserveSettlement(settlement=result.settlement))
-                return _mapping(policy, "result", outcome, None), (accepted,), state
+                authority.apply(AcceptResult(request=request, results=(accepted,)))
+                authority.apply(ObserveSettlement(settlement=result.settlement))
+                return _mapping(policy, "result", outcome, None), (accepted,), ()
             failure: FailureClass = "malformed_response"
-            state = advance_requests(state=state, event=AcceptFailure(request=request, failure=failure))
-            state = advance_requests(state=state, event=ObserveSettlement(settlement=result.settlement))
+            authority.apply(AcceptFailure(request=request, failure=failure))
+            if result.settlement.request == request:
+                authority.apply(ObserveSettlement(settlement=result.settlement))
         elif isinstance(result, SourceFailure):
-            failure = result.failure
-            state = advance_requests(state=state, event=AcceptFailure(request=request, failure=failure))
-            if result.settlement is not None:
-                state = advance_requests(state=state, event=ObserveSettlement(settlement=result.settlement))
+            failure = (
+                result.failure
+                if result.source == declaration.source
+                and (result.settlement is None or result.settlement.request == request)
+                else "malformed_response"
+            )
+            authority.apply(AcceptFailure(request=request, failure=failure))
+            if result.settlement is not None and result.settlement.request == request:
+                authority.apply(ObserveSettlement(settlement=result.settlement))
         else:
-            state = advance_requests(state=state, event=MarkLost(request=request))
-            if isinstance(result, SourceLost) and result.settlement is not None:
-                state = advance_requests(state=state, event=ObserveSettlement(settlement=result.settlement))
-            return _mapping(policy, "lost", None, None), (), state
+            if isinstance(result, SourceLost) and result.source != declaration.source:
+                authority.apply(AcceptFailure(request=request, failure="malformed_response"))
+                purpose = "correction"
+                continue
+            authority.apply(MarkLost(request=request))
+            if (
+                isinstance(result, SourceLost)
+                and result.settlement is not None
+                and result.settlement.request == request
+            ):
+                authority.apply(ObserveSettlement(settlement=result.settlement))
+            return _mapping(policy, "lost", None, None), (), ()
         if failure == "malformed_response":
             purpose = "correction"
         elif capability.request.retry_owner == "executor" and (
@@ -1652,7 +1958,7 @@ async def _run_adaptive(
         ):
             purpose = "retry"
         else:
-            return _mapping(policy, "failure", None, failure), (), state
+            return _mapping(policy, "failure", None, failure), (), ()
 
 
 def _adaptive_success_outcome(policy: OperationExecutionPolicy) -> str:
@@ -1694,56 +2000,69 @@ def _accept_outputs(
     inputs: tuple[AssociationInput, ...],
     results: tuple[AssociationResult, ...],
     values: dict[ArtifactRef, ArtifactValue],
-    produced: dict[tuple[DatumId, NodeId, str], ArtifactRef],
+    produced: dict[tuple[DatumId, ActivationKey | NodeId, str], ArtifactRef],
     provenance: list[ArtifactProvenanceFact],
     port_facts: list[ExecutionPortFact],
     next_artifact: int,
     limits: ExecutionLimits,
-) -> tuple[bool, tuple[ArtifactRef, ...], int]:
-    if len(results) != 1 or results[0].association != association or mapping.outcome is None:
-        return False, (), next_artifact
+) -> tuple[Literal["valid", "malformed", "limit"], tuple[ArtifactRef, ...], int]:
+    if not _validate_output_shape(operation, mapping, association, inputs, results):
+        return "malformed", (), next_artifact
+    assert mapping.outcome is not None
     outcome = next(item for item in operation.outcomes if item.name == mapping.outcome)
     expected = {item.name: item.artifact_type for item in operation.outputs if item.name in outcome.produced_ports}
     outputs = results[0].outputs
     if len(outputs) != len(expected) or {item.port for item in outputs} != set(expected):
-        return False, (), next_artifact
+        return "malformed", (), next_artifact
     if any(item.artifact is not None or item.artifact_type != expected[item.port] for item in outputs):
-        return False, (), next_artifact
-    if len(values) + len(outputs) > limits.max_runtime_artifacts:
-        return False, (), next_artifact
+        return "malformed", (), next_artifact
+    dependencies = {item.output: item for item in operation.output_dependencies if item.output in expected}
+    new_outputs = [item for item in outputs if dependencies[item.port].identity_input is None]
+    if len(values) + len(new_outputs) > limits.max_runtime_artifacts:
+        return "limit", (), next_artifact
     if any(
         isinstance(item.value, TextCollectionValue) and len(item.value.items) > limits.max_collection_items
         for item in outputs
     ):
-        return False, (), next_artifact
+        return "limit", (), next_artifact
     if (
-        sum(_artifact_bytes(item) for item in values.values()) + sum(_artifact_bytes(item.value) for item in outputs)
+        sum(_artifact_bytes(item) for item in values.values())
+        + sum(_artifact_bytes(item.value) for item in new_outputs)
         > limits.max_runtime_artifact_bytes
     ):
-        return False, (), next_artifact
+        return "limit", (), next_artifact
     input_artifacts = {item.port: item.artifact for item in inputs[0].inputs if item.artifact is not None}
     planned_parents: dict[str, frozenset[ProvenanceKey]] = {}
     for output in outputs:
-        dependency = next(item for item in operation.output_dependencies if item.output == output.port)
+        dependency = dependencies[output.port]
         if not dependency.inputs <= input_artifacts.keys():
-            return False, (), next_artifact
+            return "malformed", (), next_artifact
         parent_artifacts = {input_artifacts[name] for name in dependency.inputs}
         parent_keys = {fact.key for fact in provenance if fact.artifact in parent_artifacts}
         if len(parent_keys) != len(parent_artifacts):
-            return False, (), next_artifact
+            return "malformed", (), next_artifact
         planned_parents[output.port] = frozenset(parent_keys)
+        if dependency.identity_input is not None:
+            aliased = input_artifacts.get(dependency.identity_input)
+            if aliased is None or values[aliased] != output.value:
+                return "malformed", (), next_artifact
     limits_assessment = admitted.assessment_limits
     if len(port_facts) + len(outputs) > limits_assessment.max_port_facts:
-        return False, (), next_artifact
+        return "limit", (), next_artifact
     current_edges = sum(len(item.parents) for item in provenance)
     if current_edges + sum(len(item) for item in planned_parents.values()) > limits_assessment.max_provenance_edges:
-        return False, (), next_artifact
+        return "limit", (), next_artifact
     created: list[ArtifactRef] = []
     for output in outputs:
-        reference = ArtifactRef(invocation=invocation, key=next_artifact, version=1)
-        next_artifact += 1
-        values[reference] = output.value
-        produced[(target, node, output.port)] = reference
+        identity_input = dependencies[output.port].identity_input
+        if identity_input is None:
+            reference = ArtifactRef(invocation=invocation, key=next_artifact, version=1)
+            next_artifact += 1
+            values[reference] = output.value
+            created.append(reference)
+        else:
+            reference = input_artifacts[identity_input]
+        produced[(target, activation, output.port)] = reference
         key = OperationOutputKey(activation=activation, target=target, port=output.port)
         provenance.append(
             ArtifactProvenanceFact(
@@ -1780,15 +2099,38 @@ def _accept_outputs(
                 ),
             )
         )
-        created.append(reference)
-    return True, tuple(created), next_artifact
+    return "valid", tuple(created), next_artifact
+
+
+def _validate_output_shape(
+    operation: OperationSpec,
+    mapping: RuntimeOutcome,
+    association: SemanticAssociation,
+    inputs: tuple[AssociationInput, ...],
+    results: tuple[AssociationResult, ...],
+) -> bool:
+    if len(results) != 1 or results[0].association != association or mapping.outcome is None:
+        return False
+    outcome = next((item for item in operation.outcomes if item.name == mapping.outcome), None)
+    if outcome is None:
+        return False
+    expected = {item.name: item.artifact_type for item in operation.outputs if item.name in outcome.produced_ports}
+    outputs = results[0].outputs
+    present_inputs = {item.port for item in inputs[0].inputs}
+    return (
+        len(outputs) == len(expected)
+        and {item.port for item in outputs} == set(expected)
+        and all(item.artifact is None and item.artifact_type == expected[item.port] for item in outputs)
+        and results[0].consumed_context_ports
+        == frozenset(use.port for use in outcome.context if use.port in present_inputs)
+    )
 
 
 def _materialize_bound_context(
     admitted: AdmittedExecutionPlan,
     invocation: InvocationId,
     values: dict[ArtifactRef, ArtifactValue],
-    produced: dict[tuple[DatumId, NodeId, str], ArtifactRef],
+    produced: dict[tuple[DatumId, ActivationKey | NodeId, str], ArtifactRef],
     provenance: list[ArtifactProvenanceFact],
     next_artifact: int,
     limits: ExecutionLimits,
@@ -1873,7 +2215,7 @@ def _capture_assessments(
     node: NodeId,
     mapping: RuntimeOutcome,
     returned: tuple[LocalAssessmentResult, ...],
-    produced: dict[tuple[DatumId, NodeId, str], ArtifactRef],
+    produced: dict[tuple[DatumId, ActivationKey | NodeId, str], ArtifactRef],
     target: DatumId,
     services: ExecutionServices,
     facts: list[ExecutionAssessmentFact],
@@ -1897,7 +2239,7 @@ def _capture_assessments(
             and item.evidence_port == declaration.evidence_port
             and item.finding in declaration.supported_findings
         ]
-        artifact = produced.get((target, node, declaration.evidence_port))
+        artifact = produced.get((target, activation, declaration.evidence_port))
         if len(matches) != 1 or artifact is None:
             return False
         facts.append(
@@ -1959,7 +2301,7 @@ def _validate_assessment_returns(
 def _final_outputs(
     prepared: PreparedPlan,
     states: tuple[ActivationState, ...],
-    produced: dict[tuple[DatumId, NodeId, str], ArtifactRef],
+    produced: dict[tuple[DatumId, ActivationKey | NodeId, str], ArtifactRef],
     provenance: list[ArtifactProvenanceFact],
 ) -> tuple[FinalOutputFact, ...]:
     results: list[FinalOutputFact] = []
@@ -1977,7 +2319,7 @@ def _final_outputs(
             )
             if terminal is None or terminal.outcome is None:
                 continue
-            artifact = produced.get((target_map.target, output_binding.source.node, output_binding.source.port))
+            artifact = produced.get((target_map.target, terminal.activation, output_binding.source.port))
             if artifact is None:
                 continue
             producer = next(

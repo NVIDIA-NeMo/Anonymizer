@@ -23,11 +23,11 @@ from anonymizer.engine.graph_sdk.executor import (
     AssessmentFinding,
     AssessmentLimits,
     DecisionLimits,
+    EvidenceProductionDecl,
     ExecutionImplementation,
     ExecutionLimits,
     ExecutionServices,
     ImplementationHandle,
-    EvidenceProductionDecl,
     LocalAssessmentResult,
     LocalCompleted,
     OperationExecutionPolicy,
@@ -39,8 +39,8 @@ from anonymizer.engine.graph_sdk.preparation import BoundInput, PreparationConfi
 from anonymizer.engine.graph_sdk.requests import (
     AssociationInput,
     AssociationResult,
-    ExactUsage,
     DispatchEnvelope,
+    ExactUsage,
     ExternalSettlement,
     PhysicalRequestId,
     PhysicalRequestPolicy,
@@ -49,21 +49,23 @@ from anonymizer.engine.graph_sdk.requests import (
     SemanticAssociation,
     StopConfirmed,
     TextArtifactValue,
+    TransportFailure,
     TransportResult,
+    TransportSuccess,
 )
 from anonymizer.engine.graph_sdk.resources import ResourceLease
 from anonymizer.graph.workflow import (
     DynamicLimits,
     DynamicScope,
+    EvidencePromise,
     NodeOutputRef,
     OperationNode,
     OutputBinding,
     OutputDependency,
     OutputPort,
     ResourceCeiling,
-    EvidencePromise,
-    WorkflowOutputRef,
     WorkflowLimits,
+    WorkflowOutputRef,
     admit_activation_workflow,
     admit_static_workflow,
 )
@@ -118,6 +120,48 @@ class _UnusedTransport:
         return None
 
 
+@dataclass
+class _RetryingTransport:
+    calls: int = 0
+
+    async def dispatch(self, request: DispatchEnvelope) -> TransportResult:
+        self.calls += 1
+        settlement = ExternalSettlement(
+            request=request.request,
+            disposition="completed",
+            usage=ExactUsage(input_units=1, output_units=1),
+            remote_stopped=True,
+        )
+        if self.calls == 1:
+            return TransportFailure(failure="retryable", settlement=settlement)
+        association = request.associations[0].association
+        return TransportSuccess(
+            results=(
+                AssociationResult(
+                    association=association,
+                    outcome="ok",
+                    outputs=(
+                        PortArtifact(
+                            port="context",
+                            artifact_type=request.operation.outputs[0].artifact_type,
+                            artifact=None,
+                            value=TextArtifactValue(text="retried"),
+                        ),
+                    ),
+                    consumed_context_ports=frozenset(),
+                ),
+            ),
+            settlement=settlement,
+        )
+
+    async def cancel(self, request: object) -> StopConfirmed:
+        del request
+        return StopConfirmed(usage=ExactUsage(input_units=0, output_units=0))
+
+    async def close(self) -> None:
+        return None
+
+
 def _adaptive_rows() -> tuple[RuntimeOutcome, ...]:
     rows = [RuntimeOutcome(condition="result", reported_outcome="ok", failure=None, outcome="ok", category="success")]
     rows.extend(
@@ -148,8 +192,8 @@ def _adaptive_rows() -> tuple[RuntimeOutcome, ...]:
     return tuple(rows)
 
 
-def _adaptive_workflow(*, assessment: bool = False):
-    base, node, artifact = _workflow(requests=1, with_input=True)
+def _adaptive_workflow(*, assessment: bool = False, requests: int = 1):
+    base, node, artifact = _workflow(requests=requests, with_input=True)
     static = base.workflow
     raw = next(item for item in static.nodes if isinstance(item, OperationNode))
     outcome = replace(
@@ -172,7 +216,7 @@ def _adaptive_workflow(*, assessment: bool = False):
         ),
         ceiling=ResourceCeiling(
             max_activations=1,
-            max_model_requests=1,
+            max_model_requests=requests,
             max_input_bytes=100,
             max_output_bytes=100,
         ),
@@ -348,6 +392,100 @@ async def _assert_adaptive_retrieval() -> None:
     assert result.states[0].complete
     assert any(value == TextArtifactValue(text="retrieved") for _, value in result.artifacts)
     assert result.final_outputs[0].candidate.target == target
+
+
+def test_external_execution_retries_with_new_charged_request() -> None:
+    asyncio.run(_assert_external_retry())
+
+
+async def _assert_external_retry() -> None:
+    workflow, node, artifact = _adaptive_workflow(requests=2)
+    data = _data(1)
+    target = next(iter(data.targets))
+    capability = replace(_capability(workflow, external=True), max_physical_requests_per_activation=2)
+    prepared = _prepare(
+        data=data,
+        workflow=workflow,
+        capability=capability,
+        configuration=PreparationConfiguration(
+            purpose="execution_only", required_protection_outcomes=frozenset(), hard_request_limit=2
+        ),
+        bound_inputs=(BoundInput(target=target, source=target, port="input", artifact_type=artifact),),
+    )
+    context = admit_context_plan(
+        prepared=prepared,
+        bound_context=None,
+        adaptive_retrievals=(),
+        context_capabilities=(),
+    )
+    request_policy = PhysicalRequestPolicy(
+        visibility="dispatch_and_settlement",
+        pre_dispatch_control="executor",
+        retry_owner="executor",
+        replay="idempotent",
+        max_attempts=2,
+    )
+    implementation = ExecutionImplementation(
+        implementation=capability.implementation,
+        configuration=capability.configuration,
+        capability=capability,
+        request=request_policy,
+    )
+    policy = OperationExecutionPolicy(
+        node=node,
+        kind="external",
+        request=request_policy,
+        safe_detachment="forbidden",
+        implementations=(implementation,),
+        result_outcomes=frozenset({"ok"}),
+        runtime_outcomes=_adaptive_rows(),
+    )
+    admitted = admit_execution_plan(
+        context=context,
+        capabilities=(capability,),
+        policies=(policy,),
+        decisions=(),
+        assessment_productions=(),
+        assessment_limits=AssessmentLimits(
+            max_productions=0,
+            max_findings_per_production=0,
+            max_finding_code_bytes=0,
+            max_absence_queries=0,
+            max_assessment_facts=0,
+            max_port_facts=2,
+            max_provenance_edges=1,
+        ),
+    )
+    transport = _RetryingTransport()
+    services = ExecutionServices(
+        handles=(
+            ImplementationHandle(
+                implementation=capability.implementation,
+                operation=capability.operation,
+                configuration=capability.configuration,
+                local=None,
+                transport=transport,
+                resource=ResourceLease.create(owner="sdk", safe_detachment="forbidden", handle=transport),
+            ),
+        ),
+        context_resources=(),
+        limits=ExecutionLimits(
+            max_local_in_flight=0,
+            max_remote_outstanding=1,
+            max_runtime_artifacts=2,
+            max_runtime_artifact_bytes=100,
+            max_collection_items=1,
+        ),
+        decision_limits=DecisionLimits(max_pending=0, max_lifetime_ns=0),
+        clock=_Clock(),
+    )
+    running = await start_execution(admitted=admitted, capabilities=(capability,), services=services)
+    result = await running.wait()
+    assert transport.calls == 2
+    assert [item.purpose for item in result.requests.dispatches] == ["initial", "retry"]
+    assert result.requests.dispatched_count == 2
+    assert result.states[0].complete
+    assert any(value == TextArtifactValue(text="retried") for _, value in result.artifacts)
 
 
 @dataclass

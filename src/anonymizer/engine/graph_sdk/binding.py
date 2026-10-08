@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import suppress
 from dataclasses import dataclass
 
 from anonymizer.engine.graph_sdk._effect_values import EffectCode, EffectRejected, reject, require_instance
@@ -22,7 +23,7 @@ from anonymizer.engine.graph_sdk.context import (
     SourceFailure,
     SourceLost,
     SourceResponse,
-    create_binding_result,
+    _create_binding_result,
 )
 from anonymizer.engine.graph_sdk.data import ValidatedDataGraph
 from anonymizer.engine.graph_sdk.requests import (
@@ -59,6 +60,8 @@ class BindingRejected(EffectRejected):
 @dataclass(slots=True)
 class _BindingWork:
     binding: BindingId
+    data: ValidatedDataGraph
+    workflow: AdmittedActivationWorkflow
     declarations: tuple[InitialContextDecl, ...]
     identities: tuple[BindingDeclarationId, ...]
     capabilities: tuple[ContextSourceCapability, ...]
@@ -100,6 +103,8 @@ async def start_initial_binding(
     return RunningBinding(
         _BindingWork(
             binding=binding,
+            data=data,
+            workflow=workflow,
             declarations=declarations,
             identities=identities,
             capabilities=capabilities,
@@ -116,7 +121,23 @@ async def _run_binding(work: _BindingWork) -> BindingResult:
         hard_limit=work.limits.max_requests,
         policies=frozenset(item.request for item in work.capabilities),
     )
-    acquired, cleanup = _acquire_resources(work)
+    try:
+        acquired, cleanup = _acquire_resources(work)
+    except Exception:
+        facts = tuple(
+            SourceBindingFact(identity=identity, declaration=declaration, terminal="failed")
+            for identity, declaration in zip(work.identities, work.declarations, strict=True)
+        )
+        return _create_binding_result(
+            binding=work.binding,
+            data=work.data,
+            workflow=work.workflow,
+            terminal="failed",
+            sources=facts,
+            artifacts=(),
+            requests=request_receipt(state),
+            cleanup=(),
+        )
     facts: list[SourceBindingFact] = []
     artifacts: list[BoundTextArtifact] = []
     if work.cancelled:
@@ -126,8 +147,10 @@ async def _run_binding(work: _BindingWork) -> BindingResult:
             for identity, declaration in zip(work.identities, work.declarations, strict=True)
         )
         cleanup.extend(await _cleanup(acquired))
-        return create_binding_result(
+        return _create_binding_result(
             binding=work.binding,
+            data=work.data,
+            workflow=work.workflow,
             terminal="cancelled",
             sources=tuple(facts),
             artifacts=(),
@@ -167,17 +190,24 @@ async def _run_binding(work: _BindingWork) -> BindingResult:
         provider = acquired[declaration.source].handle
         if not isinstance(provider, ContextProvider):
             reject(EffectCode.INVALID_TYPE)
-        try:
-            result = await provider.retrieve(
+        retrieval = asyncio.create_task(
+            provider.retrieve(
                 request=request,
                 association=association,
                 selector=declaration.selector,
                 bounds=declaration.bounds,
             )
-        except Exception:
-            result = SourceFailure(source=declaration.source, failure="implementation_exception", settlement=None)
-        if work.cancelled:
-            stopped = await provider.cancel(request)
+        )
+        while not retrieval.done() and not work.cancelled:
+            await asyncio.sleep(0)
+        if work.cancelled and not retrieval.done():
+            try:
+                stopped = await provider.cancel(request)
+            except Exception:
+                stopped = None
+            retrieval.cancel()
+            with suppress(asyncio.CancelledError):
+                await retrieval
             if isinstance(stopped, StopConfirmed):
                 state = advance_requests(
                     state=state,
@@ -189,10 +219,17 @@ async def _run_binding(work: _BindingWork) -> BindingResult:
                 terminal = "lost"
             facts.append(SourceBindingFact(identity=identity, declaration=declaration, terminal=terminal))
             continue
+        try:
+            result = retrieval.result()
+        except Exception:
+            result = SourceLost(source=declaration.source, settlement=None)
         if isinstance(result, SourceResponse):
             if result.source != declaration.source or result.settlement.request != request:
-                state = advance_requests(state=state, event=MarkLost(request=request))
-                facts.append(SourceBindingFact(identity=identity, declaration=declaration, terminal="lost"))
+                state = advance_requests(
+                    state=state,
+                    event=AcceptFailure(request=request, failure="malformed_response"),
+                )
+                facts.append(SourceBindingFact(identity=identity, declaration=declaration, terminal="failed"))
                 continue
             byte_count = sum(len(item.text.encode("utf-8")) for item in result.items)
             valid_associations = all(item.association == association for item in result.items)
@@ -244,14 +281,22 @@ async def _run_binding(work: _BindingWork) -> BindingResult:
             )
             facts.append(SourceBindingFact(identity=identity, declaration=declaration, terminal="bound"))
         elif isinstance(result, SourceFailure):
-            state = advance_requests(state=state, event=AcceptFailure(request=request, failure=result.failure))
-            if result.settlement is not None:
+            failure = result.failure if result.source == declaration.source else "malformed_response"
+            state = advance_requests(state=state, event=AcceptFailure(request=request, failure=failure))
+            if result.settlement is not None and result.settlement.request == request:
                 state = advance_requests(state=state, event=ObserveSettlement(settlement=result.settlement))
             terminal = "omitted_optional" if declaration.requirement == "optional" else "failed"
             facts.append(SourceBindingFact(identity=identity, declaration=declaration, terminal=terminal))
         elif isinstance(result, SourceLost):
+            if result.source != declaration.source:
+                state = advance_requests(
+                    state=state,
+                    event=AcceptFailure(request=request, failure="malformed_response"),
+                )
+                facts.append(SourceBindingFact(identity=identity, declaration=declaration, terminal="failed"))
+                continue
             state = advance_requests(state=state, event=MarkLost(request=request))
-            if result.settlement is not None:
+            if result.settlement is not None and result.settlement.request == request:
                 state = advance_requests(state=state, event=ObserveSettlement(settlement=result.settlement))
             facts.append(SourceBindingFact(identity=identity, declaration=declaration, terminal="lost"))
         else:
@@ -259,8 +304,10 @@ async def _run_binding(work: _BindingWork) -> BindingResult:
             facts.append(SourceBindingFact(identity=identity, declaration=declaration, terminal="lost"))
     cleanup.extend(await _cleanup(acquired))
     terminal = _binding_terminal(facts)
-    return create_binding_result(
+    return _create_binding_result(
         binding=work.binding,
+        data=work.data,
+        workflow=work.workflow,
         terminal=terminal,
         sources=tuple(facts),
         artifacts=tuple(artifacts),
@@ -308,7 +355,10 @@ def _validate_binding(
     keys = [(item.target, item.node, item.port) for item in declarations]
     if len(keys) != len(set(keys)) or len(capabilities) != len(set(capabilities)):
         reject(EffectCode.DUPLICATE)
-    if {item.source for item in resources} != sources:
+    resource_sources = [item.source for item in resources]
+    if len(resource_sources) != len(set(resource_sources)):
+        reject(EffectCode.DUPLICATE)
+    if set(resource_sources) != sources:
         reject(EffectCode.MISSING)
     schemas: dict[object, tuple[str, object]] = {}
     for declaration in declarations:
@@ -344,6 +394,9 @@ def _validate_binding(
         ]
         if len(matches) != 1 or declaration.bounds.max_requests > matches[0].request.max_attempts:
             reject(EffectCode.UNSUPPORTED)
+        resource = next(item for item in resources if item.source == declaration.source)
+        if resource.capability != matches[0]:
+            reject(EffectCode.CONTRADICTORY)
 
 
 def _acquire_resources(work: _BindingWork) -> tuple[dict[object, ResourceLease], list[CleanupFact]]:

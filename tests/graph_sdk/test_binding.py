@@ -175,5 +175,7 @@ async def _assert_initial_binding() -> None:
     assert provider.calls == 1
     assert result.context is not None
     assert result.context.artifacts[0].text == "context"
+    assert result.receipt.data is data
+    assert result.receipt.workflow is workflow
     assert result.receipt.requests.dispatched_count == 1
     assert result.receipt.cleanup[0].disposition == "left_open"
