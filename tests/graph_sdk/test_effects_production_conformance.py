@@ -162,6 +162,7 @@ LOCAL_BRIDGE_CASES = tuple(
     if case["case_id"]
     in {
         "bridges/result",
+        "bridges/cancel_after_start",
         "bridges/failure_rejected_before_acceptance",
         "bridges/failure_retryable",
         "bridges/failure_malformed_response",
@@ -1013,9 +1014,14 @@ class _CaseProvider:
 class _BridgeLocalCallback:
     failure: str | None
     calls: int = 0
+    block: bool = False
+    started: asyncio.Event = field(default_factory=asyncio.Event)
 
     async def run(self, request: tuple[AssociationInput, ...]) -> LocalCompleted | LocalFailure:
         self.calls += 1
+        self.started.set()
+        if self.block:
+            await asyncio.Event().wait()
         if self.failure is not None:
             return LocalFailure(failure=cast(Any, self.failure))
         return LocalCompleted(
@@ -1077,35 +1083,40 @@ async def _assert_local_bridge_case(case: dict[str, Any]) -> None:
         if "/failure_" in cast(str, case["case_id"])
         else None
     )
-    callback = _BridgeLocalCallback(failure=condition)
-    result = await (
-        await start_execution(
-            admitted=admitted,
-            capabilities=(selected.capability,),
-            services=ExecutionServices(
-                handles=(
-                    ImplementationHandle(
-                        implementation=implementation.implementation,
-                        operation=implementation.capability.operation,
-                        configuration=implementation.configuration,
-                        local=callback,
-                        transport=None,
-                        resource=None,
-                    ),
+    callback = _BridgeLocalCallback(
+        failure=condition,
+        block=case["case_id"] == "bridges/cancel_after_start",
+    )
+    running = await start_execution(
+        admitted=admitted,
+        capabilities=(selected.capability,),
+        services=ExecutionServices(
+            handles=(
+                ImplementationHandle(
+                    implementation=implementation.implementation,
+                    operation=implementation.capability.operation,
+                    configuration=implementation.configuration,
+                    local=callback,
+                    transport=None,
+                    resource=None,
                 ),
-                context_resources=(),
-                limits=ExecutionLimits(
-                    max_local_in_flight=1,
-                    max_remote_outstanding=0,
-                    max_runtime_artifacts=4,
-                    max_runtime_artifact_bytes=64,
-                    max_collection_items=1,
-                ),
-                decision_limits=DecisionLimits(max_pending=0, max_lifetime_ns=0),
-                clock=_ZeroClock(),
             ),
-        )
-    ).wait()
+            context_resources=(),
+            limits=ExecutionLimits(
+                max_local_in_flight=1,
+                max_remote_outstanding=0,
+                max_runtime_artifacts=4,
+                max_runtime_artifact_bytes=64,
+                max_collection_items=1,
+            ),
+            decision_limits=DecisionLimits(max_pending=0, max_lifetime_ns=0),
+            clock=_ZeroClock(),
+        ),
+    )
+    if callback.block:
+        await callback.started.wait()
+        running.request_cancel()
+    result = await running.wait()
     expected = cast(dict[str, Any], case["expected"])["state"]
     assert callback.calls == 1
     assert len(result.record.terminals) == 1
