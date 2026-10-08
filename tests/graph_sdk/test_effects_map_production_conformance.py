@@ -200,6 +200,7 @@ def _map_fixture(*, max_children: int = 2) -> _MapFixture:
 @dataclass
 class _MapCallback:
     mode: str
+    response_mode: str
     item_count: int
     collection_type: ArtifactType
     text_type: ArtifactType
@@ -211,23 +212,22 @@ class _MapCallback:
         outcome = "ok"
         if self.mode == "expander":
             outcome = "expand"
-            outputs = (
-                PortArtifact(
-                    port="members",
-                    artifact_type=self.collection_type,
-                    artifact=None,
-                    value=TextCollectionValue(
-                        items=tuple(
-                            TextCollectionItem(
-                                key=index,
-                                version=1,
-                                value=TextArtifactValue(text=f"item-{index}"),
-                            )
-                            for index in range(self.item_count)
+            membership = PortArtifact(
+                port="members",
+                artifact_type=self.text_type if self.response_mode == "wrong_type" else self.collection_type,
+                artifact=None,
+                value=TextCollectionValue(
+                    items=tuple(
+                        TextCollectionItem(
+                            key=index,
+                            version=1,
+                            value=TextArtifactValue(text=f"item-{index}"),
                         )
-                    ),
+                        for index in range(self.item_count)
+                    )
                 ),
             )
+            outputs = (membership, membership) if self.response_mode == "duplicate" else (membership,)
         return LocalCompleted(
             results=(
                 AssociationResult(
@@ -321,13 +321,20 @@ def _admit_fixture(
     )
 
 
-async def _execute_membership(item_count: int):
+async def _execute_membership(
+    item_count: int,
+    *,
+    response_mode: str = "valid",
+    max_artifacts: int = 8,
+    max_collection_items: int = 4,
+):
     fixture = _map_fixture()
     admitted = _admit_fixture(fixture)
     by_node = dict(zip((fixture.expander, fixture.member, fixture.join), fixture.capabilities, strict=True))
     callbacks = {
         node: _MapCallback(
             mode="expander" if node == fixture.expander else "operation",
+            response_mode=response_mode,
             item_count=item_count,
             collection_type=fixture.collection_type,
             text_type=fixture.text_type,
@@ -355,9 +362,9 @@ async def _execute_membership(item_count: int):
                 limits=ExecutionLimits(
                     max_local_in_flight=4,
                     max_remote_outstanding=0,
-                    max_runtime_artifacts=8,
+                    max_runtime_artifacts=max_artifacts,
                     max_runtime_artifact_bytes=128,
-                    max_collection_items=4,
+                    max_collection_items=max_collection_items,
                 ),
                 decision_limits=DecisionLimits(max_pending=0, max_lifetime_ns=0),
                 clock=_Clock(),
@@ -441,3 +448,76 @@ async def _assert_map_membership(item_count: int) -> None:
     assert {entry.template for entry in state.entries if entry.activation in expansion.members} == (
         {fixture.member} if item_count else set()
     )
+
+
+@pytest.mark.parametrize(
+    ("case_id", "response_mode"),
+    (
+        ("map/wrong_membership_type", "wrong_type"),
+        ("map/duplicate_membership_port", "duplicate"),
+    ),
+)
+def test_malformed_map_results_publish_no_partial_facts(case_id: str, response_mode: str) -> None:
+    asyncio.run(_assert_malformed_map_result(case_id, response_mode))
+
+
+async def _assert_malformed_map_result(case_id: str, response_mode: str) -> None:
+    case = MAP_CASES[case_id]
+    fixture, result, _ = await _execute_membership(1, response_mode=response_mode)
+    expander = next(entry for entry in result.states[0].entries if entry.template == fixture.expander)
+    assert expander.status == "failure"
+    assert expander.outcome is None
+    assert case["expected"]["state"]["terminal"] == "malformed_response"
+    assert not any(isinstance(fact.key, (OperationOutputKey, MapItemKey)) for fact in result.provenance)
+    assert all(fact.node != fixture.expander or fact.port == "default" for fact in result.ports)
+    assert len(result.artifacts) == 1
+
+
+def test_map_overflow_publishes_collection_without_item_facts() -> None:
+    asyncio.run(_assert_map_overflow())
+
+
+async def _assert_map_overflow() -> None:
+    case = MAP_CASES["map/membership_one_over"]
+    fixture, result, _ = await _execute_membership(3)
+    expansion = next(iter(result.states[0].expansions))
+    assert expansion.status == "overflow"
+    assert not expansion.members
+    assert case["expected"]["state"]["terminal"] == "overflow"
+    outputs = [fact for fact in result.provenance if isinstance(fact.key, OperationOutputKey)]
+    assert len(outputs) == 1
+    assert outputs[0].key.port == "members"
+    assert not any(isinstance(fact.key, MapItemKey) for fact in result.provenance)
+    assert len(result.artifacts) == 2  # one captured root plus the accepted collection
+
+
+@pytest.mark.parametrize(
+    ("case_id", "max_artifacts", "max_collection_items"),
+    (
+        ("map/artifact_count_one_over", 3, 4),
+        ("map/collection_items_one_over", 9, 1),
+        ("map/overflow_collection_storage_one_over", 9, 2),
+    ),
+)
+def test_map_storage_limits_rollback_publication(
+    case_id: str,
+    max_artifacts: int,
+    max_collection_items: int,
+) -> None:
+    asyncio.run(_assert_map_storage_limit(case_id, max_artifacts, max_collection_items))
+
+
+async def _assert_map_storage_limit(case_id: str, max_artifacts: int, max_collection_items: int) -> None:
+    case = MAP_CASES[case_id]
+    item_count = 3 if case_id == "map/overflow_collection_storage_one_over" else 2
+    fixture, result, _ = await _execute_membership(
+        item_count,
+        max_artifacts=max_artifacts,
+        max_collection_items=max_collection_items,
+    )
+    expander = next(entry for entry in result.states[0].entries if entry.template == fixture.expander)
+    assert expander.status == "blocked"
+    assert expander.outcome is None
+    assert case["expected"]["state"]["terminal"] == "artifact_limit"
+    assert not any(isinstance(fact.key, (OperationOutputKey, MapItemKey)) for fact in result.provenance)
+    assert len(result.artifacts) == 1
