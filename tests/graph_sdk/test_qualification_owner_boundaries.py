@@ -12,9 +12,10 @@ import pytest
 from anonymizer.engine.graph_sdk._effect_values import EffectCode, EffectRejected
 from anonymizer.engine.graph_sdk.capabilities import PreparationCode, PreparationRejected
 from anonymizer.engine.graph_sdk.evidence import AssessmentSubmission
+from anonymizer.engine.graph_sdk.preparation import StateRevision, StateRevisionView
 from anonymizer.engine.graph_sdk.qualification import qualify
 from anonymizer.graph._values import ContractViolation, ValidationCode
-from anonymizer.graph.workflow import CoverageAtom, CoverageKind, EvidencePromise
+from anonymizer.graph.workflow import CoverageAtom, CoverageKind, EvidencePromise, StateEffect
 from tests.graph_sdk.test_qualification import _inputs
 from tests.graph_sdk.test_qualification_subject_context import _execute_separate_subject_context
 
@@ -86,3 +87,48 @@ def test_consumed_port_cannot_introduce_an_unsupported_role() -> None:
     with pytest.raises(EffectRejected) as error:
         qualify(admitted=admitted, result=result, current=current, submissions=submissions)
     assert error.value.code is EffectCode.UNSUPPORTED
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "code"),
+    [
+        ("structural", 1, ValidationCode.INVALID_TYPE),
+        ("reasons", frozenset({"unexpected"}), ValidationCode.INVALID_VALUE),
+        ("attempt", None, ValidationCode.CONTRADICTORY),
+    ],
+)
+def test_retained_terminal_preserves_its_value_invariants(field: str, value: object, code: ValidationCode) -> None:
+    execution, result = asyncio.run(_execute_separate_subject_context())
+    admitted, current, submissions = _inputs(execution, result)
+    (terminal,) = result.record.terminals
+    object.__setattr__(terminal, field, value)
+    with pytest.raises(ContractViolation) as error:
+        qualify(admitted=admitted, result=result, current=current, submissions=submissions)
+    assert error.value.code is code
+
+
+@pytest.mark.parametrize("second_revision", [1, 2])
+def test_raw_state_revision_keys_reject_duplicates_before_canonicalization(second_revision: int) -> None:
+    effect = StateEffect(kind="read", name="read")
+    first = StateRevision(effect=effect, revision=1)
+    second = StateRevision(effect=effect, revision=second_revision)
+    with pytest.raises(PreparationRejected) as error:
+        StateRevisionView.from_revisions(revisions=(first, second))
+    assert error.value.code is PreparationCode.DUPLICATE
+
+
+def test_raw_state_revision_view_preserves_distinct_effects_and_order_independence() -> None:
+    revisions = (
+        StateRevision(effect=StateEffect(kind="read", name="a"), revision=1),
+        StateRevision(effect=StateEffect(kind="read", name="b"), revision=1),
+    )
+    forward = StateRevisionView.from_revisions(revisions=revisions)
+    backward = StateRevisionView.from_revisions(revisions=tuple(reversed(revisions)))
+    assert forward == backward == StateRevisionView(revisions=frozenset(revisions))
+
+
+@pytest.mark.parametrize("revisions", [[], (object(),)])
+def test_raw_state_revision_view_rejects_invalid_input_types(revisions: object) -> None:
+    with pytest.raises(PreparationRejected) as error:
+        StateRevisionView.from_revisions(revisions=cast(tuple[StateRevision, ...], revisions))
+    assert error.value.code is PreparationCode.INVALID_TYPE

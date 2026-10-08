@@ -317,6 +317,7 @@ class _Qualification:
             if terminal is None:
                 self.incomplete(target)
                 continue
+            terminal.__post_init__()
             structural = isinstance(self.nodes[entry.template], SubgraphNode)
             if terminal.structural != structural or terminal.category != entry.status:
                 reject(EffectCode.CONTRADICTORY)

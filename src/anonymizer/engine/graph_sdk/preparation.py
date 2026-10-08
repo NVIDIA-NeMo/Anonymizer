@@ -112,6 +112,16 @@ class StateRevisionView(_PrivateValue):
         ):
             _reject(PreparationCode.INVALID_TYPE)
 
+    @classmethod
+    def from_revisions(cls, *, revisions: tuple[StateRevision, ...]) -> StateRevisionView:
+        """Validate raw revision keys before converting them to a canonical set."""
+        if not isinstance(revisions, tuple) or any(not isinstance(item, StateRevision) for item in revisions):
+            _reject(PreparationCode.INVALID_TYPE)
+        effects = [item.effect for item in revisions]
+        if len(effects) != len(set(effects)):
+            _reject(PreparationCode.DUPLICATE)
+        return cls(revisions=frozenset(revisions))
+
 
 @dataclass(frozen=True, slots=True, kw_only=True, repr=False)
 class PreparationConfiguration(_PrivateValue):
