@@ -116,8 +116,12 @@ _BASE_CASES = tuple(
         or case["case_id"]
         in {
             "binding/adaptive_semantic_outcome_independent",
+            "binding/cancelled_late_source_failure",
+            "binding/cancelled_late_source_result",
             "binding/cancel_after_dispatch_lost",
             "binding/cancel_before_dispatch",
+            "binding/lost_late_source_failure",
+            "binding/lost_late_source_result",
             "binding/source_failure_correction_authority",
             "binding/source_failure_retry_authority",
             "binding/success_after_failure_preserves_authority",
