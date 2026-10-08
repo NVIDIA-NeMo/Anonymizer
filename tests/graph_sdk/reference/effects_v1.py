@@ -15,8 +15,10 @@ Json: TypeAlias = str | int | bool | None | list["Json"] | dict[str, "Json"]
 Object: TypeAlias = dict[str, Json]
 MappingKey: TypeAlias = tuple[str, str | None, str | None]
 CONTRACT_SHA256 = "9b0ab07b8c0212ffd954dc37eb37540141da6899753fc778ad26238494aeaeca"
-GENERATOR_VERSION = "effects-v1-generator-4-binding-map"
-SELF_TEST_VERSION = "effects-v1-self-test-4-binding-map"
+REQUEST_BOUNDARY_ADDENDUM_SHA256 = "6344f7f1bdbb14a4c9e08f546928d31c89f26d3ed26e0c50362d9537d891c3a5"
+
+GENERATOR_VERSION = "effects-v1-generator-6-binding-map"
+SELF_TEST_VERSION = "effects-v1-self-test-6-binding-map"
 MATERIALIZATION_ADDENDUM_SHA256 = "b1a5651ee2649b01c89e80bd1442e3f03209292b48ce846d27714698f57eb07c"
 BASE_CORPUS_SHA256 = "c62f2cc7e7237ea030451ac8d35a3c30b39f71766b4275348597949d560a7a6a"
 PREDECESSOR_CASE_COUNT = 214
@@ -605,6 +607,14 @@ def _advance(state: Object, declaration: Object, event: Object) -> Object | None
             settlements[request] = value
             if event["remote_stopped"] is True:
                 _remove(state, "remote_outstanding", request)
+    elif kind == "binding_result":
+        # AssociationResult construction precedes any request reducer event.
+        if (
+            event.get("outcome") != "retrieved"
+            or event.get("outputs") != []
+            or event.get("consumed_context_ports") != []
+        ):
+            return _reject("contradictory")
     elif kind == "source_result":
         request = cast(str, event.get("request"))
         if request not in dispatched or request not in _object(state["request_associations"]):
@@ -2349,7 +2359,16 @@ def _binding_correction_specs() -> list[Object]:
                 "binding",
                 name,
                 _binding_decl({"D0": "S0"}),
-                [*_trace(("D0",)), dict(base_result, **changes)],
+                [
+                    *_trace(("D0",)),
+                    {
+                        "kind": "binding_result",
+                        "association": "D0",
+                        "outcome": changes.get("outcome", "retrieved"),
+                        "outputs": changes.get("outputs", []),
+                        "consumed_context_ports": changes.get("consumed_context_ports", []),
+                    },
+                ],
             )
         )
     cases.append(
@@ -3618,6 +3637,7 @@ def build_manifest(cases: Sequence[Object]) -> Object:
         "optional_omission_addendum_sha256": OPTIONAL_OMISSION_ADDENDUM_SHA256,
         "map_execution_addendum_sha256": MAP_EXECUTION_ADDENDUM_SHA256,
         "binding_success_addendum_sha256": BINDING_SUCCESS_ADDENDUM_SHA256,
+        "request_boundary_addendum_sha256": REQUEST_BOUNDARY_ADDENDUM_SHA256,
         "corpus_path": CORPUS_PATH,
         "corpus_sha256": hashlib.sha256(corpus).hexdigest(),
         "event_count": event_count(cases),

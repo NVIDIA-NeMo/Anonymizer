@@ -515,12 +515,7 @@ def test_binding_success_records_physical_and_association_authority() -> None:
 
 
 def test_binding_success_shape_and_oversize_are_closed() -> None:
-    for suffix in (
-        "source_result_wrong_outcome",
-        "source_result_outputs_present",
-        "source_result_consumed_present",
-        "empty_optional_response_malformed",
-    ):
+    for suffix in ("empty_optional_response_malformed",):
         state = cast(
             reference.Object,
             cast(reference.Object, reference.case_by_id(f"binding/{suffix}")["expected"])["state"],
@@ -718,3 +713,21 @@ def test_optional_oversize_preserves_physical_success_and_partial_binding() -> N
     assert state["binding_sources"] == {"D0": "oversize"}
     assert state["request_facts"] == {"R0": {"condition": "result", "outcomes": {"D0": "retrieved"}}}
     assert state["artifacts"] == []
+
+
+def test_binding_result_constructor_mutants_do_not_claim_provider_terminals() -> None:
+    for suffix in ("source_result_wrong_outcome", "source_result_outputs_present", "source_result_consumed_present"):
+        case = reference.case_by_id(f"binding/{suffix}")
+        result = cast(reference.Object, case["expected"])
+        assert result == {"status": "rejected", "code": "contradictory"}
+        event = cast(list[reference.Object], case["events"])[-1]
+        assert event["kind"] == "binding_result"
+        assert "items" not in event and "source" not in event
+
+
+def test_manifest_binds_request_boundary_addendum() -> None:
+    manifest = json.loads(MANIFEST.read_text())
+    assert manifest["request_boundary_addendum_sha256"] == reference.REQUEST_BOUNDARY_ADDENDUM_SHA256
+    assert (
+        reference.REQUEST_BOUNDARY_ADDENDUM_SHA256 == "6344f7f1bdbb14a4c9e08f546928d31c89f26d3ed26e0c50362d9537d891c3a5"
+    )

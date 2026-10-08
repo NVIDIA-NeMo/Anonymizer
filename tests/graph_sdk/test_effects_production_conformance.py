@@ -16,6 +16,9 @@ from anonymizer.engine.graph_sdk.requests import (
     AcceptFailure,
     AcceptResult,
     AssociationResult,
+    BindingAssociation,
+    BindingDeclarationId,
+    BindingId,
     Dispatch,
     ExactUsage,
     ExternalSettlement,
@@ -24,6 +27,7 @@ from anonymizer.engine.graph_sdk.requests import (
     ObserveSettlement,
     PhysicalRequestId,
     PhysicalRequestPolicy,
+    PortArtifact,
     RequestCancel,
     RequestPolicyBinding,
     RequestState,
@@ -31,6 +35,7 @@ from anonymizer.engine.graph_sdk.requests import (
     ScopeCancel,
     SemanticAssociation,
     StopAcknowledged,
+    TextArtifactValue,
     UnknownUsage,
     advance_requests,
     bind_request_policies,
@@ -38,6 +43,7 @@ from anonymizer.engine.graph_sdk.requests import (
 )
 from anonymizer.engine.graph_sdk.resources import ResourceLease, close_resource
 from anonymizer.graph._values import ActivationKey, InvocationId, PlanId, TaskAttemptId
+from anonymizer.graph.workflow import ArtifactType
 
 CORPUS = Path(__file__).parent / "reference" / "effects_v1_cases.json"
 REQUEST_FAMILIES = {"budgets", "keyed", "retry", "races", "inflight"}
@@ -70,6 +76,16 @@ RESOURCE_CASES = tuple(
         "resources/sdk_close_unknown",
     }
 )
+BINDING_RESULT_SHAPE_CASES = tuple(
+    case
+    for case in json.loads(CORPUS.read_bytes())
+    if case["case_id"]
+    in {
+        "binding/source_result_wrong_outcome",
+        "binding/source_result_outputs_present",
+        "binding/source_result_consumed_present",
+    }
+)
 
 
 class _Closable:
@@ -95,6 +111,35 @@ def test_resource_corpus_case_through_production(case: dict[str, Any]) -> None:
     fact = asyncio.run(close_resource(lease))
     expected = cast(dict[str, Any], case["expected"])["state"]["cleanup"]["Q0"]
     assert fact.disposition == expected
+
+
+@pytest.mark.parametrize("case", BINDING_RESULT_SHAPE_CASES, ids=lambda case: cast(str, case["case_id"]))
+def test_binding_result_shape_case_through_production(case: dict[str, Any]) -> None:
+    event = cast(list[dict[str, Any]], case["events"])[-1]
+    binding = BindingId.new()
+    association = BindingAssociation(declaration=BindingDeclarationId.new(binding=binding, ordinal=0))
+    outputs = tuple(
+        PortArtifact(
+            port=cast(str, item["port"]),
+            artifact_type=ArtifactType(name="text", revision=1),
+            artifact=None,
+            value=TextArtifactValue(text="unexpected"),
+        )
+        for item in cast(list[dict[str, object]], event.get("outputs", []))
+    )
+    rejected: str | None = None
+    try:
+        AssociationResult(
+            association=association,
+            outcome=cast(str, event.get("outcome", "retrieved")),
+            outputs=outputs,
+            consumed_context_ports=frozenset(cast(list[str], event.get("consumed_context_ports", []))),
+        )
+    except EffectRejected as exc:
+        rejected = exc.code.value
+    expected = cast(dict[str, str], case["expected"])
+    assert ("rejected" if rejected else "accepted") == expected["status"]
+    assert rejected == expected["code"]
 
 
 def _policy(value: dict[str, Any]) -> PhysicalRequestPolicy:
@@ -173,6 +218,7 @@ def test_request_corpus_case_through_production(case: dict[str, Any]) -> None:
         "settlements",
         "request_facts",
         "cancel_requested",
+        "association_requests",
     ):
         assert actual[key] == expected_state[key], (case["case_id"], key)
 
@@ -346,4 +392,9 @@ def _normalize(
         "settlements": settlements,
         "request_facts": request_facts,
         "cancel_requested": sorted(request_names[item] for item in state.cancel_requested),
+        "association_requests": {
+            task_names[association]: request_names[item.request]
+            for item in state.dispatches
+            for association in item.associations
+        },
     }

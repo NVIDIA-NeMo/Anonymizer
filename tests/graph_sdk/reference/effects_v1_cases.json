@@ -36485,130 +36485,16 @@
         "request": "R0"
       },
       {
+        "association": "D0",
         "consumed_context_ports": [],
-        "items": [
-          {
-            "association": "D0",
-            "key": 0,
-            "text": "a",
-            "version": 1
-          }
-        ],
-        "kind": "source_result",
+        "kind": "binding_result",
         "outcome": "ok",
-        "outputs": [],
-        "request": "R0",
-        "settlement": {
-          "disposition": "completed",
-          "remote_stopped": true,
-          "usage": {
-            "input": 0,
-            "output": 0
-          }
-        },
-        "source": "S0"
+        "outputs": []
       }
     ],
     "expected": {
-      "state": {
-        "artifacts": [],
-        "association_requests": {
-          "D0": "R0"
-        },
-        "association_terminals": {
-          "D0": {
-            "failure": "malformed_response",
-            "policy": "P0",
-            "request": "R0"
-          }
-        },
-        "attempts": {
-          "D0": 1
-        },
-        "binding_declarations": {
-          "D0": "S0"
-        },
-        "binding_defects": [
-          "malformed_source_result"
-        ],
-        "binding_sources": {},
-        "binding_terminal": "inconsistent",
-        "bindings": {
-          "D0": [
-            "P0"
-          ]
-        },
-        "cancel_requested": [],
-        "cleanup": {},
-        "closed_unstarted": {},
-        "decision_defects": [],
-        "decisions": {},
-        "defects": [],
-        "denials": {},
-        "dispatched": [
-          "R0"
-        ],
-        "dispatched_count": 1,
-        "local_in_flight": [],
-        "policies": {
-          "P0": {
-            "failover_failures": [
-              "permanent",
-              "implementation_exception"
-            ],
-            "max_attempts": 2,
-            "replay": "idempotent",
-            "retry_owner": "executor"
-          },
-          "P1": {
-            "failover_failures": [
-              "permanent",
-              "implementation_exception"
-            ],
-            "max_attempts": 3,
-            "replay": "idempotent",
-            "retry_owner": "executor"
-          }
-        },
-        "remote_outstanding": [],
-        "request_associations": {
-          "R0": [
-            "D0"
-          ]
-        },
-        "request_facts": {
-          "R0": {
-            "condition": "failure",
-            "failure": "malformed_response"
-          }
-        },
-        "request_failures": {
-          "R0": "malformed_response"
-        },
-        "request_policies": {
-          "R0": "P0"
-        },
-        "reservation_policies": {},
-        "reservations": {},
-        "resource_count": 0,
-        "resources": {},
-        "settlements": {
-          "R0": {
-            "disposition": "completed",
-            "remote_stopped": true,
-            "usage": {
-              "input": 0,
-              "output": 0
-            }
-          }
-        },
-        "task_requests": {},
-        "tasks": {},
-        "terminals": {
-          "R0": "failure"
-        }
-      },
-      "status": "accepted"
+      "code": "contradictory",
+      "status": "rejected"
     },
     "family": "binding",
     "traces": []
@@ -36668,134 +36554,20 @@
         "request": "R0"
       },
       {
+        "association": "D0",
         "consumed_context_ports": [],
-        "items": [
-          {
-            "association": "D0",
-            "key": 0,
-            "text": "a",
-            "version": 1
-          }
-        ],
-        "kind": "source_result",
+        "kind": "binding_result",
         "outcome": "retrieved",
         "outputs": [
           {
             "port": "x"
           }
-        ],
-        "request": "R0",
-        "settlement": {
-          "disposition": "completed",
-          "remote_stopped": true,
-          "usage": {
-            "input": 0,
-            "output": 0
-          }
-        },
-        "source": "S0"
+        ]
       }
     ],
     "expected": {
-      "state": {
-        "artifacts": [],
-        "association_requests": {
-          "D0": "R0"
-        },
-        "association_terminals": {
-          "D0": {
-            "failure": "malformed_response",
-            "policy": "P0",
-            "request": "R0"
-          }
-        },
-        "attempts": {
-          "D0": 1
-        },
-        "binding_declarations": {
-          "D0": "S0"
-        },
-        "binding_defects": [
-          "malformed_source_result"
-        ],
-        "binding_sources": {},
-        "binding_terminal": "inconsistent",
-        "bindings": {
-          "D0": [
-            "P0"
-          ]
-        },
-        "cancel_requested": [],
-        "cleanup": {},
-        "closed_unstarted": {},
-        "decision_defects": [],
-        "decisions": {},
-        "defects": [],
-        "denials": {},
-        "dispatched": [
-          "R0"
-        ],
-        "dispatched_count": 1,
-        "local_in_flight": [],
-        "policies": {
-          "P0": {
-            "failover_failures": [
-              "permanent",
-              "implementation_exception"
-            ],
-            "max_attempts": 2,
-            "replay": "idempotent",
-            "retry_owner": "executor"
-          },
-          "P1": {
-            "failover_failures": [
-              "permanent",
-              "implementation_exception"
-            ],
-            "max_attempts": 3,
-            "replay": "idempotent",
-            "retry_owner": "executor"
-          }
-        },
-        "remote_outstanding": [],
-        "request_associations": {
-          "R0": [
-            "D0"
-          ]
-        },
-        "request_facts": {
-          "R0": {
-            "condition": "failure",
-            "failure": "malformed_response"
-          }
-        },
-        "request_failures": {
-          "R0": "malformed_response"
-        },
-        "request_policies": {
-          "R0": "P0"
-        },
-        "reservation_policies": {},
-        "reservations": {},
-        "resource_count": 0,
-        "resources": {},
-        "settlements": {
-          "R0": {
-            "disposition": "completed",
-            "remote_stopped": true,
-            "usage": {
-              "input": 0,
-              "output": 0
-            }
-          }
-        },
-        "task_requests": {},
-        "tasks": {},
-        "terminals": {
-          "R0": "failure"
-        }
-      },
-      "status": "accepted"
+      "code": "contradictory",
+      "status": "rejected"
     },
     "family": "binding",
     "traces": []
@@ -36855,132 +36627,18 @@
         "request": "R0"
       },
       {
+        "association": "D0",
         "consumed_context_ports": [
           "x"
         ],
-        "items": [
-          {
-            "association": "D0",
-            "key": 0,
-            "text": "a",
-            "version": 1
-          }
-        ],
-        "kind": "source_result",
+        "kind": "binding_result",
         "outcome": "retrieved",
-        "outputs": [],
-        "request": "R0",
-        "settlement": {
-          "disposition": "completed",
-          "remote_stopped": true,
-          "usage": {
-            "input": 0,
-            "output": 0
-          }
-        },
-        "source": "S0"
+        "outputs": []
       }
     ],
     "expected": {
-      "state": {
-        "artifacts": [],
-        "association_requests": {
-          "D0": "R0"
-        },
-        "association_terminals": {
-          "D0": {
-            "failure": "malformed_response",
-            "policy": "P0",
-            "request": "R0"
-          }
-        },
-        "attempts": {
-          "D0": 1
-        },
-        "binding_declarations": {
-          "D0": "S0"
-        },
-        "binding_defects": [
-          "malformed_source_result"
-        ],
-        "binding_sources": {},
-        "binding_terminal": "inconsistent",
-        "bindings": {
-          "D0": [
-            "P0"
-          ]
-        },
-        "cancel_requested": [],
-        "cleanup": {},
-        "closed_unstarted": {},
-        "decision_defects": [],
-        "decisions": {},
-        "defects": [],
-        "denials": {},
-        "dispatched": [
-          "R0"
-        ],
-        "dispatched_count": 1,
-        "local_in_flight": [],
-        "policies": {
-          "P0": {
-            "failover_failures": [
-              "permanent",
-              "implementation_exception"
-            ],
-            "max_attempts": 2,
-            "replay": "idempotent",
-            "retry_owner": "executor"
-          },
-          "P1": {
-            "failover_failures": [
-              "permanent",
-              "implementation_exception"
-            ],
-            "max_attempts": 3,
-            "replay": "idempotent",
-            "retry_owner": "executor"
-          }
-        },
-        "remote_outstanding": [],
-        "request_associations": {
-          "R0": [
-            "D0"
-          ]
-        },
-        "request_facts": {
-          "R0": {
-            "condition": "failure",
-            "failure": "malformed_response"
-          }
-        },
-        "request_failures": {
-          "R0": "malformed_response"
-        },
-        "request_policies": {
-          "R0": "P0"
-        },
-        "reservation_policies": {},
-        "reservations": {},
-        "resource_count": 0,
-        "resources": {},
-        "settlements": {
-          "R0": {
-            "disposition": "completed",
-            "remote_stopped": true,
-            "usage": {
-              "input": 0,
-              "output": 0
-            }
-          }
-        },
-        "task_requests": {},
-        "tasks": {},
-        "terminals": {
-          "R0": "failure"
-        }
-      },
-      "status": "accepted"
+      "code": "contradictory",
+      "status": "rejected"
     },
     "family": "binding",
     "traces": []

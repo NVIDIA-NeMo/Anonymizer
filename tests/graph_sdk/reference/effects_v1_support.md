@@ -1,3 +1,26 @@
+# R2 binding/map reference v6
+
+V6 adds the missing manifest binding to request-boundary addendum SHA 6344f7f1bdbb14a4c9e08f546928d31c89f26d3ed26e0c50362d9537d891c3a5.
+The corpus is byte-identical to v5. This version retains the three v4 constructor-boundary corrections under
+D06-request-boundary-addendum-v1.md. It changes no other case and removes none.
+Counts remain 296 cases, 301 traces, 1008 events.
+
+The existing IDs source_result_wrong_outcome, source_result_outputs_present and
+source_result_consumed_present now use binding_result events representing direct
+AssociationResult construction. Expected rejection is CONTRADICTORY before any
+AcceptResult/settlement or source fact. The fields cannot be supplied through
+SourceResponse; generic invalid provider dictionaries are not equivalent tests.
+All genuine provider responses and cancellation-race witnesses remain unchanged.
+
+46 isolated tests, Ruff and ty are checked for this version. All earlier
+reference bytes and reports remain historical. The materialization-v2 prefix
+and its 20 corrected cases are unchanged from v4.
+
+## Historical v4 support
+
+The following describes v4 and its predecessor comparison. V5 differs only in
+the three cases above; use the v5 manifest for its corpus digest.
+
 # R2 binding/map reference v4
 
 Independent neutral reference; no production imports or output-derived expectations.
