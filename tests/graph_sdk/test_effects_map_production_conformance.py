@@ -910,27 +910,14 @@ def test_dynamic_map_items_override_an_unavailable_static_default() -> None:
 
 
 async def _assert_dynamic_map_items_override_default() -> None:
-    case = MAP_CASES["map/default_override_no_fallback"]
-    fixture, result, callbacks = await _execute_membership(
-        2,
-        item_values=("a", "b"),
+    await _assert_map_result_publication(
+        "map/default_override_no_fallback",
+        ("actual",),
+        artifact_headroom=8,
+        artifact_byte_headroom=32,
+        other_count=0,
         default_override=True,
     )
-    assert fixture.default_source is not None
-    assert len(callbacks[fixture.default_source].calls) == 1
-    expansion = next(iter(result.states[0].expansions))
-    assert expansion.status == "closed"
-    map_items = {fact.key.member: fact for fact in result.provenance if isinstance(fact.key, MapItemKey)}
-    member_calls = [call[0] for call in callbacks[fixture.member].calls]
-    assert len(member_calls) == len(map_items) == 2
-    assert {
-        cast(SemanticAssociation, call.association).task.activation: (call.inputs[0].artifact, call.inputs[0].value)
-        for call in member_calls
-    } == {
-        activation: (fact.artifact, TextArtifactValue(text=("a", "b")[fact.key.item_key]))
-        for activation, fact in map_items.items()
-    }
-    assert case["expected"]["state"]["terminal"] == "published"
 
 
 async def _assert_control_only_map() -> None:
@@ -983,6 +970,7 @@ async def _assert_map_result_publication(
     artifact_headroom: int,
     artifact_byte_headroom: int,
     other_count: int,
+    default_override: bool = False,
 ) -> None:
     case = MAP_CASES[case_id]
     fixture, result, callbacks = await _execute_membership(
@@ -991,6 +979,7 @@ async def _assert_map_result_publication(
         artifact_headroom=artifact_headroom,
         artifact_byte_headroom=artifact_byte_headroom,
         other_count=other_count,
+        default_override=default_override,
         provenance_edge_headroom=cast(dict[str, int], case["declaration"]["limits"])["max_provenance_edges"],
     )
     expected = case["expected"]["state"]["publication"]
@@ -1030,6 +1019,9 @@ async def _assert_map_result_publication(
         and item.inputs[0].artifact == item_artifacts[item.association.task.activation]
         for item in member_inputs
     )
+    if default_override:
+        assert fixture.default_source is not None
+        assert len(callbacks[fixture.default_source].calls) == 1
     expander_ports = {fact.port: fact for fact in staged_ports if fact.node == fixture.expander}
     assert set(expander_ports) == set(outputs)
     assert all(expander_ports[port].artifact == fact.artifact for port, fact in outputs.items())
