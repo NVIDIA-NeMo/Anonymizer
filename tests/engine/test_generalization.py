@@ -18,6 +18,7 @@ from anonymizer.engine.constants import (
     COL_DISPOSITION_COVERAGE,
     COL_DISPOSITION_LATENT_ENTITIES,
     COL_GENERALIZATION_NEEDS_REVIEW,
+    COL_GENERALIZATION_REVIEW_DIAGNOSTICS,
     COL_GENERALIZATION_REVIEW_INPUT,
     COL_GENERALIZATION_SUGGESTIONS,
     COL_GENERALIZATION_TARGETS,
@@ -73,8 +74,29 @@ def _row() -> dict[str, Any]:
         }
     }
     build_generalization_targets(row)
+    row[COL_GENERALIZATION_REVIEW_INPUT] = [{"entity_id": 2, "suggested_value": "a professional"}]
     row[COL_REVIEWED_GENERALIZATION_SUGGESTIONS] = {"defects": [], "generalization_suggestions": [_suggestion()]}
     return row
+
+
+@pytest.mark.parametrize("review_value", ["a professional", None])
+def test_initial_omission_is_preserved(review_value: str | None, caplog: pytest.LogCaptureFixture) -> None:
+    row = _row()
+    row[COL_GENERALIZATION_REVIEW_INPUT][0]["suggested_value"] = None
+    reviewed = row[COL_REVIEWED_GENERALIZATION_SUGGESTIONS]["generalization_suggestions"][0]
+    reviewed["suggested_value"] = review_value
+    result = validate_generalization_suggestions(row)
+    canonical = result[COL_GENERALIZATION_SUGGESTIONS]["generalization_suggestions"][0]
+    assert canonical["suggested_value"] is None
+    assert canonical["status"] == "no_effective_generalization"
+    assert reviewed["suggested_value"] == review_value
+    assert reviewed["status"] == "ready"
+    assert bool(result[COL_GENERALIZATION_REVIEW_DIAGNOSTICS]) is (review_value is not None)
+    assert ("attempted to reverse" in caplog.text) is (review_value is not None)
+    result[COL_DISPOSITION_LATENT_ENTITIES] = ""
+    actions = _build_rewrite_actions(result)[COL_REWRITE_ACTIONS]
+    assert actions["generalize"] == []
+    assert [action["entity_id"] for action in actions["remove"]] == [2]
 
 
 @pytest.mark.parametrize("status", ["ready", "needs_context_change", "no_effective_generalization"])
