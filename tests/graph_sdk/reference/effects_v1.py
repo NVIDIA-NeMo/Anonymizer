@@ -18,8 +18,8 @@ MappingKey: TypeAlias = tuple[str, str | None, str | None]
 CONTRACT_SHA256 = "9b0ab07b8c0212ffd954dc37eb37540141da6899753fc778ad26238494aeaeca"
 REQUEST_BOUNDARY_ADDENDUM_SHA256 = "6344f7f1bdbb14a4c9e08f546928d31c89f26d3ed26e0c50362d9537d891c3a5"
 
-GENERATOR_VERSION = "effects-v1-generator-17-late-conflict-payload"
-SELF_TEST_VERSION = "effects-v1-self-test-17-late-conflict-payload"
+GENERATOR_VERSION = "effects-v1-generator-18-owner-complete-latest"
+SELF_TEST_VERSION = "effects-v1-self-test-18-owner-complete-latest"
 MATERIALIZATION_ADDENDUM_SHA256 = "b1a5651ee2649b01c89e80bd1442e3f03209292b48ce846d27714698f57eb07c"
 BASE_CORPUS_SHA256 = "c62f2cc7e7237ea030451ac8d35a3c30b39f71766b4275348597949d560a7a6a"
 PREDECESSOR_CASE_COUNT = 214
@@ -30,7 +30,7 @@ BINDING_SUCCESS_ADDENDUM_SHA256 = "c6689c78f712837072235ad8343de8bd8240ea2c7e858
 MATERIALIZED_VERSION_CONTRACT_SHA256 = "165c7c95bce31a7c5808860f28d012bbe1986bf0712cebdc86fb08ad07afcb21"
 ACCEPTED_PREDECESSOR_CORPUS_SHA256 = "d56c9c64367ca9f4aa211aeb0e1bc8c5c213c977af07f906eced572764bc7726"
 ACCEPTED_PREDECESSOR_CASE_COUNT = 296
-CORPUS_PATH = "future-contracts/r2-version-selection-v8/effects_v1_cases.json"
+CORPUS_PATH = "future-contracts/r2-version-selection-v9/effects_v1_cases.json"
 FAMILIES = (
     "budgets",
     "keyed",
@@ -170,8 +170,10 @@ def _initial(declaration: Object) -> Object:
         "terminals": {},
     }
     raw_specs = declaration.get("materializations", [])
-    if isinstance(raw_specs, list) and any(
-        isinstance(raw, dict) and raw.get("version_selection") == "latest" for raw in raw_specs
+    if (
+        declaration.get("binding_cleanup_projection") is True
+        or isinstance(raw_specs, list)
+        and any(isinstance(raw, dict) and raw.get("version_selection") == "latest" for raw in raw_specs)
     ):
         state.update(
             {
@@ -1004,9 +1006,10 @@ def _advance(state: Object, declaration: Object, event: Object) -> Object | None
             {"identity": key, "artifact_type": event["artifact_type"], "value": event["value"]}
         )
     elif kind == "root_artifact":
-        if set(event) != {"artifact_type", "kind", "port", "target", "value"} or not isinstance(
-            event.get("value"), str
-        ):
+        if set(event) not in (
+            {"artifact_type", "kind", "port", "target", "value"},
+            {"artifact_type", "kind", "node", "port", "target", "value"},
+        ) or not isinstance(event.get("value"), str):
             return _reject("invalid_type")
         admitted_root = {
             "artifact_type": event.get("artifact_type"),
@@ -1027,6 +1030,14 @@ def _advance(state: Object, declaration: Object, event: Object) -> Object | None
         }
         producer = f"RootInputKey:{event['target']}:{event['port']}"
         _object(materialization["provenance"])[producer] = {"artifact": identity, "parents": []}
+        if event.get("node") is not None:
+            port_key = f"root:{event['target']}:{event['node']}:{event['port']}"
+            _object(materialization["ports"])[port_key] = {
+                "artifact_type": event["artifact_type"],
+                "key": identity,
+                "value": event["value"],
+            }
+            _object(materialization.setdefault("input_parents", {}))[port_key] = producer
         materialization["artifact_count"] = cast(int, materialization["artifact_count"]) + 1
         materialization["artifact_bytes"] = cast(int, materialization["artifact_bytes"]) + len(
             cast(str, event["value"]).encode()
@@ -1059,15 +1070,22 @@ def _advance(state: Object, declaration: Object, event: Object) -> Object | None
         cleanup_associations = _object(state["binding_cleanup_associations"])
         cleanups = _object(state["binding_cleanup"])
         expected_cleanup = {cast(str, spec["association"]): cast(str, spec["target"]) for spec in initial_specs}
-        actual_cleanup = {
-            cast(str, _object(raw).get("association")): resource for resource, raw in cleanup_associations.items()
-        }
+        actual_cleanup: dict[str, str] = {}
+        for resource, raw in cleanup_associations.items():
+            value = _object(raw)
+            for association in _strings(value.get("associations", [value.get("association")])):
+                actual_cleanup[association] = resource
         if set(actual_cleanup) != set(expected_cleanup) or set(cleanups) != set(actual_cleanup.values()):
             return _reject("missing")
         for association, target in expected_cleanup.items():
             resource = actual_cleanup[association]
             cleanup_owner = _object(cleanup_associations[resource]).get("owner")
-            if _object(cleanup_associations[resource]).get("target") != target or cleanup_owner not in (
+            cleanup_targets = _strings(
+                _object(cleanup_associations[resource]).get(
+                    "targets", [_object(cleanup_associations[resource]).get("target")]
+                )
+            )
+            if target not in cleanup_targets or cleanup_owner not in (
                 "sdk",
                 "caller",
             ):
@@ -1082,6 +1100,21 @@ def _advance(state: Object, declaration: Object, event: Object) -> Object | None
         if key in occurrences:
             return _reject("duplicate")
         occurrences[key] = {**owner, "published_ports": [], "terminal": None}
+    elif kind == "operation_blocked":
+        if set(event) != {"activation", "attempt", "binding_declaration", "kind", "node", "reason", "target"}:
+            return _reject("invalid_value")
+        admitted = [_object(raw) for raw in _array(declaration.get("operation_occurrences", []))]
+        owner = {key: event[key] for key in ("activation", "attempt", "binding_declaration", "node", "target")}
+        if owner not in admitted or event.get("reason") != "omitted_optional":
+            return _reject("foreign_owner")
+        key = f"{event['activation']}:{event['attempt']}"
+        if key in _object(state["operation_occurrences"]):
+            return _reject("duplicate")
+        _object(state["operation_occurrences"])[key] = {
+            **owner,
+            "published_ports": [],
+            "terminal": {"category": "blocked", "reason": "omitted_optional"},
+        }
     elif kind == "operation_publish":
         candidate = deepcopy(state)
         rejected = _publish_operation(candidate, declaration, event)
@@ -1094,12 +1127,64 @@ def _advance(state: Object, declaration: Object, event: Object) -> Object | None
             "provenance_limit_exceeded",
         ):
             occurrence = _object(_object(state["operation_occurrences"])[f"{event['activation']}:{event['attempt']}"])
-            occurrence["terminal"] = {"category": "failure", "reason": "artifact_limit_exhausted"}
+            occurrence["terminal"] = {"category": "blocked", "reason": "artifact_limit_exhausted"}
             _array(state["publication_failures"]).append(
                 {"activation": event["activation"], "attempt": event["attempt"], "reason": "artifact_limit_exhausted"}
             )
         else:
             return rejected
+    elif kind == "root_operation_publish":
+        if set(event) != {"activation", "attempt", "kind", "node", "outcome", "output_port", "target", "value"}:
+            return _reject("invalid_value")
+        publications = [_object(raw) for raw in _array(declaration.get("root_publications", []))]
+        owner = {key: event[key] for key in ("activation", "node", "outcome", "output_port", "target")}
+        matches = [item for item in publications if all(item.get(key) == value for key, value in owner.items())]
+        if len(matches) != 1 or not isinstance(event.get("value"), str):
+            return _reject("foreign_owner")
+        publication = matches[0]
+        occurrence = _object(
+            _object(state["operation_occurrences"]).get(f"{event['activation']}:{event['attempt']}", {})
+        )
+        if not occurrence or occurrence.get("terminal") is not None:
+            return _reject("missing")
+        parent = f"RootInputKey:{event['target']}:{publication['input_port']}"
+        materialization = _object(state.get("materialization", {}))
+        if not any(
+            _object(raw).get("artifact") and key == parent
+            for key, raw in _object(materialization["provenance"]).items()
+        ):
+            return _reject("missing")
+        allocation = f"K{state['allocator_next']}"
+        output_ref = f"ArtifactRef:I0:{allocation}:1"
+        producer = (
+            f"OperationOutputKey:{event['activation']}:{event['target']}:"
+            f"{event['node']}:{event['outcome']}:{event['output_port']}"
+        )
+        byte_count = len(cast(str, event["value"]).encode())
+        limits = _object(declaration["materialization_limits"])
+        if cast(int, materialization["artifact_count"]) + 1 > cast(int, limits["max_artifacts"]):
+            return _reject("artifact_count_exceeded")
+        if cast(int, materialization["artifact_bytes"]) + byte_count > cast(int, limits["max_artifact_bytes"]):
+            return _reject("artifact_bytes_exceeded")
+        if cast(int, materialization["provenance_edges"]) + 1 > cast(int, limits["max_provenance_edges"]):
+            return _reject("provenance_limit_exceeded")
+        state["allocator_next"] = cast(int, state["allocator_next"]) + 1
+        _object(materialization["provenance"])[producer] = {"artifact": output_ref, "parents": [parent]}
+        materialization["artifact_count"] = cast(int, materialization["artifact_count"]) + 1
+        materialization["artifact_bytes"] = cast(int, materialization["artifact_bytes"]) + byte_count
+        materialization["provenance_edges"] = cast(int, materialization["provenance_edges"]) + 1
+        _array(state["artifacts"]).append(
+            {
+                "artifact_type": publication["artifact_type"],
+                "identity": output_ref,
+                "source": f"operation:{event['node']}",
+                "text": event["value"],
+            }
+        )
+        occurrence["published_ports"] = [event["output_port"]]
+        occurrence["terminal"] = {"category": "success", "outcome": event["outcome"]}
+        if publication.get("final") is True:
+            state["final_outputs"] = [output_ref]
     elif kind == "materialize_result":
         request = cast(str, event.get("request"))
         if request not in dispatched or request not in _object(state["request_associations"]):
@@ -1253,6 +1338,17 @@ def _advance(state: Object, declaration: Object, event: Object) -> Object | None
         state["binding_terminal"] = expected_terminal
         if "binding_finished" in state:
             state["binding_finished"] = True
+            if _array(declaration.get("materializations", [])):
+                state.setdefault(
+                    "materialization",
+                    {
+                        "artifact_bytes": 0,
+                        "artifact_count": 0,
+                        "ports": {},
+                        "provenance": {},
+                        "provenance_edges": 0,
+                    },
+                )
     elif kind == "resource":
         resource = cast(str, event["resource"])
         resources = _object(state["resources"])
@@ -1260,17 +1356,15 @@ def _advance(state: Object, declaration: Object, event: Object) -> Object | None
             state["resource_count"] = cast(int, state["resource_count"]) + 1
         resources[resource] = {"owner": event["owner"], "safe_detachment": event["safe_detachment"]}
     elif kind == "binding_cleanup_association":
-        if set(event) != {"association", "kind", "owner", "resource", "target"}:
+        single = {"association", "kind", "owner", "resource", "target"}
+        shared = {"associations", "kind", "owner", "purpose", "resource", "targets"}
+        if set(event) not in (single, shared):
             return _reject("invalid_value")
         resource = cast(str, event["resource"])
         associations = _object(state["binding_cleanup_associations"])
         if resource in associations:
             return _reject("duplicate")
-        associations[resource] = {
-            "association": event["association"],
-            "owner": event["owner"],
-            "target": event["target"],
-        }
+        associations[resource] = {key: value for key, value in event.items() if key not in {"kind", "resource"}}
     elif kind == "binding_cleanup":
         if set(event) != {"disposition", "kind", "resource"}:
             return _reject("invalid_value")
@@ -1692,11 +1786,29 @@ def recheck_capabilities(declaration: Object) -> Object:
 
 def _materialization_preflight(declaration: Object, events: Sequence[Object]) -> Object:
     specs = [_object(raw) for raw in _array(declaration["materializations"])]
-    binding_declaration = _binding_decl(
-        {cast(str, spec["association"]): cast(str, spec["source"]) for spec in specs},
-        max_items=max(cast(int, spec["max_items"]) for spec in specs),
-        max_bytes=max(cast(int, spec["max_bytes"]) for spec in specs),
+    completed_binding = declaration.get("preflight_uses_completed_binding") is True
+    # Corrected latest cases preserve the completed P6 receipt. Older frozen
+    # families retain their independent bounded preflight projection.
+    binding_declaration = (
+        deepcopy(declaration)
+        if completed_binding
+        else _binding_decl(
+            {cast(str, spec["association"]): cast(str, spec["source"]) for spec in specs},
+            max_items=max(cast(int, spec["max_items"]) for spec in specs),
+            max_bytes=max(cast(int, spec["max_bytes"]) for spec in specs),
+        )
     )
+    if completed_binding:
+        for key in (
+            "materializations",
+            "materialization_limits",
+            "operation_occurrences",
+            "preflight_uses_completed_binding",
+            "root_artifacts",
+            "root_input_types",
+        ):
+            binding_declaration.pop(key, None)
+        binding_declaration["binding_cleanup_projection"] = True
     binding_events: list[Object] = []
     artifact_count = artifact_bytes = provenance_edges = 0
     for spec in specs:
@@ -1710,6 +1822,8 @@ def _materialization_preflight(declaration: Object, events: Sequence[Object]) ->
             if spec is None:
                 return _reject("missing")
             artifact_bytes += len(cast(str, event.get("value", "")).encode())
+            continue
+        if completed_binding and event["kind"] in {"operation_start", "operation_blocked", "root_artifact"}:
             continue
         if event["kind"] != "materialize_result":
             binding_events.append(event)
@@ -1735,7 +1849,10 @@ def _materialization_preflight(declaration: Object, events: Sequence[Object]) ->
         item_bytes = sum(len(cast(str, item["value"]).encode()) for item in items)
         artifact_bytes += item_bytes * (2 if collection else 1)
         provenance_edges += len(items) if collection else 0
-    binding = reduce_trace(binding_declaration, [*binding_events, {"kind": "binding_finish"}])
+    binding = reduce_trace(
+        binding_declaration,
+        binding_events if completed_binding else [*binding_events, {"kind": "binding_finish"}],
+    )
     if binding["status"] != "accepted":
         return binding
     limits = _object(declaration["materialization_limits"])
@@ -2260,6 +2377,8 @@ def _case(
     events: list[Object],
     boundary: str = "runtime",
     traces: list[list[Object]] | None = None,
+    comparison_scope: str = "production_boundary",
+    witness_obligation: str | None = None,
 ) -> Object:
     case: Object = {
         "boundary": boundary,
@@ -2270,6 +2389,10 @@ def _case(
         "expected": {},
         "traces": [],
     }
+    if comparison_scope != "production_boundary":
+        case["comparison_scope"] = comparison_scope
+    if witness_obligation is not None:
+        case["witness_obligation"] = witness_obligation
     case["expected"] = evaluate_case(case)
     case["traces"] = [
         {"events": trace, "expected": reduce_trace(declaration, trace), "name": f"alternate_{index}"}
@@ -3366,6 +3489,7 @@ def _latest_selection_specs() -> list[Object]:
                 _reserve("R0", ["D0"], purpose="initial_binding"),
                 _dispatch("R0"),
                 _source_failure("D0", "S0", request="R0", disposition="omitted_optional"),
+                {"kind": "binding_finish"},
                 *cleanup(),
             ],
         )
@@ -3389,11 +3513,32 @@ def _latest_selection_specs() -> list[Object]:
         "initial",
         "single",
         declaration="D1",
+        node="N1",
         port="optional_context",
         version_selection="exact_one",
     )
     mixed_declaration = declaration(latest, optional)
     mixed_declaration["binding_requirements"] = {"D0": "required", "D1": "optional"}
+    _array(mixed_declaration["operation_occurrences"]).append(
+        {
+            "activation": "OP:D1",
+            "attempt": "TASK:OP:D1",
+            "binding_declaration": "D1",
+            "node": "N1",
+            "target": "T0",
+        }
+    )
+    shared_cleanup: list[Object] = [
+        {
+            "associations": ["D0", "D1"],
+            "kind": "binding_cleanup_association",
+            "owner": "sdk",
+            "purpose": "binding",
+            "resource": "Q:S0",
+            "targets": ["T0"],
+        },
+        {"disposition": "closed", "kind": "binding_cleanup", "resource": "Q:S0"},
+    ]
     mixed_events: list[Object] = [
         _bind("D0", "P0"),
         _bind("D1", "P0"),
@@ -3404,10 +3549,18 @@ def _latest_selection_specs() -> list[Object]:
         _dispatch("R1"),
         _source_failure("D1", "S0", request="R1", disposition="omitted_optional"),
         {"kind": "binding_finish"},
-        *cleanup(association="D0"),
-        *cleanup(association="D1"),
+        *shared_cleanup,
         _operation_start(latest),
         _publication_event(latest),
+        {
+            "activation": "OP:D1",
+            "attempt": "TASK:OP:D1",
+            "binding_declaration": "D1",
+            "kind": "operation_blocked",
+            "node": "N1",
+            "reason": "omitted_optional",
+            "target": "T0",
+        },
     ]
     cases.append(
         _case(
@@ -3428,6 +3581,11 @@ def _latest_selection_specs() -> list[Object]:
             "latest_unresolved_optional_at_finish",
             mixed_declaration,
             unresolved,
+            comparison_scope="neutral_only",
+            witness_obligation=(
+                "RunningBinding.wait remains pending while D1 retrieval is unresolved and cleanup has not run; "
+                "after a permanent omitted_optional response it returns one immutable partial result"
+            ),
         )
     )
     late_failure = deepcopy(mixed_events)
@@ -3442,6 +3600,11 @@ def _latest_selection_specs() -> list[Object]:
             "latest_post_finish_source_failure",
             mixed_declaration,
             late_failure,
+            comparison_scope="neutral_only",
+            witness_obligation=(
+                "Repeated RunningBinding.wait returns the same completed result and does not request or retain "
+                "a second provider failure after sealing"
+            ),
         )
     )
     late_result = deepcopy(trace(one))
@@ -3456,22 +3619,36 @@ def _latest_selection_specs() -> list[Object]:
             "latest_post_finish_materialization",
             declaration(latest),
             late_result,
+            comparison_scope="neutral_only",
+            witness_obligation=(
+                "Repeated RunningBinding.wait returns the same completed result and does not request, publish, "
+                "or retain a second materialization after sealing"
+            ),
         )
     )
     for name, maximum in (("exact", 1), ("one_over", 0)):
+        preflight_declaration = declaration(latest, limits={"max_provenance_edges": maximum})
+        preflight_declaration["preflight_uses_completed_binding"] = True
         cases.append(
             _case(
                 "materialization",
                 f"latest_provenance_edges_{name}",
-                declaration(latest, limits={"max_provenance_edges": maximum}),
-                trace(one)[:4],
+                preflight_declaration,
+                trace(one),
                 "execution_preflight",
             )
         )
 
     rollback_events: list[Object] = [
         {"artifact_type": "text", "kind": "root_artifact", "port": "left", "target": "T0", "value": "L"},
-        {"artifact_type": "text", "kind": "root_artifact", "port": "right", "target": "T0", "value": "R"},
+        {
+            "artifact_type": "text",
+            "kind": "root_artifact",
+            "node": "N1",
+            "port": "right",
+            "target": "T0",
+            "value": "R",
+        },
         _bind("D0", "P0"),
         _reserve("R0", ["D0"], purpose="initial_binding"),
         _dispatch("R0"),
@@ -3480,19 +3657,47 @@ def _latest_selection_specs() -> list[Object]:
         *cleanup(association="D0"),
         _operation_start(latest),
         _publication_event(latest, value="x" * 9),
-        _operation_start(latest, activation="OP:D1"),
-        _publication_event(latest, activation="OP:D1", value="ok"),
+        {
+            "activation": "OP:N1",
+            "attempt": "TASK:OP:N1",
+            "binding_declaration": None,
+            "kind": "operation_start",
+            "node": "N1",
+            "target": "T0",
+        },
+        {
+            "activation": "OP:N1",
+            "attempt": "TASK:OP:N1",
+            "kind": "root_operation_publish",
+            "node": "N1",
+            "outcome": "ok",
+            "output_port": "result",
+            "target": "T0",
+            "value": "ok",
+        },
     ]
     rollback_decl = declaration(latest, limits={"max_artifact_bytes": 16, "max_artifacts": 5})
     _array(rollback_decl["operation_occurrences"]).append(
         {
-            "activation": "OP:D1",
-            "attempt": "TASK:OP:D1",
-            "binding_declaration": "D0",
-            "node": "N0",
+            "activation": "OP:N1",
+            "attempt": "TASK:OP:N1",
+            "binding_declaration": None,
+            "node": "N1",
             "target": "T0",
         }
     )
+    rollback_decl["root_publications"] = [
+        {
+            "activation": "OP:N1",
+            "artifact_type": "text",
+            "final": True,
+            "input_port": "right",
+            "node": "N1",
+            "outcome": "ok",
+            "output_port": "result",
+            "target": "T0",
+        }
+    ]
     cases.append(
         _case(
             "materialization",

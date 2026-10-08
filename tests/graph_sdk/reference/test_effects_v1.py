@@ -178,19 +178,20 @@ def test_latest_followups_cleanup_capacity_and_transactional_rollback() -> None:
     ]
     occurrences = cast(reference.Object, rollback["operation_occurrences"])
     assert cast(reference.Object, occurrences["OP:D0:TASK:OP:D0"])["terminal"] == {
-        "category": "failure",
+        "category": "blocked",
         "reason": "artifact_limit_exhausted",
     }
-    assert cast(reference.Object, occurrences["OP:D1:TASK:OP:D1"])["terminal"] == {
+    assert cast(reference.Object, occurrences["OP:N1:TASK:OP:N1"])["terminal"] == {
         "category": "success",
         "outcome": "ok",
     }
     provenance = cast(reference.Object, cast(reference.Object, rollback["materialization"])["provenance"])
     assert "OperationOutputKey:OP:D0:T0:N0:ok:result" not in provenance
-    assert provenance["OperationOutputKey:OP:D1:T0:N0:ok:result"] == {
+    assert provenance["OperationOutputKey:OP:N1:T0:N1:ok:result"] == {
         "artifact": "ArtifactRef:I0:K3:1",
-        "parents": ["BoundInputKey:T0:N0:context:D0:0:2"],
+        "parents": ["RootInputKey:T0:right"],
     }
+    assert rollback["final_outputs"] == ["ArtifactRef:I0:K3:1"]
 
 
 def test_latest_publication_edges_come_from_exact_owned_parents() -> None:
@@ -215,8 +216,13 @@ def test_latest_preflight_is_structural_and_publication_is_at_most_once() -> Non
     item = reference.case_by_id("materialization/latest_provenance_edges_one_over")
     declaration = cast(reference.Object, item["declaration"])
     events = cast(list[reference.Object], item["events"])
-    assert all(event["kind"] != "operation_publish" for event in events)
+    assert any(event["kind"] == "operation_publish" for event in events)
+    assert any(event["kind"] == "binding_finish" for event in events)
+    assert any(event["kind"] == "binding_cleanup" for event in events)
     assert reference._materialization_preflight(declaration, events) == item["expected"]
+    binding = cast(reference.Object, item["expected"])["binding"]
+    policies = cast(reference.Object, cast(reference.Object, binding)["policies"])
+    assert cast(reference.Object, policies["P0"])["max_attempts"] == 3
 
     positive = reference.case_by_id("materialization/latest_one_version")
     positive_declaration = cast(reference.Object, positive["declaration"])
@@ -260,28 +266,32 @@ def test_latest_sealed_context_survives_cleanup_defects_and_optional_omission() 
     assert state["binding_finished"] is True
     assert state["binding_terminal"] == "partial"
     assert state["binding_sources"] == {"D0": "bound", "D1": "omitted_optional"}
-    assert state["binding_cleanup"] == {"Q:D0": "closed", "Q:D1": "closed"}
+    assert state["binding_cleanup"] == {"Q:S0": "closed"}
+    assert state["binding_cleanup_associations"] == {
+        "Q:S0": {
+            "associations": ["D0", "D1"],
+            "owner": "sdk",
+            "purpose": "binding",
+            "targets": ["T0"],
+        }
+    }
     assert cast(reference.Object, cast(reference.Object, state["materialization"])["ports"])["initial:T0:N0:context:D0"]
+    occurrences = cast(reference.Object, state["operation_occurrences"])
+    assert cast(reference.Object, occurrences["OP:D1:TASK:OP:D1"])["terminal"] == {
+        "category": "blocked",
+        "reason": "omitted_optional",
+    }
 
     missing_cleanup = [
-        event
-        for event in cast(list[reference.Object], mixed["events"])
-        if not (
-            event["kind"] in {"binding_cleanup_association", "binding_cleanup"} and event.get("association") == "D1"
-        )
-        and not (event["kind"] == "binding_cleanup" and event.get("resource") == "Q:D1")
+        event for event in cast(list[reference.Object], mixed["events"]) if event["kind"] != "binding_cleanup"
     ]
     assert reference.reduce_trace(cast(reference.Object, mixed["declaration"]), missing_cleanup) == {
         "code": "missing",
         "status": "rejected",
     }
     foreign_cleanup = [dict(event) for event in cast(list[reference.Object], mixed["events"])]
-    association = next(
-        event
-        for event in foreign_cleanup
-        if event["kind"] == "binding_cleanup_association" and event["association"] == "D1"
-    )
-    association["target"] = "OTHER"
+    association = next(event for event in foreign_cleanup if event["kind"] == "binding_cleanup_association")
+    association["targets"] = ["OTHER"]
     assert reference.reduce_trace(cast(reference.Object, mixed["declaration"]), foreign_cleanup) == {
         "code": "foreign_owner",
         "status": "rejected",
@@ -297,6 +307,21 @@ def test_binding_finish_requires_every_terminal_and_freezes_binding_state() -> N
     for suffix, code in expected.items():
         item = reference.case_by_id(f"materialization/{suffix}")
         assert item["expected"] == {"code": code, "status": "rejected"}
+        assert item["comparison_scope"] == "neutral_only"
+        assert item["witness_obligation"]
+
+    optional = reference.case_by_id("materialization/latest_optional_omission")
+    optional_state = cast(reference.Object, cast(reference.Object, optional["expected"])["state"])
+    assert optional_state["binding_finished"] is True
+    assert optional_state["binding_terminal"] == "partial"
+    assert optional_state["artifacts"] == []
+    assert optional_state["materialization"] == {
+        "artifact_bytes": 0,
+        "artifact_count": 0,
+        "ports": {},
+        "provenance": {},
+        "provenance_edges": 0,
+    }
 
     mixed = reference.case_by_id("materialization/latest_bound_with_optional_omission")
     events = [dict(event) for event in cast(list[reference.Object], mixed["events"])]

@@ -1,4 +1,29 @@
-# R2 latest-selection supplement v8
+# R2 latest-selection supplement v9
+
+V9 corrects the remaining eight latest-selection owner witnesses while
+preserving every case ID, the 296-case accepted prefix, all unrelated case
+objects, and the four V8 late-response objects exactly.
+
+Optional omission now seals before cleanup and returns a partial binding with
+an empty context.  The mixed case places the optional declaration on distinct
+node N1: N0 publishes from required D0, N1 closes blocked without publication,
+and the shared S0 lease yields one SDK cleanup record whose target set is T0.
+The unresolved and two post-finish injection cases remain finite reducer
+negatives but are explicitly `neutral_only`; their public witnesses are a
+pending `RunningBinding.wait` before D1 completes and immutable repeated waits
+after completion.
+
+The edge-cap pair carries the complete successful P6 lifecycle and derives its
+binding projection from the same admitted policies and bounds.  It then checks
+the single declared P5 dependency at admission: capacity one accepts and zero
+rejects before callbacks.  The rollback case uses independent admitted nodes.
+N0 consumes the selected D0 context and closes blocked after a transactional
+nine-byte publication exceeds capacity.  N1 consumes the real right root
+input, publishes the sole final output, and reuses K3.  The rejected N0 output
+leaves no artifact, port, provenance edge, allocator increment, or request
+attribution.
+
+## Retained v8 history
 
 V8 corrects the four late `latest` response projections while preserving every
 case ID and every unrelated case object. The immutable first request terminal

@@ -49347,6 +49347,9 @@
         "source": "S0"
       },
       {
+        "kind": "binding_finish"
+      },
+      {
         "association": "D0",
         "kind": "binding_cleanup_association",
         "owner": "sdk",
@@ -49390,7 +49393,7 @@
         "binding_declarations": {
           "D0": "S0"
         },
-        "binding_finished": false,
+        "binding_finished": true,
         "binding_sources": {
           "D0": "omitted_optional"
         },
@@ -49412,6 +49415,13 @@
         "dispatched_count": 1,
         "lineage_allocations": {},
         "local_in_flight": [],
+        "materialization": {
+          "artifact_bytes": 0,
+          "artifact_count": 0,
+          "ports": {},
+          "provenance": {},
+          "provenance_edges": 0
+        },
         "operation_occurrences": {},
         "policies": {
           "P0": {
@@ -50617,7 +50627,7 @@
           "kind": "single",
           "max_bytes": 12,
           "max_items": 1,
-          "node": "N0",
+          "node": "N1",
           "output_type": "text",
           "path": "initial",
           "port": "optional_context",
@@ -50633,6 +50643,13 @@
           "attempt": "TASK:OP:D0",
           "binding_declaration": "D0",
           "node": "N0",
+          "target": "T0"
+        },
+        {
+          "activation": "OP:D1",
+          "attempt": "TASK:OP:D1",
+          "binding_declaration": "D1",
+          "node": "N1",
           "target": "T0"
         }
       ],
@@ -50761,28 +50778,22 @@
         "kind": "binding_finish"
       },
       {
-        "association": "D0",
+        "associations": [
+          "D0",
+          "D1"
+        ],
         "kind": "binding_cleanup_association",
         "owner": "sdk",
-        "resource": "Q:D0",
-        "target": "T0"
+        "purpose": "binding",
+        "resource": "Q:S0",
+        "targets": [
+          "T0"
+        ]
       },
       {
         "disposition": "closed",
         "kind": "binding_cleanup",
-        "resource": "Q:D0"
-      },
-      {
-        "association": "D1",
-        "kind": "binding_cleanup_association",
-        "owner": "sdk",
-        "resource": "Q:D1",
-        "target": "T0"
-      },
-      {
-        "disposition": "closed",
-        "kind": "binding_cleanup",
-        "resource": "Q:D1"
+        "resource": "Q:S0"
       },
       {
         "activation": "OP:D0",
@@ -50804,6 +50815,15 @@
         "port": "context",
         "target": "T0",
         "value": "result"
+      },
+      {
+        "activation": "OP:D1",
+        "attempt": "TASK:OP:D1",
+        "binding_declaration": "D1",
+        "kind": "operation_blocked",
+        "node": "N1",
+        "reason": "omitted_optional",
+        "target": "T0"
       }
     ],
     "expected": {
@@ -50853,19 +50873,19 @@
           }
         ],
         "binding_cleanup": {
-          "Q:D0": "closed",
-          "Q:D1": "closed"
+          "Q:S0": "closed"
         },
         "binding_cleanup_associations": {
-          "Q:D0": {
-            "association": "D0",
+          "Q:S0": {
+            "associations": [
+              "D0",
+              "D1"
+            ],
             "owner": "sdk",
-            "target": "T0"
-          },
-          "Q:D1": {
-            "association": "D1",
-            "owner": "sdk",
-            "target": "T0"
+            "purpose": "binding",
+            "targets": [
+              "T0"
+            ]
           }
         },
         "binding_declarations": {
@@ -50938,6 +50958,18 @@
             "terminal": {
               "category": "success",
               "outcome": "ok"
+            }
+          },
+          "OP:D1:TASK:OP:D1": {
+            "activation": "OP:D1",
+            "attempt": "TASK:OP:D1",
+            "binding_declaration": "D1",
+            "node": "N1",
+            "published_ports": [],
+            "target": "T0",
+            "terminal": {
+              "category": "blocked",
+              "reason": "omitted_optional"
             }
           }
         },
@@ -51028,6 +51060,7 @@
   {
     "boundary": "runtime",
     "case_id": "materialization/latest_unresolved_optional_at_finish",
+    "comparison_scope": "neutral_only",
     "declaration": {
       "binding_declarations": {
         "D0": "S0",
@@ -51084,7 +51117,7 @@
           "kind": "single",
           "max_bytes": 12,
           "max_items": 1,
-          "node": "N0",
+          "node": "N1",
           "output_type": "text",
           "path": "initial",
           "port": "optional_context",
@@ -51100,6 +51133,13 @@
           "attempt": "TASK:OP:D0",
           "binding_declaration": "D0",
           "node": "N0",
+          "target": "T0"
+        },
+        {
+          "activation": "OP:D1",
+          "attempt": "TASK:OP:D1",
+          "binding_declaration": "D1",
+          "node": "N1",
           "target": "T0"
         }
       ],
@@ -51199,28 +51239,22 @@
         "kind": "binding_finish"
       },
       {
-        "association": "D0",
+        "associations": [
+          "D0",
+          "D1"
+        ],
         "kind": "binding_cleanup_association",
         "owner": "sdk",
-        "resource": "Q:D0",
-        "target": "T0"
+        "purpose": "binding",
+        "resource": "Q:S0",
+        "targets": [
+          "T0"
+        ]
       },
       {
         "disposition": "closed",
         "kind": "binding_cleanup",
-        "resource": "Q:D0"
-      },
-      {
-        "association": "D1",
-        "kind": "binding_cleanup_association",
-        "owner": "sdk",
-        "resource": "Q:D1",
-        "target": "T0"
-      },
-      {
-        "disposition": "closed",
-        "kind": "binding_cleanup",
-        "resource": "Q:D1"
+        "resource": "Q:S0"
       },
       {
         "activation": "OP:D0",
@@ -51242,6 +51276,15 @@
         "port": "context",
         "target": "T0",
         "value": "result"
+      },
+      {
+        "activation": "OP:D1",
+        "attempt": "TASK:OP:D1",
+        "binding_declaration": "D1",
+        "kind": "operation_blocked",
+        "node": "N1",
+        "reason": "omitted_optional",
+        "target": "T0"
       }
     ],
     "expected": {
@@ -51249,11 +51292,13 @@
       "status": "rejected"
     },
     "family": "materialization",
-    "traces": []
+    "traces": [],
+    "witness_obligation": "RunningBinding.wait remains pending while D1 retrieval is unresolved and cleanup has not run; after a permanent omitted_optional response it returns one immutable partial result"
   },
   {
     "boundary": "runtime",
     "case_id": "materialization/latest_post_finish_source_failure",
+    "comparison_scope": "neutral_only",
     "declaration": {
       "binding_declarations": {
         "D0": "S0",
@@ -51310,7 +51355,7 @@
           "kind": "single",
           "max_bytes": 12,
           "max_items": 1,
-          "node": "N0",
+          "node": "N1",
           "output_type": "text",
           "path": "initial",
           "port": "optional_context",
@@ -51326,6 +51371,13 @@
           "attempt": "TASK:OP:D0",
           "binding_declaration": "D0",
           "node": "N0",
+          "target": "T0"
+        },
+        {
+          "activation": "OP:D1",
+          "attempt": "TASK:OP:D1",
+          "binding_declaration": "D1",
+          "node": "N1",
           "target": "T0"
         }
       ],
@@ -51470,28 +51522,22 @@
         "source": "S0"
       },
       {
-        "association": "D0",
+        "associations": [
+          "D0",
+          "D1"
+        ],
         "kind": "binding_cleanup_association",
         "owner": "sdk",
-        "resource": "Q:D0",
-        "target": "T0"
+        "purpose": "binding",
+        "resource": "Q:S0",
+        "targets": [
+          "T0"
+        ]
       },
       {
         "disposition": "closed",
         "kind": "binding_cleanup",
-        "resource": "Q:D0"
-      },
-      {
-        "association": "D1",
-        "kind": "binding_cleanup_association",
-        "owner": "sdk",
-        "resource": "Q:D1",
-        "target": "T0"
-      },
-      {
-        "disposition": "closed",
-        "kind": "binding_cleanup",
-        "resource": "Q:D1"
+        "resource": "Q:S0"
       },
       {
         "activation": "OP:D0",
@@ -51513,6 +51559,15 @@
         "port": "context",
         "target": "T0",
         "value": "result"
+      },
+      {
+        "activation": "OP:D1",
+        "attempt": "TASK:OP:D1",
+        "binding_declaration": "D1",
+        "kind": "operation_blocked",
+        "node": "N1",
+        "reason": "omitted_optional",
+        "target": "T0"
       }
     ],
     "expected": {
@@ -51520,11 +51575,13 @@
       "status": "rejected"
     },
     "family": "materialization",
-    "traces": []
+    "traces": [],
+    "witness_obligation": "Repeated RunningBinding.wait returns the same completed result and does not request or retain a second provider failure after sealing"
   },
   {
     "boundary": "runtime",
     "case_id": "materialization/latest_post_finish_materialization",
+    "comparison_scope": "neutral_only",
     "declaration": {
       "binding_declarations": {
         "D0": "S0"
@@ -51734,7 +51791,8 @@
       "status": "rejected"
     },
     "family": "materialization",
-    "traces": []
+    "traces": [],
+    "witness_obligation": "Repeated RunningBinding.wait returns the same completed result and does not request, publish, or retain a second materialization after sealing"
   },
   {
     "boundary": "execution_preflight",
@@ -51813,6 +51871,7 @@
           "retry_owner": "executor"
         }
       },
+      "preflight_uses_completed_binding": true,
       "root_artifacts": [
         {
           "artifact_type": "text",
@@ -51877,10 +51936,47 @@
           }
         },
         "target": "T0"
+      },
+      {
+        "kind": "binding_finish"
+      },
+      {
+        "association": "D0",
+        "kind": "binding_cleanup_association",
+        "owner": "sdk",
+        "resource": "Q:D0",
+        "target": "T0"
+      },
+      {
+        "disposition": "closed",
+        "kind": "binding_cleanup",
+        "resource": "Q:D0"
+      },
+      {
+        "activation": "OP:D0",
+        "attempt": "TASK:OP:D0",
+        "binding_declaration": "D0",
+        "kind": "operation_start",
+        "node": "N0",
+        "target": "T0"
+      },
+      {
+        "activation": "OP:D0",
+        "attempt": "TASK:OP:D0",
+        "declaration": "D0",
+        "kind": "operation_publish",
+        "node": "N0",
+        "outcome": "ok",
+        "output_port": "result",
+        "path": "initial",
+        "port": "context",
+        "target": "T0",
+        "value": "result"
       }
     ],
     "expected": {
       "binding": {
+        "allocator_next": 0,
         "artifacts": [
           {
             "identity": "D0:0:1",
@@ -51901,9 +51997,21 @@
         "attempts": {
           "D0": 1
         },
+        "binding_artifacts": [],
+        "binding_cleanup": {
+          "Q:D0": "closed"
+        },
+        "binding_cleanup_associations": {
+          "Q:D0": {
+            "association": "D0",
+            "owner": "sdk",
+            "target": "T0"
+          }
+        },
         "binding_declarations": {
           "D0": "S0"
         },
+        "binding_finished": true,
         "binding_sources": {
           "D0": "bound"
         },
@@ -51923,14 +52031,16 @@
           "R0"
         ],
         "dispatched_count": 1,
+        "lineage_allocations": {},
         "local_in_flight": [],
+        "operation_occurrences": {},
         "policies": {
           "P0": {
             "failover_failures": [
               "permanent",
               "implementation_exception"
             ],
-            "max_attempts": 2,
+            "max_attempts": 3,
             "replay": "idempotent",
             "retry_owner": "executor"
           },
@@ -51944,6 +52054,8 @@
             "retry_owner": "executor"
           }
         },
+        "publication_attempts": [],
+        "publication_failures": [],
         "remote_outstanding": [],
         "request_associations": {
           "R0": [
@@ -52064,6 +52176,7 @@
           "retry_owner": "executor"
         }
       },
+      "preflight_uses_completed_binding": true,
       "root_artifacts": [
         {
           "artifact_type": "text",
@@ -52128,10 +52241,47 @@
           }
         },
         "target": "T0"
+      },
+      {
+        "kind": "binding_finish"
+      },
+      {
+        "association": "D0",
+        "kind": "binding_cleanup_association",
+        "owner": "sdk",
+        "resource": "Q:D0",
+        "target": "T0"
+      },
+      {
+        "disposition": "closed",
+        "kind": "binding_cleanup",
+        "resource": "Q:D0"
+      },
+      {
+        "activation": "OP:D0",
+        "attempt": "TASK:OP:D0",
+        "binding_declaration": "D0",
+        "kind": "operation_start",
+        "node": "N0",
+        "target": "T0"
+      },
+      {
+        "activation": "OP:D0",
+        "attempt": "TASK:OP:D0",
+        "declaration": "D0",
+        "kind": "operation_publish",
+        "node": "N0",
+        "outcome": "ok",
+        "output_port": "result",
+        "path": "initial",
+        "port": "context",
+        "target": "T0",
+        "value": "result"
       }
     ],
     "expected": {
       "binding": {
+        "allocator_next": 0,
         "artifacts": [
           {
             "identity": "D0:0:1",
@@ -52152,9 +52302,21 @@
         "attempts": {
           "D0": 1
         },
+        "binding_artifacts": [],
+        "binding_cleanup": {
+          "Q:D0": "closed"
+        },
+        "binding_cleanup_associations": {
+          "Q:D0": {
+            "association": "D0",
+            "owner": "sdk",
+            "target": "T0"
+          }
+        },
         "binding_declarations": {
           "D0": "S0"
         },
+        "binding_finished": true,
         "binding_sources": {
           "D0": "bound"
         },
@@ -52174,14 +52336,16 @@
           "R0"
         ],
         "dispatched_count": 1,
+        "lineage_allocations": {},
         "local_in_flight": [],
+        "operation_occurrences": {},
         "policies": {
           "P0": {
             "failover_failures": [
               "permanent",
               "implementation_exception"
             ],
-            "max_attempts": 2,
+            "max_attempts": 3,
             "replay": "idempotent",
             "retry_owner": "executor"
           },
@@ -52195,6 +52359,8 @@
             "retry_owner": "executor"
           }
         },
+        "publication_attempts": [],
+        "publication_failures": [],
         "remote_outstanding": [],
         "request_associations": {
           "R0": [
@@ -52296,10 +52462,10 @@
           "target": "T0"
         },
         {
-          "activation": "OP:D1",
-          "attempt": "TASK:OP:D1",
-          "binding_declaration": "D0",
-          "node": "N0",
+          "activation": "OP:N1",
+          "attempt": "TASK:OP:N1",
+          "binding_declaration": null,
+          "node": "N1",
           "target": "T0"
         }
       ],
@@ -52337,6 +52503,18 @@
       ],
       "root_input_types": [
         "text"
+      ],
+      "root_publications": [
+        {
+          "activation": "OP:N1",
+          "artifact_type": "text",
+          "final": true,
+          "input_port": "right",
+          "node": "N1",
+          "outcome": "ok",
+          "output_port": "result",
+          "target": "T0"
+        }
       ]
     },
     "events": [
@@ -52350,6 +52528,7 @@
       {
         "artifact_type": "text",
         "kind": "root_artifact",
+        "node": "N1",
         "port": "right",
         "target": "T0",
         "value": "R"
@@ -52444,23 +52623,20 @@
         "value": "xxxxxxxxx"
       },
       {
-        "activation": "OP:D1",
-        "attempt": "TASK:OP:D1",
-        "binding_declaration": "D0",
+        "activation": "OP:N1",
+        "attempt": "TASK:OP:N1",
+        "binding_declaration": null,
         "kind": "operation_start",
-        "node": "N0",
+        "node": "N1",
         "target": "T0"
       },
       {
-        "activation": "OP:D1",
-        "attempt": "TASK:OP:D1",
-        "declaration": "D0",
-        "kind": "operation_publish",
-        "node": "N0",
+        "activation": "OP:N1",
+        "attempt": "TASK:OP:N1",
+        "kind": "root_operation_publish",
+        "node": "N1",
         "outcome": "ok",
         "output_port": "result",
-        "path": "initial",
-        "port": "context",
         "target": "T0",
         "value": "ok"
       }
@@ -52496,7 +52672,7 @@
           {
             "artifact_type": "text",
             "identity": "ArtifactRef:I0:K3:1",
-            "source": "operation:N0",
+            "source": "operation:N1",
             "text": "ok"
           }
         ],
@@ -52562,6 +52738,9 @@
           "R0"
         ],
         "dispatched_count": 1,
+        "final_outputs": [
+          "ArtifactRef:I0:K3:1"
+        ],
         "lineage_allocations": {
           "D0:0": "K2"
         },
@@ -52569,11 +52748,19 @@
         "materialization": {
           "artifact_bytes": 10,
           "artifact_count": 5,
+          "input_parents": {
+            "root:T0:N1:right": "RootInputKey:T0:right"
+          },
           "ports": {
             "initial:T0:N0:context:D0": {
               "artifact_type": "text",
               "key": "ArtifactRef:I0:K2:2",
               "value": "new"
+            },
+            "root:T0:N1:right": {
+              "artifact_type": "text",
+              "key": "ArtifactRef:I0:K1:1",
+              "value": "R"
             }
           },
           "provenance": {
@@ -52585,10 +52772,10 @@
               "artifact": "ArtifactRef:I0:K2:2",
               "parents": []
             },
-            "OperationOutputKey:OP:D1:T0:N0:ok:result": {
+            "OperationOutputKey:OP:N1:T0:N1:ok:result": {
               "artifact": "ArtifactRef:I0:K3:1",
               "parents": [
-                "BoundInputKey:T0:N0:context:D0:0:2"
+                "RootInputKey:T0:right"
               ]
             },
             "RootInputKey:T0:left": {
@@ -52611,15 +52798,15 @@
             "published_ports": [],
             "target": "T0",
             "terminal": {
-              "category": "failure",
+              "category": "blocked",
               "reason": "artifact_limit_exhausted"
             }
           },
-          "OP:D1:TASK:OP:D1": {
-            "activation": "OP:D1",
-            "attempt": "TASK:OP:D1",
-            "binding_declaration": "D0",
-            "node": "N0",
+          "OP:N1:TASK:OP:N1": {
+            "activation": "OP:N1",
+            "attempt": "TASK:OP:N1",
+            "binding_declaration": null,
+            "node": "N1",
             "published_ports": [
               "result"
             ],

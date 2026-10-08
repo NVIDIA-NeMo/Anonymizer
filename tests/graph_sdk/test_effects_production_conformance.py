@@ -196,6 +196,9 @@ ADMISSION_CASES = tuple(
     if case["family"] == "admission" or case["case_id"] == "retry/implementation_owner_rejected"
 )
 REAL_BINDING_CASE_IDS = {
+    "materialization/latest_optional_omission",
+    "materialization/latest_provenance_edges_exact",
+    "materialization/latest_provenance_edges_one_over",
     "materialization/latest_one_version",
     "materialization/latest_two_versions",
     "materialization/latest_reordered_versions",
@@ -1667,7 +1670,7 @@ async def _assert_binding_corpus_case(case: dict[str, Any]) -> None:
             provider.closes == int(owners[name] == "sdk" and not isinstance(handles[name], _ProviderWithoutClose))
             for name, provider in providers.items()
         )
-    if latest:
+    if latest and not preflight_rejection:
         expected_artifacts = expected["binding_artifacts"]
         actual_artifacts = [
             {
@@ -1774,9 +1777,24 @@ async def _assert_binding_corpus_case(case: dict[str, Any]) -> None:
             declaration_names=source_names,
             target_names={target: f"T{index}" for index, target in enumerate(targets)},
             limits=cast(dict[str, int], raw["materialization_limits"]),
-            expected_rejection=case["expected"]["code"],
+            expected_rejection=case["expected"].get("code"),
+            admission_only=latest,
         )
         assert result.receipt is before
+    elif latest and all(fact.terminal == "omitted_optional" for fact in result.receipt.sources):
+        assert result.context is not None and result.context.receipt is result.receipt
+        assert not result.receipt.artifacts
+        assert expected["binding_finished"] is True
+        assert expected["materialization"] == {
+            "artifact_bytes": 0,
+            "artifact_count": 0,
+            "ports": {},
+            "provenance": {},
+            "provenance_edges": 0,
+        }
+        assert expected["allocator_next"] == 0
+        assert expected["lineage_allocations"] == expected["operation_occurrences"] == {}
+        assert expected["publication_attempts"] == expected["publication_failures"] == []
     elif materializations and result.context is not None and expected.get("materialization") is not None:
         await _assert_initial_execution_projection(
             data=data,
@@ -1811,6 +1829,7 @@ async def _assert_initial_execution_projection(
     target_names: Mapping[Any, str],
     limits: dict[str, int],
     expected_rejection: str | None = None,
+    admission_only: bool = False,
     publication: dict[str, Any] | None = None,
 ) -> None:
     capability = _capability(workflow)
@@ -1860,22 +1879,31 @@ async def _assert_initial_execution_projection(
         if publication is None
         else next(iter(expected["materialization"]["ports"].values()))["value"],
     )
-    admitted = admit_execution_plan(
-        context=context,
-        capabilities=(capability,),
-        policies=(policy,),
-        decisions=(),
-        assessment_productions=(),
-        assessment_limits=AssessmentLimits(
-            max_productions=0,
-            max_findings_per_production=0,
-            max_finding_code_bytes=0,
-            max_absence_queries=0,
-            max_assessment_facts=0,
-            max_port_facts=16,
-            max_provenance_edges=limits["max_provenance_edges"],
-        ),
-    )
+    try:
+        admitted = admit_execution_plan(
+            context=context,
+            capabilities=(capability,),
+            policies=(policy,),
+            decisions=(),
+            assessment_productions=(),
+            assessment_limits=AssessmentLimits(
+                max_productions=0,
+                max_findings_per_production=0,
+                max_finding_code_bytes=0,
+                max_absence_queries=0,
+                max_assessment_facts=0,
+                max_port_facts=16,
+                max_provenance_edges=limits["max_provenance_edges"],
+            ),
+        )
+    except EffectRejected as exc:
+        assert admission_only and exc.code.value == expected_rejection
+        assert consumer.calls == 0
+        return
+    if admission_only:
+        assert expected_rejection is None
+        assert consumer.calls == 0
+        return
     try:
         running = await start_execution(
             admitted=admitted,
