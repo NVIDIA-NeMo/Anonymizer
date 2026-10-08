@@ -162,6 +162,7 @@ LOCAL_BRIDGE_CASES = tuple(
     if case["case_id"]
     in {
         "bridges/result",
+        "bridges/cancel_before_start",
         "bridges/cancel_after_start",
         "bridges/failure_rejected_before_acceptance",
         "bridges/failure_retryable",
@@ -1194,11 +1195,21 @@ async def _assert_local_bridge_case(case: dict[str, Any]) -> None:
             clock=_ZeroClock(),
         ),
     )
+    if case["case_id"] == "bridges/cancel_before_start":
+        running.request_cancel()
     if callback.block:
         await callback.started.wait()
         running.request_cancel()
     result = await running.wait()
     expected = cast(dict[str, Any], case["expected"])["state"]
+    if case["case_id"] == "bridges/cancel_before_start":
+        assert callback.calls == 0
+        assert len(result.record.terminals) == 1
+        assert result.record.terminals[0].attempt is None
+        assert result.record.terminals[0].category == expected["closed_unstarted"]["A0"]
+        assert not result.requests.dispatches and not result.artifacts
+        assert all(state.complete for state in result.states)
+        return
     assert callback.calls == 1
     assert len(result.record.terminals) == 1
     terminal = result.record.terminals[0]
