@@ -508,6 +508,14 @@ def test_map_operation_declaration_admits_through_production() -> None:
     assert fixture.workflow.scopes[0].maps[0].member == fixture.member
 
 
+def test_control_only_map_declaration_admits_through_production() -> None:
+    case = MAP_CASES["map/admit_control_only"]
+    fixture = _map_fixture(control_only=True)
+    assert case["expected"] == {"status": "accepted"}
+    assert fixture.workflow.scopes[0].maps[0].item_input is None
+    _admit_fixture(fixture)
+
+
 @pytest.mark.parametrize(
     ("case_id", "declarations", "code"),
     (
@@ -618,6 +626,34 @@ async def _assert_map_overflow() -> None:
     assert not any(isinstance(fact.key, MapItemKey) for fact in result.provenance)
     assert len(result.artifacts) == 2  # one captured root plus the accepted collection
     assert len(result.assessments) == 1
+
+
+def test_overflow_collection_storage_exact_matches_frozen_publication() -> None:
+    asyncio.run(_assert_overflow_collection_storage_exact())
+
+
+async def _assert_overflow_collection_storage_exact() -> None:
+    case = MAP_CASES["map/overflow_collection_storage_exact"]
+    fixture, result, _ = await _execute_membership(
+        3,
+        item_values=("a", "b", "c"),
+        max_collection_items=3,
+    )
+    expected = case["expected"]["state"]["publication"]
+    expansion = next(iter(result.states[0].expansions))
+    assert expansion.status == "overflow"
+    assert not expansion.members
+    root = next(fact for fact in result.provenance if isinstance(fact.key, RootInputKey))
+    staged = [(artifact, value) for artifact, value in result.artifacts if artifact != root.artifact]
+    assert len(staged) == len(expected["artifacts"]) == 1
+    collection = cast(TextCollectionValue, staged[0][1])
+    assert [item.value.text for item in collection.items] == ["a", "b", "c"]
+    assert len(result.assessments) == len(expected["assessments"]) == 1
+    output = next(fact for fact in result.provenance if isinstance(fact.key, OperationOutputKey))
+    assert output.parents == frozenset({root.key})
+    assert not any(isinstance(fact.key, MapItemKey) for fact in result.provenance)
+    expander = next(entry for entry in result.states[0].entries if entry.template == fixture.expander)
+    assert expander.status == "success"
 
 
 def test_control_only_map_activates_members_without_item_facts() -> None:
