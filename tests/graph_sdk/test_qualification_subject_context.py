@@ -73,6 +73,7 @@ class _SeparateAssessment:
     finding: AssessmentFinding | None
     target_findings: tuple[tuple[str, AssessmentFinding], ...] = ()
     returned_evidence_port: str = "evidence"
+    additional_evidence: bool = False
     calls: int = 0
 
     async def run(self, request: tuple[AssociationInput, ...]) -> LocalCompleted:
@@ -96,6 +97,15 @@ class _SeparateAssessment:
                     value=TextArtifactValue(text="E"),
                 ),
             )
+            if self.additional_evidence:
+                outputs += (
+                    PortArtifact(
+                        port="evidence2",
+                        artifact_type=subject.artifact_type,
+                        artifact=None,
+                        value=TextArtifactValue(text="E2"),
+                    ),
+                )
         return LocalCompleted(
             results=(
                 AssociationResult(
@@ -114,6 +124,15 @@ class _SeparateAssessment:
                     evidence_port=self.returned_evidence_port,
                     finding=finding,
                 ),
+            )
+            + (
+                (
+                    LocalAssessmentResult(
+                        association=item.association, promise="complete", evidence_port="evidence2", finding=finding
+                    ),
+                )
+                if self.additional_evidence
+                else ()
             ),
         )
 
@@ -132,6 +151,8 @@ async def _execute_separate_subject_context(
     dependencies: tuple[tuple[int, int], ...] = (),
     atomic_groups: tuple[tuple[int, ...], ...] = (),
     returned_evidence_port: str = "evidence",
+    provenance_edge_limit: int | None = None,
+    additional_coverage: frozenset[CoverageAtom] | None = None,
 ) -> tuple[AdmittedExecutionPlan, ExecutionResult]:
     base, node, artifact = _workflow(with_input=True)
     raw = base.workflow
@@ -169,6 +190,33 @@ async def _execute_separate_subject_context(
             ),
         ),
     )
+    if additional_coverage is not None:
+        assert not execution_only and not expose_evidence
+        operation = replace(
+            operation,
+            outputs=(*operation.outputs, OutputPort(name="evidence2", artifact_type=artifact)),
+            output_dependencies=(
+                *operation.output_dependencies,
+                OutputDependency(output="evidence2", inputs=frozenset({"context"}), identity_input=None),
+            ),
+            outcomes=tuple(
+                replace(
+                    outcome,
+                    produced_ports=outcome.produced_ports | {"evidence2"},
+                    evidence=outcome.evidence
+                    | {
+                        EvidencePromise(
+                            name="complete",
+                            meaning="test assessment",
+                            subject_port="subject",
+                            consumed_ports=frozenset({"context"}),
+                            coverage=additional_coverage,
+                        )
+                    },
+                )
+                for outcome in operation.outcomes
+            ),
+        )
     if execution_only:
         expose_evidence = False
         operation = replace(
@@ -289,30 +337,37 @@ async def _execute_separate_subject_context(
         decisions=(),
         assessment_productions=()
         if execution_only
-        else (
+        else tuple(
             EvidenceProductionDecl(
                 node=node,
                 outcome="ok",
-                promise="checked",
-                evidence_port="evidence",
+                promise=promise,
+                evidence_port=port,
                 absence_queries=frozenset({0}) if environment else frozenset(),
                 supported_findings=supported_findings,
-            ),
+            )
+            for promise, port in (
+                ("checked", "evidence"),
+                *((("complete", "evidence2"),) if additional_coverage is not None else ()),
+            )
         ),
         assessment_limits=AssessmentLimits(
-            max_productions=1,
+            max_productions=1 + (additional_coverage is not None),
             max_findings_per_production=len(supported_findings),
             max_finding_code_bytes=16,
             max_absence_queries=1 if environment else 0,
-            max_assessment_facts=target_count,
-            max_port_facts=4 * target_count,
-            max_provenance_edges=3 * target_count,
+            max_assessment_facts=(1 + (additional_coverage is not None)) * target_count,
+            max_port_facts=(4 + (additional_coverage is not None)) * target_count,
+            max_provenance_edges=(3 + (additional_coverage is not None)) * target_count
+            if provenance_edge_limit is None
+            else provenance_edge_limit,
         ),
     )
     callback = _SeparateAssessment(
         None if execution_only else finding,
         tuple(zip(target_labels, target_findings, strict=True)) if target_findings else (),
         returned_evidence_port,
+        additional_coverage is not None,
     )
     running = await start_execution(
         admitted=admitted,
@@ -332,7 +387,7 @@ async def _execute_separate_subject_context(
             limits=ExecutionLimits(
                 max_local_in_flight=1,
                 max_remote_outstanding=0,
-                max_runtime_artifacts=3 * target_count,
+                max_runtime_artifacts=(3 + (additional_coverage is not None)) * target_count,
                 max_runtime_artifact_bytes=32 * target_count,
                 max_collection_items=0,
             ),

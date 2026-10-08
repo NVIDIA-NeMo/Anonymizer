@@ -18,9 +18,9 @@ CONTRACT_SHA256 = "239bdaf97eda6b90caeb13d29826abead08e2beff6297460c26409b3e1f5d
 STRUCTURAL_CONTRACT_SHA256 = "88c0ef075b225847f1b2668d2a749307c220eceb50215718db722119d828dc6b"
 MATERIALIZED_VERSION_CONTRACT_SHA256 = "165c7c95bce31a7c5808860f28d012bbe1986bf0712cebdc86fb08ad07afcb21"
 MAP_ITEM_EVIDENCE_CONTRACT_SHA256 = "d5e270fe413f4f5632b522e3ce57e0c913a143060997d63b7673268ae9acfbd8"
-GENERATOR_VERSION = "qualification-v1-generator-25-admission-precedence-v6"
-SELF_TEST_VERSION = "qualification-v1-self-test-25-admission-precedence-v6"
-CORPUS_PATH = "future-contracts/r3-map-item-v6/qualification_v1_cases.json"
+GENERATOR_VERSION = "qualification-v1-generator-27-canonical-verified-v8"
+SELF_TEST_VERSION = "qualification-v1-self-test-27-canonical-verified-v8"
+CORPUS_PATH = "future-contracts/r3-map-item-v8/qualification_v1_cases.json"
 V10_IDS_SHA256 = "043c433056b1ecb21d17ef48efa8bcca6a678fd6b722e7a91ea2e1b3a05c9544"
 
 TERMINAL_CATEGORIES = {"blocked", "cancelled", "failure", "inconsistent", "lost", "success"}
@@ -248,8 +248,10 @@ def admit(d: Obj) -> Obj:
     ):
         return reject("invalid_value")
     lim = obj(d["limits"])
-    if set(lim) != LIMIT_KEYS or any(type(v) is not int or v < 0 for v in lim.values()):
+    if set(lim) != LIMIT_KEYS or any(type(v) is not int for v in lim.values()):
         return reject("invalid_type")
+    if any(cast(int, value) < 0 for value in lim.values()) or cast(int, lim["max_fixed_point_steps"]) == 0:
+        return reject("invalid_value")
     targets = [cast(str, x) for x in arr(d["targets"])]
     if len(targets) != len(set(targets)):
         return reject("duplicate")
@@ -289,8 +291,14 @@ def admit(d: Obj) -> Obj:
         if set(r) != requirement_fields:
             return reject("invalid_value")
         matches = [p for p in ps if p["meaning"] == r.get("meaning") and p["outcome"] == r.get("outcome")]
-        if r.get("target") not in targets or not matches:
-            return reject("missing")
+        if r.get("target") not in targets:
+            return reject("foreign_owner")
+        if not matches:
+            return reject(
+                "protection_ineligible"
+                if any(production.get("outcome") == r.get("outcome") for production in ps)
+                else "missing"
+            )
         eligible = [
             p
             for p in matches
@@ -997,17 +1005,21 @@ def typed_endpoint_owner(d: Obj, s: Obj, activation: str, target: str, endpoint:
         return None, "missing"
     if artifact_value.get("target") != target or artifact_value.get("invocation") != obj(d["execution"])["invocation"]:
         return None, "foreign_owner"
+    if item_owner.get("target") != target:
+        return None, "foreign_owner"
+    if item_owner.get("source") != "map_item":
+        return None, "contradictory"
+    if item_owner.get("member") not in entries or item_owner.get("expander") not in entries:
+        return None, "missing"
     if (
         item_port.get("node") != endpoint.get("member")
         or item_port.get("role") != "artifact"
         or input_fact.get("node") != endpoint.get("member")
         or input_fact.get("target") != target
-        or item_owner.get("source") != "map_item"
         or item_owner.get("artifact") != item_port.get("artifact")
         or item_owner.get("member") != activation
         or item_owner.get("expander") != expander_activation
         or item_owner.get("port") != endpoint.get("item_input")
-        or item_owner.get("target") != target
         or arr(item_owner.get("parents")) != [membership_key]
         or membership_owner.get("activation") != expander_activation
         or membership_owner.get("node") != endpoint.get("expander")
@@ -1016,7 +1028,6 @@ def typed_endpoint_owner(d: Obj, s: Obj, activation: str, target: str, endpoint:
         or activation not in arr(membership.get("members"))
         or membership.get("target") != target
         or artifact_value.get("key") != cast(str, item_owner.get("artifact", "")).rsplit("v", 1)[0]
-        or artifact_value.get("version") != item_owner.get("item_version")
     ):
         return None, "contradictory"
     return producer_key, None
@@ -1195,6 +1206,29 @@ def authenticate(d: Obj, s: Obj) -> tuple[list[Obj], Obj | None]:
         verified.append(verified_fact)
     if len(verified) > cast(int, lim["max_verified_evidence"]):
         return [], reject("limit_exceeded")
+    target_ordinals = {cast(str, target): index for index, target in enumerate(arr(d["targets"]))}
+    node_ordinals = {node: index for index, node in enumerate(sorted(obj(d["node_kinds"])))}
+    port_ordinals = {
+        (cast(str, dependency["node"]), cast(str, dependency["port"])): index
+        for index, dependency in enumerate(map(obj, arr(d["output_dependencies"])))
+    }
+    artifact_ordinals = {artifact: index for index, artifact in enumerate(sorted(obj(s["artifacts"])))}
+
+    def verified_key(fact: Obj) -> tuple[int, int, int, int, int]:
+        target = cast(str, fact["target"])
+        activation = cast(str, fact["activation"])
+        node = cast(str, fact["node"])
+        evidence_port = cast(str, fact["evidence_port"])
+        evidence_artifact = cast(str, fact["evidence_artifact"])
+        return (
+            target_ordinals[target],
+            cast(int, obj(obj(s["entries"])[activation])["occurrence"]),
+            node_ordinals[node],
+            port_ordinals[(node, evidence_port)],
+            artifact_ordinals[evidence_artifact],
+        )
+
+    verified.sort(key=verified_key)
     return verified, None
 
 
@@ -1250,7 +1284,11 @@ def reconcile(d: Obj, s: Obj) -> tuple[dict[str, set[str]], Obj | None]:
                 or parent_terminal.get("target") != parent_entry.get("target")
             ):
                 return codes, reject("contradictory")
-            if m.get("status") == "closed" and parent_terminal.get("outcome") != m.get("expansion_outcome"):
+            if (
+                is_map_expander
+                and m.get("status") == "closed"
+                and parent_terminal.get("outcome") != m.get("expansion_outcome")
+            ):
                 codes[cast(str, t)].add("incomplete_membership")
             if m.get("status") in ("failed", "overflow"):
                 codes[cast(str, t)].add("terminal_failure")
@@ -1779,10 +1817,10 @@ def qualify(d: Obj, s: Obj) -> Obj:
                 return reject("contradictory")
             if source == "operation_output":
                 if structural_output:
-                    wrapper_input = obj(
-                        input_producers.get(f"{value.get('activation')}|{structural_output.get('input_port')}", {})
-                    )
                     if structural_output.get("body_source") == "workflow_input":
+                        wrapper_input = obj(
+                            input_producers.get(f"{value.get('activation')}|{structural_output.get('input_port')}", {})
+                        )
                         actual_parents = [cast(str, parent) for parent in arr(value["parents"])]
                         if (
                             len(actual_parents) != 1
@@ -1816,8 +1854,6 @@ def qualify(d: Obj, s: Obj) -> Obj:
                     if (
                         body_parent.get("artifact") != artifact_ref
                         or body_entry.get("node") != structural_output.get("body_node")
-                        or wrapper_input.get("producer") != body_input.get("producer")
-                        or wrapper_input.get("target") != value.get("target")
                         or body_input.get("target") != value.get("target")
                     ):
                         return reject("contradictory")
@@ -1968,7 +2004,7 @@ def qualify(d: Obj, s: Obj) -> Obj:
             expander = cast(str, value.get("expander"))
             member_entry = obj(entries.get(member, {}))
             expander_entry = obj(entries.get(expander, {}))
-            if not expander_entry:
+            if not expander_entry or not member_entry:
                 return reject("missing")
             matches = [
                 map_input
@@ -2020,6 +2056,8 @@ def qualify(d: Obj, s: Obj) -> Obj:
                 return reject("contradictory")
             member_index = ordered_members.index(member) if member in ordered_members else -1
             items = [obj(item) for item in arr(collection.get("items"))]
+            if not any(item.get("key") == item_key and item.get("version") == item_version for item in items):
+                return reject("missing")
             if (
                 parent_fact.get("source") != "operation_output"
                 or parent_fact.get("activation") != expander
@@ -3184,6 +3222,11 @@ def case(
         "assessment/wrong_kind_coverage",
         "joins/evidence_port_swap",
         "joins/subject_port_swap",
+        "map_item_evidence/expansion_failed",
+        "map_item_evidence/expansion_open",
+        "map_item_evidence/expansion_overflow",
+        "map_item_evidence/member_blocked_unreached",
+        "map_item_evidence/two_maps_cross_owner",
         "map_item_evidence/wrong_subject_artifact",
     }
     c["comparison_scope"] = "neutral_only" if case_id in neutral_only else "production_boundary"
@@ -4195,10 +4238,15 @@ def generate_cases() -> tuple[Obj, ...]:
     e.insert(next(i for i, event in enumerate(e) if event.get("kind") == "revision"), duplicate)
     c.append(case("assessment", "dynamic_occurrence_duplicate", assessed_map_declaration(1), e))
 
-    def submit_dynamic_occurrences(count: int) -> list[Obj]:
+    def submit_dynamic_occurrences(count: int, *, canonical_occurrences: bool = False) -> list[Obj]:
         events = assessed_map_events(count)
         insertion = next(i for i, event in enumerate(events) if event.get("kind") == "revision")
         events[insertion:insertion] = [assessment_submission(f"M{index}", "P_MEMBER") for index in range(count)]
+        if canonical_occurrences:
+            occurrence_by_activation = {"MAP": 0, "M0": 1, "M1": 2, "ROOT:A": 3}
+            for event in events:
+                if event.get("kind") == "entry" and event.get("activation") in occurrence_by_activation:
+                    event["occurrence"] = occurrence_by_activation[cast(str, event["activation"])]
         return events
 
     for count in (1, 2):
@@ -4207,7 +4255,7 @@ def generate_cases() -> tuple[Obj, ...]:
                 "assessment",
                 f"dynamic_submissions_{count}",
                 assessed_map_declaration(count),
-                submit_dynamic_occurrences(count),
+                submit_dynamic_occurrences(count, canonical_occurrences=True),
             )
         )
     e = submit_dynamic_occurrences(1)
@@ -4523,6 +4571,10 @@ def generate_cases() -> tuple[Obj, ...]:
             )
             seal += 1
         events.insert(seal, {"collection": "configurations", "key": "MN", "kind": "revision", "value": "c0"})
+        occurrence_by_activation = {"MAP": 0, "M0": 1, "M1": 2, "ROOT:A": 3, "JOIN": 4}
+        for event in events:
+            if event.get("kind") == "entry" and event.get("activation") in occurrence_by_activation:
+                event["occurrence"] = occurrence_by_activation[cast(str, event["activation"])]
         return events
 
     def block_keyed_join(events: list[Obj], activation: str = "JOIN") -> None:
@@ -4810,8 +4862,6 @@ def generate_cases() -> tuple[Obj, ...]:
         {"activation": "WRAP", "kind": "reservation", "parent": None, "selected": True, "target": "A"},
         entry("WRAP", "A", "SG", node_kind="container"),
         terminal("WRAP", "A", structural=True),
-        port("WRAP", "A", "context", "XAv0", "artifact", "SG"),
-        input_producer("WRAP", "A", "SG", "context", "ROOT:A:context"),
         port("WRAP", "A", "nested_members", "CAv0", "artifact", "SG"),
         provenance(
             "SGOUT:WRAP:A:nested_members",
@@ -4826,7 +4876,7 @@ def generate_cases() -> tuple[Obj, ...]:
         {"activation": "JOIN", "kind": "reservation", "parent": "WRAP", "selected": True, "target": "A"},
         {
             "closed": True,
-            "expansion_outcome": "ok",
+            "expansion_outcome": None,
             "kind": "membership",
             "members": ["MAP", "JOIN"],
             "parent": "WRAP",
@@ -4834,6 +4884,10 @@ def generate_cases() -> tuple[Obj, ...]:
             "target": "A",
         },
     ]
+    nested_occurrences = {"WRAP": 0, "MAP": 1, "M0": 2, "M1": 3, "JOIN": 4, "ROOT:A": 5}
+    for event in e:
+        if event.get("kind") == "entry" and event.get("activation") in nested_occurrences:
+            event["occurrence"] = nested_occurrences[cast(str, event["activation"])]
     c.append(case("map_item_evidence", "nested_path", d, e))
 
     alternate_endpoint = map_item_endpoint(expansion_outcome="alternate", membership_port="alternate_members")
@@ -5032,12 +5086,12 @@ def generate_cases() -> tuple[Obj, ...]:
             subject_port="item2",
         ),
         assessment_submission("Z0", "P_ITEM_2"),
-        entry("MAP2", "A", "EXP2"),
+        entry("MAP2", "A", "EXP2", occurrence=5),
         terminal("MAP2", "A"),
-        entry("JOIN2", "A", "J2"),
+        entry("JOIN2", "A", "J2", occurrence=8),
         terminal("JOIN2", "A"),
         {"activation": "Z0", "kind": "reservation", "parent": "MAP2", "selected": True, "target": "A"},
-        entry("Z0", "A", "MN2", parent="MAP2"),
+        entry("Z0", "A", "MN2", occurrence=6, parent="MAP2"),
         terminal("Z0", "A"),
         {
             "closed": True,

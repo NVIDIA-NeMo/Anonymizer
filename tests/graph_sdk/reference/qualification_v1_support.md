@@ -1,7 +1,76 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# Qualification v1 R3 map-item evidence reference extension v6
+# Qualification v1 R3 map-item evidence reference extension v8
+
+## Canonical verified-evidence order
+
+V8 authenticates submissions in caller order for duplicate and ownership
+errors, then orders the resulting verified tuple by D08's canonical key:
+target, activation occurrence, node, evidence port, and artifact ordinal. The
+finite model now gives its map occurrences an explicit reservation recipe. For
+one map, `MAP`, `M0`, `M1`, `ROOT:A`, and `JOIN` have ordinals 0 through 4.
+The second map uses `MAP2=5`, `Z0=6`, and `JOIN2=8`; nested occurrences have a
+separate explicit route-local recipe. `two_independent_maps` therefore emits
+`M0`, `ROOT:A`, `Z0`, rather than submission order `M0`, `Z0`, `ROOT:A`.
+
+Neutral symbolic identities and runtime identities belong to different plans.
+The runtime reservation recipe iterates admitted node storage and fresh typed
+IDs need not assign the same numeric occurrence to the same neutral name.
+Cross-model comparison must first assert that each raw tuple is ordered by its
+own retained numeric ordinals, then compare complete rows after identity
+normalization. It cannot require raw symbolic order to coincide across plans.
+The reference self-test checks every multi-fact result against its complete
+finite canonical key.
+
+`map_item_evidence/member_blocked_unreached` remains a neutral terminal-failure
+witness but is now `neutral_only`: its declaration supplies the mapped item and
+contains no unavailable prerequisite capable of blocking the member. The
+production obligation is a real map member with an additional failed ordinary
+input, a retained item owner, a blocked unstarted member, no assessment
+callback/fact, and terminal-failure withholding.
+
+V8 also aligns two admission negatives with their earliest public boundary.
+`max_fixed_point_steps=0` violates the positive `QualificationLimits` scalar
+invariant and is `invalid_value`; it never reaches the later target-count
+limit check. A protection requirement whose meaning has no matching projected
+promise is rejected during workflow preparation as `protection_ineligible`;
+it cannot reach P7 as a missing production. Both cases remain callback-free.
+
+## Retained map-owner validation precedence
+
+V7 corrects six corruption results at the retained provenance owner boundary.
+An item key or version absent from the expander's exact retained collection is
+`missing`. A `MapItemKey` whose expander or member occurrence is absent is also
+`missing`. A key naming a different workflow target is `foreign_owner`.
+These checks precede relationship checks because the relationship can be
+authenticated only after its owners and collection item exist. A present
+non-map producer remains `contradictory`, and an artifact from another
+invocation remains `foreign_owner`.
+
+Typed subject and consumed endpoints use this same ordering. In particular, a
+consumed endpoint whose captured `MapItemKey` names an absent member occurrence
+is `missing`; the neutral evaluator no longer collapses that absence into a
+generic endpoint contradiction. The eight corruption witnesses assert this
+precedence directly.
+
+The retained `expansion_failed`, `expansion_overflow`, and `expansion_open`
+records remain useful finite qualification-state witnesses, but V7 classifies
+them as `neutral_only`. The runtime publishes a successful collection and its
+membership transition atomically: an empty successful collection closes the
+expansion, overflow requires an actually over-limit retained collection, and a
+failed expander cannot publish the successful collection consumed by the
+candidate operation. Production comparison needs separate records with those
+real topologies; these neutral traces do not claim to be constructible P5
+records.
+
+V7 also aligns the nested record with public structural projection. A
+`SubgraphNode` input is an internal binding used to materialize body operation
+inputs; it is not an `ExecutionPortFact` occurrence and does not appear in the
+public operation-input-parent inventory. The nested trace therefore retains
+the body expander's `context` port and producer plus the wrapper's projected
+`nested_members` output and provenance, while omitting the synthetic wrapper
+`context` port and input producer.
 
 ## Typed admission precedence and route ownership
 
@@ -30,6 +99,13 @@ corresponding production-boundary witness: the member item port/input parent no
 longer resolves to its exact `MapItemKey` and rejects `contradictory`. This
 mapping preserves the neutral family without adding an SDK field or concealing
 the real owner check.
+
+`map_item_evidence/two_maps_cross_owner` has the same representation limit: its
+neutral mutation replaces the derived assessment subject artifact. V7 retains
+the scenario and result but classifies it as `neutral_only`. A production
+witness remains required that changes a real captured member port or
+`MapItemKey` to the sibling map while retaining both map owner domains; no
+caller-supplied assessment field may stand in for that test.
 
 ## Root-input candidate passthrough output role
 

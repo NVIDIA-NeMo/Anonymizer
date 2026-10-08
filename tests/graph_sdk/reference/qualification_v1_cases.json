@@ -24457,6 +24457,41 @@
             "context": "artifact"
           },
           "coverage": [
+            "K0"
+          ],
+          "environment": {
+            "absences": {
+              "Q0": 1
+            },
+            "configurations": {
+              "N": "c0"
+            },
+            "state": {
+              "read": 1
+            }
+          },
+          "evidence_artifact": "EAv0",
+          "evidence_port": "evidence",
+          "finding": "satisfied",
+          "meaning": "privacy",
+          "node": "N",
+          "outcome": "ok",
+          "promise": "P_PART",
+          "subject_artifact": "Av0",
+          "subject_port": "subject",
+          "target": "A",
+          "validity": "current"
+        },
+        {
+          "activation": "ROOT:A",
+          "authenticated_factory": "EXEC:I0",
+          "consumed": {
+            "context": "XAv0"
+          },
+          "consumed_roles": {
+            "context": "artifact"
+          },
+          "coverage": [
             "K0",
             "K1"
           ],
@@ -24478,41 +24513,6 @@
           "node": "N",
           "outcome": "ok",
           "promise": "P_FULL",
-          "subject_artifact": "Av0",
-          "subject_port": "subject",
-          "target": "A",
-          "validity": "current"
-        },
-        {
-          "activation": "ROOT:A",
-          "authenticated_factory": "EXEC:I0",
-          "consumed": {
-            "context": "XAv0"
-          },
-          "consumed_roles": {
-            "context": "artifact"
-          },
-          "coverage": [
-            "K0"
-          ],
-          "environment": {
-            "absences": {
-              "Q0": 1
-            },
-            "configurations": {
-              "N": "c0"
-            },
-            "state": {
-              "read": 1
-            }
-          },
-          "evidence_artifact": "EAv0",
-          "evidence_port": "evidence",
-          "finding": "satisfied",
-          "meaning": "privacy",
-          "node": "N",
-          "outcome": "ok",
-          "promise": "P_PART",
           "subject_artifact": "Av0",
           "subject_port": "subject",
           "target": "A",
@@ -71219,7 +71219,7 @@
         "kind": "entry",
         "node": "N",
         "node_kind": "operation",
-        "occurrence": 0,
+        "occurrence": 3,
         "parent": null,
         "state_category": "success",
         "state_outcome": "ok",
@@ -71682,7 +71682,7 @@
         "kind": "entry",
         "node": "MN",
         "node_kind": "operation",
-        "occurrence": 0,
+        "occurrence": 1,
         "parent": "MAP",
         "state_category": "success",
         "state_outcome": "ok",
@@ -71882,6 +71882,38 @@
       ],
       "verified": [
         {
+          "activation": "M0",
+          "authenticated_factory": "EXEC:I0",
+          "consumed": {
+            "subject": "Av0"
+          },
+          "consumed_roles": {
+            "subject": "candidate"
+          },
+          "coverage": [
+            "K0",
+            "K1"
+          ],
+          "environment": {
+            "absences": {},
+            "configurations": {
+              "MN": "c0"
+            },
+            "state": {}
+          },
+          "evidence_artifact": "ME0v0",
+          "evidence_port": "evidence",
+          "finding": "satisfied",
+          "meaning": "member_privacy",
+          "node": "MN",
+          "outcome": "ok",
+          "promise": "P_MEMBER",
+          "subject_artifact": "Av0",
+          "subject_port": "subject",
+          "target": "A",
+          "validity": "current"
+        },
+        {
           "activation": "ROOT:A",
           "authenticated_factory": "EXEC:I0",
           "consumed": {
@@ -71912,38 +71944,6 @@
           "node": "N",
           "outcome": "ok",
           "promise": "P",
-          "subject_artifact": "Av0",
-          "subject_port": "subject",
-          "target": "A",
-          "validity": "current"
-        },
-        {
-          "activation": "M0",
-          "authenticated_factory": "EXEC:I0",
-          "consumed": {
-            "subject": "Av0"
-          },
-          "consumed_roles": {
-            "subject": "candidate"
-          },
-          "coverage": [
-            "K0",
-            "K1"
-          ],
-          "environment": {
-            "absences": {},
-            "configurations": {
-              "MN": "c0"
-            },
-            "state": {}
-          },
-          "evidence_artifact": "ME0v0",
-          "evidence_port": "evidence",
-          "finding": "satisfied",
-          "meaning": "member_privacy",
-          "node": "MN",
-          "outcome": "ok",
-          "promise": "P_MEMBER",
           "subject_artifact": "Av0",
           "subject_port": "subject",
           "target": "A",
@@ -72176,7 +72176,7 @@
         "kind": "entry",
         "node": "N",
         "node_kind": "operation",
-        "occurrence": 0,
+        "occurrence": 3,
         "parent": null,
         "state_category": "success",
         "state_outcome": "ok",
@@ -72795,7 +72795,7 @@
         "kind": "entry",
         "node": "MN",
         "node_kind": "operation",
-        "occurrence": 0,
+        "occurrence": 1,
         "parent": "MAP",
         "state_category": "success",
         "state_outcome": "ok",
@@ -72824,7 +72824,7 @@
         "kind": "entry",
         "node": "MN",
         "node_kind": "operation",
-        "occurrence": 1,
+        "occurrence": 2,
         "parent": "MAP",
         "state_category": "success",
         "state_outcome": "ok",
@@ -73050,42 +73050,6 @@
       ],
       "verified": [
         {
-          "activation": "ROOT:A",
-          "authenticated_factory": "EXEC:I0",
-          "consumed": {
-            "context": "XAv0"
-          },
-          "consumed_roles": {
-            "context": "artifact"
-          },
-          "coverage": [
-            "K0",
-            "K1"
-          ],
-          "environment": {
-            "absences": {
-              "Q0": 1
-            },
-            "configurations": {
-              "N": "c0"
-            },
-            "state": {
-              "read": 1
-            }
-          },
-          "evidence_artifact": "EAv0",
-          "evidence_port": "evidence",
-          "finding": "satisfied",
-          "meaning": "privacy",
-          "node": "N",
-          "outcome": "ok",
-          "promise": "P",
-          "subject_artifact": "Av0",
-          "subject_port": "subject",
-          "target": "A",
-          "validity": "current"
-        },
-        {
           "activation": "M0",
           "authenticated_factory": "EXEC:I0",
           "consumed": {
@@ -73144,6 +73108,42 @@
           "node": "MN",
           "outcome": "ok",
           "promise": "P_MEMBER",
+          "subject_artifact": "Av0",
+          "subject_port": "subject",
+          "target": "A",
+          "validity": "current"
+        },
+        {
+          "activation": "ROOT:A",
+          "authenticated_factory": "EXEC:I0",
+          "consumed": {
+            "context": "XAv0"
+          },
+          "consumed_roles": {
+            "context": "artifact"
+          },
+          "coverage": [
+            "K0",
+            "K1"
+          ],
+          "environment": {
+            "absences": {
+              "Q0": 1
+            },
+            "configurations": {
+              "N": "c0"
+            },
+            "state": {
+              "read": 1
+            }
+          },
+          "evidence_artifact": "EAv0",
+          "evidence_port": "evidence",
+          "finding": "satisfied",
+          "meaning": "privacy",
+          "node": "N",
+          "outcome": "ok",
+          "promise": "P",
           "subject_artifact": "Av0",
           "subject_port": "subject",
           "target": "A",
@@ -81754,7 +81754,7 @@
         "kind": "entry",
         "node": "N",
         "node_kind": "operation",
-        "occurrence": 0,
+        "occurrence": 3,
         "parent": null,
         "state_category": "success",
         "state_outcome": "ok",
@@ -82081,7 +82081,7 @@
         "kind": "entry",
         "node": "J",
         "node_kind": "operation",
-        "occurrence": 0,
+        "occurrence": 4,
         "parent": null,
         "state_category": "success",
         "state_outcome": "ok",
@@ -82552,7 +82552,7 @@
         "kind": "entry",
         "node": "N",
         "node_kind": "operation",
-        "occurrence": 0,
+        "occurrence": 3,
         "parent": null,
         "state_category": "success",
         "state_outcome": "ok",
@@ -83003,7 +83003,7 @@
         "kind": "entry",
         "node": "MN",
         "node_kind": "operation",
-        "occurrence": 0,
+        "occurrence": 1,
         "parent": "MAP",
         "state_category": "success",
         "state_outcome": "ok",
@@ -83036,7 +83036,7 @@
         "kind": "entry",
         "node": "J",
         "node_kind": "operation",
-        "occurrence": 0,
+        "occurrence": 4,
         "parent": null,
         "state_category": "success",
         "state_outcome": "ok",
@@ -83571,7 +83571,7 @@
         "kind": "entry",
         "node": "N",
         "node_kind": "operation",
-        "occurrence": 0,
+        "occurrence": 3,
         "parent": null,
         "state_category": "success",
         "state_outcome": "ok",
@@ -84147,7 +84147,7 @@
         "kind": "entry",
         "node": "MN",
         "node_kind": "operation",
-        "occurrence": 0,
+        "occurrence": 1,
         "parent": "MAP",
         "state_category": "success",
         "state_outcome": "ok",
@@ -84176,7 +84176,7 @@
         "kind": "entry",
         "node": "MN",
         "node_kind": "operation",
-        "occurrence": 1,
+        "occurrence": 2,
         "parent": "MAP",
         "state_category": "success",
         "state_outcome": "ok",
@@ -84210,7 +84210,7 @@
         "kind": "entry",
         "node": "J",
         "node_kind": "operation",
-        "occurrence": 0,
+        "occurrence": 4,
         "parent": null,
         "state_category": "success",
         "state_outcome": "ok",
@@ -84808,7 +84808,7 @@
         "kind": "entry",
         "node": "N",
         "node_kind": "operation",
-        "occurrence": 0,
+        "occurrence": 3,
         "parent": null,
         "state_category": "success",
         "state_outcome": "ok",
@@ -85384,7 +85384,7 @@
         "kind": "entry",
         "node": "MN",
         "node_kind": "operation",
-        "occurrence": 0,
+        "occurrence": 1,
         "parent": "MAP",
         "state_category": "success",
         "state_outcome": "ok",
@@ -85413,7 +85413,7 @@
         "kind": "entry",
         "node": "MN",
         "node_kind": "operation",
-        "occurrence": 1,
+        "occurrence": 2,
         "parent": "MAP",
         "state_category": "success",
         "state_outcome": "ok",
@@ -85447,7 +85447,7 @@
         "kind": "entry",
         "node": "J",
         "node_kind": "operation",
-        "occurrence": 0,
+        "occurrence": 4,
         "parent": null,
         "state_category": "success",
         "state_outcome": "ok",
@@ -85799,7 +85799,7 @@
         "kind": "entry",
         "node": "N",
         "node_kind": "operation",
-        "occurrence": 0,
+        "occurrence": 3,
         "parent": null,
         "state_category": "success",
         "state_outcome": "ok",
@@ -86375,7 +86375,7 @@
         "kind": "entry",
         "node": "MN",
         "node_kind": "operation",
-        "occurrence": 0,
+        "occurrence": 1,
         "parent": "MAP",
         "state_category": "success",
         "state_outcome": "ok",
@@ -86404,7 +86404,7 @@
         "kind": "entry",
         "node": "MN",
         "node_kind": "operation",
-        "occurrence": 1,
+        "occurrence": 2,
         "parent": "MAP",
         "state_category": "success",
         "state_outcome": "ok",
@@ -86438,7 +86438,7 @@
         "kind": "entry",
         "node": "J",
         "node_kind": "operation",
-        "occurrence": 0,
+        "occurrence": 4,
         "parent": null,
         "state_category": "success",
         "state_outcome": "ok",
@@ -86783,7 +86783,7 @@
         "kind": "entry",
         "node": "N",
         "node_kind": "operation",
-        "occurrence": 0,
+        "occurrence": 3,
         "parent": null,
         "state_category": "success",
         "state_outcome": "ok",
@@ -87251,7 +87251,7 @@
         "kind": "entry",
         "node": "MN",
         "node_kind": "operation",
-        "occurrence": 0,
+        "occurrence": 1,
         "parent": "MAP",
         "state_category": "success",
         "state_outcome": "ok",
@@ -87284,7 +87284,7 @@
         "kind": "entry",
         "node": "J",
         "node_kind": "operation",
-        "occurrence": 0,
+        "occurrence": 4,
         "parent": null,
         "state_category": "success",
         "state_outcome": "ok",
@@ -87815,7 +87815,7 @@
         "kind": "entry",
         "node": "N",
         "node_kind": "operation",
-        "occurrence": 0,
+        "occurrence": 3,
         "parent": null,
         "state_category": "success",
         "state_outcome": "ok",
@@ -88262,7 +88262,7 @@
         "kind": "entry",
         "node": "MN",
         "node_kind": "operation",
-        "occurrence": 0,
+        "occurrence": 1,
         "parent": "MAP",
         "state_category": "success",
         "state_outcome": "ok",
@@ -88295,7 +88295,7 @@
         "kind": "entry",
         "node": "J",
         "node_kind": "operation",
-        "occurrence": 0,
+        "occurrence": 4,
         "parent": null,
         "state_category": "success",
         "state_outcome": "ok",
@@ -88785,7 +88785,7 @@
         "kind": "entry",
         "node": "N",
         "node_kind": "operation",
-        "occurrence": 0,
+        "occurrence": 3,
         "parent": null,
         "state_category": "success",
         "state_outcome": "ok",
@@ -89236,7 +89236,7 @@
         "kind": "entry",
         "node": "MN",
         "node_kind": "operation",
-        "occurrence": 0,
+        "occurrence": 1,
         "parent": "MAP",
         "state_category": "success",
         "state_outcome": "ok",
@@ -89269,7 +89269,7 @@
         "kind": "entry",
         "node": "J",
         "node_kind": "operation",
-        "occurrence": 0,
+        "occurrence": 4,
         "parent": null,
         "state_category": "success",
         "state_outcome": "ok",
@@ -89609,7 +89609,7 @@
         "kind": "entry",
         "node": "N",
         "node_kind": "operation",
-        "occurrence": 0,
+        "occurrence": 3,
         "parent": null,
         "state_category": "success",
         "state_outcome": "ok",
@@ -90060,7 +90060,7 @@
         "kind": "entry",
         "node": "MN",
         "node_kind": "operation",
-        "occurrence": 0,
+        "occurrence": 1,
         "parent": "MAP",
         "state_category": "success",
         "state_outcome": "ok",
@@ -90093,7 +90093,7 @@
         "kind": "entry",
         "node": "J",
         "node_kind": "operation",
-        "occurrence": 0,
+        "occurrence": 4,
         "parent": null,
         "state_category": "success",
         "state_outcome": "ok",
@@ -90437,7 +90437,7 @@
         "kind": "entry",
         "node": "N",
         "node_kind": "operation",
-        "occurrence": 0,
+        "occurrence": 3,
         "parent": null,
         "state_category": "success",
         "state_outcome": "ok",
@@ -90855,7 +90855,7 @@
         "kind": "entry",
         "node": "MN",
         "node_kind": "operation",
-        "occurrence": 0,
+        "occurrence": 1,
         "parent": "MAP",
         "state_category": "success",
         "state_outcome": "ok",
@@ -90888,7 +90888,7 @@
         "kind": "entry",
         "node": "J",
         "node_kind": "operation",
-        "occurrence": 0,
+        "occurrence": 4,
         "parent": null,
         "state_category": "success",
         "state_outcome": "ok",
@@ -91228,7 +91228,7 @@
         "kind": "entry",
         "node": "N",
         "node_kind": "operation",
-        "occurrence": 0,
+        "occurrence": 3,
         "parent": null,
         "state_category": "success",
         "state_outcome": "ok",
@@ -91804,7 +91804,7 @@
         "kind": "entry",
         "node": "MN",
         "node_kind": "operation",
-        "occurrence": 0,
+        "occurrence": 1,
         "parent": "MAP",
         "state_category": "success",
         "state_outcome": "ok",
@@ -91833,7 +91833,7 @@
         "kind": "entry",
         "node": "MN",
         "node_kind": "operation",
-        "occurrence": 1,
+        "occurrence": 2,
         "parent": "MAP",
         "state_category": "success",
         "state_outcome": "ok",
@@ -91867,7 +91867,7 @@
         "kind": "entry",
         "node": "J",
         "node_kind": "operation",
-        "occurrence": 0,
+        "occurrence": 4,
         "parent": null,
         "state_category": "success",
         "state_outcome": "ok",
@@ -94546,7 +94546,7 @@
         "kind": "entry",
         "node": "N",
         "node_kind": "operation",
-        "occurrence": 0,
+        "occurrence": 3,
         "parent": null,
         "state_category": "success",
         "state_outcome": "ok",
@@ -95014,7 +95014,7 @@
         "kind": "entry",
         "node": "MN",
         "node_kind": "operation",
-        "occurrence": 0,
+        "occurrence": 1,
         "parent": "MAP",
         "state_category": "success",
         "state_outcome": "ok",
@@ -95047,7 +95047,7 @@
         "kind": "entry",
         "node": "J",
         "node_kind": "operation",
-        "occurrence": 0,
+        "occurrence": 4,
         "parent": null,
         "state_category": "success",
         "state_outcome": "ok",
@@ -95122,7 +95122,7 @@
       }
     ],
     "expected": {
-      "code": "contradictory",
+      "code": "missing",
       "status": "rejected"
     },
     "family": "map_item_evidence",
@@ -95387,7 +95387,7 @@
         "kind": "entry",
         "node": "N",
         "node_kind": "operation",
-        "occurrence": 0,
+        "occurrence": 3,
         "parent": null,
         "state_category": "success",
         "state_outcome": "ok",
@@ -95838,7 +95838,7 @@
         "kind": "entry",
         "node": "MN",
         "node_kind": "operation",
-        "occurrence": 0,
+        "occurrence": 1,
         "parent": "MAP",
         "state_category": "success",
         "state_outcome": "ok",
@@ -95871,7 +95871,7 @@
         "kind": "entry",
         "node": "J",
         "node_kind": "operation",
-        "occurrence": 0,
+        "occurrence": 4,
         "parent": null,
         "state_category": "success",
         "state_outcome": "ok",
@@ -96211,7 +96211,7 @@
         "kind": "entry",
         "node": "N",
         "node_kind": "operation",
-        "occurrence": 0,
+        "occurrence": 3,
         "parent": null,
         "state_category": "success",
         "state_outcome": "ok",
@@ -96662,7 +96662,7 @@
         "kind": "entry",
         "node": "MN",
         "node_kind": "operation",
-        "occurrence": 0,
+        "occurrence": 1,
         "parent": "MAP",
         "state_category": "success",
         "state_outcome": "ok",
@@ -96695,7 +96695,7 @@
         "kind": "entry",
         "node": "J",
         "node_kind": "operation",
-        "occurrence": 0,
+        "occurrence": 4,
         "parent": null,
         "state_category": "success",
         "state_outcome": "ok",
@@ -96770,7 +96770,7 @@
       }
     ],
     "expected": {
-      "code": "contradictory",
+      "code": "missing",
       "status": "rejected"
     },
     "family": "map_item_evidence",
@@ -97035,7 +97035,7 @@
         "kind": "entry",
         "node": "N",
         "node_kind": "operation",
-        "occurrence": 0,
+        "occurrence": 3,
         "parent": null,
         "state_category": "success",
         "state_outcome": "ok",
@@ -97486,7 +97486,7 @@
         "kind": "entry",
         "node": "MN",
         "node_kind": "operation",
-        "occurrence": 0,
+        "occurrence": 1,
         "parent": "MAP",
         "state_category": "success",
         "state_outcome": "ok",
@@ -97519,7 +97519,7 @@
         "kind": "entry",
         "node": "J",
         "node_kind": "operation",
-        "occurrence": 0,
+        "occurrence": 4,
         "parent": null,
         "state_category": "success",
         "state_outcome": "ok",
@@ -97594,7 +97594,7 @@
       }
     ],
     "expected": {
-      "code": "contradictory",
+      "code": "missing",
       "status": "rejected"
     },
     "family": "map_item_evidence",
@@ -97859,7 +97859,7 @@
         "kind": "entry",
         "node": "N",
         "node_kind": "operation",
-        "occurrence": 0,
+        "occurrence": 3,
         "parent": null,
         "state_category": "success",
         "state_outcome": "ok",
@@ -98310,7 +98310,7 @@
         "kind": "entry",
         "node": "MN",
         "node_kind": "operation",
-        "occurrence": 0,
+        "occurrence": 1,
         "parent": "MAP",
         "state_category": "success",
         "state_outcome": "ok",
@@ -98343,7 +98343,7 @@
         "kind": "entry",
         "node": "J",
         "node_kind": "operation",
-        "occurrence": 0,
+        "occurrence": 4,
         "parent": null,
         "state_category": "success",
         "state_outcome": "ok",
@@ -98683,7 +98683,7 @@
         "kind": "entry",
         "node": "N",
         "node_kind": "operation",
-        "occurrence": 0,
+        "occurrence": 3,
         "parent": null,
         "state_category": "success",
         "state_outcome": "ok",
@@ -99134,7 +99134,7 @@
         "kind": "entry",
         "node": "MN",
         "node_kind": "operation",
-        "occurrence": 0,
+        "occurrence": 1,
         "parent": "MAP",
         "state_category": "success",
         "state_outcome": "ok",
@@ -99167,7 +99167,7 @@
         "kind": "entry",
         "node": "J",
         "node_kind": "operation",
-        "occurrence": 0,
+        "occurrence": 4,
         "parent": null,
         "state_category": "success",
         "state_outcome": "ok",
@@ -99688,7 +99688,7 @@
         "kind": "entry",
         "node": "N",
         "node_kind": "operation",
-        "occurrence": 0,
+        "occurrence": 3,
         "parent": null,
         "state_category": "success",
         "state_outcome": "ok",
@@ -100066,7 +100066,7 @@
         "kind": "entry",
         "node": "MN",
         "node_kind": "operation",
-        "occurrence": 0,
+        "occurrence": 1,
         "parent": "MAP",
         "state_category": "failure",
         "state_outcome": null,
@@ -100101,7 +100101,7 @@
         "kind": "entry",
         "node": "J",
         "node_kind": "operation",
-        "occurrence": 0,
+        "occurrence": 4,
         "parent": null,
         "state_category": "blocked",
         "state_outcome": null,
@@ -100334,7 +100334,7 @@
   {
     "boundary": "qualification",
     "case_id": "map_item_evidence/member_blocked_unreached",
-    "comparison_scope": "production_boundary",
+    "comparison_scope": "neutral_only",
     "declaration": {
       "atomic": [
         [
@@ -100590,7 +100590,7 @@
         "kind": "entry",
         "node": "N",
         "node_kind": "operation",
-        "occurrence": 0,
+        "occurrence": 3,
         "parent": null,
         "state_category": "success",
         "state_outcome": "ok",
@@ -100968,7 +100968,7 @@
         "kind": "entry",
         "node": "MN",
         "node_kind": "operation",
-        "occurrence": 0,
+        "occurrence": 1,
         "parent": "MAP",
         "state_category": "blocked",
         "state_outcome": null,
@@ -101003,7 +101003,7 @@
         "kind": "entry",
         "node": "J",
         "node_kind": "operation",
-        "occurrence": 0,
+        "occurrence": 4,
         "parent": null,
         "state_category": "blocked",
         "state_outcome": null,
@@ -101236,7 +101236,7 @@
   {
     "boundary": "qualification",
     "case_id": "map_item_evidence/expansion_failed",
-    "comparison_scope": "production_boundary",
+    "comparison_scope": "neutral_only",
     "declaration": {
       "atomic": [
         [
@@ -101492,7 +101492,7 @@
         "kind": "entry",
         "node": "N",
         "node_kind": "operation",
-        "occurrence": 0,
+        "occurrence": 3,
         "parent": null,
         "state_category": "success",
         "state_outcome": "ok",
@@ -101826,7 +101826,7 @@
         "kind": "entry",
         "node": "J",
         "node_kind": "operation",
-        "occurrence": 0,
+        "occurrence": 4,
         "parent": null,
         "state_category": "blocked",
         "state_outcome": null,
@@ -102040,7 +102040,7 @@
   {
     "boundary": "qualification",
     "case_id": "map_item_evidence/expansion_overflow",
-    "comparison_scope": "production_boundary",
+    "comparison_scope": "neutral_only",
     "declaration": {
       "atomic": [
         [
@@ -102296,7 +102296,7 @@
         "kind": "entry",
         "node": "N",
         "node_kind": "operation",
-        "occurrence": 0,
+        "occurrence": 3,
         "parent": null,
         "state_category": "success",
         "state_outcome": "ok",
@@ -102623,7 +102623,7 @@
         "kind": "entry",
         "node": "J",
         "node_kind": "operation",
-        "occurrence": 0,
+        "occurrence": 4,
         "parent": null,
         "state_category": "blocked",
         "state_outcome": null,
@@ -102837,7 +102837,7 @@
   {
     "boundary": "qualification",
     "case_id": "map_item_evidence/expansion_open",
-    "comparison_scope": "production_boundary",
+    "comparison_scope": "neutral_only",
     "declaration": {
       "atomic": [
         [
@@ -103093,7 +103093,7 @@
         "kind": "entry",
         "node": "N",
         "node_kind": "operation",
-        "occurrence": 0,
+        "occurrence": 3,
         "parent": null,
         "state_category": "success",
         "state_outcome": "ok",
@@ -103420,7 +103420,7 @@
         "kind": "entry",
         "node": "J",
         "node_kind": "operation",
-        "occurrence": 0,
+        "occurrence": 4,
         "parent": null,
         "state_category": "success",
         "state_outcome": "ok",
@@ -103867,7 +103867,7 @@
         "kind": "entry",
         "node": "N",
         "node_kind": "operation",
-        "occurrence": 0,
+        "occurrence": 3,
         "parent": null,
         "state_category": "success",
         "state_outcome": "ok",
@@ -104300,7 +104300,7 @@
         "kind": "entry",
         "node": "MN",
         "node_kind": "operation",
-        "occurrence": 0,
+        "occurrence": 1,
         "parent": "MAP",
         "state_category": "success",
         "state_outcome": "ok",
@@ -104333,7 +104333,7 @@
         "kind": "entry",
         "node": "J",
         "node_kind": "operation",
-        "occurrence": 0,
+        "occurrence": 4,
         "parent": null,
         "state_category": "success",
         "state_outcome": "ok",
@@ -104860,7 +104860,7 @@
         "kind": "entry",
         "node": "N",
         "node_kind": "operation",
-        "occurrence": 0,
+        "occurrence": 3,
         "parent": null,
         "state_category": "success",
         "state_outcome": "ok",
@@ -105311,7 +105311,7 @@
         "kind": "entry",
         "node": "MN",
         "node_kind": "operation",
-        "occurrence": 0,
+        "occurrence": 1,
         "parent": "MAP",
         "state_category": "success",
         "state_outcome": "ok",
@@ -105344,7 +105344,7 @@
         "kind": "entry",
         "node": "J",
         "node_kind": "operation",
-        "occurrence": 0,
+        "occurrence": 4,
         "parent": null,
         "state_category": "success",
         "state_outcome": "ok",
@@ -105890,7 +105890,7 @@
         "kind": "entry",
         "node": "N",
         "node_kind": "operation",
-        "occurrence": 0,
+        "occurrence": 5,
         "parent": null,
         "state_category": "success",
         "state_outcome": "ok",
@@ -106234,23 +106234,6 @@
       },
       {
         "activation": "WRAP",
-        "artifact": "XAv0",
-        "kind": "port",
-        "node": "SG",
-        "port": "context",
-        "role": "artifact",
-        "target": "A"
-      },
-      {
-        "activation": "WRAP",
-        "kind": "input_producer",
-        "node": "SG",
-        "port": "context",
-        "producer": "ROOT:A:context",
-        "target": "A"
-      },
-      {
-        "activation": "WRAP",
         "artifact": "CAv0",
         "kind": "port",
         "node": "SG",
@@ -106295,7 +106278,7 @@
       },
       {
         "closed": true,
-        "expansion_outcome": "ok",
+        "expansion_outcome": null,
         "kind": "membership",
         "members": [
           "MAP",
@@ -106413,7 +106396,7 @@
         "kind": "entry",
         "node": "EXP",
         "node_kind": "operation",
-        "occurrence": 0,
+        "occurrence": 1,
         "parent": "WRAP",
         "state_category": "success",
         "state_outcome": "ok",
@@ -106442,7 +106425,7 @@
         "kind": "entry",
         "node": "MN",
         "node_kind": "operation",
-        "occurrence": 0,
+        "occurrence": 2,
         "parent": "MAP",
         "state_category": "success",
         "state_outcome": "ok",
@@ -106475,7 +106458,7 @@
         "kind": "entry",
         "node": "J",
         "node_kind": "operation",
-        "occurrence": 0,
+        "occurrence": 4,
         "parent": "WRAP",
         "state_category": "success",
         "state_outcome": "ok",
@@ -106593,7 +106576,7 @@
           },
           "WRAP": {
             "closed": true,
-            "expansion_outcome": "ok",
+            "expansion_outcome": null,
             "members": [
               "MAP",
               "JOIN"
@@ -107028,7 +107011,7 @@
         "kind": "entry",
         "node": "N",
         "node_kind": "operation",
-        "occurrence": 0,
+        "occurrence": 3,
         "parent": null,
         "state_category": "success",
         "state_outcome": "ok",
@@ -107479,7 +107462,7 @@
         "kind": "entry",
         "node": "MN",
         "node_kind": "operation",
-        "occurrence": 0,
+        "occurrence": 1,
         "parent": "MAP",
         "state_category": "success",
         "state_outcome": "ok",
@@ -107512,7 +107495,7 @@
         "kind": "entry",
         "node": "J",
         "node_kind": "operation",
-        "occurrence": 0,
+        "occurrence": 4,
         "parent": null,
         "state_category": "success",
         "state_outcome": "ok",
@@ -108047,7 +108030,7 @@
         "kind": "entry",
         "node": "N",
         "node_kind": "operation",
-        "occurrence": 0,
+        "occurrence": 3,
         "parent": null,
         "state_category": "success",
         "state_outcome": "ok",
@@ -108623,7 +108606,7 @@
         "kind": "entry",
         "node": "MN",
         "node_kind": "operation",
-        "occurrence": 0,
+        "occurrence": 1,
         "parent": "MAP",
         "state_category": "success",
         "state_outcome": "ok",
@@ -108652,7 +108635,7 @@
         "kind": "entry",
         "node": "MN",
         "node_kind": "operation",
-        "occurrence": 1,
+        "occurrence": 2,
         "parent": "MAP",
         "state_category": "success",
         "state_outcome": "ok",
@@ -108686,7 +108669,7 @@
         "kind": "entry",
         "node": "J",
         "node_kind": "operation",
-        "occurrence": 0,
+        "occurrence": 4,
         "parent": null,
         "state_category": "success",
         "state_outcome": "ok",
@@ -109269,7 +109252,7 @@
         "kind": "entry",
         "node": "N",
         "node_kind": "operation",
-        "occurrence": 0,
+        "occurrence": 3,
         "parent": null,
         "state_category": "success",
         "state_outcome": "ok",
@@ -109720,7 +109703,7 @@
         "kind": "entry",
         "node": "MN",
         "node_kind": "operation",
-        "occurrence": 0,
+        "occurrence": 1,
         "parent": "MAP",
         "state_category": "success",
         "state_outcome": "ok",
@@ -109753,7 +109736,7 @@
         "kind": "entry",
         "node": "J",
         "node_kind": "operation",
-        "occurrence": 0,
+        "occurrence": 4,
         "parent": null,
         "state_category": "success",
         "state_outcome": "ok",
@@ -109828,7 +109811,7 @@
       }
     ],
     "expected": {
-      "code": "contradictory",
+      "code": "missing",
       "status": "rejected"
     },
     "family": "map_item_evidence",
@@ -110093,7 +110076,7 @@
         "kind": "entry",
         "node": "N",
         "node_kind": "operation",
-        "occurrence": 0,
+        "occurrence": 3,
         "parent": null,
         "state_category": "success",
         "state_outcome": "ok",
@@ -110544,7 +110527,7 @@
         "kind": "entry",
         "node": "MN",
         "node_kind": "operation",
-        "occurrence": 0,
+        "occurrence": 1,
         "parent": "MAP",
         "state_category": "success",
         "state_outcome": "ok",
@@ -110577,7 +110560,7 @@
         "kind": "entry",
         "node": "J",
         "node_kind": "operation",
-        "occurrence": 0,
+        "occurrence": 4,
         "parent": null,
         "state_category": "success",
         "state_outcome": "ok",
@@ -110652,7 +110635,7 @@
       }
     ],
     "expected": {
-      "code": "contradictory",
+      "code": "missing",
       "status": "rejected"
     },
     "family": "map_item_evidence",
@@ -110917,7 +110900,7 @@
         "kind": "entry",
         "node": "N",
         "node_kind": "operation",
-        "occurrence": 0,
+        "occurrence": 3,
         "parent": null,
         "state_category": "success",
         "state_outcome": "ok",
@@ -111368,7 +111351,7 @@
         "kind": "entry",
         "node": "MN",
         "node_kind": "operation",
-        "occurrence": 0,
+        "occurrence": 1,
         "parent": "MAP",
         "state_category": "success",
         "state_outcome": "ok",
@@ -111401,7 +111384,7 @@
         "kind": "entry",
         "node": "J",
         "node_kind": "operation",
-        "occurrence": 0,
+        "occurrence": 4,
         "parent": null,
         "state_category": "success",
         "state_outcome": "ok",
@@ -111476,7 +111459,7 @@
       }
     ],
     "expected": {
-      "code": "contradictory",
+      "code": "foreign_owner",
       "status": "rejected"
     },
     "family": "map_item_evidence",
@@ -111741,7 +111724,7 @@
         "kind": "entry",
         "node": "N",
         "node_kind": "operation",
-        "occurrence": 0,
+        "occurrence": 3,
         "parent": null,
         "state_category": "success",
         "state_outcome": "ok",
@@ -112192,7 +112175,7 @@
         "kind": "entry",
         "node": "MN",
         "node_kind": "operation",
-        "occurrence": 0,
+        "occurrence": 1,
         "parent": "MAP",
         "state_category": "success",
         "state_outcome": "ok",
@@ -112225,7 +112208,7 @@
         "kind": "entry",
         "node": "J",
         "node_kind": "operation",
-        "occurrence": 0,
+        "occurrence": 4,
         "parent": null,
         "state_category": "success",
         "state_outcome": "ok",
@@ -112660,7 +112643,7 @@
         "kind": "entry",
         "node": "N",
         "node_kind": "operation",
-        "occurrence": 0,
+        "occurrence": 3,
         "parent": null,
         "state_category": "success",
         "state_outcome": "ok",
@@ -113186,7 +113169,7 @@
         "kind": "entry",
         "node": "EXP2",
         "node_kind": "operation",
-        "occurrence": 2,
+        "occurrence": 5,
         "parent": null,
         "state_category": "success",
         "state_outcome": "ok",
@@ -113208,7 +113191,7 @@
         "kind": "entry",
         "node": "J2",
         "node_kind": "operation",
-        "occurrence": 2,
+        "occurrence": 8,
         "parent": null,
         "state_category": "success",
         "state_outcome": "ok",
@@ -113237,7 +113220,7 @@
         "kind": "entry",
         "node": "MN2",
         "node_kind": "operation",
-        "occurrence": 0,
+        "occurrence": 6,
         "parent": "MAP2",
         "state_category": "success",
         "state_outcome": "ok",
@@ -113405,7 +113388,7 @@
         "kind": "entry",
         "node": "MN",
         "node_kind": "operation",
-        "occurrence": 0,
+        "occurrence": 1,
         "parent": "MAP",
         "state_category": "success",
         "state_outcome": "ok",
@@ -113438,7 +113421,7 @@
         "kind": "entry",
         "node": "J",
         "node_kind": "operation",
-        "occurrence": 0,
+        "occurrence": 4,
         "parent": null,
         "state_category": "success",
         "state_outcome": "ok",
@@ -113735,42 +113718,6 @@
           "validity": "current"
         },
         {
-          "activation": "Z0",
-          "authenticated_factory": "EXEC:I0",
-          "consumed": {
-            "item2": "MJ0v1"
-          },
-          "consumed_roles": {
-            "item2": "artifact"
-          },
-          "coverage": [
-            "K0",
-            "K1"
-          ],
-          "environment": {
-            "absences": {},
-            "configurations": {
-              "MN2": "c0"
-            },
-            "state": {}
-          },
-          "evidence_artifact": "MF0v0",
-          "evidence_port": "evidence",
-          "finding": "satisfied",
-          "meaning": "item_privacy_2",
-          "node": "MN2",
-          "outcome": "ok",
-          "promise": "P_ITEM_2",
-          "subject": {
-            "artifact": "MJ0v1",
-            "producer": "MAPITEM2:0"
-          },
-          "subject_artifact": "MJ0v1",
-          "subject_port": "item2",
-          "target": "A",
-          "validity": "current"
-        },
-        {
           "activation": "ROOT:A",
           "authenticated_factory": "EXEC:I0",
           "consumed": {
@@ -113803,6 +113750,42 @@
           "promise": "P",
           "subject_artifact": "Av0",
           "subject_port": "subject",
+          "target": "A",
+          "validity": "current"
+        },
+        {
+          "activation": "Z0",
+          "authenticated_factory": "EXEC:I0",
+          "consumed": {
+            "item2": "MJ0v1"
+          },
+          "consumed_roles": {
+            "item2": "artifact"
+          },
+          "coverage": [
+            "K0",
+            "K1"
+          ],
+          "environment": {
+            "absences": {},
+            "configurations": {
+              "MN2": "c0"
+            },
+            "state": {}
+          },
+          "evidence_artifact": "MF0v0",
+          "evidence_port": "evidence",
+          "finding": "satisfied",
+          "meaning": "item_privacy_2",
+          "node": "MN2",
+          "outcome": "ok",
+          "promise": "P_ITEM_2",
+          "subject": {
+            "artifact": "MJ0v1",
+            "producer": "MAPITEM2:0"
+          },
+          "subject_artifact": "MJ0v1",
+          "subject_port": "item2",
           "target": "A",
           "validity": "current"
         }
@@ -114165,7 +114148,7 @@
         "kind": "entry",
         "node": "N",
         "node_kind": "operation",
-        "occurrence": 0,
+        "occurrence": 3,
         "parent": null,
         "state_category": "success",
         "state_outcome": "ok",
@@ -114687,7 +114670,7 @@
         "kind": "entry",
         "node": "EXP2",
         "node_kind": "operation",
-        "occurrence": 2,
+        "occurrence": 5,
         "parent": null,
         "state_category": "success",
         "state_outcome": "ok",
@@ -114709,7 +114692,7 @@
         "kind": "entry",
         "node": "J2",
         "node_kind": "operation",
-        "occurrence": 2,
+        "occurrence": 8,
         "parent": null,
         "state_category": "success",
         "state_outcome": "ok",
@@ -114738,7 +114721,7 @@
         "kind": "entry",
         "node": "MN2",
         "node_kind": "operation",
-        "occurrence": 0,
+        "occurrence": 6,
         "parent": "MAP2",
         "state_category": "success",
         "state_outcome": "ok",
@@ -114906,7 +114889,7 @@
         "kind": "entry",
         "node": "MN",
         "node_kind": "operation",
-        "occurrence": 0,
+        "occurrence": 1,
         "parent": "MAP",
         "state_category": "success",
         "state_outcome": "ok",
@@ -114939,7 +114922,7 @@
         "kind": "entry",
         "node": "J",
         "node_kind": "operation",
-        "occurrence": 0,
+        "occurrence": 4,
         "parent": null,
         "state_category": "success",
         "state_outcome": "ok",
@@ -115269,7 +115252,7 @@
   {
     "boundary": "qualification",
     "case_id": "map_item_evidence/two_maps_cross_owner",
-    "comparison_scope": "production_boundary",
+    "comparison_scope": "neutral_only",
     "declaration": {
       "atomic": [
         [
@@ -115620,7 +115603,7 @@
         "kind": "entry",
         "node": "N",
         "node_kind": "operation",
-        "occurrence": 0,
+        "occurrence": 3,
         "parent": null,
         "state_category": "success",
         "state_outcome": "ok",
@@ -116146,7 +116129,7 @@
         "kind": "entry",
         "node": "EXP2",
         "node_kind": "operation",
-        "occurrence": 2,
+        "occurrence": 5,
         "parent": null,
         "state_category": "success",
         "state_outcome": "ok",
@@ -116168,7 +116151,7 @@
         "kind": "entry",
         "node": "J2",
         "node_kind": "operation",
-        "occurrence": 2,
+        "occurrence": 8,
         "parent": null,
         "state_category": "success",
         "state_outcome": "ok",
@@ -116197,7 +116180,7 @@
         "kind": "entry",
         "node": "MN2",
         "node_kind": "operation",
-        "occurrence": 0,
+        "occurrence": 6,
         "parent": "MAP2",
         "state_category": "success",
         "state_outcome": "ok",
@@ -116365,7 +116348,7 @@
         "kind": "entry",
         "node": "MN",
         "node_kind": "operation",
-        "occurrence": 0,
+        "occurrence": 1,
         "parent": "MAP",
         "state_category": "success",
         "state_outcome": "ok",
@@ -116398,7 +116381,7 @@
         "kind": "entry",
         "node": "J",
         "node_kind": "operation",
-        "occurrence": 0,
+        "occurrence": 4,
         "parent": null,
         "state_category": "success",
         "state_outcome": "ok",
@@ -216585,7 +216568,7 @@
     },
     "events": [],
     "expected": {
-      "code": "limit_exceeded",
+      "code": "invalid_value",
       "status": "rejected"
     },
     "family": "admission",
@@ -217365,7 +217348,7 @@
     },
     "events": [],
     "expected": {
-      "code": "missing",
+      "code": "protection_ineligible",
       "status": "rejected"
     },
     "family": "admission",

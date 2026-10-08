@@ -94,6 +94,14 @@ def test_requirement_and_assessment_authority() -> None:
     assert case("assessment/foreign_evidence")["comparison_scope"] == "production_boundary"
 
 
+def test_admission_uses_public_constructor_and_preparation_boundaries() -> None:
+    assert result("admission/fixed_point") == {"code": "invalid_value", "status": "rejected"}
+    assert result("admission/missing_promise") == {
+        "code": "protection_ineligible",
+        "status": "rejected",
+    }
+
+
 def test_retained_assessment_inventory_is_independent_of_ordered_submissions() -> None:
     expected_submissions = {
         "assessment/missing": [],
@@ -239,10 +247,51 @@ def test_dynamic_occurrence_submissions_are_exact_and_ordered() -> None:
             *(f"F:M{index}:P_MEMBER" for index in range(count)),
         ]
         verified = cast(list[reference.Obj], result(case_id)["verified"])
-        assert [fact["activation"] for fact in verified] == ["ROOT:A", *(f"M{index}" for index in range(count))]
+        assert [fact["activation"] for fact in verified] == [
+            *(f"M{index}" for index in range(count)),
+            "ROOT:A",
+        ]
         assert row(case_id)["qualification"] == "met"
     assert result("assessment/dynamic_submission_repeated") == {"code": "duplicate", "status": "rejected"}
     assert result("assessment/dynamic_submission_foreign") == {"code": "foreign_owner", "status": "rejected"}
+
+
+def test_verified_tuple_uses_declared_finite_ordinals_not_submission_order() -> None:
+    for item in reference.CASES:
+        expected = item["expected"]
+        verified_raw = expected.get("verified")
+        if not isinstance(verified_raw, list) or len(verified_raw) < 2:
+            continue
+        verified = cast(list[reference.Obj], verified_raw)
+        state = reference.initial(item["declaration"])
+        for event in cast(list[reference.Obj], item["events"]):
+            assert reference.advance(state, event) is None
+        declaration_value = item["declaration"]
+        targets = {target: index for index, target in enumerate(cast(list[str], declaration_value["targets"]))}
+        node_kinds = cast(dict[str, reference.Json], declaration_value["node_kinds"])
+        nodes = {node: index for index, node in enumerate(sorted(node_kinds))}
+        ports = {
+            (dependency["node"], dependency["port"]): index
+            for index, dependency in enumerate(cast(list[reference.Obj], declaration_value["output_dependencies"]))
+        }
+        artifact_values = cast(dict[str, reference.Json], state["artifacts"])
+        artifacts = {artifact: index for index, artifact in enumerate(sorted(artifact_values))}
+
+        def key(fact: reference.Obj) -> tuple[int, int, int, int, int]:
+            entry_values = cast(dict[str, reference.Json], state["entries"])
+            entry_value = entry_values[cast(str, fact["activation"])]
+            return (
+                targets[cast(str, fact["target"])],
+                cast(int, entry_value["occurrence"]),
+                nodes[cast(str, fact["node"])],
+                ports[(cast(str, fact["node"]), cast(str, fact["evidence_port"]))],
+                artifacts[cast(str, fact["evidence_artifact"])],
+            )
+
+        assert verified == sorted(verified, key=key), item["case_id"]
+
+    two_map_verified = cast(list[reference.Obj], result("map_item_evidence/two_independent_maps")["verified"])
+    assert [fact["activation"] for fact in two_map_verified] == ["M0", "ROOT:A", "Z0"]
 
 
 def test_unreached_and_unsuccessful_assessed_members_require_no_fact() -> None:
@@ -353,6 +402,7 @@ def test_map_item_endpoint_admission_and_exact_runtime_owner() -> None:
     ):
         assert result(f"map_item_evidence/{name}")["status"] == "rejected"
     assert case("map_item_evidence/wrong_subject_artifact")["comparison_scope"] == "neutral_only"
+    assert case("map_item_evidence/two_maps_cross_owner")["comparison_scope"] == "neutral_only"
     assert case("map_item_evidence/wrong_item_owner")["comparison_scope"] == "production_boundary"
     assert (
         result("map_item_evidence/wrong_subject_artifact")
@@ -393,9 +443,24 @@ def test_map_item_routes_retain_ordered_containment_and_map_owner_transition() -
         "status": "rejected",
     }
     assert result("map_item_evidence/typed_consumed_wrong_owner") == {
-        "code": "contradictory",
+        "code": "missing",
         "status": "rejected",
     }
+
+
+def test_map_item_corruption_uses_retained_owner_precedence() -> None:
+    expected = {
+        "wrong_item_version": "missing",
+        "wrong_item_key": "missing",
+        "wrong_item_owner": "contradictory",
+        "wrong_expander": "missing",
+        "wrong_member": "missing",
+        "wrong_target": "foreign_owner",
+        "wrong_invocation": "foreign_owner",
+        "typed_consumed_wrong_owner": "missing",
+    }
+    for name, code in expected.items():
+        assert result(f"map_item_evidence/{name}") == {"code": code, "status": "rejected"}
 
 
 def test_map_item_records_retain_real_expanders_joins_and_structural_projection() -> None:
@@ -410,6 +475,9 @@ def test_map_item_records_retain_real_expanders_joins_and_structural_projection(
         }
     ]
     direct_events = cast(list[reference.Obj], direct["events"])
+    assert {
+        cast(str, event["activation"]): event["occurrence"] for event in direct_events if event.get("kind") == "entry"
+    } == {"MAP": 0, "M0": 1, "ROOT:A": 3, "JOIN": 4}
     map_terminal = next(
         event for event in direct_events if event.get("kind") == "terminal" and event.get("activation") == "MAP"
     )
@@ -452,6 +520,21 @@ def test_map_item_records_retain_real_expanders_joins_and_structural_projection(
         if event.get("kind") == "membership" and event.get("parent") is None
     )["members"]
     assert root_members == ["ROOT:A", "MAP", "JOIN", "MAP2", "JOIN2"]
+    two_map_occurrences = {
+        cast(str, event["activation"]): event["occurrence"]
+        for event in cast(list[reference.Obj], two_maps["events"])
+        if event.get("kind") == "entry"
+    }
+    assert two_map_occurrences == {
+        "MAP": 0,
+        "M0": 1,
+        "ROOT:A": 3,
+        "JOIN": 4,
+        "MAP2": 5,
+        "Z0": 6,
+        "JOIN2": 8,
+    }
+    assert len(set(two_map_occurrences.values())) == len(two_map_occurrences)
 
     for case_id in (
         "map_item_evidence/member_non_success",
@@ -472,7 +555,7 @@ def test_map_item_records_retain_real_expanders_joins_and_structural_projection(
             "kind": "entry",
             "node": "J",
             "node_kind": "operation",
-            "occurrence": 0,
+            "occurrence": 4,
             "parent": None,
             "state_category": "blocked",
             "state_outcome": None,
@@ -492,6 +575,21 @@ def test_map_item_records_retain_real_expanders_joins_and_structural_projection(
         not (event.get("kind") == "terminal" and event.get("activation") == "JOIN")
         for event in cast(list[reference.Obj], case("map_item_evidence/expansion_open")["events"])
     )
+    nested_events = cast(list[reference.Obj], case("map_item_evidence/nested_path")["events"])
+    assert not any(
+        event.get("activation") == "WRAP"
+        and event.get("kind") in {"port", "input_producer"}
+        and event.get("port") == "context"
+        for event in nested_events
+    )
+    assert any(
+        event.get("activation") == "WRAP" and event.get("kind") == "port" and event.get("port") == "nested_members"
+        for event in nested_events
+    )
+    wrapper_membership = next(
+        event for event in nested_events if event.get("kind") == "membership" and event.get("parent") == "WRAP"
+    )
+    assert wrapper_membership["expansion_outcome"] is None
 
 
 def test_map_item_currentness_and_incomplete_execution_withhold() -> None:
@@ -502,6 +600,9 @@ def test_map_item_currentness_and_incomplete_execution_withhold() -> None:
     for name in ("expansion_failed", "expansion_overflow"):
         assert row(f"map_item_evidence/{name}")["withholding"] == ["terminal_failure"]
     assert row("map_item_evidence/expansion_open")["withholding"] == ["incomplete_membership"]
+    for name in ("expansion_failed", "expansion_overflow", "expansion_open"):
+        assert case(f"map_item_evidence/{name}")["comparison_scope"] == "neutral_only"
+    assert case("map_item_evidence/member_blocked_unreached")["comparison_scope"] == "neutral_only"
 
 
 def test_map_item_paths_domains_and_candidate_ancestry_are_exact() -> None:

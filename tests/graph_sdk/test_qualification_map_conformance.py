@@ -90,6 +90,7 @@ from anonymizer.graph.workflow import (
     ProtectionRequirement,
     SequenceEdge,
     StateEffect,
+    SubgraphNode,
     WorkflowId,
     WorkflowInputRef,
     WorkflowLimits,
@@ -114,6 +115,7 @@ class _ReferenceMapCallback:
     versioned_items: bool = False
     membership_port: str = "members"
     expansion_outcome: str = "ok"
+    item_promise: str = "P_ITEM"
 
     async def run(self, request: tuple[AssociationInput, ...]) -> LocalCompleted | LocalFailure:
         self.calls += 1
@@ -155,7 +157,7 @@ class _ReferenceMapCallback:
             assessments = (
                 LocalAssessmentResult(
                     association=item.association,
-                    promise="P" if self.role == "N" else "P_ITEM",
+                    promise="P" if self.role == "N" else self.item_promise,
                     evidence_port="evidence",
                     finding=AssessmentFinding(status="satisfied", code="observed"),
                 ),
@@ -182,11 +184,19 @@ async def _execute_reference_map(
     candidate_uses_membership: bool = True,
     candidate_passthrough: bool = False,
     alternate_expansion: bool = False,
+    nested: bool = False,
+    two_maps: bool = False,
 ) -> tuple[AdmittedExecutionPlan, ExecutionResult, dict[str, NodeId]]:
     membership_port = "alternate_members" if alternate_expansion else "members"
     expansion_outcome = "alternate" if alternate_expansion else "ok"
     owner = WorkflowId.new()
     nodes = {name: NodeId.new(workflow=owner) for name in ("N", "EXP", "MN", "J")}
+    if nested:
+        inner_owner = WorkflowId.new()
+        nodes.update({name: NodeId.new(workflow=inner_owner) for name in ("EXP", "MN", "J")})
+        nodes["SG"] = NodeId.new(workflow=owner)
+    if two_maps:
+        nodes.update({name: NodeId.new(workflow=owner) for name in ("EXP2", "MN2", "J2")})
     text_type = ArtifactType(name="text", revision=1)
     collection_type = ArtifactType(name="members", revision=1)
     coverage = frozenset(CoverageAtom(kind="field", name=name) for name in ("K0", "K1"))
@@ -203,7 +213,7 @@ async def _execute_reference_map(
         coverage=coverage,
     )
     endpoint = MapItemPort(
-        path=(),
+        path=(nodes["SG"],) if nested else (),
         expander=nodes["EXP"],
         member=nodes["MN"],
         item_input="item",
@@ -267,6 +277,53 @@ async def _execute_reference_map(
         ),
         "J": OperationSpec(name="J", inputs=(), outputs=(), output_dependencies=(), outcomes=(_outcome("ok"),)),
     }
+    if two_maps:
+        second_promise = replace(
+            item_promise,
+            name="P_ITEM_2",
+            meaning="item_privacy_2",
+            subject_port="item2",
+            consumed_ports=frozenset({"item2"}),
+        )
+        second_endpoint = MapItemPort(
+            path=(),
+            expander=nodes["EXP2"],
+            member=nodes["MN2"],
+            item_input="item2",
+            membership_port="members2",
+            expansion_outcome="ok",
+        )
+        operations["N"] = replace(
+            operations["N"],
+            inputs=operations["N"].inputs + (InputPort(name="membership2", artifact_type=collection_type),),
+            output_dependencies=tuple(
+                replace(dep, inputs=dep.inputs | {"membership2"}) if dep.output == "result" else dep
+                for dep in operations["N"].output_dependencies
+            ),
+        )
+        operations["EXP2"] = replace(
+            operations["EXP"],
+            name="EXP2",
+            outputs=(OutputPort(name="members2", artifact_type=collection_type),),
+            output_dependencies=(
+                OutputDependency(output="members2", inputs=frozenset({"context"}), identity_input=None),
+            ),
+            outcomes=tuple(
+                replace(outcome, produced_ports=frozenset({"members2"})) for outcome in operations["EXP"].outcomes
+            ),
+        )
+        operations["MN2"] = replace(
+            operations["MN"],
+            name="MN2",
+            inputs=(InputPort(name="item2", artifact_type=text_type),),
+            output_dependencies=(
+                OutputDependency(output="evidence", inputs=frozenset({"item2"}), identity_input=None),
+            ),
+            outcomes=tuple(
+                replace(outcome, evidence=frozenset({second_promise})) for outcome in operations["MN"].outcomes
+            ),
+        )
+        operations["J2"] = replace(operations["J"], name="J2")
     interface = OperationSpec(
         name="root",
         inputs=tuple(InputPort(name=name, artifact_type=text_type) for name in ("subject", "context")),
@@ -282,7 +339,12 @@ async def _execute_reference_map(
         ),
         outcomes=(
             replace(
-                _outcome("ok", produced=frozenset({"result"}), max_activations=7, max_output_bytes=128),
+                _outcome(
+                    "ok",
+                    produced=frozenset({"result"}),
+                    max_activations=13 if two_maps else 7,
+                    max_output_bytes=256 if two_maps else 128,
+                ),
                 evidence=frozenset(
                     {
                         root_promise,
@@ -297,7 +359,23 @@ async def _execute_reference_map(
             ),
         ),
     )
-    static = admit_static_workflow(
+    if two_maps:
+        interface = replace(
+            interface,
+            outcomes=tuple(
+                replace(
+                    outcome,
+                    evidence=outcome.evidence
+                    | {
+                        replace(
+                            second_promise, subject_port=second_endpoint, consumed_ports=frozenset({second_endpoint})
+                        )
+                    },
+                )
+                for outcome in interface.outcomes
+            ),
+        )
+    static_options: dict[str, Any] = dict(
         workflow=owner,
         interface=interface,
         nodes=tuple(OperationNode(id=nodes[name], operation=operation) for name, operation in operations.items()),
@@ -381,11 +459,136 @@ async def _execute_reference_map(
             max_choice_states=1,
         ),
     )
+    if two_maps:
+        static_options["input_bindings"] += (
+            InputBinding(
+                source=WorkflowInputRef(port="context"), destination=NodeInputRef(node=nodes["EXP2"], port="context")
+            ),
+            InputBinding(
+                source=WorkflowInputRef(port="subject"), destination=NodeInputRef(node=nodes["MN2"], port="item2")
+            ),
+            InputBinding(
+                source=NodeOutputRef(node=nodes["EXP2"], port="members2"),
+                destination=NodeInputRef(node=nodes["N"], port="membership2"),
+            ),
+        )
+        static_options["sequence"] += (
+            SequenceEdge(before=nodes["EXP2"], after=nodes["MN2"]),
+            SequenceEdge(before=nodes["MN2"], after=nodes["J2"]),
+            SequenceEdge(before=nodes["EXP2"], after=nodes["N"]),
+            SequenceEdge(before=nodes["J2"], after=nodes["J"]),
+        )
+        static_options["protection"] += (
+            ProtectionRequirement(
+                outcome="ok",
+                meaning="item_privacy_2",
+                subject_port=second_endpoint,
+                consumed_ports=frozenset({second_endpoint}),
+                coverage=required,
+                candidate_port="result",
+            ),
+        )
+        static_options["limits"] = replace(static_options["limits"], max_nodes=7, max_bindings=13, max_sequence_edges=8)
+    if nested:
+        inner_endpoint = replace(endpoint, path=())
+        inner_interface = OperationSpec(
+            name="SG",
+            inputs=(InputPort(name="context", artifact_type=text_type),),
+            outputs=(OutputPort(name="nested_members", artifact_type=collection_type),),
+            output_dependencies=(
+                OutputDependency(output="nested_members", inputs=frozenset({"context"}), identity_input=None),
+            ),
+            outcomes=(
+                replace(
+                    _outcome("ok", produced=frozenset({"nested_members"}), max_activations=6, max_output_bytes=96),
+                    evidence=frozenset(
+                        {replace(item_promise, subject_port=inner_endpoint, consumed_ports=frozenset({inner_endpoint}))}
+                    ),
+                ),
+            ),
+        )
+        inner = admit_static_workflow(
+            workflow=inner_owner,
+            interface=inner_interface,
+            nodes=tuple(OperationNode(id=nodes[name], operation=operations[name]) for name in ("EXP", "MN", "J")),
+            input_bindings=(
+                InputBinding(
+                    source=WorkflowInputRef(port="context"), destination=NodeInputRef(node=nodes["EXP"], port="context")
+                ),
+                InputBinding(
+                    source=WorkflowInputRef(port="context"), destination=NodeInputRef(node=nodes["MN"], port="item")
+                ),
+            ),
+            output_bindings=(
+                OutputBinding(
+                    source=NodeOutputRef(node=nodes["EXP"], port=membership_port),
+                    destination=WorkflowOutputRef(port="nested_members"),
+                ),
+            ),
+            outcome_bindings=(
+                OutcomeBinding(
+                    source=NodeOutcomeRef(node=nodes["J"], outcome="ok"), destination=WorkflowOutcomeRef(outcome="ok")
+                ),
+            ),
+            sequence=(
+                SequenceEdge(before=nodes["EXP"], after=nodes["MN"]),
+                SequenceEdge(before=nodes["MN"], after=nodes["J"]),
+            ),
+            choices=(),
+            protection=(),
+            limits=WorkflowLimits(
+                max_nodes=3,
+                max_bindings=5,
+                max_sequence_edges=2,
+                max_choices=0,
+                max_branch_members=0,
+                max_subgraph_depth=1,
+                max_choice_states=1,
+            ),
+        )
+        static_options.update(
+            nodes=(
+                OperationNode(id=nodes["N"], operation=operations["N"]),
+                SubgraphNode(id=nodes["SG"], operation=inner_interface, body=inner),
+            ),
+            input_bindings=(
+                *(
+                    InputBinding(
+                        source=WorkflowInputRef(port=name), destination=NodeInputRef(node=nodes["N"], port=name)
+                    )
+                    for name in ("subject", "context")
+                ),
+                InputBinding(
+                    source=WorkflowInputRef(port="context"), destination=NodeInputRef(node=nodes["SG"], port="context")
+                ),
+                InputBinding(
+                    source=NodeOutputRef(node=nodes["SG"], port="nested_members"),
+                    destination=NodeInputRef(node=nodes["N"], port="membership"),
+                ),
+            ),
+            outcome_bindings=(
+                OutcomeBinding(
+                    source=NodeOutcomeRef(node=nodes["N"], outcome="ok"), destination=WorkflowOutcomeRef(outcome="ok")
+                ),
+            ),
+            sequence=(SequenceEdge(before=nodes["SG"], after=nodes["N"]),),
+            limits=WorkflowLimits(
+                max_nodes=5,
+                max_bindings=12,
+                max_sequence_edges=3,
+                max_choices=0,
+                max_branch_members=0,
+                max_subgraph_depth=2,
+                max_choice_states=1,
+            ),
+        )
+    static = admit_static_workflow(**static_options)
     workflow = admit_activation_workflow(
         workflow=static,
         scopes=(
+            *((DynamicScope(workflow=static, maps=(), joins=(), loops=()),) if nested else ()),
             DynamicScope(
-                workflow=static,
+                workflow=inner if nested else static,
                 maps=(
                     MapDecl(
                         expander=nodes["EXP"],
@@ -393,6 +596,19 @@ async def _execute_reference_map(
                         expansion_outcomes=frozenset({expansion_outcome}),
                         max_children=2,
                         item_input="item",
+                    ),
+                    *(
+                        (
+                            MapDecl(
+                                expander=nodes["EXP2"],
+                                member=nodes["MN2"],
+                                expansion_outcomes=frozenset({"ok"}),
+                                max_children=2,
+                                item_input="item2",
+                            ),
+                        )
+                        if two_maps
+                        else ()
                     ),
                 ),
                 joins=(
@@ -402,18 +618,30 @@ async def _execute_reference_map(
                         accepted_categories=frozenset({"success"}),
                         reduction="all_by_key",
                     ),
+                    *(
+                        (
+                            KeyedJoinDecl(
+                                source=nodes["EXP2"],
+                                join=nodes["J2"],
+                                accepted_categories=frozenset({"success"}),
+                                reduction="all_by_key",
+                            ),
+                        )
+                        if two_maps
+                        else ()
+                    ),
                 ),
                 loops=(),
             ),
         ),
         limits=DynamicLimits(
-            max_maps=1,
-            max_joins=1,
+            max_maps=2 if two_maps else 1,
+            max_joins=2 if two_maps else 1,
             max_loops=0,
             max_children_per_map=2,
             max_iterations_per_loop=0,
-            max_dynamic_depth=1,
-            max_activation_occurrences=5,
+            max_dynamic_depth=2 if nested else 1,
+            max_activation_occurrences=9 if two_maps else 6 if nested else 5,
         ),
     )
     graph = DataGraph.new()
@@ -433,7 +661,9 @@ async def _execute_reference_map(
     prepared = prepare(
         data=data,
         workflow=workflow,
-        activation_limits=ActivationLimits(max_events=40, max_entries=5, max_parent_depth=2),
+        activation_limits=ActivationLimits(
+            max_events=64, max_entries=9 if two_maps else 6 if nested else 5, max_parent_depth=3 if nested else 2
+        ),
         bound_inputs=tuple(
             BoundInput(target=target, source=source, port=port, artifact_type=text_type)
             for port, source in (("subject", target), ("context", context))
@@ -446,10 +676,10 @@ async def _execute_reference_map(
             ImplementationSelection(
                 node=node, implementation=capability.implementation, configuration=capability.configuration
             )
-            for node, capability in zip(nodes.values(), capabilities, strict=True)
+            for node, capability in zip((nodes[name] for name in operations), capabilities, strict=True)
         ),
         capabilities=capabilities,
-        limits=_limits(capabilities=4, slots=5),
+        limits=_limits(capabilities=7 if two_maps else 4, slots=9 if two_maps else 6 if nested else 5),
     )
     admitted = admit_execution_plan(
         context=admit_context_plan(
@@ -473,7 +703,7 @@ async def _execute_reference_map(
                 result_outcomes=frozenset(outcome.name for outcome in capability.operation.outcomes),
                 runtime_outcomes=_rows(frozenset(outcome.name for outcome in capability.operation.outcomes)),
             )
-            for node, capability in zip(nodes.values(), capabilities, strict=True)
+            for node, capability in zip((nodes[name] for name in operations), capabilities, strict=True)
         ),
         decisions=(),
         assessment_productions=tuple(
@@ -485,35 +715,45 @@ async def _execute_reference_map(
                 absence_queries=frozenset({0}) if name == "N" else frozenset(),
                 supported_findings=frozenset({AssessmentFinding(status="satisfied", code="observed")}),
             )
-            for name, promise in (("N", "P"), ("MN", "P_ITEM"))
+            for name, promise in (("N", "P"), ("MN", "P_ITEM"), *((("MN2", "P_ITEM_2"),) if two_maps else ()))
         ),
         assessment_limits=AssessmentLimits(
-            max_productions=2,
+            max_productions=3 if two_maps else 2,
             max_findings_per_production=1,
             max_finding_code_bytes=16,
             max_absence_queries=1,
-            max_assessment_facts=3,
-            max_port_facts=16,
-            max_provenance_edges=16,
+            max_assessment_facts=5 if two_maps else 3,
+            max_port_facts=24 if two_maps else 16,
+            max_provenance_edges=24 if two_maps else 16,
         ),
         map_expansions=(
             MapExpansionDecl(
                 expander=nodes["EXP"], outcome=expansion_outcome, membership_port=membership_port, item_type=text_type
             ),
+            *(
+                (
+                    MapExpansionDecl(
+                        expander=nodes["EXP2"], outcome="ok", membership_port="members2", item_type=text_type
+                    ),
+                )
+                if two_maps
+                else ()
+            ),
         ),
     )
     callbacks = tuple(
         _ReferenceMapCallback(
-            name,
+            name.removesuffix("2"),
             count,
             text_type,
             collection_type,
             member_failure=member_failure,
             versioned_items=versioned_items,
-            membership_port=membership_port,
+            membership_port="members2" if name == "EXP2" else membership_port,
             expansion_outcome=expansion_outcome,
+            item_promise="P_ITEM_2" if name == "MN2" else "P_ITEM",
         )
-        for name in nodes
+        for name in operations
     )
     running = await start_execution(
         admitted=admitted,
@@ -544,7 +784,9 @@ async def _execute_reference_map(
         ),
     )
     result = await running.wait()
-    assert [callback.calls for callback in callbacks] == [1, 1, count, int(not member_failure)]
+    assert [callback.calls for callback in callbacks] == [1, 1, count, int(not member_failure)] + (
+        [1, count, 1] if two_maps else []
+    )
     return admitted, result, nodes
 
 
@@ -555,6 +797,9 @@ FLAT_CASE_IDS = {
         f"map_item_evidence/{suffix}"
         for suffix in (
             "typed_consumed_endpoint",
+            "nested_path",
+            "two_independent_maps",
+            "two_maps_no_crossproduct",
             "member_non_success",
             "distinct_outcome_port",
             "item_stale",
@@ -582,6 +827,8 @@ def test_reference_map_case_through_real_execution(case: dict[str, Any]) -> None
     except EffectRejected as exc:
         actual = {"status": "rejected", "code": exc.code.value}
     expected = json.loads(json.dumps(case["expected"]))
+    if "verified" in expected:
+        expected["verified"].sort(key=lambda row: (row["target"], row["activation"], row["evidence_artifact"]))
     if "record" in expected:
         for membership in expected["record"]["memberships"].values():
             membership["members"].sort()
@@ -597,6 +844,11 @@ async def _run_reference_map_case(case: dict[str, Any]) -> dict[str, Any]:
     candidate_uses_membership = case["case_id"] != "map_item_evidence/different_final_ancestry"
     candidate_passthrough = case["case_id"] == "map_item_evidence/candidate_passthrough_unrelated"
     alternate_expansion = case["case_id"] == "map_item_evidence/distinct_outcome_port"
+    nested = case["case_id"] == "map_item_evidence/nested_path"
+    two_maps = case["case_id"] in {
+        "map_item_evidence/two_independent_maps",
+        "map_item_evidence/two_maps_no_crossproduct",
+    }
     baseline = (
         case
         if consumed_only
@@ -605,8 +857,11 @@ async def _run_reference_map_case(case: dict[str, Any]) -> dict[str, Any]:
         or not candidate_uses_membership
         or candidate_passthrough
         or alternate_expansion
+        or nested
         else next(item for item in CORPUS if item["case_id"] == f"map_item_evidence/direct_{count}")
     )
+    if two_maps:
+        baseline = next(item for item in CORPUS if item["case_id"] == "map_item_evidence/two_independent_maps")
     mutable_events = {"assessment_submission", "assessment", "revision"}
     assert [event for event in events if event["kind"] not in mutable_events] == [
         event for event in baseline["events"] if event["kind"] not in mutable_events
@@ -622,13 +877,19 @@ async def _run_reference_map_case(case: dict[str, Any]) -> dict[str, Any]:
         candidate_uses_membership=candidate_uses_membership,
         candidate_passthrough=candidate_passthrough,
         alternate_expansion=alternate_expansion,
+        nested=nested,
+        two_maps=two_maps,
     )
-    assert len(result.states[0].entries) == len(result.record.terminals) == count + 3
+    assert (
+        len(result.states[0].entries)
+        == len(result.record.terminals)
+        == count + 3 + int(nested) + (count + 2 if two_maps else 0)
+    )
     names = _MapRecordNames(execution, result, nodes)
     names.assert_retained_facts(events)
     names.assert_assessments(baseline["events"])
     facts = {
-        ("F:A:P" if fact.node == nodes["N"] else f"F:{names.activation(fact.activation)}:P_ITEM"): fact
+        ("F:A:P" if fact.node == nodes["N"] else f"F:{names.activation(fact.activation)}:{fact.promise}"): fact
         for fact in result.assessments
     }
     retained = {event["fact"] for event in events if event["kind"] == "assessment"}
@@ -696,42 +957,60 @@ class _MapRecordNames:
         )
         self.activations = {entry.activation: f"M{index}" for index, entry in enumerate(members)}
         for entry in self.entries.values():
-            if entry.template != nodes["MN"]:
-                self.activations[entry.activation] = {"N": "ROOT:A", "EXP": "MAP", "J": "JOIN"}[
-                    self.nodes[entry.template]
-                ]
+            if entry.template not in {nodes["MN"], nodes.get("MN2")}:
+                self.activations[entry.activation] = {
+                    "N": "ROOT:A",
+                    "EXP": "MAP",
+                    "J": "JOIN",
+                    "SG": "WRAP",
+                    "EXP2": "MAP2",
+                    "J2": "JOIN2",
+                }[self.nodes[entry.template]]
+        if "MN2" in nodes:
+            second_members = sorted(
+                (entry for entry in self.entries.values() if entry.template == nodes["MN2"]),
+                key=lambda entry: entry.activation.occurrence,
+            )
+            self.activations.update({entry.activation: f"Z{index}" for index, entry in enumerate(second_members)})
         self.artifacts: dict[ArtifactRef, str] = {}
         for port in result.ports:
             node = self.nodes[port.node]
             if node == "N":
-                name = {"subject": "Av0", "result": "Av0", "context": "XAv0", "evidence": "EAv0", "membership": "CAv0"}[
-                    port.port
-                ]
-            elif node == "EXP":
+                name = {
+                    "subject": "Av0",
+                    "result": "Av0",
+                    "context": "XAv0",
+                    "evidence": "EAv0",
+                    "membership": "CAv0",
+                    "membership2": "CBv0",
+                }[port.port]
+            elif node == "SG":
                 name = "XAv0" if port.port == "context" else "CAv0"
+            elif node in {"EXP", "EXP2"}:
+                name = "XAv0" if port.port == "context" else "CBv0" if node == "EXP2" else "CAv0"
             else:
-                assert node == "MN"
+                assert node in {"MN", "MN2"}
                 index = self.activations[port.activation][1:]
-                if port.port == "item":
+                if port.port in {"item", "item2"}:
                     key = next(
                         fact.key
                         for fact in result.provenance
                         if isinstance(fact.key, MapItemKey) and fact.key.member == port.activation
                     )
-                    name = f"MI{key.item_key}v{key.item_version}"
+                    name = f"{'MJ' if node == 'MN2' else 'MI'}{key.item_key}v{key.item_version}"
                 else:
-                    name = "Av0" if port.port == "subject" else f"ME{index}v0"
+                    name = "Av0" if port.port == "subject" else f"{'MF' if node == 'MN2' else 'ME'}{index}v0"
             if port.artifact in self.artifacts:
                 assert self.artifacts[port.artifact] == name
             self.artifacts[port.artifact] = name
         assert len(set(self.artifacts.values())) == len(self.artifacts)
         assert set(self.artifacts) == {ref for ref, _ in result.artifacts} == set(result.record.artifacts)
         assert all(
-            ref.version == (int(name.rsplit("v", 1)[1]) if name.startswith("MI") else 1)
+            ref.version == (int(name.rsplit("v", 1)[1]) if name.startswith(("MI", "MJ")) else 1)
             for ref, name in self.artifacts.items()
         )
         self.producers = {
-            fact.key: f"MAPITEM:{self.activations[fact.key.member][1:]}"
+            fact.key: f"{'MAPITEM2' if self.activations[fact.key.member].startswith('Z') else 'MAPITEM'}:{self.activations[fact.key.member][1:]}"
             for fact in result.provenance
             if isinstance(fact.key, MapItemKey)
         }
@@ -765,8 +1044,10 @@ class _MapRecordNames:
                 producers[key] = f"ROOT:A:{key.port}"
             elif isinstance(key, OperationOutputKey):
                 activation = self.activation(key.activation)
-                if activation == "MAP":
-                    producers[key] = f"OP:MAP:A:{key.port}"
+                if activation in {"MAP", "MAP2"}:
+                    producers[key] = f"OP:{activation}:A:{key.port}"
+                elif activation == "WRAP":
+                    producers[key] = f"SGOUT:WRAP:A:{key.port}"
                 elif activation == "ROOT:A":
                     producers[key] = "OUT:A" if key.port == "result" else "EVID:A"
                 else:
@@ -775,6 +1056,17 @@ class _MapRecordNames:
             else:
                 assert isinstance(key, MapItemKey)
         assert len(producers) == len(self.result.provenance)
+        actual_inputs = {
+            (self.activation(activation), port, producers[producer])
+            for _, activation, port, producer in self.result._input_parents
+        }
+        expected_inputs = {
+            (event["activation"], event["port"], event["producer"])
+            for event in events
+            if event["kind"] == "input_producer"
+        }
+        assert len(actual_inputs) == len(self.result._input_parents)
+        assert actual_inputs == expected_inputs
         actual_provenance = {
             producers[fact.key]: {
                 "artifact": self.artifact(fact.artifact),
@@ -833,7 +1125,7 @@ class _MapRecordNames:
             actual.append(
                 {
                     "kind": "assessment",
-                    "fact": "F:A:P" if node == "N" else f"F:{activation}:P_ITEM",
+                    "fact": "F:A:P" if node == "N" else f"F:{activation}:{fact.promise}",
                     "activation": activation,
                     "authenticated_factory": "EXEC:I0",
                     "node": node,
@@ -871,6 +1163,10 @@ class _MapRecordNames:
 
     def normalize(self, output: QualificationResult) -> dict[str, Any]:
         assert output._result is self.result
+        # Actual reservation ordinals are local to each admitted plan. Check
+        # its public tuple before renaming identities for the neutral model.
+        order = [(item.activation.occurrence, item.reference.artifact.key) for item in output.verified]
+        assert order == sorted(order)
         (target,) = output.targets
         (status,) = output.record.statuses
         assert target.target == status.target == self.execution.context.prepared.target_occurrences[0].target
@@ -891,8 +1187,10 @@ class _MapRecordNames:
             node = self.nodes[item.node]
             fact = next(fact for fact in self.result.assessments if fact.activation == item.activation)
             assert item.environment.configuration == fact.environment.configuration
-            assert item.promise.name == ("P" if node == "N" else "P_ITEM")
-            assert item.promise.meaning == ("privacy" if node == "N" else "item_privacy")
+            assert item.promise.name == ("P" if node == "N" else "P_ITEM_2" if node == "MN2" else "P_ITEM")
+            assert item.promise.meaning == (
+                "privacy" if node == "N" else "item_privacy_2" if node == "MN2" else "item_privacy"
+            )
             consumed = {}
             roles = {}
             for port, ref in item.consumed_by_port:

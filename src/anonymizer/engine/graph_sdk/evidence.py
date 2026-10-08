@@ -550,7 +550,30 @@ def verify_evidence(
     if len(identities) != len(set(identities)):
         reject(EffectCode.DUPLICATE)
     verified = tuple(facts.verify(item.fact) for item in submissions)
-    return tuple(sorted(verified, key=lambda item: (item.activation.occurrence, item.reference.artifact.key)))
+    prepared = admitted.execution.context.prepared
+    target_order = {item.target: index for index, item in enumerate(prepared.target_occurrences)}
+    node_order = {
+        node.id: index
+        for index, node in enumerate(node for body in reachable_workflows(prepared.workflow) for node in body.nodes)
+    }
+    productions = {(item.declaration.node, item.outcome.name, item.promise.name): item for item in admitted._resolved}
+
+    def canonical_order(item: VerifiedEvidence) -> tuple[int, int, int, int, int, int]:
+        production = productions[item.node, item.outcome, item.promise.name]
+        port = production.declaration.evidence_port
+        target = facts.ports[item.activation, port].target
+        port_order = next(index for index, output in enumerate(production.operation.outputs) if output.name == port)
+        artifact = item.reference.artifact
+        return (
+            target_order[target],
+            item.activation.occurrence,
+            node_order[item.node],
+            port_order,
+            artifact.key,
+            artifact.version,
+        )
+
+    return tuple(sorted(verified, key=canonical_order))
 
 
 @dataclass(frozen=True, slots=True, kw_only=True, repr=False, init=False)
