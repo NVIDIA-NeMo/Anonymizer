@@ -1047,7 +1047,7 @@ def _validate_assessments(
         if outcome is None or item.evidence_port not in outcome.produced_ports:
             reject(EffectCode.UNSUPPORTED)
         promise = next((value for value in outcome.evidence if value.name == item.promise), None)
-        if promise is None or promise.subject_port != item.evidence_port:
+        if promise is None:
             reject(EffectCode.UNSUPPORTED)
         dependency = next(
             (value for value in operation.output_dependencies if value.output == item.evidence_port),
@@ -1077,7 +1077,7 @@ class _FactCheckpoint:
     values: dict[ArtifactRef, ArtifactValue]
     produced: dict[tuple[DatumId, ActivationKey | NodeId, str], ArtifactRef]
     provenance_count: int
-    port_count: int
+    ports: tuple[ExecutionPortFact, ...]
     assessment_count: int
     next_artifact: int
 
@@ -1096,7 +1096,7 @@ class _ExecutionFacts:
             values=self.values.copy(),
             produced=self.produced.copy(),
             provenance_count=len(self.provenance),
-            port_count=len(self.ports),
+            ports=tuple(self.ports),
             assessment_count=len(self.assessments),
             next_artifact=self.next_artifact,
         )
@@ -1107,7 +1107,8 @@ class _ExecutionFacts:
         self.produced.clear()
         self.produced.update(checkpoint.produced)
         del self.provenance[checkpoint.provenance_count :]
-        del self.ports[checkpoint.port_count :]
+        self.ports.clear()
+        self.ports.extend(checkpoint.ports)
         del self.assessments[checkpoint.assessment_count :]
         self.next_artifact = checkpoint.next_artifact
 
@@ -1538,7 +1539,11 @@ async def _run_execution(
                                 == next(
                                     item.artifact_port for item in admitted.decisions if item.node == entry.template
                                 )
-                                else _inherited_artifact_role(input_artifact.artifact, provenance, port_facts)
+                                else _inherited_artifact_role(
+                                    input_parents.get(input_artifact.port),
+                                    provenance,
+                                    port_facts,
+                                )
                             ),
                         )
                     )
@@ -1700,6 +1705,14 @@ async def _run_execution(
                         facts.restore(checkpoint)
                         mapping = _mapping(job.policy, "failure", None, "malformed_response")
                     else:
+                        _mark_assessment_subjects(
+                            admitted,
+                            job.node,
+                            mapping,
+                            job.target,
+                            job.activation,
+                            facts,
+                        )
                         staged_result = True
                     del created
             prior_state = states[job.state_index]
@@ -2005,14 +2018,28 @@ def _optional_context_omitted(
 
 
 def _inherited_artifact_role(
-    artifact: ArtifactRef,
+    parent: ProvenanceKey | None,
     provenance: list[ArtifactProvenanceFact],
     ports: list[ExecutionPortFact],
 ) -> ArtifactRole:
-    if any(item.artifact == artifact and item.decision for item in provenance):
+    if parent is None:
+        return "artifact"
+    source = next((item for item in provenance if item.key == parent), None)
+    if source is None:
+        return "artifact"
+    if source.decision:
         return "decision"
-    if any(item.artifact == artifact and item.role == "candidate" for item in ports):
-        return "candidate"
+    if isinstance(parent, OperationOutputKey):
+        occurrence = next(
+            (
+                item
+                for item in ports
+                if item.activation == parent.activation and item.target == parent.target and item.port == parent.port
+            ),
+            None,
+        )
+        if occurrence is not None and occurrence.role == "candidate":
+            return "candidate"
     return "artifact"
 
 
@@ -3066,6 +3093,12 @@ def _accept_outputs(
         return "limit", ()
     created: list[ArtifactRef] = []
     decision_output = any(item.node == node for item in admitted.decisions)
+    productions = [
+        item for item in admitted.assessment_productions if item.node == node and item.outcome == mapping.outcome
+    ]
+    promises = {item.name: item for item in outcome.evidence}
+    subject_ports = {promises[item.promise].subject_port for item in productions}
+    evidence_ports = {item.evidence_port for item in productions}
     for output in outputs:
         identity_input = dependencies[output.port].identity_input
         if identity_input is None:
@@ -3098,11 +3131,10 @@ def _accept_outputs(
                 role=(
                     "decision"
                     if decision_output
+                    else "candidate"
+                    if output.port in subject_ports
                     else "evidence"
-                    if any(
-                        item.node == node and item.evidence_port == output.port
-                        for item in admitted.assessment_productions
-                    )
+                    if output.port in evidence_ports
                     else "candidate"
                     if any(
                         isinstance(item.source, NodeOutputRef)
@@ -3331,6 +3363,45 @@ def _capture_assessments(
             )
         )
     return True
+
+
+def _mark_assessment_subjects(
+    admitted: AdmittedExecutionPlan,
+    node: NodeId,
+    mapping: RuntimeOutcome,
+    target: DatumId,
+    activation: ActivationKey,
+    facts: _ExecutionFacts,
+) -> None:
+    if mapping.outcome is None:
+        return
+    declarations = [
+        item for item in admitted.assessment_productions if item.node == node and item.outcome == mapping.outcome
+    ]
+    if not declarations:
+        return
+    operation = _node_operation(admitted.context.prepared.workflow.workflow, node)
+    outcome = next(item for item in operation.outcomes if item.name == mapping.outcome)
+    promises = {item.name: item for item in outcome.evidence}
+    for port in {promises[item.promise].subject_port for item in declarations}:
+        indexes = [
+            index
+            for index, fact in enumerate(facts.ports)
+            if fact.activation == activation and fact.node == node and fact.target == target and fact.port == port
+        ]
+        if len(indexes) != 1 or facts.ports[indexes[0]].role == "decision":
+            reject(EffectCode.CONTRADICTORY)
+        fact = facts.ports[indexes[0]]
+        facts.ports[indexes[0]] = ExecutionPortFact(
+            _key=_FACT_KEY,
+            activation=fact.activation,
+            node=fact.node,
+            target=fact.target,
+            port=fact.port,
+            artifact=fact.artifact,
+            artifact_type=fact.artifact_type,
+            role="candidate",
+        )
 
 
 def _validate_assessment_returns(
