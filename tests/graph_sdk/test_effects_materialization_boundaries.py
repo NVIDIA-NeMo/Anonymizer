@@ -5,7 +5,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 from typing import Any, cast
 
 import pytest
@@ -18,14 +17,15 @@ from anonymizer.engine.graph_sdk.context import (
 )
 from anonymizer.engine.graph_sdk.requests import BindingDeclarationId, BindingId
 from anonymizer.graph.workflow import ArtifactType, NodeId, WorkflowId
+from tests.graph_sdk.reference.corpora import load_cases
 from tests.graph_sdk.test_context_source_execution import (
     _assert_collection_root_preflight,
 )
-from tests.graph_sdk.test_effects_production_conformance import CORPUS, _assert_adaptive_materialization_case
+from tests.graph_sdk.test_effects_production_conformance import _assert_adaptive_materialization_case
 
 
 def test_adaptive_binding_identity_is_not_a_public_declaration_field() -> None:
-    corpus = json.loads(CORPUS.read_bytes())
+    corpus = load_cases("effects")
     case = next(case for case in corpus if case["case_id"] == "materialization/adaptive_binding_identity")
     positive = next(case for case in corpus if case["case_id"] == "materialization/adaptive_collection_1")
     raw = case["declaration"]["materializations"][0]
@@ -50,9 +50,7 @@ def test_adaptive_binding_identity_is_not_a_public_declaration_field() -> None:
 
 
 def test_known_collection_cannot_be_supplied_as_a_caller_root(monkeypatch: pytest.MonkeyPatch) -> None:
-    case = next(
-        case for case in json.loads(CORPUS.read_bytes()) if case["case_id"] == "materialization/collection_root_input"
-    )
+    case = next(case for case in load_cases("effects") if case["case_id"] == "materialization/collection_root_input")
     raw = case["declaration"]["materializations"][0]
     assert raw["kind"] == "collection"
     assert raw["output_type"] in case["declaration"]["root_input_types"]

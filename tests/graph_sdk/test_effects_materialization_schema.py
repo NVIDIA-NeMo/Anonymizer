@@ -5,7 +5,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 from dataclasses import dataclass, replace
 from typing import Any
 
@@ -96,8 +95,8 @@ from anonymizer.graph.workflow import (
     admit_activation_workflow,
     admit_static_workflow,
 )
+from tests.graph_sdk.reference.corpora import load_cases
 from tests.graph_sdk.test_effects_production_conformance import (
-    CORPUS,
     _assessment_limits,
     _ContextConsumer,
     _normalize,
@@ -187,7 +186,7 @@ class _SchemaFixture:
 
 
 async def _assert_schema_case(case_id: str, allocations: list[BindingId]) -> None:
-    case = next(item for item in json.loads(CORPUS.read_bytes()) if item["case_id"] == case_id)
+    case = next(item for item in load_cases("effects") if item["case_id"] == case_id)
     fixture = _build_schema_fixture(case)
     if case_id == "materialization/conflicting_schema":
         # Distinct sites isolate schema union from duplicate-site precedence.

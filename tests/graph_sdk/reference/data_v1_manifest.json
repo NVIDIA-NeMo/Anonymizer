@@ -1,35 +1,35 @@
 {
-  "schema_version": 1,
-  "reference_id": "graph-sdk-data-record-v1",
-  "contract_id": "c0-v3",
-  "contract_sha256": "4335c135e534b3eece68021312b97f95eda63c8b60462e87da28455bb94f5341",
-  "normative_semantics_sha256": "60c30d29a80251505c884a3faffc3dfd02ca3f2c2dc55c478cbc5a4dc0600ee1",
-  "reference_spec_sha256": "f98ab1ca38328b9b3a25b03843e4f34eadc840a71d78c0c797ae85279f56720f",
-  "corpus_sha256": "ddb99182c635000ef36df1ee4def274214636d32ba8e9ec02c7a078737b39374",
-  "generator_sha256": "d6a69f6ec16c4bfa8a522811fe7639e1f49752e16c65291aeb447d14ed36ca5c",
-  "self_test_sha256": "648c7451c03ac7802d0b4ae2bfd16bde229464b3702c34434bf3eaf3ceecde21",
-  "python": {
-    "implementation": "CPython",
-    "version": "3.11.14"
-  },
   "alphabet": {
+    "record": [
+      "declare_record_fact(kind,value)",
+      "close_declaration",
+      "validate"
+    ],
     "static": [
       "declare_datum(id,text)",
       "select_target(id)",
       "add_relation(kind,value)",
       "close_declaration",
       "validate"
-    ],
-    "record": [
-      "declare_record_fact(kind,value)",
-      "close_declaration",
-      "validate"
     ]
   },
+  "base_case_counts": {
+    "precedence": 11,
+    "record_precedence": 7
+  },
+  "contract_id": "c0-v3",
+  "contract_sha256": "4335c135e534b3eece68021312b97f95eda63c8b60462e87da28455bb94f5341",
+  "corpus_sha256": "ddb99182c635000ef36df1ee4def274214636d32ba8e9ec02c7a078737b39374",
   "counts": {
-    "raw_variants": 43626,
     "deduplicated_cases": 38341,
-    "traces": 38341,
+    "event_kinds": {
+      "add_relation(kind,value)": 91414,
+      "close_declaration": 38341,
+      "declare_datum(id,text)": 113816,
+      "declare_record_fact(kind,value)": 436,
+      "select_target(id)": 89660,
+      "validate": 38341
+    },
     "events": 372008,
     "families": {
       "context": 7363,
@@ -44,31 +44,18 @@
       "record-precedence": 7,
       "relation-separation": 660
     },
-    "event_kinds": {
-      "add_relation(kind,value)": 91414,
-      "close_declaration": 38341,
-      "declare_datum(id,text)": 113816,
-      "declare_record_fact(kind,value)": 436,
-      "select_target(id)": 89660,
-      "validate": 38341
-    }
+    "raw_variants": 43626,
+    "traces": 38341
   },
-  "base_case_counts": {
-    "precedence": 11,
-    "record_precedence": 7
-  },
-  "maxima": {
-    "datums": 4,
-    "targets": 3,
-    "declarations": 8,
-    "group_members": 6,
-    "text_bytes": 12,
-    "trace_length": 16
+  "generator_sha256": "96a0e12bc19413c9745ee59559800e120c93fd7eceffca69f19e8be95d270ccb",
+  "historical_source_sha256": {
+    "generator_sha256": "d6a69f6ec16c4bfa8a522811fe7639e1f49752e16c65291aeb447d14ed36ca5c",
+    "self_test_sha256": "648c7451c03ac7802d0b4ae2bfd16bde229464b3702c34434bf3eaf3ceecde21"
   },
   "independence": {
+    "assertion_count": 444234,
     "pair_count": 148078,
-    "swapped_trace_count": 148078,
-    "assertion_count": 444234
+    "swapped_trace_count": 148078
   },
   "independence_probe": {
     "clean_subprocess": true,
@@ -78,10 +65,22 @@
       "donor"
     ]
   },
-  "representation_notes": {
-    "membership_duplicate": "A duplicate inside a JSON member list is collapsed by the contracted frozenset adapter; repeated membership is witnessed across independently valid manifests, where the same member necessarily repeats the same parent and therefore shares the duplicate code.",
-    "artifact_duplicate": "An exact duplicate ArtifactRef is not observable after frozenset adaptation; distinct versions remain independently represented."
+  "maxima": {
+    "datums": 4,
+    "declarations": 8,
+    "group_members": 6,
+    "targets": 3,
+    "text_bytes": 12,
+    "trace_length": 16
   },
+  "mutants": [
+    "collapse_equal_text_identities",
+    "infer_atomic_groups_from_context",
+    "admit_overlapping_output_ownership",
+    "reject_cyclic_context",
+    "accept_foreign_identity",
+    "publish_successful_unassessed_target"
+  ],
   "named_witnesses": [
     "self-source-invalid-range-before-cycle",
     "activation-negative-occurrence",
@@ -98,12 +97,18 @@
     "candidate-outside-targets",
     "member-repeated-across-manifests-and-duplicate-parent"
   ],
-  "mutants": [
-    "collapse_equal_text_identities",
-    "infer_atomic_groups_from_context",
-    "admit_overlapping_output_ownership",
-    "reject_cyclic_context",
-    "accept_foreign_identity",
-    "publish_successful_unassessed_target"
-  ]
+  "normative_semantics_sha256": "60c30d29a80251505c884a3faffc3dfd02ca3f2c2dc55c478cbc5a4dc0600ee1",
+  "python": {
+    "implementation": "CPython",
+    "version": "3.11.14"
+  },
+  "reference_id": "graph-sdk-data-record-v1",
+  "reference_spec_sha256": "f98ab1ca38328b9b3a25b03843e4f34eadc840a71d78c0c797ae85279f56720f",
+  "representation_notes": {
+    "artifact_duplicate": "An exact duplicate ArtifactRef is not observable after frozenset adaptation; distinct versions remain independently represented.",
+    "membership_duplicate": "A duplicate inside a JSON member list is collapsed by the contracted frozenset adapter; repeated membership is witnessed across independently valid manifests, where the same member necessarily repeats the same parent and therefore shares the duplicate code."
+  },
+  "schema_version": 1,
+  "self_test_sha256": "e6787ec36db4be3725a5449fed3a7d12697a07977ff0858a1daa26bbba193979",
+  "source_digest_format": "sorted-relative-path-NUL-source-bytes-NUL-v1"
 }

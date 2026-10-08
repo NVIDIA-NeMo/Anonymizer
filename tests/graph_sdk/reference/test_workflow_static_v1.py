@@ -4,11 +4,8 @@
 
 from __future__ import annotations
 
-import ast
 import hashlib
 import json
-import subprocess
-import sys
 from collections import Counter
 from copy import deepcopy
 from pathlib import Path
@@ -17,6 +14,8 @@ from typing import TypeAlias, cast
 import pytest
 
 from tests.graph_sdk.reference import workflow_static_v1 as reference
+from tests.graph_sdk.reference.corpora import corpus_bytes
+from tests.graph_sdk.reference.source_layout import assert_isolated_generation, assert_reference_imports, source_digest
 
 Json: TypeAlias = reference.Json
 Object: TypeAlias = reference.Object
@@ -25,7 +24,7 @@ REFERENCE_DIR = Path(__file__).parent
 GENERATOR_PATH = REFERENCE_DIR / "workflow_static_v1.py"
 CORPUS_PATH = REFERENCE_DIR / "workflow_static_v1_cases.json"
 MANIFEST_PATH = REFERENCE_DIR / "workflow_static_v1_manifest.json"
-FROZEN_BYTES = CORPUS_PATH.read_bytes()
+FROZEN_BYTES = corpus_bytes("workflow_static")
 FROZEN_CASES = reference.load_cases(json.loads(FROZEN_BYTES))
 MANIFEST = cast(Object, json.loads(MANIFEST_PATH.read_bytes()))
 
@@ -736,6 +735,8 @@ def test_manifest_has_exact_schema_hashes_counts_and_provenance() -> None:
         "independence",
         "generator_sha256",
         "self_test_sha256",
+        "historical_source_sha256",
+        "source_digest_format",
         "generation_provenance",
     }
     assert MANIFEST["schema_version"] == 1
@@ -745,8 +746,8 @@ def test_manifest_has_exact_schema_hashes_counts_and_provenance() -> None:
     assert MANIFEST["contract_sha256"] == reference.CONTRACT_SHA256
     assert MANIFEST["corpus_path"] == reference.CORPUS_PATH
     assert MANIFEST["corpus_sha256"] == hashlib.sha256(FROZEN_BYTES).hexdigest()
-    assert MANIFEST["generator_sha256"] == hashlib.sha256(GENERATOR_PATH.read_bytes()).hexdigest()
-    assert MANIFEST["self_test_sha256"] == hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
+    assert MANIFEST["generator_sha256"] == source_digest("workflow_static_v1")
+    assert MANIFEST["self_test_sha256"] == source_digest("workflow_static_v1", self_tests=True)
     assert MANIFEST["counts"] == reference.counts(FROZEN_CASES)
     assert MANIFEST["alphabet"] == list(reference.ALPHABET)
     assert MANIFEST["independence"] == {"kind": "conditional-symmetric-v1", "rule_ids": list(reference.RULE_IDS)}
@@ -767,36 +768,5 @@ def test_manifest_has_exact_schema_hashes_counts_and_provenance() -> None:
 
 
 def test_clean_subprocess_denies_product_imports_and_generates() -> None:
-    tree = ast.parse(GENERATOR_PATH.read_text())
-    imported = {node.module or "" for node in ast.walk(tree) if isinstance(node, ast.ImportFrom)} | {
-        alias.name for node in ast.walk(tree) if isinstance(node, ast.Import) for alias in node.names
-    }
-    assert not any(name == "anonymizer" or name.startswith("anonymizer.") for name in imported)
-    script = """
-import builtins
-import importlib.util
-import pathlib
-import sys
-
-path = pathlib.Path(sys.argv[1])
-original_import = builtins.__import__
-def deny(name, *args, **kwargs):
-    if name == "anonymizer" or name.startswith("anonymizer."):
-        raise AssertionError("product import denied")
-    return original_import(name, *args, **kwargs)
-builtins.__import__ = deny
-spec = importlib.util.spec_from_file_location("workflow_static_reference_probe", path)
-module = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(module)
-cases = module.generate_cases()
-assert len(cases) > 0
-assert module.judge(cases[0]["declaration"]) == cases[0]["expected"]
-assert module.module_is_independent()
-"""
-    completed = subprocess.run(
-        [sys.executable, "-I", "-c", script, str(GENERATOR_PATH)],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    assert completed.returncode == 0, completed.stderr
+    assert_reference_imports("workflow_static_v1")
+    assert_isolated_generation("workflow_static_v1")

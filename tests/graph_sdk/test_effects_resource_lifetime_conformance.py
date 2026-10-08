@@ -5,7 +5,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 from dataclasses import dataclass, replace
 from typing import Any, cast
 
@@ -27,8 +26,8 @@ from anonymizer.engine.graph_sdk.requests import (
 )
 from anonymizer.engine.graph_sdk.resources import ResourceLease
 from anonymizer.graph._values import ActivationKey, InvocationId, PlanId, TaskAttemptId
+from tests.graph_sdk.reference.corpora import load_cases
 from tests.graph_sdk.test_effects_production_conformance import (
-    CORPUS,
     _apply,
     _assessment_limits,
     _normalize,
@@ -39,7 +38,7 @@ from tests.graph_sdk.test_preparation import _capability, _data, _prepare, _work
 
 CASES = tuple(
     case
-    for case in json.loads(CORPUS.read_bytes())
+    for case in load_cases("effects")
     if case["case_id"]
     in {
         "resources/sdk_remote_waits",

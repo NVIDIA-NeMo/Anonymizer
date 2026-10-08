@@ -14,7 +14,7 @@ from anonymizer.engine.graph_sdk._effect_values import EffectRejected
 from anonymizer.engine.graph_sdk.executor import MapItemKey, RootInputKey
 from anonymizer.engine.graph_sdk.qualification import qualify
 from anonymizer.graph._values import ActivationKey, DatumId, InvocationId
-from tests.graph_sdk import test_qualification_map_conformance as fixture
+from tests.graph_sdk import qualification_map_records as fixture
 
 CASE_IDS = {
     f"map_item_evidence/{suffix}"

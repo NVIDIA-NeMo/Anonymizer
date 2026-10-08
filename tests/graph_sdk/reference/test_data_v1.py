@@ -4,11 +4,8 @@
 
 from __future__ import annotations
 
-import ast
 import hashlib
 import json
-import subprocess
-import sys
 from collections import Counter
 from copy import deepcopy
 from pathlib import Path
@@ -17,6 +14,8 @@ from typing import Callable, TypeAlias
 import pytest
 
 from tests.graph_sdk.reference import data_v1
+from tests.graph_sdk.reference.corpora import corpus_bytes
+from tests.graph_sdk.reference.source_layout import assert_isolated_generation, assert_reference_imports, source_digest
 
 Mutant: TypeAlias = Callable[[data_v1.FixtureCase], data_v1.ValidationResult]
 
@@ -30,7 +29,7 @@ MANIFEST_MAXIMA = data_v1._as_object(MANIFEST["maxima"])
 MANIFEST_ALPHABET = data_v1._as_object(MANIFEST["alphabet"])
 MANIFEST_INDEPENDENCE = data_v1._as_object(MANIFEST["independence"])
 MANIFEST_NAMED_WITNESSES = tuple(data_v1._string(value) for value in data_v1._as_list(MANIFEST["named_witnesses"]))
-FROZEN_BYTES = CORPUS_PATH.read_bytes()
+FROZEN_BYTES = corpus_bytes("data")
 FROZEN_CASES = data_v1._parse_cases(json.loads(FROZEN_BYTES))
 
 
@@ -538,47 +537,13 @@ def test_precedence_fixtures_have_frozen_codes() -> None:
 
 
 def test_reference_imports_are_independent() -> None:
-    source = (REFERENCE_DIR / "data_v1.py").read_text()
-    tree = ast.parse(source)
-    imports = {
-        node.names[0].name.split(".")[0] for node in ast.walk(tree) if isinstance(node, ast.Import) and node.names
-    }
-    imports.update(
-        node.module.split(".")[0]
-        for node in ast.walk(tree)
-        if isinstance(node, ast.ImportFrom) and node.module is not None
-    )
-    assert imports <= {"__future__", "collections", "copy", "itertools", "json", "typing"}
-    probe = """
-import builtins
-import importlib.util
-from pathlib import Path
-real_import = builtins.__import__
-def guarded(name, *args, **kwargs):
-    if name.startswith(('anonymizer', 'tests', 'donor')):
-        raise RuntimeError('forbidden dependency')
-    return real_import(name, *args, **kwargs)
-builtins.__import__ = guarded
-path = Path(sys.argv[1])
-spec = importlib.util.spec_from_file_location('independent_data_v1', path)
-module = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(module)
-cases = module.generate_cases()
-assert cases
-assert module.validate_case(cases[0]) == cases[0]['expected']
-"""
-    completed = subprocess.run(
-        [sys.executable, "-I", "-c", "import sys;" + probe, str(REFERENCE_DIR / "data_v1.py")],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    assert completed.returncode == 0, completed.stderr
+    assert_reference_imports("data_v1")
+    assert_isolated_generation("data_v1")
 
 
 def test_reference_file_hashes_match_manifest() -> None:
-    assert _sha256(REFERENCE_DIR / "data_v1.py") == MANIFEST["generator_sha256"]
-    assert _sha256(Path(__file__)) == MANIFEST["self_test_sha256"]
+    assert source_digest("data_v1") == MANIFEST["generator_sha256"]
+    assert source_digest("data_v1", self_tests=True) == MANIFEST["self_test_sha256"]
     assert MANIFEST["contract_sha256"] == "4335c135e534b3eece68021312b97f95eda63c8b60462e87da28455bb94f5341"
 
 

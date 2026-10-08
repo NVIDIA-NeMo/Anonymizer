@@ -10,9 +10,7 @@ literal version numbers. Normalization changes opaque names, never verdicts.
 from __future__ import annotations
 
 import asyncio
-import json
 from dataclasses import fields, replace
-from pathlib import Path
 from typing import Any, cast
 
 import pytest
@@ -32,9 +30,10 @@ from anonymizer.engine.graph_sdk.qualification import QualificationResult, quali
 from anonymizer.engine.graph_sdk.records import AbsenceRef, CandidateRef, DecisionRef
 from anonymizer.graph._values import ActivationKey, ArtifactRef, ContractViolation, DatumId
 from anonymizer.graph.workflow import CoverageAtom, NodeId, StateEffect
+from tests.graph_sdk.reference.corpora import load_cases
 from tests.graph_sdk.test_qualification_subject_context import _execute_separate_subject_context
 
-CORPUS = json.loads((Path(__file__).parent / "reference/qualification_v1_cases.json").read_text())
+CORPUS = load_cases("qualification")
 BASELINE_IDS = frozenset(
     {
         "release/protection_success",

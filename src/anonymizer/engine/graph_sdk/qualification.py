@@ -8,6 +8,7 @@ from dataclasses import dataclass, replace
 from typing import Literal, get_args
 
 from anonymizer.engine.graph_sdk._effect_values import EffectCode, PrivateValue, reject, require_instance
+from anonymizer.engine.graph_sdk._qualification_provenance import _ProvenanceValidator
 from anonymizer.engine.graph_sdk._workflow import reachable_workflows
 from anonymizer.engine.graph_sdk.evidence import (
     AdmittedQualification,
@@ -21,15 +22,10 @@ from anonymizer.engine.graph_sdk.evidence import (
 )
 from anonymizer.engine.graph_sdk.executor import (
     ArtifactProvenanceFact,
-    BoundInputKey,
     ExecutionResult,
     FinalOutputFact,
-    InitialCollectionKey,
-    MapItemKey,
     OperationOutputKey,
     ProvenanceKey,
-    RootInputKey,
-    _source_activation,
 )
 from anonymizer.engine.graph_sdk.records import CandidateRef, CanonicalRecord, DecisionRef, EvidenceRef, TargetStatus
 from anonymizer.engine.graph_sdk.requests import (
@@ -41,7 +37,6 @@ from anonymizer.engine.graph_sdk.requests import (
     RequestReservation,
     RequestTerminalFact,
     SemanticAssociation,
-    TextCollectionValue,
 )
 from anonymizer.engine.graph_sdk.resources import CleanupAssociation, CleanupFact
 from anonymizer.graph._values import ActivationKey, DatumId
@@ -49,10 +44,8 @@ from anonymizer.graph.activation import ActivationEntry
 from anonymizer.graph.workflow import (
     MapItemPort,
     NodeId,
-    NodeOutputRef,
     ProtectionRequirement,
     SubgraphNode,
-    WorkflowInputRef,
 )
 
 WithholdingCode = Literal[
@@ -376,350 +369,7 @@ class _Qualification:
             reject(EffectCode.UNSUPPORTED)
 
     def validate_provenance(self) -> None:
-        if len(self.result.provenance) > self.admitted.limits.max_port_facts:
-            reject(EffectCode.LIMIT_EXCEEDED)
-        for fact in self.result.provenance:
-            if fact.key in self.provenance:
-                reject(EffectCode.DUPLICATE)
-            if fact.artifact.invocation != self.result.record.invocation or fact.key.target not in self.order:
-                reject(EffectCode.FOREIGN_OWNER)
-            if fact.artifact not in self.result.record.artifacts:
-                reject(EffectCode.MISSING)
-            self.provenance[fact.key] = fact
-        self._validate_input_parents()
-        self._validate_passthrough_parents()
-        for fact in self.result.provenance:
-            if not fact.parents <= self.provenance.keys():
-                reject(EffectCode.MISSING)
-            self._producer(fact)
-        self._validate_artifact_allocations()
-        self._provenance_acyclic()
-        outputs = [(item.target, item.port) for item in self.result.final_outputs]
-        if len(outputs) != len(set(outputs)):
-            reject(EffectCode.DUPLICATE)
-        for output in self.result.final_outputs:
-            if output.target not in self.order or output.candidate.target != output.target:
-                reject(EffectCode.FOREIGN_OWNER)
-            producer = self.provenance.get(output.producer)
-            if producer is None:
-                reject(EffectCode.MISSING)
-            if producer.key.target != output.target:
-                reject(EffectCode.FOREIGN_OWNER)
-            if producer.artifact != output.candidate.artifact:
-                reject(EffectCode.CONTRADICTORY)
-            bindings = [
-                item for item in self.prepared.workflow.workflow.output_bindings if item.destination.port == output.port
-            ]
-            if len(bindings) != 1:
-                reject(EffectCode.MISSING)
-            source = bindings[0].source
-            if isinstance(source, NodeOutputRef):
-                if not isinstance(output.producer, OperationOutputKey):
-                    reject(EffectCode.CONTRADICTORY)
-                source_entry = self.entries[output.producer.activation]
-                if source_entry.template != source.node or output.producer.port != source.port:
-                    reject(EffectCode.CONTRADICTORY)
-            elif isinstance(source, WorkflowInputRef) and output.producer != RootInputKey(
-                target=output.target, port=source.port
-            ):
-                reject(EffectCode.CONTRADICTORY)
-            actual_outcomes = {
-                binding.destination.outcome
-                for binding in self.prepared.workflow.workflow.outcome_bindings
-                for key, entry in self.entries.items()
-                if self.owners[key] == output.target
-                and entry.template == binding.source.node
-                and entry.status == "success"
-                and entry.outcome == binding.source.outcome
-            }
-            if actual_outcomes != {output.outcome}:
-                reject(EffectCode.CONTRADICTORY)
-            if output.outcome not in {
-                item.name
-                for item in self.prepared.workflow.workflow.interface.outcomes
-                if output.port in item.produced_ports
-            }:
-                reject(EffectCode.CONTRADICTORY)
-
-    def _validate_artifact_allocations(self) -> None:
-        allocated: dict[tuple[object, ...], int] = {}
-        owners: dict[int, tuple[object, ...]] = {}
-        for fact in self.result.provenance:
-            key = fact.key
-            if isinstance(key, BoundInputKey):
-                lineage = (BoundInputKey, key.binding_artifact.declaration, key.binding_artifact.key)
-                version = key.binding_artifact.version
-            elif isinstance(key, MapItemKey):
-                lineage = (MapItemKey, key.expander, key.target, key.item_key)
-                version = key.item_version
-            elif isinstance(key, OperationOutputKey):
-                node = self.nodes[self.entries[key.activation].template]
-                if isinstance(node, SubgraphNode):
-                    continue
-                dependency = next(item for item in node.operation.output_dependencies if item.output == key.port)
-                if dependency.identity_input is not None:
-                    continue
-                lineage = (OperationOutputKey, key)
-                version = 1
-            else:
-                lineage = (type(key), key)
-                version = 1
-            if (
-                fact.artifact.version != version
-                or allocated.setdefault(lineage, fact.artifact.key) != fact.artifact.key
-                or owners.setdefault(fact.artifact.key, lineage) != lineage
-            ):
-                reject(EffectCode.CONTRADICTORY)
-
-    def _validate_input_parents(self) -> None:
-        for target, activation, port, parent in self.result._input_parents:
-            if activation not in self.entries or target != self.owners[activation] or parent.target != target:
-                reject(EffectCode.FOREIGN_OWNER)
-            key = (target, activation, port)
-            if key in self.input_parents:
-                reject(EffectCode.DUPLICATE)
-            self.input_parents[key] = parent
-        expected = {
-            (fact.target, fact.activation, fact.port)
-            for fact in self.result.ports
-            if fact.activation in self.entries
-            and not isinstance(self.nodes[self.entries[fact.activation].template], SubgraphNode)
-            and fact.port in {item.name for item in self.nodes[self.entries[fact.activation].template].operation.inputs}
-        }
-        if expected - self.input_parents.keys():
-            reject(EffectCode.MISSING)
-        if self.input_parents.keys() - expected:
-            reject(EffectCode.CONTRADICTORY)
-        for (_, activation, port), parent in self.input_parents.items():
-            source = self.provenance.get(parent)
-            if source is None:
-                reject(EffectCode.MISSING)
-            if source.artifact != self.facts.ports[activation, port].artifact:
-                reject(EffectCode.CONTRADICTORY)
-            if isinstance(parent, BoundInputKey):
-                bound = self.admitted.execution.context.bound_context
-                if bound is None:
-                    reject(EffectCode.MISSING)
-                declaration = next(
-                    (
-                        item.declaration
-                        for item in bound.receipt.sources
-                        if item.identity == parent.binding_artifact.declaration
-                    ),
-                    None,
-                )
-                if declaration is None:
-                    reject(EffectCode.FOREIGN_OWNER)
-                if declaration.version_selection == "latest" and parent.binding_artifact.version != max(
-                    (
-                        item.reference.version
-                        for item in bound.artifacts
-                        if item.reference.declaration == parent.binding_artifact.declaration
-                        and item.reference.key == parent.binding_artifact.key
-                    ),
-                    default=0,
-                ):
-                    reject(EffectCode.CONTRADICTORY)
-
-    def _validate_passthrough_parents(self) -> None:
-        for target, activation, port, parent in self.result._passthrough_parents:
-            if activation not in self.entries or target != self.owners[activation] or parent.target != target:
-                reject(EffectCode.FOREIGN_OWNER)
-            key = (target, activation, port)
-            if key in self.passthrough_parents:
-                reject(EffectCode.DUPLICATE)
-            self.passthrough_parents[key] = parent
-        expected = set()
-        for fact in self.result.provenance:
-            key = fact.key
-            if not isinstance(key, OperationOutputKey) or key.activation not in self.entries:
-                continue
-            node = self.nodes[self.entries[key.activation].template]
-            if isinstance(node, SubgraphNode) and any(
-                binding.destination.port == key.port and isinstance(binding.source, WorkflowInputRef)
-                for binding in node.body.output_bindings
-            ):
-                expected.add((key.target, key.activation, key.port))
-        if expected - self.passthrough_parents.keys():
-            reject(EffectCode.MISSING)
-        if self.passthrough_parents.keys() - expected:
-            reject(EffectCode.CONTRADICTORY)
-        if any(parent not in self.provenance for parent in self.passthrough_parents.values()):
-            reject(EffectCode.MISSING)
-
-    def _provenance_acyclic(self) -> None:
-        remaining = {key: len(fact.parents) for key, fact in self.provenance.items()}
-        children: dict[ProvenanceKey, list[ProvenanceKey]] = {key: [] for key in remaining}
-        for key, fact in self.provenance.items():
-            for parent in fact.parents:
-                children[parent].append(key)
-        ready = [key for key, count in remaining.items() if count == 0]
-        visited = 0
-        while ready:
-            key = ready.pop()
-            visited += 1
-            for child in children[key]:
-                remaining[child] -= 1
-                if remaining[child] == 0:
-                    ready.append(child)
-        if visited != len(remaining):
-            reject(EffectCode.CONTRADICTORY)
-
-    def _producer(self, fact: ArtifactProvenanceFact) -> None:
-        key = fact.key
-        if isinstance(key, OperationOutputKey):
-            entry = self.entries.get(key.activation)
-            if entry is None:
-                reject(EffectCode.MISSING)
-            if self.owners[key.activation] != key.target:
-                reject(EffectCode.FOREIGN_OWNER)
-            port = self.facts.ports.get((key.activation, key.port))
-            if port is None or port.artifact != fact.artifact or port.node != entry.template:
-                reject(EffectCode.CONTRADICTORY)
-            outcome = next(
-                (item for item in self.nodes[entry.template].operation.outcomes if item.name == entry.outcome), None
-            )
-            if outcome is None or key.port not in outcome.produced_ports:
-                reject(EffectCode.CONTRADICTORY)
-            node = self.nodes[entry.template]
-            if isinstance(node, SubgraphNode):
-                bindings = [item for item in node.body.output_bindings if item.destination.port == key.port]
-                if len(bindings) != 1 or len(fact.parents) != 1:
-                    reject(EffectCode.CONTRADICTORY)
-                source = bindings[0].source
-                parent = self.provenance[next(iter(fact.parents))]
-                if isinstance(source, WorkflowInputRef):
-                    expected_key = self.passthrough_parents[key.target, key.activation, key.port]
-                    if parent.key != expected_key:
-                        reject(EffectCode.CONTRADICTORY)
-                else:
-                    if not isinstance(parent.key, OperationOutputKey):
-                        reject(EffectCode.CONTRADICTORY)
-                    state = self.result.states[self.order.index(key.target)]
-                    expected_activation = _source_activation(state, key.activation, source.node)
-                    source_entry = self.entries.get(parent.key.activation)
-                    if (
-                        source_entry is None
-                        or parent.key.activation != expected_activation
-                        or parent.key.target != key.target
-                        or source_entry.template != source.node
-                        or parent.key.port != source.port
-                    ):
-                        reject(EffectCode.CONTRADICTORY)
-                if parent.artifact != fact.artifact or fact.decision != parent.decision:
-                    reject(EffectCode.CONTRADICTORY)
-            else:
-                dependency = next(item for item in node.operation.output_dependencies if item.output == key.port)
-                input_keys = [(key.target, key.activation, name) for name in dependency.inputs]
-                if any(item not in self.input_parents for item in input_keys):
-                    reject(EffectCode.MISSING)
-                expected = frozenset(self.input_parents[item] for item in input_keys)
-                if dependency.identity_input is not None:
-                    identity_parent = self.input_parents[key.target, key.activation, dependency.identity_input]
-                    if fact.artifact != self.provenance[identity_parent].artifact:
-                        reject(EffectCode.CONTRADICTORY)
-                if fact.parents != expected or fact.decision != any(
-                    item.node == entry.template for item in self.admitted.execution.decisions
-                ):
-                    reject(EffectCode.CONTRADICTORY)
-        elif isinstance(key, RootInputKey):
-            if (
-                fact.parents
-                or fact.decision
-                or not any(item.target == key.target and item.port == key.port for item in self.prepared.bound_inputs)
-            ):
-                reject(EffectCode.CONTRADICTORY)
-        elif isinstance(key, (BoundInputKey, InitialCollectionKey)):
-            self._bound_producer(fact, key)
-        elif isinstance(key, MapItemKey):
-            self._map_producer(fact, key)
-
-    def _bound_producer(self, fact: ArtifactProvenanceFact, key: BoundInputKey | InitialCollectionKey) -> None:
-        bound = self.admitted.execution.context.bound_context
-        if bound is None or fact.decision:
-            reject(EffectCode.CONTRADICTORY)
-        declaration = key.binding_artifact.declaration if isinstance(key, BoundInputKey) else key.declaration
-        source = next((item for item in bound.receipt.sources if item.identity == declaration), None)
-        if source is None:
-            reject(EffectCode.MISSING)
-        if (source.declaration.target, source.declaration.node, source.declaration.port) != (
-            key.target,
-            key.node,
-            key.port,
-        ):
-            reject(EffectCode.FOREIGN_OWNER)
-        items = [item for item in bound.artifacts if item.reference.declaration == declaration]
-        if isinstance(key, BoundInputKey):
-            if fact.parents or not any(
-                item.reference == key.binding_artifact
-                and (item.target, item.node, item.port) == (key.target, key.node, key.port)
-                for item in items
-            ):
-                reject(EffectCode.CONTRADICTORY)
-        else:
-            expected = frozenset(
-                BoundInputKey(target=key.target, node=key.node, port=key.port, binding_artifact=item.reference)
-                for item in items
-            )
-            if source.declaration.materialization.kind != "collection" or fact.parents != expected:
-                reject(EffectCode.CONTRADICTORY)
-            value = dict(self.result.artifacts)[fact.artifact]
-            if not isinstance(value, TextCollectionValue) or {(item.key, item.version) for item in value.items} != {
-                (item.reference.key, item.reference.version) for item in items
-            }:
-                reject(EffectCode.CONTRADICTORY)
-
-    def _map_producer(self, fact: ArtifactProvenanceFact, key: MapItemKey) -> None:
-        member = self.entries.get(key.member)
-        expander = self.entries.get(key.expander)
-        if member is None or expander is None:
-            reject(EffectCode.MISSING)
-        if (
-            key.member.parent != key.expander
-            or self.owners[key.member] != key.target
-            or self.owners[key.expander] != key.target
-        ):
-            reject(EffectCode.FOREIGN_OWNER)
-        declaration = next(
-            (
-                item
-                for scope in self.prepared.workflow.scopes
-                for item in scope.maps
-                if item.expander == expander.template
-            ),
-            None,
-        )
-        publication = next(
-            (
-                item
-                for item in self.admitted.execution.map_expansions
-                if item.expander == expander.template and item.outcome == expander.outcome
-            ),
-            None,
-        )
-        if declaration is None or publication is None:
-            reject(EffectCode.MISSING)
-        if declaration.member != member.template or declaration.item_input != key.port or fact.decision:
-            reject(EffectCode.CONTRADICTORY)
-        parent = OperationOutputKey(activation=key.expander, target=key.target, port=publication.membership_port)
-        if fact.parents != frozenset({parent}):
-            reject(EffectCode.CONTRADICTORY)
-        collection = dict(self.result.artifacts)[self.provenance[parent].artifact]
-        if not isinstance(collection, TextCollectionValue):
-            reject(EffectCode.CONTRADICTORY)
-        if (key.item_key, key.item_version) not in {(item.key, item.version) for item in collection.items}:
-            reject(EffectCode.MISSING)
-        state = self.result.states[self.order.index(key.target)]
-        expansion = next((item for item in state.expansions if item.parent == key.expander), None)
-        if expansion is None or key.member not in expansion.members:
-            reject(EffectCode.MISSING)
-        children = sorted(expansion.members, key=lambda item: item.occurrence)
-        index = children.index(key.member)
-        if index >= len(collection.items) or (key.item_key, key.item_version) != (
-            collection.items[index].key,
-            collection.items[index].version,
-        ):
-            reject(EffectCode.CONTRADICTORY)
+        _ProvenanceValidator(self).validate_provenance()
 
     def request_accounting(self) -> None:
         receipt = self.result.requests

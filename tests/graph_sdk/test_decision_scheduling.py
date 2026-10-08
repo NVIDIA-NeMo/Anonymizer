@@ -5,7 +5,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 from dataclasses import dataclass, field, replace
 
 import pytest
@@ -46,8 +45,8 @@ from anonymizer.graph.workflow import (
     admit_activation_workflow,
     admit_static_workflow,
 )
+from tests.graph_sdk.reference.corpora import load_cases
 from tests.graph_sdk.test_effects_production_conformance import (
-    CORPUS,
     _assessment_limits,
     _normalize,
     _valid_runtime_rows,
@@ -99,7 +98,7 @@ def test_decision_scheduling(case_id: str, local_capacity: int) -> None:
 
 
 async def _assert_scheduling(case_id: str, local_capacity: int) -> None:
-    case = next(item for item in json.loads(CORPUS.read_bytes()) if item["case_id"] == case_id)
+    case = next(item for item in load_cases("effects") if item["case_id"] == case_id)
     both_decisions = case_id != "decisions/matching_resume_unrelated_advances"
     pending_limit = case["declaration"].get("max_pending", 2)
     original, _, artifact_type = _workflow(with_input=True)

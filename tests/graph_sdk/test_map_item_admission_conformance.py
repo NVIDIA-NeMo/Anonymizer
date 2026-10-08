@@ -27,7 +27,7 @@ from anonymizer.graph.workflow import (
     admit_activation_workflow,
     admit_static_workflow,
 )
-from tests.graph_sdk import test_qualification_map_conformance as fixture
+from tests.graph_sdk import qualification_map_execution as fixture
 from tests.graph_sdk.test_dynamic_executor import _operation, _outcome
 
 

@@ -4,12 +4,9 @@
 
 from __future__ import annotations
 
-import ast
 import hashlib
 import importlib.util
 import json
-import subprocess
-import sys
 from collections import Counter
 from pathlib import Path
 from typing import TypeAlias, cast
@@ -17,6 +14,8 @@ from typing import TypeAlias, cast
 import pytest
 
 from tests.graph_sdk.reference import activation_v1 as reference
+from tests.graph_sdk.reference.corpora import corpus_bytes
+from tests.graph_sdk.reference.source_layout import assert_isolated_generation, assert_reference_imports, source_digest
 
 Json: TypeAlias = reference.Json
 Object: TypeAlias = reference.Object
@@ -25,7 +24,7 @@ GENERATOR = HERE / "activation_v1.py"
 CORPUS = HERE / "activation_v1_cases.json"
 MANIFEST_PATH = HERE / "activation_v1_manifest.json"
 SUPPORT = HERE / "activation_v1_support.md"
-FROZEN_BYTES = CORPUS.read_bytes()
+FROZEN_BYTES = corpus_bytes("activation")
 CASES = reference.load_cases(json.loads(FROZEN_BYTES))
 MANIFEST = cast(Object, json.loads(MANIFEST_PATH.read_bytes()))
 
@@ -797,8 +796,8 @@ def test_manifest_counts_sources_and_provenance_are_actual() -> None:
     assert MANIFEST["consumption_addendum_sha256"] == reference.CONSUMPTION_ADDENDUM_SHA256
     assert MANIFEST["counts"] == reference.counts(CASES)
     assert MANIFEST["corpus_sha256"] == hashlib.sha256(FROZEN_BYTES).hexdigest()
-    assert MANIFEST["generator_sha256"] == hashlib.sha256(GENERATOR.read_bytes()).hexdigest()
-    assert MANIFEST["self_test_sha256"] == hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
+    assert MANIFEST["generator_sha256"] == source_digest("activation_v1")
+    assert MANIFEST["self_test_sha256"] == source_digest("activation_v1", self_tests=True)
     assert MANIFEST["support_sha256"] == hashlib.sha256(SUPPORT.read_bytes()).hexdigest()
     counts = _object(MANIFEST["counts"])
     assert counts == {
@@ -815,29 +814,8 @@ def test_manifest_counts_sources_and_provenance_are_actual() -> None:
 
 
 def test_clean_subprocess_denies_product_and_unrelated_imports() -> None:
-    tree = ast.parse(GENERATOR.read_text())
-    imports = {
-        alias.name.split(".")[0] for node in ast.walk(tree) if isinstance(node, ast.Import) for alias in node.names
-    }
-    imports.update(
-        node.module.split(".")[0] for node in ast.walk(tree) if isinstance(node, ast.ImportFrom) and node.module
-    )
-    assert imports <= set(sys.stdlib_module_names) | {"__future__"}
-    script = f"""
-import importlib.abc, importlib.util, pathlib, sys
-class Deny(importlib.abc.MetaPathFinder):
-    def find_spec(self, fullname, path=None, target=None):
-        if fullname == 'anonymizer' or fullname.startswith('anonymizer.') or 'donor' in fullname.lower():
-            raise AssertionError(fullname)
-        return None
-sys.meta_path.insert(0, Deny())
-path = pathlib.Path({str(GENERATOR)!r})
-spec = importlib.util.spec_from_file_location('activation_reference_probe', path)
-module = importlib.util.module_from_spec(spec); sys.modules[spec.name] = module; spec.loader.exec_module(module)
-assert module.canonical_bytes(module.generate_cases()) == module.canonical_bytes(module.generate_cases())
-"""
-    completed = subprocess.run([sys.executable, "-I", "-c", script], check=False, capture_output=True, text=True)
-    assert completed.returncode == 0, completed.stderr
+    assert_reference_imports("activation_v1")
+    assert_isolated_generation("activation_v1")
 
 
 def test_adapter_exceptions_remain_harness_failures() -> None:

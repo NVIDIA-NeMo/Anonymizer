@@ -5,7 +5,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 from dataclasses import dataclass, field, replace
 from typing import Any, cast
 
@@ -45,8 +44,8 @@ from anonymizer.graph.workflow import (
     admit_activation_workflow,
     admit_static_workflow,
 )
+from tests.graph_sdk.reference.corpora import load_cases
 from tests.graph_sdk.test_effects_production_conformance import (
-    CORPUS,
     _assert_decision_submission,
     _assessment_limits,
     _valid_runtime_rows,
@@ -56,7 +55,7 @@ from tests.graph_sdk.test_preparation import _capability, _data, _limits, _prepa
 
 CASES = tuple(
     case
-    for case in json.loads(CORPUS.read_bytes())
+    for case in load_cases("effects")
     if case["case_id"]
     in {
         "bridges/cancel_after_dispatch",
@@ -254,7 +253,7 @@ async def _assert_terminal(case: dict[str, Any]) -> None:
 
 
 def test_deadline_bridge_uses_real_decision_deadline() -> None:
-    corpus = json.loads(CORPUS.read_bytes())
+    corpus = load_cases("effects")
     bridge = next(case for case in corpus if case["case_id"] == "bridges/deadline_exhausted")
     decision = next(case for case in corpus if case["case_id"] == "decisions/deadline")
     assert bridge["expected"]["state"]["tasks"] == decision["expected"]["state"]["tasks"]

@@ -5,68 +5,28 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass, replace
+from dataclasses import replace
 from typing import cast
 
 import pytest
 
 from anonymizer.engine.graph_sdk._effect_values import EffectCode, EffectRejected
 from anonymizer.engine.graph_sdk.context import (
-    ContextResource,
-    ContextSelector,
-    ContextSourceCapability,
     ContextSourceRef,
-    RetrievalBounds,
-    SourceItem,
-    SourceResponse,
 )
 from anonymizer.engine.graph_sdk.data import AtomicGroup, CoherenceScope, DataGraph, DataLimits, DatumDependency
 from anonymizer.engine.graph_sdk.evidence import AssessmentSubmission, admit_qualification, evidence_revision_view
-from anonymizer.engine.graph_sdk.executor import AdmittedExecutionPlan, AssessmentFinding, ExecutionResult
+from anonymizer.engine.graph_sdk.executor import AssessmentFinding
 from anonymizer.engine.graph_sdk.qualification import qualify
-from anonymizer.engine.graph_sdk.requests import (
-    AssociationResult,
-    DispatchEnvelope,
-    ExactUsage,
-    ExternalSettlement,
-    FailureClass,
-    PhysicalRequestId,
-    PhysicalRequestPolicy,
-    PortArtifact,
-    RequestAssociation,
-    StopConfirmed,
-    TransportFailure,
-    TransportResult,
-    TransportSuccess,
-    UnknownUsage,
-)
 from anonymizer.engine.graph_sdk.resources import ResourceId, ResourceLease
-from anonymizer.graph.workflow import ArtifactType
-from tests.graph_sdk.test_evidence import _execute_assessment, _qualification_limits
-
-
-def _inputs(execution: AdmittedExecutionPlan, result: ExecutionResult, *, decisions: int = 16, latest: bool = False):
-    admitted = admit_qualification(
-        execution=execution,
-        productions=()
-        if execution.context.prepared.configuration.purpose == "execution_only"
-        else execution.assessment_productions,
-        limits=_qualification_limits(max_required_decisions=decisions),
-    )
-    current = evidence_revision_view(
-        admitted=admitted,
-        result=result,
-        artifacts=tuple(
-            {ref.key: ref for ref, _ in sorted(result.artifacts, key=lambda item: item[0].version)}.values()
-        )
-        if latest
-        else tuple(ref for ref, _ in result.artifacts),
-        absences=tuple({absence for fact in result.assessments for absence in fact.environment.absences}),
-        configurations=tuple({(fact.node, fact.environment.configuration) for fact in result.assessments}),
-        state=execution.context.prepared.state,
-    )
-    submissions = tuple(AssessmentSubmission(fact=fact) for fact in result.assessments)
-    return admitted, current, submissions
+from tests.graph_sdk.evidence_fixtures import _execute_assessment, _qualification_limits
+from tests.graph_sdk.qualification_fixtures import (
+    _BindingProvider,
+    _BindingSource,
+    _initial_resource,
+    _RecoveringTransport,
+)
+from tests.graph_sdk.qualification_fixtures import _inputs as _inputs
 
 
 @pytest.mark.parametrize("environment", [False, True])
@@ -303,55 +263,6 @@ def test_required_decision_bound_applies_to_union_across_released_targets() -> N
     assert error.value.code is EffectCode.LIMIT_EXCEEDED
 
 
-@dataclass
-class _RecoveringTransport:
-    failure: FailureClass | None = None
-    unknown_usage: bool = False
-    fail_close: bool = False
-    calls: int = 0
-    closes: int = 0
-
-    async def dispatch(self, request: DispatchEnvelope) -> TransportResult:
-        self.calls += 1
-        settlement = ExternalSettlement(
-            request=request.request,
-            disposition="completed",
-            remote_stopped=True,
-            usage=UnknownUsage()
-            if self.unknown_usage and self.calls == 1
-            else ExactUsage(input_units=1, output_units=1),
-        )
-        if self.calls == 1 and self.failure is not None:
-            return TransportFailure(failure=self.failure, settlement=settlement)
-        item = request.associations[0]
-        return TransportSuccess(
-            results=(
-                AssociationResult(
-                    association=item.association,
-                    outcome="ok",
-                    consumed_context_ports=frozenset(),
-                    outputs=(
-                        PortArtifact(
-                            port="context",
-                            artifact_type=item.inputs[0].artifact_type,
-                            artifact=None,
-                            value=item.inputs[0].value,
-                        ),
-                    ),
-                ),
-            ),
-            settlement=settlement,
-        )
-
-    async def cancel(self, request: object) -> StopConfirmed:
-        return StopConfirmed(usage=ExactUsage(input_units=0, output_units=0))
-
-    async def close(self) -> None:
-        self.closes += 1
-        if self.fail_close:
-            raise RuntimeError("test close failure")
-
-
 @pytest.mark.parametrize(
     ("failure", "purpose"), [(None, None), ("retryable", "retry"), ("malformed_response", "correction")]
 )
@@ -569,81 +480,6 @@ def test_current_partial_coverage_cannot_satisfy_a_complete_requirement(selected
         supported = frozenset(item.reference for item in output.verified if item.promise.name == "checked")
         assert output.qualified[0].evidence == supported
         assert output.record.statuses[0].qualification == "met"
-
-
-@dataclass
-class _BindingSource:
-    source: ContextSourceRef
-    fail_close: bool = False
-    calls: int = 0
-    closes: int = 0
-    versions: tuple[int, ...] | None = None
-
-    async def retrieve(
-        self,
-        *,
-        request: PhysicalRequestId,
-        association: RequestAssociation,
-        selector: ContextSelector,
-        bounds: RetrievalBounds,
-    ) -> SourceResponse:
-        del selector, bounds
-        self.calls += 1
-        return SourceResponse(
-            source=self.source,
-            items=tuple(
-                SourceItem(
-                    association=association,
-                    key=0,
-                    version=version,
-                    text="initial context" if self.versions is None else str(version),
-                )
-                for version in ((1,) if self.versions is None else self.versions)
-            ),
-            settlement=ExternalSettlement(
-                request=request,
-                disposition="completed",
-                usage=ExactUsage(input_units=1, output_units=1),
-                remote_stopped=True,
-            ),
-        )
-
-    async def cancel(self, request: PhysicalRequestId) -> StopConfirmed:
-        del request
-        return StopConfirmed(usage=ExactUsage(input_units=0, output_units=0))
-
-
-class _BindingProvider(_BindingSource):
-    async def close(self) -> None:
-        self.closes += 1
-        if self.fail_close:
-            raise RuntimeError("provider cleanup failed")
-
-
-def _initial_resource(provider: _BindingSource) -> ContextResource:
-    return ContextResource(
-        source=provider.source,
-        capability=ContextSourceCapability(
-            source=provider.source,
-            artifact_type=ArtifactType(name="text", revision=1),
-            uses=frozenset({"initial_binding"}),
-            execution="async",
-            resource_owner="sdk",
-            cancellation="cooperative_ack",
-            settlement="explicit_ack",
-            usage="exact",
-            request=PhysicalRequestPolicy(
-                visibility="dispatch_and_settlement",
-                pre_dispatch_control="executor",
-                retry_owner="executor",
-                replay="idempotent",
-                max_attempts=1,
-            ),
-            safe_detachment="forbidden",
-        ),
-        lease=None,
-        factory=lambda: provider,
-    )
 
 
 @pytest.mark.parametrize("disposition", ["closed", "close_failed", "close_unknown"])
@@ -911,145 +747,3 @@ def test_latest_selection_cannot_be_rewritten_to_an_older_retained_version() -> 
         object.__setattr__(port, "artifact", original[0])
         object.__setattr__(result, "_input_parents", original[1])
         object.__setattr__(output, "parents", original[2])
-
-
-def test_latest_candidate_sibling_is_unavailable_and_cannot_replace_final_output() -> None:
-    from anonymizer.engine.graph_sdk.executor import BoundInputKey
-    from anonymizer.engine.graph_sdk.records import CandidateRef
-
-    provider = _BindingProvider(source=ContextSourceRef(name="version-owner", revision=1), versions=(1, 2))
-    execution, result = asyncio.run(
-        _execute_assessment(
-            initial_resources=(_initial_resource(provider),),
-            initial_item_limit=2,
-            initial_version_selection="latest",
-            alias_output=True,
-        )
-    )
-    older = next(
-        fact.artifact
-        for fact in result.provenance
-        if isinstance(fact.key, BoundInputKey) and fact.artifact.version == 1
-    )
-    admitted = admit_qualification(
-        execution=execution, productions=execution.assessment_productions, limits=_qualification_limits()
-    )
-    current = evidence_revision_view(
-        admitted=admitted,
-        result=result,
-        artifacts=(older,),
-        absences=(),
-        configurations=((result.assessments[0].node, result.assessments[0].environment.configuration),),
-        state=execution.context.prepared.state,
-    )
-    assert not current.candidates
-    submissions = (AssessmentSubmission(fact=result.assessments[0]),)
-    output = qualify(admitted=admitted, result=result, current=current, submissions=submissions)
-    assert not output.qualified
-    assert "missing_candidate" in output.targets[0].withholding
-    assert output.record.statuses[0].qualification == "unknown"
-    assert not output.record.statuses[0].artifact_available
-    without_assessment = qualify(admitted=admitted, result=result, current=current, submissions=())
-    assert without_assessment.record.statuses[0].qualification == "unknown"
-    assert not without_assessment.record.statuses[0].artifact_available
-    final = result.final_outputs[0]
-    original = final.candidate
-    object.__setattr__(final, "candidate", CandidateRef(artifact=older, target=original.target))
-    try:
-        with pytest.raises(EffectRejected) as error:
-            qualify(admitted=admitted, result=result, current=current, submissions=submissions)
-        assert error.value.code is EffectCode.CONTRADICTORY
-    finally:
-        object.__setattr__(final, "candidate", original)
-
-
-def test_source_versions_and_adaptive_selection_reject_at_typed_constructors() -> None:
-    from typing import Any
-
-    from anonymizer.engine.graph_sdk.context import AdaptiveRetrievalDecl
-
-    provider = _BindingProvider(source=ContextSourceRef(name="version-owner", revision=1), versions=(1, 2))
-    execution, _ = asyncio.run(
-        _execute_assessment(
-            initial_resources=(_initial_resource(provider),),
-            initial_item_limit=2,
-            initial_version_selection="latest",
-        )
-    )
-    bound = execution.context.bound_context
-    assert bound is not None
-    association = next(iter(bound.receipt.requests.dispatches[0].associations))
-    with pytest.raises(EffectRejected) as error:
-        SourceItem(association=association, key=0, version=0, text="invalid")
-    assert error.value.code is EffectCode.INVALID_VALUE
-    declaration = bound.receipt.sources[0].declaration
-    adaptive = AdaptiveRetrievalDecl(
-        node=declaration.node,
-        source=declaration.source,
-        selector_ports=(),
-        output_port="output",
-        bounds=declaration.bounds,
-        materialization=declaration.materialization,
-    )
-    with pytest.raises(TypeError, match="version_selection"):
-        replace(cast(Any, adaptive), version_selection="latest")
-
-
-@pytest.mark.parametrize("limit_name", ["max_runtime_artifacts", "max_runtime_artifact_bytes"])
-def test_initial_latest_storage_counts_all_versions_at_exact_and_one_over(limit_name: str) -> None:
-    from anonymizer.engine.graph_sdk.executor import ExecutionLimits
-
-    exact = ExecutionLimits(
-        max_local_in_flight=1,
-        max_remote_outstanding=0,
-        max_runtime_artifacts=2,
-        max_runtime_artifact_bytes=2,
-        max_collection_items=0,
-    )
-    for one_over in (True, False):
-        provider = _BindingProvider(source=ContextSourceRef(name="version-owner", revision=1), versions=(1, 2))
-        limits = replace(exact, **{limit_name: 1}) if one_over else exact
-        coroutine = _execute_assessment(
-            initial_resources=(_initial_resource(provider),),
-            initial_item_limit=2,
-            initial_version_selection="latest",
-            alias_output=True,
-            execution_limits=limits,
-        )
-        if one_over:
-            with pytest.raises(EffectRejected) as error:
-                asyncio.run(coroutine)
-            assert error.value.code is EffectCode.LIMIT_EXCEEDED
-        else:
-            execution, result = asyncio.run(coroutine)
-            assert len(result.artifacts) == 2
-            assert {ref.key for ref, _ in result.artifacts} == {0}
-            assert {ref.version for ref, _ in result.artifacts} == {1, 2}
-            admitted, current, submissions = _inputs(execution, result, latest=True)
-            assert qualify(admitted=admitted, result=result, current=current, submissions=submissions).qualified
-        assert provider.calls == provider.closes == 1
-
-
-def test_initial_latest_zero_parent_facts_do_not_consume_provenance_edges() -> None:
-    from anonymizer.engine.graph_sdk.executor import BoundInputKey
-
-    for limit in (0, 1):
-        provider = _BindingProvider(source=ContextSourceRef(name="version-owner", revision=1), versions=(1, 2))
-        coroutine = _execute_assessment(
-            initial_resources=(_initial_resource(provider),),
-            initial_item_limit=2,
-            initial_version_selection="latest",
-            assessment_edge_limit=limit,
-        )
-        if not limit:
-            with pytest.raises(EffectRejected) as error:
-                asyncio.run(coroutine)
-            assert error.value.code is EffectCode.LIMIT_EXCEEDED
-            continue
-        execution, result = asyncio.run(coroutine)
-        bound = [fact for fact in result.provenance if isinstance(fact.key, BoundInputKey)]
-        assert len(bound) == 2
-        assert all(not fact.parents for fact in bound)
-        assert sum(len(fact.parents) for fact in result.provenance) == 1
-        admitted, current, submissions = _inputs(execution, result, latest=True)
-        assert qualify(admitted=admitted, result=result, current=current, submissions=submissions).qualified

@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping
-from pathlib import Path
 from typing import cast
 
 from anonymizer.engine.graph_sdk.data import (
@@ -24,8 +23,7 @@ from anonymizer.engine.graph_sdk.data import (
 )
 from anonymizer.graph._values import ContractViolation, DatumId, GraphId, ValidationCode
 from tests.graph_sdk.reference import data_v1
-
-_CORPUS_PATH = Path(__file__).parent / "reference/data_v1_cases.json"
+from tests.graph_sdk.reference.corpora import corpus_bytes
 
 
 class _DataReferenceAdapter:
@@ -255,7 +253,7 @@ def _adapt(case: data_v1.FixtureCase) -> data_v1.ValidationResult:
 
 
 def test_all_frozen_data_cases_match_product_validation_and_normalization() -> None:
-    cases = data_v1._parse_cases(json.loads(_CORPUS_PATH.read_bytes()))
+    cases = data_v1._parse_cases(json.loads(corpus_bytes("data")))
     data_cases = [case for case in cases if case["declaration"]["kind"] == "data"]
     assert len(data_cases) == 38_267
     for case in data_cases:

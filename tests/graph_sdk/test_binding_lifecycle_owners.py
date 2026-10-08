@@ -5,9 +5,7 @@
 from __future__ import annotations
 
 import asyncio
-import json
 from dataclasses import dataclass, field
-from pathlib import Path
 
 from anonymizer.engine.graph_sdk.binding import start_initial_binding
 from anonymizer.engine.graph_sdk.context import (
@@ -30,6 +28,7 @@ from anonymizer.engine.graph_sdk.requests import (
     RequestAssociation,
     StopConfirmed,
 )
+from tests.graph_sdk.reference.corpora import load_cases
 from tests.graph_sdk.test_binding import SOURCE, _context_workflow
 from tests.graph_sdk.test_preparation import _data
 
@@ -92,7 +91,7 @@ class _GatedOptionalProvider:
 
 
 def test_optional_request_blocks_finish_and_completed_wait_never_reenters_provider() -> None:
-    cases = json.loads((Path(__file__).parent / "reference/effects_v1_cases.json").read_bytes())
+    cases = load_cases("effects")
     matched = [case for case in cases if case["case_id"] in OWNER_CASE_IDS]
     assert len(matched) == len(OWNER_CASE_IDS) == 3
     assert all(case["comparison_scope"] == "neutral_only" for case in matched)

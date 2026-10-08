@@ -56,14 +56,14 @@ from anonymizer.graph.workflow import (
     admit_static_workflow,
     substitute,
 )
+from tests.graph_sdk.reference.corpora import corpus_bytes
 
 Json: TypeAlias = str | int | bool | None | list["Json"] | dict[str, "Json"]
 Object: TypeAlias = dict[str, Json]
 T = TypeVar("T")
 REFERENCE_DIR = Path(__file__).parent / "reference"
-CORPUS_PATH = REFERENCE_DIR / "workflow_static_v1_cases.json"
 MANIFEST_PATH = REFERENCE_DIR / "workflow_static_v1_manifest.json"
-FROZEN_BYTES = CORPUS_PATH.read_bytes()
+FROZEN_BYTES = corpus_bytes("workflow_static")
 CASES = cast(Object, json.loads(FROZEN_BYTES))["cases"]
 MANIFEST = cast(Object, json.loads(MANIFEST_PATH.read_bytes()))
 

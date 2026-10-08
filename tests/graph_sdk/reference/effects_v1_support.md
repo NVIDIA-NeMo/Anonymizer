@@ -1,3 +1,6 @@
+<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
 # R2 latest-selection supplement v9
 
 V9 corrects the remaining eight latest-selection owner witnesses while

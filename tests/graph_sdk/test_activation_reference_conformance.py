@@ -7,7 +7,6 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any, TypeAlias, cast
 
 import pytest
@@ -64,14 +63,14 @@ from anonymizer.graph.workflow import (
     admit_activation_workflow,
     admit_static_workflow,
 )
+from tests.graph_sdk.reference.corpora import corpus_bytes
 
 Json: TypeAlias = str | int | bool | None | list["Json"] | dict[str, "Json"]
 Object: TypeAlias = dict[str, Json]
 Scope: TypeAlias = tuple[str, ...]
 Identity: TypeAlias = tuple[Scope, str]
 
-CASES_PATH = Path(__file__).parent / "reference" / "activation_v1_cases.json"
-CASES = cast(list[Object], json.loads(CASES_PATH.read_bytes()))
+CASES = cast(list[Object], json.loads(corpus_bytes("activation")))
 ARTIFACT = ArtifactType(name="reference-artifact", revision=1)
 ARTIFACT_V2 = ArtifactType(name="reference-artifact", revision=2)
 

@@ -32,6 +32,7 @@ from anonymizer.engine.graph_sdk.preparation import StateRevisionView
 from anonymizer.engine.graph_sdk.records import AbsenceRef, CandidateRef, ConsumedRef, DecisionRef, EvidenceRef
 from anonymizer.engine.graph_sdk.requests import TextCollectionValue
 from anonymizer.graph._values import ActivationKey, ArtifactRef, ContractViolation, DatumId
+from anonymizer.graph._workflow_composition import _project_evidence_port, _selected_nodes
 from anonymizer.graph.workflow import (
     AdmittedWorkflow,
     ContextInputRef,
@@ -46,8 +47,6 @@ from anonymizer.graph.workflow import (
     SubgraphNode,
     Vertex,
     WorkflowInputRef,
-    _project_evidence_port,
-    _selected_nodes,
 )
 
 Validity = Literal["current", "stale", "unknown"]

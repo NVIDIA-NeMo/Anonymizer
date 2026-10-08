@@ -8,7 +8,6 @@ import copy
 import json
 import pickle
 from dataclasses import FrozenInstanceError, replace
-from pathlib import Path
 from typing import Any, cast
 
 import pytest
@@ -39,6 +38,7 @@ from anonymizer.graph._values import (
     ValidationCode,
 )
 from tests.graph_sdk.reference import data_v1
+from tests.graph_sdk.reference.corpora import corpus_bytes
 
 
 class _RecordAdapter:
@@ -205,8 +205,7 @@ def _adapt_record_case(case: data_v1.FixtureCase) -> tuple[str, str | None]:
 
 
 def test_all_reference_record_cases_match_product_validation() -> None:
-    corpus_path = Path(__file__).parent / "reference/data_v1_cases.json"
-    cases = data_v1._parse_cases(json.loads(corpus_path.read_bytes()))
+    cases = data_v1._parse_cases(json.loads(corpus_bytes("data")))
     record_cases = [case for case in cases if case["declaration"]["kind"] == "record"]
     assert len(record_cases) == 74
     for case in record_cases:
