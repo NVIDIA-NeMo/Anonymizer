@@ -157,6 +157,16 @@ class InitialContextDecl(PrivateValue):
         ):
             reject(EffectCode.CONTRADICTORY)
 
+    def accepts_response_items(self, response: SourceResponse, association: RequestAssociation) -> bool:
+        """Check source-item ownership and shape independently of settlement or timing."""
+        return (
+            response.source == self.source
+            and bool(response.items)
+            and all(item.association == association for item in response.items)
+            and len({(item.key, item.version) for item in response.items}) == len(response.items)
+            and (self.version_selection != "latest" or len({item.key for item in response.items}) == 1)
+        )
+
 
 @dataclass(frozen=True, slots=True, kw_only=True, repr=False)
 class ContextSourceCapability(PrivateValue):

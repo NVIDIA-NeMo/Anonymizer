@@ -278,12 +278,7 @@ async def _bind_declaration(
                 state = advance_requests(state=state, event=MarkLost(request=request))
                 terminal = "lost"
             if isinstance(late_result, SourceResponse):
-                valid_late_result = (
-                    late_result.source == declaration.source
-                    and bool(late_result.items)
-                    and all(item.association == association for item in late_result.items)
-                    and len({(item.key, item.version) for item in late_result.items}) == len(late_result.items)
-                )
+                valid_late_result = declaration.accepts_response_items(late_result, association)
                 event: AcceptResult | AcceptFailure
                 if valid_late_result:
                     event = AcceptResult(
@@ -322,13 +317,7 @@ async def _bind_declaration(
             return state, _source_fact(identity, declaration, "lost"), (), 0, 0
         if isinstance(result, SourceResponse):
             valid_settlement = result.settlement.request == request
-            valid_items = (
-                result.source == declaration.source
-                and all(item.association == association for item in result.items)
-                and len({(item.association, item.key, item.version) for item in result.items}) == len(result.items)
-                and bool(result.items)
-                and (declaration.version_selection != "latest" or len({item.key for item in result.items}) == 1)
-            )
+            valid_items = declaration.accepts_response_items(result, association)
             if not valid_settlement or not valid_items:
                 state = advance_requests(
                     state=state, event=AcceptFailure(request=request, failure="malformed_response")

@@ -849,3 +849,130 @@ def test_qualification_rejects_corrupted_materialized_lineage(mutation: str) -> 
     finally:
         object.__setattr__(changed, "key", original[0])
         object.__setattr__(changed, "version", original[1])
+
+
+def test_latest_selection_cannot_be_rewritten_to_an_older_retained_version() -> None:
+    from anonymizer.engine.graph_sdk.executor import BoundInputKey, OperationOutputKey
+
+    provider = _BindingProvider(source=ContextSourceRef(name="version-owner", revision=1), versions=(7, 2))
+    execution, result = asyncio.run(
+        _execute_assessment(
+            initial_resources=(_initial_resource(provider),),
+            initial_item_limit=2,
+            initial_version_selection="latest",
+        )
+    )
+    older = next(
+        fact for fact in result.provenance if isinstance(fact.key, BoundInputKey) and fact.artifact.version == 2
+    )
+    port = next(fact for fact in result.ports if fact.port == "input")
+    output = next(fact for fact in result.provenance if isinstance(fact.key, OperationOutputKey))
+    original = (port.artifact, result._input_parents, output.parents)
+    object.__setattr__(port, "artifact", older.artifact)
+    object.__setattr__(
+        result,
+        "_input_parents",
+        tuple((t, a, p, older.key if p == "input" else parent) for t, a, p, parent in result._input_parents),
+    )
+    object.__setattr__(output, "parents", frozenset({older.key}))
+    try:
+        admitted = admit_qualification(
+            execution=execution, productions=execution.assessment_productions, limits=_qualification_limits()
+        )
+        current = evidence_revision_view(
+            admitted=admitted,
+            result=result,
+            artifacts=tuple(ref for ref, _ in result.artifacts if ref.key != older.artifact.key or ref.version == 2),
+            absences=(),
+            configurations=((result.assessments[0].node, result.assessments[0].environment.configuration),),
+            state=execution.context.prepared.state,
+        )
+        with pytest.raises(EffectRejected) as error:
+            qualify(
+                admitted=admitted,
+                result=result,
+                current=current,
+                submissions=(AssessmentSubmission(fact=result.assessments[0]),),
+            )
+        assert error.value.code is EffectCode.CONTRADICTORY
+    finally:
+        object.__setattr__(port, "artifact", original[0])
+        object.__setattr__(result, "_input_parents", original[1])
+        object.__setattr__(output, "parents", original[2])
+
+
+def test_latest_candidate_sibling_is_unavailable_and_cannot_replace_final_output() -> None:
+    from anonymizer.engine.graph_sdk.executor import BoundInputKey
+    from anonymizer.engine.graph_sdk.records import CandidateRef
+
+    provider = _BindingProvider(source=ContextSourceRef(name="version-owner", revision=1), versions=(1, 2))
+    execution, result = asyncio.run(
+        _execute_assessment(
+            initial_resources=(_initial_resource(provider),),
+            initial_item_limit=2,
+            initial_version_selection="latest",
+            alias_output=True,
+        )
+    )
+    older = next(
+        fact.artifact
+        for fact in result.provenance
+        if isinstance(fact.key, BoundInputKey) and fact.artifact.version == 1
+    )
+    admitted = admit_qualification(
+        execution=execution, productions=execution.assessment_productions, limits=_qualification_limits()
+    )
+    current = evidence_revision_view(
+        admitted=admitted,
+        result=result,
+        artifacts=(older,),
+        absences=(),
+        configurations=((result.assessments[0].node, result.assessments[0].environment.configuration),),
+        state=execution.context.prepared.state,
+    )
+    assert not current.candidates
+    submissions = (AssessmentSubmission(fact=result.assessments[0]),)
+    output = qualify(admitted=admitted, result=result, current=current, submissions=submissions)
+    assert not output.qualified
+    assert "missing_candidate" in output.targets[0].withholding
+    final = result.final_outputs[0]
+    original = final.candidate
+    object.__setattr__(final, "candidate", CandidateRef(artifact=older, target=original.target))
+    try:
+        with pytest.raises(EffectRejected) as error:
+            qualify(admitted=admitted, result=result, current=current, submissions=submissions)
+        assert error.value.code is EffectCode.CONTRADICTORY
+    finally:
+        object.__setattr__(final, "candidate", original)
+
+
+def test_source_versions_and_adaptive_selection_reject_at_typed_constructors() -> None:
+    from typing import Any
+
+    from anonymizer.engine.graph_sdk.context import AdaptiveRetrievalDecl
+
+    provider = _BindingProvider(source=ContextSourceRef(name="version-owner", revision=1), versions=(1, 2))
+    execution, _ = asyncio.run(
+        _execute_assessment(
+            initial_resources=(_initial_resource(provider),),
+            initial_item_limit=2,
+            initial_version_selection="latest",
+        )
+    )
+    bound = execution.context.bound_context
+    assert bound is not None
+    association = next(iter(bound.receipt.requests.dispatches[0].associations))
+    with pytest.raises(EffectRejected) as error:
+        SourceItem(association=association, key=0, version=0, text="invalid")
+    assert error.value.code is EffectCode.INVALID_VALUE
+    declaration = bound.receipt.sources[0].declaration
+    adaptive = AdaptiveRetrievalDecl(
+        node=declaration.node,
+        source=declaration.source,
+        selector_ports=(),
+        output_port="output",
+        bounds=declaration.bounds,
+        materialization=declaration.materialization,
+    )
+    with pytest.raises(TypeError, match="version_selection"):
+        replace(cast(Any, adaptive), version_selection="latest")

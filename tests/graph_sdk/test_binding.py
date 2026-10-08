@@ -128,7 +128,10 @@ class _LateProvider:
             return SourceFailure(source=SOURCE, failure="permanent", settlement=settlement)
         return SourceResponse(
             source=SOURCE,
-            items=(SourceItem(association=association, key=0, version=1, text="late"),),
+            items=tuple(
+                SourceItem(association=association, key=key, version=1, text="late")
+                for key in (range(2) if self.mode == "multiple" else range(1))
+            ),
             settlement=settlement,
         )
 
@@ -249,16 +252,18 @@ def test_initial_binding_preserves_provider_text_and_receipt() -> None:
     asyncio.run(_assert_initial_binding())
 
 
-@pytest.mark.parametrize("mode", ("response", "failure"))
+@pytest.mark.parametrize("mode", ("response", "failure", "multiple"))
 @pytest.mark.parametrize("acknowledge_stop", (False, True))
+@pytest.mark.parametrize("latest", (False, True))
 def test_initial_binding_retains_late_request_facts_without_materializing(
     mode: str,
     acknowledge_stop: bool,
+    latest: bool,
 ) -> None:
-    asyncio.run(_assert_late_initial_binding(mode, acknowledge_stop))
+    asyncio.run(_assert_late_initial_binding(mode, acknowledge_stop, latest=latest))
 
 
-async def _assert_late_initial_binding(mode: str, acknowledge_stop: bool) -> None:
+async def _assert_late_initial_binding(mode: str, acknowledge_stop: bool, *, latest: bool) -> None:
     workflow, node, artifact = _context_workflow()
     data = _data(1)
     target = next(iter(data.targets))
@@ -291,6 +296,7 @@ async def _assert_late_initial_binding(mode: str, acknowledge_stop: bool) -> Non
         requirement="required",
         bounds=RetrievalBounds(max_items=1, max_bytes=20, max_requests=1),
         materialization=ContextMaterialization(kind="single", item_type=artifact),
+        version_selection="latest" if latest else "exact_one",
     )
     provider = _LateProvider(mode=mode, acknowledge_stop=acknowledge_stop)
     running = await start_initial_binding(
@@ -331,6 +337,12 @@ async def _assert_late_initial_binding(mode: str, acknowledge_stop: bool) -> Non
     assert request.cancel_requested == frozenset({request.dispatches[0].request})
     assert [item.code for item in request.defects] == ["conflicting_terminal"]
     assert len(request.settlements) == 1
+
+    late_terminal = request.defects[0].terminal
+    assert late_terminal is not None
+    malformed = latest and mode == "multiple"
+    assert late_terminal.category == ("failure" if malformed or mode == "failure" else "success")
+    assert late_terminal.failure == ("malformed_response" if malformed else "permanent" if mode == "failure" else None)
 
 
 def test_context_source_requires_exact_initial_declaration_before_provider_effects() -> None:

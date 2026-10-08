@@ -460,6 +460,30 @@ class _Qualification:
                 reject(EffectCode.MISSING)
             if source.artifact != self.facts.ports[activation, port].artifact:
                 reject(EffectCode.CONTRADICTORY)
+            if isinstance(parent, BoundInputKey):
+                bound = self.admitted.execution.context.bound_context
+                if bound is None:
+                    reject(EffectCode.MISSING)
+                declaration = next(
+                    (
+                        item.declaration
+                        for item in bound.receipt.sources
+                        if item.identity == parent.binding_artifact.declaration
+                    ),
+                    None,
+                )
+                if declaration is None:
+                    reject(EffectCode.FOREIGN_OWNER)
+                if declaration.version_selection == "latest" and parent.binding_artifact.version != max(
+                    (
+                        item.reference.version
+                        for item in bound.artifacts
+                        if item.reference.declaration == parent.binding_artifact.declaration
+                        and item.reference.key == parent.binding_artifact.key
+                    ),
+                    default=0,
+                ):
+                    reject(EffectCode.CONTRADICTORY)
 
     def _validate_passthrough_parents(self) -> None:
         for target, activation, port, parent in self.result._passthrough_parents:
