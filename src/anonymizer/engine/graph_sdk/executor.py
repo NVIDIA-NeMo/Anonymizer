@@ -851,6 +851,13 @@ def _validate_map_expansions(
         )
     replacement_choices: list[tuple[InputBinding, ...]] = []
     by_key = {(item.expander, item.outcome): item for item in declarations}
+    for scope in workflow.scopes:
+        for endpoint in scope.workflow.map_item_ports:
+            declaration = by_key.get((endpoint.expander, endpoint.expansion_outcome))
+            if declaration is None:
+                reject(EffectCode.MISSING)
+            if declaration.membership_port != endpoint.membership_port:
+                reject(EffectCode.CONTRADICTORY)
     for dynamic_map in maps:
         member_operation = _node_operation(workflow.workflow, dynamic_map.member)
         member_inputs = {item.name: item.artifact_type for item in member_operation.inputs}
@@ -2202,6 +2209,18 @@ def _source_activation(
     source: NodeId,
 ) -> ActivationKey | None:
     candidates = [item.activation for item in state.entries if item.template == source]
+    destination_entry = next((item for item in state.entries if item.activation == destination), None)
+    context = destination.parent
+    if (
+        destination_entry is not None
+        and context is not None
+        and any(
+            declaration.member == destination_entry.template
+            for scope in state.workflow.scopes
+            for declaration in (*scope.maps, *scope.loops)
+        )
+    ):
+        context = context.parent
     if destination.iteration is not None:
         previous = [
             item
@@ -2220,7 +2239,7 @@ def _source_activation(
         expanders = [
             item.activation
             for item in state.entries
-            if item.template == dynamic_map.expander and item.activation.parent == destination.parent
+            if item.template == dynamic_map.expander and item.activation.parent == context
         ]
         if len(expanders) != 1:
             return None
@@ -2237,7 +2256,7 @@ def _source_activation(
         starters = [
             item.activation
             for item in state.entries
-            if item.template == dynamic_loop.starter and item.activation.parent == destination.parent
+            if item.template == dynamic_loop.starter and item.activation.parent == context
         ]
         if len(starters) != 1:
             return None
@@ -2249,7 +2268,7 @@ def _source_activation(
             and item.outcome in dynamic_loop.exit_outcomes
         ]
         return exited[0] if len(exited) == 1 else None
-    same_context = [item for item in candidates if item.parent == destination.parent]
+    same_context = [item for item in candidates if item.parent == context]
     if len(same_context) == 1:
         return same_context[0]
     if destination.parent in candidates:
@@ -3631,6 +3650,10 @@ def _mark_assessment_subjects(
         if len(indexes) != 1 or facts.ports[indexes[0]].role == "decision":
             reject(EffectCode.CONTRADICTORY)
         fact = facts.ports[indexes[0]]
+        item_subject = any(
+            (owner, occurrence, name) == (target, activation, port) and isinstance(producer, MapItemKey)
+            for owner, occurrence, name, producer in facts.input_parents
+        )
         facts.ports[indexes[0]] = ExecutionPortFact(
             _key=_FACT_KEY,
             activation=fact.activation,
@@ -3639,7 +3662,7 @@ def _mark_assessment_subjects(
             port=fact.port,
             artifact=fact.artifact,
             artifact_type=fact.artifact_type,
-            role="candidate",
+            role="artifact" if item_subject else "candidate",
         )
 
 

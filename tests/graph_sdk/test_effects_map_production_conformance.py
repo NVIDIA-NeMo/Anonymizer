@@ -594,6 +594,8 @@ class _MapCallback:
     same_key_versions: bool = False
     item_counts: tuple[int, ...] | None = None
     member_assessment: bool = False
+    finalize_collection: bool = False
+    assessment_promise: str | None = None
 
     async def run(self, request: tuple[AssociationInput, ...]) -> LocalCompleted | LocalFailure:
         self.calls.append(request)
@@ -652,6 +654,24 @@ class _MapCallback:
                 outputs = (membership, membership, *other_outputs)
             else:
                 outputs = (membership, *other_outputs)
+        elif self.finalize_collection:
+            values = [item.value for item in request[0].inputs]
+            assert all(isinstance(value, TextCollectionValue) for value in values)
+            outputs = (
+                PortArtifact(
+                    port="value",
+                    artifact_type=self.text_type,
+                    artifact=None,
+                    value=TextArtifactValue(
+                        text=",".join(
+                            item.value.text
+                            for value in values
+                            if isinstance(value, TextCollectionValue)
+                            for item in value.items
+                        )
+                    ),
+                ),
+            )
         elif self.member_assessment:
             outputs = (
                 PortArtifact(
@@ -683,9 +703,9 @@ class _MapCallback:
             assessments=(
                 LocalAssessmentResult(
                     association=association,
-                    promise="assessment0",
+                    promise=self.assessment_promise or "assessment0",
                     evidence_port="members",
-                    finding=AssessmentFinding(status="satisfied", code="assessment0"),
+                    finding=AssessmentFinding(status="satisfied", code=self.assessment_promise or "assessment0"),
                 ),
             )
             if self.mode == "expander"
@@ -693,9 +713,9 @@ class _MapCallback:
                 (
                     LocalAssessmentResult(
                         association=association,
-                        promise="member_checked",
+                        promise=self.assessment_promise or "member_checked",
                         evidence_port="evidence",
-                        finding=AssessmentFinding(status="satisfied", code="member_checked"),
+                        finding=AssessmentFinding(status="satisfied", code=self.assessment_promise or "member_checked"),
                     ),
                 )
                 if self.member_assessment
@@ -753,6 +773,7 @@ def _admit_fixture(
     fixture: _MapFixture,
     *,
     map_expansions: tuple[MapExpansionDecl, ...] | None = None,
+    assessment_productions: tuple[EvidenceProductionDecl, ...] | None = None,
     data: Any | None = None,
     bound_context: Any | None = None,
     baseline_port_facts: int = 1,
@@ -824,7 +845,9 @@ def _admit_fixture(
         capabilities=fixture.capabilities,
         policies=policies,
         decisions=(),
-        assessment_productions=(
+        assessment_productions=assessment_productions
+        if assessment_productions is not None
+        else (
             EvidenceProductionDecl(
                 node=fixture.expander,
                 outcome="expand",
@@ -849,7 +872,9 @@ def _admit_fixture(
             ),
         ),
         assessment_limits=AssessmentLimits(
-            max_productions=1 + fixture.member_assessment,
+            max_productions=len(assessment_productions)
+            if assessment_productions is not None
+            else 1 + fixture.member_assessment,
             max_findings_per_production=1,
             max_finding_code_bytes=16,
             max_absence_queries=0,
@@ -894,8 +919,12 @@ async def _execute_membership(
     same_key_versions: bool = False,
     item_counts: tuple[int, ...] | None = None,
     member_assessment: bool = False,
+    fixture: _MapFixture | None = None,
+    port_fact_headroom: int = 8,
+    assessment_productions: tuple[EvidenceProductionDecl, ...] | None = None,
+    map_expansions: tuple[MapExpansionDecl, ...] | None = None,
 ):
-    fixture = _map_fixture(
+    fixture = fixture or _map_fixture(
         control_only=control_only,
         other_count=other_count,
         default_override=default_override,
@@ -976,11 +1005,13 @@ async def _execute_membership(
     baseline_provenance_edges = target_count * ((1 if bound_context is not None else 0) + 1 + other_count)
     admitted = _admit_fixture(
         fixture,
+        assessment_productions=assessment_productions,
+        map_expansions=map_expansions,
         data=data,
         bound_context=bound_context,
         baseline_port_facts=baseline_port_facts,
         baseline_provenance_edges=baseline_provenance_edges,
-        port_fact_headroom=8 * target_count,
+        port_fact_headroom=port_fact_headroom * target_count,
         provenance_edge_headroom=provenance_edge_headroom * target_count,
     )
     context_item_bytes = (
@@ -999,7 +1030,7 @@ async def _execute_membership(
         node: _MapCallback(
             mode=(
                 "expander"
-                if node == fixture.expander
+                if node in {item.expander for item in admitted.map_expansions}
                 else "default_source"
                 if node == fixture.default_source
                 else "operation"
@@ -1017,7 +1048,14 @@ async def _execute_membership(
             release=release if node == fixture.expander else None,
             cross_ready=asyncio.Event() if node == fixture.expander and response_mode == "cross_association" else None,
             passthrough=node == fixture.member_implementation and outward_scalar is not None,
-            member_assessment=member_assessment and node == fixture.member_implementation,
+            member_assessment=any(
+                item.node == node and item.evidence_port == "evidence" for item in admitted.assessment_productions
+            ),
+            assessment_promise=next(
+                (item.promise for item in admitted.assessment_productions if item.node == node), None
+            ),
+            finalize_collection=any(port.name == "members" for port in by_node[node].operation.inputs)
+            and any(port.name == "value" for port in by_node[node].operation.outputs),
         )
         for node in by_node
     }

@@ -13,6 +13,7 @@ from anonymizer.engine.graph_sdk.evidence import (
     AdmittedQualification,
     AssessmentSubmission,
     EvidenceRevisionView,
+    MapItemSubjectRef,
     VerifiedEvidence,
     _EvidenceFacts,
     evidence_validity,
@@ -45,7 +46,14 @@ from anonymizer.engine.graph_sdk.requests import (
 from anonymizer.engine.graph_sdk.resources import CleanupAssociation, CleanupFact
 from anonymizer.graph._values import ActivationKey, DatumId
 from anonymizer.graph.activation import ActivationEntry
-from anonymizer.graph.workflow import NodeId, NodeOutputRef, ProtectionRequirement, SubgraphNode, WorkflowInputRef
+from anonymizer.graph.workflow import (
+    MapItemPort,
+    NodeId,
+    NodeOutputRef,
+    ProtectionRequirement,
+    SubgraphNode,
+    WorkflowInputRef,
+)
 
 WithholdingCode = Literal[
     "execution_only",
@@ -941,6 +949,14 @@ class _Qualification:
             self.withholding[target].add("missing_assessment")
             return
         for requirement in requirements:
+            endpoints = {
+                port
+                for port in (requirement.subject_port, *requirement.consumed_ports)
+                if isinstance(port, MapItemPort)
+            }
+            if endpoints:
+                self.assess_map_items(target, requirement, next(iter(endpoints)), verified)
+                continue
             matching = [
                 item
                 for item in verified
@@ -966,6 +982,100 @@ class _Qualification:
                 self.supporting[target].update(successful)
             else:
                 self.withholding[target].update(self._assessment_codes(matching, requirement))
+
+    def assess_map_items(
+        self,
+        target: DatumId,
+        requirement: ProtectionRequirement,
+        endpoint: MapItemPort,
+        verified: tuple[VerifiedEvidence, ...],
+    ) -> None:
+        """Check each actual member against the exact candidate's expansion ancestry."""
+        candidate = self.candidates[target]
+        outputs = [
+            item
+            for item in self.outputs[target]
+            if item.candidate == candidate
+            and item.outcome == requirement.outcome
+            and (requirement.candidate_port is None or item.port == requirement.candidate_port)
+        ]
+        if len(outputs) != 1:
+            self.withholding[target].add("missing_candidate")
+            return
+        ancestry: set[ProvenanceKey] = set()
+        pending = [outputs[0].producer]
+        while pending:
+            key = pending.pop()
+            if key in ancestry:
+                continue
+            ancestry.add(key)
+            fact = self.provenance.get(key)
+            if fact is not None:
+                pending.extend(fact.parents)
+        expanders = [
+            key
+            for key, entry in self.entries.items()
+            if self.owners[key] == target
+            and entry.template == endpoint.expander
+            and entry.status == "success"
+            and entry.outcome == endpoint.expansion_outcome
+            and self._path(key) == endpoint.path
+        ]
+        for expander in expanders:
+            membership = OperationOutputKey(activation=expander, target=target, port=endpoint.membership_port)
+            if membership not in ancestry:
+                self.withholding[target].add("missing_assessment")
+                continue
+            successful_terminals = {
+                terminal.activation for terminal in self.result.record.terminals if terminal.category == "success"
+            }
+            members = [
+                key
+                for key, entry in self.entries.items()
+                if key.parent == expander
+                and entry.template == endpoint.member
+                and entry.status == "success"
+                and key in successful_terminals
+            ]
+            for member in members:
+                matching = []
+                for item in verified:
+                    if not any(
+                        projection.node == item.node
+                        and projection.outcome == item.outcome
+                        and projection.promise.name == item.promise.name
+                        and projection.path == self._path(item.activation)
+                        and projection.matches(requirement)
+                        for projection in self.admitted._projections
+                    ):
+                        continue
+                    if isinstance(requirement.subject_port, MapItemPort):
+                        if not isinstance(item.subject, MapItemSubjectRef) or item.subject.producer.member != member:
+                            continue
+                    elif item.subject != candidate:
+                        continue
+                    if endpoint in requirement.consumed_ports:
+                        fact = next(
+                            fact
+                            for fact in self.result.assessments
+                            if (fact.activation, fact.node, fact.promise)
+                            == (item.activation, item.node, item.promise.name)
+                        )
+                        consumed = [self.facts.map_item(fact, port, endpoint) for port, _ in item.consumed_by_port]
+                        if not any(value is not None and value.producer.member == member for value in consumed):
+                            continue
+                    matching.append(item)
+                successful = [
+                    item
+                    for item in matching
+                    if evidence_validity(evidence=item, current=self.current) == "current"
+                    and item.finding.status == "satisfied"
+                    and item.coverage >= requirement.coverage
+                ]
+                if successful:
+                    self.supporting[target].update(successful)
+                else:
+                    self.withholding[target].update(self._assessment_codes(matching, requirement))
 
     def _assessment_codes(
         self, matching: list[VerifiedEvidence], requirement: ProtectionRequirement

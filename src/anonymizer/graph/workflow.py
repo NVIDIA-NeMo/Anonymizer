@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 import itertools
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Literal, Never, SupportsIndex, TypeAlias
 
 from anonymizer.graph._values import ContractViolation, ValidationCode
@@ -202,17 +202,84 @@ class CoverageAtom(_PrivateValue):
 
 
 @dataclass(frozen=True, slots=True, kw_only=True, repr=False)
+class MapItemPort(_PrivateValue):
+    """One outcome's extracted item, scoped to its map and containing path."""
+
+    path: tuple[NodeId, ...]
+    expander: NodeId
+    member: NodeId
+    item_input: str
+    membership_port: str
+    expansion_outcome: str
+
+    def __post_init__(self) -> None:
+        _tuple_of(self.path, NodeId)
+        if not isinstance(self.expander, NodeId) or not isinstance(self.member, NodeId):
+            _reject(ValidationCode.INVALID_TYPE)
+        _validate_scalars(strings=(self.item_input, self.membership_port, self.expansion_outcome))
+        if self.expander.workflow != self.member.workflow:
+            _reject(ValidationCode.FOREIGN_OWNER)
+        if self.expander == self.member:
+            _reject(ValidationCode.CONTRADICTORY)
+
+    def lifted(self, container: NodeId) -> MapItemPort:
+        """Preserve the map identity when exposing it through one containing node."""
+        if not isinstance(container, NodeId):
+            _reject(ValidationCode.INVALID_TYPE)
+        return replace(self, path=(container, *self.path))
+
+    def validate_in(self, *, workflow: WorkflowId, nodes: tuple[Node, ...]) -> None:
+        """Validate the static route; dynamic admission binds its map declaration."""
+        owner = workflow
+        current = {node.id: node for node in nodes}
+        for container in self.path:
+            if container.workflow != owner:
+                _reject(ValidationCode.FOREIGN_OWNER)
+            node = current.get(container)
+            if node is None:
+                _reject(ValidationCode.MISSING)
+            if not isinstance(node, SubgraphNode):
+                _reject(ValidationCode.UNSUPPORTED)
+            owner = node.body.workflow
+            current = {child.id: child for child in node.body.nodes}
+        if self.expander.workflow != owner:
+            _reject(ValidationCode.FOREIGN_OWNER)
+        expander = current.get(self.expander)
+        member = current.get(self.member)
+        if expander is None or member is None:
+            _reject(ValidationCode.MISSING)
+        outcome = next((item for item in expander.operation.outcomes if item.name == self.expansion_outcome), None)
+        if (
+            outcome is None
+            or self.membership_port not in outcome.produced_ports
+            or self.item_input not in {port.name for port in member.operation.inputs}
+        ):
+            _reject(ValidationCode.MISSING)
+
+
+EvidencePort: TypeAlias = str | MapItemPort
+
+
+@dataclass(frozen=True, slots=True, kw_only=True, repr=False)
 class EvidencePromise(_PrivateValue):
     name: str
     meaning: str
-    subject_port: str
-    consumed_ports: frozenset[str]
+    subject_port: EvidencePort
+    consumed_ports: frozenset[EvidencePort]
     coverage: frozenset[CoverageAtom]
 
     def __post_init__(self) -> None:
-        _frozenset_of(self.consumed_ports, str)
+        _frozenset_of(self.consumed_ports, (str, MapItemPort))
         _frozenset_of(self.coverage, CoverageAtom)
-        _validate_scalars(strings=(self.name, self.meaning, self.subject_port, *self.consumed_ports))
+        if not isinstance(self.subject_port, (str, MapItemPort)):
+            _reject(ValidationCode.INVALID_TYPE)
+        _validate_scalars(
+            strings=(
+                self.name,
+                self.meaning,
+                *(port for port in (self.subject_port, *self.consumed_ports) if isinstance(port, str)),
+            )
+        )
 
 
 @dataclass(frozen=True, slots=True, kw_only=True, repr=False)
@@ -327,7 +394,11 @@ class OperationSpec(_PrivateValue):
             if any(use.port not in all_ports for use in outcome.context):
                 _reject(ValidationCode.MISSING)
             for promise in outcome.evidence:
-                if promise.subject_port not in all_ports or not promise.consumed_ports <= inputs:
+                if (
+                    isinstance(promise.subject_port, str)
+                    and promise.subject_port not in all_ports
+                    or any(isinstance(port, str) and port not in inputs for port in promise.consumed_ports)
+                ):
                     _reject(ValidationCode.MISSING)
         if produced_any != outputs:
             _reject(ValidationCode.MISSING)
@@ -341,6 +412,13 @@ class OperationNode(_PrivateValue):
     def __post_init__(self) -> None:
         if not isinstance(self.id, NodeId) or not isinstance(self.operation, OperationSpec):
             _reject(ValidationCode.INVALID_TYPE)
+        if any(
+            isinstance(port, MapItemPort)
+            for outcome in self.operation.outcomes
+            for promise in outcome.evidence
+            for port in (promise.subject_port, *promise.consumed_ports)
+        ):
+            _reject(ValidationCode.UNSUPPORTED)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True, repr=False)
@@ -650,14 +728,34 @@ class DynamicLimits(_PrivateValue):
 class ProtectionRequirement(_PrivateValue):
     outcome: str
     meaning: str
-    subject_port: str
-    consumed_ports: frozenset[str]
+    subject_port: EvidencePort
+    consumed_ports: frozenset[EvidencePort]
     coverage: frozenset[CoverageAtom]
+    candidate_port: str | None = None
 
     def __post_init__(self) -> None:
-        _frozenset_of(self.consumed_ports, str)
+        _frozenset_of(self.consumed_ports, (str, MapItemPort))
         _frozenset_of(self.coverage, CoverageAtom)
-        _validate_scalars(strings=(self.outcome, self.meaning, self.subject_port, *self.consumed_ports))
+        if not isinstance(self.subject_port, (str, MapItemPort)):
+            _reject(ValidationCode.INVALID_TYPE)
+        _validate_scalars(
+            strings=(
+                self.outcome,
+                self.meaning,
+                *(port for port in (self.subject_port, *self.consumed_ports) if isinstance(port, str)),
+            )
+        )
+        if self.candidate_port is not None:
+            _validate_scalars(strings=(self.candidate_port,))
+        elif isinstance(self.subject_port, MapItemPort):
+            _reject(ValidationCode.MISSING)
+        domains = {
+            (port.path, port.expander, port.member, port.item_input, port.expansion_outcome, port.membership_port)
+            for port in (self.subject_port, *self.consumed_ports)
+            if isinstance(port, MapItemPort)
+        }
+        if len(domains) > 1:
+            _reject(ValidationCode.CONTRADICTORY)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True, repr=False)
@@ -699,6 +797,20 @@ class AdmittedWorkflow(_PrivateValue):
     unmet_protection: frozenset[ProtectionRequirement]
     limits: WorkflowLimits
     expanded_node_count: int
+
+    @property
+    def map_item_ports(self) -> frozenset[MapItemPort]:
+        """Retained static endpoints that dynamic admission must resolve."""
+        declarations = (
+            *(promise for outcome in self.interface.outcomes for promise in outcome.evidence),
+            *self.protection_requirements,
+        )
+        return frozenset(
+            port
+            for declaration in declarations
+            for port in (declaration.subject_port, *declaration.consumed_ports)
+            if isinstance(port, MapItemPort)
+        )
 
     def __init__(
         self,
@@ -844,6 +956,19 @@ def admit_activation_workflow(
         _reject(ValidationCode.DUPLICATE)
     if len(scopes) != len(reachable) or set(by_workflow) != {id(item) for item in reachable}:
         _reject(ValidationCode.MISSING)
+    for body in reachable:
+        for endpoint in body.map_item_ports:
+            matches = [
+                item
+                for scope in scopes
+                for item in scope.maps
+                if item.expander == endpoint.expander
+                and item.member == endpoint.member
+                and item.item_input == endpoint.item_input
+                and endpoint.expansion_outcome in item.expansion_outcomes
+            ]
+            if len(matches) != 1:
+                _reject(ValidationCode.MISSING if not matches else ValidationCode.DUPLICATE)
 
     total_maps = sum(len(scope.maps) for scope in scopes)
     total_joins = sum(len(scope.joins) for scope in scopes)
@@ -1097,6 +1222,17 @@ def admit_static_workflow(
         operation = node_operations.get(choice.selector)
         choice_states *= len(operation.outcomes) if operation is not None else 1
     raw_bindings = len(input_bindings) + len(output_bindings) + len(outcome_bindings)
+    raw_bindings += len(
+        {
+            port
+            for declaration in (
+                *(promise for outcome in interface.outcomes for promise in outcome.evidence),
+                *protection,
+            )
+            for port in (declaration.subject_port, *declaration.consumed_ports)
+            if isinstance(port, MapItemPort)
+        }
+    )
     branch_members = sum(len(branch.members) for choice in choices for branch in choice.branches)
     if (
         len(nodes) > limits.max_nodes
@@ -1316,6 +1452,22 @@ def _validate_references(
     interface_outputs = {port.name for port in interface.outputs}
     interface_outcomes = {outcome.name for outcome in interface.outcomes}
     incompatible_binding = False
+    endpoints = {
+        port
+        for outcome in interface.outcomes
+        for promise in outcome.evidence
+        for port in (promise.subject_port, *promise.consumed_ports)
+        if isinstance(port, MapItemPort)
+    } | {
+        port
+        for requirement in protection
+        for port in (requirement.subject_port, *requirement.consumed_ports)
+        if isinstance(port, MapItemPort)
+    }
+    for endpoint in endpoints:
+        if not nodes:
+            _reject(ValidationCode.MISSING)
+        endpoint.validate_in(workflow=nodes[0].id.workflow, nodes=nodes)
     for binding in input_bindings:
         destination = operations.get(binding.destination.node)
         source_type = _source_type(binding.source, interface, operations)
@@ -1363,8 +1515,18 @@ def _validate_references(
     for requirement in protection:
         if (
             requirement.outcome not in interface_outcomes
-            or requirement.subject_port not in ({port.name for port in interface.inputs} | interface_outputs)
-            or not requirement.consumed_ports <= {port.name for port in interface.inputs}
+            or isinstance(requirement.subject_port, str)
+            and requirement.subject_port not in ({port.name for port in interface.inputs} | interface_outputs)
+            or any(
+                isinstance(port, str) and port not in {item.name for item in interface.inputs}
+                for port in requirement.consumed_ports
+            )
+            or requirement.candidate_port is not None
+            and requirement.candidate_port not in interface_outputs
+        ):
+            _reject(ValidationCode.MISSING)
+        if requirement.candidate_port is not None and requirement.candidate_port not in next(
+            outcome.produced_ports for outcome in interface.outcomes if outcome.name == requirement.outcome
         ):
             _reject(ValidationCode.MISSING)
     required_inputs = {(node.id, port.name) for node in nodes for port in node.operation.inputs}
@@ -1618,6 +1780,41 @@ def _validate_paths(
         _reject(ValidationCode.MISSING)
 
 
+def _project_evidence_port(
+    port: EvidencePort,
+    *,
+    node: NodeId,
+    input_port: bool,
+    edges: set[tuple[Vertex, Vertex]],
+    declared: frozenset[MapItemPort],
+    assignment: dict[NodeId, OutcomeSpec],
+    allow_output_alias: bool = False,
+) -> EvidencePort:
+    """Project a local port by scalar identity or its declared dynamic endpoint."""
+    if isinstance(port, MapItemPort):
+        return port.lifted(node)
+    dynamic = {
+        endpoint
+        for endpoint in declared
+        if not endpoint.path
+        and endpoint.member == node
+        and endpoint.item_input == port
+        and endpoint.expander in assignment
+        and assignment[endpoint.expander].name == endpoint.expansion_outcome
+    }
+    if dynamic:
+        if len(dynamic) != 1 or not input_port:
+            _reject(ValidationCode.CONTRADICTORY)
+        return next(iter(dynamic))
+    if input_port:
+        inputs = _walk_interface_inputs(("in", node, port), edges, backward=True)
+        if inputs or not allow_output_alias:
+            return _project_one(inputs)
+        identity = edges | {(destination, source) for source, destination in edges}
+        return _project_one(_walk_endpoints(("in", node, port), identity, backward=False, endpoint_kind="wo"))
+    return _project_one(_walk_endpoints(("out", node, port), edges, backward=False, endpoint_kind="wo"))
+
+
 def _validate_composition_path(
     interface: OperationSpec,
     external_outcome: OutcomeSpec,
@@ -1678,6 +1875,12 @@ def _validate_composition_path(
     state_effects: set[StateEffect] = set()
     models: set[ModelRequirement] = set()
     ceiling = [0, 0, 0, 0]
+    declared_items = frozenset(
+        port
+        for promise in external_outcome.evidence
+        for port in (promise.subject_port, *promise.consumed_ports)
+        if isinstance(port, MapItemPort)
+    )
     for node in reachable:
         operation = operations[node]
         outcome = assignment[node]
@@ -1693,19 +1896,25 @@ def _validate_composition_path(
             contexts.add(ContextUse(port=endpoint, meaning=use.meaning, capture=use.capture))
         for promise in outcome.evidence:
             consumed = frozenset(
-                _project_one(_walk_interface_inputs(("in", node, port), identity_edges, backward=True))
+                _project_evidence_port(
+                    port,
+                    node=node,
+                    input_port=True,
+                    edges=identity_edges,
+                    declared=declared_items,
+                    assignment=assignment,
+                )
                 for port in promise.consumed_ports
             )
-            if promise.subject_port in input_names:
-                subject = _project_one(
-                    _walk_interface_inputs(("in", node, promise.subject_port), identity_edges, backward=True)
-                )
-            else:
-                subject = _project_one(
-                    _walk_endpoints(
-                        ("out", node, promise.subject_port), identity_edges, backward=False, endpoint_kind="wo"
-                    )
-                )
+            subject = _project_evidence_port(
+                promise.subject_port,
+                node=node,
+                input_port=promise.subject_port in input_names,
+                edges=identity_edges,
+                declared=declared_items,
+                assignment=assignment,
+                allow_output_alias=True,
+            )
             evidence.add(
                 EvidencePromise(
                     name=promise.name,

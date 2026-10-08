@@ -25,15 +25,19 @@ from anonymizer.engine.graph_sdk.executor import (
     ExecutionAssessmentFact,
     ExecutionPortFact,
     ExecutionResult,
+    MapItemKey,
+    OperationOutputKey,
 )
 from anonymizer.engine.graph_sdk.preparation import StateRevisionView
 from anonymizer.engine.graph_sdk.records import AbsenceRef, CandidateRef, ConsumedRef, DecisionRef, EvidenceRef
-from anonymizer.graph._values import ActivationKey, ArtifactRef, DatumId
+from anonymizer.engine.graph_sdk.requests import TextCollectionValue
+from anonymizer.graph._values import ActivationKey, ArtifactRef, ContractViolation, DatumId
 from anonymizer.graph.workflow import (
     AdmittedWorkflow,
     ContextInputRef,
     CoverageAtom,
     EvidencePromise,
+    MapItemPort,
     NodeId,
     OperationNode,
     OperationSpec,
@@ -42,9 +46,8 @@ from anonymizer.graph.workflow import (
     SubgraphNode,
     Vertex,
     WorkflowInputRef,
+    _project_evidence_port,
     _selected_nodes,
-    _walk_endpoints,
-    _walk_interface_inputs,
 )
 
 Validity = Literal["current", "stale", "unknown"]
@@ -120,7 +123,27 @@ class AdmittedQualification(PrivateValue):
             dependency.output
             for dependency in workflow.interface.output_dependencies
             if dependency.output in subjects or dependency.identity_input in subjects
+        ) | frozenset(
+            item.candidate_port
+            for item in workflow.protection_requirements
+            if item.outcome == outcome and item.candidate_port is not None
         )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True, repr=False)
+class MapItemSubjectRef(PrivateValue):
+    """An assessed scalar item and the exact occurrence that materialized it."""
+
+    artifact: ArtifactRef
+    producer: MapItemKey
+
+    def __post_init__(self) -> None:
+        require_instance(self.artifact, ArtifactRef)
+        require_instance(self.producer, MapItemKey)
+        if self.artifact.invocation != self.producer.member.invocation:
+            reject(EffectCode.FOREIGN_OWNER)
+        if self.artifact.version != self.producer.item_version:
+            reject(EffectCode.CONTRADICTORY)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True, repr=False, init=False)
@@ -130,7 +153,7 @@ class VerifiedEvidence(PrivateValue):
     node: NodeId
     outcome: str
     promise: EvidencePromise
-    subject: CandidateRef
+    subject: CandidateRef | MapItemSubjectRef
     consumed_by_port: tuple[tuple[str, ConsumedRef], ...]
     environment: AssessmentEnvironment
     finding: AssessmentFinding
@@ -304,15 +327,41 @@ class _EvidenceFacts:
         production = self.production(fact)
         target = self._verify_activation(fact)
         evidence = self.port(fact, production.declaration.evidence_port)
+        if not isinstance(production.promise.subject_port, str):
+            reject(EffectCode.UNSUPPORTED)
         subject = self.port(fact, production.promise.subject_port)
+        scoped_subjects = {
+            item.promise.subject_port
+            for item in self.admitted._projections
+            if item.node == fact.node
+            and item.outcome == fact.outcome
+            and item.promise.name == fact.promise
+            and isinstance(item.promise.subject_port, MapItemPort)
+        }
+        subject_reference: CandidateRef | MapItemSubjectRef
+        if scoped_subjects:
+            matches = [self.map_item(fact, subject.port, endpoint) for endpoint in scoped_subjects]
+            actual = [item for item in matches if item is not None]
+            if len(set(actual)) != 1 or subject.role != "artifact":
+                reject(EffectCode.CONTRADICTORY)
+            subject_reference = actual[0]
+        else:
+            if subject.role != "candidate":
+                reject(EffectCode.CONTRADICTORY)
+            subject_reference = CandidateRef(artifact=subject.artifact, target=target)
         if evidence.target != target or subject.target != target:
             reject(EffectCode.FOREIGN_OWNER)
         expected_role = self.admitted.execution._output_role(fact.node, production.outcome, evidence.port)
-        if evidence.artifact != fact.evidence_artifact or subject.role != "candidate" or evidence.role != expected_role:
+        if evidence.artifact != fact.evidence_artifact or evidence.role != expected_role:
             reject(EffectCode.CONTRADICTORY)
         consumed: list[tuple[str, ConsumedRef]] = []
         input_names = {item.name for item in production.operation.inputs}
-        for name in sorted(production.promise.consumed_ports):
+        names: list[str] = []
+        for name in production.promise.consumed_ports:
+            if not isinstance(name, str):
+                reject(EffectCode.UNSUPPORTED)
+            names.append(name)
+        for name in sorted(names):
             port = self.port(fact, name)
             if name not in input_names or port.target != target:
                 reject(EffectCode.CONTRADICTORY)
@@ -326,6 +375,17 @@ class _EvidenceFacts:
             else:
                 reject(EffectCode.UNSUPPORTED)
             consumed.append((name, reference))
+        scoped_consumed = {
+            port
+            for item in self.admitted._projections
+            if item.node == fact.node and item.outcome == fact.outcome and item.promise.name == fact.promise
+            for port in item.promise.consumed_ports
+            if isinstance(port, MapItemPort)
+        }
+        if scoped_consumed and not any(
+            self.map_item(fact, name, endpoint) is not None for endpoint in scoped_consumed for name in names
+        ):
+            reject(EffectCode.CONTRADICTORY)
         self._verify_environment(fact, production)
         if fact.finding not in production.declaration.supported_findings:
             reject(EffectCode.UNSUPPORTED)
@@ -339,7 +399,7 @@ class _EvidenceFacts:
             node=fact.node,
             outcome=fact.outcome,
             promise=production.promise,
-            subject=CandidateRef(artifact=subject.artifact, target=target),
+            subject=subject_reference,
             consumed_by_port=tuple(consumed),
             environment=fact.environment,
             finding=fact.finding,
@@ -347,6 +407,85 @@ class _EvidenceFacts:
             _admitted=self.admitted,
             _result=self.result,
         )
+
+    def map_item(self, fact: ExecutionAssessmentFact, port: str, endpoint: MapItemPort) -> MapItemSubjectRef | None:
+        """Authenticate an endpoint against the captured input's materialization."""
+        input_fact = self.port(fact, port)
+        parents = [
+            key
+            for target, activation, name, key in self.result._input_parents
+            if (target, activation, name) == (input_fact.target, fact.activation, port)
+        ]
+        if len(parents) != 1 or not isinstance(parents[0], MapItemKey):
+            return None
+        key = parents[0]
+        entries = {entry.activation: entry for state in self.result.states for entry in state.entries}
+        expander = entries.get(key.expander)
+        member = entries.get(key.member)
+        if (
+            expander is None
+            or member is None
+            or expander.template != endpoint.expander
+            or member.template != endpoint.member
+            or expander.outcome != endpoint.expansion_outcome
+            or key.port != endpoint.item_input
+            or key.target != input_fact.target
+        ):
+            return None
+        ancestors: set[ActivationKey] = set()
+        current: ActivationKey | None = fact.activation
+        while current is not None:
+            ancestors.add(current)
+            current = current.parent
+        if key.member not in ancestors:
+            return None
+        path: list[NodeId] = []
+        nodes = {
+            node.id: node
+            for body in reachable_workflows(self.admitted.execution.context.prepared.workflow)
+            for node in body.nodes
+        }
+        current = key.expander.parent
+        while current is not None:
+            entry = entries.get(current)
+            if entry is None:
+                return None
+            if isinstance(nodes.get(entry.template), SubgraphNode):
+                path.append(entry.template)
+            current = current.parent
+        if tuple(reversed(path)) != endpoint.path:
+            return None
+        provenance = [item for item in self.result.provenance if item.key == key]
+        if len(provenance) != 1 or provenance[0].artifact != input_fact.artifact or provenance[0].decision:
+            reject(EffectCode.CONTRADICTORY)
+        expected = OperationOutputKey(activation=key.expander, target=key.target, port=endpoint.membership_port)
+        if provenance[0].parents != frozenset({expected}):
+            reject(EffectCode.CONTRADICTORY)
+        publications = [item for item in self.result.provenance if item.key == expected]
+        if len(publications) != 1:
+            reject(EffectCode.CONTRADICTORY)
+        artifacts = dict(self.result.artifacts)
+        collection = artifacts.get(publications[0].artifact)
+        if not isinstance(collection, TextCollectionValue):
+            reject(EffectCode.CONTRADICTORY)
+        source_items = [
+            item for item in collection.items if (item.key, item.version) == (key.item_key, key.item_version)
+        ]
+        if len(source_items) != 1 or source_items[0].value != artifacts.get(input_fact.artifact):
+            reject(EffectCode.CONTRADICTORY)
+        expansions = [
+            expansion
+            for state in self.result.states
+            for expansion in state.expansions
+            if expansion.parent == key.expander
+        ]
+        if len(expansions) != 1 or key.member not in expansions[0].members:
+            reject(EffectCode.CONTRADICTORY)
+        members = sorted(expansions[0].members, key=lambda item: item.occurrence)
+        index = members.index(key.member)
+        if index >= len(collection.items) or collection.items[index] != source_items[0]:
+            reject(EffectCode.CONTRADICTORY)
+        return MapItemSubjectRef(artifact=input_fact.artifact, producer=key)
 
     def _verify_activation(self, fact: ExecutionAssessmentFact) -> DatumId:
         prepared = self.admitted.execution.context.prepared
@@ -557,9 +696,13 @@ def evidence_validity(*, evidence: VerifiedEvidence, current: EvidenceRevisionVi
             evidence.reference.artifact,
             artifacts.get((evidence.reference.artifact.invocation, evidence.reference.artifact.key)),
         ),
-        (evidence.subject, candidates.get(evidence.subject.target)),
         (evidence.environment.configuration, configurations.get(evidence.node)),
     ]
+    if isinstance(evidence.subject, MapItemSubjectRef):
+        artifact = evidence.subject.artifact
+        comparisons.append((artifact, artifacts.get((artifact.invocation, artifact.key))))
+    else:
+        comparisons.append((evidence.subject, candidates.get(evidence.subject.target)))
     for reference in evidence.reference.consumed:
         if isinstance(reference, CandidateRef):
             comparisons.append((reference, candidates.get(reference.target)))
@@ -625,6 +768,15 @@ class _PromiseProjection:
             )
             assignment = {node: outcome for node, outcome in assignment.items() if node in selected}
             edges = self._edges(body, assignment)
+            interface_outcome = next(
+                item for item in body.interface.outcomes if item.name == mapping.destination.outcome
+            )
+            declared_items = frozenset(
+                port
+                for promise in interface_outcome.evidence
+                for port in (promise.subject_port, *promise.consumed_ports)
+                if isinstance(port, MapItemPort)
+            )
             for node in nodes:
                 if node.id not in selected:
                     continue
@@ -645,17 +797,28 @@ class _PromiseProjection:
                 inputs = {item.name for item in node.operation.inputs}
                 for item in promises:
                     promise = item.promise
-                    if promise.subject_port in inputs:
-                        subjects = _walk_interface_inputs(("in", node.id, promise.subject_port), edges, backward=True)
-                    else:
-                        subjects = _walk_endpoints(
-                            ("out", node.id, promise.subject_port), edges, backward=False, endpoint_kind="wo"
+                    try:
+                        subject = _project_evidence_port(
+                            promise.subject_port,
+                            node=node.id,
+                            input_port=promise.subject_port in inputs,
+                            edges=edges,
+                            declared=declared_items,
+                            assignment=assignment,
+                            allow_output_alias=True,
                         )
-                    consumed = [
-                        _walk_interface_inputs(("in", node.id, port), edges, backward=True)
-                        for port in promise.consumed_ports
-                    ]
-                    if len(subjects) != 1 or any(len(ports) != 1 for ports in consumed):
+                        consumed = frozenset(
+                            _project_evidence_port(
+                                port,
+                                node=node.id,
+                                input_port=True,
+                                edges=edges,
+                                declared=declared_items,
+                                assignment=assignment,
+                            )
+                            for port in promise.consumed_ports
+                        )
+                    except ContractViolation:
                         continue
                     projected.add(
                         replace(
@@ -663,8 +826,8 @@ class _PromiseProjection:
                             interface_outcome=mapping.destination.outcome,
                             promise=replace(
                                 promise,
-                                subject_port=next(iter(subjects)),
-                                consumed_ports=frozenset(port for ports in consumed for port in ports),
+                                subject_port=subject,
+                                consumed_ports=consumed,
                             ),
                         )
                     )

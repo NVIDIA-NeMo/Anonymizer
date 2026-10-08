@@ -402,8 +402,11 @@ class _Adapter:
         return {"identity_input": value.identity_input, "inputs": sorted(value.inputs), "output": value.output}
 
     def evidence_json(self, value: EvidencePromise) -> Object:
+        assert isinstance(value.subject_port, str)
+        consumed = [port for port in value.consumed_ports if isinstance(port, str)]
+        assert len(consumed) == len(value.consumed_ports), "R1 adapter covers scalar evidence ports"
         return {
-            "consumed_ports": sorted(value.consumed_ports),
+            "consumed_ports": sorted(consumed),
             "coverage": _sorted([{"kind": item.kind, "name": item.name} for item in value.coverage]),
             "meaning": value.meaning,
             "name": value.name,
@@ -421,8 +424,11 @@ class _Adapter:
         representation = self.requirement_representations.get(value)
         if representation is not None:
             return copy.deepcopy(representation)
+        assert isinstance(value.subject_port, str)
+        consumed = [port for port in value.consumed_ports if isinstance(port, str)]
+        assert len(consumed) == len(value.consumed_ports), "R1 adapter covers scalar evidence ports"
         return {
-            "consumed_ports": sorted(value.consumed_ports),
+            "consumed_ports": sorted(consumed),
             "coverage": _sorted([{"kind": item.kind, "name": item.name} for item in value.coverage]),
             "meaning": value.meaning,
             "outcome": value.outcome,
