@@ -29,15 +29,29 @@ from anonymizer.engine.graph_sdk.requests import (
     ExactUsage,
     ExternalSettlement,
     PhysicalRequestPolicy,
+    PortArtifact,
     SemanticAssociation,
     StopConfirmed,
     TaskAttemptId,
+    TextArtifactValue,
+    TransportFailure,
     TransportLost,
     TransportResult,
     TransportSuccess,
     UnknownUsage,
 )
 from anonymizer.engine.graph_sdk.resources import ResourceLease
+from anonymizer.graph.workflow import (
+    DynamicScope,
+    NodeOutputRef,
+    OperationNode,
+    OutputBinding,
+    OutputDependency,
+    OutputPort,
+    WorkflowOutputRef,
+    admit_activation_workflow,
+    admit_static_workflow,
+)
 from tests.graph_sdk.test_adaptive_executor import _adaptive_rows
 from tests.graph_sdk.test_local_executor import _Clock
 from tests.graph_sdk.test_preparation import _capability, _data, _limits, _prepare, _workflow
@@ -75,11 +89,30 @@ class _DelayedSuccessTransport:
         if self.calls == 1:
             self.first_dispatched.set()
             await self.release.wait()
+        if self.mode == "retry" and self.calls == 1:
+            return TransportFailure(
+                failure="retryable",
+                settlement=ExternalSettlement(
+                    request=request.request,
+                    disposition="completed",
+                    usage=ExactUsage(input_units=0, output_units=0),
+                    remote_stopped=True,
+                ),
+            )
         rows = tuple(
             AssociationResult(
                 association=item.association,
                 outcome="ok",
-                outputs=(),
+                outputs=(
+                    PortArtifact(
+                        port="output",
+                        artifact_type=request.operation.outputs[0].artifact_type,
+                        artifact=None,
+                        value=TextArtifactValue(text="x"),
+                    ),
+                )
+                if self.mode in {"output_valid", "output_limit"}
+                else (),
                 consumed_context_ports=frozenset(),
             )
             for item in reversed(request.associations)
@@ -226,8 +259,39 @@ def test_remote_capacity_waits_for_settlement_before_dispatching_later_work() ->
 
 
 async def _assert_transient_remote_capacity(*, shared: bool = False, mode: str = "valid") -> None:
-    workflow, node, _ = _workflow(requests=1)
+    workflow, node, artifact_type = _workflow(requests=2 if mode == "retry" else 1)
+    if mode in {"output_valid", "output_limit"}:
+        static = workflow.workflow
+        operation = replace(
+            static.interface,
+            outputs=(OutputPort(name="output", artifact_type=artifact_type),),
+            output_dependencies=(OutputDependency(output="output", inputs=frozenset(), identity_input=None),),
+            outcomes=(replace(static.interface.outcomes[0], produced_ports=frozenset({"output"})),),
+        )
+        rebuilt = admit_static_workflow(
+            workflow=static.workflow,
+            interface=operation,
+            nodes=(OperationNode(id=node, operation=operation),),
+            input_bindings=(),
+            output_bindings=(
+                OutputBinding(
+                    source=NodeOutputRef(node=node, port="output"), destination=WorkflowOutputRef(port="output")
+                ),
+            ),
+            outcome_bindings=tuple(static.outcome_bindings),
+            sequence=(),
+            choices=(),
+            protection=(),
+            limits=replace(static.limits, max_bindings=2),
+        )
+        workflow = admit_activation_workflow(
+            workflow=rebuilt,
+            scopes=(DynamicScope(workflow=rebuilt, maps=(), joins=(), loops=()),),
+            limits=workflow.limits,
+        )
     capability: ImplementationCapability = _capability(workflow, external=True)
+    if mode == "retry":
+        capability = replace(capability, max_physical_requests_per_activation=2)
     if shared:
         capability = replace(capability, attribution="keyed_shared_request")
     prepared = _prepare(
@@ -252,7 +316,7 @@ async def _assert_transient_remote_capacity(*, shared: bool = False, mode: str =
         pre_dispatch_control="executor",
         retry_owner="executor",
         replay="idempotent",
-        max_attempts=1,
+        max_attempts=2 if mode == "retry" else 1,
     )
     implementation = ExecutionImplementation(
         implementation=capability.implementation,
@@ -282,7 +346,7 @@ async def _assert_transient_remote_capacity(*, shared: bool = False, mode: str =
             max_finding_code_bytes=0,
             max_absence_queries=0,
             max_assessment_facts=0,
-            max_port_facts=0,
+            max_port_facts=2,
             max_provenance_edges=0,
         ),
     )
@@ -311,8 +375,8 @@ async def _assert_transient_remote_capacity(*, shared: bool = False, mode: str =
             limits=ExecutionLimits(
                 max_local_in_flight=0,
                 max_remote_outstanding=1,
-                max_runtime_artifacts=0,
-                max_runtime_artifact_bytes=0,
+                max_runtime_artifacts=1 if mode == "output_limit" else 2,
+                max_runtime_artifact_bytes=2,
                 max_collection_items=0,
             ),
             decision_limits=DecisionLimits(max_pending=0, max_lifetime_ns=0),
@@ -324,19 +388,39 @@ async def _assert_transient_remote_capacity(*, shared: bool = False, mode: str =
     assert transport.calls == 1
     release.set()
     result = await running.wait()
-    assert transport.calls == (1 if shared else 2)
-    assert [len(envelope.associations) for envelope in transport.envelopes] == ([2] if shared else [1, 1])
+    physical_count = 2 if mode == "retry" or not shared else 1
+    assert transport.calls == physical_count
+    assert [len(envelope.associations) for envelope in transport.envelopes] == (
+        [2] * physical_count if shared else [1, 1]
+    )
+    if mode == "retry":
+        assert transport.envelopes[0].associations == transport.envelopes[1].associations
+        assert [envelope.purpose for envelope in transport.envelopes] == ["initial", "retry"]
     assert all(state.complete for state in result.states)
-    if mode == "valid":
+    if mode in {"valid", "retry", "output_valid"}:
         assert all(item.category == "success" for item in result.record.terminals)
+    elif mode == "output_limit":
+        assert all(item.category != "success" for item in result.record.terminals)
+        assert not result.artifacts
+        assert not result.ports
+        assert not result.final_outputs
+        assert not result.provenance
+        assert not result.assessments
     else:
         assert all(item.category == "inconsistent" for item in result.record.terminals)
-    assert result.requests.dispatched_count == (1 if shared else 2)
+    if mode == "output_valid":
+        assert len(result.artifacts) == len(result.ports) == len(result.final_outputs) == 2
+    assert result.requests.dispatched_count == physical_count
     assert len(result.requests.terminals) == result.requests.dispatched_count
     assert len(result.requests.settlements) == result.requests.dispatched_count
     assert not result.requests.remote_outstanding
 
 
-@pytest.mark.parametrize("mode", ["valid", "missing", "duplicate", "extra", "foreign"])
+@pytest.mark.parametrize("mode", ["valid", "missing", "duplicate", "extra", "foreign", "retry"])
 def test_shared_request_dispatches_once_and_bridges_each_key(mode: str) -> None:
+    asyncio.run(_assert_transient_remote_capacity(shared=True, mode=mode))
+
+
+@pytest.mark.parametrize("mode", ["output_valid", "output_limit"])
+def test_shared_request_publishes_all_outputs_or_rolls_back(mode: str) -> None:
     asyncio.run(_assert_transient_remote_capacity(shared=True, mode=mode))

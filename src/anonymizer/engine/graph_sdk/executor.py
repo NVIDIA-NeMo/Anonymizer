@@ -1168,13 +1168,11 @@ def _group_external_jobs(jobs: list[_ExecutionJob]) -> list[list[_ExecutionJob]]
     return groups
 
 
-@dataclass(slots=True)
+@dataclass(frozen=True, slots=True)
 class _DeferredAcceptance:
     request: PhysicalRequestId
     results: tuple[AssociationResult, ...]
     settlement: ExternalSettlement | None
-    remaining: set[SemanticAssociation] = field(default_factory=set)
-    failed: bool = False
 
 
 class RunningExecution:
@@ -1705,118 +1703,171 @@ async def _run_execution(
                 break
             continue
         completed, _ = await asyncio.wait(jobs, return_when=asyncio.FIRST_COMPLETED)
-        for task in completed:
-            job = jobs.pop(task)
-            physical_jobs.pop(task, None)
-            mapping, results, assessments = task.result()
-            deferred = deferred_acceptances.pop(job.association, None)
-            staged_result = False
-            checkpoint: _FactCheckpoint | None = None
-            if mapping.condition == "result":
-                if job.policy.kind == "decision" and not results:
-                    results = (
-                        AssociationResult(
-                            association=job.association,
-                            outcome=mapping.outcome or "",
-                            outputs=(),
-                            consumed_context_ports=frozenset(),
-                        ),
-                    )
-                if not _validate_assessment_returns(
-                    admitted,
-                    job.association,
-                    job.node,
-                    mapping,
-                    assessments,
-                ):
-                    mapping = _mapping(job.policy, "failure", None, "malformed_response")
-                elif not _valid_dynamic_membership_result(
-                    admitted,
-                    job.node,
-                    mapping,
-                    results,
-                ):
-                    mapping = _mapping(job.policy, "failure", None, "malformed_response")
-                else:
-                    checkpoint = facts.checkpoint()
-                    output_status, created = _accept_outputs(
-                        admitted,
-                        invocation,
-                        job.target,
-                        job.activation,
-                        job.node,
-                        job.implementation.capability.operation,
-                        mapping,
-                        job.association,
-                        job.inputs,
-                        job.input_parents,
-                        results,
-                        facts,
-                        services.limits,
-                    )
-                    if output_status != "valid":
-                        mapping = _mapping(
-                            job.policy,
-                            "artifact_limit_exhausted" if output_status == "limit" else "failure",
-                            None,
-                            None if output_status == "limit" else "malformed_response",
+        pending_completed = set(completed)
+        while pending_completed:
+            first = next(iter(pending_completed))
+            physical = physical_jobs.get(first)
+            peers = [task for task in jobs if physical_jobs.get(task) is physical] if physical is not None else [first]
+            await asyncio.gather(*peers)
+            pending_completed.difference_update(peers)
+            deferred = deferred_acceptances.get(jobs[first].association)
+            transaction = facts.checkpoint()
+            prior_states = list(states)
+            outcomes: list[tuple[_ExecutionJob, RuntimeOutcome]] = []
+            for task in peers:
+                job = jobs.pop(task)
+                physical_jobs.pop(task, None)
+                mapping, results, assessments = task.result()
+                deferred_acceptances.pop(job.association, None)
+                staged_result = False
+                checkpoint: _FactCheckpoint | None = None
+                if mapping.condition == "result":
+                    if job.policy.kind == "decision" and not results:
+                        results = (
+                            AssociationResult(
+                                association=job.association,
+                                outcome=mapping.outcome or "",
+                                outputs=(),
+                                consumed_context_ports=frozenset(),
+                            ),
                         )
-                    elif not _capture_assessments(
+                    if not _validate_assessment_returns(
                         admitted,
-                        job.implementation,
                         job.association,
-                        job.activation,
                         job.node,
                         mapping,
                         assessments,
-                        job.target,
-                        services,
-                        facts,
                     ):
-                        facts.restore(checkpoint)
                         mapping = _mapping(job.policy, "failure", None, "malformed_response")
-                    else:
-                        _mark_assessment_subjects(
-                            admitted,
-                            job.node,
-                            mapping,
-                            job.target,
-                            job.activation,
-                            facts,
-                        )
-                        staged_result = True
-                    del created
-            prior_state = states[job.state_index]
-            candidate_state = advance_activation(
-                state=prior_state,
-                event=ObserveTerminal(activation=job.activation, outcome=mapping.outcome, category=mapping.category),
-            )
-            if staged_result:
-                try:
-                    membership = _dynamic_membership_value(
+                    elif not _valid_dynamic_membership_result(
                         admitted,
                         job.node,
-                        mapping.outcome,
+                        mapping,
                         results,
-                    )
-                    if membership is not None:
-                        candidate_state = _observe_dynamic_membership(
+                    ):
+                        mapping = _mapping(job.policy, "failure", None, "malformed_response")
+                    else:
+                        checkpoint = facts.checkpoint()
+                        output_status, created = _accept_outputs(
                             admitted,
-                            candidate_state,
+                            invocation,
                             job.target,
                             job.activation,
                             job.node,
-                            mapping.outcome,
-                            membership,
+                            job.implementation.capability.operation,
+                            mapping,
+                            job.association,
+                            job.inputs,
+                            job.input_parents,
+                            results,
                             facts,
                             services.limits,
                         )
+                        if output_status != "valid":
+                            mapping = _mapping(
+                                job.policy,
+                                "artifact_limit_exhausted" if output_status == "limit" else "failure",
+                                None,
+                                None if output_status == "limit" else "malformed_response",
+                            )
+                        elif not _capture_assessments(
+                            admitted,
+                            job.implementation,
+                            job.association,
+                            job.activation,
+                            job.node,
+                            mapping,
+                            assessments,
+                            job.target,
+                            services,
+                            facts,
+                        ):
+                            facts.restore(checkpoint)
+                            mapping = _mapping(job.policy, "failure", None, "malformed_response")
+                        else:
+                            _mark_assessment_subjects(
+                                admitted,
+                                job.node,
+                                mapping,
+                                job.target,
+                                job.activation,
+                                facts,
+                            )
+                            staged_result = True
+                        del created
+                prior_state = states[job.state_index]
+                candidate_state = advance_activation(
+                    state=prior_state,
+                    event=ObserveTerminal(
+                        activation=job.activation, outcome=mapping.outcome, category=mapping.category
+                    ),
+                )
+                if staged_result:
+                    try:
+                        membership = _dynamic_membership_value(
+                            admitted,
+                            job.node,
+                            mapping.outcome,
+                            results,
+                        )
+                        if membership is not None:
+                            candidate_state = _observe_dynamic_membership(
+                                admitted,
+                                candidate_state,
+                                job.target,
+                                job.activation,
+                                job.node,
+                                mapping.outcome,
+                                membership,
+                                facts,
+                                services.limits,
+                            )
+                    except (ContractViolation, EffectRejected) as exc:
+                        assert checkpoint is not None
+                        facts.restore(checkpoint)
+                        condition = (
+                            "artifact_limit_exhausted"
+                            if (isinstance(exc, EffectRejected) and exc.code == EffectCode.LIMIT_EXCEEDED)
+                            else "failure"
+                        )
+                        mapping = _mapping(
+                            job.policy,
+                            condition,
+                            None,
+                            None if condition == "artifact_limit_exhausted" else "malformed_response",
+                        )
+                        candidate_state = advance_activation(
+                            state=prior_state,
+                            event=ObserveTerminal(
+                                activation=job.activation,
+                                outcome=mapping.outcome,
+                                category=mapping.category,
+                            ),
+                        )
+                try:
+                    while True:
+                        _materialize_subgraph_outputs(
+                            prepared.workflow.workflow,
+                            job.target,
+                            candidate_state,
+                            facts,
+                        )
+                        candidate_state, bridged = _bridge_structural_map_membership(
+                            admitted,
+                            candidate_state,
+                            job.target,
+                            facts,
+                            services.limits,
+                        )
+                        if not bridged:
+                            break
                 except (ContractViolation, EffectRejected) as exc:
-                    assert checkpoint is not None
+                    if not staged_result or checkpoint is None:
+                        raise
                     facts.restore(checkpoint)
                     condition = (
                         "artifact_limit_exhausted"
-                        if (isinstance(exc, EffectRejected) and exc.code == EffectCode.LIMIT_EXCEEDED)
+                        if isinstance(exc, EffectRejected) and exc.code == EffectCode.LIMIT_EXCEEDED
                         else "failure"
                     )
                     mapping = _mapping(
@@ -1833,57 +1884,28 @@ async def _run_execution(
                             category=mapping.category,
                         ),
                     )
-            try:
-                while True:
-                    _materialize_subgraph_outputs(
-                        prepared.workflow.workflow,
-                        job.target,
-                        candidate_state,
-                        facts,
-                    )
-                    candidate_state, bridged = _bridge_structural_map_membership(
-                        admitted,
-                        candidate_state,
-                        job.target,
-                        facts,
-                        services.limits,
-                    )
-                    if not bridged:
-                        break
-            except (ContractViolation, EffectRejected) as exc:
-                if not staged_result or checkpoint is None:
-                    raise
-                facts.restore(checkpoint)
-                condition = (
-                    "artifact_limit_exhausted"
-                    if isinstance(exc, EffectRejected) and exc.code == EffectCode.LIMIT_EXCEEDED
-                    else "failure"
-                )
-                mapping = _mapping(
-                    job.policy,
-                    condition,
-                    None,
-                    None if condition == "artifact_limit_exhausted" else "malformed_response",
-                )
-                candidate_state = advance_activation(
-                    state=prior_state,
-                    event=ObserveTerminal(
-                        activation=job.activation,
-                        outcome=mapping.outcome,
-                        category=mapping.category,
-                    ),
-                )
-            states[job.state_index] = candidate_state
+                states[job.state_index] = candidate_state
+                outcomes.append((job, mapping))
             if deferred is not None:
-                deferred.failed |= mapping.condition != "result"
-                deferred.remaining.discard(job.association)
-                if not deferred.remaining:
-                    if deferred.failed:
-                        request_authority.apply(AcceptFailure(request=deferred.request, failure="malformed_response"))
-                    else:
-                        request_authority.apply(AcceptResult(request=deferred.request, results=deferred.results))
-                    if deferred.settlement is not None:
-                        request_authority.apply(ObserveSettlement(settlement=deferred.settlement))
+                failed = any(mapping.condition != "result" for _, mapping in outcomes)
+                if failed and len(peers) > 1:
+                    facts.restore(transaction)
+                    states[:] = prior_states
+                    for job, mapping in outcomes:
+                        if mapping.condition == "result":
+                            mapping = _mapping(job.policy, "failure", None, "malformed_response")
+                        states[job.state_index] = advance_activation(
+                            state=states[job.state_index],
+                            event=ObserveTerminal(
+                                activation=job.activation, outcome=mapping.outcome, category=mapping.category
+                            ),
+                        )
+                if failed:
+                    request_authority.apply(AcceptFailure(request=deferred.request, failure="malformed_response"))
+                else:
+                    request_authority.apply(AcceptResult(request=deferred.request, results=deferred.results))
+                if deferred.settlement is not None:
+                    request_authority.apply(ObserveSettlement(settlement=deferred.settlement))
     if control.cancelled:
         request_authority.apply(ScopeCancel())
     cleanup, cleanup_associations = await _cleanup_execution(
@@ -2854,7 +2876,6 @@ async def _run_external_batch(
                     request=request,
                     results=result.results,
                     settlement=result.settlement,
-                    remaining=set(associations),
                 )
                 for association in associations:
                     deferred_acceptances[association] = deferred
