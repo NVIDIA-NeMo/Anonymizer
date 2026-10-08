@@ -118,6 +118,9 @@ _BASE_CASES = tuple(
             "binding/adaptive_semantic_outcome_independent",
             "binding/cancel_after_dispatch_lost",
             "binding/cancel_before_dispatch",
+            "binding/source_failure_correction_authority",
+            "binding/source_failure_retry_authority",
+            "binding/success_after_failure_preserves_authority",
             "binding/unsolicited_source_result",
         }
     )
@@ -2304,12 +2307,20 @@ def test_request_corpus_case_through_production(case: dict[str, Any]) -> None:
     policies = {
         name: _policy(value) for name, value in cast(dict[str, dict[str, Any]], declaration["policies"]).items()
     }
-    association_names = {
-        item
-        for event in cast(list[dict[str, Any]], case["events"])
-        for field in ("associations", "returned")
-        for item in cast(list[str], event.get(field, ()))
-    } | {"T0", "T1"}
+    association_names = (
+        {
+            item
+            for event in cast(list[dict[str, Any]], case["events"])
+            for field in ("associations", "returned")
+            for item in cast(list[str], event.get(field, ()))
+        }
+        | {
+            cast(str, event["association"])
+            for event in cast(list[dict[str, Any]], case["events"])
+            if "association" in event
+        }
+        | {"T0", "T1"}
+    )
     foreign_invocation = InvocationId.new(plan=invocation.plan)
     tasks = {
         name: SemanticAssociation(
@@ -2427,6 +2438,51 @@ def _apply(
                 usage=_usage(event["usage"]),
                 remote_stopped=event["remote_stopped"],
             )
+        )
+    elif kind == "source_failure":
+        state = advance_requests(
+            state=state,
+            event=AcceptFailure(request=requests[event["request"]], failure=event["failure"]),
+        )
+        settlement = cast(dict[str, Any], event["settlement"])
+        return advance_requests(
+            state=state,
+            event=ObserveSettlement(
+                settlement=ExternalSettlement(
+                    request=requests[event["request"]],
+                    disposition=settlement["disposition"],
+                    usage=_usage(settlement["usage"]),
+                    remote_stopped=settlement["remote_stopped"],
+                )
+            ),
+        )
+    elif kind == "source_result":
+        returned = cast(list[dict[str, Any]], event["items"])
+        state = advance_requests(
+            state=state,
+            event=AcceptResult(
+                request=requests[event["request"]],
+                results=(
+                    AssociationResult(
+                        association=tasks[returned[0]["association"]],
+                        outcome=event["outcome"],
+                        outputs=(),
+                        consumed_context_ports=frozenset(),
+                    ),
+                ),
+            ),
+        )
+        settlement = cast(dict[str, Any], event["settlement"])
+        return advance_requests(
+            state=state,
+            event=ObserveSettlement(
+                settlement=ExternalSettlement(
+                    request=requests[event["request"]],
+                    disposition=settlement["disposition"],
+                    usage=_usage(settlement["usage"]),
+                    remote_stopped=settlement["remote_stopped"],
+                )
+            ),
         )
     else:
         raise AssertionError(kind)
