@@ -250,7 +250,7 @@ def _adapt(case: data_v1.FixtureCase) -> data_v1.ValidationResult:
     try:
         graph = adapter.validate(declaration)
     except ContractViolation as error:
-        return {"verdict": "reject", "code": error.code.value}
+        return {"verdict": "reject", "code": cast(data_v1.ValidationCode, error.code.value)}
     return {"verdict": "accept", "normalized": adapter.normalized(graph)}
 
 

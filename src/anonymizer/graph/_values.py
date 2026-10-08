@@ -22,6 +22,7 @@ class ValidationCode(str, Enum):
     OVERLAP = "overlap"
     CYCLE = "cycle"
     CONTRADICTORY = "contradictory"
+    UNSUPPORTED = "unsupported"
 
 
 class ContractViolation(ValueError):

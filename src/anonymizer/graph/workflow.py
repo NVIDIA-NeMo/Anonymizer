@@ -904,7 +904,7 @@ def admit_activation_workflow(
                     for binding in scope.workflow.output_bindings
                 )
                 if outward_inputs or outward_outputs:
-                    _reject(ValidationCode.CONTRADICTORY)
+                    _reject(ValidationCode.UNSUPPORTED)
             if item.item_input is None:
                 continue
             member_inputs = {port.name for port in nodes[item.member].operation.inputs}

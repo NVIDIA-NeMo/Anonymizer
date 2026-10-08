@@ -909,8 +909,8 @@ def test_scalar_map_cardinality_admission_matches_frozen_case(
 
     with pytest.raises(ContractViolation) as error:
         _map_fixture(max_children=max_children, outward_scalar=destination)
-    assert error.value.code is ValidationCode.CONTRADICTORY
-    assert case["expected"] == {"status": "rejected", "code": "unsupported"}
+    assert error.value.code is ValidationCode.UNSUPPORTED
+    assert error.value.code.value == case["expected"]["code"]
 
 
 @pytest.mark.parametrize(
