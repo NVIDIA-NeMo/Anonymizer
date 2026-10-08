@@ -186,6 +186,7 @@ REAL_BINDING_CASE_IDS = {
     "materialization/initial_declared_bytes_exact",
     "materialization/initial_declared_bytes_one_over",
     "materialization/initial_single_zero_collection_limit",
+    "materialization/initial_unmaterialized_source_result",
 }
 REAL_BINDING_CASES = tuple(case for case in json.loads(CORPUS.read_bytes()) if case["case_id"] in REAL_BINDING_CASE_IDS)
 ADAPTIVE_MATERIALIZATION_CASE_IDS = {
@@ -1493,8 +1494,10 @@ async def _assert_initial_execution_projection(
     assert materialization == expected["materialization"]
     assert len(execution.ports) == 1
     port = execution.ports[0]
-    assert (port.node, port.artifact, port.artifact_type, port.role) == (
+    assert (port.node, port.target, port.port, port.artifact, port.artifact_type, port.role) == (
         node,
+        next(iter(target_names)),
+        context_port,
         aggregate.artifact,
         input_type,
         "artifact",
