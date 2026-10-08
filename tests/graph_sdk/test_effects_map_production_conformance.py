@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, cast
 
@@ -27,6 +27,7 @@ from anonymizer.engine.graph_sdk.executor import (
     MapItemKey,
     OperationExecutionPolicy,
     OperationOutputKey,
+    RootInputKey,
     admit_execution_plan,
     start_execution,
 )
@@ -35,6 +36,7 @@ from anonymizer.engine.graph_sdk.requests import (
     AssociationInput,
     AssociationResult,
     PortArtifact,
+    SemanticAssociation,
     TextArtifactValue,
     TextCollectionItem,
     TextCollectionValue,
@@ -51,7 +53,6 @@ from anonymizer.graph.workflow import (
     NodeId,
     NodeInputRef,
     NodeOutcomeRef,
-    NodeOutputRef,
     OperationNode,
     OperationSpec,
     OutcomeBinding,
@@ -93,9 +94,7 @@ def _map_fixture(*, max_children: int = 2) -> _MapFixture:
         name="expander",
         inputs=(InputPort(name="default", artifact_type=text_type),),
         outputs=(OutputPort(name="members", artifact_type=collection_type),),
-        output_dependencies=(
-            OutputDependency(output="members", inputs=frozenset({"default"}), identity_input=None),
-        ),
+        output_dependencies=(OutputDependency(output="members", inputs=frozenset({"default"}), identity_input=None),),
         outcomes=(
             _outcome(
                 "expand",
@@ -204,8 +203,10 @@ class _MapCallback:
     item_count: int
     collection_type: ArtifactType
     text_type: ArtifactType
+    calls: list[tuple[AssociationInput, ...]] = field(default_factory=list)
 
     async def run(self, request: tuple[AssociationInput, ...]) -> LocalCompleted:
+        self.calls.append(request)
         outputs: tuple[PortArtifact, ...] = ()
         outcome = "ok"
         if self.mode == "expander":
@@ -251,9 +252,7 @@ def _admit_fixture(
         data=data,
         workflow=fixture.workflow,
         activation_limits=ActivationLimits(max_events=20, max_entries=4, max_parent_depth=2),
-        bound_inputs=(
-            BoundInput(target=target, source=target, port="default", artifact_type=fixture.text_type),
-        ),
+        bound_inputs=(BoundInput(target=target, source=target, port="default", artifact_type=fixture.text_type),),
         configuration=PreparationConfiguration(
             purpose="execution_only", required_protection_outcomes=frozenset(), hard_request_limit=None
         ),
@@ -326,17 +325,21 @@ async def _execute_membership(item_count: int):
     fixture = _map_fixture()
     admitted = _admit_fixture(fixture)
     by_node = dict(zip((fixture.expander, fixture.member, fixture.join), fixture.capabilities, strict=True))
+    callbacks = {
+        node: _MapCallback(
+            mode="expander" if node == fixture.expander else "operation",
+            item_count=item_count,
+            collection_type=fixture.collection_type,
+            text_type=fixture.text_type,
+        )
+        for node in by_node
+    }
     handles = tuple(
         ImplementationHandle(
             implementation=capability.implementation,
             operation=capability.operation,
             configuration=capability.configuration,
-            local=_MapCallback(
-                mode="expander" if node == fixture.expander else "operation",
-                item_count=item_count,
-                collection_type=fixture.collection_type,
-                text_type=fixture.text_type,
-            ),
+            local=callbacks[node],
             transport=None,
             resource=None,
         )
@@ -361,7 +364,7 @@ async def _execute_membership(item_count: int):
             ),
         )
     ).wait()
-    return fixture, result
+    return fixture, result, callbacks
 
 
 def test_map_operation_declaration_admits_through_production() -> None:
@@ -406,7 +409,7 @@ def test_map_harness_publishes_real_occurrences(item_count: int) -> None:
 
 
 async def _assert_map_membership(item_count: int) -> None:
-    fixture, result = await _execute_membership(item_count)
+    fixture, result, callbacks = await _execute_membership(item_count)
     state = result.states[0]
     expansion = next(iter(state.expansions))
     assert expansion.status == "closed"
@@ -422,6 +425,19 @@ async def _assert_map_membership(item_count: int) -> None:
         and fact.key.port == "members"
     )
     assert all(fact.parents == frozenset({parent}) for fact in map_items)
+    membership = next(fact for fact in result.provenance if fact.key == parent)
+    assert len(membership.parents) == 1
+    assert isinstance(next(iter(membership.parents)), RootInputKey)
+    member_inputs = [call[0] for call in callbacks[fixture.member].calls]
+    assert [item.inputs[0].value for item in member_inputs] == [
+        TextArtifactValue(text=f"item-{index}") for index in range(item_count)
+    ]
+    item_artifacts = {fact.key.member: fact.artifact for fact in map_items}
+    assert all(
+        isinstance(item.association, SemanticAssociation)
+        and item.inputs[0].artifact == item_artifacts[item.association.task.activation]
+        for item in member_inputs
+    )
     assert {entry.template for entry in state.entries if entry.activation in expansion.members} == (
         {fixture.member} if item_count else set()
     )
