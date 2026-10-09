@@ -18,6 +18,7 @@ from anonymizer.engine.graph_sdk._execution_values import (
     ExecutionAssessmentFact,
     ExecutionImplementation,
     ExecutionPortFact,
+    ImplementationHandle,
     LocalAssessmentResult,
     OperationExecutionPolicy,
     ProvenanceKey,
@@ -46,6 +47,7 @@ class _ExecutionControl:
     pending: dict[DecisionWaitId, DecisionWait] = field(default_factory=dict)
     responses: dict[DecisionWaitId, DecisionResponse] = field(default_factory=dict)
     closed: set[DecisionWaitId] = field(default_factory=set)
+    measured_handles: dict[SemanticAssociation, ImplementationHandle] = field(default_factory=dict)
 
 
 _T = TypeVar("_T")

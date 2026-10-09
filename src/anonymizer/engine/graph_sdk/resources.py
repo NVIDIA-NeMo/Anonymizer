@@ -15,6 +15,7 @@ from anonymizer.engine.graph_sdk._effect_values import (
     require_instance,
     require_literal,
 )
+from anonymizer.engine.graph_sdk.observations import _Span
 from anonymizer.graph._values import DatumId
 
 ResourceOwner: TypeAlias = Literal["caller", "sdk"]
@@ -132,6 +133,18 @@ def _cleanup_association(
 
 
 async def close_resource(lease: ResourceLease) -> CleanupFact:
+    with _Span("cleanup") as span:
+        result = await _close_resource(lease)
+        if result.disposition == "close_failed":
+            span.outcome = "failure"
+            span.reasons = frozenset({"cleanup_failed"})
+        elif result.disposition == "close_unknown":
+            span.outcome = "unknown"
+            span.reasons = frozenset({"cleanup_unknown"})
+        return result
+
+
+async def _close_resource(lease: ResourceLease) -> CleanupFact:
     """Close an SDK-owned lease once its owner has proved cleanup eligibility."""
     require_instance(lease, ResourceLease)
     if lease.owner == "caller":
@@ -150,3 +163,12 @@ async def close_resource(lease: ResourceLease) -> CleanupFact:
     except Exception:
         return CleanupFact(resource=lease.resource, owner=lease.owner, disposition="close_failed")
     return CleanupFact(resource=lease.resource, owner=lease.owner, disposition="closed")
+
+
+def _retain_resource(lease: ResourceLease) -> CleanupFact:
+    """Record an entered cleanup boundary whose owner cannot yet close it."""
+    with _Span("cleanup") as span:
+        if lease.owner == "sdk":
+            span.outcome = "unknown"
+            span.reasons = frozenset({"cleanup_unknown"})
+        return CleanupFact(resource=lease.resource, owner=lease.owner, disposition="left_open")

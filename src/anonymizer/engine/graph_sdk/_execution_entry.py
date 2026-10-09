@@ -26,6 +26,16 @@ from anonymizer.engine.graph_sdk.blocking import _reject_worker_entry
 from anonymizer.engine.graph_sdk.capabilities import (
     ImplementationCapability,
 )
+from anonymizer.engine.graph_sdk.observations import (
+    _CURRENT,
+    _PRODUCER,
+    ObservationSession,
+    _exception_terminal,
+    _requirements,
+    _Span,
+    execution_observation_requirements,
+    reserve_observation_scope,
+)
 from anonymizer.engine.graph_sdk.preparation import recheck_capabilities
 from anonymizer.graph._values import (
     InvocationId,
@@ -74,25 +84,58 @@ async def start_execution(
     admitted: AdmittedExecutionPlan,
     capabilities: tuple[ImplementationCapability, ...],
     services: ExecutionServices,
+    observations: ObservationSession | None = None,
 ) -> RunningExecution:
     """Recheck a plan before allocating one graph invocation and starting work."""
-    _reject_worker_entry()
-    require_instance(admitted, AdmittedExecutionPlan)
-    require_instance(services, ExecutionServices)
-    prepared = admitted.context.prepared
-    recheck_capabilities(prepared=prepared, capabilities=capabilities)
-    if any(
-        item not in capabilities
-        for policy in admitted.policies
-        for item in (x.capability for x in policy.implementations)
-    ):
-        reject(EffectCode.CHANGED_FAILOVER_POLICY)
-    _validate_services(admitted, services)
-    _validate_absences(admitted, services)
-    invocation = InvocationId.new(plan=prepared.plan)
-    control = _ExecutionControl()
-    task = asyncio.create_task(_run_execution(admitted, services, invocation, control))
-    return RunningExecution(invocation, control, task)
+    if observations is not None:
+        try:
+            requirements = (
+                execution_observation_requirements(execution=admitted, limits=observations.limits)
+                if isinstance(admitted, AdmittedExecutionPlan)
+                else _requirements(1, 1, observations.limits)
+            )
+            reserve_observation_scope(session=observations, requirements=requirements)
+            if isinstance(admitted, AdmittedExecutionPlan):
+                observations._bind(
+                    _PRODUCER,
+                    data=admitted.context.prepared.data,
+                    workflow=admitted.context.prepared.workflow,
+                    prepared=admitted.context.prepared,
+                    context=admitted.context,
+                    execution_plan=admitted,
+                )
+                if "execution" in observations._owner:
+                    observations._disable("producer_contract")
+        except BaseException:
+            observations._disable("producer_contract")
+    span = _Span("execution", session=observations)
+    token = _CURRENT.set(
+        (span.session, span.ordinal) if span.session is not None and span.ordinal is not None else None
+    )
+    try:
+        _reject_worker_entry()
+        require_instance(admitted, AdmittedExecutionPlan)
+        require_instance(services, ExecutionServices)
+        prepared = admitted.context.prepared
+        recheck_capabilities(prepared=prepared, capabilities=capabilities)
+        if any(
+            item not in capabilities
+            for policy in admitted.policies
+            for item in (x.capability for x in policy.implementations)
+        ):
+            reject(EffectCode.CHANGED_FAILOVER_POLICY)
+        _validate_services(admitted, services)
+        _validate_absences(admitted, services)
+        invocation = InvocationId.new(plan=prepared.plan)
+        control = _ExecutionControl()
+        task = asyncio.create_task(_run_execution(admitted, services, invocation, control, span))
+        return RunningExecution(invocation, control, task)
+    except BaseException as error:
+        span.outcome, span.reasons = _exception_terminal(error)
+        span.finish()
+        raise
+    finally:
+        _CURRENT.reset(token)
 
 
 def execute_sync(
@@ -100,6 +143,7 @@ def execute_sync(
     admitted: AdmittedExecutionPlan,
     capabilities: tuple[ImplementationCapability, ...],
     services: ExecutionServices,
+    observations: ObservationSession | None = None,
 ) -> ExecutionResult:
     """Execute outside an active event loop using the authoritative async core."""
     _reject_worker_entry()
@@ -111,13 +155,32 @@ def execute_sync(
         raise NestedEventLoopError("execute_sync cannot run inside an active event loop")
 
     async def run() -> ExecutionResult:
-        running = await start_execution(admitted=admitted, capabilities=capabilities, services=services)
+        running = await start_execution(
+            admitted=admitted, capabilities=capabilities, services=services, observations=observations
+        )
         return await running.wait()
 
     return asyncio.run(run())
 
 
 async def _run_execution(
-    admitted: AdmittedExecutionPlan, services: ExecutionServices, invocation: InvocationId, control: _ExecutionControl
+    admitted: AdmittedExecutionPlan,
+    services: ExecutionServices,
+    invocation: InvocationId,
+    control: _ExecutionControl,
+    span: _Span,
 ) -> ExecutionResult:
-    return await _InvocationRuntime(admitted, services, invocation, control).run()
+    with span:
+        result = await _InvocationRuntime(admitted, services, invocation, control).run()
+        if span.session is not None:
+            span.session._bind(_PRODUCER, result=True, execution=result)
+        categories = {fact.category for fact in result.record.terminals}
+        span.outcome = next(
+            (
+                category
+                for category in ("inconsistent", "lost", "cancelled", "failure", "blocked")
+                if category in categories
+            ),
+            "success",
+        )
+        return result

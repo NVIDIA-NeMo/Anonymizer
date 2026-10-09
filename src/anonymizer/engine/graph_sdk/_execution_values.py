@@ -32,6 +32,7 @@ from anonymizer.engine.graph_sdk.context import (
     BindingArtifactRef,
     ContextResource,
 )
+from anonymizer.engine.graph_sdk.observations import NodeMeasurement
 from anonymizer.engine.graph_sdk.preparation import StateRevisionView
 from anonymizer.engine.graph_sdk.records import (
     AbsenceRef,
@@ -611,6 +612,7 @@ class ImplementationHandle(PrivateValue):
     local: LocalCallable | None
     transport: RequestTransport | None
     resource: ResourceLease | None
+    measurement: NodeMeasurement | None = None
 
 
 @dataclass(frozen=True, slots=True, kw_only=True, repr=False)

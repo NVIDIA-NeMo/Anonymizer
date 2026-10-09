@@ -24,6 +24,7 @@ from anonymizer.engine.graph_sdk.resources import (
     ResourceId,
     ResourceLease,
     _cleanup_association,
+    _retain_resource,
     close_resource,
 )
 
@@ -104,7 +105,7 @@ async def _cleanup_execution(
             lease.resource in local_resources
             or (lease.resource in remote_resources and lease.safe_detachment == "forbidden")
         ):
-            cleanup_values.append(CleanupFact(resource=lease.resource, owner=lease.owner, disposition="left_open"))
+            cleanup_values.append(_retain_resource(lease))
         else:
             cleanup_values.append(await close_resource(lease))
     cleanup = tuple(cleanup_values)

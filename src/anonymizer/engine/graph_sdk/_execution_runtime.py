@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import suppress
+from typing import cast
 
 from anonymizer.engine.graph_sdk._effect_values import (
     EffectCode,
@@ -68,6 +69,13 @@ from anonymizer.engine.graph_sdk._execution_values import (
     RuntimeOutcome,
 )
 from anonymizer.engine.graph_sdk._request_driver import _RequestAuthority
+from anonymizer.engine.graph_sdk.observations import (
+    _CURRENT,
+    ObservationReason,
+    WorkMeasurement,
+    _Span,
+    _valid_measurement,
+)
 from anonymizer.engine.graph_sdk.requests import (
     AssociationResult,
     InvocationRequestScope,
@@ -117,6 +125,8 @@ class _InvocationRuntime:
         invocation: InvocationId,
         control: _ExecutionControl,
     ) -> None:
+        self._activation_spans: dict[ActivationKey, _Span] = {}
+        self._operation_spans: dict[ActivationKey, _Span] = {}
         self.admitted = admitted
         self.services = services
         self.invocation = invocation
@@ -212,8 +222,39 @@ class _InvocationRuntime:
             )
 
     async def run(self) -> ExecutionResult:
+        try:
+            return await self._run()
+        finally:
+            self._close_observed_activations()
+            for span in (*self._operation_spans.values(), *self._activation_spans.values()):
+                if not span._done:
+                    span.outcome = "unknown"
+                    span.reasons = frozenset({"internal_failure"})
+                    span.finish()
+
+    def _start_observed_activation(self, activation: ActivationKey, *, operation: bool) -> None:
+        parent = self._activation_spans.get(activation.parent)
+        span = _Span("activation", parent=None if parent is None else parent.ordinal)
+        self._activation_spans[activation] = span
+        if operation:
+            self._operation_spans[activation] = _Span("operation", session=span.session, parent=span.ordinal)
+
+    def _close_observed_activations(self) -> None:
+        for state in self.states:
+            for entry in state.entries:
+                span = self._activation_spans.get(entry.activation)
+                if (
+                    span is not None
+                    and not span._done
+                    and entry.status in {"success", "failure", "cancelled", "lost", "blocked", "inconsistent"}
+                ):
+                    span.outcome = entry.status
+                    span.finish()
+
+    async def _run(self) -> ExecutionResult:
         while True:
             scheduled = self._schedule_ready()
+            self._close_observed_activations()
             if all((state.complete for state in self.states)) and (not self.jobs):
                 break
             if not self.jobs:
@@ -309,6 +350,7 @@ class _InvocationRuntime:
                     event=CloseUnstarted(activation=entry.activation, category="blocked"),
                 )
                 return True
+            self._start_observed_activation(entry.activation, operation=False)
             self.states[state_index] = advance_activation(
                 state=self.states[state_index], event=Start(activation=entry.activation)
             )
@@ -354,6 +396,7 @@ class _InvocationRuntime:
                 state=self.states[state_index], event=CloseUnstarted(activation=entry.activation, category="blocked")
             )
             return
+        self._start_observed_activation(entry.activation, operation=True)
         self.states[state_index] = advance_activation(
             state=self.states[state_index], event=Start(activation=entry.activation)
         )
@@ -371,7 +414,14 @@ class _InvocationRuntime:
             association=association,
         )
         self._record_input_ports(job)
-        self._launch_job(job, external_jobs, remote_capacity_stalled)
+        span = self._operation_spans[entry.activation]
+        token = _CURRENT.set(
+            (span.session, span.ordinal) if span.session is not None and span.ordinal is not None else None
+        )
+        try:
+            self._launch_job(job, external_jobs, remote_capacity_stalled)
+        finally:
+            _CURRENT.reset(token)
 
     def _record_input_ports(self, job: _ExecutionJob) -> None:
         self.facts.input_parents.extend(
@@ -494,6 +544,55 @@ class _InvocationRuntime:
             accepted = mapping.condition == "result"
             mapping, results, checkpoint, staged_result = self._stage_outputs(job, mapping, results, assessments)
             mapping = self._advance_completed(job, mapping, results, checkpoint, staged_result)
+            span = self._operation_spans[job.activation]
+            span.outcome = mapping.category
+            if mapping.failure is not None:
+                span.reasons = frozenset(
+                    {"malformed_response" if mapping.failure == "malformed_response" else "provider_failure"}
+                )
+            elif mapping.condition in {"deadline_exhausted", "budget_exhausted", "request_limit_exhausted"}:
+                span.reasons = frozenset(
+                    {
+                        cast(
+                            ObservationReason,
+                            {
+                                "deadline_exhausted": "deadline",
+                                "budget_exhausted": "budget_stopped",
+                                "request_limit_exhausted": "request_limit_stopped",
+                            }[mapping.condition],
+                        )
+                    }
+                )
+            handle = self.handles[
+                job.implementation.implementation,
+                job.implementation.capability.operation,
+                job.implementation.configuration,
+            ]
+            handle = self.control.measured_handles.pop(job.association, handle)
+            if span.session is not None and span.session._failure is None and handle.measurement is not None:
+                try:
+                    measurement = handle.measurement.terminal_measurement()
+                    route = (
+                        "context"
+                        if any(item.node == job.node for item in self.admitted.context.adaptive_retrievals)
+                        else job.policy.kind
+                    )
+                    if type(measurement) is WorkMeasurement and any(
+                        type(getattr(measurement, name)) is int
+                        and getattr(measurement, name) > span.session.limits.max_count
+                        for name in ("input_count", "output_count", "artifact_count", "artifact_bytes", "request_count")
+                    ):
+                        span.session._disable("capacity_contract")
+                    elif (
+                        not _valid_measurement(measurement, span.session.limits.max_count) or measurement.route != route
+                    ):
+                        span.session._disable("producer_contract")
+                    else:
+                        span.measurement = measurement
+                except BaseException:
+                    span.reasons = span.reasons | frozenset[ObservationReason]({"internal_failure"})
+            span.finish()
+            self._close_observed_activations()
             if mapping.category == "blocked" and mapping.condition == "artifact_limit_exhausted":
                 self.blocked_reasons[job.activation] = mapping.condition
             if mapping.condition == "artifact_limit_exhausted" or accepted and mapping.condition != "result":

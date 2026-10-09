@@ -35,6 +35,14 @@ from anonymizer.engine.graph_sdk.context import (
     _create_binding_result,
 )
 from anonymizer.engine.graph_sdk.data import ValidatedDataGraph
+from anonymizer.engine.graph_sdk.observations import (
+    _PRODUCER,
+    ObservationSession,
+    _exception_terminal,
+    _Span,
+    binding_observation_requirements,
+    reserve_observation_scope,
+)
 from anonymizer.engine.graph_sdk.requests import (
     AcceptFailure,
     AcceptResult,
@@ -64,6 +72,7 @@ from anonymizer.engine.graph_sdk.resources import (
     CleanupFact,
     ResourceLease,
     _cleanup_association,
+    _retain_resource,
     close_resource,
 )
 from anonymizer.graph.workflow import (
@@ -88,6 +97,7 @@ class _BindingWork:
     capabilities: tuple[ContextSourceCapability, ...]
     resources: tuple[ContextResource, ...]
     limits: BindingLimits
+    observations: _Span | None = None
     cancelled: bool = False
 
 
@@ -116,27 +126,65 @@ async def start_initial_binding(
     capabilities: tuple[ContextSourceCapability, ...],
     resources: tuple[ContextResource, ...],
     limits: BindingLimits,
+    observations: ObservationSession | None = None,
 ) -> RunningBinding:
     """Validate initial context and return its live asynchronous controller."""
-    _reject_worker_entry()
-    _validate_binding(data, workflow, declarations, capabilities, resources, limits)
-    binding = BindingId.new()
-    identities = tuple(BindingDeclarationId.new(binding=binding, ordinal=index) for index in range(len(declarations)))
-    return RunningBinding(
-        _BindingWork(
-            binding=binding,
-            data=data,
-            workflow=workflow,
-            declarations=declarations,
-            identities=identities,
-            capabilities=capabilities,
-            resources=resources,
-            limits=limits,
+    if observations is not None:
+        try:
+            reserve_observation_scope(
+                session=observations,
+                requirements=binding_observation_requirements(
+                    data=data,
+                    workflow=workflow,
+                    declarations=declarations,
+                    capabilities=capabilities,
+                    binding_limits=limits,
+                    limits=observations.limits,
+                ),
+            )
+            observations._bind(_PRODUCER, data=data, workflow=workflow)
+            if "binding" in observations._owner:
+                observations._disable("producer_contract")
+        except BaseException:
+            observations._disable("producer_contract")
+    span = _Span("initial_binding", session=observations)
+    try:
+        _reject_worker_entry()
+        _validate_binding(data, workflow, declarations, capabilities, resources, limits)
+        binding = BindingId.new()
+        identities = tuple(
+            BindingDeclarationId.new(binding=binding, ordinal=index) for index in range(len(declarations))
         )
-    )
+        return RunningBinding(
+            _BindingWork(
+                binding=binding,
+                data=data,
+                workflow=workflow,
+                declarations=declarations,
+                identities=identities,
+                capabilities=capabilities,
+                resources=resources,
+                limits=limits,
+                observations=span,
+            )
+        )
+    except BaseException as error:
+        span.outcome, span.reasons = _exception_terminal(error)
+        span.finish()
+        raise
 
 
 async def _run_binding(work: _BindingWork) -> BindingResult:
+    span = work.observations or _Span("initial_binding")
+    with span:
+        result = await _run_binding_body(work)
+        span.outcome = "failure" if result.receipt.terminal == "failed" else result.receipt.terminal
+        if span.session is not None:
+            span.session._bind(_PRODUCER, result=True, binding=result)
+        return result
+
+
+async def _run_binding_body(work: _BindingWork) -> BindingResult:
     scope = BindingRequestScope(binding=work.binding)
     state = initialize_requests(
         scope=scope,
@@ -578,9 +626,7 @@ async def _cleanup(
         if source in uncertain_sources and lease.safe_detachment == "forbidden"
     }
     return [
-        CleanupFact(resource=lease.resource, owner=lease.owner, disposition="left_open")
-        if lease.resource in unsafe
-        else await close_resource(lease)
+        _retain_resource(lease) if lease.resource in unsafe else await close_resource(lease)
         for lease in {item.resource: item for item in acquired.values()}.values()
     ]
 

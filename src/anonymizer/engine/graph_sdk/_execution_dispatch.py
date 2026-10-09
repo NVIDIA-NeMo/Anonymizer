@@ -51,6 +51,7 @@ from anonymizer.engine.graph_sdk.context import (
     SourceLost,
     SourceResponse,
 )
+from anonymizer.engine.graph_sdk.observations import _CURRENT, _Span
 from anonymizer.engine.graph_sdk.requests import (
     AcceptFailure,
     AcceptResult,
@@ -179,43 +180,47 @@ async def _run_decision(
     pending = control.pending
     responses = control.responses
     closed = control.closed
-    pending[wait.wait] = wait
-    control.scheduler_changed.set()
-    while True:
-        if control.cancelled:
-            mapping = _mapping(policy, "cancel_after_start", None, None)
-            break
-        response = responses.pop(wait.wait, None)
-        if response is not None:
-            selected = next(item for item in declaration.outcomes if item.decision == response.decision)
-            outcome = next(item for item in handle.operation.outcomes if item.name == selected.outcome)
-            category = outcome.category
-            mapping = RuntimeOutcome(
-                condition="result",
-                reported_outcome=selected.outcome,
-                failure=None,
-                outcome=selected.outcome,
-                category=category,
-            )
-            available = {item.port: item for item in inputs[0].inputs}
-            dependencies = {item.output: item for item in handle.operation.output_dependencies}
-            output_types = {item.name: item.artifact_type for item in handle.operation.outputs}
-            outputs = tuple(
-                PortArtifact(
-                    port=port,
-                    artifact_type=output_types[port],
-                    artifact=None,
-                    value=available[_identity_input(dependencies[port])].value,
+    with _Span("decision_wait") as span:
+        pending[wait.wait] = wait
+        control.scheduler_changed.set()
+        while True:
+            if control.cancelled:
+                mapping = _mapping(policy, "cancel_after_start", None, None)
+                break
+            response = responses.pop(wait.wait, None)
+            if response is not None:
+                selected = next(item for item in declaration.outcomes if item.decision == response.decision)
+                outcome = next(item for item in handle.operation.outcomes if item.name == selected.outcome)
+                category = outcome.category
+                mapping = RuntimeOutcome(
+                    condition="result",
+                    reported_outcome=selected.outcome,
+                    failure=None,
+                    outcome=selected.outcome,
+                    category=category,
                 )
-                for port in sorted(outcome.produced_ports)
-            )
-            break
-        if services.clock.now_ns() >= wait.deadline_ns:
-            mapping = _mapping(policy, "deadline_exhausted", None, None)
-            break
-        await asyncio.sleep(0)
-    del pending[wait.wait]
-    closed.add(wait.wait)
+                available = {item.port: item for item in inputs[0].inputs}
+                dependencies = {item.output: item for item in handle.operation.output_dependencies}
+                output_types = {item.name: item.artifact_type for item in handle.operation.outputs}
+                outputs = tuple(
+                    PortArtifact(
+                        port=port,
+                        artifact_type=output_types[port],
+                        artifact=None,
+                        value=available[_identity_input(dependencies[port])].value,
+                    )
+                    for port in sorted(outcome.produced_ports)
+                )
+                break
+            if services.clock.now_ns() >= wait.deadline_ns:
+                mapping = _mapping(policy, "deadline_exhausted", None, None)
+                break
+            await asyncio.sleep(0)
+        del pending[wait.wait]
+        closed.add(wait.wait)
+        span.outcome = mapping.category
+        if mapping.condition == "deadline_exhausted":
+            span.reasons = frozenset({"deadline"})
     if mapping.condition != "result":
         return mapping, (), ()
     return (
@@ -311,6 +316,9 @@ async def _run_external_batch(
             transport.cancel,
             blocking=transport._invocation(envelope) if isinstance(transport, BlockingTransport) else None,
         )
+        if _CURRENT.get() is not None and request in authority.state.dispatched:
+            for association in associations:
+                control.measured_handles[association] = handle
         if completion.cancelled:
             condition = (
                 "cancel_before_start"
@@ -443,6 +451,30 @@ async def _run_external_batch(
 
 
 async def _run_adaptive(
+    admitted: AdmittedExecutionPlan,
+    policy: OperationExecutionPolicy,
+    declaration: AdaptiveRetrievalDecl,
+    association: SemanticAssociation,
+    inputs: tuple[AssociationInput, ...],
+    authority: _RequestAuthority,
+    leases: dict[object, ResourceLease],
+    control: _ExecutionControl,
+    limits: ExecutionLimits,
+    request_resources: dict[PhysicalRequestId, ResourceId],
+) -> tuple[RuntimeOutcome, tuple[AssociationResult, ...], tuple[LocalAssessmentResult, ...]]:
+    with _Span("adaptive_retrieval") as span:
+        result = await _run_adaptive_body(
+            admitted, policy, declaration, association, inputs, authority, leases, control, limits, request_resources
+        )
+        span.outcome = result[0].category
+        if result[0].failure is not None:
+            span.reasons = frozenset(
+                {"malformed_response" if result[0].failure == "malformed_response" else "provider_failure"}
+            )
+        return result
+
+
+async def _run_adaptive_body(
     admitted: AdmittedExecutionPlan,
     policy: OperationExecutionPolicy,
     declaration: AdaptiveRetrievalDecl,
