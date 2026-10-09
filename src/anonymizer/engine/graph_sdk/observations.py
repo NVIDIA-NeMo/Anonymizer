@@ -704,13 +704,26 @@ def observed_execution_admission(
         return result
 
 
+def observed_qualify_retained(
+    *,
+    observations: ObservationSession,
+    admitted: AdmittedQualification,
+    result: ExecutionResult,
+    current: EvidenceRevisionView,
+) -> QualificationResult:
+    """Observe qualification of all retained assessments without executing callbacks."""
+    return observed_qualify(
+        observations=observations, admitted=admitted, result=result, current=current, submissions=None
+    )
+
+
 def observed_qualify(
     *,
     observations: ObservationSession,
     admitted: AdmittedQualification,
     result: ExecutionResult,
     current: EvidenceRevisionView,
-    submissions: tuple[AssessmentSubmission, ...],
+    submissions: tuple[AssessmentSubmission, ...] | None,
 ) -> QualificationResult:
     from anonymizer.engine.graph_sdk.qualification import qualify
 

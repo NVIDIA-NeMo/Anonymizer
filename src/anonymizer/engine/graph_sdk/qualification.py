@@ -138,20 +138,31 @@ class QualificationResult(PrivateValue):
             object.__setattr__(self, name, value)
 
 
+def qualify_retained(
+    *, admitted: AdmittedQualification, result: ExecutionResult, current: EvidenceRevisionView
+) -> QualificationResult:
+    """Qualify a saved result using all retained assessments and explicit current revisions."""
+    return qualify(admitted=admitted, result=result, current=current, submissions=None)
+
+
 def qualify(
     *,
     admitted: AdmittedQualification,
     result: ExecutionResult,
     current: EvidenceRevisionView,
-    submissions: tuple[AssessmentSubmission, ...],
+    submissions: tuple[AssessmentSubmission, ...] | None,
 ) -> QualificationResult:
     """Reconcile execution and release only targets supported by current evidence."""
     require_instance(admitted, AdmittedQualification)
     require_instance(result, ExecutionResult)
     require_instance(current, EvidenceRevisionView)
-    require_instance(submissions, tuple)
-    if len(submissions) > min(admitted.limits.max_submissions, admitted.limits.max_verified_evidence):
+    if submissions is not None:
+        require_instance(submissions, tuple)
+    count = len(result.assessments) if submissions is None else len(submissions)
+    if count > min(admitted.limits.max_submissions, admitted.limits.max_verified_evidence):
         reject(EffectCode.LIMIT_EXCEEDED)
+    if submissions is None:
+        submissions = tuple(AssessmentSubmission(fact=fact) for fact in result.assessments)
     if admitted.execution.context.prepared.configuration.purpose != "execution_only" and any(
         not isinstance(item, AssessmentSubmission) for item in submissions
     ):
