@@ -119,33 +119,40 @@ class _IngressBudget:
         return valid
 
     def artifact(self, value: object, depth: int) -> bool:
-        self.depth(depth)
-        if type(value) is TextArtifactValue:
-            return self.text(value.text, depth + 1, payload=True)
-        if type(value) is not TextCollectionValue:
-            return False
-        self.depth(depth + 1)
-        if type(value.items) is not tuple:
-            return False
-        self.debit("collection_items", len(value.items))
-        prior: tuple[int, int] | None = None
+        # Explicit work avoids Python recursion even for a caller-selected large
+        # finite depth bound. Malformed known values still contribute to limits.
+        pending = [(value, depth, False)]
         valid = True
-        for item in value.items:
-            self.depth(depth + 2)
-            if type(item) is not TextCollectionItem:
+        while pending:
+            current, current_depth, scalar_only = pending.pop()
+            self.depth(current_depth)
+            if type(current) is TextArtifactValue:
+                valid = self.text(current.text, current_depth + 1, payload=True) and valid
+                continue
+            if type(current) is not TextCollectionValue:
                 valid = False
                 continue
-            self.depth(depth + 3)  # key, version and scalar value
-            if type(item.key) is int and item.key >= 0 and type(item.version) is int and item.version > 0:
-                identity = (item.key, item.version)
-                valid = (prior is None or identity > prior) and valid
-                prior = identity
-            else:
+            valid = not scalar_only and valid
+            self.depth(current_depth + 1)
+            if type(current.items) is not tuple:
                 valid = False
-            self.debit("metadata_items", 2)
-            scalar = type(item.value) is TextArtifactValue
-            # Even a malformed known nested value must not hide aggregate bytes.
-            valid = self.artifact(item.value, depth + 3) and scalar and valid
+                continue
+            self.debit("collection_items", len(current.items))
+            prior: tuple[int, int] | None = None
+            for item in current.items:
+                self.depth(current_depth + 2)
+                if type(item) is not TextCollectionItem:
+                    valid = False
+                    continue
+                self.depth(current_depth + 3)
+                if type(item.key) is int and item.key >= 0 and type(item.version) is int and item.version > 0:
+                    identity = (item.key, item.version)
+                    valid = (prior is None or identity > prior) and valid
+                    prior = identity
+                else:
+                    valid = False
+                self.debit("metadata_items", 2)
+                pending.append((item.value, current_depth + 3, True))
         return valid
 
     def row(self, row: AssociationResult, depth: int) -> bool:

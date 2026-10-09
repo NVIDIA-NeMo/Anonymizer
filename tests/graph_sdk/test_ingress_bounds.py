@@ -287,3 +287,16 @@ def test_accepted_terminal_reason_type_matches_constructor(reason: str) -> None:
         reasons=frozenset({cast(ReasonCode, reason)}),
     )
     assert reason in fact.reasons
+
+
+def test_large_finite_depth_never_uses_python_recursion_for_foreign_values() -> None:
+    rows = _rows()
+    value: TextArtifactValue | TextCollectionValue = TextArtifactValue(text="x")
+    for index in range(1100):
+        item = TextCollectionItem(key=index, version=1, value=TextArtifactValue(text="x"))
+        object.__setattr__(item, "value", value)
+        value = TextCollectionValue(items=(item,))
+    changed = (replace(rows[0], outputs=(replace(rows[0].outputs[0], value=value),)), rows[1])
+    expected = frozenset(row.association for row in rows)
+    assert inspect_associations(changed, expected, IngressLimits(max_depth=10_000)) == frozenset({rows[0].association})
+    assert inspect_associations(changed, expected, IngressLimits()) == expected
