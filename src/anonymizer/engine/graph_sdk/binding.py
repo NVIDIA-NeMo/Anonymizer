@@ -342,7 +342,7 @@ async def _bind_declaration(
             else completion.value
         )
         if completion.raised:
-            state = advance_requests(state=state, event=MarkLost(request=request))
+            state = authority.apply(MarkLost(request=request))
             return state, _source_fact(identity, declaration, "lost"), (), 0, 0
         if type(result) is SourceResponse:
             valid_settlement = completion.settlement_valid
@@ -350,9 +350,7 @@ async def _bind_declaration(
                 result, association, work.limits.ingress
             ) and declaration.accepts_response_items(result, association)
             if not valid_settlement or not valid_items:
-                state = advance_requests(
-                    state=state, event=AcceptFailure(request=request, failure="malformed_response")
-                )
+                state = authority.apply(AcceptFailure(request=request, failure="malformed_response"))
                 purpose = "correction"
                 if _can_retry(capability, declaration, state, association, "malformed_response"):
                     continue
@@ -364,9 +362,8 @@ async def _bind_declaration(
                 or total_items + len(result.items) > work.limits.max_items
                 or total_bytes + item_bytes > work.limits.max_bytes
             )
-            accepted = advance_requests(
-                state=state,
-                event=AcceptResult(
+            accepted = authority.apply(
+                AcceptResult(
                     request=request,
                     results=(
                         AssociationResult(
@@ -405,7 +402,7 @@ async def _bind_declaration(
                 )
             )
             failure = inspect_failure(result.failure) if valid_owner and valid_omission else "malformed_response"
-            state = advance_requests(state=state, event=AcceptFailure(request=request, failure=failure))
+            state = authority.apply(AcceptFailure(request=request, failure=failure))
             if failure != "malformed_response" and result.disposition == "omitted_optional":
                 return state, _source_fact(identity, declaration, "omitted_optional"), (), 0, 0
             purpose = "correction" if failure == "malformed_response" else "retry"
@@ -413,11 +410,11 @@ async def _bind_declaration(
                 continue
             return state, _source_fact(identity, declaration, _failed_terminal(declaration)), (), 0, 0
         if type(result) is SourceLost and inspect_source_identity(result.source, declaration.source):
-            state = advance_requests(state=state, event=MarkLost(request=request))
+            state = authority.apply(MarkLost(request=request))
             return state, _source_fact(identity, declaration, "lost"), (), 0, 0
         if type(result) is SourceLost and result.settlement is None:
-            state = advance_requests(state=state, event=RejectSettlement(request=request))
-        state = advance_requests(state=state, event=AcceptFailure(request=request, failure="malformed_response"))
+            state = authority.apply(RejectSettlement(request=request))
+        state = authority.apply(AcceptFailure(request=request, failure="malformed_response"))
         purpose = "correction"
         if not _can_retry(capability, declaration, state, association, "malformed_response"):
             return state, _source_fact(identity, declaration, _failed_terminal(declaration)), (), 0, 0

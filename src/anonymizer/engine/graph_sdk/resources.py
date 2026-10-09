@@ -135,13 +135,17 @@ def _cleanup_association(
 async def close_resource(lease: ResourceLease) -> CleanupFact:
     with _Span("cleanup") as span:
         result = await _close_resource(lease)
-        if result.disposition == "close_failed":
-            span.outcome = "failure"
-            span.reasons = frozenset({"cleanup_failed"})
-        elif result.disposition == "close_unknown":
-            span.outcome = "unknown"
-            span.reasons = frozenset({"cleanup_unknown"})
+        _observe_cleanup(span, result)
         return result
+
+
+def _observe_cleanup(span: _Span, result: CleanupFact) -> None:
+    if result.disposition == "close_failed":
+        span.outcome = "failure"
+        span.reasons = frozenset({"cleanup_failed"})
+    elif result.disposition == "close_unknown" or (result.owner == "sdk" and result.disposition == "left_open"):
+        span.outcome = "unknown"
+        span.reasons = frozenset({"cleanup_unknown"})
 
 
 async def _close_resource(lease: ResourceLease) -> CleanupFact:
@@ -168,7 +172,6 @@ async def _close_resource(lease: ResourceLease) -> CleanupFact:
 def _retain_resource(lease: ResourceLease) -> CleanupFact:
     """Record an entered cleanup boundary whose owner cannot yet close it."""
     with _Span("cleanup") as span:
-        if lease.owner == "sdk":
-            span.outcome = "unknown"
-            span.reasons = frozenset({"cleanup_unknown"})
-        return CleanupFact(resource=lease.resource, owner=lease.owner, disposition="left_open")
+        result = CleanupFact(resource=lease.resource, owner=lease.owner, disposition="left_open")
+        _observe_cleanup(span, result)
+        return result

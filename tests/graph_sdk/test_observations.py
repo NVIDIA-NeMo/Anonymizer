@@ -717,3 +717,82 @@ def test_binding_invalid_limits_returns_original_rejection_and_complete_pair(mon
     receipt = observer.close()
     assert isinstance(receipt, ObservationReceipt)
     assert len(receipt.pairs) == 1 and receipt.pairs[0].terminal.reasons == frozenset({"invalid_input"})
+
+
+@pytest.mark.parametrize("malformed_join", [False, True])
+def test_request_pairs_use_consumer_ingress_terminal(monkeypatch, malformed_join: bool) -> None:
+    import asyncio
+
+    from anonymizer.engine.graph_sdk.executor import start_execution
+    from tests.graph_sdk import test_adaptive_executor as fixture
+
+    observer = session(bounds=limits(max_count=1000, max_duration_ns=1000), pairs=1)
+
+    class Provider(fixture._Provider):
+        async def retrieve(self, **kwargs):
+            if not malformed_join:
+                return object()
+            response = await super().retrieve(**kwargs)
+            return replace(response, source=replace(response.source, revision=response.source.revision + 1))
+
+    async def start(**kwargs):
+        return await start_execution(**kwargs, observations=observer)
+
+    monkeypatch.setattr(fixture, "start_execution", start)
+
+    async def run():
+        running, _ = await fixture._adaptive_running(Provider())
+        return await running.wait()
+
+    result = asyncio.run(run())
+    receipt = observer.close()
+    assert isinstance(receipt, ObservationReceipt)
+    request_pairs = [
+        pair for pair in receipt.pairs if pair.start.boundary in {"physical_request", "request_reconciliation"}
+    ]
+    assert len(request_pairs) == 2 * len(result.requests.terminals)
+    for terminal in result.requests.terminals:
+        assert all(pair.terminal.outcome == terminal.category for pair in request_pairs)
+    assert all(pair.terminal.outcome == ("failure" if malformed_join else "lost") for pair in request_pairs)
+
+
+def test_cleanup_of_sdk_resource_with_active_worker_reports_unknown() -> None:
+    import asyncio
+    from threading import Event
+
+    from anonymizer.engine.graph_sdk.blocking import BlockingPool, BlockingTransport
+    from anonymizer.engine.graph_sdk.requests import TransportFailure
+    from anonymizer.engine.graph_sdk.resources import ResourceLease, close_resource
+    from tests.graph_sdk.test_blocking import AFFINITY, Control, launch, reserved, until
+
+    async def run():
+        observer = session(bounds=limits(max_count=1000, max_duration_ns=1000), pairs=10)
+        pool = BlockingPool(max_workers=1)
+        entered, release = Event(), Event()
+
+        def callback(request):
+            entered.set()
+            assert release.wait(5)
+            return TransportFailure(failure="permanent", settlement=None)
+
+        adapter = BlockingTransport(callback=callback, pool=pool, affinity=AFFINITY)
+        authority, request = reserved()
+        # The worker fixture stops at physical completion; observe only cleanup here.
+        task = launch(adapter, authority, request, Control())
+        try:
+            await until(entered.is_set)
+            lease = ResourceLease.create(owner="sdk", safe_detachment="independent_after_dispatch", handle=adapter)
+            with _Span("execution", session=observer):
+                fact = await close_resource(lease)
+            assert fact.owner == "sdk" and fact.disposition == "left_open"
+            receipt = observer.close()
+            assert isinstance(receipt, ObservationReceipt)
+            cleanup = next(pair for pair in receipt.pairs if pair.start.boundary == "cleanup")
+            assert cleanup.terminal.outcome == "unknown"
+            assert cleanup.terminal.reasons == frozenset({"cleanup_unknown"})
+        finally:
+            release.set()
+            await task
+            await pool.close()
+
+    asyncio.run(run())
