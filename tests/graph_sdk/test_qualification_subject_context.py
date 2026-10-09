@@ -166,12 +166,14 @@ async def _execute_separate_subject_context(
     provenance_edge_limit: int | None = None,
     additional_coverage: frozenset[CoverageAtom] | None = None,
     versioned_context_dependencies: frozenset[str] | None = None,
+    versioned_context_ports: tuple[str, ...] = ("a", "b"),
 ) -> tuple[AdmittedExecutionPlan, ExecutionResult]:
     base, node, artifact = _workflow(with_input=True)
     raw = base.workflow
     coverage = coverage if coverage is not None else frozenset({CoverageAtom(kind="field", name="text")})
     read = StateEffect(kind="read", name="read")
-    context_ports = ("context",) if versioned_context_dependencies is None else ("a", "b")
+    assert versioned_context_ports in {("a",), ("a", "b")}
+    context_ports = ("context",) if versioned_context_dependencies is None else versioned_context_ports
     consumed = frozenset(context_ports) if versioned_context_dependencies is None else versioned_context_dependencies
     assert consumed <= frozenset(context_ports)
     assert versioned_context_dependencies is None or additional_coverage is None
