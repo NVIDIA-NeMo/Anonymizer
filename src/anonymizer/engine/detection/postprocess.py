@@ -72,7 +72,7 @@ def parse_raw_entities(raw_response: str, text: str) -> list[EntitySpan]:
     """Parse hosted GLiNER JSON response into canonical standoff entities.
 
     Threshold filtering is handled server-side by the GLiNER API; this
-    function only validates structural integrity of the returned spans.
+    function validates structural and source-offset integrity of the returned spans.
     """
     payload = _safe_json_loads(raw_response)
     raw_entities = payload.get("entities", [])
@@ -92,8 +92,10 @@ def parse_raw_entities(raw_response: str, text: str) -> list[EntitySpan]:
             continue
         if start is None or end is None or start < 0 or end <= start or end > len(text):
             continue
-        # Valid source offsets are authoritative; detector text may be normalized.
-        value = text[start:end]
+        source_value = text[start:end]
+        if detector_text.casefold() != source_value.strip().casefold():
+            raise ValueError(f"Detector entity text does not match the source span at offsets [{start}, {end})")
+        value = source_value
         entity_id = _build_entity_id(label=label, start=start, end=end)
         parsed.append(
             EntitySpan(
