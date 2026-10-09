@@ -8,6 +8,7 @@ from dataclasses import dataclass, replace
 from typing import Literal, get_args
 
 from anonymizer.engine.graph_sdk._effect_values import EffectCode, PrivateValue, reject, require_instance
+from anonymizer.engine.graph_sdk._execution_topology import _lexical_path
 from anonymizer.engine.graph_sdk._qualification_provenance import _ProvenanceValidator
 from anonymizer.engine.graph_sdk.evidence import (
     AdmittedQualification,
@@ -567,14 +568,10 @@ class _Qualification:
                     self.withholding[target].add(code)
 
     def _path(self, activation: ActivationKey) -> tuple[NodeId, ...]:
-        path = []
-        parent = activation.parent
-        while parent is not None:
-            entry = self.entries[parent]
-            if isinstance(self.nodes[entry.template], SubgraphNode):
-                path.append(entry.template)
-            parent = parent.parent
-        return tuple(reversed(path))
+        path = _lexical_path(activation, self.entries, self.nodes)
+        if path is None:
+            reject(EffectCode.MISSING)
+        return path
 
     def select_candidate(self, target: DatumId) -> None:
         outputs = tuple(

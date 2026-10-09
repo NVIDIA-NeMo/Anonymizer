@@ -15,12 +15,14 @@ from anonymizer.engine.graph_sdk._effect_values import (
     require_count,
     require_instance,
 )
+from anonymizer.engine.graph_sdk._execution_topology import _lexical_path
 from anonymizer.engine.graph_sdk._workflow import reachable_workflows
 from anonymizer.engine.graph_sdk.capabilities import FrozenConfig, config_size
 from anonymizer.engine.graph_sdk.executor import (
     AdmittedExecutionPlan,
     AssessmentEnvironment,
     AssessmentFinding,
+    BoundInputKey,
     EvidenceProductionDecl,
     ExecutionAssessmentFact,
     ExecutionPortFact,
@@ -36,6 +38,7 @@ from anonymizer.engine.graph_sdk.records import (
     DecisionRef,
     EvidenceRef,
     ExpectedMembership,
+    TerminalFact,
 )
 from anonymizer.engine.graph_sdk.requests import TextCollectionValue
 from anonymizer.graph._values import ActivationKey, ArtifactRef, ContractViolation, DatumId
@@ -287,6 +290,7 @@ class _EvidenceFacts:
             > min(limits.max_port_facts, execution.assessment_limits.max_port_facts)
             or len(result.provenance) > limits.max_port_facts
             or len(result.record.memberships) > prepared.limits.max_total_activation_slots + 1
+            or len(result.record.terminals) > prepared.limits.max_total_activation_slots
             or len(result.assessments) > execution.assessment_limits.max_assessment_facts
             or sum(len(item.parents) for item in result.provenance)
             > min(limits.max_provenance_edges, execution.assessment_limits.max_provenance_edges)
@@ -302,9 +306,16 @@ class _EvidenceFacts:
                 reject(EffectCode.LIMIT_EXCEEDED)
         for membership in record.memberships:
             membership._validate_fields()
+        for terminal in record.terminals:
+            require_instance(terminal, TerminalFact)
+            terminal._validate_fields()
         for fact in result.provenance:
             if isinstance(fact.key, MapItemKey):
                 fact.key._validate_fields()
+            elif isinstance(fact.key, BoundInputKey):
+                fact.key.__post_init__()
+        if bound is not None:
+            bound._validate_inventory_fields()
         if (
             result._execution is not execution
             or record.plan != prepared.plan
@@ -313,6 +324,12 @@ class _EvidenceFacts:
         ):
             reject(EffectCode.FOREIGN_OWNER)
         if any(reference.invocation != record.invocation for reference, _ in result.artifacts):
+            reject(EffectCode.FOREIGN_OWNER)
+        if any(
+            terminal.activation.invocation != record.invocation
+            or (terminal.attempt is not None and terminal.attempt.activation != terminal.activation)
+            for terminal in record.terminals
+        ):
             reject(EffectCode.FOREIGN_OWNER)
         if bound is not None:
             if bound.receipt.data is not prepared.data or bound.receipt.workflow is not prepared.workflow:
@@ -325,8 +342,16 @@ class _EvidenceFacts:
         if frozenset(references) != record.artifacts:
             reject(EffectCode.CONTRADICTORY)
         ports: dict[tuple[ActivationKey, str], ExecutionPortFact] = {}
+        target_offsets = {item.target: item.occurrence_offset for item in prepared.target_occurrences}
         for fact in result.ports:
             if fact.activation.invocation != record.invocation or fact.target not in record.targets:
+                reject(EffectCode.FOREIGN_OWNER)
+            offset = target_offsets[fact.target]
+            width = len(prepared.reservation_recipe)
+            if (
+                0 <= fact.activation.occurrence < width * len(target_offsets)
+                and not offset <= fact.activation.occurrence < offset + width
+            ):
                 reject(EffectCode.FOREIGN_OWNER)
             key = (fact.activation, fact.port)
             if key in ports:
@@ -476,21 +501,7 @@ class _EvidenceFacts:
             current = current.parent
         if key.member not in ancestors:
             return None
-        path: list[NodeId] = []
-        nodes = {
-            node.id: node
-            for body in reachable_workflows(self.admitted.execution.context.prepared.workflow)
-            for node in body.nodes
-        }
-        current = key.expander.parent
-        while current is not None:
-            entry = entries.get(current)
-            if entry is None:
-                return None
-            if isinstance(nodes.get(entry.template), SubgraphNode):
-                path.append(entry.template)
-            current = current.parent
-        if tuple(reversed(path)) != endpoint.path:
+        if _lexical_path(key.expander, entries, self.admitted.execution.nodes) != endpoint.path:
             return None
         provenance = [item for item in self.result.provenance if item.key == key]
         if len(provenance) != 1 or provenance[0].artifact != input_fact.artifact or provenance[0].decision:

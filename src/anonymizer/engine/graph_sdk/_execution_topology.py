@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 
 from anonymizer.engine.graph_sdk._effect_values import (
     EffectCode,
@@ -23,11 +23,13 @@ from anonymizer.graph._values import (
     DatumId,
 )
 from anonymizer.graph.activation import (
+    ActivationEntry,
     ActivationState,
 )
 from anonymizer.graph.workflow import (
     AdmittedWorkflow,
     ContextInputRef,
+    Node,
     NodeId,
     NodeInputRef,
     NodeOutputRef,
@@ -36,6 +38,29 @@ from anonymizer.graph.workflow import (
     WorkflowId,
     WorkflowInputRef,
 )
+
+
+def _lexical_path(
+    activation: ActivationKey,
+    entries: Mapping[ActivationKey, ActivationEntry],
+    nodes: Mapping[NodeId, Node],
+) -> tuple[NodeId, ...] | None:
+    """Resolve lexical containers without mistaking map/loop parents for them."""
+    path = []
+    child = entries.get(activation)
+    if child is None:
+        return None
+    parent = activation.parent
+    while parent is not None:
+        entry = entries.get(parent)
+        if entry is None:
+            return None
+        node = nodes.get(entry.template)
+        if isinstance(node, SubgraphNode) and child.template.workflow == node.body.workflow:
+            path.append(entry.template)
+        child = entry
+        parent = parent.parent
+    return tuple(reversed(path))
 
 
 def _loop_input_source(

@@ -161,6 +161,17 @@ class TerminalFact(_PrivateRepr):
     structural: bool = False
 
     def __post_init__(self) -> None:
+        self._validate_fields()
+        if self.attempt is not None and self.attempt.activation != self.activation:
+            raise ContractViolation(ValidationCode.FOREIGN_OWNER)
+        if (self.category == "success" and self.reasons) or (self.category != "success" and not self.reasons):
+            raise ContractViolation(ValidationCode.CONTRADICTORY)
+        if self.structural and self.attempt is not None:
+            raise ContractViolation(ValidationCode.CONTRADICTORY)
+        if not self.structural and self.attempt is None and self.category not in ("blocked", "inconsistent"):
+            raise ContractViolation(ValidationCode.CONTRADICTORY)
+
+    def _validate_fields(self) -> None:
         if not isinstance(self.activation, ActivationKey):
             raise ContractViolation(ValidationCode.INVALID_TYPE)
         if self.attempt is not None and not isinstance(self.attempt, TaskAttemptId):
@@ -173,14 +184,6 @@ class TerminalFact(_PrivateRepr):
             raise ContractViolation(ValidationCode.INVALID_TYPE)
         if self.category not in _TERMINAL_CATEGORIES or any(reason not in _REASON_CODES for reason in self.reasons):
             raise ContractViolation(ValidationCode.INVALID_VALUE)
-        if self.attempt is not None and self.attempt.activation != self.activation:
-            raise ContractViolation(ValidationCode.FOREIGN_OWNER)
-        if (self.category == "success" and self.reasons) or (self.category != "success" and not self.reasons):
-            raise ContractViolation(ValidationCode.CONTRADICTORY)
-        if self.structural and self.attempt is not None:
-            raise ContractViolation(ValidationCode.CONTRADICTORY)
-        if not self.structural and self.attempt is None and self.category not in ("blocked", "inconsistent"):
-            raise ContractViolation(ValidationCode.CONTRADICTORY)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True, repr=False)

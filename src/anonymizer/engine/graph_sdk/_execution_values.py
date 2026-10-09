@@ -362,6 +362,7 @@ class BoundInputKey(PrivateValue):
         require_instance(self.node, NodeId)
         require_text(self.port)
         require_instance(self.binding_artifact, BindingArtifactRef)
+        self.binding_artifact.__post_init__()
 
 
 @dataclass(frozen=True, slots=True, kw_only=True, repr=False)

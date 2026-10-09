@@ -11,7 +11,7 @@ import pytest
 
 from anonymizer.engine.graph_sdk._effect_values import EffectCode, EffectRejected
 from anonymizer.engine.graph_sdk.qualification import qualify
-from anonymizer.graph._values import ContractViolation, InvocationId, ValidationCode
+from anonymizer.graph._values import ContractViolation, InvocationId, TaskAttemptId, ValidationCode
 from tests.graph_sdk.test_evidence import _execute_assessment
 from tests.graph_sdk.test_qualification import _inputs
 from tests.graph_sdk.test_qualification_subject_context import _execute_separate_subject_context
@@ -36,10 +36,10 @@ def test_terminal_cannot_rebind_its_activation_to_another_invocation() -> None:
     (terminal,) = result.record.terminals
     foreign = replace(terminal.activation, invocation=InvocationId.new(plan=result.record.plan))
     object.__setattr__(terminal, "activation", foreign)
-    # Terminal-to-entry presence is checked before typed record reconstruction.
+    # Foreign invocation ownership precedes terminal-to-entry presence.
     with pytest.raises(EffectRejected) as rejected:
         qualify(admitted=admitted, result=result, current=current, submissions=submissions)
-    assert rejected.value.code is EffectCode.MISSING
+    assert rejected.value.code is EffectCode.FOREIGN_OWNER
 
 
 def test_duplicate_retained_membership_rows_preserve_observable_multiplicity() -> None:
@@ -86,3 +86,46 @@ def test_child_membership_cannot_cross_prepared_target_owners() -> None:
     with pytest.raises(EffectRejected) as rejected:
         qualify(admitted=admitted, result=result, current=current, submissions=submissions)
     assert rejected.value.code is EffectCode.FOREIGN_OWNER
+
+
+@pytest.mark.parametrize(
+    "fault", ["missing", "duplicate", "foreign-duplicate", "invalid-foreign", "scalar-foreign", "oversized-invalid"]
+)
+def test_terminal_inventory_precedence(fault: str) -> None:
+    execution, result = asyncio.run(_execute_separate_subject_context())
+    admitted, current, submissions = _inputs(execution, result)
+    baseline = qualify(admitted=admitted, result=result, current=current, submissions=submissions)
+    assert len(baseline.qualified) == 1
+    original = result.record.terminals
+    (terminal,) = original
+    changed = replace(terminal)
+    expected: EffectCode | ValidationCode
+    error_type: type[EffectRejected] | type[ContractViolation] = EffectRejected
+    if fault == "missing":
+        absent = replace(terminal.activation, occurrence=999)
+        changed = replace(terminal, activation=absent, attempt=TaskAttemptId.new(activation=absent))
+        rows = (changed,)
+        expected = EffectCode.MISSING
+    elif fault == "duplicate":
+        rows = (terminal, terminal)
+        expected = EffectCode.DUPLICATE
+    elif fault == "oversized-invalid":
+        rows = (None,) * (execution.context.prepared.limits.max_total_activation_slots + 1)
+        expected = EffectCode.LIMIT_EXCEEDED
+    else:
+        foreign = replace(terminal.activation, invocation=InvocationId.new(plan=result.record.plan))
+        object.__setattr__(changed, "activation", foreign)
+        rows = (changed, changed)
+        expected = EffectCode.FOREIGN_OWNER
+        if fault in ("invalid-foreign", "scalar-foreign"):
+            object.__setattr__(changed, "category", 1 if fault == "invalid-foreign" else "invalid")
+            error_type = ContractViolation
+            expected = ValidationCode.INVALID_TYPE if fault == "invalid-foreign" else ValidationCode.INVALID_VALUE
+    try:
+        object.__setattr__(result.record, "terminals", rows)
+        with pytest.raises(error_type) as rejected:
+            qualify(admitted=admitted, result=result, current=current, submissions=submissions)
+        assert rejected.value.code is expected
+    finally:
+        object.__setattr__(result.record, "terminals", original)
+    assert qualify(admitted=admitted, result=result, current=current, submissions=submissions) == baseline

@@ -369,15 +369,19 @@ class BoundContext(PrivateValue):
         object.__setattr__(self, "receipt", receipt)
         object.__setattr__(self, "artifacts", artifacts)
 
-    def _validate_inventory(self, *, source_mismatch: EffectCode = EffectCode.CONTRADICTORY) -> None:
-        """Recheck retained identity joins without coalescing duplicate facts."""
+    def _validate_inventory_fields(self) -> None:
+        """Validate both retained inventories before comparing their identities."""
         for fact in self.receipt.sources:
             require_instance(fact, SourceBindingFact)
             fact.__post_init__()
-        for artifact in self.artifacts:
-            require_instance(artifact, BoundTextArtifact)
-            artifact.__post_init__()
-            artifact.reference.__post_init__()
+        for artifacts in (self.artifacts, self.receipt.artifacts):
+            for artifact in artifacts:
+                require_instance(artifact, BoundTextArtifact)
+                artifact.__post_init__()
+                artifact.reference.__post_init__()
+
+    def _validate_inventory(self, *, source_mismatch: EffectCode = EffectCode.CONTRADICTORY) -> None:
+        """Recheck retained identities without coalescing duplicate facts."""
         # Source ownership precedes duplicate identities at qualification.
         if source_mismatch is EffectCode.FOREIGN_OWNER:
             owners: dict[BindingDeclarationId, set[ContextSourceRef]] = {}
@@ -604,6 +608,7 @@ def _validate_bound_context(
     receipt = context.receipt
     if receipt.terminal not in {"success", "partial"} or context.artifacts != receipt.artifacts:
         reject(EffectCode.CONTRADICTORY)
+    context._validate_inventory_fields()
     context._validate_inventory()
     targets = {item.target for item in prepared.target_occurrences}
     workflow_owners = {item.workflow for item in nodes}
