@@ -146,12 +146,10 @@ def _join_new_columns(
             dropped,
         )
         surviving_ids = set(source[RECORD_ID_COLUMN].astype(str))
-        target = (
-            target[target[RECORD_ID_COLUMN].astype(str).isin(surviving_ids)]
-            .sort_values(RECORD_ID_COLUMN)
-            .reset_index(drop=True)
-        )
-        source = source.sort_values(RECORD_ID_COLUMN).reset_index(drop=True)
+        target = target[target[RECORD_ID_COLUMN].astype(str).isin(surviving_ids)].reset_index(drop=True)
+        source = source.copy()
+        source.index = source[RECORD_ID_COLUMN].astype(str)
+        source = source.loc[target[RECORD_ID_COLUMN].astype(str)].reset_index(drop=True)
 
     skip = set(seed_cols) if seed_cols else set()
     for col in source.columns:
