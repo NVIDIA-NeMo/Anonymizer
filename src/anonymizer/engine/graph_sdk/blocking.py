@@ -122,7 +122,22 @@ class BlockingPool(PrivateValue):
             raise
         # Cancelling a coordinator observer must never cancel a queued worker
         # or release its slot; the request driver retains this completion.
-        return await asyncio.shield(asyncio.wrap_future(future))
+        completion = asyncio.wrap_future(future)
+        try:
+            return await asyncio.shield(completion)
+        except asyncio.CancelledError:
+            # Keep adapter serialization and local-user ownership until the
+            # actual callable ends, even if the internal observer is cancelled.
+            while not completion.done():
+                try:
+                    await asyncio.shield(completion)
+                except asyncio.CancelledError:
+                    continue
+                except Exception:
+                    break
+            # The request owner still needs late settlement metadata. Returning
+            # completion here cannot reopen its already recorded terminal.
+            return completion.result()
 
 
 @dataclass(frozen=True, slots=True)

@@ -41,18 +41,16 @@ def _acquire_context_resources(
             reject(EffectCode.MISSING)
         try:
             provider = resource.factory()
+            leases[resource.source] = ResourceLease.create(
+                owner="sdk",
+                safe_detachment=resource.capability.safe_detachment,
+                handle=provider,
+            )
+            if not isinstance(provider, ContextProvider):
+                reject(EffectCode.INVALID_TYPE)
             _validate_provider_execution(provider, resource.capability.execution)
         except Exception:
             failed.add(resource.source)
-            continue
-        if not isinstance(provider, ContextProvider):
-            failed.add(resource.source)
-            continue
-        leases[resource.source] = ResourceLease.create(
-            owner="sdk",
-            safe_detachment=resource.capability.safe_detachment,
-            handle=provider,
-        )
     return leases, frozenset(failed)
 
 

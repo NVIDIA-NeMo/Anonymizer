@@ -421,3 +421,142 @@ def test_closed_pool_never_dispatches_or_charges() -> None:
         assert pool.occupied == 0
 
     asyncio.run(run())
+
+
+@pytest.mark.parametrize("mode", ["mismatch", "malformed", "valid", "close_failure"])
+def test_adaptive_factory_retains_created_handle_for_cleanup(mode: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    from anonymizer.engine.graph_sdk.blocking import BlockingContextProvider
+    from anonymizer.engine.graph_sdk.context import SourceItem, SourceResponse
+    from tests.graph_sdk import test_adaptive_executor as fixture
+
+    async def run() -> None:
+        pool = BlockingPool(max_workers=1)
+        calls, closes = [], []
+
+        async def close():
+            closes.append(True)
+            if mode == "close_failure":
+                raise RuntimeError("private cleanup failure")
+
+        def callback(*, request, association, selector, bounds):
+            calls.append(request)
+            return SourceResponse(
+                source=fixture.SOURCE,
+                items=(SourceItem(association=association, key=0, version=1, text="retrieved"),),
+                settlement=ExternalSettlement(
+                    request=request,
+                    disposition="completed",
+                    usage=ExactUsage(input_units=1, output_units=1),
+                    remote_stopped=True,
+                ),
+            )
+
+        adapter = BlockingContextProvider(callback=callback, pool=pool, affinity=AFFINITY, close=close)
+
+        class MalformedProvider:
+            async def close(self):
+                await close()
+
+        provider = MalformedProvider() if mode == "malformed" else adapter
+        original_capability, original_resource = fixture.ContextSourceCapability, fixture.ContextResource
+
+        def capability(**kwargs):
+            kwargs["resource_owner"] = "sdk"
+            kwargs["execution"] = "blocking" if mode == "valid" else "async"
+            return original_capability(**kwargs)
+
+        def resource(**kwargs):
+            kwargs.update(lease=None, factory=lambda: provider)
+            return original_resource(**kwargs)
+
+        monkeypatch.setattr(fixture, "ContextSourceCapability", capability)
+        monkeypatch.setattr(fixture, "ContextResource", resource)
+        try:
+            running, _ = await fixture._adaptive_running(adapter)
+            result = await running.wait()
+            assert len(calls) == result.requests.dispatched_count == (1 if mode == "valid" else 0)
+            assert closes == [True]
+            assert len(result.cleanup) == 2
+            assert sorted(row.disposition for row in result.cleanup) == (
+                ["close_failed", "closed"] if mode == "close_failure" else ["closed", "closed"]
+            )
+        finally:
+            await pool.close()
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("raises", [False, True])
+def test_internal_observer_cancellation_keeps_handle_until_callable_ends(raises: bool) -> None:
+    async def run() -> None:
+        pool = BlockingPool(max_workers=2)
+        entered, release = Event(), Event()
+        cancelled = asyncio.Event()
+        calls, closes = [], []
+
+        async def cancel(request):
+            cancelled.set()
+            return StopUnknown()
+
+        async def close():
+            closes.append(True)
+
+        def callback(request):
+            calls.append(request)
+            entered.set()
+            assert release.wait(5)
+            if raises:
+                raise RuntimeError("private worker exception")
+            return TransportFailure(
+                failure="permanent",
+                settlement=ExternalSettlement(
+                    request=request,
+                    disposition="completed",
+                    usage=ExactUsage(input_units=1, output_units=1),
+                    remote_stopped=True,
+                ),
+            )
+
+        adapter = BlockingTransport(
+            callback=callback,
+            pool=pool,
+            affinity=BlockingAffinity(cross_thread=True, concurrency_safe=False, close_on_event_loop=True),
+            cancel=cancel,
+            close=close,
+        )
+        authority, request = reserved()
+        control = Control()
+        first = launch(adapter, authority, request, control)
+        tasks = [first]
+        try:
+            await until(entered.is_set)
+            control.cancelled = True
+            await asyncio.wait_for(cancelled.wait(), 5)
+            await until(lambda: bool(authority.state.terminals))
+            # This is the internal await phase after the semantic terminal.
+            first.cancel()
+            second_authority, second_request = reserved()
+            second = launch(adapter, second_authority, second_request, Control())
+            tasks.append(second)
+            await until(lambda: adapter.local_users == 2)
+            for _ in range(3):
+                first.cancel()
+                await asyncio.sleep(0)  # Deliver each cancellation at an await checkpoint.
+                assert not first.done() and adapter.local_users == 2
+            assert pool.occupied == 1 and not second_authority.state.dispatched
+            lease = ResourceLease.create(owner="sdk", safe_detachment="independent_after_dispatch", handle=adapter)
+            assert (await close_resource(lease)).disposition == "left_open"
+            assert not closes and len(calls) == 1 and not first.done()
+            release.set()
+            await asyncio.wait_for(asyncio.gather(first, second), 5)
+            assert pool.occupied == adapter.local_users == 0 and len(calls) == 2
+            assert authority.state.terminals[0].category == "lost"
+            assert len(authority.state.settlements) == (0 if raises else 1)
+            assert bool(authority.state.remote_outstanding) == raises
+            assert (await close_resource(lease)).disposition == "closed" and closes == [True]
+        finally:
+            release.set()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            await pool.close()
+
+    asyncio.run(run())
