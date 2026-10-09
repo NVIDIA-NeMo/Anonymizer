@@ -6,13 +6,12 @@ from __future__ import annotations
 
 import asyncio
 import json
-from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
 import pytest
 
-from anonymizer.engine.graph_sdk.evidence import admit_qualification, evidence_revision_view, evidence_validity
+from anonymizer.engine.graph_sdk.evidence import evidence_revision_view, evidence_validity
 from anonymizer.engine.graph_sdk.executor import BoundInputKey
 from anonymizer.engine.graph_sdk.qualification import qualify
 from anonymizer.engine.graph_sdk.records import CandidateRef
@@ -57,20 +56,7 @@ def executions() -> dict[str, Any]:
                 atomic_groups=atomic,
             )
         )
-        admitted, current, submissions = _inputs(execution, result, latest=True)
-        admitted = admit_qualification(
-            execution=execution,
-            productions=execution.assessment_productions,
-            limits=replace(admitted.limits, max_port_facts=32, max_provenance_edges=32),
-        )
-        current = evidence_revision_view(
-            admitted=admitted,
-            result=result,
-            artifacts=tuple(current.artifacts),
-            absences=tuple(current.absences),
-            configurations=current.configurations,
-            state=current.state,
-        )
+        admitted, current, submissions = _inputs(execution, result, latest=True, port_facts=32, provenance_edges=32)
         labels = {datum.id: datum.text for datum in execution.context.prepared.data.datums}
         assert len(result.assessments) == len(result.final_outputs) == 3
         bound = execution.context.bound_context

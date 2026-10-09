@@ -133,6 +133,16 @@ class ExpectedMembership(_PrivateRepr):
     closed: bool
 
     def __post_init__(self) -> None:
+        self._validate_fields()
+        if self.parent is not None and self.parent.invocation != self.invocation:
+            raise ContractViolation(ValidationCode.FOREIGN_OWNER)
+        if any(member.invocation != self.invocation for member in self.members):
+            raise ContractViolation(ValidationCode.FOREIGN_OWNER)
+        if any(member == self.parent or member.parent != self.parent for member in self.members):
+            raise ContractViolation(ValidationCode.CONTRADICTORY)
+
+    def _validate_fields(self) -> None:
+        """Validate field shapes without performing relational checks."""
         if not isinstance(self.invocation, InvocationId):
             raise ContractViolation(ValidationCode.INVALID_TYPE)
         if self.parent is not None and not isinstance(self.parent, ActivationKey):
@@ -140,12 +150,6 @@ class ExpectedMembership(_PrivateRepr):
         _require_frozenset(self.members, ActivationKey)
         if not isinstance(self.closed, bool):
             raise ContractViolation(ValidationCode.INVALID_TYPE)
-        if self.parent is not None and self.parent.invocation != self.invocation:
-            raise ContractViolation(ValidationCode.FOREIGN_OWNER)
-        if any(member.invocation != self.invocation for member in self.members):
-            raise ContractViolation(ValidationCode.FOREIGN_OWNER)
-        if any(member == self.parent or member.parent != self.parent for member in self.members):
-            raise ContractViolation(ValidationCode.CONTRADICTORY)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True, repr=False)

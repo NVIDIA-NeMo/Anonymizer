@@ -5,11 +5,10 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import replace
 
 import pytest
 
-from anonymizer.engine.graph_sdk.evidence import admit_qualification, evidence_revision_view, evidence_validity
+from anonymizer.engine.graph_sdk.evidence import evidence_revision_view, evidence_validity
 from anonymizer.engine.graph_sdk.executor import BoundInputKey
 from anonymizer.engine.graph_sdk.qualification import qualify
 from tests.graph_sdk.qualification_fixtures import _inputs
@@ -72,20 +71,7 @@ def test_context_currentness_propagates_only_through_declared_relations(relation
             atomic_groups=((0, 1),) if relation in {"atomic", "mixed"} else (),
         )
     )
-    admitted, current, submissions = _inputs(execution, result, latest=True)
-    admitted = admit_qualification(
-        execution=execution,
-        productions=execution.assessment_productions,
-        limits=replace(admitted.limits, max_port_facts=32, max_provenance_edges=32),
-    )
-    current = evidence_revision_view(
-        admitted=admitted,
-        result=result,
-        artifacts=tuple(current.artifacts),
-        absences=tuple(current.absences),
-        configurations=current.configurations,
-        state=current.state,
-    )
+    admitted, current, submissions = _inputs(execution, result, latest=True, port_facts=32, provenance_edges=32)
     labels = {datum.id: datum.text for datum in execution.context.prepared.data.datums}
     target_a = next(target for target in execution.context.prepared.data.targets if labels[target] == "A")
     b_port = next(port for port in result.ports if port.target == target_a and port.port == "b")

@@ -29,7 +29,14 @@ from anonymizer.engine.graph_sdk.executor import (
     OperationOutputKey,
 )
 from anonymizer.engine.graph_sdk.preparation import StateRevisionView
-from anonymizer.engine.graph_sdk.records import AbsenceRef, CandidateRef, ConsumedRef, DecisionRef, EvidenceRef
+from anonymizer.engine.graph_sdk.records import (
+    AbsenceRef,
+    CandidateRef,
+    ConsumedRef,
+    DecisionRef,
+    EvidenceRef,
+    ExpectedMembership,
+)
 from anonymizer.engine.graph_sdk.requests import TextCollectionValue
 from anonymizer.graph._values import ActivationKey, ArtifactRef, ContractViolation, DatumId
 from anonymizer.graph._workflow_composition import _project_evidence_port, _selected_nodes
@@ -266,12 +273,26 @@ class _EvidenceFacts:
         if (
             max(len(result.ports), len(result._input_parents), len(result._passthrough_parents))
             > min(limits.max_port_facts, execution.assessment_limits.max_port_facts)
+            or len(result.provenance) > limits.max_port_facts
+            or len(result.record.memberships) > prepared.limits.max_total_activation_slots + 1
             or len(result.assessments) > execution.assessment_limits.max_assessment_facts
             or sum(len(item.parents) for item in result.provenance)
             > min(limits.max_provenance_edges, execution.assessment_limits.max_provenance_edges)
         ):
             reject(EffectCode.LIMIT_EXCEEDED)
         record = result.record
+        # Bound retained membership containers before traversing their members.
+        for membership in record.memberships:
+            require_instance(membership, ExpectedMembership)
+            if isinstance(membership.members, (frozenset, set, tuple, list)) and (
+                len(membership.members) > prepared.limits.max_total_activation_slots
+            ):
+                reject(EffectCode.LIMIT_EXCEEDED)
+        for membership in record.memberships:
+            membership._validate_fields()
+        for fact in result.provenance:
+            if isinstance(fact.key, MapItemKey):
+                fact.key._validate_fields()
         if (
             result._execution is not execution
             or record.plan != prepared.plan

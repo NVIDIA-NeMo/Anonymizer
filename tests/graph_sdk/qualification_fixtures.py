@@ -37,13 +37,23 @@ from anonymizer.graph.workflow import ArtifactType
 from tests.graph_sdk.evidence_fixtures import _qualification_limits
 
 
-def _inputs(execution: AdmittedExecutionPlan, result: ExecutionResult, *, decisions: int = 16, latest: bool = False):
+def _inputs(
+    execution: AdmittedExecutionPlan,
+    result: ExecutionResult,
+    *,
+    decisions: int = 16,
+    latest: bool = False,
+    port_facts: int = 16,
+    provenance_edges: int = 16,
+):
     admitted = admit_qualification(
         execution=execution,
         productions=()
         if execution.context.prepared.configuration.purpose == "execution_only"
         else execution.assessment_productions,
-        limits=_qualification_limits(max_required_decisions=decisions),
+        limits=_qualification_limits(
+            max_required_decisions=decisions, max_port_facts=port_facts, max_provenance_edges=provenance_edges
+        ),
     )
     current = evidence_revision_view(
         admitted=admitted,

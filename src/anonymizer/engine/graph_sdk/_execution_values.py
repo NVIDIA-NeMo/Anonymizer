@@ -384,14 +384,18 @@ class MapItemKey(PrivateValue):
     item_version: int
 
     def __post_init__(self) -> None:
+        self._validate_fields()
+        if self.member.invocation != self.expander.invocation or self.member.parent != self.expander:
+            reject(EffectCode.FOREIGN_OWNER)
+
+    def _validate_fields(self) -> None:
+        """Validate shape and scalars separately from occurrence ownership."""
         require_instance(self.expander, ActivationKey)
         require_instance(self.member, ActivationKey)
         require_instance(self.target, DatumId)
         require_text(self.port)
         require_count(self.item_key)
         require_count(self.item_version, positive=True)
-        if self.member.invocation != self.expander.invocation or self.member.parent != self.expander:
-            reject(EffectCode.FOREIGN_OWNER)
 
 
 ProvenanceKey: TypeAlias = OperationOutputKey | RootInputKey | BoundInputKey | InitialCollectionKey | MapItemKey
