@@ -20,6 +20,7 @@ from anonymizer.config.replace_strategies import (
     Annotate,
     Hash,
     Redact,
+    Substitute,
 )
 from anonymizer.engine.constants import DEFAULT_ENTITY_LABELS
 
@@ -416,3 +417,46 @@ def test_entity_labels_superset_of_excluded_entity_labels_only_warns(
         )
     assert config.detect.entity_labels == ["bank_account", "city", "email"]
     assert "will never be detected" in caplog.text
+
+
+@pytest.mark.parametrize(
+    ("kind", "expected_type"),
+    [("annotate", Annotate), ("redact", Redact), ("hash", Hash), ("substitute", Substitute)],
+)
+def test_replace_dict_resolves_by_kind(kind: str, expected_type: type) -> None:
+    config = AnonymizerConfig.model_validate({"replace": {"kind": kind}})
+    assert type(config.replace) is expected_type
+
+
+def test_replace_dict_kind_is_case_insensitive() -> None:
+    config = AnonymizerConfig.model_validate({"replace": {"kind": "Redact", "format_template": "[X]"}})
+    assert config.replace == Redact(format_template="[X]")
+
+
+def test_replace_instance_needs_no_explicit_kind() -> None:
+    config = AnonymizerConfig(replace=Hash(digest_length=8))
+    assert isinstance(config.replace, Hash)
+    assert config.replace.kind == "hash"
+
+
+@pytest.mark.parametrize("replace", [{"format_template": "[X]"}, {"kind": "scramble"}, {"kind": 1}])
+def test_replace_dict_without_valid_kind_raises_validation_error(replace: dict) -> None:
+    with pytest.raises(ValidationError):
+        AnonymizerConfig.model_validate({"replace": replace})
+
+
+def test_replace_instance_kind_cannot_be_overridden() -> None:
+    with pytest.raises(ValidationError):
+        Redact.model_validate({"kind": "hash"})
+
+
+@pytest.mark.parametrize("replace", [Annotate(), Redact(), Hash(), Substitute(instructions="Keep it short.")])
+def test_replace_config_round_trips_through_json(replace: Annotate | Redact | Hash | Substitute) -> None:
+    config = AnonymizerConfig(replace=replace)
+    assert AnonymizerConfig.model_validate_json(config.model_dump_json()) == config
+
+
+def test_replace_json_schema_declares_kind_discriminator() -> None:
+    replace_schema = AnonymizerConfig.model_json_schema()["properties"]["replace"]["anyOf"][0]
+    assert replace_schema["discriminator"]["propertyName"] == "kind"
+    assert set(replace_schema["discriminator"]["mapping"]) == {"annotate", "redact", "hash", "substitute"}
