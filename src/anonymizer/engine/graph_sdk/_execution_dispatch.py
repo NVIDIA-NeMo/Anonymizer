@@ -37,6 +37,7 @@ from anonymizer.engine.graph_sdk._ingress import (
 )
 from anonymizer.engine.graph_sdk._ingress_values import IngressLimits
 from anonymizer.engine.graph_sdk._request_driver import _RequestAuthority, drive_request, late_source_event
+from anonymizer.engine.graph_sdk.blocking import BlockingContextProvider, BlockingTransport
 from anonymizer.engine.graph_sdk.capabilities import (
     FrozenConfig,
     ImplementationRef,
@@ -308,6 +309,7 @@ async def _run_external_batch(
             control,
             lambda: transport.dispatch(envelope),
             transport.cancel,
+            blocking=transport._invocation(envelope) if isinstance(transport, BlockingTransport) else None,
         )
         if completion.cancelled:
             condition = (
@@ -318,7 +320,11 @@ async def _run_external_batch(
                 else "lost"
             )
             return failed(_mapping(policy, condition, None, None))
-        result = completion.value
+        result = (
+            TransportFailure(failure="malformed_response", settlement=None)
+            if completion.malformed
+            else completion.value
+        )
         settlement_valid = completion.settlement_valid
         if type(result) is TransportSuccess:
             if not settlement_valid:
@@ -505,6 +511,13 @@ async def _run_adaptive(
                     and len({(item.key, item.version) for item in response.items}) == len(response.items)
                 ),
             ),
+            blocking=(
+                provider._invocation(
+                    request=request, association=association, selector=selector, bounds=declaration.bounds
+                )
+                if isinstance(provider, BlockingContextProvider)
+                else None
+            ),
         )
         if completion.cancelled:
             condition = (
@@ -515,7 +528,11 @@ async def _run_adaptive(
                 else "lost"
             )
             return _mapping(policy, condition, None, None), (), ()
-        result = completion.value
+        result = (
+            SourceFailure(source=declaration.source, failure="malformed_response", settlement=None)
+            if completion.malformed
+            else completion.value
+        )
         if type(result) is SourceResponse:
             valid = (
                 inspect_source(result, association, admitted.ingress_limits)

@@ -12,6 +12,11 @@ from anonymizer.engine.graph_sdk._effect_values import EffectCode, EffectRejecte
 from anonymizer.engine.graph_sdk._ingress import inspect_failure, inspect_source, inspect_source_identity
 from anonymizer.engine.graph_sdk._request_driver import _RequestAuthority, drive_request, late_source_event
 from anonymizer.engine.graph_sdk._workflow import reachable_workflows
+from anonymizer.engine.graph_sdk.blocking import (
+    BlockingContextProvider,
+    _reject_worker_entry,
+    _validate_provider_execution,
+)
 from anonymizer.engine.graph_sdk.context import (
     BindingArtifactRef,
     BindingLimits,
@@ -113,6 +118,7 @@ async def start_initial_binding(
     limits: BindingLimits,
 ) -> RunningBinding:
     """Validate initial context and return its live asynchronous controller."""
+    _reject_worker_entry()
     _validate_binding(data, workflow, declarations, capabilities, resources, limits)
     binding = BindingId.new()
     identities = tuple(BindingDeclarationId.new(binding=binding, ordinal=index) for index in range(len(declarations)))
@@ -267,12 +273,23 @@ async def _bind_declaration(
                     and declaration.accepts_response_items(response, association)
                 ),
             ),
+            blocking=(
+                provider._invocation(
+                    request=request, association=association, selector=declaration.selector, bounds=declaration.bounds
+                )
+                if isinstance(provider, BlockingContextProvider)
+                else None
+            ),
         )
         state = authority.state
         if completion.cancelled:
             terminal: SourceTerminal = "cancelled" if completion.stop_confirmed else "lost"
             return state, _source_fact(identity, declaration, terminal), (), 0, 0
-        result = completion.value
+        result = (
+            SourceFailure(source=declaration.source, failure="malformed_response", settlement=None)
+            if completion.malformed
+            else completion.value
+        )
         if completion.raised:
             state = advance_requests(state=state, event=MarkLost(request=request))
             return state, _source_fact(identity, declaration, "lost"), (), 0, 0
@@ -431,6 +448,9 @@ def _validate_binding(
         reject(EffectCode.DUPLICATE)
     if set(resource_sources) != sources:
         reject(EffectCode.MISSING)
+    for resource in resources:
+        if resource.lease is not None:
+            _validate_provider_execution(resource.lease.handle, resource.capability.execution)
     schemas: dict[object, tuple[str, object]] = {}
     for declaration in declarations:
         item_type = declaration.materialization.item_type
@@ -518,6 +538,7 @@ def _acquire_resources(work: _BindingWork, acquired: dict[object, ResourceLease]
         )
         if not isinstance(provider, ContextProvider):
             reject(EffectCode.INVALID_TYPE)
+        _validate_provider_execution(provider, resource.capability.execution)
 
 
 def _binding_cleanup_associations(

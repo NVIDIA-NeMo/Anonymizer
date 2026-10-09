@@ -22,6 +22,7 @@ from anonymizer.engine.graph_sdk._execution_values import (
     ExecutionServices,
     NestedEventLoopError,
 )
+from anonymizer.engine.graph_sdk.blocking import _reject_worker_entry
 from anonymizer.engine.graph_sdk.capabilities import (
     ImplementationCapability,
 )
@@ -75,6 +76,7 @@ async def start_execution(
     services: ExecutionServices,
 ) -> RunningExecution:
     """Recheck a plan before allocating one graph invocation and starting work."""
+    _reject_worker_entry()
     require_instance(admitted, AdmittedExecutionPlan)
     require_instance(services, ExecutionServices)
     prepared = admitted.context.prepared
@@ -100,6 +102,7 @@ def execute_sync(
     services: ExecutionServices,
 ) -> ExecutionResult:
     """Execute outside an active event loop using the authoritative async core."""
+    _reject_worker_entry()
     try:
         asyncio.get_running_loop()
     except RuntimeError:

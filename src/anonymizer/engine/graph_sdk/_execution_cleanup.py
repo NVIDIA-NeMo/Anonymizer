@@ -9,6 +9,7 @@ from anonymizer.engine.graph_sdk._effect_values import (
     reject,
 )
 from anonymizer.engine.graph_sdk._execution_values import AdmittedExecutionPlan, ImplementationHandle
+from anonymizer.engine.graph_sdk.blocking import _validate_provider_execution
 from anonymizer.engine.graph_sdk.context import (
     ContextProvider,
     ContextResource,
@@ -40,6 +41,7 @@ def _acquire_context_resources(
             reject(EffectCode.MISSING)
         try:
             provider = resource.factory()
+            _validate_provider_execution(provider, resource.capability.execution)
         except Exception:
             failed.add(resource.source)
             continue

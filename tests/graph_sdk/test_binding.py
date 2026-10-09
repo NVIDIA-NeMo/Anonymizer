@@ -12,6 +12,7 @@ import pytest
 
 from anonymizer.engine.graph_sdk._effect_values import EffectRejected
 from anonymizer.engine.graph_sdk.binding import start_initial_binding
+from anonymizer.engine.graph_sdk.blocking import BlockingContextProvider
 from anonymizer.engine.graph_sdk.context import (
     BindingLimits,
     ContextMaterialization,
@@ -452,7 +453,7 @@ async def _assert_context_source_requires_exact_initial_declaration() -> None:
     assert rejected.value.code.value == "missing"
 
 
-async def _assert_initial_binding() -> None:
+async def _initial_running(provider):
     workflow, node, artifact = _context_workflow()
     data = _data(1)
     target = next(iter(data.targets))
@@ -467,7 +468,7 @@ async def _assert_initial_binding() -> None:
         source=SOURCE,
         artifact_type=artifact,
         uses=frozenset({"initial_binding"}),
-        execution="async",
+        execution="blocking" if isinstance(provider, BlockingContextProvider) else "async",
         resource_owner="caller",
         cancellation="cooperative_ack",
         settlement="explicit_ack",
@@ -486,7 +487,6 @@ async def _assert_initial_binding() -> None:
         bounds=RetrievalBounds(max_items=1, max_bytes=20, max_requests=1),
         materialization=ContextMaterialization(kind="single", item_type=artifact),
     )
-    provider = _Provider()
     lease = ResourceLease.create(owner="caller", safe_detachment="forbidden", handle=provider)
     running = await start_initial_binding(
         data=data,
@@ -506,6 +506,12 @@ async def _assert_initial_binding() -> None:
             max_resources=1,
         ),
     )
+    return running, data, workflow, target
+
+
+async def _assert_initial_binding() -> None:
+    provider = _Provider()
+    running, data, workflow, target = await _initial_running(provider)
     result = await running.wait()
     assert provider.calls == 1
     assert result.context is not None

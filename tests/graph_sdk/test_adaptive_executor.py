@@ -11,6 +11,7 @@ from typing import cast
 import pytest
 
 from anonymizer.engine.graph_sdk._effect_values import EffectRejected
+from anonymizer.engine.graph_sdk.blocking import BlockingContextProvider
 from anonymizer.engine.graph_sdk.capabilities import ImplementationSelection
 from anonymizer.engine.graph_sdk.context import (
     AdaptiveRetrievalDecl,
@@ -313,7 +314,7 @@ def test_adaptive_retrieval_materializes_provider_result_once() -> None:
     asyncio.run(_assert_adaptive_retrieval())
 
 
-async def _assert_adaptive_retrieval(*, malformed_lost: bool = False) -> None:
+async def _adaptive_running(provider):
     workflow, node, artifact = _adaptive_workflow()
     data = _data(1)
     target = next(iter(data.targets))
@@ -339,7 +340,7 @@ async def _assert_adaptive_retrieval(*, malformed_lost: bool = False) -> None:
         source=SOURCE,
         artifact_type=artifact,
         uses=frozenset({"adaptive_retrieval"}),
-        execution="async",
+        execution="blocking" if isinstance(provider, BlockingContextProvider) else "async",
         resource_owner="caller",
         cancellation="cooperative_ack",
         settlement="explicit_ack",
@@ -392,7 +393,6 @@ async def _assert_adaptive_retrieval(*, malformed_lost: bool = False) -> None:
             max_provenance_edges=1,
         ),
     )
-    provider = _Provider()
     transport = _UnusedTransport()
     services = ExecutionServices(
         handles=(
@@ -424,6 +424,12 @@ async def _assert_adaptive_retrieval(*, malformed_lost: bool = False) -> None:
         clock=_Clock(),
     )
     running = await start_execution(admitted=admitted, capabilities=(capability,), services=services)
+    return running, target
+
+
+async def _assert_adaptive_retrieval(*, malformed_lost: bool = False) -> None:
+    provider = _Provider()
+    running, target = await _adaptive_running(provider)
     result = await running.wait()
     assert provider.calls == 1
     assert result.requests.dispatched_count == 1
@@ -442,7 +448,7 @@ def test_external_execution_retries_with_new_charged_request() -> None:
     asyncio.run(_assert_external_retry())
 
 
-async def _assert_external_retry() -> None:
+async def _external_running(transport):
     workflow, node, artifact = _adaptive_workflow(requests=2)
     data = _data(1)
     target = next(iter(data.targets))
@@ -500,7 +506,6 @@ async def _assert_external_retry() -> None:
             max_provenance_edges=1,
         ),
     )
-    transport = _RetryingTransport()
     services = ExecutionServices(
         handles=(
             ImplementationHandle(
@@ -524,6 +529,12 @@ async def _assert_external_retry() -> None:
         clock=_Clock(),
     )
     running = await start_execution(admitted=admitted, capabilities=(capability,), services=services)
+    return running
+
+
+async def _assert_external_retry() -> None:
+    transport = _RetryingTransport()
+    running = await _external_running(transport)
     result = await running.wait()
     assert transport.calls == 2
     assert [item.purpose for item in result.requests.dispatches] == ["initial", "retry"]

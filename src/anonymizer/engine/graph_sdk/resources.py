@@ -137,6 +137,12 @@ async def close_resource(lease: ResourceLease) -> CleanupFact:
     if lease.owner == "caller":
         return CleanupFact(resource=lease.resource, owner=lease.owner, disposition="left_open")
     handle = lease.handle
+    # A Lost request is no longer locally in-flight in the request reducer,
+    # but an ordinary worker may still be touching this shared handle.
+    from anonymizer.engine.graph_sdk.blocking import _BlockingAdapter
+
+    if isinstance(handle, _BlockingAdapter) and handle.local_users:
+        return CleanupFact(resource=lease.resource, owner=lease.owner, disposition="left_open")
     if not isinstance(handle, CloseableResource):
         return CleanupFact(resource=lease.resource, owner=lease.owner, disposition="close_unknown")
     try:

@@ -32,6 +32,7 @@ from anonymizer.engine.graph_sdk._execution_values import (
     RequestTransport,
 )
 from anonymizer.engine.graph_sdk._ingress_values import IngressLimits
+from anonymizer.engine.graph_sdk.blocking import BlockingTransport, _validate_provider_execution
 from anonymizer.engine.graph_sdk.capabilities import (
     ImplementationCapability,
     validate_capability,
@@ -501,6 +502,9 @@ def _validate_services(admitted: AdmittedExecutionPlan, services: ExecutionServi
                 reject(EffectCode.INVALID_TYPE)
         elif handle.local is None or not isinstance(handle.local, LocalCallable):
             reject(EffectCode.INVALID_TYPE)
+        if isinstance(handle.transport, BlockingTransport) and handle.resource is not None:
+            if handle.resource.handle is not handle.transport:
+                reject(EffectCode.CONTRADICTORY)
         if capability.resource_lifetime == "stateless" and handle.resource is not None:
             reject(EffectCode.CONTRADICTORY)
         if capability.resource_lifetime != "stateless":
@@ -519,6 +523,9 @@ def _validate_services(admitted: AdmittedExecutionPlan, services: ExecutionServi
     actual_context = {(item.source, item.capability) for item in services.context_resources}
     if actual_context != expected_context or len(actual_context) != len(services.context_resources):
         reject(EffectCode.MISSING if actual_context < expected_context else EffectCode.EXTRA)
+    for resource in services.context_resources:
+        if resource.lease is not None:
+            _validate_provider_execution(resource.lease.handle, resource.capability.execution)
 
 
 def _validate_initial_materialization_capacity(admitted: AdmittedExecutionPlan, limits: ExecutionLimits) -> None:
