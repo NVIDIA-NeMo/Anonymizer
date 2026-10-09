@@ -147,6 +147,42 @@ def test_run_in_memory_records_exposes_ids_and_entities_in_public_dataframe() ->
     assert result.dataframe["final_entities"].tolist() == entities
 
 
+def test_run_in_memory_records_tracks_dropped_caller_id_and_survivor_order() -> None:
+    from data_designer.interface.data_designer import DataDesigner
+
+    ids = ["turn-2", "dropped", "turn-1"]
+    texts = ["Bob works at Acme", "Drop this record", "Alice works at Globex"]
+    surviving_ids = ["turn-2", "turn-1"]
+    surviving_texts = [texts[0], texts[2]]
+    detected = pd.DataFrame(
+        {
+            "id": surviving_ids,
+            COL_TEXT: surviving_texts,
+            RECORD_ID_COLUMN: surviving_ids,
+            COL_DETECTED_ENTITIES: [{"entities": []}, {"entities": []}],
+            COL_TAGGED_TEXT: surviving_texts,
+        }
+    )
+    data_designer = Mock(spec=DataDesigner)
+    data_designer.create.return_value = SimpleNamespace(load_dataset=Mock(return_value=detected))
+
+    result = Anonymizer(data_designer=data_designer).run(
+        config=AnonymizerConfig(replace=Redact(), emit_telemetry=False),
+        data=TextRecordsInput(
+            records=[TextRecord(id=record_id, text=text) for record_id, text in zip(ids, texts, strict=True)]
+        ),
+    )
+
+    assert result.dataframe["id"].tolist() == surviving_ids
+    assert result.failed_records == [
+        FailedRecord(
+            record_id="dropped",
+            step="entity-detection",
+            reason="Record missing from workflow output",
+        )
+    ]
+
+
 def test_run_enables_latent_detection_when_rewrite_configured(stub_input: AnonymizerInput) -> None:
     config = AnonymizerConfig(rewrite=Rewrite())
     anonymizer, detection_wf, _, _ = _make_anonymizer()
