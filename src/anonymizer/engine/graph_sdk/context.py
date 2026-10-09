@@ -369,6 +369,49 @@ class BoundContext(PrivateValue):
         object.__setattr__(self, "receipt", receipt)
         object.__setattr__(self, "artifacts", artifacts)
 
+    def _validate_inventory(self, *, source_mismatch: EffectCode = EffectCode.CONTRADICTORY) -> None:
+        """Recheck retained identity joins without coalescing duplicate facts."""
+        for fact in self.receipt.sources:
+            require_instance(fact, SourceBindingFact)
+            fact.__post_init__()
+        for artifact in self.artifacts:
+            require_instance(artifact, BoundTextArtifact)
+            artifact.__post_init__()
+            artifact.reference.__post_init__()
+        # Source ownership precedes duplicate identities at qualification.
+        if source_mismatch is EffectCode.FOREIGN_OWNER:
+            owners: dict[BindingDeclarationId, set[ContextSourceRef]] = {}
+            for fact in self.receipt.sources:
+                owners.setdefault(fact.identity, set()).add(fact.declaration.source)
+            for artifact in self.artifacts:
+                sources = owners.get(artifact.reference.declaration)
+                if sources is not None and sources != {artifact.source}:
+                    reject(source_mismatch)
+        identities = [item.identity for item in self.receipt.sources]
+        references = [item.reference for item in self.artifacts]
+        if len(identities) != len(set(identities)) or len(references) != len(set(references)):
+            reject(EffectCode.DUPLICATE)
+
+    def _validate_artifact_joins(self, *, source_mismatch: EffectCode = EffectCode.CONTRADICTORY) -> None:
+        """Match unique retained artifacts to their exact binding declarations."""
+        by_identity = {item.identity: item for item in self.receipt.sources}
+        for artifact in self.artifacts:
+            fact = by_identity.get(artifact.reference.declaration)
+            if fact is None:
+                reject(EffectCode.EXTRA)
+            declaration = fact.declaration
+            if artifact.source != declaration.source:
+                reject(source_mismatch)
+            if (
+                artifact.target != declaration.target
+                or artifact.node != declaration.node
+                or artifact.port != declaration.port
+                or artifact.artifact_type != declaration.materialization.item_type
+            ):
+                reject(EffectCode.CONTRADICTORY)
+        if self.artifacts != self.receipt.artifacts:
+            reject(EffectCode.CONTRADICTORY)
+
 
 @dataclass(frozen=True, slots=True, kw_only=True, repr=False, init=False)
 class BindingResult(PrivateValue):
@@ -561,15 +604,9 @@ def _validate_bound_context(
     receipt = context.receipt
     if receipt.terminal not in {"success", "partial"} or context.artifacts != receipt.artifacts:
         reject(EffectCode.CONTRADICTORY)
-    identities = [item.identity for item in receipt.sources]
-    if len(identities) != len(set(identities)):
-        reject(EffectCode.DUPLICATE)
+    context._validate_inventory()
     targets = {item.target for item in prepared.target_occurrences}
     workflow_owners = {item.workflow for item in nodes}
-    by_identity = {item.identity: item for item in receipt.sources}
-    artifact_refs = [item.reference for item in context.artifacts]
-    if len(artifact_refs) != len(set(artifact_refs)):
-        reject(EffectCode.DUPLICATE)
     for fact in receipt.sources:
         declaration = fact.declaration
         operation_node = nodes.get(declaration.node)
@@ -607,19 +644,7 @@ def _validate_bound_context(
             reject(EffectCode.EXTRA)
         if declaration.requirement == "required" and fact.terminal != "bound":
             reject(EffectCode.CONTRADICTORY)
-    for artifact in context.artifacts:
-        fact = by_identity.get(artifact.reference.declaration)
-        if fact is None:
-            reject(EffectCode.EXTRA)
-        declaration = fact.declaration
-        if (
-            artifact.target != declaration.target
-            or artifact.node != declaration.node
-            or artifact.port != declaration.port
-            or artifact.source != declaration.source
-            or artifact.artifact_type != declaration.materialization.item_type
-        ):
-            reject(EffectCode.CONTRADICTORY)
+    context._validate_artifact_joins()
     destinations = {
         (binding.destination.node, binding.destination.port)
         for binding in prepared.workflow.workflow.input_bindings

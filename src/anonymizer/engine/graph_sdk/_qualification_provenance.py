@@ -180,6 +180,8 @@ class _ProvenanceValidator:
                 bound = self.context.admitted.execution.context.bound_context
                 if bound is None:
                     reject(EffectCode.MISSING)
+                if parent.binding_artifact.declaration.binding != bound.receipt.binding:
+                    reject(EffectCode.FOREIGN_OWNER)
                 declaration = next(
                     (
                         item.declaration
@@ -189,7 +191,7 @@ class _ProvenanceValidator:
                     None,
                 )
                 if declaration is None:
-                    reject(EffectCode.FOREIGN_OWNER)
+                    reject(EffectCode.MISSING)
                 if declaration.version_selection == "latest" and parent.binding_artifact.version != max(
                     (
                         item.reference.version
@@ -326,6 +328,8 @@ class _ProvenanceValidator:
         if bound is None:
             reject(EffectCode.CONTRADICTORY)
         declaration = key.binding_artifact.declaration if isinstance(key, BoundInputKey) else key.declaration
+        if declaration.binding != bound.receipt.binding:
+            reject(EffectCode.FOREIGN_OWNER)
         source = next((item for item in bound.receipt.sources if item.identity == declaration), None)
         if source is None:
             reject(EffectCode.MISSING)

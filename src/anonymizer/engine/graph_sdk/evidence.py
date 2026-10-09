@@ -270,6 +270,18 @@ class _EvidenceFacts:
         limits = admitted.limits
         execution = admitted.execution
         prepared = execution.context.prepared
+        bound = execution.context.bound_context
+        if bound is not None:
+            require_instance(bound.artifacts, tuple)
+            require_instance(bound.receipt.artifacts, tuple)
+            require_instance(bound.receipt.sources, tuple)
+            source_limit = len(prepared.target_occurrences) * sum(
+                isinstance(binding.source, ContextInputRef) for binding in prepared.workflow.workflow.input_bindings
+            )
+            if max(len(bound.artifacts), len(bound.receipt.artifacts)) > limits.max_port_facts or len(
+                bound.receipt.sources
+            ) > max(source_limit, limits.max_port_facts):
+                reject(EffectCode.LIMIT_EXCEEDED)
         if (
             max(len(result.ports), len(result._input_parents), len(result._passthrough_parents))
             > min(limits.max_port_facts, execution.assessment_limits.max_port_facts)
@@ -302,6 +314,11 @@ class _EvidenceFacts:
             reject(EffectCode.FOREIGN_OWNER)
         if any(reference.invocation != record.invocation for reference, _ in result.artifacts):
             reject(EffectCode.FOREIGN_OWNER)
+        if bound is not None:
+            if bound.receipt.data is not prepared.data or bound.receipt.workflow is not prepared.workflow:
+                reject(EffectCode.FOREIGN_OWNER)
+            bound._validate_inventory(source_mismatch=EffectCode.FOREIGN_OWNER)
+            bound._validate_artifact_joins(source_mismatch=EffectCode.FOREIGN_OWNER)
         references = [reference for reference, _ in result.artifacts]
         if len(references) != len(set(references)):
             reject(EffectCode.DUPLICATE)
