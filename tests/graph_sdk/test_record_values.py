@@ -5,7 +5,6 @@
 from __future__ import annotations
 
 import copy
-import json
 import pickle
 from dataclasses import FrozenInstanceError, replace
 from typing import Any, cast
@@ -37,14 +36,13 @@ from anonymizer.graph._values import (
     TaskAttemptId,
     ValidationCode,
 )
-from tests.graph_sdk.reference import data_v1
-from tests.graph_sdk.reference.corpora import corpus_bytes
+from tests.graph_sdk.reference import data_shapes
 
 
 class _RecordAdapter:
     """Map neutral reference labels to fresh nominal product identities."""
 
-    def __init__(self, facts: dict[str, data_v1.JsonValue]) -> None:
+    def __init__(self, facts: dict[str, data_shapes.JsonValue]) -> None:
         self._facts = facts
         self._plans: dict[str, PlanId] = {}
         self._invocations: dict[str, InvocationId] = {}
@@ -68,14 +66,14 @@ class _RecordAdapter:
     def _plan(self, label: str) -> PlanId:
         return self._plans.setdefault(label, PlanId.new())
 
-    def _invocation(self, label: data_v1.JsonValue, plan_label: str = "P") -> InvocationId:
+    def _invocation(self, label: data_shapes.JsonValue, plan_label: str = "P") -> InvocationId:
         if not isinstance(label, str):
             return cast(InvocationId, label)
         if label not in self._invocations:
             self._invocations[label] = InvocationId.new(plan=self._plan(plan_label))
         return self._invocations[label]
 
-    def _datum(self, value: data_v1.JsonValue) -> DatumId:
+    def _datum(self, value: data_shapes.JsonValue) -> DatumId:
         if not isinstance(value, list):
             return cast(DatumId, value)
         label = (cast(str, value[0]), cast(int, value[1]))
@@ -84,7 +82,7 @@ class _RecordAdapter:
             self._datums[label] = DatumId.new(graph=graph)
         return self._datums[label]
 
-    def _activation(self, value: dict[str, data_v1.JsonValue]) -> ActivationKey:
+    def _activation(self, value: dict[str, data_shapes.JsonValue]) -> ActivationKey:
         parent_value = value["parent"]
         return ActivationKey(
             invocation=self._invocation(value["invocation"]),
@@ -93,21 +91,21 @@ class _RecordAdapter:
             iteration=None if value["iteration"] is None else cast(int, value["iteration"]),
         )
 
-    def _artifact(self, value: dict[str, data_v1.JsonValue]) -> ArtifactRef:
+    def _artifact(self, value: dict[str, data_shapes.JsonValue]) -> ArtifactRef:
         return ArtifactRef(
             invocation=self._invocation(value["invocation"]),
             key=cast(int, value["key"]),
             version=cast(int, value["version"]),
         )
 
-    def _absence(self, value: dict[str, data_v1.JsonValue]) -> AbsenceRef:
+    def _absence(self, value: dict[str, data_shapes.JsonValue]) -> AbsenceRef:
         return AbsenceRef(
             invocation=self._invocation(value["invocation"]),
             query=cast(int, value["query"]),
             scope_revision=cast(int, value["scope_revision"]),
         )
 
-    def _consumed(self, value: data_v1.JsonValue) -> ArtifactRef | CandidateRef | DecisionRef | AbsenceRef:
+    def _consumed(self, value: data_shapes.JsonValue) -> ArtifactRef | CandidateRef | DecisionRef | AbsenceRef:
         raw = _object(value)
         kind = cast(str, raw["kind"])
         reference = _object(raw["ref"])
@@ -122,13 +120,13 @@ class _RecordAdapter:
             return DecisionRef(artifact=artifact)
         raise AssertionError("reference corpus admitted an unknown consumed reference")
 
-    def _evidence(self, value: dict[str, data_v1.JsonValue]) -> EvidenceRef:
+    def _evidence(self, value: dict[str, data_shapes.JsonValue]) -> EvidenceRef:
         return EvidenceRef(
             artifact=self._artifact(_object(value["artifact"])),
             consumed=frozenset(self._consumed(item) for item in _list(value["consumed"])),
         )
 
-    def _membership(self, value: dict[str, data_v1.JsonValue]) -> ExpectedMembership:
+    def _membership(self, value: dict[str, data_shapes.JsonValue]) -> ExpectedMembership:
         parent_value = value["parent"]
         return ExpectedMembership(
             invocation=self._invocation(value["invocation"]),
@@ -137,7 +135,7 @@ class _RecordAdapter:
             closed=cast(bool, value["closed"]),
         )
 
-    def _terminal(self, value: dict[str, data_v1.JsonValue]) -> TerminalFact:
+    def _terminal(self, value: dict[str, data_shapes.JsonValue]) -> TerminalFact:
         activation = self._activation(_object(value["activation"]))
         attempt_value = value["attempt"]
         attempt = None
@@ -157,7 +155,7 @@ class _RecordAdapter:
             reasons=reasons,
         )
 
-    def _status(self, value: dict[str, data_v1.JsonValue]) -> TargetStatus:
+    def _status(self, value: dict[str, data_shapes.JsonValue]) -> TargetStatus:
         return TargetStatus(
             target=self._datum(value["target"]),
             completion=cast(Completion, value["completion"]),
@@ -185,15 +183,15 @@ class _RecordAdapter:
         )
 
 
-def _object(value: data_v1.JsonValue) -> dict[str, data_v1.JsonValue]:
-    return cast(dict[str, data_v1.JsonValue], value)
+def _object(value: data_shapes.JsonValue) -> dict[str, data_shapes.JsonValue]:
+    return cast(dict[str, data_shapes.JsonValue], value)
 
 
-def _list(value: data_v1.JsonValue) -> list[data_v1.JsonValue]:
-    return cast(list[data_v1.JsonValue], value)
+def _list(value: data_shapes.JsonValue) -> list[data_shapes.JsonValue]:
+    return cast(list[data_shapes.JsonValue], value)
 
 
-def _adapt_record_case(case: data_v1.FixtureCase) -> tuple[str, str | None]:
+def _adapt_record_case(case: data_shapes.FixtureCase) -> tuple[str, str | None]:
     declaration = case["declaration"]
     assert declaration["kind"] == "record"
     adapter = _RecordAdapter(declaration["facts"])
@@ -205,7 +203,7 @@ def _adapt_record_case(case: data_v1.FixtureCase) -> tuple[str, str | None]:
 
 
 def test_all_reference_record_cases_match_product_validation() -> None:
-    cases = data_v1._parse_cases(json.loads(corpus_bytes("data")))
+    cases = data_shapes.load_data_cases()
     record_cases = [case for case in cases if case["declaration"]["kind"] == "record"]
     assert len(record_cases) == 74
     for case in record_cases:

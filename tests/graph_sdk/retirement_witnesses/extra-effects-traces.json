@@ -1,0 +1,6883 @@
+[
+  {
+    "case_id": "retirement-0",
+    "declaration": {
+      "hard_limit": 2,
+      "policies": {
+        "P0": {
+          "failover_failures": [
+            "permanent",
+            "implementation_exception"
+          ],
+          "max_attempts": 2,
+          "replay": "idempotent",
+          "retry_owner": "executor"
+        },
+        "P1": {
+          "failover_failures": [
+            "permanent",
+            "implementation_exception"
+          ],
+          "max_attempts": 3,
+          "replay": "idempotent",
+          "retry_owner": "executor"
+        }
+      }
+    },
+    "events": [
+      {
+        "association": "T0",
+        "kind": "bind_policy",
+        "policies": [
+          "P0"
+        ]
+      },
+      {
+        "associations": [
+          "T0"
+        ],
+        "kind": "reserve",
+        "policy": "P0",
+        "purpose": "initial",
+        "request": "R0"
+      },
+      {
+        "kind": "dispatch",
+        "request": "R0"
+      },
+      {
+        "kind": "result",
+        "outcomes": {
+          "T0": "ok"
+        },
+        "request": "R0",
+        "returned": [
+          "T0"
+        ]
+      },
+      {
+        "disposition": "completed",
+        "kind": "settlement",
+        "remote_stopped": true,
+        "request": "R0",
+        "usage": {
+          "input": 1,
+          "output": 1
+        }
+      }
+    ],
+    "expected": {
+      "state": {
+        "artifacts": [],
+        "association_requests": {
+          "T0": "R0"
+        },
+        "association_terminals": {},
+        "attempts": {
+          "T0": 1
+        },
+        "binding_declarations": {},
+        "binding_sources": {},
+        "binding_terminal": null,
+        "bindings": {
+          "T0": [
+            "P0"
+          ]
+        },
+        "cancel_requested": [],
+        "cleanup": {},
+        "closed_unstarted": {},
+        "decisions": {},
+        "defects": [],
+        "denials": {},
+        "dispatched": [
+          "R0"
+        ],
+        "dispatched_count": 1,
+        "local_in_flight": [],
+        "policies": {
+          "P0": {
+            "failover_failures": [
+              "permanent",
+              "implementation_exception"
+            ],
+            "max_attempts": 2,
+            "replay": "idempotent",
+            "retry_owner": "executor"
+          },
+          "P1": {
+            "failover_failures": [
+              "permanent",
+              "implementation_exception"
+            ],
+            "max_attempts": 3,
+            "replay": "idempotent",
+            "retry_owner": "executor"
+          }
+        },
+        "remote_outstanding": [],
+        "request_associations": {
+          "R0": [
+            "T0"
+          ]
+        },
+        "request_facts": {
+          "R0": {
+            "condition": "result",
+            "outcomes": {
+              "T0": "ok"
+            }
+          }
+        },
+        "request_failures": {},
+        "request_policies": {
+          "R0": "P0"
+        },
+        "reservation_policies": {},
+        "reservations": {},
+        "resource_count": 0,
+        "resources": {},
+        "settlements": {
+          "R0": {
+            "disposition": "completed",
+            "remote_stopped": true,
+            "usage": {
+              "input": 1,
+              "output": 1
+            }
+          }
+        },
+        "task_requests": {},
+        "tasks": {},
+        "terminals": {
+          "R0": "success"
+        }
+      },
+      "status": "accepted"
+    },
+    "origin": "tests/graph_sdk/reference/test_effects_v1.py::test_every_frozen_expectation_is_reduced_from_its_inputs"
+  },
+  {
+    "case_id": "retirement-1",
+    "declaration": {
+      "binding_declarations": {
+        "D0": "S0"
+      },
+      "binding_limits": {
+        "max_bytes": 8,
+        "max_items": 2,
+        "max_requests": 2
+      },
+      "hard_limit": 2,
+      "policies": {
+        "P0": {
+          "failover_failures": [
+            "permanent",
+            "implementation_exception"
+          ],
+          "max_attempts": 2,
+          "replay": "idempotent",
+          "retry_owner": "executor"
+        },
+        "P1": {
+          "failover_failures": [
+            "permanent",
+            "implementation_exception"
+          ],
+          "max_attempts": 3,
+          "replay": "idempotent",
+          "retry_owner": "executor"
+        }
+      }
+    },
+    "events": [
+      {
+        "association": "D0",
+        "kind": "bind_policy",
+        "policies": [
+          "P0"
+        ]
+      },
+      {
+        "associations": [
+          "D0"
+        ],
+        "kind": "reserve",
+        "policy": "P0",
+        "purpose": "initial",
+        "request": "R0"
+      },
+      {
+        "kind": "dispatch",
+        "request": "R0"
+      },
+      {
+        "kind": "cancel",
+        "request": "R0"
+      },
+      {
+        "kind": "lost",
+        "request": "R0"
+      },
+      {
+        "consumed_context_ports": [],
+        "items": [
+          {
+            "association": "D0",
+            "key": 0,
+            "text": "late",
+            "version": 1
+          }
+        ],
+        "kind": "source_result",
+        "outcome": "retrieved",
+        "outputs": [],
+        "request": "R0",
+        "settlement": {
+          "disposition": "completed",
+          "remote_stopped": true,
+          "usage": {
+            "input": 0,
+            "output": 0
+          }
+        },
+        "source": "S0"
+      },
+      {
+        "disposition": "completed",
+        "kind": "settlement",
+        "remote_stopped": true,
+        "request": "R0",
+        "usage": {
+          "input": 1,
+          "output": 1
+        }
+      }
+    ],
+    "expected": {
+      "state": {
+        "artifacts": [],
+        "association_requests": {
+          "D0": "R0"
+        },
+        "association_terminals": {},
+        "attempts": {
+          "D0": 1
+        },
+        "binding_declarations": {
+          "D0": "S0"
+        },
+        "binding_sources": {},
+        "binding_terminal": null,
+        "bindings": {
+          "D0": [
+            "P0"
+          ]
+        },
+        "cancel_requested": [
+          "R0"
+        ],
+        "cleanup": {},
+        "closed_unstarted": {},
+        "decisions": {},
+        "defects": [
+          "conflicting_terminal",
+          "conflicting_settlement"
+        ],
+        "denials": {},
+        "dispatched": [
+          "R0"
+        ],
+        "dispatched_count": 1,
+        "local_in_flight": [],
+        "policies": {
+          "P0": {
+            "failover_failures": [
+              "permanent",
+              "implementation_exception"
+            ],
+            "max_attempts": 2,
+            "replay": "idempotent",
+            "retry_owner": "executor"
+          },
+          "P1": {
+            "failover_failures": [
+              "permanent",
+              "implementation_exception"
+            ],
+            "max_attempts": 3,
+            "replay": "idempotent",
+            "retry_owner": "executor"
+          }
+        },
+        "remote_outstanding": [],
+        "request_associations": {
+          "R0": [
+            "D0"
+          ]
+        },
+        "request_facts": {
+          "R0": {
+            "condition": "lost"
+          }
+        },
+        "request_failures": {},
+        "request_policies": {
+          "R0": "P0"
+        },
+        "reservation_policies": {},
+        "reservations": {},
+        "resource_count": 0,
+        "resources": {},
+        "settlements": {
+          "R0": {
+            "disposition": "completed",
+            "remote_stopped": true,
+            "usage": {
+              "input": 0,
+              "output": 0
+            }
+          }
+        },
+        "task_requests": {},
+        "tasks": {},
+        "terminals": {
+          "R0": "lost"
+        }
+      },
+      "status": "accepted"
+    },
+    "origin": "tests/graph_sdk/reference/test_effects_v1.py::test_every_frozen_expectation_is_reduced_from_its_inputs"
+  },
+  {
+    "case_id": "retirement-2",
+    "declaration": {
+      "binding_declarations": {
+        "D0": "S0"
+      },
+      "binding_limits": {
+        "max_bytes": 8,
+        "max_items": 2,
+        "max_requests": 2
+      },
+      "hard_limit": 2,
+      "policies": {
+        "P0": {
+          "failover_failures": [
+            "permanent",
+            "implementation_exception"
+          ],
+          "max_attempts": 2,
+          "replay": "idempotent",
+          "retry_owner": "executor"
+        },
+        "P1": {
+          "failover_failures": [
+            "permanent",
+            "implementation_exception"
+          ],
+          "max_attempts": 3,
+          "replay": "idempotent",
+          "retry_owner": "executor"
+        }
+      }
+    },
+    "events": [
+      {
+        "association": "D0",
+        "kind": "bind_policy",
+        "policies": [
+          "P0"
+        ]
+      },
+      {
+        "associations": [
+          "D0"
+        ],
+        "kind": "reserve",
+        "policy": "P0",
+        "purpose": "initial",
+        "request": "R0"
+      },
+      {
+        "kind": "dispatch",
+        "request": "R0"
+      },
+      {
+        "kind": "cancel",
+        "request": "R0"
+      },
+      {
+        "kind": "lost",
+        "request": "R0"
+      },
+      {
+        "association": "D0",
+        "failure": "permanent",
+        "kind": "source_failure",
+        "request": "R0",
+        "settlement": {
+          "disposition": "completed",
+          "remote_stopped": true,
+          "usage": {
+            "input": 0,
+            "output": 0
+          }
+        },
+        "source": "S0"
+      },
+      {
+        "disposition": "completed",
+        "kind": "settlement",
+        "remote_stopped": true,
+        "request": "R0",
+        "usage": {
+          "input": 1,
+          "output": 1
+        }
+      }
+    ],
+    "expected": {
+      "state": {
+        "artifacts": [],
+        "association_requests": {
+          "D0": "R0"
+        },
+        "association_terminals": {},
+        "attempts": {
+          "D0": 1
+        },
+        "binding_declarations": {
+          "D0": "S0"
+        },
+        "binding_sources": {},
+        "binding_terminal": null,
+        "bindings": {
+          "D0": [
+            "P0"
+          ]
+        },
+        "cancel_requested": [
+          "R0"
+        ],
+        "cleanup": {},
+        "closed_unstarted": {},
+        "decisions": {},
+        "defects": [
+          "conflicting_terminal",
+          "conflicting_settlement"
+        ],
+        "denials": {},
+        "dispatched": [
+          "R0"
+        ],
+        "dispatched_count": 1,
+        "local_in_flight": [],
+        "policies": {
+          "P0": {
+            "failover_failures": [
+              "permanent",
+              "implementation_exception"
+            ],
+            "max_attempts": 2,
+            "replay": "idempotent",
+            "retry_owner": "executor"
+          },
+          "P1": {
+            "failover_failures": [
+              "permanent",
+              "implementation_exception"
+            ],
+            "max_attempts": 3,
+            "replay": "idempotent",
+            "retry_owner": "executor"
+          }
+        },
+        "remote_outstanding": [],
+        "request_associations": {
+          "R0": [
+            "D0"
+          ]
+        },
+        "request_facts": {
+          "R0": {
+            "condition": "lost"
+          }
+        },
+        "request_failures": {},
+        "request_policies": {
+          "R0": "P0"
+        },
+        "reservation_policies": {},
+        "reservations": {},
+        "resource_count": 0,
+        "resources": {},
+        "settlements": {
+          "R0": {
+            "disposition": "completed",
+            "remote_stopped": true,
+            "usage": {
+              "input": 0,
+              "output": 0
+            }
+          }
+        },
+        "task_requests": {},
+        "tasks": {},
+        "terminals": {
+          "R0": "lost"
+        }
+      },
+      "status": "accepted"
+    },
+    "origin": "tests/graph_sdk/reference/test_effects_v1.py::test_every_frozen_expectation_is_reduced_from_its_inputs"
+  },
+  {
+    "case_id": "retirement-3",
+    "declaration": {
+      "binding_declarations": {
+        "D0": "S0"
+      },
+      "binding_limits": {
+        "max_bytes": 8,
+        "max_items": 2,
+        "max_requests": 2
+      },
+      "hard_limit": 2,
+      "policies": {
+        "P0": {
+          "failover_failures": [
+            "permanent",
+            "implementation_exception"
+          ],
+          "max_attempts": 2,
+          "replay": "idempotent",
+          "retry_owner": "executor"
+        },
+        "P1": {
+          "failover_failures": [
+            "permanent",
+            "implementation_exception"
+          ],
+          "max_attempts": 3,
+          "replay": "idempotent",
+          "retry_owner": "executor"
+        }
+      }
+    },
+    "events": [
+      {
+        "association": "D0",
+        "kind": "bind_policy",
+        "policies": [
+          "P0"
+        ]
+      },
+      {
+        "associations": [
+          "D0"
+        ],
+        "kind": "reserve",
+        "policy": "P0",
+        "purpose": "initial",
+        "request": "R0"
+      },
+      {
+        "kind": "dispatch",
+        "request": "R0"
+      },
+      {
+        "kind": "cancel",
+        "request": "R0"
+      },
+      {
+        "kind": "stop",
+        "request": "R0",
+        "usage": "unknown"
+      },
+      {
+        "consumed_context_ports": [],
+        "items": [
+          {
+            "association": "D0",
+            "key": 0,
+            "text": "late",
+            "version": 1
+          }
+        ],
+        "kind": "source_result",
+        "outcome": "retrieved",
+        "outputs": [],
+        "request": "R0",
+        "settlement": {
+          "disposition": "completed",
+          "remote_stopped": true,
+          "usage": {
+            "input": 0,
+            "output": 0
+          }
+        },
+        "source": "S0"
+      },
+      {
+        "disposition": "completed",
+        "kind": "settlement",
+        "remote_stopped": true,
+        "request": "R0",
+        "usage": {
+          "input": 1,
+          "output": 1
+        }
+      }
+    ],
+    "expected": {
+      "state": {
+        "artifacts": [],
+        "association_requests": {
+          "D0": "R0"
+        },
+        "association_terminals": {},
+        "attempts": {
+          "D0": 1
+        },
+        "binding_declarations": {
+          "D0": "S0"
+        },
+        "binding_sources": {},
+        "binding_terminal": null,
+        "bindings": {
+          "D0": [
+            "P0"
+          ]
+        },
+        "cancel_requested": [
+          "R0"
+        ],
+        "cleanup": {},
+        "closed_unstarted": {},
+        "decisions": {},
+        "defects": [
+          "conflicting_terminal",
+          "conflicting_settlement"
+        ],
+        "denials": {},
+        "dispatched": [
+          "R0"
+        ],
+        "dispatched_count": 1,
+        "local_in_flight": [],
+        "policies": {
+          "P0": {
+            "failover_failures": [
+              "permanent",
+              "implementation_exception"
+            ],
+            "max_attempts": 2,
+            "replay": "idempotent",
+            "retry_owner": "executor"
+          },
+          "P1": {
+            "failover_failures": [
+              "permanent",
+              "implementation_exception"
+            ],
+            "max_attempts": 3,
+            "replay": "idempotent",
+            "retry_owner": "executor"
+          }
+        },
+        "remote_outstanding": [],
+        "request_associations": {
+          "R0": [
+            "D0"
+          ]
+        },
+        "request_facts": {
+          "R0": {
+            "condition": "cancel_after_dispatch"
+          }
+        },
+        "request_failures": {},
+        "request_policies": {
+          "R0": "P0"
+        },
+        "reservation_policies": {},
+        "reservations": {},
+        "resource_count": 0,
+        "resources": {},
+        "settlements": {
+          "R0": {
+            "disposition": "completed",
+            "remote_stopped": true,
+            "usage": {
+              "input": 0,
+              "output": 0
+            }
+          }
+        },
+        "task_requests": {},
+        "tasks": {},
+        "terminals": {
+          "R0": "cancelled"
+        }
+      },
+      "status": "accepted"
+    },
+    "origin": "tests/graph_sdk/reference/test_effects_v1.py::test_every_frozen_expectation_is_reduced_from_its_inputs"
+  },
+  {
+    "case_id": "retirement-4",
+    "declaration": {
+      "binding_declarations": {
+        "D0": "S0"
+      },
+      "binding_limits": {
+        "max_bytes": 8,
+        "max_items": 2,
+        "max_requests": 2
+      },
+      "hard_limit": 2,
+      "policies": {
+        "P0": {
+          "failover_failures": [
+            "permanent",
+            "implementation_exception"
+          ],
+          "max_attempts": 2,
+          "replay": "idempotent",
+          "retry_owner": "executor"
+        },
+        "P1": {
+          "failover_failures": [
+            "permanent",
+            "implementation_exception"
+          ],
+          "max_attempts": 3,
+          "replay": "idempotent",
+          "retry_owner": "executor"
+        }
+      }
+    },
+    "events": [
+      {
+        "association": "D0",
+        "kind": "bind_policy",
+        "policies": [
+          "P0"
+        ]
+      },
+      {
+        "associations": [
+          "D0"
+        ],
+        "kind": "reserve",
+        "policy": "P0",
+        "purpose": "initial",
+        "request": "R0"
+      },
+      {
+        "kind": "dispatch",
+        "request": "R0"
+      },
+      {
+        "kind": "cancel",
+        "request": "R0"
+      },
+      {
+        "kind": "stop",
+        "request": "R0",
+        "usage": "unknown"
+      },
+      {
+        "association": "D0",
+        "failure": "permanent",
+        "kind": "source_failure",
+        "request": "R0",
+        "settlement": {
+          "disposition": "completed",
+          "remote_stopped": true,
+          "usage": {
+            "input": 0,
+            "output": 0
+          }
+        },
+        "source": "S0"
+      },
+      {
+        "disposition": "completed",
+        "kind": "settlement",
+        "remote_stopped": true,
+        "request": "R0",
+        "usage": {
+          "input": 1,
+          "output": 1
+        }
+      }
+    ],
+    "expected": {
+      "state": {
+        "artifacts": [],
+        "association_requests": {
+          "D0": "R0"
+        },
+        "association_terminals": {},
+        "attempts": {
+          "D0": 1
+        },
+        "binding_declarations": {
+          "D0": "S0"
+        },
+        "binding_sources": {},
+        "binding_terminal": null,
+        "bindings": {
+          "D0": [
+            "P0"
+          ]
+        },
+        "cancel_requested": [
+          "R0"
+        ],
+        "cleanup": {},
+        "closed_unstarted": {},
+        "decisions": {},
+        "defects": [
+          "conflicting_terminal",
+          "conflicting_settlement"
+        ],
+        "denials": {},
+        "dispatched": [
+          "R0"
+        ],
+        "dispatched_count": 1,
+        "local_in_flight": [],
+        "policies": {
+          "P0": {
+            "failover_failures": [
+              "permanent",
+              "implementation_exception"
+            ],
+            "max_attempts": 2,
+            "replay": "idempotent",
+            "retry_owner": "executor"
+          },
+          "P1": {
+            "failover_failures": [
+              "permanent",
+              "implementation_exception"
+            ],
+            "max_attempts": 3,
+            "replay": "idempotent",
+            "retry_owner": "executor"
+          }
+        },
+        "remote_outstanding": [],
+        "request_associations": {
+          "R0": [
+            "D0"
+          ]
+        },
+        "request_facts": {
+          "R0": {
+            "condition": "cancel_after_dispatch"
+          }
+        },
+        "request_failures": {},
+        "request_policies": {
+          "R0": "P0"
+        },
+        "reservation_policies": {},
+        "reservations": {},
+        "resource_count": 0,
+        "resources": {},
+        "settlements": {
+          "R0": {
+            "disposition": "completed",
+            "remote_stopped": true,
+            "usage": {
+              "input": 0,
+              "output": 0
+            }
+          }
+        },
+        "task_requests": {},
+        "tasks": {},
+        "terminals": {
+          "R0": "cancelled"
+        }
+      },
+      "status": "accepted"
+    },
+    "origin": "tests/graph_sdk/reference/test_effects_v1.py::test_every_frozen_expectation_is_reduced_from_its_inputs"
+  },
+  {
+    "case_id": "retirement-5",
+    "declaration": {
+      "binding_declarations": {
+        "D0": "S0"
+      },
+      "binding_limits": {
+        "max_bytes": 12,
+        "max_items": 3,
+        "max_requests": 3
+      },
+      "hard_limit": 2,
+      "materialization_limits": {
+        "max_artifact_bytes": 64,
+        "max_artifacts": 8,
+        "max_collection_items": 3,
+        "max_declarations": 4,
+        "max_provenance_edges": 8
+      },
+      "materializations": [
+        {
+          "association": "D0",
+          "declaration": "D0",
+          "item_type": "text",
+          "kind": "single",
+          "max_bytes": 12,
+          "max_items": 3,
+          "node": "N0",
+          "output_type": "text",
+          "path": "initial",
+          "port": "context",
+          "publication": {
+            "activation": "OP:D0",
+            "artifact_type": "text",
+            "inputs": [
+              "context"
+            ],
+            "node": "N0",
+            "outcome": "ok",
+            "output_port": "result"
+          },
+          "selector_inputs": [],
+          "source": "S0",
+          "target": "T0",
+          "version_selection": "latest"
+        }
+      ],
+      "operation_occurrences": [
+        {
+          "activation": "OP:D0",
+          "attempt": "TASK:OP:D0",
+          "binding_declaration": "D0",
+          "node": "N0",
+          "target": "T0"
+        }
+      ],
+      "policies": {
+        "P0": {
+          "failover_failures": [
+            "permanent",
+            "implementation_exception"
+          ],
+          "max_attempts": 3,
+          "replay": "idempotent",
+          "retry_owner": "executor"
+        },
+        "P1": {
+          "failover_failures": [
+            "permanent",
+            "implementation_exception"
+          ],
+          "max_attempts": 3,
+          "replay": "idempotent",
+          "retry_owner": "executor"
+        }
+      },
+      "root_artifacts": [
+        {
+          "artifact_type": "text",
+          "port": "left",
+          "target": "T0"
+        },
+        {
+          "artifact_type": "text",
+          "port": "right",
+          "target": "T0"
+        }
+      ],
+      "root_input_types": [
+        "text"
+      ]
+    },
+    "events": [
+      {
+        "association": "D0",
+        "kind": "bind_policy",
+        "policies": [
+          "P0"
+        ]
+      },
+      {
+        "associations": [
+          "D0"
+        ],
+        "kind": "reserve",
+        "policy": "P0",
+        "purpose": "initial_binding",
+        "request": "R0"
+      },
+      {
+        "kind": "dispatch",
+        "request": "R0"
+      },
+      {
+        "activation": null,
+        "association": "D0",
+        "declaration": "D0",
+        "items": [
+          {
+            "key": 0,
+            "value": "one",
+            "version": 1
+          }
+        ],
+        "kind": "materialize_result",
+        "node": "N0",
+        "parents": [],
+        "path": "initial",
+        "port": "context",
+        "reported_outcome": null,
+        "request": "R0",
+        "settlement": {
+          "disposition": "completed",
+          "remote_stopped": true,
+          "usage": {
+            "input": 0,
+            "output": 0
+          }
+        },
+        "target": "T0"
+      },
+      {
+        "kind": "binding_finish"
+      },
+      {
+        "association": "D0",
+        "kind": "binding_cleanup_association",
+        "owner": "sdk",
+        "resource": "Q:D0",
+        "target": "T0"
+      },
+      {
+        "disposition": "closed",
+        "kind": "binding_cleanup",
+        "resource": "Q:D0"
+      },
+      {
+        "activation": "OP:D0",
+        "attempt": "TASK:OP:D0",
+        "binding_declaration": "D0",
+        "kind": "operation_start",
+        "node": "N0",
+        "target": "T0"
+      },
+      {
+        "activation": "OP:D0",
+        "attempt": "TASK:OP:D0",
+        "declaration": "D0",
+        "kind": "operation_publish",
+        "node": "OTHER",
+        "outcome": "ok",
+        "output_port": "result",
+        "path": "initial",
+        "port": "context",
+        "target": "T0",
+        "value": "result"
+      }
+    ],
+    "expected": {
+      "code": "missing_materialization",
+      "status": "rejected"
+    },
+    "origin": "tests/graph_sdk/reference/test_effects_v1.py::test_latest_publication_edges_come_from_exact_owned_parents"
+  },
+  {
+    "case_id": "retirement-6",
+    "declaration": {
+      "binding_declarations": {
+        "D0": "S0"
+      },
+      "binding_limits": {
+        "max_bytes": 12,
+        "max_items": 3,
+        "max_requests": 3
+      },
+      "hard_limit": 2,
+      "materialization_limits": {
+        "max_artifact_bytes": 64,
+        "max_artifacts": 8,
+        "max_collection_items": 3,
+        "max_declarations": 4,
+        "max_provenance_edges": 8
+      },
+      "materializations": [
+        {
+          "association": "D0",
+          "declaration": "D0",
+          "item_type": "text",
+          "kind": "single",
+          "max_bytes": 12,
+          "max_items": 3,
+          "node": "N0",
+          "output_type": "text",
+          "path": "initial",
+          "port": "context",
+          "publication": {
+            "activation": "OP:D0",
+            "artifact_type": "text",
+            "inputs": [
+              "context"
+            ],
+            "node": "N0",
+            "outcome": "ok",
+            "output_port": "result"
+          },
+          "selector_inputs": [],
+          "source": "S0",
+          "target": "T0",
+          "version_selection": "latest"
+        }
+      ],
+      "operation_occurrences": [
+        {
+          "activation": "OP:D0",
+          "attempt": "TASK:OP:D0",
+          "binding_declaration": "D0",
+          "node": "N0",
+          "target": "T0"
+        }
+      ],
+      "policies": {
+        "P0": {
+          "failover_failures": [
+            "permanent",
+            "implementation_exception"
+          ],
+          "max_attempts": 3,
+          "replay": "idempotent",
+          "retry_owner": "executor"
+        },
+        "P1": {
+          "failover_failures": [
+            "permanent",
+            "implementation_exception"
+          ],
+          "max_attempts": 3,
+          "replay": "idempotent",
+          "retry_owner": "executor"
+        }
+      },
+      "root_artifacts": [
+        {
+          "artifact_type": "text",
+          "port": "left",
+          "target": "T0"
+        },
+        {
+          "artifact_type": "text",
+          "port": "right",
+          "target": "T0"
+        }
+      ],
+      "root_input_types": [
+        "text"
+      ]
+    },
+    "events": [
+      {
+        "association": "D0",
+        "kind": "bind_policy",
+        "policies": [
+          "P0"
+        ]
+      },
+      {
+        "associations": [
+          "D0"
+        ],
+        "kind": "reserve",
+        "policy": "P0",
+        "purpose": "initial_binding",
+        "request": "R0"
+      },
+      {
+        "kind": "dispatch",
+        "request": "R0"
+      },
+      {
+        "activation": null,
+        "association": "D0",
+        "declaration": "D0",
+        "items": [
+          {
+            "key": 0,
+            "value": "one",
+            "version": 1
+          }
+        ],
+        "kind": "materialize_result",
+        "node": "N0",
+        "parents": [],
+        "path": "initial",
+        "port": "context",
+        "reported_outcome": null,
+        "request": "R0",
+        "settlement": {
+          "disposition": "completed",
+          "remote_stopped": true,
+          "usage": {
+            "input": 0,
+            "output": 0
+          }
+        },
+        "target": "T0"
+      },
+      {
+        "association": "D0",
+        "kind": "binding_cleanup_association",
+        "owner": "sdk",
+        "resource": "Q:D0",
+        "target": "T0"
+      },
+      {
+        "disposition": "closed",
+        "kind": "binding_cleanup",
+        "resource": "Q:D0"
+      },
+      {
+        "activation": "OP:D0",
+        "attempt": "TASK:OP:D0",
+        "binding_declaration": "D0",
+        "kind": "operation_start",
+        "node": "N0",
+        "target": "T0"
+      },
+      {
+        "activation": "OP:D0",
+        "attempt": "TASK:OP:D0",
+        "declaration": "D0",
+        "kind": "operation_publish",
+        "node": "N0",
+        "outcome": "ok",
+        "output_port": "result",
+        "path": "initial",
+        "port": "context",
+        "target": "T0",
+        "value": "result"
+      }
+    ],
+    "expected": {
+      "code": "missing",
+      "status": "rejected"
+    },
+    "origin": "tests/graph_sdk/reference/test_effects_v1.py::test_latest_preflight_is_structural_and_publication_is_at_most_once"
+  },
+  {
+    "case_id": "retirement-7",
+    "declaration": {
+      "binding_declarations": {
+        "D0": "S0"
+      },
+      "binding_limits": {
+        "max_bytes": 12,
+        "max_items": 3,
+        "max_requests": 3
+      },
+      "hard_limit": 2,
+      "materialization_limits": {
+        "max_artifact_bytes": 64,
+        "max_artifacts": 8,
+        "max_collection_items": 3,
+        "max_declarations": 4,
+        "max_provenance_edges": 8
+      },
+      "materializations": [
+        {
+          "association": "D0",
+          "declaration": "D0",
+          "item_type": "text",
+          "kind": "single",
+          "max_bytes": 12,
+          "max_items": 3,
+          "node": "N0",
+          "output_type": "text",
+          "path": "initial",
+          "port": "context",
+          "publication": {
+            "activation": "OP:D0",
+            "artifact_type": "text",
+            "inputs": [
+              "context"
+            ],
+            "node": "N0",
+            "outcome": "ok",
+            "output_port": "result"
+          },
+          "selector_inputs": [],
+          "source": "S0",
+          "target": "T0",
+          "version_selection": "latest"
+        }
+      ],
+      "operation_occurrences": [
+        {
+          "activation": "OP:D0",
+          "attempt": "TASK:OP:D0",
+          "binding_declaration": "D0",
+          "node": "N0",
+          "target": "T0"
+        }
+      ],
+      "policies": {
+        "P0": {
+          "failover_failures": [
+            "permanent",
+            "implementation_exception"
+          ],
+          "max_attempts": 3,
+          "replay": "idempotent",
+          "retry_owner": "executor"
+        },
+        "P1": {
+          "failover_failures": [
+            "permanent",
+            "implementation_exception"
+          ],
+          "max_attempts": 3,
+          "replay": "idempotent",
+          "retry_owner": "executor"
+        }
+      },
+      "root_artifacts": [
+        {
+          "artifact_type": "text",
+          "port": "left",
+          "target": "T0"
+        },
+        {
+          "artifact_type": "text",
+          "port": "right",
+          "target": "T0"
+        }
+      ],
+      "root_input_types": [
+        "text"
+      ]
+    },
+    "events": [
+      {
+        "association": "D0",
+        "kind": "bind_policy",
+        "policies": [
+          "P0"
+        ]
+      },
+      {
+        "associations": [
+          "D0"
+        ],
+        "kind": "reserve",
+        "policy": "P0",
+        "purpose": "initial_binding",
+        "request": "R0"
+      },
+      {
+        "kind": "dispatch",
+        "request": "R0"
+      },
+      {
+        "activation": null,
+        "association": "D0",
+        "declaration": "D0",
+        "items": [
+          {
+            "key": 0,
+            "value": "one",
+            "version": 1
+          }
+        ],
+        "kind": "materialize_result",
+        "node": "N0",
+        "parents": [],
+        "path": "initial",
+        "port": "context",
+        "reported_outcome": null,
+        "request": "R0",
+        "settlement": {
+          "disposition": "completed",
+          "remote_stopped": true,
+          "usage": {
+            "input": 0,
+            "output": 0
+          }
+        },
+        "target": "T0"
+      },
+      {
+        "activation": "OP:D0",
+        "attempt": "TASK:OP:D0",
+        "binding_declaration": "D0",
+        "kind": "operation_start",
+        "node": "N0",
+        "target": "T0"
+      },
+      {
+        "kind": "binding_finish"
+      },
+      {
+        "association": "D0",
+        "kind": "binding_cleanup_association",
+        "owner": "sdk",
+        "resource": "Q:D0",
+        "target": "T0"
+      },
+      {
+        "disposition": "closed",
+        "kind": "binding_cleanup",
+        "resource": "Q:D0"
+      },
+      {
+        "activation": "OP:D0",
+        "attempt": "TASK:OP:D0",
+        "declaration": "D0",
+        "kind": "operation_publish",
+        "node": "N0",
+        "outcome": "ok",
+        "output_port": "result",
+        "path": "initial",
+        "port": "context",
+        "target": "T0",
+        "value": "result"
+      }
+    ],
+    "expected": {
+      "code": "missing",
+      "status": "rejected"
+    },
+    "origin": "tests/graph_sdk/reference/test_effects_v1.py::test_latest_preflight_is_structural_and_publication_is_at_most_once"
+  },
+  {
+    "case_id": "retirement-8",
+    "declaration": {
+      "binding_declarations": {
+        "D0": "S0"
+      },
+      "binding_limits": {
+        "max_bytes": 12,
+        "max_items": 3,
+        "max_requests": 3
+      },
+      "hard_limit": 2,
+      "materialization_limits": {
+        "max_artifact_bytes": 64,
+        "max_artifacts": 8,
+        "max_collection_items": 3,
+        "max_declarations": 4,
+        "max_provenance_edges": 8
+      },
+      "materializations": [
+        {
+          "association": "D0",
+          "declaration": "D0",
+          "item_type": "text",
+          "kind": "single",
+          "max_bytes": 12,
+          "max_items": 3,
+          "node": "N0",
+          "output_type": "text",
+          "path": "initial",
+          "port": "context",
+          "publication": {
+            "activation": "OP:D0",
+            "artifact_type": "text",
+            "inputs": [
+              "context"
+            ],
+            "node": "N0",
+            "outcome": "ok",
+            "output_port": "result"
+          },
+          "selector_inputs": [],
+          "source": "S0",
+          "target": "T0",
+          "version_selection": "latest"
+        }
+      ],
+      "operation_occurrences": [
+        {
+          "activation": "OP:D0",
+          "attempt": "TASK:OP:D0",
+          "binding_declaration": "D0",
+          "node": "N0",
+          "target": "T0"
+        }
+      ],
+      "policies": {
+        "P0": {
+          "failover_failures": [
+            "permanent",
+            "implementation_exception"
+          ],
+          "max_attempts": 3,
+          "replay": "idempotent",
+          "retry_owner": "executor"
+        },
+        "P1": {
+          "failover_failures": [
+            "permanent",
+            "implementation_exception"
+          ],
+          "max_attempts": 3,
+          "replay": "idempotent",
+          "retry_owner": "executor"
+        }
+      },
+      "root_artifacts": [
+        {
+          "artifact_type": "text",
+          "port": "left",
+          "target": "T0"
+        },
+        {
+          "artifact_type": "text",
+          "port": "right",
+          "target": "T0"
+        }
+      ],
+      "root_input_types": [
+        "text"
+      ]
+    },
+    "events": [
+      {
+        "association": "D0",
+        "kind": "bind_policy",
+        "policies": [
+          "P0"
+        ]
+      },
+      {
+        "associations": [
+          "D0"
+        ],
+        "kind": "reserve",
+        "policy": "P0",
+        "purpose": "initial_binding",
+        "request": "R0"
+      },
+      {
+        "kind": "dispatch",
+        "request": "R0"
+      },
+      {
+        "activation": null,
+        "association": "D0",
+        "declaration": "D0",
+        "items": [
+          {
+            "key": 0,
+            "value": "one",
+            "version": 1
+          }
+        ],
+        "kind": "materialize_result",
+        "node": "N0",
+        "parents": [],
+        "path": "initial",
+        "port": "context",
+        "reported_outcome": null,
+        "request": "R0",
+        "settlement": {
+          "disposition": "completed",
+          "remote_stopped": true,
+          "usage": {
+            "input": 0,
+            "output": 0
+          }
+        },
+        "target": "T0"
+      },
+      {
+        "kind": "binding_finish"
+      },
+      {
+        "association": "D0",
+        "kind": "binding_cleanup_association",
+        "owner": "sdk",
+        "resource": "Q:D0",
+        "target": "T0"
+      },
+      {
+        "disposition": "closed",
+        "kind": "binding_cleanup",
+        "resource": "Q:D0"
+      },
+      {
+        "activation": "OP:D0",
+        "attempt": "TASK:OP:D0",
+        "binding_declaration": "D0",
+        "kind": "operation_start",
+        "node": "N0",
+        "target": "T0"
+      },
+      {
+        "activation": "OP:D0",
+        "attempt": "TASK:OP:D0",
+        "declaration": "D0",
+        "kind": "operation_publish",
+        "node": "N0",
+        "outcome": "ok",
+        "output_port": "result",
+        "path": "initial",
+        "port": "context",
+        "target": "T0",
+        "value": "result"
+      },
+      {
+        "activation": "OP:D0",
+        "attempt": "TASK:OP:D0",
+        "declaration": "D0",
+        "kind": "operation_publish",
+        "node": "N0",
+        "outcome": "ok",
+        "output_port": "result",
+        "path": "initial",
+        "port": "context",
+        "target": "T0",
+        "value": "result"
+      }
+    ],
+    "expected": {
+      "code": "duplicate",
+      "status": "rejected"
+    },
+    "origin": "tests/graph_sdk/reference/test_effects_v1.py::test_latest_preflight_is_structural_and_publication_is_at_most_once"
+  },
+  {
+    "case_id": "retirement-9",
+    "declaration": {
+      "binding_declarations": {
+        "D0": "S0",
+        "D1": "S0"
+      },
+      "binding_limits": {
+        "max_bytes": 12,
+        "max_items": 3,
+        "max_requests": 3
+      },
+      "binding_requirements": {
+        "D0": "required",
+        "D1": "optional"
+      },
+      "hard_limit": 2,
+      "materialization_limits": {
+        "max_artifact_bytes": 64,
+        "max_artifacts": 8,
+        "max_collection_items": 3,
+        "max_declarations": 4,
+        "max_provenance_edges": 8
+      },
+      "materializations": [
+        {
+          "association": "D0",
+          "declaration": "D0",
+          "item_type": "text",
+          "kind": "single",
+          "max_bytes": 12,
+          "max_items": 3,
+          "node": "N0",
+          "output_type": "text",
+          "path": "initial",
+          "port": "context",
+          "publication": {
+            "activation": "OP:D0",
+            "artifact_type": "text",
+            "inputs": [
+              "context"
+            ],
+            "node": "N0",
+            "outcome": "ok",
+            "output_port": "result"
+          },
+          "selector_inputs": [],
+          "source": "S0",
+          "target": "T0",
+          "version_selection": "latest"
+        },
+        {
+          "association": "D1",
+          "declaration": "D1",
+          "item_type": "text",
+          "kind": "single",
+          "max_bytes": 12,
+          "max_items": 1,
+          "node": "N1",
+          "output_type": "text",
+          "path": "initial",
+          "port": "optional_context",
+          "selector_inputs": [],
+          "source": "S0",
+          "target": "T0",
+          "version_selection": "exact_one"
+        }
+      ],
+      "operation_occurrences": [
+        {
+          "activation": "OP:D0",
+          "attempt": "TASK:OP:D0",
+          "binding_declaration": "D0",
+          "node": "N0",
+          "target": "T0"
+        },
+        {
+          "activation": "OP:D1",
+          "attempt": "TASK:OP:D1",
+          "binding_declaration": "D1",
+          "node": "N1",
+          "target": "T0"
+        }
+      ],
+      "policies": {
+        "P0": {
+          "failover_failures": [
+            "permanent",
+            "implementation_exception"
+          ],
+          "max_attempts": 3,
+          "replay": "idempotent",
+          "retry_owner": "executor"
+        },
+        "P1": {
+          "failover_failures": [
+            "permanent",
+            "implementation_exception"
+          ],
+          "max_attempts": 3,
+          "replay": "idempotent",
+          "retry_owner": "executor"
+        }
+      },
+      "root_artifacts": [
+        {
+          "artifact_type": "text",
+          "port": "left",
+          "target": "T0"
+        },
+        {
+          "artifact_type": "text",
+          "port": "right",
+          "target": "T0"
+        }
+      ],
+      "root_input_types": [
+        "text"
+      ]
+    },
+    "events": [
+      {
+        "association": "D0",
+        "kind": "bind_policy",
+        "policies": [
+          "P0"
+        ]
+      },
+      {
+        "association": "D1",
+        "kind": "bind_policy",
+        "policies": [
+          "P0"
+        ]
+      },
+      {
+        "associations": [
+          "D0"
+        ],
+        "kind": "reserve",
+        "policy": "P0",
+        "purpose": "initial_binding",
+        "request": "R0"
+      },
+      {
+        "kind": "dispatch",
+        "request": "R0"
+      },
+      {
+        "activation": null,
+        "association": "D0",
+        "declaration": "D0",
+        "items": [
+          {
+            "key": 0,
+            "value": "one",
+            "version": 1
+          }
+        ],
+        "kind": "materialize_result",
+        "node": "N0",
+        "parents": [],
+        "path": "initial",
+        "port": "context",
+        "reported_outcome": null,
+        "request": "R0",
+        "settlement": {
+          "disposition": "completed",
+          "remote_stopped": true,
+          "usage": {
+            "input": 0,
+            "output": 0
+          }
+        },
+        "target": "T0"
+      },
+      {
+        "associations": [
+          "D1"
+        ],
+        "kind": "reserve",
+        "policy": "P0",
+        "purpose": "initial_binding",
+        "request": "R1"
+      },
+      {
+        "kind": "dispatch",
+        "request": "R1"
+      },
+      {
+        "association": "D1",
+        "disposition": "omitted_optional",
+        "failure": "permanent",
+        "kind": "source_failure",
+        "request": "R1",
+        "settlement": {
+          "disposition": "completed",
+          "remote_stopped": true,
+          "usage": {
+            "input": 0,
+            "output": 0
+          }
+        },
+        "source": "S0"
+      },
+      {
+        "kind": "binding_finish"
+      },
+      {
+        "associations": [
+          "D0",
+          "D1"
+        ],
+        "kind": "binding_cleanup_association",
+        "owner": "sdk",
+        "purpose": "binding",
+        "resource": "Q:S0",
+        "targets": [
+          "T0"
+        ]
+      },
+      {
+        "activation": "OP:D0",
+        "attempt": "TASK:OP:D0",
+        "binding_declaration": "D0",
+        "kind": "operation_start",
+        "node": "N0",
+        "target": "T0"
+      },
+      {
+        "activation": "OP:D0",
+        "attempt": "TASK:OP:D0",
+        "declaration": "D0",
+        "kind": "operation_publish",
+        "node": "N0",
+        "outcome": "ok",
+        "output_port": "result",
+        "path": "initial",
+        "port": "context",
+        "target": "T0",
+        "value": "result"
+      },
+      {
+        "activation": "OP:D1",
+        "attempt": "TASK:OP:D1",
+        "binding_declaration": "D1",
+        "kind": "operation_blocked",
+        "node": "N1",
+        "reason": "omitted_optional",
+        "target": "T0"
+      }
+    ],
+    "expected": {
+      "code": "missing",
+      "status": "rejected"
+    },
+    "origin": "tests/graph_sdk/reference/test_effects_v1.py::test_latest_sealed_context_survives_cleanup_defects_and_optional_omission"
+  },
+  {
+    "case_id": "retirement-10",
+    "declaration": {
+      "binding_declarations": {
+        "D0": "S0",
+        "D1": "S0"
+      },
+      "binding_limits": {
+        "max_bytes": 12,
+        "max_items": 3,
+        "max_requests": 3
+      },
+      "binding_requirements": {
+        "D0": "required",
+        "D1": "optional"
+      },
+      "hard_limit": 2,
+      "materialization_limits": {
+        "max_artifact_bytes": 64,
+        "max_artifacts": 8,
+        "max_collection_items": 3,
+        "max_declarations": 4,
+        "max_provenance_edges": 8
+      },
+      "materializations": [
+        {
+          "association": "D0",
+          "declaration": "D0",
+          "item_type": "text",
+          "kind": "single",
+          "max_bytes": 12,
+          "max_items": 3,
+          "node": "N0",
+          "output_type": "text",
+          "path": "initial",
+          "port": "context",
+          "publication": {
+            "activation": "OP:D0",
+            "artifact_type": "text",
+            "inputs": [
+              "context"
+            ],
+            "node": "N0",
+            "outcome": "ok",
+            "output_port": "result"
+          },
+          "selector_inputs": [],
+          "source": "S0",
+          "target": "T0",
+          "version_selection": "latest"
+        },
+        {
+          "association": "D1",
+          "declaration": "D1",
+          "item_type": "text",
+          "kind": "single",
+          "max_bytes": 12,
+          "max_items": 1,
+          "node": "N1",
+          "output_type": "text",
+          "path": "initial",
+          "port": "optional_context",
+          "selector_inputs": [],
+          "source": "S0",
+          "target": "T0",
+          "version_selection": "exact_one"
+        }
+      ],
+      "operation_occurrences": [
+        {
+          "activation": "OP:D0",
+          "attempt": "TASK:OP:D0",
+          "binding_declaration": "D0",
+          "node": "N0",
+          "target": "T0"
+        },
+        {
+          "activation": "OP:D1",
+          "attempt": "TASK:OP:D1",
+          "binding_declaration": "D1",
+          "node": "N1",
+          "target": "T0"
+        }
+      ],
+      "policies": {
+        "P0": {
+          "failover_failures": [
+            "permanent",
+            "implementation_exception"
+          ],
+          "max_attempts": 3,
+          "replay": "idempotent",
+          "retry_owner": "executor"
+        },
+        "P1": {
+          "failover_failures": [
+            "permanent",
+            "implementation_exception"
+          ],
+          "max_attempts": 3,
+          "replay": "idempotent",
+          "retry_owner": "executor"
+        }
+      },
+      "root_artifacts": [
+        {
+          "artifact_type": "text",
+          "port": "left",
+          "target": "T0"
+        },
+        {
+          "artifact_type": "text",
+          "port": "right",
+          "target": "T0"
+        }
+      ],
+      "root_input_types": [
+        "text"
+      ]
+    },
+    "events": [
+      {
+        "association": "D0",
+        "kind": "bind_policy",
+        "policies": [
+          "P0"
+        ]
+      },
+      {
+        "association": "D1",
+        "kind": "bind_policy",
+        "policies": [
+          "P0"
+        ]
+      },
+      {
+        "associations": [
+          "D0"
+        ],
+        "kind": "reserve",
+        "policy": "P0",
+        "purpose": "initial_binding",
+        "request": "R0"
+      },
+      {
+        "kind": "dispatch",
+        "request": "R0"
+      },
+      {
+        "activation": null,
+        "association": "D0",
+        "declaration": "D0",
+        "items": [
+          {
+            "key": 0,
+            "value": "one",
+            "version": 1
+          }
+        ],
+        "kind": "materialize_result",
+        "node": "N0",
+        "parents": [],
+        "path": "initial",
+        "port": "context",
+        "reported_outcome": null,
+        "request": "R0",
+        "settlement": {
+          "disposition": "completed",
+          "remote_stopped": true,
+          "usage": {
+            "input": 0,
+            "output": 0
+          }
+        },
+        "target": "T0"
+      },
+      {
+        "associations": [
+          "D1"
+        ],
+        "kind": "reserve",
+        "policy": "P0",
+        "purpose": "initial_binding",
+        "request": "R1"
+      },
+      {
+        "kind": "dispatch",
+        "request": "R1"
+      },
+      {
+        "association": "D1",
+        "disposition": "omitted_optional",
+        "failure": "permanent",
+        "kind": "source_failure",
+        "request": "R1",
+        "settlement": {
+          "disposition": "completed",
+          "remote_stopped": true,
+          "usage": {
+            "input": 0,
+            "output": 0
+          }
+        },
+        "source": "S0"
+      },
+      {
+        "kind": "binding_finish"
+      },
+      {
+        "associations": [
+          "D0",
+          "D1"
+        ],
+        "kind": "binding_cleanup_association",
+        "owner": "sdk",
+        "purpose": "binding",
+        "resource": "Q:S0",
+        "targets": [
+          "OTHER"
+        ]
+      },
+      {
+        "disposition": "closed",
+        "kind": "binding_cleanup",
+        "resource": "Q:S0"
+      },
+      {
+        "activation": "OP:D0",
+        "attempt": "TASK:OP:D0",
+        "binding_declaration": "D0",
+        "kind": "operation_start",
+        "node": "N0",
+        "target": "T0"
+      },
+      {
+        "activation": "OP:D0",
+        "attempt": "TASK:OP:D0",
+        "declaration": "D0",
+        "kind": "operation_publish",
+        "node": "N0",
+        "outcome": "ok",
+        "output_port": "result",
+        "path": "initial",
+        "port": "context",
+        "target": "T0",
+        "value": "result"
+      },
+      {
+        "activation": "OP:D1",
+        "attempt": "TASK:OP:D1",
+        "binding_declaration": "D1",
+        "kind": "operation_blocked",
+        "node": "N1",
+        "reason": "omitted_optional",
+        "target": "T0"
+      }
+    ],
+    "expected": {
+      "code": "foreign_owner",
+      "status": "rejected"
+    },
+    "origin": "tests/graph_sdk/reference/test_effects_v1.py::test_latest_sealed_context_survives_cleanup_defects_and_optional_omission"
+  },
+  {
+    "case_id": "retirement-11",
+    "declaration": {
+      "binding_declarations": {
+        "D0": "S0",
+        "D1": "S0"
+      },
+      "binding_limits": {
+        "max_bytes": 12,
+        "max_items": 3,
+        "max_requests": 3
+      },
+      "binding_requirements": {
+        "D0": "required",
+        "D1": "optional"
+      },
+      "hard_limit": 2,
+      "materialization_limits": {
+        "max_artifact_bytes": 64,
+        "max_artifacts": 8,
+        "max_collection_items": 3,
+        "max_declarations": 4,
+        "max_provenance_edges": 8
+      },
+      "materializations": [
+        {
+          "association": "D0",
+          "declaration": "D0",
+          "item_type": "text",
+          "kind": "single",
+          "max_bytes": 12,
+          "max_items": 3,
+          "node": "N0",
+          "output_type": "text",
+          "path": "initial",
+          "port": "context",
+          "publication": {
+            "activation": "OP:D0",
+            "artifact_type": "text",
+            "inputs": [
+              "context"
+            ],
+            "node": "N0",
+            "outcome": "ok",
+            "output_port": "result"
+          },
+          "selector_inputs": [],
+          "source": "S0",
+          "target": "T0",
+          "version_selection": "latest"
+        },
+        {
+          "association": "D1",
+          "declaration": "D1",
+          "item_type": "text",
+          "kind": "single",
+          "max_bytes": 12,
+          "max_items": 1,
+          "node": "N1",
+          "output_type": "text",
+          "path": "initial",
+          "port": "optional_context",
+          "selector_inputs": [],
+          "source": "S0",
+          "target": "T0",
+          "version_selection": "exact_one"
+        }
+      ],
+      "operation_occurrences": [
+        {
+          "activation": "OP:D0",
+          "attempt": "TASK:OP:D0",
+          "binding_declaration": "D0",
+          "node": "N0",
+          "target": "T0"
+        },
+        {
+          "activation": "OP:D1",
+          "attempt": "TASK:OP:D1",
+          "binding_declaration": "D1",
+          "node": "N1",
+          "target": "T0"
+        }
+      ],
+      "policies": {
+        "P0": {
+          "failover_failures": [
+            "permanent",
+            "implementation_exception"
+          ],
+          "max_attempts": 3,
+          "replay": "idempotent",
+          "retry_owner": "executor"
+        },
+        "P1": {
+          "failover_failures": [
+            "permanent",
+            "implementation_exception"
+          ],
+          "max_attempts": 3,
+          "replay": "idempotent",
+          "retry_owner": "executor"
+        }
+      },
+      "root_artifacts": [
+        {
+          "artifact_type": "text",
+          "port": "left",
+          "target": "T0"
+        },
+        {
+          "artifact_type": "text",
+          "port": "right",
+          "target": "T0"
+        }
+      ],
+      "root_input_types": [
+        "text"
+      ]
+    },
+    "events": [
+      {
+        "association": "D0",
+        "kind": "bind_policy",
+        "policies": [
+          "P0"
+        ]
+      },
+      {
+        "association": "D1",
+        "kind": "bind_policy",
+        "policies": [
+          "P0"
+        ]
+      },
+      {
+        "associations": [
+          "D0"
+        ],
+        "kind": "reserve",
+        "policy": "P0",
+        "purpose": "initial_binding",
+        "request": "R0"
+      },
+      {
+        "kind": "dispatch",
+        "request": "R0"
+      },
+      {
+        "activation": null,
+        "association": "D0",
+        "declaration": "D0",
+        "items": [
+          {
+            "key": 0,
+            "value": "one",
+            "version": 1
+          }
+        ],
+        "kind": "materialize_result",
+        "node": "N0",
+        "parents": [],
+        "path": "initial",
+        "port": "context",
+        "reported_outcome": null,
+        "request": "R0",
+        "settlement": {
+          "disposition": "completed",
+          "remote_stopped": true,
+          "usage": {
+            "input": 0,
+            "output": 0
+          }
+        },
+        "target": "T0"
+      },
+      {
+        "associations": [
+          "D1"
+        ],
+        "kind": "reserve",
+        "policy": "P0",
+        "purpose": "initial_binding",
+        "request": "R1"
+      },
+      {
+        "kind": "dispatch",
+        "request": "R1"
+      },
+      {
+        "association": "D1",
+        "disposition": "omitted_optional",
+        "failure": "permanent",
+        "kind": "source_failure",
+        "request": "R1",
+        "settlement": {
+          "disposition": "completed",
+          "remote_stopped": true,
+          "usage": {
+            "input": 0,
+            "output": 0
+          }
+        },
+        "source": "S0"
+      },
+      {
+        "kind": "binding_finish"
+      },
+      {
+        "associations": [
+          "D1"
+        ],
+        "kind": "reserve",
+        "policy": "P0",
+        "purpose": "initial_binding",
+        "request": "R2"
+      },
+      {
+        "associations": [
+          "D0",
+          "D1"
+        ],
+        "kind": "binding_cleanup_association",
+        "owner": "sdk",
+        "purpose": "binding",
+        "resource": "Q:S0",
+        "targets": [
+          "T0"
+        ]
+      },
+      {
+        "disposition": "closed",
+        "kind": "binding_cleanup",
+        "resource": "Q:S0"
+      },
+      {
+        "activation": "OP:D0",
+        "attempt": "TASK:OP:D0",
+        "binding_declaration": "D0",
+        "kind": "operation_start",
+        "node": "N0",
+        "target": "T0"
+      },
+      {
+        "activation": "OP:D0",
+        "attempt": "TASK:OP:D0",
+        "declaration": "D0",
+        "kind": "operation_publish",
+        "node": "N0",
+        "outcome": "ok",
+        "output_port": "result",
+        "path": "initial",
+        "port": "context",
+        "target": "T0",
+        "value": "result"
+      },
+      {
+        "activation": "OP:D1",
+        "attempt": "TASK:OP:D1",
+        "binding_declaration": "D1",
+        "kind": "operation_blocked",
+        "node": "N1",
+        "reason": "omitted_optional",
+        "target": "T0"
+      }
+    ],
+    "expected": {
+      "code": "contradictory",
+      "status": "rejected"
+    },
+    "origin": "tests/graph_sdk/reference/test_effects_v1.py::test_binding_finish_requires_every_terminal_and_freezes_binding_state"
+  },
+  {
+    "case_id": "retirement-12",
+    "declaration": {
+      "binding_declarations": {
+        "D0": "S0"
+      },
+      "binding_limits": {
+        "max_bytes": 12,
+        "max_items": 3,
+        "max_requests": 3
+      },
+      "hard_limit": 2,
+      "materialization_limits": {
+        "max_artifact_bytes": 64,
+        "max_artifacts": 8,
+        "max_collection_items": 3,
+        "max_declarations": 4,
+        "max_provenance_edges": 8
+      },
+      "materializations": [
+        {
+          "association": "D0",
+          "declaration": "D0",
+          "item_type": "text",
+          "kind": "single",
+          "max_bytes": 12,
+          "max_items": 3,
+          "node": "N0",
+          "output_type": "text",
+          "path": "initial",
+          "port": "context",
+          "publication": {
+            "activation": "OP:D0",
+            "artifact_type": "text",
+            "inputs": [
+              "context"
+            ],
+            "node": "N0",
+            "outcome": "ok",
+            "output_port": "result"
+          },
+          "selector_inputs": [],
+          "source": "S0",
+          "target": "T0",
+          "version_selection": "latest"
+        }
+      ],
+      "operation_occurrences": [
+        {
+          "activation": "OP:D0",
+          "attempt": "TASK:OP:D0",
+          "binding_declaration": "D0",
+          "node": "N0",
+          "target": "T0"
+        }
+      ],
+      "policies": {
+        "P0": {
+          "failover_failures": [
+            "permanent",
+            "implementation_exception"
+          ],
+          "max_attempts": 3,
+          "replay": "idempotent",
+          "retry_owner": "executor"
+        },
+        "P1": {
+          "failover_failures": [
+            "permanent",
+            "implementation_exception"
+          ],
+          "max_attempts": 3,
+          "replay": "idempotent",
+          "retry_owner": "executor"
+        }
+      },
+      "root_artifacts": [
+        {
+          "artifact_type": "text",
+          "port": "left",
+          "target": "T0"
+        },
+        {
+          "artifact_type": "text",
+          "port": "right",
+          "target": "T0"
+        }
+      ],
+      "root_input_types": [
+        "text"
+      ]
+    },
+    "events": [
+      {
+        "association": "D0",
+        "kind": "bind_policy",
+        "policies": [
+          "P0"
+        ]
+      },
+      {
+        "associations": [
+          "D0"
+        ],
+        "kind": "reserve",
+        "policy": "P0",
+        "purpose": "initial_binding",
+        "request": "R0"
+      },
+      {
+        "kind": "dispatch",
+        "request": "R0"
+      },
+      {
+        "activation": null,
+        "association": "D0",
+        "declaration": "D0",
+        "items": [
+          {
+            "key": 0,
+            "value": "one",
+            "version": 1
+          }
+        ],
+        "kind": "materialize_result",
+        "node": "N0",
+        "parents": [],
+        "path": "initial",
+        "port": "context",
+        "reported_outcome": null,
+        "request": "R0",
+        "settlement": {
+          "disposition": "completed",
+          "remote_stopped": true,
+          "usage": {
+            "input": 0,
+            "output": 0
+          }
+        },
+        "target": "T0"
+      },
+      {
+        "kind": "binding_finish"
+      },
+      {
+        "association": "D0",
+        "kind": "bind_policy",
+        "policies": [
+          "P0"
+        ]
+      },
+      {
+        "association": "D0",
+        "kind": "binding_cleanup_association",
+        "owner": "sdk",
+        "resource": "Q:D0",
+        "target": "T0"
+      },
+      {
+        "disposition": "closed",
+        "kind": "binding_cleanup",
+        "resource": "Q:D0"
+      },
+      {
+        "activation": "OP:D0",
+        "attempt": "TASK:OP:D0",
+        "binding_declaration": "D0",
+        "kind": "operation_start",
+        "node": "N0",
+        "target": "T0"
+      },
+      {
+        "activation": "OP:D0",
+        "attempt": "TASK:OP:D0",
+        "declaration": "D0",
+        "kind": "operation_publish",
+        "node": "N0",
+        "outcome": "ok",
+        "output_port": "result",
+        "path": "initial",
+        "port": "context",
+        "target": "T0",
+        "value": "result"
+      }
+    ],
+    "expected": {
+      "code": "contradictory",
+      "status": "rejected"
+    },
+    "origin": "tests/graph_sdk/reference/test_effects_v1.py::test_binding_finish_requires_every_terminal_and_freezes_binding_state"
+  },
+  {
+    "case_id": "retirement-13",
+    "declaration": {
+      "binding_declarations": {
+        "D0": "S0"
+      },
+      "binding_limits": {
+        "max_bytes": 12,
+        "max_items": 3,
+        "max_requests": 3
+      },
+      "hard_limit": 2,
+      "materialization_limits": {
+        "max_artifact_bytes": 64,
+        "max_artifacts": 8,
+        "max_collection_items": 3,
+        "max_declarations": 4,
+        "max_provenance_edges": 8
+      },
+      "materializations": [
+        {
+          "association": "D0",
+          "declaration": "D0",
+          "item_type": "text",
+          "kind": "single",
+          "max_bytes": 12,
+          "max_items": 3,
+          "node": "N0",
+          "output_type": "text",
+          "path": "initial",
+          "port": "context",
+          "publication": {
+            "activation": "OP:D0",
+            "artifact_type": "text",
+            "inputs": [
+              "context"
+            ],
+            "node": "N0",
+            "outcome": "ok",
+            "output_port": "result"
+          },
+          "selector_inputs": [],
+          "source": "S0",
+          "target": "T0",
+          "version_selection": "latest"
+        }
+      ],
+      "operation_occurrences": [
+        {
+          "activation": "OP:D0",
+          "attempt": "TASK:OP:D0",
+          "binding_declaration": "D0",
+          "node": "N0",
+          "target": "T0"
+        }
+      ],
+      "policies": {
+        "P0": {
+          "failover_failures": [
+            "permanent",
+            "implementation_exception"
+          ],
+          "max_attempts": 3,
+          "replay": "idempotent",
+          "retry_owner": "executor"
+        },
+        "P1": {
+          "failover_failures": [
+            "permanent",
+            "implementation_exception"
+          ],
+          "max_attempts": 3,
+          "replay": "idempotent",
+          "retry_owner": "executor"
+        }
+      },
+      "root_artifacts": [
+        {
+          "artifact_type": "text",
+          "port": "left",
+          "target": "T0"
+        },
+        {
+          "artifact_type": "text",
+          "port": "right",
+          "target": "T0"
+        }
+      ],
+      "root_input_types": [
+        "text"
+      ]
+    },
+    "events": [
+      {
+        "association": "D0",
+        "kind": "bind_policy",
+        "policies": [
+          "P0"
+        ]
+      },
+      {
+        "associations": [
+          "D0"
+        ],
+        "kind": "reserve",
+        "policy": "P0",
+        "purpose": "initial_binding",
+        "request": "R0"
+      },
+      {
+        "kind": "dispatch",
+        "request": "R0"
+      },
+      {
+        "activation": null,
+        "association": "D0",
+        "declaration": "D0",
+        "items": [
+          {
+            "key": 0,
+            "value": "one",
+            "version": 1
+          }
+        ],
+        "kind": "materialize_result",
+        "node": "N0",
+        "parents": [],
+        "path": "initial",
+        "port": "context",
+        "reported_outcome": null,
+        "request": "R0",
+        "settlement": {
+          "disposition": "completed",
+          "remote_stopped": true,
+          "usage": {
+            "input": 0,
+            "output": 0
+          }
+        },
+        "target": "T0"
+      },
+      {
+        "kind": "binding_finish"
+      },
+      {
+        "associations": [
+          "D0"
+        ],
+        "kind": "reserve",
+        "policy": "P0",
+        "purpose": "initial_binding",
+        "request": "R1"
+      },
+      {
+        "association": "D0",
+        "kind": "binding_cleanup_association",
+        "owner": "sdk",
+        "resource": "Q:D0",
+        "target": "T0"
+      },
+      {
+        "disposition": "closed",
+        "kind": "binding_cleanup",
+        "resource": "Q:D0"
+      },
+      {
+        "activation": "OP:D0",
+        "attempt": "TASK:OP:D0",
+        "binding_declaration": "D0",
+        "kind": "operation_start",
+        "node": "N0",
+        "target": "T0"
+      },
+      {
+        "activation": "OP:D0",
+        "attempt": "TASK:OP:D0",
+        "declaration": "D0",
+        "kind": "operation_publish",
+        "node": "N0",
+        "outcome": "ok",
+        "output_port": "result",
+        "path": "initial",
+        "port": "context",
+        "target": "T0",
+        "value": "result"
+      }
+    ],
+    "expected": {
+      "code": "contradictory",
+      "status": "rejected"
+    },
+    "origin": "tests/graph_sdk/reference/test_effects_v1.py::test_binding_finish_requires_every_terminal_and_freezes_binding_state"
+  },
+  {
+    "case_id": "retirement-14",
+    "declaration": {
+      "binding_declarations": {
+        "D0": "S0"
+      },
+      "binding_limits": {
+        "max_bytes": 12,
+        "max_items": 3,
+        "max_requests": 3
+      },
+      "hard_limit": 2,
+      "materialization_limits": {
+        "max_artifact_bytes": 64,
+        "max_artifacts": 8,
+        "max_collection_items": 3,
+        "max_declarations": 4,
+        "max_provenance_edges": 8
+      },
+      "materializations": [
+        {
+          "association": "D0",
+          "declaration": "D0",
+          "item_type": "text",
+          "kind": "single",
+          "max_bytes": 12,
+          "max_items": 3,
+          "node": "N0",
+          "output_type": "text",
+          "path": "initial",
+          "port": "context",
+          "publication": {
+            "activation": "OP:D0",
+            "artifact_type": "text",
+            "inputs": [
+              "context"
+            ],
+            "node": "N0",
+            "outcome": "ok",
+            "output_port": "result"
+          },
+          "selector_inputs": [],
+          "source": "S0",
+          "target": "T0",
+          "version_selection": "latest"
+        }
+      ],
+      "operation_occurrences": [
+        {
+          "activation": "OP:D0",
+          "attempt": "TASK:OP:D0",
+          "binding_declaration": "D0",
+          "node": "N0",
+          "target": "T0"
+        }
+      ],
+      "policies": {
+        "P0": {
+          "failover_failures": [
+            "permanent",
+            "implementation_exception"
+          ],
+          "max_attempts": 3,
+          "replay": "idempotent",
+          "retry_owner": "executor"
+        },
+        "P1": {
+          "failover_failures": [
+            "permanent",
+            "implementation_exception"
+          ],
+          "max_attempts": 3,
+          "replay": "idempotent",
+          "retry_owner": "executor"
+        }
+      },
+      "root_artifacts": [
+        {
+          "artifact_type": "text",
+          "port": "left",
+          "target": "T0"
+        },
+        {
+          "artifact_type": "text",
+          "port": "right",
+          "target": "T0"
+        }
+      ],
+      "root_input_types": [
+        "text"
+      ]
+    },
+    "events": [
+      {
+        "association": "D0",
+        "kind": "bind_policy",
+        "policies": [
+          "P0"
+        ]
+      },
+      {
+        "associations": [
+          "D0"
+        ],
+        "kind": "reserve",
+        "policy": "P0",
+        "purpose": "initial_binding",
+        "request": "R0"
+      },
+      {
+        "kind": "dispatch",
+        "request": "R0"
+      },
+      {
+        "activation": null,
+        "association": "D0",
+        "declaration": "D0",
+        "items": [
+          {
+            "key": 0,
+            "value": "one",
+            "version": 1
+          }
+        ],
+        "kind": "materialize_result",
+        "node": "N0",
+        "parents": [],
+        "path": "initial",
+        "port": "context",
+        "reported_outcome": null,
+        "request": "R0",
+        "settlement": {
+          "disposition": "completed",
+          "remote_stopped": true,
+          "usage": {
+            "input": 0,
+            "output": 0
+          }
+        },
+        "target": "T0"
+      },
+      {
+        "kind": "binding_finish"
+      },
+      {
+        "kind": "dispatch",
+        "request": "R0"
+      },
+      {
+        "association": "D0",
+        "kind": "binding_cleanup_association",
+        "owner": "sdk",
+        "resource": "Q:D0",
+        "target": "T0"
+      },
+      {
+        "disposition": "closed",
+        "kind": "binding_cleanup",
+        "resource": "Q:D0"
+      },
+      {
+        "activation": "OP:D0",
+        "attempt": "TASK:OP:D0",
+        "binding_declaration": "D0",
+        "kind": "operation_start",
+        "node": "N0",
+        "target": "T0"
+      },
+      {
+        "activation": "OP:D0",
+        "attempt": "TASK:OP:D0",
+        "declaration": "D0",
+        "kind": "operation_publish",
+        "node": "N0",
+        "outcome": "ok",
+        "output_port": "result",
+        "path": "initial",
+        "port": "context",
+        "target": "T0",
+        "value": "result"
+      }
+    ],
+    "expected": {
+      "code": "contradictory",
+      "status": "rejected"
+    },
+    "origin": "tests/graph_sdk/reference/test_effects_v1.py::test_binding_finish_requires_every_terminal_and_freezes_binding_state"
+  },
+  {
+    "case_id": "retirement-15",
+    "declaration": {
+      "binding_declarations": {
+        "D0": "S0"
+      },
+      "binding_limits": {
+        "max_bytes": 12,
+        "max_items": 3,
+        "max_requests": 3
+      },
+      "hard_limit": 2,
+      "materialization_limits": {
+        "max_artifact_bytes": 64,
+        "max_artifacts": 8,
+        "max_collection_items": 3,
+        "max_declarations": 4,
+        "max_provenance_edges": 8
+      },
+      "materializations": [
+        {
+          "association": "D0",
+          "declaration": "D0",
+          "item_type": "text",
+          "kind": "single",
+          "max_bytes": 12,
+          "max_items": 3,
+          "node": "N0",
+          "output_type": "text",
+          "path": "initial",
+          "port": "context",
+          "publication": {
+            "activation": "OP:D0",
+            "artifact_type": "text",
+            "inputs": [
+              "context"
+            ],
+            "node": "N0",
+            "outcome": "ok",
+            "output_port": "result"
+          },
+          "selector_inputs": [],
+          "source": "S0",
+          "target": "T0",
+          "version_selection": "latest"
+        }
+      ],
+      "operation_occurrences": [
+        {
+          "activation": "OP:D0",
+          "attempt": "TASK:OP:D0",
+          "binding_declaration": "D0",
+          "node": "N0",
+          "target": "T0"
+        }
+      ],
+      "policies": {
+        "P0": {
+          "failover_failures": [
+            "permanent",
+            "implementation_exception"
+          ],
+          "max_attempts": 3,
+          "replay": "idempotent",
+          "retry_owner": "executor"
+        },
+        "P1": {
+          "failover_failures": [
+            "permanent",
+            "implementation_exception"
+          ],
+          "max_attempts": 3,
+          "replay": "idempotent",
+          "retry_owner": "executor"
+        }
+      },
+      "root_artifacts": [
+        {
+          "artifact_type": "text",
+          "port": "left",
+          "target": "T0"
+        },
+        {
+          "artifact_type": "text",
+          "port": "right",
+          "target": "T0"
+        }
+      ],
+      "root_input_types": [
+        "text"
+      ]
+    },
+    "events": [
+      {
+        "association": "D0",
+        "kind": "bind_policy",
+        "policies": [
+          "P0"
+        ]
+      },
+      {
+        "associations": [
+          "D0"
+        ],
+        "kind": "reserve",
+        "policy": "P0",
+        "purpose": "initial_binding",
+        "request": "R0"
+      },
+      {
+        "kind": "dispatch",
+        "request": "R0"
+      },
+      {
+        "activation": null,
+        "association": "D0",
+        "declaration": "D0",
+        "items": [
+          {
+            "key": 0,
+            "value": "one",
+            "version": 1
+          }
+        ],
+        "kind": "materialize_result",
+        "node": "N0",
+        "parents": [],
+        "path": "initial",
+        "port": "context",
+        "reported_outcome": null,
+        "request": "R0",
+        "settlement": {
+          "disposition": "completed",
+          "remote_stopped": true,
+          "usage": {
+            "input": 0,
+            "output": 0
+          }
+        },
+        "target": "T0"
+      },
+      {
+        "kind": "binding_finish"
+      },
+      {
+        "kind": "result",
+        "outcomes": {
+          "D0": "retrieved"
+        },
+        "request": "R0",
+        "returned": [
+          "D0"
+        ]
+      },
+      {
+        "association": "D0",
+        "kind": "binding_cleanup_association",
+        "owner": "sdk",
+        "resource": "Q:D0",
+        "target": "T0"
+      },
+      {
+        "disposition": "closed",
+        "kind": "binding_cleanup",
+        "resource": "Q:D0"
+      },
+      {
+        "activation": "OP:D0",
+        "attempt": "TASK:OP:D0",
+        "binding_declaration": "D0",
+        "kind": "operation_start",
+        "node": "N0",
+        "target": "T0"
+      },
+      {
+        "activation": "OP:D0",
+        "attempt": "TASK:OP:D0",
+        "declaration": "D0",
+        "kind": "operation_publish",
+        "node": "N0",
+        "outcome": "ok",
+        "output_port": "result",
+        "path": "initial",
+        "port": "context",
+        "target": "T0",
+        "value": "result"
+      }
+    ],
+    "expected": {
+      "code": "contradictory",
+      "status": "rejected"
+    },
+    "origin": "tests/graph_sdk/reference/test_effects_v1.py::test_binding_finish_requires_every_terminal_and_freezes_binding_state"
+  },
+  {
+    "case_id": "retirement-16",
+    "declaration": {
+      "binding_declarations": {
+        "D0": "S0"
+      },
+      "binding_limits": {
+        "max_bytes": 12,
+        "max_items": 3,
+        "max_requests": 3
+      },
+      "hard_limit": 2,
+      "materialization_limits": {
+        "max_artifact_bytes": 64,
+        "max_artifacts": 8,
+        "max_collection_items": 3,
+        "max_declarations": 4,
+        "max_provenance_edges": 8
+      },
+      "materializations": [
+        {
+          "association": "D0",
+          "declaration": "D0",
+          "item_type": "text",
+          "kind": "single",
+          "max_bytes": 12,
+          "max_items": 3,
+          "node": "N0",
+          "output_type": "text",
+          "path": "initial",
+          "port": "context",
+          "publication": {
+            "activation": "OP:D0",
+            "artifact_type": "text",
+            "inputs": [
+              "context"
+            ],
+            "node": "N0",
+            "outcome": "ok",
+            "output_port": "result"
+          },
+          "selector_inputs": [],
+          "source": "S0",
+          "target": "T0",
+          "version_selection": "latest"
+        }
+      ],
+      "operation_occurrences": [
+        {
+          "activation": "OP:D0",
+          "attempt": "TASK:OP:D0",
+          "binding_declaration": "D0",
+          "node": "N0",
+          "target": "T0"
+        }
+      ],
+      "policies": {
+        "P0": {
+          "failover_failures": [
+            "permanent",
+            "implementation_exception"
+          ],
+          "max_attempts": 3,
+          "replay": "idempotent",
+          "retry_owner": "executor"
+        },
+        "P1": {
+          "failover_failures": [
+            "permanent",
+            "implementation_exception"
+          ],
+          "max_attempts": 3,
+          "replay": "idempotent",
+          "retry_owner": "executor"
+        }
+      },
+      "root_artifacts": [
+        {
+          "artifact_type": "text",
+          "port": "left",
+          "target": "T0"
+        },
+        {
+          "artifact_type": "text",
+          "port": "right",
+          "target": "T0"
+        }
+      ],
+      "root_input_types": [
+        "text"
+      ]
+    },
+    "events": [
+      {
+        "association": "D0",
+        "kind": "bind_policy",
+        "policies": [
+          "P0"
+        ]
+      },
+      {
+        "associations": [
+          "D0"
+        ],
+        "kind": "reserve",
+        "policy": "P0",
+        "purpose": "initial_binding",
+        "request": "R0"
+      },
+      {
+        "kind": "dispatch",
+        "request": "R0"
+      },
+      {
+        "activation": null,
+        "association": "D0",
+        "declaration": "D0",
+        "items": [
+          {
+            "key": 0,
+            "value": "one",
+            "version": 1
+          }
+        ],
+        "kind": "materialize_result",
+        "node": "N0",
+        "parents": [],
+        "path": "initial",
+        "port": "context",
+        "reported_outcome": null,
+        "request": "R0",
+        "settlement": {
+          "disposition": "completed",
+          "remote_stopped": true,
+          "usage": {
+            "input": 0,
+            "output": 0
+          }
+        },
+        "target": "T0"
+      },
+      {
+        "kind": "binding_finish"
+      },
+      {
+        "failure": "permanent",
+        "kind": "failure",
+        "request": "R0"
+      },
+      {
+        "association": "D0",
+        "kind": "binding_cleanup_association",
+        "owner": "sdk",
+        "resource": "Q:D0",
+        "target": "T0"
+      },
+      {
+        "disposition": "closed",
+        "kind": "binding_cleanup",
+        "resource": "Q:D0"
+      },
+      {
+        "activation": "OP:D0",
+        "attempt": "TASK:OP:D0",
+        "binding_declaration": "D0",
+        "kind": "operation_start",
+        "node": "N0",
+        "target": "T0"
+      },
+      {
+        "activation": "OP:D0",
+        "attempt": "TASK:OP:D0",
+        "declaration": "D0",
+        "kind": "operation_publish",
+        "node": "N0",
+        "outcome": "ok",
+        "output_port": "result",
+        "path": "initial",
+        "port": "context",
+        "target": "T0",
+        "value": "result"
+      }
+    ],
+    "expected": {
+      "code": "contradictory",
+      "status": "rejected"
+    },
+    "origin": "tests/graph_sdk/reference/test_effects_v1.py::test_binding_finish_requires_every_terminal_and_freezes_binding_state"
+  },
+  {
+    "case_id": "retirement-17",
+    "declaration": {
+      "binding_declarations": {
+        "D0": "S0"
+      },
+      "binding_limits": {
+        "max_bytes": 12,
+        "max_items": 3,
+        "max_requests": 3
+      },
+      "hard_limit": 2,
+      "materialization_limits": {
+        "max_artifact_bytes": 64,
+        "max_artifacts": 8,
+        "max_collection_items": 3,
+        "max_declarations": 4,
+        "max_provenance_edges": 8
+      },
+      "materializations": [
+        {
+          "association": "D0",
+          "declaration": "D0",
+          "item_type": "text",
+          "kind": "single",
+          "max_bytes": 12,
+          "max_items": 3,
+          "node": "N0",
+          "output_type": "text",
+          "path": "initial",
+          "port": "context",
+          "publication": {
+            "activation": "OP:D0",
+            "artifact_type": "text",
+            "inputs": [
+              "context"
+            ],
+            "node": "N0",
+            "outcome": "ok",
+            "output_port": "result"
+          },
+          "selector_inputs": [],
+          "source": "S0",
+          "target": "T0",
+          "version_selection": "latest"
+        }
+      ],
+      "operation_occurrences": [
+        {
+          "activation": "OP:D0",
+          "attempt": "TASK:OP:D0",
+          "binding_declaration": "D0",
+          "node": "N0",
+          "target": "T0"
+        }
+      ],
+      "policies": {
+        "P0": {
+          "failover_failures": [
+            "permanent",
+            "implementation_exception"
+          ],
+          "max_attempts": 3,
+          "replay": "idempotent",
+          "retry_owner": "executor"
+        },
+        "P1": {
+          "failover_failures": [
+            "permanent",
+            "implementation_exception"
+          ],
+          "max_attempts": 3,
+          "replay": "idempotent",
+          "retry_owner": "executor"
+        }
+      },
+      "root_artifacts": [
+        {
+          "artifact_type": "text",
+          "port": "left",
+          "target": "T0"
+        },
+        {
+          "artifact_type": "text",
+          "port": "right",
+          "target": "T0"
+        }
+      ],
+      "root_input_types": [
+        "text"
+      ]
+    },
+    "events": [
+      {
+        "association": "D0",
+        "kind": "bind_policy",
+        "policies": [
+          "P0"
+        ]
+      },
+      {
+        "associations": [
+          "D0"
+        ],
+        "kind": "reserve",
+        "policy": "P0",
+        "purpose": "initial_binding",
+        "request": "R0"
+      },
+      {
+        "kind": "dispatch",
+        "request": "R0"
+      },
+      {
+        "activation": null,
+        "association": "D0",
+        "declaration": "D0",
+        "items": [
+          {
+            "key": 0,
+            "value": "one",
+            "version": 1
+          }
+        ],
+        "kind": "materialize_result",
+        "node": "N0",
+        "parents": [],
+        "path": "initial",
+        "port": "context",
+        "reported_outcome": null,
+        "request": "R0",
+        "settlement": {
+          "disposition": "completed",
+          "remote_stopped": true,
+          "usage": {
+            "input": 0,
+            "output": 0
+          }
+        },
+        "target": "T0"
+      },
+      {
+        "kind": "binding_finish"
+      },
+      {
+        "kind": "cancel",
+        "request": "R0"
+      },
+      {
+        "association": "D0",
+        "kind": "binding_cleanup_association",
+        "owner": "sdk",
+        "resource": "Q:D0",
+        "target": "T0"
+      },
+      {
+        "disposition": "closed",
+        "kind": "binding_cleanup",
+        "resource": "Q:D0"
+      },
+      {
+        "activation": "OP:D0",
+        "attempt": "TASK:OP:D0",
+        "binding_declaration": "D0",
+        "kind": "operation_start",
+        "node": "N0",
+        "target": "T0"
+      },
+      {
+        "activation": "OP:D0",
+        "attempt": "TASK:OP:D0",
+        "declaration": "D0",
+        "kind": "operation_publish",
+        "node": "N0",
+        "outcome": "ok",
+        "output_port": "result",
+        "path": "initial",
+        "port": "context",
+        "target": "T0",
+        "value": "result"
+      }
+    ],
+    "expected": {
+      "code": "contradictory",
+      "status": "rejected"
+    },
+    "origin": "tests/graph_sdk/reference/test_effects_v1.py::test_binding_finish_requires_every_terminal_and_freezes_binding_state"
+  },
+  {
+    "case_id": "retirement-18",
+    "declaration": {
+      "binding_declarations": {
+        "D0": "S0"
+      },
+      "binding_limits": {
+        "max_bytes": 12,
+        "max_items": 3,
+        "max_requests": 3
+      },
+      "hard_limit": 2,
+      "materialization_limits": {
+        "max_artifact_bytes": 64,
+        "max_artifacts": 8,
+        "max_collection_items": 3,
+        "max_declarations": 4,
+        "max_provenance_edges": 8
+      },
+      "materializations": [
+        {
+          "association": "D0",
+          "declaration": "D0",
+          "item_type": "text",
+          "kind": "single",
+          "max_bytes": 12,
+          "max_items": 3,
+          "node": "N0",
+          "output_type": "text",
+          "path": "initial",
+          "port": "context",
+          "publication": {
+            "activation": "OP:D0",
+            "artifact_type": "text",
+            "inputs": [
+              "context"
+            ],
+            "node": "N0",
+            "outcome": "ok",
+            "output_port": "result"
+          },
+          "selector_inputs": [],
+          "source": "S0",
+          "target": "T0",
+          "version_selection": "latest"
+        }
+      ],
+      "operation_occurrences": [
+        {
+          "activation": "OP:D0",
+          "attempt": "TASK:OP:D0",
+          "binding_declaration": "D0",
+          "node": "N0",
+          "target": "T0"
+        }
+      ],
+      "policies": {
+        "P0": {
+          "failover_failures": [
+            "permanent",
+            "implementation_exception"
+          ],
+          "max_attempts": 3,
+          "replay": "idempotent",
+          "retry_owner": "executor"
+        },
+        "P1": {
+          "failover_failures": [
+            "permanent",
+            "implementation_exception"
+          ],
+          "max_attempts": 3,
+          "replay": "idempotent",
+          "retry_owner": "executor"
+        }
+      },
+      "root_artifacts": [
+        {
+          "artifact_type": "text",
+          "port": "left",
+          "target": "T0"
+        },
+        {
+          "artifact_type": "text",
+          "port": "right",
+          "target": "T0"
+        }
+      ],
+      "root_input_types": [
+        "text"
+      ]
+    },
+    "events": [
+      {
+        "association": "D0",
+        "kind": "bind_policy",
+        "policies": [
+          "P0"
+        ]
+      },
+      {
+        "associations": [
+          "D0"
+        ],
+        "kind": "reserve",
+        "policy": "P0",
+        "purpose": "initial_binding",
+        "request": "R0"
+      },
+      {
+        "kind": "dispatch",
+        "request": "R0"
+      },
+      {
+        "activation": null,
+        "association": "D0",
+        "declaration": "D0",
+        "items": [
+          {
+            "key": 0,
+            "value": "one",
+            "version": 1
+          }
+        ],
+        "kind": "materialize_result",
+        "node": "N0",
+        "parents": [],
+        "path": "initial",
+        "port": "context",
+        "reported_outcome": null,
+        "request": "R0",
+        "settlement": {
+          "disposition": "completed",
+          "remote_stopped": true,
+          "usage": {
+            "input": 0,
+            "output": 0
+          }
+        },
+        "target": "T0"
+      },
+      {
+        "kind": "binding_finish"
+      },
+      {
+        "kind": "stop",
+        "request": "R0",
+        "usage": {
+          "input": 0,
+          "output": 0
+        }
+      },
+      {
+        "association": "D0",
+        "kind": "binding_cleanup_association",
+        "owner": "sdk",
+        "resource": "Q:D0",
+        "target": "T0"
+      },
+      {
+        "disposition": "closed",
+        "kind": "binding_cleanup",
+        "resource": "Q:D0"
+      },
+      {
+        "activation": "OP:D0",
+        "attempt": "TASK:OP:D0",
+        "binding_declaration": "D0",
+        "kind": "operation_start",
+        "node": "N0",
+        "target": "T0"
+      },
+      {
+        "activation": "OP:D0",
+        "attempt": "TASK:OP:D0",
+        "declaration": "D0",
+        "kind": "operation_publish",
+        "node": "N0",
+        "outcome": "ok",
+        "output_port": "result",
+        "path": "initial",
+        "port": "context",
+        "target": "T0",
+        "value": "result"
+      }
+    ],
+    "expected": {
+      "code": "contradictory",
+      "status": "rejected"
+    },
+    "origin": "tests/graph_sdk/reference/test_effects_v1.py::test_binding_finish_requires_every_terminal_and_freezes_binding_state"
+  },
+  {
+    "case_id": "retirement-19",
+    "declaration": {
+      "binding_declarations": {
+        "D0": "S0"
+      },
+      "binding_limits": {
+        "max_bytes": 12,
+        "max_items": 3,
+        "max_requests": 3
+      },
+      "hard_limit": 2,
+      "materialization_limits": {
+        "max_artifact_bytes": 64,
+        "max_artifacts": 8,
+        "max_collection_items": 3,
+        "max_declarations": 4,
+        "max_provenance_edges": 8
+      },
+      "materializations": [
+        {
+          "association": "D0",
+          "declaration": "D0",
+          "item_type": "text",
+          "kind": "single",
+          "max_bytes": 12,
+          "max_items": 3,
+          "node": "N0",
+          "output_type": "text",
+          "path": "initial",
+          "port": "context",
+          "publication": {
+            "activation": "OP:D0",
+            "artifact_type": "text",
+            "inputs": [
+              "context"
+            ],
+            "node": "N0",
+            "outcome": "ok",
+            "output_port": "result"
+          },
+          "selector_inputs": [],
+          "source": "S0",
+          "target": "T0",
+          "version_selection": "latest"
+        }
+      ],
+      "operation_occurrences": [
+        {
+          "activation": "OP:D0",
+          "attempt": "TASK:OP:D0",
+          "binding_declaration": "D0",
+          "node": "N0",
+          "target": "T0"
+        }
+      ],
+      "policies": {
+        "P0": {
+          "failover_failures": [
+            "permanent",
+            "implementation_exception"
+          ],
+          "max_attempts": 3,
+          "replay": "idempotent",
+          "retry_owner": "executor"
+        },
+        "P1": {
+          "failover_failures": [
+            "permanent",
+            "implementation_exception"
+          ],
+          "max_attempts": 3,
+          "replay": "idempotent",
+          "retry_owner": "executor"
+        }
+      },
+      "root_artifacts": [
+        {
+          "artifact_type": "text",
+          "port": "left",
+          "target": "T0"
+        },
+        {
+          "artifact_type": "text",
+          "port": "right",
+          "target": "T0"
+        }
+      ],
+      "root_input_types": [
+        "text"
+      ]
+    },
+    "events": [
+      {
+        "association": "D0",
+        "kind": "bind_policy",
+        "policies": [
+          "P0"
+        ]
+      },
+      {
+        "associations": [
+          "D0"
+        ],
+        "kind": "reserve",
+        "policy": "P0",
+        "purpose": "initial_binding",
+        "request": "R0"
+      },
+      {
+        "kind": "dispatch",
+        "request": "R0"
+      },
+      {
+        "activation": null,
+        "association": "D0",
+        "declaration": "D0",
+        "items": [
+          {
+            "key": 0,
+            "value": "one",
+            "version": 1
+          }
+        ],
+        "kind": "materialize_result",
+        "node": "N0",
+        "parents": [],
+        "path": "initial",
+        "port": "context",
+        "reported_outcome": null,
+        "request": "R0",
+        "settlement": {
+          "disposition": "completed",
+          "remote_stopped": true,
+          "usage": {
+            "input": 0,
+            "output": 0
+          }
+        },
+        "target": "T0"
+      },
+      {
+        "kind": "binding_finish"
+      },
+      {
+        "kind": "lost",
+        "request": "R0"
+      },
+      {
+        "association": "D0",
+        "kind": "binding_cleanup_association",
+        "owner": "sdk",
+        "resource": "Q:D0",
+        "target": "T0"
+      },
+      {
+        "disposition": "closed",
+        "kind": "binding_cleanup",
+        "resource": "Q:D0"
+      },
+      {
+        "activation": "OP:D0",
+        "attempt": "TASK:OP:D0",
+        "binding_declaration": "D0",
+        "kind": "operation_start",
+        "node": "N0",
+        "target": "T0"
+      },
+      {
+        "activation": "OP:D0",
+        "attempt": "TASK:OP:D0",
+        "declaration": "D0",
+        "kind": "operation_publish",
+        "node": "N0",
+        "outcome": "ok",
+        "output_port": "result",
+        "path": "initial",
+        "port": "context",
+        "target": "T0",
+        "value": "result"
+      }
+    ],
+    "expected": {
+      "code": "contradictory",
+      "status": "rejected"
+    },
+    "origin": "tests/graph_sdk/reference/test_effects_v1.py::test_binding_finish_requires_every_terminal_and_freezes_binding_state"
+  },
+  {
+    "case_id": "retirement-20",
+    "declaration": {
+      "binding_declarations": {
+        "D0": "S0"
+      },
+      "binding_limits": {
+        "max_bytes": 12,
+        "max_items": 3,
+        "max_requests": 3
+      },
+      "hard_limit": 2,
+      "materialization_limits": {
+        "max_artifact_bytes": 64,
+        "max_artifacts": 8,
+        "max_collection_items": 3,
+        "max_declarations": 4,
+        "max_provenance_edges": 8
+      },
+      "materializations": [
+        {
+          "association": "D0",
+          "declaration": "D0",
+          "item_type": "text",
+          "kind": "single",
+          "max_bytes": 12,
+          "max_items": 3,
+          "node": "N0",
+          "output_type": "text",
+          "path": "initial",
+          "port": "context",
+          "publication": {
+            "activation": "OP:D0",
+            "artifact_type": "text",
+            "inputs": [
+              "context"
+            ],
+            "node": "N0",
+            "outcome": "ok",
+            "output_port": "result"
+          },
+          "selector_inputs": [],
+          "source": "S0",
+          "target": "T0",
+          "version_selection": "latest"
+        }
+      ],
+      "operation_occurrences": [
+        {
+          "activation": "OP:D0",
+          "attempt": "TASK:OP:D0",
+          "binding_declaration": "D0",
+          "node": "N0",
+          "target": "T0"
+        }
+      ],
+      "policies": {
+        "P0": {
+          "failover_failures": [
+            "permanent",
+            "implementation_exception"
+          ],
+          "max_attempts": 3,
+          "replay": "idempotent",
+          "retry_owner": "executor"
+        },
+        "P1": {
+          "failover_failures": [
+            "permanent",
+            "implementation_exception"
+          ],
+          "max_attempts": 3,
+          "replay": "idempotent",
+          "retry_owner": "executor"
+        }
+      },
+      "root_artifacts": [
+        {
+          "artifact_type": "text",
+          "port": "left",
+          "target": "T0"
+        },
+        {
+          "artifact_type": "text",
+          "port": "right",
+          "target": "T0"
+        }
+      ],
+      "root_input_types": [
+        "text"
+      ]
+    },
+    "events": [
+      {
+        "association": "D0",
+        "kind": "bind_policy",
+        "policies": [
+          "P0"
+        ]
+      },
+      {
+        "associations": [
+          "D0"
+        ],
+        "kind": "reserve",
+        "policy": "P0",
+        "purpose": "initial_binding",
+        "request": "R0"
+      },
+      {
+        "kind": "dispatch",
+        "request": "R0"
+      },
+      {
+        "activation": null,
+        "association": "D0",
+        "declaration": "D0",
+        "items": [
+          {
+            "key": 0,
+            "value": "one",
+            "version": 1
+          }
+        ],
+        "kind": "materialize_result",
+        "node": "N0",
+        "parents": [],
+        "path": "initial",
+        "port": "context",
+        "reported_outcome": null,
+        "request": "R0",
+        "settlement": {
+          "disposition": "completed",
+          "remote_stopped": true,
+          "usage": {
+            "input": 0,
+            "output": 0
+          }
+        },
+        "target": "T0"
+      },
+      {
+        "kind": "binding_finish"
+      },
+      {
+        "disposition": "completed",
+        "kind": "settlement",
+        "remote_stopped": true,
+        "request": "R0",
+        "usage": {
+          "input": 0,
+          "output": 0
+        }
+      },
+      {
+        "association": "D0",
+        "kind": "binding_cleanup_association",
+        "owner": "sdk",
+        "resource": "Q:D0",
+        "target": "T0"
+      },
+      {
+        "disposition": "closed",
+        "kind": "binding_cleanup",
+        "resource": "Q:D0"
+      },
+      {
+        "activation": "OP:D0",
+        "attempt": "TASK:OP:D0",
+        "binding_declaration": "D0",
+        "kind": "operation_start",
+        "node": "N0",
+        "target": "T0"
+      },
+      {
+        "activation": "OP:D0",
+        "attempt": "TASK:OP:D0",
+        "declaration": "D0",
+        "kind": "operation_publish",
+        "node": "N0",
+        "outcome": "ok",
+        "output_port": "result",
+        "path": "initial",
+        "port": "context",
+        "target": "T0",
+        "value": "result"
+      }
+    ],
+    "expected": {
+      "code": "contradictory",
+      "status": "rejected"
+    },
+    "origin": "tests/graph_sdk/reference/test_effects_v1.py::test_binding_finish_requires_every_terminal_and_freezes_binding_state"
+  },
+  {
+    "case_id": "retirement-21",
+    "declaration": {
+      "binding_declarations": {
+        "D0": "S0"
+      },
+      "binding_limits": {
+        "max_bytes": 12,
+        "max_items": 3,
+        "max_requests": 3
+      },
+      "hard_limit": 2,
+      "materialization_limits": {
+        "max_artifact_bytes": 64,
+        "max_artifacts": 8,
+        "max_collection_items": 3,
+        "max_declarations": 4,
+        "max_provenance_edges": 8
+      },
+      "materializations": [
+        {
+          "association": "D0",
+          "declaration": "D0",
+          "item_type": "text",
+          "kind": "single",
+          "max_bytes": 12,
+          "max_items": 3,
+          "node": "N0",
+          "output_type": "text",
+          "path": "initial",
+          "port": "context",
+          "publication": {
+            "activation": "OP:D0",
+            "artifact_type": "text",
+            "inputs": [
+              "context"
+            ],
+            "node": "N0",
+            "outcome": "ok",
+            "output_port": "result"
+          },
+          "selector_inputs": [],
+          "source": "S0",
+          "target": "T0",
+          "version_selection": "latest"
+        }
+      ],
+      "operation_occurrences": [
+        {
+          "activation": "OP:D0",
+          "attempt": "TASK:OP:D0",
+          "binding_declaration": "D0",
+          "node": "N0",
+          "target": "T0"
+        }
+      ],
+      "policies": {
+        "P0": {
+          "failover_failures": [
+            "permanent",
+            "implementation_exception"
+          ],
+          "max_attempts": 3,
+          "replay": "idempotent",
+          "retry_owner": "executor"
+        },
+        "P1": {
+          "failover_failures": [
+            "permanent",
+            "implementation_exception"
+          ],
+          "max_attempts": 3,
+          "replay": "idempotent",
+          "retry_owner": "executor"
+        }
+      },
+      "root_artifacts": [
+        {
+          "artifact_type": "text",
+          "port": "left",
+          "target": "T0"
+        },
+        {
+          "artifact_type": "text",
+          "port": "right",
+          "target": "T0"
+        }
+      ],
+      "root_input_types": [
+        "text"
+      ]
+    },
+    "events": [
+      {
+        "association": "D0",
+        "kind": "bind_policy",
+        "policies": [
+          "P0"
+        ]
+      },
+      {
+        "associations": [
+          "D0"
+        ],
+        "kind": "reserve",
+        "policy": "P0",
+        "purpose": "initial_binding",
+        "request": "R0"
+      },
+      {
+        "kind": "dispatch",
+        "request": "R0"
+      },
+      {
+        "activation": null,
+        "association": "D0",
+        "declaration": "D0",
+        "items": [
+          {
+            "key": 0,
+            "value": "one",
+            "version": 1
+          }
+        ],
+        "kind": "materialize_result",
+        "node": "N0",
+        "parents": [],
+        "path": "initial",
+        "port": "context",
+        "reported_outcome": null,
+        "request": "R0",
+        "settlement": {
+          "disposition": "completed",
+          "remote_stopped": true,
+          "usage": {
+            "input": 0,
+            "output": 0
+          }
+        },
+        "target": "T0"
+      },
+      {
+        "kind": "binding_finish"
+      },
+      {
+        "association": "D0",
+        "kind": "source_result",
+        "request": "R0"
+      },
+      {
+        "association": "D0",
+        "kind": "binding_cleanup_association",
+        "owner": "sdk",
+        "resource": "Q:D0",
+        "target": "T0"
+      },
+      {
+        "disposition": "closed",
+        "kind": "binding_cleanup",
+        "resource": "Q:D0"
+      },
+      {
+        "activation": "OP:D0",
+        "attempt": "TASK:OP:D0",
+        "binding_declaration": "D0",
+        "kind": "operation_start",
+        "node": "N0",
+        "target": "T0"
+      },
+      {
+        "activation": "OP:D0",
+        "attempt": "TASK:OP:D0",
+        "declaration": "D0",
+        "kind": "operation_publish",
+        "node": "N0",
+        "outcome": "ok",
+        "output_port": "result",
+        "path": "initial",
+        "port": "context",
+        "target": "T0",
+        "value": "result"
+      }
+    ],
+    "expected": {
+      "code": "contradictory",
+      "status": "rejected"
+    },
+    "origin": "tests/graph_sdk/reference/test_effects_v1.py::test_binding_finish_requires_every_terminal_and_freezes_binding_state"
+  },
+  {
+    "case_id": "retirement-22",
+    "declaration": {
+      "binding_declarations": {
+        "D0": "S0"
+      },
+      "binding_limits": {
+        "max_bytes": 12,
+        "max_items": 3,
+        "max_requests": 3
+      },
+      "hard_limit": 2,
+      "materialization_limits": {
+        "max_artifact_bytes": 64,
+        "max_artifacts": 8,
+        "max_collection_items": 3,
+        "max_declarations": 4,
+        "max_provenance_edges": 8
+      },
+      "materializations": [
+        {
+          "association": "D0",
+          "declaration": "D0",
+          "item_type": "text",
+          "kind": "single",
+          "max_bytes": 12,
+          "max_items": 3,
+          "node": "N0",
+          "output_type": "text",
+          "path": "initial",
+          "port": "context",
+          "publication": {
+            "activation": "OP:D0",
+            "artifact_type": "text",
+            "inputs": [
+              "context"
+            ],
+            "node": "N0",
+            "outcome": "ok",
+            "output_port": "result"
+          },
+          "selector_inputs": [],
+          "source": "S0",
+          "target": "T0",
+          "version_selection": "latest"
+        }
+      ],
+      "operation_occurrences": [
+        {
+          "activation": "OP:D0",
+          "attempt": "TASK:OP:D0",
+          "binding_declaration": "D0",
+          "node": "N0",
+          "target": "T0"
+        }
+      ],
+      "policies": {
+        "P0": {
+          "failover_failures": [
+            "permanent",
+            "implementation_exception"
+          ],
+          "max_attempts": 3,
+          "replay": "idempotent",
+          "retry_owner": "executor"
+        },
+        "P1": {
+          "failover_failures": [
+            "permanent",
+            "implementation_exception"
+          ],
+          "max_attempts": 3,
+          "replay": "idempotent",
+          "retry_owner": "executor"
+        }
+      },
+      "root_artifacts": [
+        {
+          "artifact_type": "text",
+          "port": "left",
+          "target": "T0"
+        },
+        {
+          "artifact_type": "text",
+          "port": "right",
+          "target": "T0"
+        }
+      ],
+      "root_input_types": [
+        "text"
+      ]
+    },
+    "events": [
+      {
+        "association": "D0",
+        "kind": "bind_policy",
+        "policies": [
+          "P0"
+        ]
+      },
+      {
+        "associations": [
+          "D0"
+        ],
+        "kind": "reserve",
+        "policy": "P0",
+        "purpose": "initial_binding",
+        "request": "R0"
+      },
+      {
+        "kind": "dispatch",
+        "request": "R0"
+      },
+      {
+        "activation": null,
+        "association": "D0",
+        "declaration": "D0",
+        "items": [
+          {
+            "key": 0,
+            "value": "one",
+            "version": 1
+          }
+        ],
+        "kind": "materialize_result",
+        "node": "N0",
+        "parents": [],
+        "path": "initial",
+        "port": "context",
+        "reported_outcome": null,
+        "request": "R0",
+        "settlement": {
+          "disposition": "completed",
+          "remote_stopped": true,
+          "usage": {
+            "input": 0,
+            "output": 0
+          }
+        },
+        "target": "T0"
+      },
+      {
+        "kind": "binding_finish"
+      },
+      {
+        "association": "D0",
+        "kind": "source_failure",
+        "request": "R0"
+      },
+      {
+        "association": "D0",
+        "kind": "binding_cleanup_association",
+        "owner": "sdk",
+        "resource": "Q:D0",
+        "target": "T0"
+      },
+      {
+        "disposition": "closed",
+        "kind": "binding_cleanup",
+        "resource": "Q:D0"
+      },
+      {
+        "activation": "OP:D0",
+        "attempt": "TASK:OP:D0",
+        "binding_declaration": "D0",
+        "kind": "operation_start",
+        "node": "N0",
+        "target": "T0"
+      },
+      {
+        "activation": "OP:D0",
+        "attempt": "TASK:OP:D0",
+        "declaration": "D0",
+        "kind": "operation_publish",
+        "node": "N0",
+        "outcome": "ok",
+        "output_port": "result",
+        "path": "initial",
+        "port": "context",
+        "target": "T0",
+        "value": "result"
+      }
+    ],
+    "expected": {
+      "code": "contradictory",
+      "status": "rejected"
+    },
+    "origin": "tests/graph_sdk/reference/test_effects_v1.py::test_binding_finish_requires_every_terminal_and_freezes_binding_state"
+  },
+  {
+    "case_id": "retirement-23",
+    "declaration": {
+      "hard_limit": 2,
+      "policies": {
+        "P0": {
+          "failover_failures": [
+            "permanent",
+            "implementation_exception"
+          ],
+          "max_attempts": 2,
+          "replay": "idempotent",
+          "retry_owner": "executor"
+        },
+        "P1": {
+          "failover_failures": [
+            "permanent",
+            "implementation_exception"
+          ],
+          "max_attempts": 3,
+          "replay": "idempotent",
+          "retry_owner": "executor"
+        }
+      }
+    },
+    "events": [
+      {
+        "association": "T0",
+        "kind": "bind_policy",
+        "policies": [
+          "P0"
+        ]
+      },
+      {
+        "association": "T1",
+        "kind": "bind_policy",
+        "policies": [
+          "P0"
+        ]
+      },
+      {
+        "kind": "dispatch",
+        "request": "R0"
+      },
+      {
+        "associations": [
+          "T0",
+          "T1"
+        ],
+        "kind": "reserve",
+        "policy": "P0",
+        "purpose": "initial",
+        "request": "R0"
+      },
+      {
+        "kind": "result",
+        "outcomes": {
+          "T0": "ok",
+          "T1": "ok"
+        },
+        "request": "R0",
+        "returned": [
+          "T1",
+          "T0"
+        ]
+      }
+    ],
+    "expected": {
+      "code": "missing_reservation",
+      "status": "rejected"
+    },
+    "origin": "tests/graph_sdk/reference/test_effects_v1.py::test_request_mutants_change_semantics_at_the_real_boundary"
+  },
+  {
+    "case_id": "retirement-24",
+    "declaration": {
+      "binding_declarations": {
+        "D0": "S0"
+      },
+      "binding_limits": {
+        "max_bytes": 8,
+        "max_items": 2,
+        "max_requests": 2
+      },
+      "hard_limit": 2,
+      "policies": {
+        "P0": {
+          "failover_failures": [
+            "permanent",
+            "implementation_exception"
+          ],
+          "max_attempts": 2,
+          "replay": "idempotent",
+          "retry_owner": "executor"
+        },
+        "P1": {
+          "failover_failures": [
+            "permanent",
+            "implementation_exception"
+          ],
+          "max_attempts": 3,
+          "replay": "idempotent",
+          "retry_owner": "executor"
+        }
+      }
+    },
+    "events": [
+      {
+        "association": "D0",
+        "kind": "bind_policy",
+        "policies": [
+          "P0"
+        ]
+      },
+      {
+        "associations": [
+          "D0"
+        ],
+        "kind": "reserve",
+        "policy": "P0",
+        "purpose": "initial",
+        "request": "R0"
+      },
+      {
+        "kind": "dispatch",
+        "request": "R0"
+      },
+      {
+        "kind": "cancel",
+        "request": "R0"
+      },
+      {
+        "kind": "lost",
+        "request": "R0"
+      },
+      {
+        "consumed_context_ports": [],
+        "items": [
+          {
+            "association": "D0",
+            "key": 0,
+            "text": "late",
+            "version": 1
+          }
+        ],
+        "kind": "source_result",
+        "outcome": "retrieved",
+        "outputs": [],
+        "request": "R0",
+        "settlement": {
+          "disposition": "completed",
+          "remote_stopped": true,
+          "usage": {
+            "input": 0,
+            "output": 0
+          }
+        },
+        "source": "S0"
+      },
+      {
+        "disposition": "completed",
+        "kind": "settlement",
+        "remote_stopped": true,
+        "request": "R0",
+        "usage": "unknown"
+      }
+    ],
+    "expected": {
+      "state": {
+        "artifacts": [],
+        "association_requests": {
+          "D0": "R0"
+        },
+        "association_terminals": {},
+        "attempts": {
+          "D0": 1
+        },
+        "binding_declarations": {
+          "D0": "S0"
+        },
+        "binding_sources": {},
+        "binding_terminal": null,
+        "bindings": {
+          "D0": [
+            "P0"
+          ]
+        },
+        "cancel_requested": [
+          "R0"
+        ],
+        "cleanup": {},
+        "closed_unstarted": {},
+        "decisions": {},
+        "defects": [
+          "conflicting_terminal",
+          "conflicting_settlement"
+        ],
+        "denials": {},
+        "dispatched": [
+          "R0"
+        ],
+        "dispatched_count": 1,
+        "local_in_flight": [],
+        "policies": {
+          "P0": {
+            "failover_failures": [
+              "permanent",
+              "implementation_exception"
+            ],
+            "max_attempts": 2,
+            "replay": "idempotent",
+            "retry_owner": "executor"
+          },
+          "P1": {
+            "failover_failures": [
+              "permanent",
+              "implementation_exception"
+            ],
+            "max_attempts": 3,
+            "replay": "idempotent",
+            "retry_owner": "executor"
+          }
+        },
+        "remote_outstanding": [],
+        "request_associations": {
+          "R0": [
+            "D0"
+          ]
+        },
+        "request_facts": {
+          "R0": {
+            "condition": "lost"
+          }
+        },
+        "request_failures": {},
+        "request_policies": {
+          "R0": "P0"
+        },
+        "reservation_policies": {},
+        "reservations": {},
+        "resource_count": 0,
+        "resources": {},
+        "settlements": {
+          "R0": {
+            "disposition": "completed",
+            "remote_stopped": true,
+            "usage": {
+              "input": 0,
+              "output": 0
+            }
+          }
+        },
+        "task_requests": {},
+        "tasks": {},
+        "terminals": {
+          "R0": "lost"
+        }
+      },
+      "status": "accepted"
+    },
+    "origin": "tests/graph_sdk/reference/test_effects_v1.py::test_late_binding_responses_cannot_create_outputs_or_change_terminal"
+  },
+  {
+    "case_id": "retirement-25",
+    "declaration": {
+      "binding_declarations": {
+        "D0": "S0"
+      },
+      "binding_limits": {
+        "max_bytes": 8,
+        "max_items": 2,
+        "max_requests": 2
+      },
+      "hard_limit": 2,
+      "policies": {
+        "P0": {
+          "failover_failures": [
+            "permanent",
+            "implementation_exception"
+          ],
+          "max_attempts": 2,
+          "replay": "idempotent",
+          "retry_owner": "executor"
+        },
+        "P1": {
+          "failover_failures": [
+            "permanent",
+            "implementation_exception"
+          ],
+          "max_attempts": 3,
+          "replay": "idempotent",
+          "retry_owner": "executor"
+        }
+      }
+    },
+    "events": [
+      {
+        "association": "D0",
+        "kind": "bind_policy",
+        "policies": [
+          "P0"
+        ]
+      },
+      {
+        "associations": [
+          "D0"
+        ],
+        "kind": "reserve",
+        "policy": "P0",
+        "purpose": "initial",
+        "request": "R0"
+      },
+      {
+        "kind": "dispatch",
+        "request": "R0"
+      },
+      {
+        "kind": "cancel",
+        "request": "R0"
+      },
+      {
+        "kind": "lost",
+        "request": "R0"
+      },
+      {
+        "association": "D0",
+        "failure": "permanent",
+        "kind": "source_failure",
+        "request": "R0",
+        "settlement": {
+          "disposition": "completed",
+          "remote_stopped": true,
+          "usage": {
+            "input": 0,
+            "output": 0
+          }
+        },
+        "source": "S0"
+      },
+      {
+        "disposition": "completed",
+        "kind": "settlement",
+        "remote_stopped": true,
+        "request": "R0",
+        "usage": "unknown"
+      }
+    ],
+    "expected": {
+      "state": {
+        "artifacts": [],
+        "association_requests": {
+          "D0": "R0"
+        },
+        "association_terminals": {},
+        "attempts": {
+          "D0": 1
+        },
+        "binding_declarations": {
+          "D0": "S0"
+        },
+        "binding_sources": {},
+        "binding_terminal": null,
+        "bindings": {
+          "D0": [
+            "P0"
+          ]
+        },
+        "cancel_requested": [
+          "R0"
+        ],
+        "cleanup": {},
+        "closed_unstarted": {},
+        "decisions": {},
+        "defects": [
+          "conflicting_terminal",
+          "conflicting_settlement"
+        ],
+        "denials": {},
+        "dispatched": [
+          "R0"
+        ],
+        "dispatched_count": 1,
+        "local_in_flight": [],
+        "policies": {
+          "P0": {
+            "failover_failures": [
+              "permanent",
+              "implementation_exception"
+            ],
+            "max_attempts": 2,
+            "replay": "idempotent",
+            "retry_owner": "executor"
+          },
+          "P1": {
+            "failover_failures": [
+              "permanent",
+              "implementation_exception"
+            ],
+            "max_attempts": 3,
+            "replay": "idempotent",
+            "retry_owner": "executor"
+          }
+        },
+        "remote_outstanding": [],
+        "request_associations": {
+          "R0": [
+            "D0"
+          ]
+        },
+        "request_facts": {
+          "R0": {
+            "condition": "lost"
+          }
+        },
+        "request_failures": {},
+        "request_policies": {
+          "R0": "P0"
+        },
+        "reservation_policies": {},
+        "reservations": {},
+        "resource_count": 0,
+        "resources": {},
+        "settlements": {
+          "R0": {
+            "disposition": "completed",
+            "remote_stopped": true,
+            "usage": {
+              "input": 0,
+              "output": 0
+            }
+          }
+        },
+        "task_requests": {},
+        "tasks": {},
+        "terminals": {
+          "R0": "lost"
+        }
+      },
+      "status": "accepted"
+    },
+    "origin": "tests/graph_sdk/reference/test_effects_v1.py::test_late_binding_responses_cannot_create_outputs_or_change_terminal"
+  },
+  {
+    "case_id": "retirement-26",
+    "declaration": {},
+    "events": [
+      {
+        "kind": "bridge_start",
+        "node": "N0",
+        "task": "T0"
+      },
+      {
+        "condition": "result",
+        "kind": "bridge_condition",
+        "reported_outcome": "ok",
+        "task": "T0"
+      }
+    ],
+    "expected": {
+      "code": "runtime_mapping",
+      "status": "rejected"
+    },
+    "origin": "tests/graph_sdk/reference/test_effects_v1.py::test_bridges_are_admitted_and_integrated_with_shared_requests"
+  },
+  {
+    "case_id": "retirement-27",
+    "declaration": {
+      "declared_outcomes": [
+        "ok"
+      ],
+      "outcome_categories": {
+        "ok": "success"
+      },
+      "runtime_mappings": [
+        {
+          "category": "success",
+          "condition": "result",
+          "failure": null,
+          "outcome": "ok",
+          "reported_outcome": "ok"
+        }
+      ]
+    },
+    "events": [
+      {
+        "kind": "bridge_start",
+        "node": "N0",
+        "task": "T0"
+      },
+      {
+        "category": "failure",
+        "condition": "result",
+        "kind": "bridge_condition",
+        "outcome": null,
+        "reported_outcome": "ok",
+        "task": "T0"
+      }
+    ],
+    "expected": {
+      "code": "runtime_mapping",
+      "status": "rejected"
+    },
+    "origin": "tests/graph_sdk/reference/test_effects_v1.py::test_bridges_are_admitted_and_integrated_with_shared_requests"
+  },
+  {
+    "case_id": "retirement-28",
+    "declaration": {
+      "binding_declarations": {
+        "D0": "S0"
+      },
+      "binding_limits": {
+        "max_bytes": 12,
+        "max_items": 1,
+        "max_requests": 2
+      },
+      "hard_limit": 2,
+      "materialization_limits": {
+        "max_artifact_bytes": 64,
+        "max_artifacts": 8,
+        "max_collection_items": 3,
+        "max_declarations": 4,
+        "max_provenance_edges": 8
+      },
+      "materializations": [
+        {
+          "association": "D0",
+          "declaration": "D0",
+          "item_type": "text",
+          "kind": "single",
+          "max_bytes": 12,
+          "max_items": 1,
+          "node": "N0",
+          "output_type": "text",
+          "path": "initial",
+          "port": "context",
+          "selector_inputs": [],
+          "source": "S0",
+          "target": "T0"
+        }
+      ],
+      "policies": {
+        "P0": {
+          "failover_failures": [
+            "permanent",
+            "implementation_exception"
+          ],
+          "max_attempts": 2,
+          "replay": "idempotent",
+          "retry_owner": "executor"
+        },
+        "P1": {
+          "failover_failures": [
+            "permanent",
+            "implementation_exception"
+          ],
+          "max_attempts": 3,
+          "replay": "idempotent",
+          "retry_owner": "executor"
+        }
+      },
+      "root_input_types": [
+        "text"
+      ]
+    },
+    "events": [
+      {
+        "association": "D0",
+        "kind": "bind_policy",
+        "policies": [
+          "P0"
+        ]
+      },
+      {
+        "associations": [
+          "D0"
+        ],
+        "kind": "reserve",
+        "policy": "P0",
+        "purpose": "initial_binding",
+        "request": "R0"
+      },
+      {
+        "kind": "dispatch",
+        "request": "R0"
+      },
+      {
+        "kind": "cancel",
+        "request": "R0"
+      },
+      {
+        "kind": "lost",
+        "request": "R0"
+      }
+    ],
+    "expected": {
+      "state": {
+        "artifacts": [],
+        "association_requests": {
+          "D0": "R0"
+        },
+        "association_terminals": {},
+        "attempts": {
+          "D0": 1
+        },
+        "binding_declarations": {
+          "D0": "S0"
+        },
+        "binding_sources": {},
+        "binding_terminal": null,
+        "bindings": {
+          "D0": [
+            "P0"
+          ]
+        },
+        "cancel_requested": [
+          "R0"
+        ],
+        "cleanup": {},
+        "closed_unstarted": {},
+        "decisions": {},
+        "defects": [],
+        "denials": {},
+        "dispatched": [
+          "R0"
+        ],
+        "dispatched_count": 1,
+        "local_in_flight": [],
+        "policies": {
+          "P0": {
+            "failover_failures": [
+              "permanent",
+              "implementation_exception"
+            ],
+            "max_attempts": 2,
+            "replay": "idempotent",
+            "retry_owner": "executor"
+          },
+          "P1": {
+            "failover_failures": [
+              "permanent",
+              "implementation_exception"
+            ],
+            "max_attempts": 3,
+            "replay": "idempotent",
+            "retry_owner": "executor"
+          }
+        },
+        "remote_outstanding": [
+          "R0"
+        ],
+        "request_associations": {
+          "R0": [
+            "D0"
+          ]
+        },
+        "request_facts": {
+          "R0": {
+            "condition": "lost"
+          }
+        },
+        "request_failures": {},
+        "request_policies": {
+          "R0": "P0"
+        },
+        "reservation_policies": {},
+        "reservations": {},
+        "resource_count": 0,
+        "resources": {},
+        "settlements": {},
+        "task_requests": {},
+        "tasks": {},
+        "terminals": {
+          "R0": "lost"
+        }
+      },
+      "status": "accepted"
+    },
+    "origin": "tests/graph_sdk/reference/test_effects_v1_materialization.py::test_late_materialization_cannot_replace_first_terminal_or_create_output"
+  },
+  {
+    "case_id": "retirement-29",
+    "declaration": {
+      "binding_declarations": {
+        "D0": "S0"
+      },
+      "binding_limits": {
+        "max_bytes": 12,
+        "max_items": 1,
+        "max_requests": 2
+      },
+      "hard_limit": 2,
+      "materialization_limits": {
+        "max_artifact_bytes": 64,
+        "max_artifacts": 8,
+        "max_collection_items": 3,
+        "max_declarations": 4,
+        "max_provenance_edges": 8
+      },
+      "materializations": [
+        {
+          "association": "D0",
+          "declaration": "D0",
+          "item_type": "text",
+          "kind": "single",
+          "max_bytes": 12,
+          "max_items": 1,
+          "node": "N0",
+          "output_type": "text",
+          "path": "initial",
+          "port": "context",
+          "selector_inputs": [],
+          "source": "S0",
+          "target": "T0"
+        }
+      ],
+      "policies": {
+        "P0": {
+          "failover_failures": [
+            "permanent",
+            "implementation_exception"
+          ],
+          "max_attempts": 2,
+          "replay": "idempotent",
+          "retry_owner": "executor"
+        },
+        "P1": {
+          "failover_failures": [
+            "permanent",
+            "implementation_exception"
+          ],
+          "max_attempts": 3,
+          "replay": "idempotent",
+          "retry_owner": "executor"
+        }
+      },
+      "root_input_types": [
+        "text"
+      ]
+    },
+    "events": [
+      {
+        "association": "D0",
+        "kind": "bind_policy",
+        "policies": [
+          "P0"
+        ]
+      },
+      {
+        "associations": [
+          "D0"
+        ],
+        "kind": "reserve",
+        "policy": "P0",
+        "purpose": "initial_binding",
+        "request": "R0"
+      },
+      {
+        "kind": "dispatch",
+        "request": "R0"
+      },
+      {
+        "kind": "cancel",
+        "request": "R0"
+      },
+      {
+        "kind": "stop",
+        "request": "R0",
+        "usage": "unknown"
+      }
+    ],
+    "expected": {
+      "state": {
+        "artifacts": [],
+        "association_requests": {
+          "D0": "R0"
+        },
+        "association_terminals": {},
+        "attempts": {
+          "D0": 1
+        },
+        "binding_declarations": {
+          "D0": "S0"
+        },
+        "binding_sources": {},
+        "binding_terminal": null,
+        "bindings": {
+          "D0": [
+            "P0"
+          ]
+        },
+        "cancel_requested": [
+          "R0"
+        ],
+        "cleanup": {},
+        "closed_unstarted": {},
+        "decisions": {},
+        "defects": [],
+        "denials": {},
+        "dispatched": [
+          "R0"
+        ],
+        "dispatched_count": 1,
+        "local_in_flight": [],
+        "policies": {
+          "P0": {
+            "failover_failures": [
+              "permanent",
+              "implementation_exception"
+            ],
+            "max_attempts": 2,
+            "replay": "idempotent",
+            "retry_owner": "executor"
+          },
+          "P1": {
+            "failover_failures": [
+              "permanent",
+              "implementation_exception"
+            ],
+            "max_attempts": 3,
+            "replay": "idempotent",
+            "retry_owner": "executor"
+          }
+        },
+        "remote_outstanding": [],
+        "request_associations": {
+          "R0": [
+            "D0"
+          ]
+        },
+        "request_facts": {
+          "R0": {
+            "condition": "cancel_after_dispatch"
+          }
+        },
+        "request_failures": {},
+        "request_policies": {
+          "R0": "P0"
+        },
+        "reservation_policies": {},
+        "reservations": {},
+        "resource_count": 0,
+        "resources": {},
+        "settlements": {},
+        "task_requests": {},
+        "tasks": {},
+        "terminals": {
+          "R0": "cancelled"
+        }
+      },
+      "status": "accepted"
+    },
+    "origin": "tests/graph_sdk/reference/test_effects_v1_materialization.py::test_late_materialization_cannot_replace_first_terminal_or_create_output"
+  },
+  {
+    "case_id": "retirement-30",
+    "declaration": {
+      "binding_declarations": {},
+      "binding_limits": {
+        "max_bytes": 0,
+        "max_items": 0,
+        "max_requests": 2
+      },
+      "declared_outcomes": [
+        "ok"
+      ],
+      "hard_limit": 2,
+      "materialization_limits": {
+        "max_artifact_bytes": 64,
+        "max_artifacts": 8,
+        "max_collection_items": 3,
+        "max_declarations": 4,
+        "max_provenance_edges": 8
+      },
+      "materializations": [
+        {
+          "association": "A0",
+          "declaration": null,
+          "item_type": "text",
+          "kind": "single",
+          "max_bytes": 12,
+          "max_items": 1,
+          "node": "N0",
+          "output_type": "text",
+          "path": "adaptive",
+          "port": "context",
+          "selector_inputs": [
+            "RootInputKey:T0:input"
+          ],
+          "source": null,
+          "target": "T0"
+        }
+      ],
+      "outcome_categories": {
+        "ok": "success"
+      },
+      "policies": {
+        "P0": {
+          "failover_failures": [
+            "permanent",
+            "implementation_exception"
+          ],
+          "max_attempts": 2,
+          "replay": "idempotent",
+          "retry_owner": "executor"
+        },
+        "P1": {
+          "failover_failures": [
+            "permanent",
+            "implementation_exception"
+          ],
+          "max_attempts": 3,
+          "replay": "idempotent",
+          "retry_owner": "executor"
+        }
+      },
+      "retrieval_bounds": {
+        "max_requests": 2
+      },
+      "root_input_types": [
+        "text"
+      ],
+      "runtime_mappings": [
+        {
+          "category": "success",
+          "condition": "result",
+          "failure": null,
+          "outcome": "ok",
+          "reported_outcome": "ok"
+        },
+        {
+          "category": "failure",
+          "condition": "failure",
+          "failure": "rejected_before_acceptance",
+          "outcome": null,
+          "reported_outcome": null
+        },
+        {
+          "category": "failure",
+          "condition": "failure",
+          "failure": "retryable",
+          "outcome": null,
+          "reported_outcome": null
+        },
+        {
+          "category": "failure",
+          "condition": "failure",
+          "failure": "malformed_response",
+          "outcome": null,
+          "reported_outcome": null
+        },
+        {
+          "category": "failure",
+          "condition": "failure",
+          "failure": "permanent",
+          "outcome": null,
+          "reported_outcome": null
+        },
+        {
+          "category": "failure",
+          "condition": "failure",
+          "failure": "transport_unknown",
+          "outcome": null,
+          "reported_outcome": null
+        },
+        {
+          "category": "failure",
+          "condition": "failure",
+          "failure": "implementation_exception",
+          "outcome": null,
+          "reported_outcome": null
+        },
+        {
+          "category": "blocked",
+          "condition": "cancel_before_start",
+          "failure": null,
+          "outcome": null,
+          "reported_outcome": null
+        },
+        {
+          "category": "cancelled",
+          "condition": "cancel_after_start",
+          "failure": null,
+          "outcome": null,
+          "reported_outcome": null
+        },
+        {
+          "category": "cancelled",
+          "condition": "cancel_after_dispatch",
+          "failure": null,
+          "outcome": null,
+          "reported_outcome": null
+        },
+        {
+          "category": "lost",
+          "condition": "lost",
+          "failure": null,
+          "outcome": null,
+          "reported_outcome": null
+        },
+        {
+          "category": "inconsistent",
+          "condition": "request_inconsistent",
+          "failure": null,
+          "outcome": null,
+          "reported_outcome": null
+        },
+        {
+          "category": "blocked",
+          "condition": "budget_exhausted",
+          "failure": null,
+          "outcome": null,
+          "reported_outcome": null
+        },
+        {
+          "category": "blocked",
+          "condition": "request_limit_exhausted",
+          "failure": null,
+          "outcome": null,
+          "reported_outcome": null
+        },
+        {
+          "category": "blocked",
+          "condition": "artifact_limit_exhausted",
+          "failure": null,
+          "outcome": null,
+          "reported_outcome": null
+        },
+        {
+          "category": "failure",
+          "condition": "deadline_exhausted",
+          "failure": null,
+          "outcome": null,
+          "reported_outcome": null
+        }
+      ]
+    },
+    "events": [
+      {
+        "artifact_type": "text",
+        "kind": "root_input",
+        "port": "input",
+        "target": "T0",
+        "value": "selector"
+      },
+      {
+        "association": "A0",
+        "kind": "bind_policy",
+        "policies": [
+          "P0"
+        ]
+      },
+      {
+        "associations": [
+          "A0"
+        ],
+        "kind": "reserve",
+        "policy": "P0",
+        "purpose": "adaptive_retrieval",
+        "request": "R0"
+      },
+      {
+        "kind": "dispatch",
+        "request": "R0"
+      },
+      {
+        "kind": "cancel",
+        "request": "R0"
+      },
+      {
+        "kind": "lost",
+        "request": "R0"
+      }
+    ],
+    "expected": {
+      "state": {
+        "artifacts": [
+          {
+            "artifact_type": "text",
+            "identity": "RootInputKey:T0:input",
+            "value": "selector"
+          }
+        ],
+        "association_requests": {
+          "A0": "R0"
+        },
+        "association_terminals": {},
+        "attempts": {
+          "A0": 1
+        },
+        "binding_declarations": {},
+        "binding_sources": {},
+        "binding_terminal": null,
+        "bindings": {
+          "A0": [
+            "P0"
+          ]
+        },
+        "cancel_requested": [
+          "R0"
+        ],
+        "cleanup": {},
+        "closed_unstarted": {},
+        "decisions": {},
+        "defects": [],
+        "denials": {},
+        "dispatched": [
+          "R0"
+        ],
+        "dispatched_count": 1,
+        "local_in_flight": [],
+        "materialization": {
+          "artifact_bytes": 8,
+          "artifact_count": 1,
+          "ports": {},
+          "provenance": {
+            "RootInputKey:T0:input": []
+          },
+          "provenance_edges": 0
+        },
+        "policies": {
+          "P0": {
+            "failover_failures": [
+              "permanent",
+              "implementation_exception"
+            ],
+            "max_attempts": 2,
+            "replay": "idempotent",
+            "retry_owner": "executor"
+          },
+          "P1": {
+            "failover_failures": [
+              "permanent",
+              "implementation_exception"
+            ],
+            "max_attempts": 3,
+            "replay": "idempotent",
+            "retry_owner": "executor"
+          }
+        },
+        "remote_outstanding": [
+          "R0"
+        ],
+        "request_associations": {
+          "R0": [
+            "A0"
+          ]
+        },
+        "request_facts": {
+          "R0": {
+            "condition": "lost"
+          }
+        },
+        "request_failures": {},
+        "request_policies": {
+          "R0": "P0"
+        },
+        "reservation_policies": {},
+        "reservations": {},
+        "resource_count": 0,
+        "resources": {},
+        "settlements": {},
+        "task_requests": {},
+        "tasks": {},
+        "terminals": {
+          "R0": "lost"
+        }
+      },
+      "status": "accepted"
+    },
+    "origin": "tests/graph_sdk/reference/test_effects_v1_materialization.py::test_late_materialization_cannot_replace_first_terminal_or_create_output"
+  },
+  {
+    "case_id": "retirement-31",
+    "declaration": {
+      "binding_declarations": {},
+      "binding_limits": {
+        "max_bytes": 0,
+        "max_items": 0,
+        "max_requests": 2
+      },
+      "declared_outcomes": [
+        "ok"
+      ],
+      "hard_limit": 2,
+      "materialization_limits": {
+        "max_artifact_bytes": 64,
+        "max_artifacts": 8,
+        "max_collection_items": 3,
+        "max_declarations": 4,
+        "max_provenance_edges": 8
+      },
+      "materializations": [
+        {
+          "association": "A0",
+          "declaration": null,
+          "item_type": "text",
+          "kind": "single",
+          "max_bytes": 12,
+          "max_items": 1,
+          "node": "N0",
+          "output_type": "text",
+          "path": "adaptive",
+          "port": "context",
+          "selector_inputs": [
+            "RootInputKey:T0:input"
+          ],
+          "source": null,
+          "target": "T0"
+        }
+      ],
+      "outcome_categories": {
+        "ok": "success"
+      },
+      "policies": {
+        "P0": {
+          "failover_failures": [
+            "permanent",
+            "implementation_exception"
+          ],
+          "max_attempts": 2,
+          "replay": "idempotent",
+          "retry_owner": "executor"
+        },
+        "P1": {
+          "failover_failures": [
+            "permanent",
+            "implementation_exception"
+          ],
+          "max_attempts": 3,
+          "replay": "idempotent",
+          "retry_owner": "executor"
+        }
+      },
+      "retrieval_bounds": {
+        "max_requests": 2
+      },
+      "root_input_types": [
+        "text"
+      ],
+      "runtime_mappings": [
+        {
+          "category": "success",
+          "condition": "result",
+          "failure": null,
+          "outcome": "ok",
+          "reported_outcome": "ok"
+        },
+        {
+          "category": "failure",
+          "condition": "failure",
+          "failure": "rejected_before_acceptance",
+          "outcome": null,
+          "reported_outcome": null
+        },
+        {
+          "category": "failure",
+          "condition": "failure",
+          "failure": "retryable",
+          "outcome": null,
+          "reported_outcome": null
+        },
+        {
+          "category": "failure",
+          "condition": "failure",
+          "failure": "malformed_response",
+          "outcome": null,
+          "reported_outcome": null
+        },
+        {
+          "category": "failure",
+          "condition": "failure",
+          "failure": "permanent",
+          "outcome": null,
+          "reported_outcome": null
+        },
+        {
+          "category": "failure",
+          "condition": "failure",
+          "failure": "transport_unknown",
+          "outcome": null,
+          "reported_outcome": null
+        },
+        {
+          "category": "failure",
+          "condition": "failure",
+          "failure": "implementation_exception",
+          "outcome": null,
+          "reported_outcome": null
+        },
+        {
+          "category": "blocked",
+          "condition": "cancel_before_start",
+          "failure": null,
+          "outcome": null,
+          "reported_outcome": null
+        },
+        {
+          "category": "cancelled",
+          "condition": "cancel_after_start",
+          "failure": null,
+          "outcome": null,
+          "reported_outcome": null
+        },
+        {
+          "category": "cancelled",
+          "condition": "cancel_after_dispatch",
+          "failure": null,
+          "outcome": null,
+          "reported_outcome": null
+        },
+        {
+          "category": "lost",
+          "condition": "lost",
+          "failure": null,
+          "outcome": null,
+          "reported_outcome": null
+        },
+        {
+          "category": "inconsistent",
+          "condition": "request_inconsistent",
+          "failure": null,
+          "outcome": null,
+          "reported_outcome": null
+        },
+        {
+          "category": "blocked",
+          "condition": "budget_exhausted",
+          "failure": null,
+          "outcome": null,
+          "reported_outcome": null
+        },
+        {
+          "category": "blocked",
+          "condition": "request_limit_exhausted",
+          "failure": null,
+          "outcome": null,
+          "reported_outcome": null
+        },
+        {
+          "category": "blocked",
+          "condition": "artifact_limit_exhausted",
+          "failure": null,
+          "outcome": null,
+          "reported_outcome": null
+        },
+        {
+          "category": "failure",
+          "condition": "deadline_exhausted",
+          "failure": null,
+          "outcome": null,
+          "reported_outcome": null
+        }
+      ]
+    },
+    "events": [
+      {
+        "artifact_type": "text",
+        "kind": "root_input",
+        "port": "input",
+        "target": "T0",
+        "value": "selector"
+      },
+      {
+        "association": "A0",
+        "kind": "bind_policy",
+        "policies": [
+          "P0"
+        ]
+      },
+      {
+        "associations": [
+          "A0"
+        ],
+        "kind": "reserve",
+        "policy": "P0",
+        "purpose": "adaptive_retrieval",
+        "request": "R0"
+      },
+      {
+        "kind": "dispatch",
+        "request": "R0"
+      },
+      {
+        "kind": "cancel",
+        "request": "R0"
+      },
+      {
+        "kind": "stop",
+        "request": "R0",
+        "usage": "unknown"
+      }
+    ],
+    "expected": {
+      "state": {
+        "artifacts": [
+          {
+            "artifact_type": "text",
+            "identity": "RootInputKey:T0:input",
+            "value": "selector"
+          }
+        ],
+        "association_requests": {
+          "A0": "R0"
+        },
+        "association_terminals": {},
+        "attempts": {
+          "A0": 1
+        },
+        "binding_declarations": {},
+        "binding_sources": {},
+        "binding_terminal": null,
+        "bindings": {
+          "A0": [
+            "P0"
+          ]
+        },
+        "cancel_requested": [
+          "R0"
+        ],
+        "cleanup": {},
+        "closed_unstarted": {},
+        "decisions": {},
+        "defects": [],
+        "denials": {},
+        "dispatched": [
+          "R0"
+        ],
+        "dispatched_count": 1,
+        "local_in_flight": [],
+        "materialization": {
+          "artifact_bytes": 8,
+          "artifact_count": 1,
+          "ports": {},
+          "provenance": {
+            "RootInputKey:T0:input": []
+          },
+          "provenance_edges": 0
+        },
+        "policies": {
+          "P0": {
+            "failover_failures": [
+              "permanent",
+              "implementation_exception"
+            ],
+            "max_attempts": 2,
+            "replay": "idempotent",
+            "retry_owner": "executor"
+          },
+          "P1": {
+            "failover_failures": [
+              "permanent",
+              "implementation_exception"
+            ],
+            "max_attempts": 3,
+            "replay": "idempotent",
+            "retry_owner": "executor"
+          }
+        },
+        "remote_outstanding": [],
+        "request_associations": {
+          "R0": [
+            "A0"
+          ]
+        },
+        "request_facts": {
+          "R0": {
+            "condition": "cancel_after_dispatch"
+          }
+        },
+        "request_failures": {},
+        "request_policies": {
+          "R0": "P0"
+        },
+        "reservation_policies": {},
+        "reservations": {},
+        "resource_count": 0,
+        "resources": {},
+        "settlements": {},
+        "task_requests": {},
+        "tasks": {},
+        "terminals": {
+          "R0": "cancelled"
+        }
+      },
+      "status": "accepted"
+    },
+    "origin": "tests/graph_sdk/reference/test_effects_v1_materialization.py::test_late_materialization_cannot_replace_first_terminal_or_create_output"
+  },
+  {
+    "case_id": "retirement-32",
+    "declaration": {
+      "binding_declarations": {},
+      "binding_limits": {
+        "max_bytes": 0,
+        "max_items": 0,
+        "max_requests": 2
+      },
+      "declared_outcomes": [
+        "ok"
+      ],
+      "hard_limit": 2,
+      "materialization_limits": {
+        "max_artifact_bytes": 64,
+        "max_artifacts": 8,
+        "max_collection_items": 3,
+        "max_declarations": 4,
+        "max_provenance_edges": 8
+      },
+      "materializations": [
+        {
+          "association": "A0",
+          "declaration": null,
+          "item_type": "text",
+          "kind": "collection",
+          "max_bytes": 12,
+          "max_items": 3,
+          "node": "N0",
+          "output_type": "text_collection",
+          "path": "adaptive",
+          "port": "context",
+          "selector_inputs": [
+            "RootInputKey:T0:input"
+          ],
+          "source": null,
+          "target": "T0"
+        }
+      ],
+      "outcome_categories": {
+        "ok": "success"
+      },
+      "policies": {
+        "P0": {
+          "failover_failures": [
+            "permanent",
+            "implementation_exception"
+          ],
+          "max_attempts": 2,
+          "replay": "idempotent",
+          "retry_owner": "executor"
+        },
+        "P1": {
+          "failover_failures": [
+            "permanent",
+            "implementation_exception"
+          ],
+          "max_attempts": 3,
+          "replay": "idempotent",
+          "retry_owner": "executor"
+        }
+      },
+      "retrieval_bounds": {
+        "max_requests": 2
+      },
+      "root_input_types": [
+        "text"
+      ],
+      "runtime_mappings": [
+        {
+          "category": "success",
+          "condition": "result",
+          "failure": null,
+          "outcome": "ok",
+          "reported_outcome": "ok"
+        }
+      ]
+    },
+    "events": [
+      {
+        "kind": "bridge_start",
+        "task": "A0"
+      },
+      {
+        "artifact_type": "text",
+        "kind": "root_input",
+        "port": "input",
+        "target": "T0",
+        "value": "selector"
+      },
+      {
+        "association": "A0",
+        "kind": "bind_policy",
+        "policies": [
+          "P0"
+        ]
+      },
+      {
+        "associations": [
+          "A0"
+        ],
+        "kind": "reserve",
+        "policy": "P0",
+        "purpose": "adaptive_retrieval",
+        "request": "R0"
+      },
+      {
+        "kind": "dispatch",
+        "request": "R0"
+      },
+      {
+        "activation": "A0",
+        "association": "A0",
+        "declaration": null,
+        "items": [
+          {
+            "key": 0,
+            "value": "one",
+            "version": 1
+          }
+        ],
+        "kind": "materialize_result",
+        "node": "N0",
+        "parents": [
+          "RootInputKey:T0:input"
+        ],
+        "path": "adaptive",
+        "port": "context",
+        "reported_outcome": "ok",
+        "request": "R0",
+        "settlement": {
+          "disposition": "completed",
+          "remote_stopped": true,
+          "usage": {
+            "input": 0,
+            "output": 0
+          }
+        },
+        "target": "T0"
+      },
+      {
+        "condition": "result",
+        "kind": "bridge_condition",
+        "reported_outcome": "other",
+        "task": "A0"
+      },
+      {
+        "category": "success",
+        "kind": "bridge_emit",
+        "outcome": "ok",
+        "task": "A0"
+      }
+    ],
+    "expected": {
+      "code": "request_causality",
+      "status": "rejected"
+    },
+    "origin": "tests/graph_sdk/reference/test_effects_v1_materialization.py::test_adaptive_result_drives_actual_task_outcome"
+  },
+  {
+    "case_id": "retirement-33",
+    "declaration": {
+      "binding_declarations": {
+        "D0": "S0"
+      },
+      "binding_limits": {
+        "max_bytes": 2,
+        "max_items": 2,
+        "max_requests": 2
+      },
+      "hard_limit": 2,
+      "policies": {
+        "P0": {
+          "failover_failures": [
+            "permanent",
+            "implementation_exception"
+          ],
+          "max_attempts": 2,
+          "replay": "idempotent",
+          "retry_owner": "executor"
+        },
+        "P1": {
+          "failover_failures": [
+            "permanent",
+            "implementation_exception"
+          ],
+          "max_attempts": 3,
+          "replay": "idempotent",
+          "retry_owner": "executor"
+        }
+      }
+    },
+    "events": [
+      {
+        "association": "D0",
+        "kind": "bind_policy",
+        "policies": [
+          "P0"
+        ]
+      },
+      {
+        "associations": [
+          "D0"
+        ],
+        "kind": "reserve",
+        "policy": "P0",
+        "purpose": "initial",
+        "request": "R0"
+      },
+      {
+        "kind": "dispatch",
+        "request": "R0"
+      },
+      {
+        "consumed_context_ports": [],
+        "items": [
+          {
+            "association": "D0",
+            "key": 0,
+            "text": "a",
+            "version": 1
+          },
+          {
+            "association": "D0",
+            "key": 1,
+            "text": "b",
+            "version": 1
+          }
+        ],
+        "kind": "source_result",
+        "outcome": "retrieved",
+        "outputs": [],
+        "request": "R0",
+        "settlement": {
+          "disposition": "completed",
+          "remote_stopped": true,
+          "usage": {
+            "input": 0,
+            "output": 0
+          }
+        },
+        "source": "S0"
+      }
+    ],
+    "expected": {
+      "state": {
+        "artifacts": [
+          {
+            "identity": "D0:0:1",
+            "source": "S0",
+            "text": "a"
+          },
+          {
+            "identity": "D0:1:1",
+            "source": "S0",
+            "text": "b"
+          }
+        ],
+        "association_requests": {
+          "D0": "R0"
+        },
+        "association_terminals": {
+          "D0": {
+            "outcome": "retrieved",
+            "policy": "P0",
+            "request": "R0"
+          }
+        },
+        "attempts": {
+          "D0": 1
+        },
+        "binding_declarations": {
+          "D0": "S0"
+        },
+        "binding_sources": {
+          "D0": "bound"
+        },
+        "binding_terminal": null,
+        "bindings": {
+          "D0": [
+            "P0"
+          ]
+        },
+        "cancel_requested": [],
+        "cleanup": {},
+        "closed_unstarted": {},
+        "decisions": {},
+        "defects": [],
+        "denials": {},
+        "dispatched": [
+          "R0"
+        ],
+        "dispatched_count": 1,
+        "local_in_flight": [],
+        "policies": {
+          "P0": {
+            "failover_failures": [
+              "permanent",
+              "implementation_exception"
+            ],
+            "max_attempts": 2,
+            "replay": "idempotent",
+            "retry_owner": "executor"
+          },
+          "P1": {
+            "failover_failures": [
+              "permanent",
+              "implementation_exception"
+            ],
+            "max_attempts": 3,
+            "replay": "idempotent",
+            "retry_owner": "executor"
+          }
+        },
+        "remote_outstanding": [],
+        "request_associations": {
+          "R0": [
+            "D0"
+          ]
+        },
+        "request_facts": {
+          "R0": {
+            "condition": "result",
+            "outcomes": {
+              "D0": "retrieved"
+            }
+          }
+        },
+        "request_failures": {},
+        "request_policies": {
+          "R0": "P0"
+        },
+        "reservation_policies": {},
+        "reservations": {},
+        "resource_count": 0,
+        "resources": {},
+        "settlements": {
+          "R0": {
+            "disposition": "completed",
+            "remote_stopped": true,
+            "usage": {
+              "input": 0,
+              "output": 0
+            }
+          }
+        },
+        "task_requests": {},
+        "tasks": {},
+        "terminals": {
+          "R0": "success"
+        }
+      },
+      "status": "accepted"
+    },
+    "origin": "tests/graph_sdk/reference/test_effects_v1_materialization.py::test_exact_binding_bounds_return_terminal_public_result"
+  },
+  {
+    "case_id": "retirement-34",
+    "declaration": {
+      "binding_declarations": {
+        "D0": "S0"
+      },
+      "binding_limits": {
+        "max_bytes": 8,
+        "max_items": 2,
+        "max_requests": 1
+      },
+      "hard_limit": 2,
+      "policies": {
+        "P0": {
+          "failover_failures": [
+            "permanent",
+            "implementation_exception"
+          ],
+          "max_attempts": 1,
+          "replay": "idempotent",
+          "retry_owner": "executor"
+        },
+        "P1": {
+          "failover_failures": [
+            "permanent",
+            "implementation_exception"
+          ],
+          "max_attempts": 3,
+          "replay": "idempotent",
+          "retry_owner": "executor"
+        }
+      }
+    },
+    "events": [
+      {
+        "association": "D0",
+        "kind": "bind_policy",
+        "policies": [
+          "P0"
+        ]
+      },
+      {
+        "associations": [
+          "D0"
+        ],
+        "kind": "reserve",
+        "policy": "P0",
+        "purpose": "initial",
+        "request": "R0"
+      },
+      {
+        "kind": "dispatch",
+        "request": "R0"
+      },
+      {
+        "consumed_context_ports": [],
+        "items": [
+          {
+            "association": "D0",
+            "key": 0,
+            "text": "a",
+            "version": 1
+          }
+        ],
+        "kind": "source_result",
+        "outcome": "retrieved",
+        "outputs": [],
+        "request": "R0",
+        "settlement": {
+          "disposition": "completed",
+          "remote_stopped": true,
+          "usage": {
+            "input": 0,
+            "output": 0
+          }
+        },
+        "source": "S0"
+      },
+      {
+        "kind": "binding_finish"
+      }
+    ],
+    "expected": {
+      "state": {
+        "artifacts": [
+          {
+            "identity": "D0:0:1",
+            "source": "S0",
+            "text": "a"
+          }
+        ],
+        "association_requests": {
+          "D0": "R0"
+        },
+        "association_terminals": {
+          "D0": {
+            "outcome": "retrieved",
+            "policy": "P0",
+            "request": "R0"
+          }
+        },
+        "attempts": {
+          "D0": 1
+        },
+        "binding_declarations": {
+          "D0": "S0"
+        },
+        "binding_sources": {
+          "D0": "bound"
+        },
+        "binding_terminal": "success",
+        "bindings": {
+          "D0": [
+            "P0"
+          ]
+        },
+        "cancel_requested": [],
+        "cleanup": {},
+        "closed_unstarted": {},
+        "decisions": {},
+        "defects": [],
+        "denials": {},
+        "dispatched": [
+          "R0"
+        ],
+        "dispatched_count": 1,
+        "local_in_flight": [],
+        "policies": {
+          "P0": {
+            "failover_failures": [
+              "permanent",
+              "implementation_exception"
+            ],
+            "max_attempts": 1,
+            "replay": "idempotent",
+            "retry_owner": "executor"
+          },
+          "P1": {
+            "failover_failures": [
+              "permanent",
+              "implementation_exception"
+            ],
+            "max_attempts": 3,
+            "replay": "idempotent",
+            "retry_owner": "executor"
+          }
+        },
+        "remote_outstanding": [],
+        "request_associations": {
+          "R0": [
+            "D0"
+          ]
+        },
+        "request_facts": {
+          "R0": {
+            "condition": "result",
+            "outcomes": {
+              "D0": "retrieved"
+            }
+          }
+        },
+        "request_failures": {},
+        "request_policies": {
+          "R0": "P0"
+        },
+        "reservation_policies": {},
+        "reservations": {},
+        "resource_count": 0,
+        "resources": {},
+        "settlements": {
+          "R0": {
+            "disposition": "completed",
+            "remote_stopped": true,
+            "usage": {
+              "input": 0,
+              "output": 0
+            }
+          }
+        },
+        "task_requests": {},
+        "tasks": {},
+        "terminals": {
+          "R0": "success"
+        }
+      },
+      "status": "accepted"
+    },
+    "origin": "tests/graph_sdk/reference/test_effects_v1_materialization.py::test_wrong_source_is_the_only_response_defect"
+  },
+  {
+    "case_id": "retirement-35",
+    "declaration": {
+      "binding_declarations": {
+        "D0": "S0"
+      },
+      "binding_limits": {
+        "max_bytes": 8,
+        "max_items": 2,
+        "max_requests": 2
+      },
+      "hard_limit": 2,
+      "policies": {
+        "P0": {
+          "failover_failures": [
+            "permanent",
+            "implementation_exception"
+          ],
+          "max_attempts": 2,
+          "replay": "idempotent",
+          "retry_owner": "executor"
+        },
+        "P1": {
+          "failover_failures": [
+            "permanent",
+            "implementation_exception"
+          ],
+          "max_attempts": 3,
+          "replay": "idempotent",
+          "retry_owner": "executor"
+        }
+      }
+    },
+    "events": [
+      {
+        "association": "D0",
+        "kind": "bind_policy",
+        "policies": [
+          "P0"
+        ]
+      },
+      {
+        "associations": [
+          "D0"
+        ],
+        "kind": "reserve",
+        "policy": "P0",
+        "purpose": "initial",
+        "request": "R0"
+      },
+      {
+        "kind": "dispatch",
+        "request": "R0"
+      },
+      {
+        "kind": "result",
+        "outcomes": {
+          "D0": "retrieved"
+        },
+        "request": "R0",
+        "returned": [
+          "D0"
+        ]
+      }
+    ],
+    "expected": {
+      "state": {
+        "artifacts": [],
+        "association_requests": {
+          "D0": "R0"
+        },
+        "association_terminals": {},
+        "attempts": {
+          "D0": 1
+        },
+        "binding_declarations": {
+          "D0": "S0"
+        },
+        "binding_sources": {},
+        "binding_terminal": null,
+        "bindings": {
+          "D0": [
+            "P0"
+          ]
+        },
+        "cancel_requested": [],
+        "cleanup": {},
+        "closed_unstarted": {},
+        "decisions": {},
+        "defects": [],
+        "denials": {},
+        "dispatched": [
+          "R0"
+        ],
+        "dispatched_count": 1,
+        "local_in_flight": [],
+        "policies": {
+          "P0": {
+            "failover_failures": [
+              "permanent",
+              "implementation_exception"
+            ],
+            "max_attempts": 2,
+            "replay": "idempotent",
+            "retry_owner": "executor"
+          },
+          "P1": {
+            "failover_failures": [
+              "permanent",
+              "implementation_exception"
+            ],
+            "max_attempts": 3,
+            "replay": "idempotent",
+            "retry_owner": "executor"
+          }
+        },
+        "remote_outstanding": [],
+        "request_associations": {
+          "R0": [
+            "D0"
+          ]
+        },
+        "request_facts": {
+          "R0": {
+            "condition": "result",
+            "outcomes": {
+              "D0": "retrieved"
+            }
+          }
+        },
+        "request_failures": {},
+        "request_policies": {
+          "R0": "P0"
+        },
+        "reservation_policies": {},
+        "reservations": {},
+        "resource_count": 0,
+        "resources": {},
+        "settlements": {},
+        "task_requests": {},
+        "tasks": {},
+        "terminals": {
+          "R0": "success"
+        }
+      },
+      "status": "accepted"
+    },
+    "origin": "tests/graph_sdk/reference/test_effects_v1_materialization.py::test_unsolicited_result_has_a_valid_dispatched_counterpart"
+  },
+  {
+    "additional_origins": [
+      "tests/graph_sdk/reference/test_effects_v1_materialization.py::test_decision_submission_rejects_without_state_mutation",
+      "tests/graph_sdk/reference/test_effects_v1_materialization.py::test_decision_submission_rejects_without_state_mutation",
+      "tests/graph_sdk/reference/test_effects_v1_materialization.py::test_decision_submission_rejects_without_state_mutation"
+    ],
+    "case_id": "retirement-36",
+    "declaration": {},
+    "events": [
+      {
+        "kind": "bridge_start",
+        "node": "N0",
+        "task": "T0"
+      },
+      {
+        "allowed": [
+          "approve",
+          "reject"
+        ],
+        "artifact": "V0",
+        "kind": "decision_open",
+        "task": "T0",
+        "wait": "W0",
+        "workflow": "F0"
+      }
+    ],
+    "expected": {
+      "state": {
+        "artifacts": [],
+        "association_requests": {},
+        "association_terminals": {},
+        "attempts": {},
+        "binding_declarations": {},
+        "binding_sources": {},
+        "binding_terminal": null,
+        "bindings": {},
+        "cancel_requested": [],
+        "cleanup": {},
+        "closed_unstarted": {},
+        "decisions": {
+          "W0": {
+            "allowed": [
+              "approve",
+              "reject"
+            ],
+            "artifact": "V0",
+            "task": "T0",
+            "workflow": "F0"
+          }
+        },
+        "defects": [],
+        "denials": {},
+        "dispatched": [],
+        "dispatched_count": 0,
+        "local_in_flight": [],
+        "policies": {},
+        "remote_outstanding": [],
+        "request_associations": {},
+        "request_facts": {},
+        "request_failures": {},
+        "request_policies": {},
+        "reservation_policies": {},
+        "reservations": {},
+        "resource_count": 0,
+        "resources": {},
+        "settlements": {},
+        "task_requests": {},
+        "tasks": {
+          "T0": "running"
+        },
+        "terminals": {}
+      },
+      "status": "accepted"
+    },
+    "origin": "tests/graph_sdk/reference/test_effects_v1_materialization.py::test_decision_submission_rejects_without_state_mutation"
+  },
+  {
+    "case_id": "retirement-40",
+    "declaration": {},
+    "events": [
+      {
+        "kind": "bridge_start",
+        "node": "N0",
+        "task": "T0"
+      },
+      {
+        "allowed": [
+          "approve",
+          "reject"
+        ],
+        "artifact": "V0",
+        "kind": "decision_open",
+        "task": "T0",
+        "wait": "W0",
+        "workflow": "F0"
+      },
+      {
+        "artifact": "V0",
+        "decision": "approve",
+        "kind": "decision_submit",
+        "wait": "W0",
+        "workflow": "F0"
+      }
+    ],
+    "expected": {
+      "state": {
+        "artifacts": [],
+        "association_requests": {},
+        "association_terminals": {},
+        "attempts": {},
+        "binding_declarations": {},
+        "binding_sources": {},
+        "binding_terminal": null,
+        "bindings": {},
+        "cancel_requested": [],
+        "cleanup": {},
+        "closed_unstarted": {},
+        "decisions": {
+          "W0": {
+            "allowed": [
+              "approve",
+              "reject"
+            ],
+            "artifact": "V0",
+            "closed": true,
+            "task": "T0",
+            "workflow": "F0"
+          }
+        },
+        "defects": [],
+        "denials": {},
+        "dispatched": [],
+        "dispatched_count": 0,
+        "local_in_flight": [],
+        "policies": {},
+        "remote_outstanding": [],
+        "request_associations": {},
+        "request_facts": {},
+        "request_failures": {},
+        "request_policies": {},
+        "reservation_policies": {},
+        "reservations": {},
+        "resource_count": 0,
+        "resources": {},
+        "settlements": {},
+        "task_requests": {},
+        "tasks": {
+          "T0": "success"
+        },
+        "terminals": {}
+      },
+      "status": "accepted"
+    },
+    "origin": "tests/graph_sdk/reference/test_effects_v1_materialization.py::test_decision_submission_rejects_without_state_mutation"
+  }
+]

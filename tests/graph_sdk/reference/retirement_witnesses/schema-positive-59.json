@@ -1,0 +1,61 @@
+{
+  "after": {
+    "same_as_before": true
+  },
+  "api": "admit",
+  "before": {
+    "declaration": {
+      "materialization_limits": {
+        "max_artifact_bytes": 64,
+        "max_artifacts": 8,
+        "max_collection_items": 3,
+        "max_declarations": 4,
+        "max_provenance_edges": 8
+      },
+      "materializations": [
+        {
+          "association": "D0",
+          "declaration": "D0",
+          "item_type": "text",
+          "kind": "collection",
+          "max_bytes": 12,
+          "max_items": 3,
+          "node": "N0",
+          "output_type": "text_collection",
+          "path": "initial",
+          "port": "context",
+          "selector_inputs": [],
+          "source": "S0",
+          "target": "T0"
+        },
+        {
+          "association": "A1",
+          "declaration": null,
+          "item_type": "text",
+          "kind": "collection",
+          "max_bytes": 12,
+          "max_items": 3,
+          "node": "N0",
+          "output_type": "text_collection",
+          "path": "adaptive",
+          "port": "context",
+          "selector_inputs": [
+            "RootInputKey:T0:input"
+          ],
+          "source": null,
+          "target": "T0"
+        }
+      ],
+      "root_input_types": [
+        "text"
+      ]
+    }
+  },
+  "before_hash": "aed057298c14ccb5523faa4d5e50db59179f02bf124590cad5f83feea90eaf11",
+  "exception": null,
+  "hash": "59a40bd72ae07ca9a98b4865023416a406d6830ee7ade53874a53164cde33f85",
+  "module": "tests.graph_sdk.reference._effects_v1.admission",
+  "return": {
+    "status": "accepted"
+  }
+}

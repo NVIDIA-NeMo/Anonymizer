@@ -4,7 +4,6 @@
 
 from __future__ import annotations
 
-import json
 from collections.abc import Mapping
 from typing import cast
 
@@ -22,8 +21,7 @@ from anonymizer.engine.graph_sdk.data import (
     ValidatedDataGraph,
 )
 from anonymizer.graph._values import ContractViolation, DatumId, GraphId, ValidationCode
-from tests.graph_sdk.reference import data_v1
-from tests.graph_sdk.reference.corpora import corpus_bytes
+from tests.graph_sdk.reference import data_shapes
 
 
 class _DataReferenceAdapter:
@@ -35,7 +33,7 @@ class _DataReferenceAdapter:
         self._identities: dict[tuple[str, int], DatumId] = {}
         self._labels: dict[DatumId, tuple[str, int]] = {}
 
-    def validate(self, declaration: data_v1.DataDeclaration) -> ValidatedDataGraph:
+    def validate(self, declaration: data_shapes.DataDeclaration) -> ValidatedDataGraph:
         datums = tuple(self._datum(value) for value in declaration["datums"])
         graph = DataGraph(graph=self._graph, datums=datums)
         targets = tuple(self._identity(value) for value in declaration["targets"])
@@ -64,7 +62,7 @@ class _DataReferenceAdapter:
             limits=limits,
         )
 
-    def normalized(self, graph: ValidatedDataGraph) -> data_v1.JsonObject:
+    def normalized(self, graph: ValidatedDataGraph) -> data_shapes.JsonObject:
         return {
             "datums": sorted(
                 ({"id": self._json_id(datum.id), "text": datum.text} for datum in graph.datums),
@@ -140,7 +138,7 @@ class _DataReferenceAdapter:
             },
         }
 
-    def _identity(self, value: data_v1.JsonValue) -> DatumId:
+    def _identity(self, value: data_shapes.JsonValue) -> DatumId:
         if not isinstance(value, list) or len(value) != 2:
             raise ContractViolation(ValidationCode.INVALID_TYPE)
         owner, index = value
@@ -158,14 +156,14 @@ class _DataReferenceAdapter:
             self._labels[identifier] = label
         return self._identities[label]
 
-    def _json_id(self, identifier: DatumId) -> list[data_v1.JsonValue]:
+    def _json_id(self, identifier: DatumId) -> list[data_shapes.JsonValue]:
         owner, index = self._labels[identifier]
         return [owner, index]
 
-    def _datum(self, value: data_v1.DatumEnvelope) -> Datum:
+    def _datum(self, value: data_shapes.DatumEnvelope) -> Datum:
         return Datum(id=self._identity(value["id"]), text=cast(str, value["text"]))
 
-    def _source(self, value: data_v1.SourceRelationEnvelope) -> SourceRelation:
+    def _source(self, value: data_shapes.SourceRelationEnvelope) -> SourceRelation:
         return SourceRelation(
             derived=self._identity(value["derived"]),
             view=SourceView(
@@ -175,7 +173,7 @@ class _DataReferenceAdapter:
             ),
         )
 
-    def _context(self, value: data_v1.ContextEnvelope) -> ContextView:
+    def _context(self, value: data_shapes.ContextEnvelope) -> ContextView:
         return ContextView(
             target=self._identity(value["target"]),
             view=SourceView(
@@ -185,19 +183,19 @@ class _DataReferenceAdapter:
             ),
         )
 
-    def _dependency(self, value: data_v1.DependencyEnvelope) -> DatumDependency:
+    def _dependency(self, value: data_shapes.DependencyEnvelope) -> DatumDependency:
         return DatumDependency(
             prerequisite=self._identity(value["prerequisite"]),
             dependent=self._identity(value["dependent"]),
         )
 
-    def _coherence(self, value: data_v1.GroupEnvelope) -> CoherenceScope:
+    def _coherence(self, value: data_shapes.GroupEnvelope) -> CoherenceScope:
         return CoherenceScope(members=tuple(self._identity(member) for member in _list(value["members"])))
 
-    def _atomic(self, value: data_v1.GroupEnvelope) -> AtomicGroup:
+    def _atomic(self, value: data_shapes.GroupEnvelope) -> AtomicGroup:
         return AtomicGroup(members=tuple(self._identity(member) for member in _list(value["members"])))
 
-    def _region(self, value: data_v1.OutputRegionEnvelope) -> OutputRegion:
+    def _region(self, value: data_shapes.OutputRegionEnvelope) -> OutputRegion:
         return OutputRegion(
             target=self._identity(value["target"]),
             source=self._identity(value["source"]),
@@ -205,42 +203,42 @@ class _DataReferenceAdapter:
             end=cast(int, value["end"]),
         )
 
-    def _groups(self, groups: frozenset[frozenset[DatumId]]) -> list[data_v1.JsonValue]:
-        normalized: list[list[data_v1.JsonValue]] = [
+    def _groups(self, groups: frozenset[frozenset[DatumId]]) -> list[data_shapes.JsonValue]:
+        normalized: list[list[data_shapes.JsonValue]] = [
             sorted((self._json_id(member) for member in group), key=_json_id_key) for group in groups
         ]
         result = sorted(normalized, key=_group_key)
         # Recursive JSON aliases are invariant in mutable lists; the values are
         # fully built and only compared by this read-only fixture adapter.
-        return cast(list[data_v1.JsonValue], result)
+        return cast(list[data_shapes.JsonValue], result)
 
 
-def _list(value: data_v1.JsonValue) -> list[data_v1.JsonValue]:
-    return cast(list[data_v1.JsonValue], value)
+def _list(value: data_shapes.JsonValue) -> list[data_shapes.JsonValue]:
+    return cast(list[data_shapes.JsonValue], value)
 
 
-def _json_id_key(value: data_v1.JsonValue) -> tuple[str, int]:
-    raw = cast(list[data_v1.JsonValue], value)
+def _json_id_key(value: data_shapes.JsonValue) -> tuple[str, int]:
+    raw = cast(list[data_shapes.JsonValue], value)
     return cast(str, raw[0]), cast(int, raw[1])
 
 
-def _group_key(group: list[data_v1.JsonValue]) -> tuple[tuple[str, int], ...]:
+def _group_key(group: list[data_shapes.JsonValue]) -> tuple[tuple[str, int], ...]:
     return tuple(_json_id_key(member) for member in group)
 
 
 def _relation_key(
-    value: Mapping[str, data_v1.JsonValue],
+    value: Mapping[str, data_shapes.JsonValue],
 ) -> tuple[tuple[str, int], tuple[str, int], int, int]:
     first = value.get("target", value.get("derived"))
     return (
-        _json_id_key(cast(data_v1.JsonValue, first)),
-        _json_id_key(cast(data_v1.JsonValue, value["source"])),
+        _json_id_key(cast(data_shapes.JsonValue, first)),
+        _json_id_key(cast(data_shapes.JsonValue, value["source"])),
         cast(int, value["start"]),
         cast(int, value["end"]),
     )
 
 
-def _adapt(case: data_v1.FixtureCase) -> data_v1.ValidationResult:
+def _adapt(case: data_shapes.FixtureCase) -> data_shapes.ValidationResult:
     declaration = case["declaration"]
     if declaration["kind"] != "data":
         raise AssertionError("reference adapter received a non-data fixture")
@@ -248,12 +246,12 @@ def _adapt(case: data_v1.FixtureCase) -> data_v1.ValidationResult:
     try:
         graph = adapter.validate(declaration)
     except ContractViolation as error:
-        return {"verdict": "reject", "code": cast(data_v1.ValidationCode, error.code.value)}
+        return {"verdict": "reject", "code": cast(data_shapes.ValidationCode, error.code.value)}
     return {"verdict": "accept", "normalized": adapter.normalized(graph)}
 
 
 def test_all_frozen_data_cases_match_product_validation_and_normalization() -> None:
-    cases = data_v1._parse_cases(json.loads(corpus_bytes("data")))
+    cases = data_shapes.load_data_cases()
     data_cases = [case for case in cases if case["declaration"]["kind"] == "data"]
     assert len(data_cases) == 38_267
     for case in data_cases:

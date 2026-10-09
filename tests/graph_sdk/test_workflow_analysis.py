@@ -5,8 +5,11 @@
 from __future__ import annotations
 
 import copy
+import hashlib
+import json
 from collections.abc import Callable
 from dataclasses import replace
+from pathlib import Path
 from typing import ParamSpec, cast
 
 import pytest
@@ -17,7 +20,7 @@ from anonymizer.graph._values import ContractViolation, ValidationCode
 from anonymizer.graph._workflow_analysis import _ANALYSIS, _AnalysisMeter
 from anonymizer.graph._workflow_composition import validate_dynamic_input_summaries
 from anonymizer.graph.workflow import AdmittedWorkflow, NodeId, SubgraphNode, WorkflowId, admit_static_workflow
-from tests.graph_sdk.reference._workflow_static_v1.builders import (
+from tests.graph_sdk.reference.workflow_fixture_builders import (
     _context,
     _evidence,
     _input,
@@ -30,7 +33,6 @@ from tests.graph_sdk.reference._workflow_static_v1.builders import (
     _workflow,
     _wrap,
 )
-from tests.graph_sdk.reference._workflow_static_v1.validation import judge
 from tests.graph_sdk.test_workflow_static import Json, Object, _Adapter, _execute, _object
 
 _P = ParamSpec("_P")
@@ -87,9 +89,13 @@ def _meters(monkeypatch: pytest.MonkeyPatch) -> list[_AnalysisMeter]:
 
 
 @pytest.mark.parametrize("count", (1, 2, 3, 4))
-def test_tiny_product_normalization_matches_frozen_independent_judge(count: int) -> None:
+def test_tiny_product_normalization_matches_frozen_independent_answers(count: int) -> None:
     declaration = _chain(count)
-    expected = judge(declaration)
+    frozen = (Path(__file__).parent / "reference" / "frozen" / "workflow_analysis_known_answers.json").read_bytes()
+    assert hashlib.sha256(frozen).hexdigest() == "a4b8fc5a5b1bce0fcd6d9c470cb54d737ab5fd41b280ac342ee7d7dc70184fdd"
+    fixture = next(item for item in json.loads(frozen) if item["count"] == count)
+    assert fixture["declaration"] == declaration
+    expected = fixture["expected"]
     actual = _execute(declaration, None)
     assert expected["status"] == "accepted"
     assert actual[:3] == (expected["status"], expected["code"], expected["normalized"])

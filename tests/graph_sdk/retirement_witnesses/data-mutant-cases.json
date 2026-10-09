@@ -1,0 +1,1221 @@
+[
+  {
+    "case": {
+      "case_id": "identity-003245-equal-text-distinct",
+      "declaration": {
+        "atomic": [],
+        "coherence": [],
+        "contexts": [],
+        "datums": [
+          {
+            "id": [
+              "local",
+              0
+            ],
+            "text": "x"
+          },
+          {
+            "id": [
+              "local",
+              1
+            ],
+            "text": "x"
+          }
+        ],
+        "dependencies": [],
+        "kind": "data",
+        "limits": {
+          "max_datums": 2,
+          "max_declarations": 0,
+          "max_group_members": 0,
+          "max_targets": 2,
+          "max_text_bytes": 2
+        },
+        "output_regions": [],
+        "source_relations": [],
+        "targets": [
+          [
+            "local",
+            0
+          ],
+          [
+            "local",
+            1
+          ]
+        ]
+      },
+      "expected": {
+        "normalized": {
+          "atomic": [
+            [
+              [
+                "local",
+                0
+              ]
+            ],
+            [
+              [
+                "local",
+                1
+              ]
+            ]
+          ],
+          "coherence": [
+            [
+              [
+                "local",
+                0
+              ]
+            ],
+            [
+              [
+                "local",
+                1
+              ]
+            ]
+          ],
+          "contexts": [],
+          "datums": [
+            {
+              "id": [
+                "local",
+                0
+              ],
+              "text": "x"
+            },
+            {
+              "id": [
+                "local",
+                1
+              ],
+              "text": "x"
+            }
+          ],
+          "dependencies": [],
+          "effective_ownership": [
+            {
+              "end": 1,
+              "source": [
+                "local",
+                0
+              ],
+              "start": 0,
+              "target": [
+                "local",
+                0
+              ]
+            },
+            {
+              "end": 1,
+              "source": [
+                "local",
+                1
+              ],
+              "start": 0,
+              "target": [
+                "local",
+                1
+              ]
+            }
+          ],
+          "limits": {
+            "max_datums": 2,
+            "max_declarations": 0,
+            "max_group_members": 0,
+            "max_targets": 2,
+            "max_text_bytes": 2
+          },
+          "output_regions": [],
+          "source_relations": [],
+          "targets": [
+            [
+              "local",
+              0
+            ],
+            [
+              "local",
+              1
+            ]
+          ]
+        },
+        "verdict": "accept"
+      },
+      "family": "identity",
+      "trace": [
+        {
+          "op": "declare_datum(id,text)",
+          "value": {
+            "id": [
+              "local",
+              0
+            ],
+            "text": "x"
+          }
+        },
+        {
+          "op": "declare_datum(id,text)",
+          "value": {
+            "id": [
+              "local",
+              1
+            ],
+            "text": "x"
+          }
+        },
+        {
+          "op": "select_target(id)",
+          "value": [
+            "local",
+            0
+          ]
+        },
+        {
+          "op": "select_target(id)",
+          "value": [
+            "local",
+            1
+          ]
+        },
+        {
+          "op": "close_declaration"
+        },
+        {
+          "op": "validate"
+        }
+      ]
+    },
+    "mutant": "collapse_equal_text_identities"
+  },
+  {
+    "case": {
+      "case_id": "relation-separation-037474",
+      "declaration": {
+        "atomic": [
+          {
+            "members": [
+              [
+                "local",
+                0
+              ],
+              [
+                "local",
+                1
+              ]
+            ]
+          },
+          {
+            "members": [
+              [
+                "local",
+                2
+              ]
+            ]
+          }
+        ],
+        "coherence": [
+          {
+            "members": [
+              [
+                "local",
+                0
+              ]
+            ]
+          },
+          {
+            "members": [
+              [
+                "local",
+                1
+              ]
+            ]
+          },
+          {
+            "members": [
+              [
+                "local",
+                2
+              ]
+            ]
+          }
+        ],
+        "contexts": [
+          {
+            "end": 1,
+            "source": [
+              "local",
+              1
+            ],
+            "start": 0,
+            "target": [
+              "local",
+              0
+            ]
+          },
+          {
+            "end": 1,
+            "source": [
+              "local",
+              0
+            ],
+            "start": 0,
+            "target": [
+              "local",
+              1
+            ]
+          }
+        ],
+        "datums": [
+          {
+            "id": [
+              "local",
+              0
+            ],
+            "text": "x"
+          },
+          {
+            "id": [
+              "local",
+              1
+            ],
+            "text": "x"
+          },
+          {
+            "id": [
+              "local",
+              2
+            ],
+            "text": "x"
+          }
+        ],
+        "dependencies": [],
+        "kind": "data",
+        "limits": {
+          "max_datums": 3,
+          "max_declarations": 7,
+          "max_group_members": 6,
+          "max_targets": 3,
+          "max_text_bytes": 3
+        },
+        "output_regions": [],
+        "source_relations": [],
+        "targets": [
+          [
+            "local",
+            0
+          ],
+          [
+            "local",
+            1
+          ],
+          [
+            "local",
+            2
+          ]
+        ]
+      },
+      "expected": {
+        "normalized": {
+          "atomic": [
+            [
+              [
+                "local",
+                0
+              ],
+              [
+                "local",
+                1
+              ]
+            ],
+            [
+              [
+                "local",
+                2
+              ]
+            ]
+          ],
+          "coherence": [
+            [
+              [
+                "local",
+                0
+              ]
+            ],
+            [
+              [
+                "local",
+                1
+              ]
+            ],
+            [
+              [
+                "local",
+                2
+              ]
+            ]
+          ],
+          "contexts": [
+            {
+              "end": 1,
+              "source": [
+                "local",
+                1
+              ],
+              "start": 0,
+              "target": [
+                "local",
+                0
+              ]
+            },
+            {
+              "end": 1,
+              "source": [
+                "local",
+                0
+              ],
+              "start": 0,
+              "target": [
+                "local",
+                1
+              ]
+            }
+          ],
+          "datums": [
+            {
+              "id": [
+                "local",
+                0
+              ],
+              "text": "x"
+            },
+            {
+              "id": [
+                "local",
+                1
+              ],
+              "text": "x"
+            },
+            {
+              "id": [
+                "local",
+                2
+              ],
+              "text": "x"
+            }
+          ],
+          "dependencies": [],
+          "effective_ownership": [
+            {
+              "end": 1,
+              "source": [
+                "local",
+                0
+              ],
+              "start": 0,
+              "target": [
+                "local",
+                0
+              ]
+            },
+            {
+              "end": 1,
+              "source": [
+                "local",
+                1
+              ],
+              "start": 0,
+              "target": [
+                "local",
+                1
+              ]
+            },
+            {
+              "end": 1,
+              "source": [
+                "local",
+                2
+              ],
+              "start": 0,
+              "target": [
+                "local",
+                2
+              ]
+            }
+          ],
+          "limits": {
+            "max_datums": 3,
+            "max_declarations": 7,
+            "max_group_members": 6,
+            "max_targets": 3,
+            "max_text_bytes": 3
+          },
+          "output_regions": [],
+          "source_relations": [],
+          "targets": [
+            [
+              "local",
+              0
+            ],
+            [
+              "local",
+              1
+            ],
+            [
+              "local",
+              2
+            ]
+          ]
+        },
+        "verdict": "accept"
+      },
+      "family": "relation-separation",
+      "trace": [
+        {
+          "op": "declare_datum(id,text)",
+          "value": {
+            "id": [
+              "local",
+              0
+            ],
+            "text": "x"
+          }
+        },
+        {
+          "op": "declare_datum(id,text)",
+          "value": {
+            "id": [
+              "local",
+              1
+            ],
+            "text": "x"
+          }
+        },
+        {
+          "op": "declare_datum(id,text)",
+          "value": {
+            "id": [
+              "local",
+              2
+            ],
+            "text": "x"
+          }
+        },
+        {
+          "op": "select_target(id)",
+          "value": [
+            "local",
+            0
+          ]
+        },
+        {
+          "op": "select_target(id)",
+          "value": [
+            "local",
+            1
+          ]
+        },
+        {
+          "op": "select_target(id)",
+          "value": [
+            "local",
+            2
+          ]
+        },
+        {
+          "kind": "contexts",
+          "op": "add_relation(kind,value)",
+          "value": {
+            "end": 1,
+            "source": [
+              "local",
+              1
+            ],
+            "start": 0,
+            "target": [
+              "local",
+              0
+            ]
+          }
+        },
+        {
+          "kind": "contexts",
+          "op": "add_relation(kind,value)",
+          "value": {
+            "end": 1,
+            "source": [
+              "local",
+              0
+            ],
+            "start": 0,
+            "target": [
+              "local",
+              1
+            ]
+          }
+        },
+        {
+          "kind": "coherence",
+          "op": "add_relation(kind,value)",
+          "value": {
+            "members": [
+              [
+                "local",
+                0
+              ]
+            ]
+          }
+        },
+        {
+          "kind": "coherence",
+          "op": "add_relation(kind,value)",
+          "value": {
+            "members": [
+              [
+                "local",
+                1
+              ]
+            ]
+          }
+        },
+        {
+          "kind": "coherence",
+          "op": "add_relation(kind,value)",
+          "value": {
+            "members": [
+              [
+                "local",
+                2
+              ]
+            ]
+          }
+        },
+        {
+          "kind": "atomic",
+          "op": "add_relation(kind,value)",
+          "value": {
+            "members": [
+              [
+                "local",
+                0
+              ],
+              [
+                "local",
+                1
+              ]
+            ]
+          }
+        },
+        {
+          "kind": "atomic",
+          "op": "add_relation(kind,value)",
+          "value": {
+            "members": [
+              [
+                "local",
+                2
+              ]
+            ]
+          }
+        },
+        {
+          "op": "close_declaration"
+        },
+        {
+          "op": "validate"
+        }
+      ]
+    },
+    "mutant": "infer_atomic_groups_from_context"
+  },
+  {
+    "case": {
+      "case_id": "ranges-020090-outputs",
+      "declaration": {
+        "atomic": [],
+        "coherence": [],
+        "contexts": [],
+        "datums": [
+          {
+            "id": [
+              "local",
+              0
+            ],
+            "text": "abcd"
+          },
+          {
+            "id": [
+              "local",
+              1
+            ],
+            "text": "a"
+          },
+          {
+            "id": [
+              "local",
+              2
+            ],
+            "text": "a"
+          }
+        ],
+        "dependencies": [],
+        "kind": "data",
+        "limits": {
+          "max_datums": 1000000,
+          "max_declarations": 1000000,
+          "max_group_members": 1000000,
+          "max_targets": 1000000,
+          "max_text_bytes": 1000000
+        },
+        "output_regions": [],
+        "source_relations": [
+          {
+            "derived": [
+              "local",
+              1
+            ],
+            "end": 1,
+            "source": [
+              "local",
+              0
+            ],
+            "start": 0
+          },
+          {
+            "derived": [
+              "local",
+              2
+            ],
+            "end": 1,
+            "source": [
+              "local",
+              0
+            ],
+            "start": 0
+          }
+        ],
+        "targets": [
+          [
+            "local",
+            1
+          ],
+          [
+            "local",
+            2
+          ]
+        ]
+      },
+      "expected": {
+        "code": "overlap",
+        "verdict": "reject"
+      },
+      "family": "ranges",
+      "trace": [
+        {
+          "op": "declare_datum(id,text)",
+          "value": {
+            "id": [
+              "local",
+              0
+            ],
+            "text": "abcd"
+          }
+        },
+        {
+          "op": "declare_datum(id,text)",
+          "value": {
+            "id": [
+              "local",
+              1
+            ],
+            "text": "a"
+          }
+        },
+        {
+          "op": "declare_datum(id,text)",
+          "value": {
+            "id": [
+              "local",
+              2
+            ],
+            "text": "a"
+          }
+        },
+        {
+          "op": "select_target(id)",
+          "value": [
+            "local",
+            1
+          ]
+        },
+        {
+          "op": "select_target(id)",
+          "value": [
+            "local",
+            2
+          ]
+        },
+        {
+          "kind": "source_relations",
+          "op": "add_relation(kind,value)",
+          "value": {
+            "derived": [
+              "local",
+              1
+            ],
+            "end": 1,
+            "source": [
+              "local",
+              0
+            ],
+            "start": 0
+          }
+        },
+        {
+          "kind": "source_relations",
+          "op": "add_relation(kind,value)",
+          "value": {
+            "derived": [
+              "local",
+              2
+            ],
+            "end": 1,
+            "source": [
+              "local",
+              0
+            ],
+            "start": 0
+          }
+        },
+        {
+          "op": "close_declaration"
+        },
+        {
+          "op": "validate"
+        }
+      ]
+    },
+    "mutant": "admit_overlapping_output_ownership"
+  },
+  {
+    "case": {
+      "case_id": "context-003326",
+      "declaration": {
+        "atomic": [],
+        "coherence": [],
+        "contexts": [
+          {
+            "end": 1,
+            "source": [
+              "local",
+              1
+            ],
+            "start": 0,
+            "target": [
+              "local",
+              0
+            ]
+          },
+          {
+            "end": 1,
+            "source": [
+              "local",
+              0
+            ],
+            "start": 0,
+            "target": [
+              "local",
+              1
+            ]
+          }
+        ],
+        "datums": [
+          {
+            "id": [
+              "local",
+              0
+            ],
+            "text": "x"
+          },
+          {
+            "id": [
+              "local",
+              1
+            ],
+            "text": "x"
+          }
+        ],
+        "dependencies": [],
+        "kind": "data",
+        "limits": {
+          "max_datums": 2,
+          "max_declarations": 2,
+          "max_group_members": 0,
+          "max_targets": 2,
+          "max_text_bytes": 2
+        },
+        "output_regions": [],
+        "source_relations": [],
+        "targets": [
+          [
+            "local",
+            0
+          ],
+          [
+            "local",
+            1
+          ]
+        ]
+      },
+      "expected": {
+        "normalized": {
+          "atomic": [
+            [
+              [
+                "local",
+                0
+              ]
+            ],
+            [
+              [
+                "local",
+                1
+              ]
+            ]
+          ],
+          "coherence": [
+            [
+              [
+                "local",
+                0
+              ]
+            ],
+            [
+              [
+                "local",
+                1
+              ]
+            ]
+          ],
+          "contexts": [
+            {
+              "end": 1,
+              "source": [
+                "local",
+                1
+              ],
+              "start": 0,
+              "target": [
+                "local",
+                0
+              ]
+            },
+            {
+              "end": 1,
+              "source": [
+                "local",
+                0
+              ],
+              "start": 0,
+              "target": [
+                "local",
+                1
+              ]
+            }
+          ],
+          "datums": [
+            {
+              "id": [
+                "local",
+                0
+              ],
+              "text": "x"
+            },
+            {
+              "id": [
+                "local",
+                1
+              ],
+              "text": "x"
+            }
+          ],
+          "dependencies": [],
+          "effective_ownership": [
+            {
+              "end": 1,
+              "source": [
+                "local",
+                0
+              ],
+              "start": 0,
+              "target": [
+                "local",
+                0
+              ]
+            },
+            {
+              "end": 1,
+              "source": [
+                "local",
+                1
+              ],
+              "start": 0,
+              "target": [
+                "local",
+                1
+              ]
+            }
+          ],
+          "limits": {
+            "max_datums": 2,
+            "max_declarations": 2,
+            "max_group_members": 0,
+            "max_targets": 2,
+            "max_text_bytes": 2
+          },
+          "output_regions": [],
+          "source_relations": [],
+          "targets": [
+            [
+              "local",
+              0
+            ],
+            [
+              "local",
+              1
+            ]
+          ]
+        },
+        "verdict": "accept"
+      },
+      "family": "context",
+      "trace": [
+        {
+          "op": "declare_datum(id,text)",
+          "value": {
+            "id": [
+              "local",
+              0
+            ],
+            "text": "x"
+          }
+        },
+        {
+          "op": "declare_datum(id,text)",
+          "value": {
+            "id": [
+              "local",
+              1
+            ],
+            "text": "x"
+          }
+        },
+        {
+          "op": "select_target(id)",
+          "value": [
+            "local",
+            0
+          ]
+        },
+        {
+          "op": "select_target(id)",
+          "value": [
+            "local",
+            1
+          ]
+        },
+        {
+          "kind": "contexts",
+          "op": "add_relation(kind,value)",
+          "value": {
+            "end": 1,
+            "source": [
+              "local",
+              1
+            ],
+            "start": 0,
+            "target": [
+              "local",
+              0
+            ]
+          }
+        },
+        {
+          "kind": "contexts",
+          "op": "add_relation(kind,value)",
+          "value": {
+            "end": 1,
+            "source": [
+              "local",
+              0
+            ],
+            "start": 0,
+            "target": [
+              "local",
+              1
+            ]
+          }
+        },
+        {
+          "op": "close_declaration"
+        },
+        {
+          "op": "validate"
+        }
+      ]
+    },
+    "mutant": "reject_cyclic_context"
+  },
+  {
+    "case": {
+      "case_id": "ownership-negatives-037990-foreign-target",
+      "declaration": {
+        "atomic": [],
+        "coherence": [],
+        "contexts": [],
+        "datums": [
+          {
+            "id": [
+              "local",
+              0
+            ],
+            "text": "x"
+          },
+          {
+            "id": [
+              "local",
+              1
+            ],
+            "text": "x"
+          }
+        ],
+        "dependencies": [],
+        "kind": "data",
+        "limits": {
+          "max_datums": 1000000,
+          "max_declarations": 1000000,
+          "max_group_members": 1000000,
+          "max_targets": 1000000,
+          "max_text_bytes": 1000000
+        },
+        "output_regions": [],
+        "source_relations": [],
+        "targets": [
+          [
+            "foreign",
+            0
+          ]
+        ]
+      },
+      "expected": {
+        "code": "foreign_owner",
+        "verdict": "reject"
+      },
+      "family": "ownership-negatives",
+      "trace": [
+        {
+          "op": "declare_datum(id,text)",
+          "value": {
+            "id": [
+              "local",
+              0
+            ],
+            "text": "x"
+          }
+        },
+        {
+          "op": "declare_datum(id,text)",
+          "value": {
+            "id": [
+              "local",
+              1
+            ],
+            "text": "x"
+          }
+        },
+        {
+          "op": "select_target(id)",
+          "value": [
+            "foreign",
+            0
+          ]
+        },
+        {
+          "op": "close_declaration"
+        },
+        {
+          "op": "validate"
+        }
+      ]
+    },
+    "mutant": "accept_foreign_identity"
+  },
+  {
+    "case": {
+      "case_id": "record-038267-closed-unassessedclosed-unassessed",
+      "declaration": {
+        "boundary": "status",
+        "facts": {
+          "artifact_available": true,
+          "completion": "closed",
+          "protection_available": false,
+          "qualification": "not_assessed",
+          "target": [
+            "local",
+            0
+          ]
+        },
+        "kind": "record"
+      },
+      "expected": {
+        "normalized": {
+          "artifact_available": true,
+          "completion": "closed",
+          "protection_available": false,
+          "qualification": "not_assessed",
+          "target": [
+            "local",
+            0
+          ]
+        },
+        "verdict": "accept"
+      },
+      "family": "record",
+      "trace": [
+        {
+          "kind": "target",
+          "op": "declare_record_fact(kind,value)",
+          "value": [
+            "local",
+            0
+          ]
+        },
+        {
+          "kind": "completion",
+          "op": "declare_record_fact(kind,value)",
+          "value": "closed"
+        },
+        {
+          "kind": "qualification",
+          "op": "declare_record_fact(kind,value)",
+          "value": "not_assessed"
+        },
+        {
+          "kind": "artifact_available",
+          "op": "declare_record_fact(kind,value)",
+          "value": true
+        },
+        {
+          "kind": "protection_available",
+          "op": "declare_record_fact(kind,value)",
+          "value": false
+        },
+        {
+          "op": "close_declaration"
+        },
+        {
+          "op": "validate"
+        }
+      ]
+    },
+    "mutant": "publish_successful_unassessed_target"
+  }
+]

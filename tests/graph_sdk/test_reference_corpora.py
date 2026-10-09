@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Isolation and drift rejection for generated reference fixtures."""
+"""Isolation and drift rejection for authenticated historical reference fixtures."""
 
 from __future__ import annotations
 
@@ -22,14 +22,13 @@ def test_corpus_callers_cannot_mutate_another_copy(name: Literal["effects", "qua
 
 
 @pytest.mark.parametrize("name", ("effects", "qualification"))
-def test_changed_generator_cannot_bypass_reviewed_digest(
+def test_changed_decoded_bytes_cannot_bypass_reviewed_digest(
     name: Literal["effects", "qualification"], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    module = corpora.effects_v1 if name == "effects" else corpora.qualification_v1
     corpora.corpus_bytes.cache_clear()
     try:
         with monkeypatch.context() as patch:
-            patch.setattr(module, "canonical_bytes", lambda cases: b"[]\n")
+            patch.setattr(corpora.gzip, "decompress", lambda data: b"[]\n")
             with pytest.raises(AssertionError, match="differs from its reviewed manifest"):
                 corpora.load_cases(name)
     finally:
