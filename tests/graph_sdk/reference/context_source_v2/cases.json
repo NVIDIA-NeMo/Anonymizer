@@ -1,0 +1,1636 @@
+{
+  "schema": 1,
+  "status": "draft-independent-fixtures-v2",
+  "cases": [
+    {
+      "id": "scalar_context",
+      "input": {
+        "interface_inputs": {
+          "context": "text"
+        },
+        "nodes": {
+          "N0": {
+            "inputs": {
+              "context": "text"
+            },
+            "context_ports": [
+              "context"
+            ]
+          }
+        },
+        "bindings": [
+          {
+            "kind": "context",
+            "port": "context",
+            "node": "N0",
+            "destination": "context"
+          }
+        ],
+        "initial": [
+          {
+            "target": "T0",
+            "node": "N0",
+            "port": "context",
+            "type": "text",
+            "optional": false
+          }
+        ],
+        "targets": [
+          "T0"
+        ],
+        "root_values": {},
+        "source_items": [
+          {
+            "key": 0,
+            "version": 1,
+            "text": "ab"
+          }
+        ],
+        "interface_output_dependency": {
+          "inputs": [
+            "context"
+          ],
+          "identity_input": "context"
+        },
+        "nested": false
+      },
+      "expected": {
+        "static": "accepted",
+        "context": "accepted",
+        "root_artifacts": 0,
+        "bound_items": 1,
+        "initial_collections": 0,
+        "input_value": "ab",
+        "execution": "success",
+        "lineage": {
+          "source_key": "BoundInputKey:T0:N0:context:0:1",
+          "source_parents": [],
+          "operation_input_source": "BoundInputKey:T0:N0:context:0:1",
+          "identity_output_preserves_source_artifact": true,
+          "final_candidate_is_source_artifact": true,
+          "fabricated_root_input_keys": [],
+          "initial_materialization_keys": [
+            "BoundInputKey:T0:N0:context:0:1"
+          ]
+        }
+      }
+    },
+    {
+      "id": "collection_context",
+      "input": {
+        "interface_inputs": {
+          "context": "text_collection"
+        },
+        "nodes": {
+          "N0": {
+            "inputs": {
+              "context": "text_collection"
+            },
+            "context_ports": [
+              "context"
+            ]
+          }
+        },
+        "bindings": [
+          {
+            "kind": "context",
+            "port": "context",
+            "node": "N0",
+            "destination": "context"
+          }
+        ],
+        "initial": [
+          {
+            "target": "T0",
+            "node": "N0",
+            "port": "context",
+            "type": "text_collection",
+            "optional": false
+          }
+        ],
+        "targets": [
+          "T0"
+        ],
+        "root_values": {},
+        "source_items": [
+          {
+            "key": 0,
+            "version": 1,
+            "text": "ab"
+          },
+          {
+            "key": 1,
+            "version": 1,
+            "text": "cd"
+          }
+        ],
+        "interface_output_dependency": {
+          "inputs": [
+            "context"
+          ],
+          "identity_input": "context"
+        },
+        "nested": false
+      },
+      "expected": {
+        "static": "accepted",
+        "context": "accepted",
+        "root_artifacts": 0,
+        "bound_items": 2,
+        "initial_collections": 1,
+        "collection_texts": [
+          "ab",
+          "cd"
+        ],
+        "materialization_artifacts": 3,
+        "materialization_bytes": 8,
+        "materialization_edges": 2,
+        "execution": "success",
+        "lineage": {
+          "source_key": "InitialCollectionKey:T0:N0:context",
+          "source_parents": [
+            "BoundInputKey:T0:N0:context:0:1",
+            "BoundInputKey:T0:N0:context:1:1"
+          ],
+          "operation_input_source": "InitialCollectionKey:T0:N0:context",
+          "identity_output_preserves_source_artifact": true,
+          "final_candidate_is_source_artifact": true,
+          "fabricated_root_input_keys": [],
+          "initial_materialization_keys": [
+            "BoundInputKey:T0:N0:context:0:1",
+            "BoundInputKey:T0:N0:context:1:1",
+            "InitialCollectionKey:T0:N0:context"
+          ]
+        }
+      }
+    },
+    {
+      "id": "nested_collection_context",
+      "input": {
+        "interface_inputs": {
+          "context": "text_collection"
+        },
+        "nodes": {
+          "N0": {
+            "inputs": {
+              "context": "text_collection"
+            },
+            "context_ports": [
+              "context"
+            ]
+          }
+        },
+        "bindings": [
+          {
+            "kind": "context",
+            "port": "context",
+            "node": "N0",
+            "destination": "context"
+          }
+        ],
+        "initial": [
+          {
+            "target": "T0",
+            "node": "N0",
+            "port": "context",
+            "type": "text_collection",
+            "optional": false
+          }
+        ],
+        "targets": [
+          "T0"
+        ],
+        "root_values": {},
+        "source_items": [
+          {
+            "key": 0,
+            "version": 1,
+            "text": "ab"
+          },
+          {
+            "key": 1,
+            "version": 1,
+            "text": "cd"
+          }
+        ],
+        "interface_output_dependency": {
+          "inputs": [
+            "context"
+          ],
+          "identity_input": "context"
+        },
+        "nested": true,
+        "wrapper": {
+          "node": "N0",
+          "body_node": "B0",
+          "body_source_kind": "context",
+          "port": "context"
+        }
+      },
+      "expected": {
+        "static": "accepted",
+        "context": "accepted",
+        "initial_sites": 1,
+        "nested_retrievals": 0,
+        "root_artifacts": 0,
+        "exact_wrapper_artifact_preserved": true,
+        "execution": "success",
+        "lineage": {
+          "source_key": "InitialCollectionKey:T0:N0:context",
+          "source_parents": [
+            "BoundInputKey:T0:N0:context:0:1",
+            "BoundInputKey:T0:N0:context:1:1"
+          ],
+          "operation_input_source": "InitialCollectionKey:T0:N0:context",
+          "identity_output_preserves_source_artifact": true,
+          "final_candidate_is_source_artifact": true,
+          "fabricated_root_input_keys": [],
+          "initial_materialization_keys": [
+            "BoundInputKey:T0:N0:context:0:1",
+            "BoundInputKey:T0:N0:context:1:1",
+            "InitialCollectionKey:T0:N0:context"
+          ],
+          "nested_input_is_wrapper_artifact": true,
+          "nested_initial_materialization_keys": [],
+          "wrapper_final_is_inner_output_artifact": true
+        }
+      }
+    },
+    {
+      "id": "ordinary_context_use_preserved",
+      "input": {
+        "interface_inputs": {
+          "context": "text"
+        },
+        "nodes": {
+          "N0": {
+            "inputs": {
+              "context": "text"
+            },
+            "context_ports": [
+              "context"
+            ]
+          }
+        },
+        "bindings": [
+          {
+            "kind": "workflow",
+            "port": "context",
+            "node": "N0",
+            "destination": "context"
+          }
+        ],
+        "initial": [],
+        "targets": [
+          "T0"
+        ],
+        "root_values": {
+          "context": "ab"
+        },
+        "source_items": [
+          {
+            "key": 0,
+            "version": 1,
+            "text": "ab"
+          }
+        ],
+        "interface_output_dependency": {
+          "inputs": [
+            "context"
+          ],
+          "identity_input": "context"
+        },
+        "nested": false
+      },
+      "expected": {
+        "static": "accepted",
+        "context": "accepted",
+        "root_artifacts": 1,
+        "initial_sites": 0,
+        "execution": "success"
+      }
+    },
+    {
+      "id": "mixed_source_kinds",
+      "input": {
+        "interface_inputs": {
+          "context": "text"
+        },
+        "nodes": {
+          "N0": {
+            "inputs": {
+              "context": "text"
+            },
+            "context_ports": [
+              "context"
+            ]
+          },
+          "N1": {
+            "inputs": {
+              "context": "text"
+            },
+            "context_ports": [
+              "context"
+            ]
+          }
+        },
+        "bindings": [
+          {
+            "kind": "context",
+            "port": "context",
+            "node": "N0",
+            "destination": "context"
+          },
+          {
+            "kind": "workflow",
+            "port": "context",
+            "node": "N1",
+            "destination": "context"
+          }
+        ],
+        "initial": [
+          {
+            "target": "T0",
+            "node": "N0",
+            "port": "context",
+            "type": "text",
+            "optional": false
+          }
+        ],
+        "targets": [
+          "T0"
+        ],
+        "root_values": {},
+        "source_items": [
+          {
+            "key": 0,
+            "version": 1,
+            "text": "ab"
+          }
+        ],
+        "interface_output_dependency": {
+          "inputs": [
+            "context"
+          ],
+          "identity_input": "context"
+        },
+        "nested": false
+      },
+      "expected": {
+        "static": "contradictory",
+        "provider_calls": 0
+      }
+    },
+    {
+      "id": "repeated_context_endpoint",
+      "input": {
+        "interface_inputs": {
+          "context": "text"
+        },
+        "nodes": {
+          "N0": {
+            "inputs": {
+              "context": "text"
+            },
+            "context_ports": [
+              "context"
+            ]
+          },
+          "N1": {
+            "inputs": {
+              "context": "text"
+            },
+            "context_ports": [
+              "context"
+            ]
+          }
+        },
+        "bindings": [
+          {
+            "kind": "context",
+            "port": "context",
+            "node": "N0",
+            "destination": "context"
+          },
+          {
+            "kind": "context",
+            "port": "context",
+            "node": "N1",
+            "destination": "context"
+          }
+        ],
+        "initial": [
+          {
+            "target": "T0",
+            "node": "N0",
+            "port": "context",
+            "type": "text",
+            "optional": false
+          }
+        ],
+        "targets": [
+          "T0"
+        ],
+        "root_values": {},
+        "source_items": [
+          {
+            "key": 0,
+            "version": 1,
+            "text": "ab"
+          }
+        ],
+        "interface_output_dependency": {
+          "inputs": [
+            "context"
+          ],
+          "identity_input": "context"
+        },
+        "nested": false
+      },
+      "expected": {
+        "static": "duplicate",
+        "provider_calls": 0
+      }
+    },
+    {
+      "id": "unmarked_destination",
+      "input": {
+        "interface_inputs": {
+          "context": "text"
+        },
+        "nodes": {
+          "N0": {
+            "inputs": {
+              "context": "text"
+            },
+            "context_ports": []
+          }
+        },
+        "bindings": [
+          {
+            "kind": "context",
+            "port": "context",
+            "node": "N0",
+            "destination": "context"
+          }
+        ],
+        "initial": [
+          {
+            "target": "T0",
+            "node": "N0",
+            "port": "context",
+            "type": "text",
+            "optional": false
+          }
+        ],
+        "targets": [
+          "T0"
+        ],
+        "root_values": {},
+        "source_items": [
+          {
+            "key": 0,
+            "version": 1,
+            "text": "ab"
+          }
+        ],
+        "interface_output_dependency": {
+          "inputs": [
+            "context"
+          ],
+          "identity_input": "context"
+        },
+        "nested": false
+      },
+      "expected": {
+        "static": "contradictory",
+        "provider_calls": 0
+      }
+    },
+    {
+      "id": "missing_initial_declaration",
+      "input": {
+        "interface_inputs": {
+          "context": "text"
+        },
+        "nodes": {
+          "N0": {
+            "inputs": {
+              "context": "text"
+            },
+            "context_ports": [
+              "context"
+            ]
+          }
+        },
+        "bindings": [
+          {
+            "kind": "context",
+            "port": "context",
+            "node": "N0",
+            "destination": "context"
+          }
+        ],
+        "initial": [],
+        "targets": [
+          "T0"
+        ],
+        "root_values": {},
+        "source_items": [
+          {
+            "key": 0,
+            "version": 1,
+            "text": "ab"
+          }
+        ],
+        "interface_output_dependency": {
+          "inputs": [
+            "context"
+          ],
+          "identity_input": "context"
+        },
+        "nested": false
+      },
+      "expected": {
+        "static": "accepted",
+        "context": "missing",
+        "provider_calls": 0
+      }
+    },
+    {
+      "id": "duplicate_initial_declaration",
+      "input": {
+        "interface_inputs": {
+          "context": "text"
+        },
+        "nodes": {
+          "N0": {
+            "inputs": {
+              "context": "text"
+            },
+            "context_ports": [
+              "context"
+            ]
+          }
+        },
+        "bindings": [
+          {
+            "kind": "context",
+            "port": "context",
+            "node": "N0",
+            "destination": "context"
+          }
+        ],
+        "initial": [
+          {
+            "target": "T0",
+            "node": "N0",
+            "port": "context",
+            "type": "text",
+            "optional": false
+          },
+          {
+            "target": "T0",
+            "node": "N0",
+            "port": "context",
+            "type": "text",
+            "optional": false
+          }
+        ],
+        "targets": [
+          "T0"
+        ],
+        "root_values": {},
+        "source_items": [
+          {
+            "key": 0,
+            "version": 1,
+            "text": "ab"
+          }
+        ],
+        "interface_output_dependency": {
+          "inputs": [
+            "context"
+          ],
+          "identity_input": "context"
+        },
+        "nested": false
+      },
+      "expected": {
+        "static": "accepted",
+        "context": "duplicate",
+        "provider_calls": 0
+      }
+    },
+    {
+      "id": "wrong_initial_type",
+      "input": {
+        "interface_inputs": {
+          "context": "text"
+        },
+        "nodes": {
+          "N0": {
+            "inputs": {
+              "context": "text"
+            },
+            "context_ports": [
+              "context"
+            ]
+          }
+        },
+        "bindings": [
+          {
+            "kind": "context",
+            "port": "context",
+            "node": "N0",
+            "destination": "context"
+          }
+        ],
+        "initial": [
+          {
+            "target": "T0",
+            "node": "N0",
+            "port": "context",
+            "type": "text_collection",
+            "optional": false
+          }
+        ],
+        "targets": [
+          "T0"
+        ],
+        "root_values": {},
+        "source_items": [
+          {
+            "key": 0,
+            "version": 1,
+            "text": "ab"
+          }
+        ],
+        "interface_output_dependency": {
+          "inputs": [
+            "context"
+          ],
+          "identity_input": "context"
+        },
+        "nested": false
+      },
+      "expected": {
+        "static": "accepted",
+        "context": "contradictory",
+        "provider_calls": 0
+      }
+    },
+    {
+      "id": "missing_initial_port",
+      "input": {
+        "interface_inputs": {
+          "context": "text"
+        },
+        "nodes": {
+          "N0": {
+            "inputs": {
+              "context": "text"
+            },
+            "context_ports": [
+              "context"
+            ]
+          }
+        },
+        "bindings": [
+          {
+            "kind": "context",
+            "port": "context",
+            "node": "N0",
+            "destination": "context"
+          }
+        ],
+        "initial": [
+          {
+            "target": "T0",
+            "node": "N0",
+            "port": "absent",
+            "type": "text",
+            "optional": false
+          }
+        ],
+        "targets": [
+          "T0"
+        ],
+        "root_values": {},
+        "source_items": [
+          {
+            "key": 0,
+            "version": 1,
+            "text": "ab"
+          }
+        ],
+        "interface_output_dependency": {
+          "inputs": [
+            "context"
+          ],
+          "identity_input": "context"
+        },
+        "nested": false
+      },
+      "expected": {
+        "static": "accepted",
+        "context": "missing",
+        "provider_calls": 0
+      }
+    },
+    {
+      "id": "initial_shadows_ordinary_source",
+      "input": {
+        "interface_inputs": {
+          "context": "text"
+        },
+        "nodes": {
+          "N0": {
+            "inputs": {
+              "context": "text"
+            },
+            "context_ports": [
+              "context"
+            ]
+          }
+        },
+        "bindings": [
+          {
+            "kind": "workflow",
+            "port": "context",
+            "node": "N0",
+            "destination": "context"
+          }
+        ],
+        "initial": [
+          {
+            "target": "T0",
+            "node": "N0",
+            "port": "context",
+            "type": "text",
+            "optional": false
+          }
+        ],
+        "targets": [
+          "T0"
+        ],
+        "root_values": {
+          "context": "ab"
+        },
+        "source_items": [
+          {
+            "key": 0,
+            "version": 1,
+            "text": "ab"
+          }
+        ],
+        "interface_output_dependency": {
+          "inputs": [
+            "context"
+          ],
+          "identity_input": "context"
+        },
+        "nested": false
+      },
+      "expected": {
+        "static": "accepted",
+        "context": "contradictory",
+        "provider_calls": 0
+      }
+    },
+    {
+      "id": "collection_workflow_root",
+      "input": {
+        "interface_inputs": {
+          "context": "text_collection"
+        },
+        "nodes": {
+          "N0": {
+            "inputs": {
+              "context": "text_collection"
+            },
+            "context_ports": [
+              "context"
+            ]
+          }
+        },
+        "bindings": [
+          {
+            "kind": "workflow",
+            "port": "context",
+            "node": "N0",
+            "destination": "context"
+          }
+        ],
+        "initial": [],
+        "targets": [
+          "T0"
+        ],
+        "root_values": {},
+        "source_items": [
+          {
+            "key": 0,
+            "version": 1,
+            "text": "ab"
+          },
+          {
+            "key": 1,
+            "version": 1,
+            "text": "cd"
+          }
+        ],
+        "interface_output_dependency": {
+          "inputs": [
+            "context"
+          ],
+          "identity_input": "context"
+        },
+        "nested": false
+      },
+      "expected": {
+        "static": "accepted",
+        "context": "contradictory",
+        "provider_calls": 0
+      }
+    },
+    {
+      "id": "optional_context_omission",
+      "input": {
+        "interface_inputs": {
+          "context": "text"
+        },
+        "nodes": {
+          "N0": {
+            "inputs": {
+              "context": "text"
+            },
+            "context_ports": [
+              "context"
+            ]
+          }
+        },
+        "bindings": [
+          {
+            "kind": "context",
+            "port": "context",
+            "node": "N0",
+            "destination": "context"
+          }
+        ],
+        "initial": [
+          {
+            "target": "T0",
+            "node": "N0",
+            "port": "context",
+            "type": "text",
+            "optional": true
+          }
+        ],
+        "targets": [
+          "T0"
+        ],
+        "root_values": {},
+        "source_items": [],
+        "interface_output_dependency": {
+          "inputs": [
+            "context"
+          ],
+          "identity_input": "context"
+        },
+        "nested": false,
+        "response": {
+          "failure": "permanent",
+          "disposition": "omitted_optional",
+          "settlement": "completed_known_zero"
+        }
+      },
+      "expected": {
+        "static": "accepted",
+        "context": "accepted",
+        "binding_source": "omitted_optional",
+        "input_artifacts": 0,
+        "operation_calls": 0,
+        "execution": "blocked"
+      }
+    },
+    {
+      "id": "missing_second_target_declaration",
+      "input": {
+        "interface_inputs": {
+          "context": "text"
+        },
+        "nodes": {
+          "N0": {
+            "inputs": {
+              "context": "text"
+            },
+            "context_ports": [
+              "context"
+            ]
+          }
+        },
+        "bindings": [
+          {
+            "kind": "context",
+            "port": "context",
+            "node": "N0",
+            "destination": "context"
+          }
+        ],
+        "initial": [
+          {
+            "target": "T0",
+            "node": "N0",
+            "port": "context",
+            "type": "text",
+            "optional": false
+          }
+        ],
+        "targets": [
+          "T0",
+          "T1"
+        ],
+        "root_values": {},
+        "source_items": [
+          {
+            "key": 0,
+            "version": 1,
+            "text": "ab"
+          }
+        ],
+        "interface_output_dependency": {
+          "inputs": [
+            "context"
+          ],
+          "identity_input": "context"
+        },
+        "nested": false
+      },
+      "expected": {
+        "static": "accepted",
+        "context": "missing",
+        "provider_calls": 0
+      }
+    },
+    {
+      "id": "substitution_preserves_context_source",
+      "input": {
+        "interface_inputs": {
+          "context": "text_collection"
+        },
+        "nodes": {
+          "N0": {
+            "inputs": {
+              "context": "text_collection"
+            },
+            "context_ports": [
+              "context"
+            ]
+          }
+        },
+        "bindings": [
+          {
+            "kind": "context",
+            "port": "context",
+            "node": "N0",
+            "destination": "context"
+          }
+        ],
+        "initial": [
+          {
+            "target": "T0",
+            "node": "N0",
+            "port": "context",
+            "type": "text_collection",
+            "optional": false
+          }
+        ],
+        "targets": [
+          "T0"
+        ],
+        "root_values": {},
+        "source_items": [
+          {
+            "key": 0,
+            "version": 1,
+            "text": "ab"
+          },
+          {
+            "key": 1,
+            "version": 1,
+            "text": "cd"
+          }
+        ],
+        "interface_output_dependency": {
+          "inputs": [
+            "context"
+          ],
+          "identity_input": "context"
+        },
+        "nested": true,
+        "wrapper": {
+          "node": "N0",
+          "body_node": "B0",
+          "body_source_kind": "context",
+          "port": "context"
+        },
+        "substitution": {
+          "replacement_interface": "exact",
+          "preserve_enclosing_source": true
+        }
+      },
+      "expected": {
+        "static": "accepted",
+        "context": "accepted",
+        "initial_sites": 1,
+        "source_kind": "context",
+        "exact_wrapper_artifact_preserved": true,
+        "execution": "success",
+        "lineage": {
+          "source_key": "InitialCollectionKey:T0:N0:context",
+          "source_parents": [
+            "BoundInputKey:T0:N0:context:0:1",
+            "BoundInputKey:T0:N0:context:1:1"
+          ],
+          "operation_input_source": "InitialCollectionKey:T0:N0:context",
+          "identity_output_preserves_source_artifact": true,
+          "final_candidate_is_source_artifact": true,
+          "fabricated_root_input_keys": [],
+          "initial_materialization_keys": [
+            "BoundInputKey:T0:N0:context:0:1",
+            "BoundInputKey:T0:N0:context:1:1",
+            "InitialCollectionKey:T0:N0:context"
+          ],
+          "nested_input_is_wrapper_artifact": true,
+          "nested_initial_materialization_keys": [],
+          "wrapper_final_is_inner_output_artifact": true
+        }
+      }
+    },
+    {
+      "id": "missing_context_interface_port",
+      "input": {
+        "interface_inputs": {
+          "context": "text"
+        },
+        "nodes": {
+          "N0": {
+            "inputs": {
+              "context": "text"
+            },
+            "context_ports": [
+              "context"
+            ]
+          }
+        },
+        "bindings": [
+          {
+            "kind": "context",
+            "port": "absent",
+            "node": "N0",
+            "destination": "context"
+          }
+        ],
+        "initial": [
+          {
+            "target": "T0",
+            "node": "N0",
+            "port": "context",
+            "type": "text",
+            "optional": false
+          }
+        ],
+        "targets": [
+          "T0"
+        ],
+        "root_values": {},
+        "source_items": [
+          {
+            "key": 0,
+            "version": 1,
+            "text": "ab"
+          }
+        ],
+        "interface_output_dependency": {
+          "inputs": [
+            "context"
+          ],
+          "identity_input": "context"
+        },
+        "nested": false
+      },
+      "expected": {
+        "static": "missing",
+        "provider_calls": 0
+      }
+    },
+    {
+      "id": "context_destination_type_mismatch",
+      "input": {
+        "interface_inputs": {
+          "context": "text"
+        },
+        "nodes": {
+          "N0": {
+            "inputs": {
+              "context": "other_text"
+            },
+            "context_ports": [
+              "context"
+            ]
+          }
+        },
+        "bindings": [
+          {
+            "kind": "context",
+            "port": "context",
+            "node": "N0",
+            "destination": "context"
+          }
+        ],
+        "initial": [
+          {
+            "target": "T0",
+            "node": "N0",
+            "port": "context",
+            "type": "text",
+            "optional": false
+          }
+        ],
+        "targets": [
+          "T0"
+        ],
+        "root_values": {},
+        "source_items": [
+          {
+            "key": 0,
+            "version": 1,
+            "text": "ab"
+          }
+        ],
+        "interface_output_dependency": {
+          "inputs": [
+            "context"
+          ],
+          "identity_input": "context"
+        },
+        "nested": false
+      },
+      "expected": {
+        "static": "contradictory",
+        "provider_calls": 0
+      }
+    },
+    {
+      "id": "foreign_initial_target",
+      "input": {
+        "interface_inputs": {
+          "context": "text"
+        },
+        "nodes": {
+          "N0": {
+            "inputs": {
+              "context": "text"
+            },
+            "context_ports": [
+              "context"
+            ]
+          }
+        },
+        "bindings": [
+          {
+            "kind": "context",
+            "port": "context",
+            "node": "N0",
+            "destination": "context"
+          }
+        ],
+        "initial": [
+          {
+            "target": "FOREIGN:T0",
+            "node": "N0",
+            "port": "context",
+            "type": "text",
+            "optional": false
+          }
+        ],
+        "targets": [
+          "T0"
+        ],
+        "root_values": {},
+        "source_items": [
+          {
+            "key": 0,
+            "version": 1,
+            "text": "ab"
+          }
+        ],
+        "interface_output_dependency": {
+          "inputs": [
+            "context"
+          ],
+          "identity_input": "context"
+        },
+        "nested": false
+      },
+      "expected": {
+        "static": "accepted",
+        "context": "foreign_owner",
+        "provider_calls": 0
+      }
+    },
+    {
+      "id": "foreign_initial_node",
+      "input": {
+        "interface_inputs": {
+          "context": "text"
+        },
+        "nodes": {
+          "N0": {
+            "inputs": {
+              "context": "text"
+            },
+            "context_ports": [
+              "context"
+            ]
+          }
+        },
+        "bindings": [
+          {
+            "kind": "context",
+            "port": "context",
+            "node": "N0",
+            "destination": "context"
+          }
+        ],
+        "initial": [
+          {
+            "target": "T0",
+            "node": "FOREIGN:N0",
+            "port": "context",
+            "type": "text",
+            "optional": false
+          }
+        ],
+        "targets": [
+          "T0"
+        ],
+        "root_values": {},
+        "source_items": [
+          {
+            "key": 0,
+            "version": 1,
+            "text": "ab"
+          }
+        ],
+        "interface_output_dependency": {
+          "inputs": [
+            "context"
+          ],
+          "identity_input": "context"
+        },
+        "nested": false
+      },
+      "expected": {
+        "static": "accepted",
+        "context": "foreign_owner",
+        "provider_calls": 0
+      }
+    },
+    {
+      "id": "context_evidence_projection",
+      "input": {
+        "interface_inputs": {
+          "context": "text"
+        },
+        "nodes": {
+          "N0": {
+            "inputs": {
+              "context": "text"
+            },
+            "context_ports": [
+              "context"
+            ]
+          }
+        },
+        "bindings": [
+          {
+            "kind": "context",
+            "port": "context",
+            "node": "N0",
+            "destination": "context"
+          }
+        ],
+        "initial": [
+          {
+            "target": "T0",
+            "node": "N0",
+            "port": "context",
+            "type": "text",
+            "optional": false
+          }
+        ],
+        "targets": [
+          "T0"
+        ],
+        "root_values": {},
+        "source_items": [
+          {
+            "key": 0,
+            "version": 1,
+            "text": "ab"
+          }
+        ],
+        "interface_output_dependency": {
+          "inputs": [
+            "context"
+          ],
+          "identity_input": "context"
+        },
+        "nested": false,
+        "evidence": {
+          "name": "checked",
+          "meaning": "local-check",
+          "subject_port": "context",
+          "consumed_ports": [
+            "context"
+          ],
+          "coverage": [
+            {
+              "kind": "field",
+              "name": "text"
+            }
+          ]
+        }
+      },
+      "expected": {
+        "static": "accepted",
+        "context": "accepted",
+        "projected_evidence": {
+          "name": "checked",
+          "meaning": "local-check",
+          "subject_port": "context",
+          "consumed_ports": [
+            "context"
+          ],
+          "coverage": [
+            {
+              "kind": "field",
+              "name": "text"
+            }
+          ]
+        },
+        "projected_context_ports": [
+          "context"
+        ],
+        "projected_dependency_inputs": [
+          "context"
+        ]
+      }
+    },
+    {
+      "id": "outcome_context_union",
+      "input": {
+        "interface_inputs": {
+          "context": "text",
+          "extra": "text"
+        },
+        "nodes": {
+          "N0": {
+            "inputs": {
+              "context": "text",
+              "extra": "text"
+            },
+            "context_ports": [
+              "context",
+              "extra"
+            ]
+          }
+        },
+        "bindings": [
+          {
+            "kind": "context",
+            "port": "context",
+            "node": "N0",
+            "destination": "context"
+          },
+          {
+            "kind": "context",
+            "port": "extra",
+            "node": "N0",
+            "destination": "extra"
+          }
+        ],
+        "initial": [
+          {
+            "target": "T0",
+            "node": "N0",
+            "port": "context",
+            "type": "text",
+            "optional": false
+          },
+          {
+            "target": "T0",
+            "node": "N0",
+            "port": "extra",
+            "type": "text",
+            "optional": false
+          }
+        ],
+        "targets": [
+          "T0"
+        ],
+        "root_values": {},
+        "source_items": [
+          {
+            "key": 0,
+            "version": 1,
+            "text": "ab"
+          }
+        ],
+        "interface_output_dependency": {
+          "inputs": [
+            "context"
+          ],
+          "identity_input": "context"
+        },
+        "nested": false,
+        "outcomes": {
+          "main": {
+            "context_ports": [
+              "context"
+            ],
+            "produced_ports": [
+              "output"
+            ]
+          },
+          "extra": {
+            "context_ports": [
+              "extra"
+            ],
+            "produced_ports": [
+              "extra_output"
+            ]
+          }
+        },
+        "returned_outcome": "main",
+        "outcome_output_dependencies": {
+          "output": {
+            "inputs": [
+              "context"
+            ],
+            "identity_input": "context"
+          },
+          "extra_output": {
+            "inputs": [
+              "extra"
+            ],
+            "identity_input": "extra"
+          }
+        }
+      },
+      "expected": {
+        "static": "accepted",
+        "context": "accepted",
+        "initial_destination_ports": [
+          "context",
+          "extra"
+        ],
+        "actual_consumed_ports": [
+          "context"
+        ],
+        "actual_output": "output",
+        "unused_bound_context_retained": true
+      }
+    },
+    {
+      "id": "mixed_source_kinds_reversed",
+      "input": {
+        "interface_inputs": {
+          "context": "text"
+        },
+        "nodes": {
+          "N0": {
+            "inputs": {
+              "context": "text"
+            },
+            "context_ports": [
+              "context"
+            ]
+          },
+          "N1": {
+            "inputs": {
+              "context": "text"
+            },
+            "context_ports": [
+              "context"
+            ]
+          }
+        },
+        "bindings": [
+          {
+            "kind": "workflow",
+            "port": "context",
+            "node": "N1",
+            "destination": "context"
+          },
+          {
+            "kind": "context",
+            "port": "context",
+            "node": "N0",
+            "destination": "context"
+          }
+        ],
+        "initial": [
+          {
+            "target": "T0",
+            "node": "N0",
+            "port": "context",
+            "type": "text",
+            "optional": false
+          }
+        ],
+        "targets": [
+          "T0"
+        ],
+        "root_values": {},
+        "source_items": [
+          {
+            "key": 0,
+            "version": 1,
+            "text": "ab"
+          }
+        ],
+        "interface_output_dependency": {
+          "inputs": [
+            "context"
+          ],
+          "identity_input": "context"
+        },
+        "nested": false
+      },
+      "expected": {
+        "static": "contradictory",
+        "provider_calls": 0
+      }
+    },
+    {
+      "id": "missing_same_owner_initial_node",
+      "input": {
+        "interface_inputs": {
+          "context": "text"
+        },
+        "nodes": {
+          "N0": {
+            "inputs": {
+              "context": "text"
+            },
+            "context_ports": [
+              "context"
+            ]
+          }
+        },
+        "bindings": [
+          {
+            "kind": "context",
+            "port": "context",
+            "node": "N0",
+            "destination": "context"
+          }
+        ],
+        "initial": [
+          {
+            "target": "T0",
+            "node": "ABSENT_SAME_OWNER",
+            "port": "context",
+            "type": "text",
+            "optional": false
+          }
+        ],
+        "targets": [
+          "T0"
+        ],
+        "root_values": {},
+        "source_items": [
+          {
+            "key": 0,
+            "version": 1,
+            "text": "ab"
+          }
+        ],
+        "interface_output_dependency": {
+          "inputs": [
+            "context"
+          ],
+          "identity_input": "context"
+        },
+        "nested": false
+      },
+      "expected": {
+        "static": "accepted",
+        "context": "missing",
+        "provider_calls": 0
+      }
+    }
+  ]
+}

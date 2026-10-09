@@ -1,0 +1,54 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+"""Stable imports for executor contracts and operations."""
+
+from __future__ import annotations
+
+from anonymizer.engine.graph_sdk._execution_admission import admit_execution_plan as admit_execution_plan
+from anonymizer.engine.graph_sdk._execution_cleanup import _cleanup_execution as _cleanup_execution
+from anonymizer.engine.graph_sdk._execution_entry import RunningExecution as RunningExecution
+from anonymizer.engine.graph_sdk._execution_entry import execute_sync as execute_sync
+from anonymizer.engine.graph_sdk._execution_entry import start_execution as start_execution
+from anonymizer.engine.graph_sdk._execution_values import AdmittedExecutionPlan as AdmittedExecutionPlan
+from anonymizer.engine.graph_sdk._execution_values import ArtifactProvenanceFact as ArtifactProvenanceFact
+from anonymizer.engine.graph_sdk._execution_values import ArtifactRole as ArtifactRole
+from anonymizer.engine.graph_sdk._execution_values import AssessmentEnvironment as AssessmentEnvironment
+from anonymizer.engine.graph_sdk._execution_values import AssessmentFinding as AssessmentFinding
+from anonymizer.engine.graph_sdk._execution_values import AssessmentLimits as AssessmentLimits
+from anonymizer.engine.graph_sdk._execution_values import AssessmentStatus as AssessmentStatus
+from anonymizer.engine.graph_sdk._execution_values import BoundInputKey as BoundInputKey
+from anonymizer.engine.graph_sdk._execution_values import DecisionDeclaration as DecisionDeclaration
+from anonymizer.engine.graph_sdk._execution_values import DecisionLimits as DecisionLimits
+from anonymizer.engine.graph_sdk._execution_values import DecisionOutcome as DecisionOutcome
+from anonymizer.engine.graph_sdk._execution_values import DecisionResponse as DecisionResponse
+from anonymizer.engine.graph_sdk._execution_values import DecisionWait as DecisionWait
+from anonymizer.engine.graph_sdk._execution_values import DecisionWaitId as DecisionWaitId
+from anonymizer.engine.graph_sdk._execution_values import EvidenceProductionDecl as EvidenceProductionDecl
+from anonymizer.engine.graph_sdk._execution_values import ExecutionAssessmentFact as ExecutionAssessmentFact
+from anonymizer.engine.graph_sdk._execution_values import ExecutionImplementation as ExecutionImplementation
+from anonymizer.engine.graph_sdk._execution_values import ExecutionKind as ExecutionKind
+from anonymizer.engine.graph_sdk._execution_values import ExecutionLimits as ExecutionLimits
+from anonymizer.engine.graph_sdk._execution_values import ExecutionPortFact as ExecutionPortFact
+from anonymizer.engine.graph_sdk._execution_values import ExecutionRejected as ExecutionRejected
+from anonymizer.engine.graph_sdk._execution_values import ExecutionResult as ExecutionResult
+from anonymizer.engine.graph_sdk._execution_values import ExecutionServices as ExecutionServices
+from anonymizer.engine.graph_sdk._execution_values import FinalOutputFact as FinalOutputFact
+from anonymizer.engine.graph_sdk._execution_values import ImplementationHandle as ImplementationHandle
+from anonymizer.engine.graph_sdk._execution_values import InitialCollectionKey as InitialCollectionKey
+from anonymizer.engine.graph_sdk._execution_values import LocalAssessmentResult as LocalAssessmentResult
+from anonymizer.engine.graph_sdk._execution_values import LocalCallable as LocalCallable
+from anonymizer.engine.graph_sdk._execution_values import LocalCompleted as LocalCompleted
+from anonymizer.engine.graph_sdk._execution_values import LocalDecisionWait as LocalDecisionWait
+from anonymizer.engine.graph_sdk._execution_values import LocalFailure as LocalFailure
+from anonymizer.engine.graph_sdk._execution_values import LocalResult as LocalResult
+from anonymizer.engine.graph_sdk._execution_values import MapExpansionDecl as MapExpansionDecl
+from anonymizer.engine.graph_sdk._execution_values import MapItemKey as MapItemKey
+from anonymizer.engine.graph_sdk._execution_values import MonotonicClock as MonotonicClock
+from anonymizer.engine.graph_sdk._execution_values import NestedEventLoopError as NestedEventLoopError
+from anonymizer.engine.graph_sdk._execution_values import OperationExecutionPolicy as OperationExecutionPolicy
+from anonymizer.engine.graph_sdk._execution_values import OperationOutputKey as OperationOutputKey
+from anonymizer.engine.graph_sdk._execution_values import ProvenanceKey as ProvenanceKey
+from anonymizer.engine.graph_sdk._execution_values import RequestTransport as RequestTransport
+from anonymizer.engine.graph_sdk._execution_values import RootInputKey as RootInputKey
+from anonymizer.engine.graph_sdk._execution_values import RuntimeCondition as RuntimeCondition
+from anonymizer.engine.graph_sdk._execution_values import RuntimeOutcome as RuntimeOutcome

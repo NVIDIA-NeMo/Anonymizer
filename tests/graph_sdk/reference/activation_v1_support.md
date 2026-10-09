@@ -1,0 +1,155 @@
+<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
+# Activation reference static-support expansion
+
+This document is normative for translating `activation_v1_cases.json` to the
+adopted D03 and D04 public boundaries. It defines static workflow support only;
+it does not contribute activations, events, counters, capacity, state, or
+completion obligations. An adapter must construct these declarations through
+the real public constructors and admission functions. It must not infer an
+expected error or fabricate an admitted workflow after admission rejects.
+
+## Identity and common declarations
+
+A template identity is `(scope, template)`. `scope` is the ordered
+`SubgraphNode` template-label path serialized on every seed. The empty path is
+the top-level workflow. A subgraph body's path is its parent's declaration
+scope followed by the parent template label. Renaming rewrites every template
+component independently from activation keys. Equal labels in different scopes create distinct D03
+`WorkflowId` and `NodeId` values. Distinct ordinary nodes in one scope always
+have distinct labels. Repeated map or loop member reservations refer to one
+declared member node in their scope.
+
+Every neutral outcome record names its full `(scope, template)` owner. Outcome
+lookup, duplicate detection, static bindings, dynamic partitions, normalized
+entries, renaming, and semantic hashes preserve that full identity. Each
+ordinary identity has `ok` and, where exercised, `fail`, with the category and
+`produced_ports` stated by the record. Loop starter and member identities have
+exactly `again` and `stop`; they do not acquire the same-labelled outcomes of
+an enclosing scope. The artifact type is `reference-artifact` revision 1.
+A node operation declares output `result` when any outcome can produce
+`result`, output `carry` when any outcome can produce `carry`, and input
+`input` when it is the destination of an `input_dependencies`, initial, or
+carried binding. A node output has an `OutputDependency` on `input` when that
+node has the input and an empty dependency otherwise; identity input is always
+null. Workflow-interface output dependencies reproduce the dependency
+projected from the sink. In the loop and nested-loop support, no static value
+binding connects the member input to the join outputs, so those interface
+dependencies are empty even though the interface has `input`. Ceilings are the
+smallest nonnegative values that admit the declaration. Context, evidence,
+state effects, model requirements, protection requirements, choices not named
+by the case, and unused interface ports are empty.
+
+An occurrence edge in `edges` becomes a D03 `SequenceEdge` between the two
+scoped template identities. Each `input_dependencies` record explicitly names
+the source and destination activation plus `source_port` and `destination_port`;
+it becomes that exact D03 `InputBinding`. Thus the common
+sink in the independent-sibling family has two ordering edges and no data
+dependency. Outcome bindings cover every reachable sink outcome exactly once.
+Limits are the exact structural counts produced by this expansion.
+
+Malformed reservation and event cases use the valid support workflow of their
+family's nearest base case. Reservation mutations never alter that admitted
+support. This separation is required: foreign, duplicate, missing-parent,
+wrong-iteration, and event defects reach initialization or transition rather
+than being moved to D03 admission. The `boundary` field selects the real public
+boundary to call.
+
+The exact support selection for negatives is:
+
+| Cases | Valid support constructed before the mutation |
+| --- | --- |
+| `sequence_mutations/*` | single top-level N0 workflow |
+| choice coordinates 004-007 | selector N0 with N1/N2 branches |
+| subgraph coordinates 004-007 and 009 | top-level N0 subgraph with one-node `[N0]`/N1 body |
+| map coordinates 012-024 | bound-two N0/N1/N2 map support |
+| join coordinates 021-025 | bound-two N0/N1/N2 map-and-join support |
+| loop coordinates 008-016 | bound-two N0/N1/N2 loop support; coordinates 008 and 009 then omit only the named D04 binding |
+| nested coordinates 009-010 | the ordinary bound-two map or loop support named by the case |
+| precedence 000 | bound-two map support before constructing the malformed event |
+| precedence 001 | single N0 support |
+| precedence 003 | independent top-level N0/N1 support; initialization declares both under A0 and omits required A1 |
+| precedence 002 | valid N0 -> N1 support; only reservation ownership/key facts are mutated |
+| precedence 004 | valid bound-one map support; initialization omits A0 and parents retained member A1 under retained join A11 |
+| terminal coverage coordinates 012-014 | bound-two N0/N1/N2 map support |
+
+Precedence coordinates 005 and 006 intentionally have no admitted support;
+their complete malformed D03 declarations are specified below and must be sent
+to static admission.
+
+## Family expansion
+
+- `sequence_single` and ordinary `sequence_mutations` declare top-level N0.
+  Linked pairs declare N0 -> N1 and the matching result-to-input binding. N0
+  declares only named `ok`, which produces `result`; every non-success N0 trace
+  uses abnormal `outcome=None`. `sequence_mutations/010/named_missing_result`
+  instead declares named `fail` without `result` and rejects `missing` at static
+  admission. Independent
+  siblings declare N0 -> N2 and N1 -> N2, with no input bindings; N2 is the
+  sole sink. Mutation cases use the single-node support even when their
+  reservation or event names an absent key.
+- `choice` declares top-level N0 as selector, N1 and N2 as branch members, the
+  recorded choice branches, and selector-before-member sequence edges. The
+  foreign, unknown, select-both, and abnormal cases reuse this valid support.
+- `subgraph` declares top-level N0 as a `SubgraphNode`. Its body scope is
+  `[N0]`. A one-node body declares N1. A two-node body declares N1 -> N2 with
+  a result-to-input binding, gives N1 only `ok/result`, and keeps N2's exercised
+  success/failure outcomes. N2 is the sole sink. Nested bodies repeat this rule
+  at `[N0,N1]`. The parent's
+  black-box operation matches the admitted body interface. Reservation
+  negatives reuse the corresponding valid one-node support.
+- `map` and `join` declare top-level N0 -> N1 -> N2. N0 is the expander, N1 the
+  member template, and N2 the keyed join. Bound zero still declares N1 in D03;
+  it creates no member occurrence. D04 map declarations and accepted child
+  categories come directly from `aggregates`. Map mutations reuse this valid
+  support and change only the stated reservation or event input.
+- `loop` declares top-level N0 -> N1 -> N2. N0 is the starter, N1 the member,
+  and N2 the join. N1.input has a real static workflow-input binding. A present
+  `initial_binding` maps that workflow input to N1.input. A present
+  `carried_binding` maps N1.carry to N1.input for the next iteration. Null means
+  that exact D04 declaration is omitted and must reject at `dynamic_admission`.
+  N0 declares exactly `again`/`stop`, matching the union of enter and bypass;
+  N1 declares exactly `again`/`stop`, matching the union of continue and exit.
+  `member_scope` and `member_template` identify N1 even at bound zero. Dynamic
+  admission rejects a missing or additional name in either partition. Case 011
+  reaches initialization with two distinct reservations for A1, one for N1 and
+  one for N2; both survive the public frozenset boundary and reject as a
+  duplicate key.
+  In `missing_carried_output`, both bindings are present, `again` does not
+  produce `carry`, and `stop` does; the failure therefore occurs at runtime.
+- `nested_map_loop` uses top-level N0/N1/N2 for the map support. Each observed
+  N1 map member is a distinct occurrence of one top-level N1 `SubgraphNode`.
+  Both occurrences reuse that node's one admitted body workflow, its one
+  `DynamicScope`, and its body declaration scope `[N1]`; their parent
+  ActivationKeys distinguish occurrence contexts. That shared body declares
+  loop support N0 -> N1 -> N2 with the explicit initial and carried bindings.
+  Its `[N1]`/N0 and `[N1]`/N1 outcome sets are exactly `again`/`stop`. The
+  enclosing `[]`/N0 map expander and `[]`/N1 subgraph keep their own complete
+  outcomes; trimming an inner loop identity never changes either outer node.
+  The `(2,2)` case consequently has 12
+  activation occurrences while using three labels per scope.
+- `precedence` cases 000 through 004 use valid support as described above and
+  reach event construction, transition, or initialization according to their
+  `boundary`. Case 003 initializes two distinct reservations that share A0 but
+  name N0 and N1, while required A1 is absent, so duplicate precedes missing
+  without relying on repeated list elements. Case 004 retains the admitted
+  bound-one support and its three-entry, ten-event limits, but reserves only
+  join A11 and member A1. Required expander A0 is absent, and A1 names present
+  A11 as its parent even though A11 has the join role. The real initialization
+  boundary therefore observes missing and contradictory together and returns
+  missing by the fixed precedence. Case 005 constructs two overlapping D03 choice branches plus the
+  recorded sequence cycle and calls `admit_static_workflow`. Case 006 constructs
+  the recorded sequence cycle plus one result-to-input binding whose source and
+  destination use different artifact revisions, then calls
+  `admit_static_workflow`. No dynamic admitted object is created for either
+  static negative.
+- `terminal_coverage` uses the same valid map support as `map`; only terminal
+  observations differ.
+
+The adapter may allocate opaque identities and translate neutral names, but
+must preserve scope in declarations and normalized entries, declaration
+topology, ports, bindings, outcomes, case
+boundary, event order, and every expected state field. Support nodes are static
+declarations. They are never silently added to activation selection, capacity,
+event counts, or completion.

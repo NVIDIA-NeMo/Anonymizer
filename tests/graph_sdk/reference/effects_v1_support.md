@@ -1,0 +1,504 @@
+<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
+# R2 latest-selection supplement v9
+
+V9 corrects the remaining eight latest-selection owner witnesses while
+preserving every case ID, the 296-case accepted prefix, all unrelated case
+objects, and the four V8 late-response objects exactly.
+
+Optional omission now seals before cleanup and returns a partial binding with
+an empty context.  The mixed case places the optional declaration on distinct
+node N1: N0 publishes from required D0, N1 closes blocked without publication,
+and the shared S0 lease yields one SDK cleanup record whose target set is T0.
+The unresolved and two post-finish injection cases remain finite reducer
+negatives but are explicitly `neutral_only`; their public witnesses are a
+pending `RunningBinding.wait` before D1 completes and immutable repeated waits
+after completion.
+
+The edge-cap pair carries the complete successful P6 lifecycle and derives its
+binding projection from the same admitted policies and bounds.  It then checks
+the single declared P5 dependency at admission: capacity one accepts and zero
+rejects before callbacks.  The rollback case uses independent admitted nodes.
+N0 consumes the selected D0 context and closes blocked after a transactional
+nine-byte publication exceeds capacity.  N1 consumes the real right root
+input, publishes the sole final output, and reuses K3.  The rejected N0 output
+leaves no artifact, port, provenance edge, allocator increment, or request
+attribution.
+
+## Retained v8 history
+
+V8 corrects the four late `latest` response projections while preserving every
+case ID and every unrelated case object. The immutable first request terminal
+remains `cancelled` or `lost`. Each late response now retains one structured
+`conflicting_terminal_facts` row shaped exactly like the public
+`RequestDefect`: request, code, null association, exact conflicting candidate
+terminal, and null settlement. A well-formed late response carries a success
+candidate with the exact `retrieved` binding result; a multi-key response
+carries `failure/malformed_response` with no results. Both have the single
+compatibility defect code `conflicting_terminal`; the earlier invented
+`malformed_late_response` string is removed. Required cancelled sources still
+aggregate to `failed`, while required lost sources aggregate to `lost` and
+preserve remote uncertainty. No late case retains artifacts, context, lineage,
+or publication.
+
+## Retained v7 history
+
+V7 corrects the caller-owned cleanup witness without changing its ID or any
+accepted predecessor. `materialization/latest_caller_cleanup` now replaces the
+single retained cleanup association owner with `caller` and the single cleanup
+disposition with `left_open` in the complete successful trace. It retains the
+binding finish, operation start, successful terminal, and publication. The
+case therefore proves that caller-owned accounting can preserve a usable bound
+context; it no longer creates a duplicate cleanup inventory.
+
+All V6 lifecycle, immutability, selection, rollback, and preflight semantics
+remain unchanged.
+
+## Retained v6 history
+
+V6 corrects every independent review329 finding while retaining the accepted 296-case R2 v14 prefix exactly.
+
+Malformed latest responses now use the admitted one-attempt request bound. Duplicate `(association,key,version)` and multi-key responses retain the immutable malformed request failure and settlement, then complete the source as `failed` and the aggregate binding as `failed` before SDK cleanup closes. Cancelled and Lost late valid or malformed responses preserve the first request terminal, retain the corresponding `cancelled` or `lost` source fact, complete the aggregate binding as `failed`, and only then close cleanup. Malformed late responses add their distinct defect without replacing the first terminal.
+
+P6 latest materialization retains only the physical source versions, parent-free `BoundInputKey` provenance, and maximum-version scalar destination. Binding finish and cleanup complete before P5 starts an admitted operation occurrence. Each occurrence has an exact activation and attempt, one terminal, and at most one publication per output port. The reducer derives the unique selected producer parent, allocates the operation artifact transactionally, and records its exact `OperationOutputKey`.
+
+`binding_finish` seals an explicit retained `binding_finished` phase. Removing it rejects operation start even when source and cleanup events otherwise look complete. The seal requires every initial declaration to have a terminal source disposition: required sources are bound, and optional sources are either bound or explicitly `omitted_optional` by an admitted permanent-failure response. It derives aggregate `success` or `partial` from that complete inventory rather than manufacturing success for an unresolved declaration. Once sealed, later initial-binding policy, reserve, dispatch, request result/failure/settlement, source result/failure, and materialization events reject. Cleanup association and cleanup facts remain a later accounting phase. Operation start requires the latest source itself to be bound, the selected scalar occurrence to exist, and an exact one-to-one cleanup association/fact inventory for every initial declaration.
+
+SDK `closed`, `close_failed`, and `close_unknown` dispositions and caller `left_open` remain retained accounting facts after a usable context is sealed; they do not erase it or prevent P5 execution. `latest_sdk_cleanup_close_failed` and `latest_sdk_cleanup_close_unknown` exercise those defects. `latest_bound_with_optional_omission` retains a bound required latest source, an unrelated omitted optional source, aggregate `partial`, complete cleanup inventory, and a successful consumer publication.
+
+`latest_unresolved_optional_at_finish`, `latest_post_finish_source_failure`, and `latest_post_finish_materialization` are direct lifecycle negatives. They reject an unresolved optional declaration at the seal and reject source or materialization mutation after it.
+
+The provenance exact/one-over pair derives its structural edge and output reservation from the admitted publication declaration. Removing the runtime publication event cannot change preflight. Changing the publication owner rejects at the typed owner lookup; the declaration has no `output_dependency_edges` or `output_artifacts` scalar. `latest_publication_rollback_then_reuse` retains real root K0/K1 and bound-input K2 facts. OP:D0's byte-one-over publication rolls back all artifact mutations and terminalizes that occurrence as `artifact_limit_exhausted`; distinct admitted occurrence OP:D1 then reuses K3 successfully. Publication failure carries no binding request or association attribution.
+
+`latest_items_exact` and `latest_items_one_over` exercise three versus four same-key versions. `latest_bytes_exact` and `latest_bytes_one_over` exercise 12 versus 13 bytes. Every case retains reserve, dispatch, physical terminal, exact settlement, source and aggregate binding completion, and cleanup as applicable.
+
+## Rejected v2 history
+
+# R2 latest-selection supplement v2
+
+This version preserves all 296 accepted R2 v14 case objects byte-for-byte as the corpus prefix. Nineteen appended cases exercise the adopted initial `single/latest` extension through the existing request, association, policy, terminal, settlement, binding, cleanup, and publication state machine. They do not use an isolated selection reducer.
+
+`latest_one_version`, `two_versions`, `reordered_versions`, and `version_gap` retain every physical source item, allocate one artifact lineage for the admitted `(BindingDeclarationId, SourceItem.key)`, select the maximum positive version at the scalar destination, and publish one operation output with one real dependency edge. Duplicate `(association,key,version)` and multiple-key latest responses are malformed physical responses. Item and byte one-over responses retain the retrieved request terminal and settlement, mark the source `oversize`, fail the required binding, and publish no artifacts.
+
+Cancelled and Lost late responses preserve the first terminal and settlement. A well-formed late response records the ordinary conflicting-terminal defect; a duplicate-key or multi-key response additionally records `malformed_late_response`. Retry and correction cases retain the exact failed predecessor and later successful authority. Optional permanent failure ends `partial`, while SDK cleanup closes and caller cleanup remains `left_open`.
+
+The initial bound versions have zero provenance parents. The paired preflight cases therefore count only the downstream operation dependency: one edge admits and zero-edge capacity rejects before execution. `latest_publication_rollback_then_reuse` starts with two real root artifacts (K0/K1), tentatively allocates K2/K3 for a two-version publication that exceeds artifact capacity, rolls the whole publication state back, then successfully reuses K2/K3 for a one-version publication. Its physical first response and publication failure remain immutable while no rejected artifact, port, provenance, or allocator increment leaks.
+
+The generator validates each expected state from declarations and events. It has no expected-error field or product import. The appended self-tests assert predecessor identity, maximum selection, malformed/oversize boundaries, late races, retry/correction authority, cleanup ownership, exact edge preflight, and transactional allocator reuse.
+
+## Retained v14 history
+
+# R2 v14 public callback association correction
+
+Retain historical ID map/wrong_parent but replace the uninjectable internal parent field with a public AssociationResult association mismatch. Capture two actual executor-supplied expander associations in the production regression and cross-return them. The expected malformed_response occurs before output, item or assessment publication; the actual parent normalizes to one failed-empty expansion. No map publication transition occurs. The matched-association counterpart publishes normally. All other v13 case objects remain unchanged. Independent review pending.
+
+## Retained v13 history
+
+# R2 v13 map provenance admission correction
+
+Only map/provenance_one_over changes: public execution admission rejects LIMIT_EXCEEDED before callbacks or publication because declared maximum item provenance exceeds capacity. Its runtime event is removed. The paired bounds_exact case remains unchanged and accepted.
+
+Actual provenance capacity equals captured setup edges plus exact external output-dependency edges omitted from this publication-local projection plus frozen edge headroom. Thus bounds_exact admits with 0+1+2=3 edges; provenance_one_over supplies 0+1+1=2 against structural requirement 3. Initial collection setup and extra output parents must be counted exactly. No arbitrary allowance, production preflight bypass, or runtime artifact-limit substitution is permitted. The production comparator must assert zero callback effects at admission rejection. Independent review pending.
+
+## Retained v12 history
+
+# R2 v12 causal initial-binding late-loss traces
+
+Public RunningBinding reaches these Lost-plus-late-response races by cancellation, failed stop and a provider that subsequently returns. Add cancel before Lost for materialization/initial_late_lost and binding/lost_late_source_result/failure, including their settlement traces. Preserve the first terminal, conflicting_terminal defect, valid settlement, and absence of artifacts or rewritten source terminal. No comparator override is permitted. Other v11 cases remain unchanged. Production must cover both late SourceResponse and SourceFailure. Review pending.
+
+## Retained v11 history
+
+# R2 v11 causal adaptive late-loss trace
+
+The real public executor reaches Lost here after cancellation and a failed stop. Add the missing cancel event before Lost in materialization/adaptive_late_lost. Preserve the immutable lost terminal, conflicting_terminal defect, valid late settlement and absence of materialized output. No comparator may override expected cancellation or defect facts. Only this case changes; all other v10 declarations and expectations remain unchanged. Independent review and production comparison are pending.
+
+## Retained v10 history
+
+# R2 v10 public-loop causality correction
+
+V9 failed independent review despite passing its self-tests. V10 applies the
+three findings in /tmp/anonymizer-pr1-r2-binding-map-v9-review-281.md
+(SHA-256 fefb87ac82d57065f254253cce1dfac44a5242c4408d49019ea1f2f1484c0c50)
+and reviewer281's full malformed-case inventory. V9 remains unchanged history.
+V10 is pending independent review; no product implementation was edited here.
+
+Twelve final malformed public cases now explicitly admit one attempt in both
+P0.max_attempts and actual binding/retrieval bounds.max_requests. This tests the
+exhausted-correction return, without weakening the separate max-two retry and
+correction families. The comparator must honor both declarations; omitting one
+recreates the old mismatch. Source-failure retry/correction witnesses retain R0
+physical failure, settlement and latest association authority plus reserved R1,
+without publishing a final source disposition or aggregate binding terminal.
+The neutral follow-up check derives replay eligibility and remaining request
+and aggregate budget from retained facts.
+
+Required/adaptive optional-omission misuse is validated before recording failure
+class. It records malformed_response, not permanent or synthetic binding_defects.
+Required initial declarations finish failed after exhaustion. Empty malformed
+optional responses retain a failed optional source and aggregate partial; they
+are not explicit omissions. Missing/duplicate/foreign responses publish physical
+malformed-response facts rather than synthetic keyed-request defects.
+
+Adaptive omission is rebuilt as semantic A0 retrieval with selector RootInputKey,
+provider source S0, explicit adaptive_retrieval purpose, max1 retrieval bounds,
+and individually valid SourceFailure(permanent, omitted_optional). Its result
+retains the selector artifact/provenance, exact request/settlement/latest authority,
+and failed activation, without any initial-binding source or aggregate terminal.
+The foreign-association adaptive witness now also seeds its exact selector root.
+All materialization traces use initial_binding/adaptive_retrieval purposes.
+
+Ownership: stay; owner=independent effects reference module; evidence=source
+failure and response reducers plus _source_followup_available consume declaration
+policy, bounds and retained request state; reason=independent expected causality
+belongs to the reference, not the production implementation or comparator.
+
+Checks: 64 isolated self-tests, Ruff, repository-config formatting and ty pass;
+two final regenerations are identical. This includes a scan over every final
+malformed expected receipt to require both max1 limits, intermediate max2 authority
+checks, and adaptive readiness/semantic-association/provenance checks.
+
+V9 boundary conversions and disclosed positive/redundant aliases remain in force.
+The historical support below explains those cases; its v9 verdict and old counts
+are history, not current adoption or P5/P6 acceptance.
+
+V10 counts: 296 cases / 301 traces / 1022 events; 83 existing case objects changed, none removed.
+
+| Changed case | V9 digest | V10 digest |
+| --- | --- | --- |
+| binding/two_sources_same_key | 11f655b19634b108bcf11a32403ea137b257b94c0b4b92ce94598d35565b3469 | 7bdaac514bfdb241e1288b190b78deb39ebc2a00a2dd5b46ad9fbc55af9d4e24 |
+| binding/one_source_two_declarations | 05ddcf10f6a1748056a9404d98fa132321aa9585d51f484e53afd8fadaeb9fba | 66928ce8d7d03555c03bdadd77b260e7a051c3f1a9bff17eb7659fec295d1d89 |
+| binding/required_failure_preserves_prior | ce4d53fd5ac77ca993066b9296eee1b9becbca4e0c3ff4689ccc068f0e8f6185 | 24753ef29ce5163b9017b18cb07694c9b1703a61848abd7ced74fb63f0a51007 |
+| binding/optional_failure_partial | 2483dc7611ecb9825f2eff0fc9ad6c40537cef12b93d7d6a1ba0b725109b6800 | 3d282c168336629a7a16560ecf302abaddf4f7509011ff2d00b8ce2801267763 |
+| binding/omitted_optional | a140b4bdf9030def8fd34e4583ed9692356375ee2d1e293be0c41c376b6c427e | d3457063e50a226ad6c44c42b54c665ca42c87cdd68f4387c7aeb51307415b54 |
+| binding/response_reordered | eacb29d21df47c7181a96cba1215aa9a7e6484670b5973a5715f98189995fcbb | 0a8165b1ff0ae7da2e5fdedbecfe631cf580b650d61779e51795d122780bea89 |
+| binding/oversize_no_truncation | 41b8e7fab43a1ef801a68c1740b5065dabd8fcffc74bcdbfd5e0ebcfe8789fb3 | 972a9a51a7a2bfa6dfb797af47731db3d84fe5c0cbb887b08724558599f4d900 |
+| binding/cancel_before_dispatch | e20d61d9260a2859eed3ae52f4a0a8fc9a10debcb7851dce34a3030a81c7f2b1 | f0741605e0e214f3d914d9497fa23e8ab0fb36cc2c14ddd4b5ded834e2e2487f |
+| binding/cancel_after_dispatch_lost | 5cc40668b03598a18d1f9018364b602f05c541e934182a85b6107040078c2d39 | db9645f736c9fe84c812462ebb56b22bdf40aedefff888d2e58d8a94508404ff |
+| binding/exact_item_byte_bounds | b172be5fc8583ac22bc34dfac70ada5f62f265d0a6db50909c3a024257b4cc08 | 4145c78fb6be6d32f44d9e15b0013993146de9fbed331866609f504ca3322fab |
+| binding/one_over_byte_bound | d7157889fdb0b2ef64291dba604f64206537f87594b7f3fcadd8044544b736af | fd4b257f6419739231b0fea1d7e7f2fc97c923529f7e7b33b5f3a004d484bc68 |
+| binding/one_over_item_bound | 809921b0968bc29d8eff3d777285093478ecdae7432dc8fdb86e92d6e18db0a4 | 1d6ccecae7560146f086fec927b578884964d6e0dfedb79f3992ff343c4120d0 |
+| binding/unsolicited_source_result | 27796d771412c5e70834bc9b8485b979c59e1e394b74a78a14a0d49f20f2f8b6 | ea01222aa030274df6441e91cbe83c0b803aa46b880602fa4b25710b87008d2f |
+| binding/wrong_source | 1353f8a7c160649db9ce53d6e4a22e0648b934d7e6b901fd09a2df48cf285880 | f7a9ed2ed54e0c733db8c5f5896906c659239a171486017e750ac2de6d5a954e |
+| binding/missing_result | 1370ab70d05ddf561d3e48e7d4e47f9455e44163093e282db6fb1592c2534f85 | ac8d5a2727379a7c4f580b1fa24530adf141d99d45162eb3b59ea16d522f8888 |
+| binding/duplicate_result | 0b3ed98538a959bda59b7e9382c9ebeb41a34f1d9e4fed6886e2cef43a310ab4 | d80f46494db07d508ae05d61f5ea85241e23a05071a3fe260e772f2b7a03d756 |
+| binding/foreign_result_association | 2866058ea3c56cfcf36b501df94f94d7fcda1c475eeab7573931310adbf40b11 | 727e4be1d6cb24a49ff7cb207a9059fd00b240f2b7c51724054b04066d0f5c89 |
+| binding/lost_late_source_result | 60a685f12801aff4d3e99c8b9ddd24abcd78f72001758110c40ce8aa00a427f8 | 2c88a6a10dc636c85c8662cffd50e57d4f3ecc90b68ccb53f195a9b83be60228 |
+| binding/lost_late_source_failure | fc9ce38d7644596dfb3773e80f5d12692ebc98586e2303ea8cd00c8da591810e | f5d195f8c24c68951661c80a54263dc3dc11ca0634af78f77d0683bcb548edec |
+| binding/cancelled_late_source_result | 4dab3bbf1dd7e4138cd58708e51876193132ec8695c0ad98b0aabb35cfdcdc29 | 82056849e9a2febb4d0c5d16843682f32524d0881383a8ceaac200c71781d50c |
+| binding/cancelled_late_source_failure | b30a9f49a15b4d53a8cb130003cc7630b21de3f0fe8edcbc6becedc5830b0dae | fe2c99eeeeeb1850acddbe391cb1e765e78742d6c51a46ed1a65b99dd378f33b |
+| materialization/collection_ceiling | b25ab1bf1a632d65dfbb5f40b45ab7184632dfc1e7f079f9db0549771a858d71 | d300d43842d8efda83f39de9244b396dcf9eaf2b0230ecc89e612a4151b55da3 |
+| materialization/initial_single_exact | c345a47f5d561d03a7686670027ddf9be2bc2887062f46175e04041004c448bd | c73d4a5d6a231afdc5d9205687509405d82af26aacb23f568f4e9e9749894b90 |
+| materialization/initial_single_multiple | ecd8d3a4719c628ae222138d5b2e0bf70e9726dffca7e50792950e0f09eadfc4 | 269cc5e7f2f8aae76500c767814069e1f8ce96744f04361554d0d2de04724ffa |
+| materialization/adaptive_single_exact | d16bb84e748732dd106bfa46b3a5d758125c5d4cc2ba2154d401532accb8eb94 | 549ce3b2c3784cc89a00c0a95525ea3ed77191eef75cafd1ad61e3eae2e95f45 |
+| materialization/adaptive_single_multiple | 2bc11fc5486a30170a3c1cf71bde067b46b7f56ad2bcc3a913350977988fee22 | 6bff09a4d7b4c0bdd2ef534289190c519dc2bed881cce6cb79d5219c28a5cd27 |
+| materialization/initial_collection_1 | 3c4844993714a2244ecc4e0c8ad77a64b040db18bae65285b8c93b7ca81a6bd4 | 415f3e699bd1b6e19fb317834a33f42b4b7582d4cd83ee13abcb03937008ddff |
+| materialization/initial_collection_2 | d71df8eb91105f8eb157884900e3c9626081850aeba097d5700abfa46a40d54b | eac7f1215aa307ac427be10ab2954eb051caaeb35ae4577e8e4deb8a442e7d31 |
+| materialization/initial_collection_3 | 9d5babdd8658d414065435d929406c826d2b5dc0277fe8f652e8ee2dc7b8204a | ec77a46fbfb2202ad07c253e37a462385e02ee1b92640e1969a58468bf1bb3d4 |
+| materialization/initial_collection_one_over | a572e5611c17f51d2fc28ad5a1ac95ed9923dbaf364582333ea98de74a91ed0d | 2c1f92c10e80f9f5aaa185c0bd29c8e260914c635db48f18325eb2e6c8077d4a |
+| materialization/initial_collection_0 | b81f38d4d423c24058f85476db7157c5ec6a6c8d70de88fc9bfd7e8846e48021 | 66f0669628bb35560d310ac6052043579ccc2c9a1b1357c85c72d8782f7f1843 |
+| materialization/initial_canonical_reorder | 4071d4e805ba0a7eda756177a2023394021d7683359ad775dad5da668b7ac79b | 10ae81b5988366b0f6d8c8df3e371c573ad33679e69de84f6798decaf921247f |
+| materialization/initial_duplicate | b2d135aadf96ebecae77db7ce8fa5440b513621a9a57a92c1ba8b329c39b27a8 | a75b3f6d8e3279db2f26b14797fff6f684c37c8d675e030bd9d30cdf898ba2b6 |
+| materialization/initial_wrong_item | 991141887904fc2fa454a475f8cb16d7d4ee4d9f4a121a2e4726c12db3e5b23e | 7f03758a9f3254fc24d025cd8d27e6d47557c4ebf0a48dc006ce2f992ae0a2b1 |
+| materialization/initial_nested_value | a817041e7b6a5a75aac1081729285f0f3707b4135930129910a82b76852ee1e0 | 013311b6224eecd5f61025ca9e6c30abb8917c861d9065979c2a5c2237d2e06b |
+| materialization/initial_outer_count_precedence | 165266659ebd134b4c15ef3154b98c083e75438b8f17f0e201a76630a5862948 | 37429915eb1b1af2c2f3d73a58dd309b397b8bd97f8b49fc055353913f0762c5 |
+| materialization/adaptive_collection_1 | a6d8868a81c5286cd31e32cceb2a38a1107057e59a77f54511730ae7f3728f4b | 9884accda4ba17826b519a70a73a5f134aba299413a6d0cd85ba93cf663c2ae2 |
+| materialization/adaptive_collection_2 | c847d5b46f4706d4361e53a342a5714452d322f4da1e4fefb345f2d170ad2a7d | 175a94770a2847a3e0335b0a88fe1ce366ee0374203d4c138a3b2ba742fa64f7 |
+| materialization/adaptive_collection_3 | 7c814d2249be84d52ca6968ec8150f1bb3fb91578d5e98a10aa7610d61995d80 | f0831c9cfc0ee445860818e43062c420337280640f557c5db9f3242afe5f347d |
+| materialization/adaptive_collection_one_over | 155ce3bf4d39ccfc4a3d34618d67d8a87175b140e36ccfb18f2d7129c04061b1 | c4e39454d8a7eee30018ad7e3250223383af8dd1c3278768c09e8683879c52a3 |
+| materialization/adaptive_collection_0 | 8cd86aea24d8a613d27b50f80f880c104d89722e463da6bd123fa0ebf8ceeedc | 8c40af1f20a523f7d557ef1fb29de10e43853634300b5b18dec307dc395eeec4 |
+| materialization/adaptive_canonical_reorder | f20adf5a09296d6243bb9ed0afaae00213e5e73bc50e7a8751811b5015c06cce | 4e9d1ce276dd7b81c5cc6279001bf8c0ff77cec3ced4cbf6627afdbeb40054f2 |
+| materialization/adaptive_duplicate | fb51591cd2e92253d36e02009bf2480eec437cf039e304b102f27e2668f8d7a2 | 68eb4668109cb694d6e38ce919e62ddd148bb6a90332116cb4ae863cefe7c3b0 |
+| materialization/adaptive_wrong_item | d0adf485a7cc69143bc9995a0450c6aac526ec0db084f77322df9474be06475f | 8f4ce9d04ec6097c86cc8ccb51416de05694eafd8401254e8894b335ddc9365a |
+| materialization/adaptive_nested_value | 9016481652c7d2f9a6f4672a9fcb98645bb6b6a5dacab4459a64ca71ad3a9f8d | 816dab5a412f02d0c41c26d30771e45396f1b5d081d7362cfe6200eb4901f1fa |
+| materialization/adaptive_outer_count_precedence | 8e34c017d171c9024997d7fd48fd36afead79c6c3a937ef081a6eadde86138aa | 46fb741807d803b99a3e135032ddbdeccd15d85e6eed38accda3c5aabf95a681 |
+| materialization/initial_artifact_count_one_over | b471d070c525730dc4345d7a0b2f6789dc237ae948ecfad67895939aff197d1e | eee23217b727b07663babf76526c982f512a8cf18d6b2eeaaa686ca41a657d8d |
+| materialization/initial_logical_bytes_one_over | 88b78699c891447e3481614baad61e7d178e785b9d02554a277438bf0e20a3b7 | 55183dfc98594e8bd27c914832fb1a01d671266222465e662e4a770db16396e6 |
+| materialization/initial_provenance_one_over | 593194a4ef6e11e4c04ae79c6e9ac37892fc89a8f7eb22956c12d76244b1f153 | 0fba129b6494a20d18ab9413658a822d071402f04dff4b3e562ed54f39a4e5fd |
+| materialization/initial_declared_bytes_exact | fbee7c76ee144908580de9aba1d162f558a9778535c3c95a10ac1e7251e48f53 | 695a0f9a8dea03ab5401bfd2bee601a4af609f6910b86c2248320093fde5c7f7 |
+| materialization/initial_declared_bytes_one_over | 22731ef72f423dc9f45cab4f15be6885da0b4b3202966868200d643ec85a643e | b03990d3b002ab957abaeb151bc3d6522c5c63ee47e798cdcbbb25cb9d34d689 |
+| materialization/adaptive_foreign_association | 8f6288341f1ffb49809aad5563f79be378596e61e479bdb0d716630e37d9edd9 | ee8dade2b4cd1c560fc0618f07703381df9dca220f09c4eb2e632070cf8add22 |
+| materialization/initial_unmaterialized_source_result | b04331886046ae95952db911fe2cf5ddffd9c5df12af7eb03a685becb869fcdd | 2666709c459bf35408036f028d9514e67a695f5666c3f7ca1d404e44669b97b8 |
+| materialization/adaptive_unmaterialized_result | 8a918cbedc7d947fbb17f789ef223b6dc65c775f7886816fe1fd5e576b64676c | 67450c0a5b889c7b7d45baeff404c836d292ba26690f21346dc1723ac2442a58 |
+| materialization/binding_finish_before_materialization | 80a87f487957a7600fe29e1d94346ada5d718a037efe8c0d250d02bd3ceabc4a | 9c4976a3dcf886ef495b433775a3bb56b199964ced98f1a70a1e9e8a3cd72267 |
+| materialization/same_port_distinct_nodes | 573df78be12b9524822044171d04320c247ec0b0b68c096f3f6010bcf08aea1b | d0b573b6ed7e61f728d97b214ee3069fc67bb58136e55c1b89f2b9427f9e4d69 |
+| materialization/initial_single_zero_collection_limit | 71d0490e9ebc495b62035637abbd49faa4a096fb30d1fcedcfca38aaf17b06fa | cb871c027351b26549a15dedcc217764f73595e9c88f342917c899ae2e684aa4 |
+| materialization/initial_late_lost | 75e3bbf1a7d3fc54b09b92ad1466a28cda210f668da629ec948f6cca21e8f181 | 93600511b7a97a4197734660a8e5d1bdc22286026c683c0f30dc8f1dac7b4dbe |
+| materialization/initial_late_cancelled | 984b20f417aae6265e3c52943b6bdde9a7946bbd53fe47e80254c5c2c636e8fb | c7e7e8a79ab0664f1661405bd766917fede6e57ad61f63289761c843b4155a15 |
+| materialization/adaptive_single_zero_collection_limit | 38cf7c31c555f2a5ed61d33fe742c209790ac26f2e9b08150ec9b3e3d0a35652 | 772cadfb39f8fac7d15fba4352efd8b90fc00190e64a597c916a963714e876e9 |
+| materialization/adaptive_late_lost | 3b3d074ef20f927c0a92f3d705b30e77b8d88dd7484c7a39f2a16510c770cb2c | d5add73ee09da36d792c8a57f1a960d2a685f1ac296ab260955f399ce710091a |
+| materialization/adaptive_late_cancelled | 2d00209213b669e6d548557f579a5b420b246964dada9d73c693677b21bcb9de | 205158c935d6b8acbbdefca6e3d968b5cc45cb4778b2e511754d711e4bb48721 |
+| materialization/adaptive_missing_parent | 5579f0f51a6f0614d04bdcb99bc3d672df64202fc0d29a3ba9587239dc3be87c | 3e8c1ae1c8085dad0a545e99647d32ab2dc9204fbbae62a4f96c45848c147f74 |
+| materialization/adaptive_foreign_parent | 79547dd5aac57055fd9a8e34614261aa9d8a52172aad7055b2d24a243ec20a32 | fb7313dd8171463640de39ae469fe06195ffb5511c5d6dd0e6715f23c9f793c2 |
+| materialization/adaptive_invented_parent | 4b9a80466eec25f52bf5a34b973ad6f2cb8c8a701e282f4948d6174d17eb68b7 | 1164b6ee84a464dc302b1562b4d454e506aff4cca20218eb5287c213ef071884 |
+| materialization/adaptive_missing_source_fact | 8409ea6c2aee60099b19f40e0e9dea1c5180d0543c0b98bbf59dde3e3c82e49c | 77c99262e18982be5a4bfedba834c710856823b38a75d753dad68c3b103d7f45 |
+| materialization/adaptive_result_bridge | 53b1838717d04f698d5c4ba0c201cd128bce131245feb6ecdcdc5f0dac7d1ea3 | 0d6fbbb021e65c298c07f40dc4438fd67aefb7b4f8650cac595ebb4792336ef1 |
+| binding/explicit_omission_preserves_prior | db30749cf18231e485bbfe051ff5967d29699785b87f4718e0890105d9b6ca4a | 9db436768097d1f1edba6deac43e392964167f6d5769945129ef2039ffce6916 |
+| binding/required_omission_misuse | 7ddda98ff1ce896ec88ccedf13e8c33f692cddd53a8ed57bf1a6d18c23163683 | efbe5ce2c20f5a097c8a300b7509d28fc503a04680bfb7f6b849b305a3f1bdc4 |
+| binding/adaptive_omission_misuse | ffba8d4bc3b3f3518eeac740a99916b26f512288f2fd88edeb18aa7da36dfa6c | b307c39012bf021d2ac67cc41f92659e0311662387af99b862fa100939fa71f0 |
+| binding/omission_failure_mismatch | 69530019162069383b1aee1fdae082649872c3f83912e1d9b80b76028dc43c35 | 6f1522a897eff7e62af45351dc5a20964720a86cebd8e1462e12ea40bdaf20e0 |
+| binding/source_failure_retry_authority | 4d74d865a91068a91b7d384d980d0c5b4eb8a7b2e1398ed1d57441d53ce3b212 | e69b4be9b78b62d2c1a96481d9896b7d6b94d724fb20406ee0d51574502c6862 |
+| binding/source_failure_correction_authority | 151955d71654c009b6fca71b1bcf99906c972f519a89a2eb5f8c9851e2b98abe | a9ea3a436f516d30ca0a1587738b0cc86fc686b15c29b7c7d53c923c7c3e48d4 |
+| binding/source_failure_missing_failure | 79bc702557ac0aa433646881ff76ceee3b64d2e89a179d74d6c30ffab592eba5 | 98b96c1a0eb292aaf3ee9fe09c7f83083521a82181c879591b98a967ab9f487a |
+| binding/source_failure_missing_settlement | 5939bc3fba17c0e52eea64faccf0350f2cb41b4585182e5d805ce7570d9d7caa | e6948f715d6ea9b6d5202914f578083ba347d8d2baefac797fb196f282de2b23 |
+| binding/source_failure_explicit_no_settlement | ea00617ba7518b691b86a1c9350e5321a6b3d76a6aadfe7fdcae914919fe2da0 | 221146f5096ae21419d2eca79e745fc9aa0245030a6fa6db438dbdfc73415978 |
+| binding/source_result_wrong_outcome | ca3aca71e936781f758bcbe38593b28db0340c021565ce1d4c25f3d289fc4864 | 6e460ed4278f2dd64a35ebf6bd67acf0a9edb0936fdf4e88e0d1f95ad8405233 |
+| binding/source_result_outputs_present | b6150343008cefe6077f56ef160cf76ce3f892429750238cc3023fe88aef43b5 | 5ac69029fc270aaa6bad7cb0a81c3e057955d6115b94b31ee936d7bb9da7ff51 |
+| binding/source_result_consumed_present | b075ed1a9abcef3290ef112ade7d2590d4ce182ba4123b9197842ed12780bf0a | d5e757d20a3dc25e51cc36d837ed9566bd67f83d020d4f337619a1ed7e5ca153 |
+| binding/empty_optional_response_malformed | 8e2f913693157b2f956df146f761f8a2b9b2d7ddea3436270d87eb4133e645c8 | 18b6607b741416c9d2cc52d4f862d223e2e70f54486a358cc18f3a680a4ab05e |
+| binding/oversize_retrieved_known_usage | 1274d0e4a5a68ccac0f7e87d9dbac26c51cb9eb53805cb2d0f45e6f75403463a | 825603c9dbcebb6886ffcf452659be4d9610ca5a2d5cee8969656bd538435585 |
+| binding/success_after_failure_preserves_authority | acc2c7415dcd02a92640974761380e293eba6662111c8054fd6cdb7b508faa1d | 99c1f76cdf879b40c5edae5d65f53092ee0acc7653e960f0de4ed28b55f5d50f |
+| binding/optional_oversize_partial | 9100d5834727f51ea8f687af8e881c8bcb4cb9ea9b9869c7f66db0d0827fd49f | f3b23936c145a146b9ea5a78b119aa685f93e01dd03c1ddc23db9f82bd5744ee |
+
+## Historical v9 support (failed review)
+
+# R2 v9 public boundary correction
+
+This independently authored reference applies reviewer281's provider, remaining
+boundary, and full materialization dispositions. Product author276 did not author
+it. V8 remains retained unchanged. V9 is pending independent review and adoption.
+
+- /tmp/anonymizer-pr1-r2-provider-boundary-disposition-281.md: SHA-256 0973151f9e8149c7e3dafa1db81753ce6efa4d7b1d3f487dc1fc8c78a320a7bf
+- /tmp/anonymizer-pr1-r2-remaining-boundary-disposition-281.md: SHA-256 48bcb0de04e6db01148d99daf171cc0202ab76a0a92ccdefee50a70c13f29bcd
+- /tmp/anonymizer-pr1-r2-materialization-boundary-disposition-281.md: SHA-256 8b0e598b1e9d633f63f45e32faeeb2a0ddcc7e43b3423b6bab0f08f4fe99326f
+
+Constructor witnesses now exercise SourceFailure mandatory keywords/omission
+invariants, SourceItem text, and TextCollectionValue uniqueness/order. Invalid
+values cannot be returned by a typed provider. Valid counterpart tests establish
+causality. An unsolicited result uses the public request reducer, with MISSING
+before any effects and a valid dispatched counterpart. Wrong source uses an
+otherwise valid response and preserves malformed-response failure and settlement.
+
+Decision submissions reject FOREIGN_OWNER, UNSUPPORTED or DUPLICATE directly,
+leaving the existing wait and unrelated activations unchanged. A foreign wait is
+from another invocation; a missing same-invocation wait is a different case.
+The synthetic decision_defects field is removed globally, including empty defaults.
+
+Every materialize_result now supplies an explicit completed known-zero settlement.
+Physical result/failure and latest association authority are retained on initial
+and adaptive paths. Late results retain first-terminal facts while their valid
+settlement can clear remote uncertainty. Malformed empty/duplicate/foreign
+responses fail operationally. Well-formed oversized responses retain physical
+success but publish no output: initial source oversize/failed completion, adaptive
+artifact-limit mapping. Adaptive completion categories derive from explicit
+runtime mappings; an explicitly running bridge task retains its separate
+condition/emit transition, while ordinary completed adaptive traces retain the
+terminal category.
+
+Execution-capacity cases use execution_preflight. They first complete a real
+binding projection, then evaluate declared collection and actual artifact/byte/
+provenance limits. Rejection contains the retained binding receipt under binding;
+no graph materialization or invocation is claimed. Raising only the limits admits
+the same binding. The production comparator must prove no execution effects.
+
+Historical IDs retained as disclosed aliases:
+
+- map/caller_transition_verdict_rejected is redundant with the actual closed-parent
+  prospective transition witness. No p3_accept caller switch remains in its inputs.
+- initial_unmaterialized_source_result and adaptive_unmaterialized_result now
+  assert that the controller performs declared materialization and provenance.
+- binding_finish_before_materialization requires a real async wait probe that
+  stays pending until provider completion, then returns the complete binding;
+  callers cannot inject a finish event. Its final trace is a positive alias.
+- adaptive_missing_parent, adaptive_foreign_parent, adaptive_invented_parent,
+  adaptive_missing_source_fact are redundant positive provenance witnesses:
+  exact parent set, exact owner/target, declared RootInputKey, retained source fact.
+- initial_outer_count_precedence and adaptive_outer_count_precedence use distinct
+  valid items. The former nested-value/count combination was not constructible.
+  They are disclosed redundant outer-count witnesses, not a new precedence claim.
+
+These aliases preserve history without claiming independent negative input
+coverage. Their public assertions remain required; no private mutation or parser
+hook may stand in for them. All other corpus IDs remain present.
+
+Ownership: stay; owner=independent effects reference module; evidence=the existing
+physical-success recorder and new materialization category/preflight functions
+consume neutral contract declarations and events; reason=reference validation and
+expected facts belong to this module, independently of production and its adapter.
+
+Checks: 61 isolated self-tests, repository-config Ruff lint/format, and ty pass.
+Two final regenerations reproduce the same corpus and manifest bytes. No product
+files were edited. P5/P6 production comparison and acceptance remain incomplete.
+
+Counts: 296 cases / 301 traces / 1020 events.
+
+176 cases changed: 115 only remove the synthetic empty decision_defects field; 61 also change boundary, input, or outcome semantics.
+
+| Case | Change | V8 digest | V9 digest |
+| --- | --- | --- | --- |
+| budgets/limit_0 | mechanical field removal | 3aac875ed6bf3d70398cbda6c336417a2f7fc6dbfd6bb59e5a9b593158465d06 | e5f81555ea03319561d30d339ff8136c17bed0bde360720b8bd6aa91ba10d54a |
+| budgets/limit_1 | mechanical field removal | 396b33a78749c6d59e5e6a1344b6d7b95082801767f9461bfdb44c632b2b6139 | 317fbb3fc6d3caf5d353d44c8ee647c15ab4550417f516f2561930f9673332ea |
+| budgets/limit_2 | mechanical field removal | cb2d54083a0c061b24be17a5e86c3dc776dc2adb9e3eaf12631afedfa71a50f8 | 43459284d476f402b7dd61edd808ddcb1191670faa409cc9243dc37a57e1bce4 |
+| budgets/partial_two | mechanical field removal | ba1c9f92ec56b4ed8bd312e5deca0900f756ea88dbb3976d67522ee9523e7455 | a2fde5b15971d4c1bef36b73b8ac88581496c3e21b6acf61598a486b8f45babc |
+| budgets/exact_two | mechanical field removal | d9a2b9e8249400f712f8e017d6172f19085cbbbc71a19f5b28fc3a1e810beb7a | 2fcfa046ccaad2f5034456f09f4c5e0a70f87708e607eb2d939a0cb235a95945 |
+| budgets/cancel_reserved_zero_charge | mechanical field removal | cf4450df9e670623303a07ba5148b652a59e0dd2c2d9d35cdfa2d837aeda7fb4 | fceba2108055b2b7d2da98a9398077137579cd92c01e4aa98bb0c61092b4d282 |
+| keyed/valid_shared_reordered | mechanical field removal | 2593a29450d57a40cba32ad23c9ab8bf8384c4af8600640e88509ef3e1b3a48b | c9da2efc8ae56d91a6897f0ad2997e35c4f2a47b221555bd38814dd584b7708c |
+| keyed/missing | mechanical field removal | 881a976d9cc1da5bbd25be009267fc41e9d6a1df25e4335206af76d2bcf2b026 | 86aff8cb862499dce2a64510a75da67dd47588250e620404d1838a75bb9718b6 |
+| keyed/duplicate | mechanical field removal | 94ee609fce4713b0c23949f6aa3762bd3f42551d1d0c057e9a99e7fe4f59c79c | 93d04d6d6d2c05168a07bab2bae04c3e0caef3ad72a0ad66095273b0c2d7beed |
+| keyed/extra | mechanical field removal | 886c35aa380d4e6112d4466f5a58898298f25709a306b5812f757b2803287f7c | 97b30b3a9ed093efefedbf06c6b9e1dd153169093be59d11c6f8a6c8ff85ea93 |
+| keyed/foreign | mechanical field removal | 13212b612500a67e7f01b148c9e39214f01ab05fa4857fa4cf8dab729f86383b | 65afa22d67ebc3fc5f7b45e1f287246fa205a7a0235951da3f44064a3b6c759d |
+| keyed/single_t0 | mechanical field removal | 592e5b5db5349871de15e3fdc9ccf1b66d2d6ec16607dc4673ace1534996055f | 79be438dce5ca9ccf55e95cc1a6d9e56f733108a46c60f7b6b005b8b7a6d7e5f |
+| keyed/single_t1 | mechanical field removal | 69013e173c6babd045c3fb4014836099027746682be4af8ae90307bb9b62ab59 | 361133add3fc5808b512876c1f7824619ca571df5f3c5666bf693b7b22fad323 |
+| keyed/parent_summary_no_charge | mechanical field removal | 1a56357eaa99996b8bca391fc3896ad3d4b6805088227423341704a4bce13712 | dcc2bc6ca3b1957e6e6b8dc8dc286a9d7ac7bf3fd229154c59607245bccad1eb |
+| retry/retry_success | mechanical field removal | 9b1743569af309695b1f33afa3c8e0e2755fc87c906ccb478fa0c682977b8c9f | 3472fc107a14bb352f024b9fee643352325ff8aa88d0b0a793eb033d1fa8bf8c |
+| retry/correction | mechanical field removal | 4f42971f3fceef2fd5eb11d06d61e5bea06b50e4fbcbc10adbfba2da5cf94497 | 33b194d5fbf375af7b620eb00a2872f8f40e07b96a09bffb6acf3225d1a42a05 |
+| retry/failover | mechanical field removal | a36b8b83b4e8dabe6ec7e920f1e3d5a5db7ee529f0a4672f6668d3a781a52289 | 38328ea45de615ef13b893d4c478cd13d460a4e57a0e27aff529a56215f5e815 |
+| retry/repair_new_task | mechanical field removal | 36de17842e62a5e0ce72e1297fb7312a95effc2e3bd79f784280b64af69741a8 | 1ba73bec0de71dbb5a44aaabe60480b4a5e61c8daf8a31435002d486e7aacbb3 |
+| retry/mixed_exhausted_shared | mechanical field removal | 75e400dbe7fc6256946e7c53d1bb16e58bbf0b3281f9ab6b907a12af37783589 | 2f24cbb43c3fc418765e9226aceb204bcec904a261ffa652358306dae049af29 |
+| retry/replay_before_acceptance_rejected_before_acceptance | mechanical field removal | a64d691bdeafe0f53cd0684c88550689915fffc1388a3f7e84e22a3a227a36ba | 9e0ea3faf74b2a6202797300bc79c0b08e1188a3197c28ae735cb1d50655c8c0 |
+| retry/replay_idempotent_transport_unknown | mechanical field removal | 2fed19443110eefea75c86ffcd47fd3b8cdfc79e8d9ec16b310d2d0ba7568dab | fd4a9fda2db014a1a3977174299c6fd98730bf4429f6ef45d3e860152b155bc8 |
+| retry/budget_denies_retry | mechanical field removal | f9b9fd8cbb2e8a79b5e2d38ebf19d4216ee505536e53100ad8844b29486d37a5 | 2e7c675acbab5be1a6beab6b0e5ed43e3cd5fec16c4e8969beeaee666382656d |
+| races/success | mechanical field removal | fa5c7da7de09c3a4bc06684e29b7387dd48680607209954f0d325fd375ee6632 | ec2c6b1129d2494edfb177e0d4f14891f569505f2d2a9e322e35d089f66f6bbc |
+| races/failure | mechanical field removal | 5fd50108ebe55feb0eebbed0a2cc0506f485fd23b326bf780eb1f4430466349d | 5fbc0eaee66bc82697fb82b9aabe4162555f6b4257baa13c03c4b1eff17ccc34 |
+| races/cancel_trusted_stop | mechanical field removal | 83241f72f67074ee6771237849b6ab6350e3a898f6b4c36e77d67acb35b90ff4 | 20090b4d60f60f8f30bdfc138598647d2fa1d62c58459815a1b166f2ecfefb3a |
+| races/cancel_unknown_lost | mechanical field removal | 7b9e7a344bc9935df894f97d05f31d64f9a5242bb02ac605b0c7f266bf8bab9f | d320f282cc9b013db2954df02752c3581196b4dbc3f938480faefc1d21c9063b |
+| races/cancel_then_result | mechanical field removal | 4654b03d9b670be95e8345291094904137d5607942d52ae273aa277d9acaa652 | 3e080ef4209a39e4dd2194021fa1ddf98755bad6ba2d7d94612efd77cbce0127 |
+| races/result_then_cancel | mechanical field removal | db8444f641b5651427b3c835e12a49e57b392e43c0a5b165a4654ca268159a18 | 7995df3d673290ad871fb5cf6311c5e7b540c1438028c78034e51e57f96d489f |
+| races/lost_late_result_settlement | mechanical field removal | fad2b3fe152b48eabfcec0c09697bab74da5a12185647cf36432b1e78b6c34f7 | 584dac0d90029d4e35af6173038e5b52b6a7f07a3961d6678cd41803be1d9810 |
+| races/lost_late_result_without_settlement | mechanical field removal | 60f15c72a8e4a38e985c54e5d3a73e901b9d0f7e3d149b473717e5413784cb9a | f601f0e56fcff63c081f8c0b064888904f07b735f67869977c4d5c713f4bb40e |
+| races/settlement_before_result | mechanical field removal | 653fe546fe19d43a68be8496ae0acbadc4dbdd11d9a9cd92ededb97f8dfb1992 | 21f06aee04c39d0cbec3b3779b4636ec964f1e32993f3fdfe883b238ece06e07 |
+| races/failure_then_settlement | mechanical field removal | 8f8e3a9efa3908a5ee4e0426b16e0a486c824b4c932cfc6b566cd1013fba66a4 | 9bfba990ac863a4b86f57980ef55d0c36b756f269a2df4b2fd13664af5ae2f25 |
+| races/settlement_then_failure | mechanical field removal | 01a7cc17d64e2623c88afd9bee1a19d0e504f6ca56fa40fb716eaff3d7ea4148 | e06b99074881fe317c8df1f8c8cc2d6ae97752f5f5de16d507286aff291a2fcb |
+| races/lost_unknown_settlement | mechanical field removal | 971276a3d4a6a5c44e64e7b312dc27cd4c06307cb925c528683f13ca8ac5aaee | f34c3ea279d6328ca33bcce1d91789449ab4efeab67733866a0a9603c8742f7a |
+| races/cancel_stop_late_result | mechanical field removal | d27e355d1f9335b9171ed2fff47540019ee9fb01d0b7f39164ae808f9bc399a9 | b5294a5f949d042263a6de0c9d2133a1100476d0cd6f630d93cd537c24bc2537 |
+| races/identical_terminal | mechanical field removal | 9010116c7ea7f9979f08a8cb3ea3288d49d4d741f7cacb09d578262c3bdde746 | b2d3e689fcbdc9a1f084192358168e9a42974a3d8d66a80b41cc310a1e9337cb |
+| races/identical_settlement | mechanical field removal | e285d35aa9eac647058258072777654ed0a6bfa7c47df7c367ecbd2112daf39e | 9b07d129f558cee82fa866ebd333c0d5c25d325dc2cca1185d6736cb0908d725 |
+| races/conflicting_terminal | mechanical field removal | 493d4badbbd10139356e0a04b253795d6a7466f50f9e5fe2d7da4abcfc13d106 | 3e778fcb0a6fe410ad3b1768d922b474553ae54d4f2a1a412dd9dad7a388c4a7 |
+| races/conflicting_settlement | mechanical field removal | d01f3466eeb37eebfbd3d8da36759a479ad4faa61493f8be16a111357a1c0d18 | f2d37a0aa917273483a50fa6f837bb7350b0ec0b90c1cd04381ff2fda4a2d8e0 |
+| races/scope_cancel | mechanical field removal | 371c66af47d3e290781f46d0f31e027b727013e7eec0ad46b8c8539cdab2245c | 65442def9b988d98c6af233894efd3d1241cfebbd9208d240a853f94546e6b21 |
+| inflight/dispatch_sets_both | mechanical field removal | c99ce761c3478f8d1d457b609f8aed93f93de0dfd8e3b1223c9562f5ccf06bd6 | 494ef294619b1cdbb475381d0369d671a38082fc797ab6ac874a63bd3dd54de7 |
+| inflight/lost_keeps_remote | mechanical field removal | 3f4c6d0c21389db9a8311a21367e2ea393be057fe064f4e853f84740a6ed6e63 | f0d15466ad674aaea0149e30a07981998b9851b049667668644b01682d916197 |
+| inflight/trusted_settlement_clears_remote | mechanical field removal | 03888eda9b82382f5866112f7c512ba63def38b2bf984e22ad4b3e7b466cd918 | 4c694a7d2f2cc2d83bfeaed3d90f8a2db5e293d7fe46b79aaab25c0b341a6dc9 |
+| inflight/unknown_settlement_keeps_remote | mechanical field removal | 4dc1039beffd722bdab7cf3a13d39df9cfa720f025342e649932a0ba5b40b002 | 2f6c4f5d07c1182c6e56b2b62b4a7dc8fd9da657cc87bde8c00531394c4d5053 |
+| inflight/result_clears_both | mechanical field removal | 508fc1099cdcb2928327e276f018cf9305d52b8753f15263cd757a444e93d72d | 54ea71c7ca9e7f9df39be67d47b1b93b7475cf21f49a51655a5373d5331cd92e |
+| binding/two_sources_same_key | mechanical field removal | 24d8f3d91681ae13f537efe84ae8b526f6dd22d04feb539b74d38af718484097 | 11f655b19634b108bcf11a32403ea137b257b94c0b4b92ce94598d35565b3469 |
+| binding/one_source_two_declarations | mechanical field removal | 97816a388325c4bc086751089b7d04fe208dbd355a63e9bee29ba19dd6bfa6ed | 05ddcf10f6a1748056a9404d98fa132321aa9585d51f484e53afd8fadaeb9fba |
+| binding/required_failure_preserves_prior | mechanical field removal | 53ab562db17363fc463e73c7760e2bf7ffed664f57bc41f149a6b9e08bda35ed | ce4d53fd5ac77ca993066b9296eee1b9becbca4e0c3ff4689ccc068f0e8f6185 |
+| binding/optional_failure_partial | mechanical field removal | 06ea43146028fc5adbcc6b57a724b6f46a12f8965a4ceee66ea19ec351331e32 | 2483dc7611ecb9825f2eff0fc9ad6c40537cef12b93d7d6a1ba0b725109b6800 |
+| binding/omitted_optional | mechanical field removal | 0a68d3c565d4aaf811059aa509abd7c351338558579ed21e41c5ada7909ddd2e | a140b4bdf9030def8fd34e4583ed9692356375ee2d1e293be0c41c376b6c427e |
+| binding/response_reordered | mechanical field removal | a1105e77b805e9523698e299a1bbce9369b0402dcafce0e4161e581429afe538 | eacb29d21df47c7181a96cba1215aa9a7e6484670b5973a5715f98189995fcbb |
+| binding/oversize_no_truncation | mechanical field removal | 7ff1280b63b73ea1a289032eb47ee933f0f6e90d2957a22b64b971f14bf31cbc | 41b8e7fab43a1ef801a68c1740b5065dabd8fcffc74bcdbfd5e0ebcfe8789fb3 |
+| binding/cancel_before_dispatch | mechanical field removal | 5010d949b693614ce0b3590b8e930a4eed875d57e5c67b7306386e148954a62b | e20d61d9260a2859eed3ae52f4a0a8fc9a10debcb7851dce34a3030a81c7f2b1 |
+| binding/cancel_after_dispatch_lost | mechanical field removal | 90e9b802bcc5e6be8d92ee3483890f7cf192c8f786f90f62fae7e1e702a07de9 | 5cc40668b03598a18d1f9018364b602f05c541e934182a85b6107040078c2d39 |
+| binding/exact_item_byte_bounds | mechanical field removal | fd24cc5bf2c98c50a78c55bbb982675b2c1cd1579131e50e68ab78e31afe99a7 | b172be5fc8583ac22bc34dfac70ada5f62f265d0a6db50909c3a024257b4cc08 |
+| binding/one_over_byte_bound | mechanical field removal | 46ae00b3cbefbdb9026ac46d28b130034870f786a933d8f500c4f67599b58532 | d7157889fdb0b2ef64291dba604f64206537f87594b7f3fcadd8044544b736af |
+| binding/one_over_item_bound | mechanical field removal | e208b4bd85aab7c97adc7f07cd62ce4a7594d88087715a9d846f18483305681d | 809921b0968bc29d8eff3d777285093478ecdae7432dc8fdb86e92d6e18db0a4 |
+| binding/unsolicited_source_result | boundary or semantic correction | 2a037c2d83a92cde2de2b07de86efd97a3f56a8bd0135113d26e3b10a4653e10 | 27796d771412c5e70834bc9b8485b979c59e1e394b74a78a14a0d49f20f2f8b6 |
+| binding/wrong_source | boundary or semantic correction | fd1603cb16fa4c45ae94e17456340823b02f5648bc5492cd771b189bdb066539 | 1353f8a7c160649db9ce53d6e4a22e0648b934d7e6b901fd09a2df48cf285880 |
+| binding/missing_result | mechanical field removal | 4534f45330a013a8c6b8dc63aaf3a167b70dc035ddc275cdc298131dd7385c53 | 1370ab70d05ddf561d3e48e7d4e47f9455e44163093e282db6fb1592c2534f85 |
+| binding/duplicate_result | mechanical field removal | 4bba74569ff97d173ac9858adfdfcab110eb9da8809862f167f51a747f242655 | 0b3ed98538a959bda59b7e9382c9ebeb41a34f1d9e4fed6886e2cef43a310ab4 |
+| binding/foreign_result_association | mechanical field removal | 6487926b107d749ce957c4cb62a0e1b948273ca910a006105fc78c83d1d8b4b9 | 2866058ea3c56cfcf36b501df94f94d7fcda1c475eeab7573931310adbf40b11 |
+| resources/caller_left_open | mechanical field removal | 04334916364895008a3072b8a09d3587877103c31fc358efd509cb1b50bc002d | 1ecf25e91e998761e17f6f49ea1ee2f5e0c1e4856aa963e0c24302f698884f61 |
+| resources/sdk_closed | mechanical field removal | e173317feb723be2d361f7c7e4d7dfe5c46c11a2e7d0871f45f6978125f6c729 | 943ea603dbe2b1d3a37187d8ab2be4008361cc92bb5983cc4739ce868f834ee4 |
+| resources/sdk_close_failed | mechanical field removal | 10f7aec371ef178eef2e51926309adacd94cf8b5c163705cb26c37b72fa0d168 | 9eb05ffee916377e32682e9269ef69c7b31f372562359a35213f41929d61ae70 |
+| resources/sdk_close_unknown | mechanical field removal | 061dfc1d4385ba31152891f3a48bb3d9b84d8fe952d4817e09f16f893fc98014 | 1f861f55b14f2907fc94115acb4d0b282d8ab07bdd8b93376e07bb077c1c6568 |
+| resources/sdk_remote_waits | mechanical field removal | 2ea8a6a662d81991d7c43a73ac86fc77af892b8939462061f7c236f83df63ee5 | 066fb28e037de49d9178c838ad593685381102923d30391af77d47fde095756f |
+| resources/sdk_safe_detach | mechanical field removal | 626a681a7ea0af4ed93b0631936394c1946534a863231960d8d53da36aeed976 | 23e50ba9a36cb435c2297510d2881ad81210350359ceb1f5ad4264c17ab856fa |
+| resources/local_inflight_waits | mechanical field removal | 6f7d6ad0f05d870cea8fc08fc41d81b20f497e22bd32dc7277755d65bb791d3a | d90635a1e44d2acc45cf7ecafd2225b438515bb5073aa58dea49197fbe3d99a4 |
+| resources/trusted_stop_then_close | mechanical field removal | 5f560564a34b887c04077665949a8d9a4667b74f917d60b4ab4b25d3b8801358 | 9bb45dff65909933f4ae9fd86aacbd2dd0a7860715b6bea276476db0ae5bbb87 |
+| bridges/cancel_before_start | mechanical field removal | 2f6df38c8d13f3eaa15a082226937cab18ecfda033162a79a02e8c9c137fb8fc | efe970ec379e9df4540d730a616aeb0d1fc8e432d90795ee95be6c957d1d8e9a |
+| bridges/result | mechanical field removal | 38f4d9b7b8534acc604214025e08a8e8592ee84676bfa06ac1798246ee2288b6 | a45df5cf32e086ad1b8086edc37130c9750f52453d7d796e6cf33e64bbefb2eb |
+| bridges/cancel_after_start | mechanical field removal | d124f8c1317a5630a8314d149cc5fd62011838e8120fe3fffd73f6e57044cd0f | a19476e884e02e0e67f4c091b0025e423e8669ab0f39ac443e84ef46f2a57aa8 |
+| bridges/cancel_after_dispatch | mechanical field removal | 309e2bf34ea566fc2289089026c853f6787cd291feee48e714b0fd1e277ee647 | b8b390cd90a3c8234f2420f9b01c581dbd7008ad85ea49b71b4f7baa8ee43f18 |
+| bridges/lost | mechanical field removal | 1754d821ff17d6ae6683ddd3009875a782e2d27642a194584e6303b827b3c60a | 2762734716bba6fdc3673195d6f3574406774e06bbed319b297aed4778fae0a4 |
+| bridges/request_inconsistent | mechanical field removal | 144cc6bdb7741dd2c64f824e37895d17ef72ecbd98ac556cfb78172b3ed241df | 5e344b3be4326f4e1503fa9ec6f6efce20796fb74a985912978751d543f44269 |
+| bridges/budget_exhausted | mechanical field removal | 89b6af0157351b41bd2e245402bfe70c435841878ec85c861dfc813856724054 | 2371525dda05b6cf2c797bb02777bc0194fbfc52780fda05cdbc497dfffe5afd |
+| bridges/request_limit_exhausted | mechanical field removal | 9200e880763834281323c2267ce7e4782ad43881cc98ba1aab2c1f02c1f8143f | 538f9c1c94a5f3b124b81e5245e8d7ba2f1c66704d95edf8718cd7983c5dad66 |
+| bridges/artifact_limit_exhausted | mechanical field removal | 977e754e5f34628530d71b3e181bbe52ce416eab4071d9e265b0f3aac6330ff8 | 536c37be961279e9f9ca73c1b64ad6f44073f33753ff1fa41b7c4170a0e6f057 |
+| bridges/deadline_exhausted | mechanical field removal | d5bfa5cba2cf930a2a066723ad802ecc60a8ec32d3b25c045e5b3c77253a369b | acd3793c5a03b9285652ccd87099ce23433dae13fa0ae0811f89be0e4f619f3c |
+| bridges/failure_rejected_before_acceptance | mechanical field removal | bf62ed533b046d4401a40312d77fb671529e4c7a6992cb0d56a64f4dfa764078 | cac409e1c3655e023505271f4023ea37c3779fd6d27e066d100d79a4bcae93b6 |
+| bridges/failure_retryable | mechanical field removal | 00a53cfc9c824b2230a133522317211e813f2a712761f352589ea4f3a7bba3df | 2f386ceebc09691f7d6ff9d351ea6662cf1d775ad6ff0e3fbf0d4ae2a95959df |
+| bridges/failure_malformed_response | mechanical field removal | e371edba224080bdeab1bf65a9237058f4be9c00b4780a4bf833586cd6d41a20 | 777897ef8c480ff48687027df2bb18b2651d73782c33146314a22874ee17e119 |
+| bridges/failure_permanent | mechanical field removal | 994c7bf7fd3eef30bf179e5511042005cc9c8bc819aa71beaca35b66c823b0be | 8e3b0f629ccc0d607a822be516f1591a4109fde7bcb7ec3e2a8194e38c7dd9bf |
+| bridges/failure_transport_unknown | mechanical field removal | bca0dd3cf9756c7bb59349e098ee1591a9d5afa506f1dae12ba957ec2a0eaeb4 | 55af0d610e0d7ed75f7fdc971306b0a1f9ed9ba408808a5ff81f5253e1a53332 |
+| bridges/failure_implementation_exception | mechanical field removal | eb4ab53a9cfedc4ed62692da206e865ff2107401c38c82aab67e32c5bb0a0ea0 | dd520c029bda653bd3469faaec8e7bb42983c8eddf3b8fc67aced4bed3bc649b |
+| bridges/shared_request_two_targets | mechanical field removal | 171a517c51e656ff88f38a7743a1357ab1885dff024050619a1b59dc04f9fc5a | 6f5602cbd862b9058f151e51004518966f4eac445b022dd245a37ce77ae0f386 |
+| bridges/shared_request_start_before_dispatch | mechanical field removal | 6a2628adfddfb5e477fca852d6bc4ad4b85287d0f8d9e04a88403054c2d94b4a | 6ea6654b2b6bd42ae5792c613d9eecdf2132f15e96e91bfc0f8628fef2f7dc39 |
+| bridges/retry_uses_latest_physical_request | mechanical field removal | 4e252910e6b160dae14aef6b7c34597f88627d61809937f811c47ad6f6389fc7 | 3498e7b779f4ff3badd3bafde1376ed3ed35e53b7875c882bd427d4ceccd3782 |
+| bridges/shared_request_missing | mechanical field removal | 0a37ac21cd7eb8a9b26bdb241e386eab23c1ea45ee31705f425523889a7bf80f | fa3732bf00cf86a77a3fe087894b1883d3dc2372b3db22bed0b4efdc0fdbddb6 |
+| bridges/shared_request_duplicate | mechanical field removal | aa61693d13c0adfb23eeb74621639f696e643136b7dc09bad3795434eea41b9c | d6b0fbb14ea8302abf7eb9f340fdba1a4cf226efc4b0ad02a7a79a900c226268 |
+| bridges/shared_request_extra | mechanical field removal | ce16af2250c94c04f4338dd7c0cad28dfc8d9c743f3d9dace358e823bc28c8fc | c278549286e3d0897faa1ba02a533d4488d8ae18802e5ffa51348dff36cd9464 |
+| bridges/shared_request_foreign | mechanical field removal | 2765ef0deef09b80b3be10040f49d453f171d51bed3b782b364c3b36f538e98e | 28b6a6795f81b92e6a6963b213296df631feef7befa20b6a888c97fc6cac7432 |
+| decisions/matching_resume_unrelated_advances | mechanical field removal | d0d31ec008e97850e739e12c23a0edbcacc1e9e3661812adca78990bd7d8bb59 | 5a0f34ecf6d8905c0b5538b595949b23fa63daac2a9c88f71e5aea1a61b08b12 |
+| decisions/stale_artifact | boundary or semantic correction | 841b4af1233e141e289614417d422732b5a47e2354089b4046beb5c07a09e9fa | b1b885cc299207df68ea10aa07f1f4f66eb15f9276e7e9aaf2c54af4924a928c |
+| decisions/foreign_workflow | boundary or semantic correction | 74d43e070a6cf97dfc2fa330bdc025128a047c7d81d8c150b1961e1b626d1351 | a38c68fedace4a60fc7fe8c68d88f416e895a36b950096f8701a4153d90babb4 |
+| decisions/foreign_wait | boundary or semantic correction | 81f5e9151c2580d89e600e4d275dd6378b9b2371e339d71b0846797ec6c51e35 | 8f08803c3d0e3b3a780ad56e67c134892a4fdd63cede47aa6a07398c45ea3ef2 |
+| decisions/unknown_decision | boundary or semantic correction | 6942f38f311e34744a502bbd342597c8563ae169aa22089e7fa70a01caa2348a | 45e07f99b45aa14e01f408cc84b611223dea74f4975f9589ad4f3ad79b8c3e79 |
+| decisions/duplicate_response | boundary or semantic correction | 0f93b0975a395e081f593ab0530dd729c067d0abcae41a4c886a77f6d3c0c2c1 | f41debeabd914f41e2137e135d1c54fc4c357f8d4302a6f331561aee5fd84f54 |
+| decisions/deadline | mechanical field removal | 7e110ae867d28bb784f3f39cb77cabbf83f39d92472d1de278a354c2bccccd14 | 99463ececbb854568a3c86d755f844172b7df7f6ab0f9abd6cad1ac0271fd7cb |
+| decisions/cancel_condition | mechanical field removal | 9816b0dae123008f08393fe4c0006929f817bb38bedbc4d28852f26d8f087d9f | 59b949f5c81aa1de897bcadcdafcc112a9947bd069f8b20202a5a995bbf508a2 |
+| decisions/implementation_failure | mechanical field removal | 84fe3784c1885b04e819e7f9ad5364a7c0f5099956f21e01bfd3c1537d4845e0 | 472b03aa1cfe785be36317650752fdc77b8f177ba712d425156627b674188c21 |
+| decisions/pending_exact | mechanical field removal | 5a9de064d264e4b73ae9b9ef0a18c57fad335b90e96e50748fe5c38a32b35c73 | 1977cb3ca85b063571dba0f37b2fe0d1fb96f54f4a01311c2d31cb467b87eb95 |
+| retry/failover_permanent_replay_idempotent | mechanical field removal | 69c145b2b38f896be85efaa409d36e490d80686098bc12f988d9fae0ff22f785 | 42355c4bcd11a5105d824d7295a7bae38bafe05c60811d1c6424e4a13316cf14 |
+| races/lost_late_failure_without_settlement | mechanical field removal | a57b0b45e86c3d085c130ab5b15bea0ae268f30c81f7d6afeab2868d59904aea | 80e47c766dfca07b8c1cf4db83d180e5c9ce5969b8021ba42f156e802e225df7 |
+| races/lost_conflicting_settlement_preserves_remote | mechanical field removal | f80296ceaab54fffcc7d971e020536a3a597676958514d3c440452d3e2510fe2 | 8bace3b5405fb7b121362dc8a81468c22b646a94b4f04dbfdbb48c45cfe2ca6f |
+| binding/lost_late_source_result | mechanical field removal | 95c7ec13c3ffde1754a2a681886f44a1caf55342fecc503eaf3bca60e32f3379 | 60a685f12801aff4d3e99c8b9ddd24abcd78f72001758110c40ce8aa00a427f8 |
+| binding/lost_late_source_failure | mechanical field removal | a5c07310e49f48eeb0df2e8b06f376429fecd8c5d9316a1be6ca14155eb589e9 | fc9ce38d7644596dfb3773e80f5d12692ebc98586e2303ea8cd00c8da591810e |
+| binding/cancelled_late_source_result | mechanical field removal | b85520b883212f1d78b8570225edda3e5d6b7e787cb968f5709d7d29a0adc9aa | 4dab3bbf1dd7e4138cd58708e51876193132ec8695c0ad98b0aabb35cfdcdc29 |
+| binding/cancelled_late_source_failure | mechanical field removal | b524a49ca2809c0c10c74b5004a7791154899d84d5c3ae271a6f0e5dc3f644c2 | b30a9f49a15b4d53a8cb130003cc7630b21de3f0fe8edcbc6becedc5830b0dae |
+| retry/latest_request_malformed | mechanical field removal | 5d58df181e9ae04d6580fc333c94dfb89e8d4a17a5821a5449107ce490f69f20 | ecf876d75a6295d0cb82186b6fe48d5296d22c04d7d476571937b1fcafd25ffe |
+| materialization/collection_ceiling | boundary or semantic correction | ad731bbd66db7e8856a567bec34226fc86e3a47e8ecf992d05f5a21bbc1179ff | b25ab1bf1a632d65dfbb5f40b45ab7184632dfc1e7f079f9db0549771a858d71 |
+| materialization/nested_collection_schema | boundary or semantic correction | 70e188a49495742adaf9a38eda6910a33f76abbe898863feac7421c4dde0ac89 | cd101ad740ff55f790e62cec2e253b604ffecc0aba2b3c490f504742af4ff341 |
+| materialization/collection_root_input | boundary or semantic correction | 122cbbe99dc8a961d282b83c234ff9e639838f3a002a7078022b4b45cac3a280 | b490255ad84598ec50daa218ac234a6b8c0840227c7bcd58eb498c728c8fe93c |
+| materialization/initial_single_exact | boundary or semantic correction | a7b283678368b36e3d0e0845c4f0b063efc7e84a2268b1dcba892a424383dc9b | c345a47f5d561d03a7686670027ddf9be2bc2887062f46175e04041004c448bd |
+| materialization/initial_single_multiple | boundary or semantic correction | 81ff8046ac225a4a0b91dd61c7058e5ee1e723653900a7bcc2681a88435bbe18 | ecd8d3a4719c628ae222138d5b2e0bf70e9726dffca7e50792950e0f09eadfc4 |
+| materialization/adaptive_single_exact | boundary or semantic correction | f6b4094b852691a72c97e6f04707a0b45af89243ea288f82a29e3653136883b2 | d16bb84e748732dd106bfa46b3a5d758125c5d4cc2ba2154d401532accb8eb94 |
+| materialization/adaptive_single_multiple | boundary or semantic correction | 866f14c2d819c13768bea00518123828e130a4d287f738cec14d09ab15f7d2b2 | 2bc11fc5486a30170a3c1cf71bde067b46b7f56ad2bcc3a913350977988fee22 |
+| materialization/initial_collection_1 | boundary or semantic correction | ee142059540e148c0ef2ca5f4865d68ed5c246832ef7acfab44fb8c69323d714 | 3c4844993714a2244ecc4e0c8ad77a64b040db18bae65285b8c93b7ca81a6bd4 |
+| materialization/initial_collection_2 | boundary or semantic correction | 51dcc125640e6d4b573edb8f97463aee16f180298bcf777b40b71db197c56c28 | d71df8eb91105f8eb157884900e3c9626081850aeba097d5700abfa46a40d54b |
+| materialization/initial_collection_3 | boundary or semantic correction | 73dd423f524e0c22259bfa07206908788647953d5238b7bf1fb7b7a17d286de8 | 9d5babdd8658d414065435d929406c826d2b5dc0277fe8f652e8ee2dc7b8204a |
+| materialization/initial_collection_one_over | boundary or semantic correction | 4c4f36086cedd2a1f54ba84cc07c8c2272fe55c3880d01ce4bb7b5fd643b3039 | a572e5611c17f51d2fc28ad5a1ac95ed9923dbaf364582333ea98de74a91ed0d |
+| materialization/initial_collection_0 | boundary or semantic correction | 4723129b79b9eb16a5a839fd9584da48abd13e0eff83fdd26a5a32e340bdd198 | b81f38d4d423c24058f85476db7157c5ec6a6c8d70de88fc9bfd7e8846e48021 |
+| materialization/initial_canonical_reorder | boundary or semantic correction | eb1ca708f85ecf5126dc14091135d4bcb1b3afb10a76a392796006479a099971 | 4071d4e805ba0a7eda756177a2023394021d7683359ad775dad5da668b7ac79b |
+| materialization/initial_duplicate | boundary or semantic correction | 13fcaf6223b128a414c5a0a1859cf69f6abcd31f6a80dbb14bdeb344b25848c3 | b2d135aadf96ebecae77db7ce8fa5440b513621a9a57a92c1ba8b329c39b27a8 |
+| materialization/initial_wrong_item | boundary or semantic correction | 0a6ff243cd4590eb3622df06ee8d0e049e8be0b53faf4a0c47310b1ed702be39 | 991141887904fc2fa454a475f8cb16d7d4ee4d9f4a121a2e4726c12db3e5b23e |
+| materialization/initial_nested_value | boundary or semantic correction | d5e31ae6821ef5a9591e819ef3f6b704366532b0bd30d061886489c91f5d149c | a817041e7b6a5a75aac1081729285f0f3707b4135930129910a82b76852ee1e0 |
+| materialization/initial_outer_count_precedence | boundary or semantic correction | 728d990da8385acecd2dc3ab7020d2041dc00764d1cca8c4a4572bc3bca39e7b | 165266659ebd134b4c15ef3154b98c083e75438b8f17f0e201a76630a5862948 |
+| materialization/adaptive_collection_1 | boundary or semantic correction | 71f591cba03f712ce74c04f69dac6e1c36d4747ae5afbf00c9ec465a710a2a92 | a6d8868a81c5286cd31e32cceb2a38a1107057e59a77f54511730ae7f3728f4b |
+| materialization/adaptive_collection_2 | boundary or semantic correction | 8f19ff30c77496be239980b4acc26ecff8e3595fbc4672221f95ee07b9abf6e0 | c847d5b46f4706d4361e53a342a5714452d322f4da1e4fefb345f2d170ad2a7d |
+| materialization/adaptive_collection_3 | boundary or semantic correction | 567c5e790efb67c6fb773fd45636739f8809edfb60f1c12e6c3e52df17016f0d | 7c814d2249be84d52ca6968ec8150f1bb3fb91578d5e98a10aa7610d61995d80 |
+| materialization/adaptive_collection_one_over | boundary or semantic correction | 0abf2ce03e2178d914a21f264609a7a9c7db45030039d2ad8bd0cc05974cd97f | 155ce3bf4d39ccfc4a3d34618d67d8a87175b140e36ccfb18f2d7129c04061b1 |
+| materialization/adaptive_collection_0 | boundary or semantic correction | 9883aaba938b6fdf63be9c1cbad4aa43f17507eea1d4f7258c70409a7b1247bb | 8cd86aea24d8a613d27b50f80f880c104d89722e463da6bd123fa0ebf8ceeedc |
+| materialization/adaptive_canonical_reorder | boundary or semantic correction | b448c5b512dbf3ea37d868b9d9958efad81cc47f1c2017b461ade64781f3e6f5 | f20adf5a09296d6243bb9ed0afaae00213e5e73bc50e7a8751811b5015c06cce |
+| materialization/adaptive_duplicate | boundary or semantic correction | 6b13f7e00f8aec49350e68d926e958147a2701e3d4cdc725be27121d763e2755 | fb51591cd2e92253d36e02009bf2480eec437cf039e304b102f27e2668f8d7a2 |
+| materialization/adaptive_wrong_item | boundary or semantic correction | e4591dd5d4981f5e14650adcc23c4c66cc8b42e543ba4e1727981e33cc10d5ad | d0adf485a7cc69143bc9995a0450c6aac526ec0db084f77322df9474be06475f |
+| materialization/adaptive_nested_value | boundary or semantic correction | 005b4f4e46eaa96331b6c5adb33a952956a609feb5f93a6a14dfb4dbd8910633 | 9016481652c7d2f9a6f4672a9fcb98645bb6b6a5dacab4459a64ca71ad3a9f8d |
+| materialization/adaptive_outer_count_precedence | boundary or semantic correction | d2597d3989a661773f45a56a858a53bf9ba77b61f7afbba5bbd50423f0a4da74 | 8e34c017d171c9024997d7fd48fd36afead79c6c3a937ef081a6eadde86138aa |
+| materialization/initial_artifact_count_one_over | boundary or semantic correction | 4adfc5e961cfb6a3d0a5a66d4b808ef717b59a6381151cfca481f106d2ecd74a | b471d070c525730dc4345d7a0b2f6789dc237ae948ecfad67895939aff197d1e |
+| materialization/initial_logical_bytes_one_over | boundary or semantic correction | a96b471cf00daa4438e4ee764e0823cdfc3177bb9d56d37f0ef658fe2fdd5881 | 88b78699c891447e3481614baad61e7d178e785b9d02554a277438bf0e20a3b7 |
+| materialization/initial_provenance_one_over | boundary or semantic correction | 47256781ac5c169550b221f4f4924bc2a9594fe26cc209efb88a5172788a49dd | 593194a4ef6e11e4c04ae79c6e9ac37892fc89a8f7eb22956c12d76244b1f153 |
+| materialization/initial_declared_bytes_exact | boundary or semantic correction | 0bb2c83f6b37e4b852bb87685083803b670b2f8755f7cdc585d542f06c8358d6 | fbee7c76ee144908580de9aba1d162f558a9778535c3c95a10ac1e7251e48f53 |
+| materialization/initial_declared_bytes_one_over | boundary or semantic correction | 950481b5426fa08133f8c632f24817530294c215d1b1028459e3e11d34b5c3d6 | 22731ef72f423dc9f45cab4f15be6885da0b4b3202966868200d643ec85a643e |
+| materialization/adaptive_foreign_association | boundary or semantic correction | ed3bbdd3a54e1353d2d5abe8711fce16403683f075bce76a7b88763b68dd53ef | 8f6288341f1ffb49809aad5563f79be378596e61e479bdb0d716630e37d9edd9 |
+| materialization/initial_unmaterialized_source_result | boundary or semantic correction | dfcc049a80d3db17f85433611e44dec5a9572d5a7266be27955f576da42cb95f | b04331886046ae95952db911fe2cf5ddffd9c5df12af7eb03a685becb869fcdd |
+| materialization/adaptive_unmaterialized_result | boundary or semantic correction | 88973b88f18da0990bbe7cf8ff663214c783ee3da2887bc1d88091bbcedaa23f | 8a918cbedc7d947fbb17f789ef223b6dc65c775f7886816fe1fd5e576b64676c |
+| materialization/binding_finish_before_materialization | boundary or semantic correction | 5f27bb2e6d43555f7d6885efa6f64fbaa5d11539e2f6dd07c766d44ac03ad2c8 | 80a87f487957a7600fe29e1d94346ada5d718a037efe8c0d250d02bd3ceabc4a |
+| materialization/same_port_distinct_nodes | boundary or semantic correction | 55b6535a80b0d17dec624d7ba64583a74cd8d00174fc47214371f97ee762e626 | 573df78be12b9524822044171d04320c247ec0b0b68c096f3f6010bcf08aea1b |
+| materialization/initial_single_zero_collection_limit | boundary or semantic correction | 29c359ef3e5bc266f532ba9d151312a3d5a9bca68b29d87e17716098f1dbee6e | 71d0490e9ebc495b62035637abbd49faa4a096fb30d1fcedcfca38aaf17b06fa |
+| materialization/initial_late_lost | boundary or semantic correction | 72586180e838544f5b29bee0d2a596264f43524e07b125a972b618205ea01682 | 75e3bbf1a7d3fc54b09b92ad1466a28cda210f668da629ec948f6cca21e8f181 |
+| materialization/initial_late_cancelled | boundary or semantic correction | 452179dfedde3060357413edfacf3ebf87510884019f40514c97f3b51fba92d2 | 984b20f417aae6265e3c52943b6bdde9a7946bbd53fe47e80254c5c2c636e8fb |
+| materialization/adaptive_single_zero_collection_limit | boundary or semantic correction | 047866c7ce4de01eb8c9a2e04025277e4a4eaca3cfc9d7db29aee070434a632c | 38cf7c31c555f2a5ed61d33fe742c209790ac26f2e9b08150ec9b3e3d0a35652 |
+| materialization/adaptive_late_lost | boundary or semantic correction | d104a9bbe48b6c6c1f8e516e2513b337aeaef2dd5a2ef2705dfdf3271fa15e70 | 3b3d074ef20f927c0a92f3d705b30e77b8d88dd7484c7a39f2a16510c770cb2c |
+| materialization/adaptive_late_cancelled | boundary or semantic correction | e28dad4e4f5d3a243594a20afd5a1d7c3fc33bd15be3df177308b1a092c5b66c | 2d00209213b669e6d548557f579a5b420b246964dada9d73c693677b21bcb9de |
+| materialization/adaptive_missing_parent | boundary or semantic correction | 96a4485a4c29296b2568810864118ba79b8e176ab9b9bf40a83d922812a5d24d | 5579f0f51a6f0614d04bdcb99bc3d672df64202fc0d29a3ba9587239dc3be87c |
+| materialization/adaptive_foreign_parent | boundary or semantic correction | 1ce3d1b5294099305ccc76e25bb9e2fb6e7411bdaf2f1e6e8b01fe465929fad2 | 79547dd5aac57055fd9a8e34614261aa9d8a52172aad7055b2d24a243ec20a32 |
+| materialization/adaptive_invented_parent | boundary or semantic correction | a98f3dc88a614c56c65fb57024d268d96b88c037ea6d0bda4cc5e96629609418 | 4b9a80466eec25f52bf5a34b973ad6f2cb8c8a701e282f4948d6174d17eb68b7 |
+| materialization/adaptive_missing_source_fact | boundary or semantic correction | 1280b4a92d193c4bd10dd687c1d531a92e627cf62ff0fe1ebbfcffcf5d67497d | 8409ea6c2aee60099b19f40e0e9dea1c5180d0543c0b98bbf59dde3e3c82e49c |
+| materialization/adaptive_result_bridge | boundary or semantic correction | 3e5895517faec381af34f6e33b9ad1e19d3a4e38fd36babca7cf8b5a7e510586 | 53b1838717d04f698d5c4ba0c201cd128bce131245feb6ecdcdc5f0dac7d1ea3 |
+| map/duplicate_item | boundary or semantic correction | bbfd6c4ace50861466569ffee96c875fe96f6dda6d38b04bbbc6c1122f020d6c | 2c15291c386b968b831e1dddc037baf6c26e9a608effa036e2eec852e47d1034 |
+| map/noncanonical_items | boundary or semantic correction | cb179d8920678621b307544106275c075f7e08e93da61c3d1c2fa344337bd33e | 5cc49175ca331cebd24f0ea3da419fc8126c3d605d37ca80eb291e71a1d27c2d |
+| map/caller_transition_verdict_rejected | boundary or semantic correction | 11d0bd3ef8648324e06a11df54549717def6056f57f755004b8f9a4aa6837c53 | b76ad7f215741e60eaf8377ea3a96dccf16c3bda72db9029b4e03d5782b3896a |
+| binding/explicit_omission_preserves_prior | mechanical field removal | b5ae25cd079841862ec378de7d7a93e148543594b9d175d7878ef65c31a3103f | db30749cf18231e485bbfe051ff5967d29699785b87f4718e0890105d9b6ca4a |
+| binding/required_omission_misuse | mechanical field removal | fe117d16b213ef82f9de1fca6b1994ecb336677547f250be9ce37bf0279c728e | 7ddda98ff1ce896ec88ccedf13e8c33f692cddd53a8ed57bf1a6d18c23163683 |
+| binding/adaptive_omission_misuse | mechanical field removal | 8245fc61db42e86a0cc19a1ba0579fc016465228e3acff22f9bdf55d9789fc8a | ffba8d4bc3b3f3518eeac740a99916b26f512288f2fd88edeb18aa7da36dfa6c |
+| binding/omission_failure_mismatch | boundary or semantic correction | aa59eb210615f59979251f768bb25e2b91632e89a1b5493b9da008e73a4ff117 | 69530019162069383b1aee1fdae082649872c3f83912e1d9b80b76028dc43c35 |
+| binding/source_failure_retry_authority | mechanical field removal | 603a13749d3019f5347514ea6f0a5f68bad8365a4536fe58c87c7c6ce7e76710 | 4d74d865a91068a91b7d384d980d0c5b4eb8a7b2e1398ed1d57441d53ce3b212 |
+| binding/source_failure_correction_authority | mechanical field removal | 502b7b86e1c08ca7140cbcc8ab13a11b412b7eea70e5e0df406d38648115854b | 151955d71654c009b6fca71b1bcf99906c972f519a89a2eb5f8c9851e2b98abe |
+| binding/source_failure_missing_failure | boundary or semantic correction | 1266a08f2cbe7fa21ac71a854aafb18b21d36d689e9b3c98bd176ff967040df1 | 79bc702557ac0aa433646881ff76ceee3b64d2e89a179d74d6c30ffab592eba5 |
+| binding/source_failure_missing_settlement | boundary or semantic correction | c930cfd61dc3e399dc03444b4b142d0186fb4004ff8d83965e851e11f46253be | 5939bc3fba17c0e52eea64faccf0350f2cb41b4585182e5d805ce7570d9d7caa |
+| binding/source_failure_explicit_no_settlement | mechanical field removal | 1e16f14f2aa82bcbb199cec7b98a7f4cc59b6497502966fcee786f132c8b7156 | ea00617ba7518b691b86a1c9350e5321a6b3d76a6aadfe7fdcae914919fe2da0 |
+| binding/empty_optional_response_malformed | mechanical field removal | f45c811f49959723bc529aa673d4d3d25c3395636db1fb821ebf35b914dcd5d7 | 8e2f913693157b2f956df146f761f8a2b9b2d7ddea3436270d87eb4133e645c8 |
+| binding/oversize_retrieved_known_usage | mechanical field removal | 2c6b93fc1faac4c35873463a9e798471d0e6918f72042adf4105fcf6984f50c0 | 1274d0e4a5a68ccac0f7e87d9dbac26c51cb9eb53805cb2d0f45e6f75403463a |
+| binding/success_after_failure_preserves_authority | mechanical field removal | e5be580f63be7434e5458a41b4c07ecd22f92db3ed4449e8d64bc3f47b978d2b | acc2c7415dcd02a92640974761380e293eba6662111c8054fd6cdb7b508faa1d |
+| binding/adaptive_semantic_outcome_independent | mechanical field removal | 7e42f90f3c55c27d4eb3146d1e6ceb8aac7499c71385064e21f429f4957247ae | c15f2c00c7b5c1391f4b506a102bcb3f748029c63653811a1707a84eed86857e |
+| binding/optional_oversize_partial | mechanical field removal | 45d067f7333497e5b95b74ae4da3b53c1016c6d39174b6cba78c18ff02445e11 | 9100d5834727f51ea8f687af8e881c8bcb4cb9ea9b9869c7f66db0d0827fd49f |

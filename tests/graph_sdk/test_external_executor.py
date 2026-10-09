@@ -1,0 +1,426 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+"""External execution tests for bounded remote-work ownership."""
+
+from __future__ import annotations
+
+import asyncio
+from dataclasses import dataclass, field, replace
+
+import pytest
+
+from anonymizer.engine.graph_sdk.capabilities import ImplementationCapability
+from anonymizer.engine.graph_sdk.context import admit_context_plan
+from anonymizer.engine.graph_sdk.executor import (
+    AssessmentLimits,
+    DecisionLimits,
+    ExecutionImplementation,
+    ExecutionLimits,
+    ExecutionServices,
+    ImplementationHandle,
+    OperationExecutionPolicy,
+    admit_execution_plan,
+    start_execution,
+)
+from anonymizer.engine.graph_sdk.preparation import PreparationConfiguration
+from anonymizer.engine.graph_sdk.requests import (
+    AssociationResult,
+    DispatchEnvelope,
+    ExactUsage,
+    ExternalSettlement,
+    PhysicalRequestPolicy,
+    PortArtifact,
+    SemanticAssociation,
+    StopConfirmed,
+    TaskAttemptId,
+    TextArtifactValue,
+    TransportFailure,
+    TransportLost,
+    TransportResult,
+    TransportSuccess,
+    UnknownUsage,
+)
+from anonymizer.engine.graph_sdk.resources import ResourceLease
+from anonymizer.graph.workflow import (
+    DynamicScope,
+    NodeOutputRef,
+    OperationNode,
+    OutputBinding,
+    OutputDependency,
+    OutputPort,
+    WorkflowOutputRef,
+    admit_activation_workflow,
+    admit_static_workflow,
+)
+from tests.graph_sdk.test_adaptive_executor import _adaptive_rows
+from tests.graph_sdk.test_local_executor import _Clock
+from tests.graph_sdk.test_preparation import _capability, _data, _limits, _prepare, _workflow
+
+
+@dataclass
+class _LostTransport:
+    calls: int = 0
+    closed: bool = False
+
+    async def dispatch(self, request: DispatchEnvelope) -> TransportResult:
+        del request
+        self.calls += 1
+        return TransportLost(settlement=None)
+
+    async def cancel(self, request: object) -> StopConfirmed:
+        del request
+        return StopConfirmed(usage=UnknownUsage())
+
+    async def close(self) -> None:
+        self.closed = True
+
+
+@dataclass
+class _DelayedSuccessTransport:
+    release: asyncio.Event
+    first_dispatched: asyncio.Event
+    calls: int = 0
+    mode: str = "valid"
+    envelopes: list[DispatchEnvelope] = field(default_factory=list)
+
+    async def dispatch(self, request: DispatchEnvelope) -> TransportResult:
+        self.calls += 1
+        self.envelopes.append(request)
+        if self.calls == 1:
+            self.first_dispatched.set()
+            await self.release.wait()
+        if self.mode == "retry" and self.calls == 1:
+            return TransportFailure(
+                failure="retryable",
+                settlement=ExternalSettlement(
+                    request=request.request,
+                    disposition="completed",
+                    usage=ExactUsage(input_units=0, output_units=0),
+                    remote_stopped=True,
+                ),
+            )
+        rows = tuple(
+            AssociationResult(
+                association=item.association,
+                outcome="ok",
+                outputs=(
+                    PortArtifact(
+                        port="output",
+                        artifact_type=request.operation.outputs[0].artifact_type,
+                        artifact=None,
+                        value=TextArtifactValue(text="x"),
+                    ),
+                )
+                if self.mode in {"output_valid", "output_limit"}
+                else (),
+                consumed_context_ports=frozenset(),
+            )
+            for item in reversed(request.associations)
+        )
+        if self.mode == "missing":
+            rows = rows[:1]
+        elif self.mode == "duplicate":
+            rows = (rows[0], rows[0])
+        elif self.mode == "extra":
+            rows = (*rows, rows[0])
+        elif self.mode == "foreign":
+            association = rows[0].association
+            assert isinstance(association, SemanticAssociation)
+            rows = (
+                replace(
+                    rows[0],
+                    association=SemanticAssociation(task=TaskAttemptId.new(activation=association.task.activation)),
+                ),
+                rows[1],
+            )
+        return TransportSuccess(
+            results=rows,
+            settlement=ExternalSettlement(
+                request=request.request,
+                disposition="completed",
+                usage=ExactUsage(input_units=0, output_units=0),
+                remote_stopped=True,
+            ),
+        )
+
+    async def cancel(self, request: object) -> StopConfirmed:
+        del request
+        return StopConfirmed(usage=UnknownUsage())
+
+    async def close(self) -> None:
+        return None
+
+
+def test_remote_outstanding_capacity_closes_later_work_without_overdispatch() -> None:
+    asyncio.run(_assert_remote_capacity())
+
+
+async def _assert_remote_capacity() -> None:
+    workflow, node, _ = _workflow(requests=1)
+    capability: ImplementationCapability = _capability(workflow, external=True)
+    prepared = _prepare(
+        data=_data(2),
+        workflow=workflow,
+        capability=capability,
+        configuration=PreparationConfiguration(
+            purpose="execution_only",
+            required_protection_outcomes=frozenset(),
+            hard_request_limit=2,
+        ),
+        limits=_limits(capabilities=1),
+    )
+    context = admit_context_plan(
+        prepared=prepared,
+        bound_context=None,
+        adaptive_retrievals=(),
+        context_capabilities=(),
+    )
+    request_policy = PhysicalRequestPolicy(
+        visibility="dispatch_and_settlement",
+        pre_dispatch_control="executor",
+        retry_owner="executor",
+        replay="idempotent",
+        max_attempts=1,
+    )
+    implementation = ExecutionImplementation(
+        implementation=capability.implementation,
+        configuration=capability.configuration,
+        capability=capability,
+        request=request_policy,
+    )
+    policy = OperationExecutionPolicy(
+        node=node,
+        kind="external",
+        request=request_policy,
+        safe_detachment="independent_after_dispatch",
+        implementations=(implementation,),
+        result_outcomes=frozenset({"ok"}),
+        runtime_outcomes=_adaptive_rows(),
+    )
+    admitted = admit_execution_plan(
+        context=context,
+        capabilities=(capability,),
+        policies=(policy,),
+        decisions=(),
+        assessment_productions=(),
+        assessment_limits=AssessmentLimits(
+            max_productions=0,
+            max_findings_per_production=0,
+            max_finding_code_bytes=0,
+            max_absence_queries=0,
+            max_assessment_facts=0,
+            max_port_facts=0,
+            max_provenance_edges=0,
+        ),
+    )
+    transport = _LostTransport()
+    result = await (
+        await start_execution(
+            admitted=admitted,
+            capabilities=(capability,),
+            services=ExecutionServices(
+                handles=(
+                    ImplementationHandle(
+                        implementation=capability.implementation,
+                        operation=capability.operation,
+                        configuration=capability.configuration,
+                        local=None,
+                        transport=transport,
+                        resource=ResourceLease.create(
+                            owner="sdk",
+                            safe_detachment="independent_after_dispatch",
+                            handle=transport,
+                        ),
+                    ),
+                ),
+                context_resources=(),
+                limits=ExecutionLimits(
+                    max_local_in_flight=0,
+                    max_remote_outstanding=1,
+                    max_runtime_artifacts=0,
+                    max_runtime_artifact_bytes=0,
+                    max_collection_items=0,
+                ),
+                decision_limits=DecisionLimits(max_pending=0, max_lifetime_ns=0),
+                clock=_Clock(),
+            ),
+        )
+    ).wait()
+    assert transport.calls == 1
+    assert transport.closed
+    assert all(state.complete for state in result.states)
+    assert sorted(item.category for item in result.record.terminals) == ["blocked", "lost"]
+    assert len(result.requests.remote_outstanding) == 1
+    assert result.cleanup[0].disposition == "closed"
+
+
+def test_remote_capacity_waits_for_settlement_before_dispatching_later_work() -> None:
+    asyncio.run(_assert_transient_remote_capacity())
+
+
+async def _assert_transient_remote_capacity(*, shared: bool = False, mode: str = "valid") -> None:
+    workflow, node, artifact_type = _workflow(requests=2 if mode == "retry" else 1)
+    if mode in {"output_valid", "output_limit"}:
+        static = workflow.workflow
+        operation = replace(
+            static.interface,
+            outputs=(OutputPort(name="output", artifact_type=artifact_type),),
+            output_dependencies=(OutputDependency(output="output", inputs=frozenset(), identity_input=None),),
+            outcomes=(replace(static.interface.outcomes[0], produced_ports=frozenset({"output"})),),
+        )
+        rebuilt = admit_static_workflow(
+            workflow=static.workflow,
+            interface=operation,
+            nodes=(OperationNode(id=node, operation=operation),),
+            input_bindings=(),
+            output_bindings=(
+                OutputBinding(
+                    source=NodeOutputRef(node=node, port="output"), destination=WorkflowOutputRef(port="output")
+                ),
+            ),
+            outcome_bindings=tuple(static.outcome_bindings),
+            sequence=(),
+            choices=(),
+            protection=(),
+            limits=replace(static.limits, max_bindings=2),
+        )
+        workflow = admit_activation_workflow(
+            workflow=rebuilt,
+            scopes=(DynamicScope(workflow=rebuilt, maps=(), joins=(), loops=()),),
+            limits=workflow.limits,
+        )
+    capability: ImplementationCapability = _capability(workflow, external=True)
+    if mode == "retry":
+        capability = replace(capability, max_physical_requests_per_activation=2)
+    if shared:
+        capability = replace(capability, attribution="keyed_shared_request")
+    prepared = _prepare(
+        data=_data(2),
+        workflow=workflow,
+        capability=capability,
+        configuration=PreparationConfiguration(
+            purpose="execution_only",
+            required_protection_outcomes=frozenset(),
+            hard_request_limit=2,
+        ),
+        limits=_limits(capabilities=1),
+    )
+    context = admit_context_plan(
+        prepared=prepared,
+        bound_context=None,
+        adaptive_retrievals=(),
+        context_capabilities=(),
+    )
+    request_policy = PhysicalRequestPolicy(
+        visibility="dispatch_and_settlement",
+        pre_dispatch_control="executor",
+        retry_owner="executor",
+        replay="idempotent",
+        max_attempts=2 if mode == "retry" else 1,
+    )
+    implementation = ExecutionImplementation(
+        implementation=capability.implementation,
+        configuration=capability.configuration,
+        capability=capability,
+        request=request_policy,
+    )
+    admitted = admit_execution_plan(
+        context=context,
+        capabilities=(capability,),
+        policies=(
+            OperationExecutionPolicy(
+                node=node,
+                kind="external",
+                request=request_policy,
+                safe_detachment="independent_after_dispatch",
+                implementations=(implementation,),
+                result_outcomes=frozenset({"ok"}),
+                runtime_outcomes=_adaptive_rows(),
+            ),
+        ),
+        decisions=(),
+        assessment_productions=(),
+        assessment_limits=AssessmentLimits(
+            max_productions=0,
+            max_findings_per_production=0,
+            max_finding_code_bytes=0,
+            max_absence_queries=0,
+            max_assessment_facts=0,
+            max_port_facts=2,
+            max_provenance_edges=0,
+        ),
+    )
+    release = asyncio.Event()
+    first_dispatched = asyncio.Event()
+    transport = _DelayedSuccessTransport(release=release, first_dispatched=first_dispatched, mode=mode)
+    running = await start_execution(
+        admitted=admitted,
+        capabilities=(capability,),
+        services=ExecutionServices(
+            handles=(
+                ImplementationHandle(
+                    implementation=capability.implementation,
+                    operation=capability.operation,
+                    configuration=capability.configuration,
+                    local=None,
+                    transport=transport,
+                    resource=ResourceLease.create(
+                        owner="sdk",
+                        safe_detachment="independent_after_dispatch",
+                        handle=transport,
+                    ),
+                ),
+            ),
+            context_resources=(),
+            limits=ExecutionLimits(
+                max_local_in_flight=0,
+                max_remote_outstanding=1,
+                max_runtime_artifacts=1 if mode == "output_limit" else 2,
+                max_runtime_artifact_bytes=2,
+                max_collection_items=0,
+            ),
+            decision_limits=DecisionLimits(max_pending=0, max_lifetime_ns=0),
+            clock=_Clock(),
+        ),
+    )
+    await first_dispatched.wait()
+    await asyncio.sleep(0)
+    assert transport.calls == 1
+    release.set()
+    result = await running.wait()
+    physical_count = 2 if mode == "retry" or not shared else 1
+    assert transport.calls == physical_count
+    assert [len(envelope.associations) for envelope in transport.envelopes] == (
+        [2] * physical_count if shared else [1, 1]
+    )
+    if mode == "retry":
+        assert transport.envelopes[0].associations == transport.envelopes[1].associations
+        assert [envelope.purpose for envelope in transport.envelopes] == ["initial", "retry"]
+    assert all(state.complete for state in result.states)
+    if mode in {"valid", "retry", "output_valid"}:
+        assert all(item.category == "success" for item in result.record.terminals)
+    elif mode == "output_limit":
+        assert all(item.category != "success" for item in result.record.terminals)
+        assert not result.artifacts
+        assert not result.ports
+        assert not result.final_outputs
+        assert not result.provenance
+        assert not result.assessments
+    else:
+        assert all(item.category == "inconsistent" for item in result.record.terminals)
+    if mode == "output_valid":
+        assert len(result.artifacts) == len(result.ports) == len(result.final_outputs) == 2
+    assert result.requests.dispatched_count == physical_count
+    assert len(result.requests.terminals) == result.requests.dispatched_count
+    assert len(result.requests.settlements) == result.requests.dispatched_count
+    assert not result.requests.remote_outstanding
+
+
+@pytest.mark.parametrize("mode", ["valid", "missing", "duplicate", "extra", "foreign", "retry"])
+def test_shared_request_dispatches_once_and_bridges_each_key(mode: str) -> None:
+    asyncio.run(_assert_transient_remote_capacity(shared=True, mode=mode))
+
+
+@pytest.mark.parametrize("mode", ["output_valid", "output_limit"])
+def test_shared_request_publishes_all_outputs_or_rolls_back(mode: str) -> None:
+    asyncio.run(_assert_transient_remote_capacity(shared=True, mode=mode))

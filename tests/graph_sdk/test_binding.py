@@ -1,0 +1,828 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+"""Initial context binding tests with real provider calls and receipts."""
+
+from __future__ import annotations
+
+import asyncio
+from dataclasses import dataclass, field, replace
+from typing import Any, cast
+
+import pytest
+
+from anonymizer.engine.graph_sdk._effect_values import EffectRejected
+from anonymizer.engine.graph_sdk.binding import start_initial_binding
+from anonymizer.engine.graph_sdk.context import (
+    BindingLimits,
+    ContextMaterialization,
+    ContextResource,
+    ContextSelector,
+    ContextSourceCapability,
+    ContextSourceRef,
+    InitialContextDecl,
+    RetrievalBounds,
+    SourceFailure,
+    SourceItem,
+    SourceResponse,
+    admit_context_plan,
+)
+from anonymizer.engine.graph_sdk.requests import (
+    ExactUsage,
+    ExternalSettlement,
+    PhysicalRequestId,
+    PhysicalRequestPolicy,
+    RequestAssociation,
+    StopConfirmed,
+)
+from anonymizer.engine.graph_sdk.resources import ResourceLease
+from anonymizer.graph.workflow import (
+    ContextInputRef,
+    ContextUse,
+    DynamicLimits,
+    DynamicScope,
+    NodeId,
+    OperationNode,
+    WorkflowId,
+    admit_activation_workflow,
+    admit_static_workflow,
+)
+from tests.graph_sdk.test_preparation import _capability, _data, _prepare, _workflow
+
+
+@dataclass
+class _Provider:
+    calls: int = 0
+
+    async def retrieve(
+        self,
+        *,
+        request: PhysicalRequestId,
+        association: RequestAssociation,
+        selector: ContextSelector,
+        bounds: RetrievalBounds,
+    ) -> SourceResponse:
+        self.calls += 1
+        assert bounds.max_items == 1 and not selector.fields
+        return SourceResponse(
+            source=SOURCE,
+            items=(SourceItem(association=association, key=0, version=1, text="context"),),
+            settlement=ExternalSettlement(
+                request=request,
+                disposition="completed",
+                usage=ExactUsage(input_units=1, output_units=1),
+                remote_stopped=True,
+            ),
+        )
+
+    async def cancel(self, request: object) -> StopConfirmed:
+        del request
+        return StopConfirmed(usage=ExactUsage(input_units=0, output_units=0))
+
+
+@dataclass
+class _RetryProvider:
+    calls: int = 0
+    latest: bool = False
+    correction: bool = False
+
+    async def retrieve(self, *, request, association, selector, bounds):
+        del selector, bounds
+        self.calls += 1
+        settlement = ExternalSettlement(
+            request=request,
+            disposition="completed",
+            usage=ExactUsage(input_units=1, output_units=1),
+            remote_stopped=True,
+        )
+        if self.calls == 1:
+            if self.correction:
+                return SourceResponse(
+                    source=SOURCE if self.latest else OTHER_SOURCE,
+                    items=tuple(SourceItem(association=association, key=key, version=1, text="bad") for key in (0, 1)),
+                    settlement=settlement,
+                )
+            return SourceFailure(source=SOURCE, failure="retryable", settlement=settlement)
+        return SourceResponse(
+            source=SOURCE,
+            items=tuple(
+                SourceItem(association=association, key=0, version=version, text="retried")
+                for version in ((2, 1) if self.latest else (1,))
+            ),
+            settlement=settlement,
+        )
+
+    async def cancel(self, request):
+        del request
+        return StopConfirmed(usage=ExactUsage(input_units=0, output_units=0))
+
+
+@dataclass
+class _LateProvider:
+    mode: str
+    acknowledge_stop: bool
+    started: asyncio.Event = field(default_factory=asyncio.Event)
+
+    async def retrieve(self, *, request, association, selector, bounds):
+        del selector, bounds
+        self.started.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            pass
+        settlement = ExternalSettlement(
+            request=request,
+            disposition="completed",
+            usage=ExactUsage(input_units=1, output_units=1),
+            remote_stopped=True,
+        )
+        if self.mode == "failure":
+            return SourceFailure(source=SOURCE, failure="permanent", settlement=settlement)
+        return SourceResponse(
+            source=SOURCE,
+            items=tuple(
+                SourceItem(association=association, key=key, version=1, text="late")
+                for key in (range(2) if self.mode == "multiple" else range(1))
+            ),
+            settlement=settlement,
+        )
+
+    async def cancel(self, request):
+        del request
+        if not self.acknowledge_stop:
+            raise RuntimeError("stop not acknowledged")
+        return StopConfirmed(usage=ExactUsage(input_units=0, output_units=0))
+
+
+SOURCE = ContextSourceRef(name="test-source", revision=1)
+OTHER_SOURCE = ContextSourceRef(name="other-source", revision=1)
+
+
+def test_source_failure_rejects_incomplete_and_contradictory_values_at_construction() -> None:
+    with pytest.raises(TypeError):
+        cast(Any, SourceFailure)(source=SOURCE)
+    with pytest.raises(TypeError):
+        cast(Any, SourceFailure)(source=SOURCE, failure="permanent")
+    with pytest.raises(EffectRejected) as rejected:
+        SourceFailure(
+            source=SOURCE,
+            failure="retryable",
+            settlement=None,
+            disposition="omitted_optional",
+        )
+    assert rejected.value.code.value == "contradictory"
+    assert (
+        SourceFailure(
+            source=SOURCE,
+            failure="permanent",
+            settlement=None,
+            disposition="omitted_optional",
+        ).disposition
+        == "omitted_optional"
+    )
+
+
+@dataclass
+class _BoundaryProvider:
+    mode: str
+
+    async def retrieve(self, *, request, association, selector, bounds):
+        del selector, bounds
+        items = (
+            SourceItem(
+                association=association,
+                key=0,
+                version=1,
+                text="too-long" if self.mode == "oversize" else "ok",
+            ),
+        )
+        if self.mode == "multiple":
+            items += (SourceItem(association=association, key=1, version=1, text="b"),)
+        elif self.mode == "duplicate":
+            items += (SourceItem(association=association, key=0, version=1, text="duplicate"),)
+        elif self.mode == "versions":
+            items += (SourceItem(association=association, key=0, version=2, text="b"),)
+        return SourceResponse(
+            source=OTHER_SOURCE if self.mode == "malformed" else SOURCE,
+            items=items,
+            settlement=ExternalSettlement(
+                request=request,
+                disposition="completed",
+                usage=ExactUsage(input_units=1, output_units=1),
+                remote_stopped=True,
+            ),
+        )
+
+    async def cancel(self, request):
+        del request
+        return StopConfirmed(usage=ExactUsage(input_units=0, output_units=0))
+
+
+def _context_workflow():
+    admitted, node, artifact = _workflow(with_input=True)
+    static = admitted.workflow
+    operation_node = next(item for item in static.nodes if isinstance(item, OperationNode))
+    outcome = replace(
+        operation_node.operation.outcomes[0],
+        context=frozenset({ContextUse(port="input", meaning="test", capture="whole_artifact")}),
+    )
+    operation = replace(operation_node.operation, outcomes=(outcome,))
+    rebuilt = admit_static_workflow(
+        workflow=static.workflow,
+        interface=operation,
+        nodes=(OperationNode(id=node, operation=operation),),
+        input_bindings=tuple(
+            replace(binding, source=ContextInputRef(port=binding.source.port)) for binding in static.input_bindings
+        ),
+        output_bindings=tuple(static.output_bindings),
+        outcome_bindings=tuple(static.outcome_bindings),
+        sequence=tuple(static.sequence),
+        choices=tuple(static.choices),
+        protection=(),
+        limits=static.limits,
+    )
+    return (
+        admit_activation_workflow(
+            workflow=rebuilt,
+            scopes=(DynamicScope(workflow=rebuilt, maps=(), joins=(), loops=()),),
+            limits=DynamicLimits(
+                max_maps=0,
+                max_joins=0,
+                max_loops=0,
+                max_children_per_map=0,
+                max_iterations_per_loop=0,
+                max_dynamic_depth=1,
+                max_activation_occurrences=1,
+            ),
+        ),
+        node,
+        artifact,
+    )
+
+
+def test_initial_binding_preserves_provider_text_and_receipt() -> None:
+    asyncio.run(_assert_initial_binding())
+
+
+@pytest.mark.parametrize("mode", ("response", "failure", "multiple"))
+@pytest.mark.parametrize("acknowledge_stop", (False, True))
+@pytest.mark.parametrize("latest", (False, True))
+def test_initial_binding_retains_late_request_facts_without_materializing(
+    mode: str,
+    acknowledge_stop: bool,
+    latest: bool,
+) -> None:
+    asyncio.run(_assert_late_initial_binding(mode, acknowledge_stop, latest=latest))
+
+
+async def _assert_late_initial_binding(mode: str, acknowledge_stop: bool, *, latest: bool) -> None:
+    workflow, node, artifact = _context_workflow()
+    data = _data(1)
+    target = next(iter(data.targets))
+    policy = PhysicalRequestPolicy(
+        visibility="dispatch_and_settlement",
+        pre_dispatch_control="executor",
+        retry_owner="executor",
+        replay="idempotent",
+        max_attempts=1,
+    )
+    capability = ContextSourceCapability(
+        source=SOURCE,
+        artifact_type=artifact,
+        uses=frozenset({"initial_binding"}),
+        execution="async",
+        resource_owner="caller",
+        cancellation="cooperative_ack",
+        settlement="explicit_ack",
+        usage="exact",
+        request=policy,
+        safe_detachment="forbidden",
+    )
+    declaration = InitialContextDecl(
+        target=target,
+        node=node,
+        port="input",
+        artifact_type=artifact,
+        source=SOURCE,
+        selector=ContextSelector(fields=()),
+        requirement="required",
+        bounds=RetrievalBounds(max_items=1, max_bytes=20, max_requests=1),
+        materialization=ContextMaterialization(kind="single", item_type=artifact),
+        version_selection="latest" if latest else "exact_one",
+    )
+    provider = _LateProvider(mode=mode, acknowledge_stop=acknowledge_stop)
+    running = await start_initial_binding(
+        data=data,
+        workflow=workflow,
+        declarations=(declaration,),
+        capabilities=(capability,),
+        resources=(
+            ContextResource(
+                source=SOURCE,
+                capability=capability,
+                lease=ResourceLease.create(owner="caller", safe_detachment="forbidden", handle=provider),
+                factory=None,
+            ),
+        ),
+        limits=BindingLimits(
+            max_declarations=1,
+            max_sources=1,
+            max_capabilities=1,
+            max_selector_fields=0,
+            max_selector_bytes=0,
+            max_items=1,
+            max_bytes=20,
+            max_requests=1,
+            max_resources=1,
+        ),
+    )
+    await provider.started.wait()
+    running.request_cancel()
+    result = await running.wait()
+    expected_terminal = "cancelled" if acknowledge_stop else "lost"
+    assert result.receipt.terminal == ("failed" if acknowledge_stop else "lost")
+    assert result.receipt.sources[0].terminal == expected_terminal
+    assert result.context is None
+    assert not result.receipt.artifacts
+    request = result.receipt.requests
+    assert request.terminals[0].category == expected_terminal
+    assert request.cancel_requested == frozenset({request.dispatches[0].request})
+    assert [item.code for item in request.defects] == ["conflicting_terminal"]
+    assert len(request.settlements) == 1
+
+    late_terminal = request.defects[0].terminal
+    assert late_terminal is not None
+    malformed = latest and mode == "multiple"
+    assert late_terminal.category == ("failure" if malformed or mode == "failure" else "success")
+    assert late_terminal.failure == ("malformed_response" if malformed else "permanent" if mode == "failure" else None)
+
+
+def test_context_source_requires_exact_initial_declaration_before_provider_effects() -> None:
+    asyncio.run(_assert_context_source_requires_exact_initial_declaration())
+
+
+async def _assert_context_source_requires_exact_initial_declaration() -> None:
+    workflow, node, artifact = _context_workflow()
+    data = _data(1)
+    target = next(iter(data.targets))
+    policy = PhysicalRequestPolicy(
+        visibility="dispatch_and_settlement",
+        pre_dispatch_control="executor",
+        retry_owner="executor",
+        replay="idempotent",
+        max_attempts=1,
+    )
+    capability = ContextSourceCapability(
+        source=SOURCE,
+        artifact_type=artifact,
+        uses=frozenset({"initial_binding"}),
+        execution="async",
+        resource_owner="caller",
+        cancellation="cooperative_ack",
+        settlement="explicit_ack",
+        usage="exact",
+        request=policy,
+        safe_detachment="forbidden",
+    )
+    provider = _Provider()
+    base = InitialContextDecl(
+        target=target,
+        node=node,
+        port="input",
+        artifact_type=artifact,
+        source=SOURCE,
+        selector=ContextSelector(fields=()),
+        requirement="required",
+        bounds=RetrievalBounds(max_items=1, max_bytes=20, max_requests=1),
+        materialization=ContextMaterialization(kind="single", item_type=artifact),
+    )
+    absent = NodeId.new(workflow=node.workflow)
+    cases = (
+        ((), "missing"),
+        ((base, base), "duplicate"),
+        ((replace(base, port="absent"),), "missing"),
+        ((replace(base, node=absent),), "missing"),
+        ((replace(base, node=NodeId.new(workflow=WorkflowId.new())),), "foreign_owner"),
+    )
+    for declarations, code in cases:
+        with pytest.raises(EffectRejected) as rejected:
+            await start_initial_binding(
+                data=data,
+                workflow=workflow,
+                declarations=declarations,
+                capabilities=(capability,),
+                resources=(
+                    ContextResource(
+                        source=SOURCE,
+                        capability=capability,
+                        lease=ResourceLease.create(owner="caller", safe_detachment="forbidden", handle=provider),
+                        factory=None,
+                    ),
+                ),
+                limits=BindingLimits(
+                    max_declarations=2,
+                    max_sources=1,
+                    max_capabilities=1,
+                    max_selector_fields=0,
+                    max_selector_bytes=0,
+                    max_items=1,
+                    max_bytes=20,
+                    max_requests=1,
+                    max_resources=1,
+                ),
+            )
+        assert rejected.value.code.value == code
+    assert provider.calls == 0
+
+    prepared = _prepare(data=data, workflow=workflow, capability=_capability(workflow), bound_inputs=())
+    with pytest.raises(EffectRejected) as rejected:
+        admit_context_plan(
+            prepared=prepared,
+            bound_context=None,
+            adaptive_retrievals=(),
+            context_capabilities=(),
+        )
+    assert rejected.value.code.value == "missing"
+
+
+async def _assert_initial_binding() -> None:
+    workflow, node, artifact = _context_workflow()
+    data = _data(1)
+    target = next(iter(data.targets))
+    policy = PhysicalRequestPolicy(
+        visibility="dispatch_and_settlement",
+        pre_dispatch_control="executor",
+        retry_owner="executor",
+        replay="idempotent",
+        max_attempts=1,
+    )
+    capability = ContextSourceCapability(
+        source=SOURCE,
+        artifact_type=artifact,
+        uses=frozenset({"initial_binding"}),
+        execution="async",
+        resource_owner="caller",
+        cancellation="cooperative_ack",
+        settlement="explicit_ack",
+        usage="exact",
+        request=policy,
+        safe_detachment="forbidden",
+    )
+    declaration = InitialContextDecl(
+        target=target,
+        node=node,
+        port="input",
+        artifact_type=artifact,
+        source=SOURCE,
+        selector=ContextSelector(fields=()),
+        requirement="required",
+        bounds=RetrievalBounds(max_items=1, max_bytes=20, max_requests=1),
+        materialization=ContextMaterialization(kind="single", item_type=artifact),
+    )
+    provider = _Provider()
+    lease = ResourceLease.create(owner="caller", safe_detachment="forbidden", handle=provider)
+    running = await start_initial_binding(
+        data=data,
+        workflow=workflow,
+        declarations=(declaration,),
+        capabilities=(capability,),
+        resources=(ContextResource(source=SOURCE, capability=capability, lease=lease, factory=None),),
+        limits=BindingLimits(
+            max_declarations=1,
+            max_sources=1,
+            max_capabilities=1,
+            max_selector_fields=0,
+            max_selector_bytes=0,
+            max_items=1,
+            max_bytes=20,
+            max_requests=1,
+            max_resources=1,
+        ),
+    )
+    result = await running.wait()
+    assert provider.calls == 1
+    assert result.context is not None
+    assert result.context.artifacts[0].text == "context"
+    assert result.receipt.data is data
+    assert result.receipt.workflow is workflow
+    assert result.receipt.requests.dispatched_count == 1
+    assert result.receipt.requests.terminals[0].results[0].outcome == "retrieved"
+    assert result.receipt.cleanup[0].disposition == "left_open"
+
+
+@pytest.mark.parametrize("latest", [False, True])
+@pytest.mark.parametrize("correction", [False, True])
+def test_initial_binding_owns_retry_and_charges_each_request(latest: bool, correction: bool) -> None:
+    asyncio.run(_assert_initial_binding_retry(latest=latest, correction=correction))
+
+
+@pytest.mark.parametrize("latest", [False, True])
+def test_initial_binding_retains_matching_settlement_for_malformed_and_oversize_responses(latest: bool) -> None:
+    asyncio.run(_assert_initial_binding_boundary_settlements(latest=latest))
+
+
+async def _assert_initial_binding_boundary_settlements(*, latest: bool) -> None:
+    workflow, node, artifact = _context_workflow()
+    data = _data(1)
+    policy = PhysicalRequestPolicy(
+        visibility="dispatch_and_settlement",
+        pre_dispatch_control="executor",
+        retry_owner="executor",
+        replay="idempotent",
+        max_attempts=1,
+    )
+    capability = ContextSourceCapability(
+        source=SOURCE,
+        artifact_type=artifact,
+        uses=frozenset({"initial_binding"}),
+        execution="async",
+        resource_owner="caller",
+        cancellation="cooperative_ack",
+        settlement="explicit_ack",
+        usage="exact",
+        request=policy,
+        safe_detachment="forbidden",
+    )
+    for mode, expected_request, expected_source in (
+        ("malformed", "failure", "failed"),
+        ("duplicate", "failure", "failed"),
+        ("oversize", "success", "oversize"),
+        ("versions", "success", "oversize"),
+        ("multiple", "failure" if latest else "success", "failed" if latest else "oversize"),
+    ):
+        provider = _BoundaryProvider(mode=mode)
+        item_limit = 2 if latest and mode != "versions" else 1
+        byte_limit = 20 if mode == "versions" else 2
+        declaration = InitialContextDecl(
+            target=next(iter(data.targets)),
+            node=node,
+            port="input",
+            artifact_type=artifact,
+            source=SOURCE,
+            selector=ContextSelector(fields=()),
+            requirement="required",
+            bounds=RetrievalBounds(max_items=item_limit, max_bytes=byte_limit, max_requests=1),
+            materialization=ContextMaterialization(kind="single", item_type=artifact),
+            version_selection="latest" if latest else "exact_one",
+        )
+        result = await (
+            await start_initial_binding(
+                data=data,
+                workflow=workflow,
+                declarations=(declaration,),
+                capabilities=(capability,),
+                resources=(
+                    ContextResource(
+                        source=SOURCE,
+                        capability=capability,
+                        lease=ResourceLease.create(owner="caller", safe_detachment="forbidden", handle=provider),
+                        factory=None,
+                    ),
+                ),
+                limits=BindingLimits(
+                    max_declarations=1,
+                    max_sources=1,
+                    max_capabilities=1,
+                    max_selector_fields=0,
+                    max_selector_bytes=0,
+                    max_items=item_limit,
+                    max_bytes=byte_limit,
+                    max_requests=1,
+                    max_resources=1,
+                ),
+            )
+        ).wait()
+        assert result.receipt.terminal == "failed"
+        assert result.receipt.sources[0].terminal == expected_source
+        assert result.receipt.requests.terminals[0].category == expected_request
+        if expected_request == "failure":
+            assert result.receipt.requests.terminals[0].failure == "malformed_response"
+        assert result.receipt.requests.settlements[0].disposition == "completed"
+        assert result.receipt.requests.settlements[0].usage == ExactUsage(input_units=1, output_units=1)
+        assert not result.receipt.artifacts
+
+
+async def _assert_initial_binding_retry(*, latest: bool, correction: bool) -> None:
+    workflow, node, artifact = _context_workflow()
+    data = _data(1)
+    policy = PhysicalRequestPolicy(
+        visibility="dispatch_and_settlement",
+        pre_dispatch_control="executor",
+        retry_owner="executor",
+        replay="idempotent",
+        max_attempts=2,
+    )
+    capability = ContextSourceCapability(
+        source=SOURCE,
+        artifact_type=artifact,
+        uses=frozenset({"initial_binding"}),
+        execution="async",
+        resource_owner="caller",
+        cancellation="cooperative_ack",
+        settlement="explicit_ack",
+        usage="exact",
+        request=policy,
+        safe_detachment="forbidden",
+    )
+    declaration = InitialContextDecl(
+        target=next(iter(data.targets)),
+        node=node,
+        port="input",
+        artifact_type=artifact,
+        source=SOURCE,
+        selector=ContextSelector(fields=()),
+        requirement="required",
+        bounds=RetrievalBounds(max_items=2 if latest else 1, max_bytes=20, max_requests=2),
+        materialization=ContextMaterialization(kind="single", item_type=artifact),
+        version_selection="latest" if latest else "exact_one",
+    )
+    provider = _RetryProvider(latest=latest, correction=correction)
+    result = await (
+        await start_initial_binding(
+            data=data,
+            workflow=workflow,
+            declarations=(declaration,),
+            capabilities=(capability,),
+            resources=(
+                ContextResource(
+                    source=SOURCE,
+                    capability=capability,
+                    lease=ResourceLease.create(owner="caller", safe_detachment="forbidden", handle=provider),
+                    factory=None,
+                ),
+            ),
+            limits=BindingLimits(
+                max_declarations=1,
+                max_sources=1,
+                max_capabilities=1,
+                max_selector_fields=0,
+                max_selector_bytes=0,
+                max_items=2 if latest else 1,
+                max_bytes=20,
+                max_requests=2,
+                max_resources=1,
+            ),
+        )
+    ).wait()
+    assert provider.calls == 2
+    assert result.receipt.terminal == "success"
+    assert result.context is not None and result.context.artifacts[0].text == "retried"
+    assert [item.purpose for item in result.receipt.requests.dispatches] == [
+        "initial_binding",
+        "correction" if correction else "retry",
+    ]
+    assert len(result.context.artifacts) == (2 if latest else 1)
+    assert len(result.receipt.requests.settlements) == 2
+
+
+@dataclass
+class _CloseableProvider(_Provider):
+    closes: int = 0
+    fail_close: bool = False
+
+    async def close(self) -> None:
+        self.closes += 1
+        if self.fail_close:
+            raise RuntimeError("cleanup failed")
+
+
+@dataclass
+class _CloseableNonProvider:
+    closes: int = 0
+
+    async def close(self) -> None:
+        self.closes += 1
+
+
+@pytest.mark.parametrize("factory_failure", ["raises", "invalid"])
+@pytest.mark.parametrize("ownership", ["sdk", "sdk-close-failed", "caller"])
+def test_failed_acquisition_retains_and_cleans_partial_resource_inventory(factory_failure: str, ownership: str) -> None:
+    asyncio.run(_assert_failed_acquisition_cleanup(factory_failure, ownership))
+
+
+async def _assert_failed_acquisition_cleanup(factory_failure: str, ownership: str) -> None:
+    workflow, node, artifact = _context_workflow()
+    data = _data(2)
+    first_target, second_target = data.targets
+    first = _CloseableProvider(fail_close=ownership == "sdk-close-failed")
+    invalid = _CloseableNonProvider()
+    factory_calls = 0
+
+    def failed_factory():
+        nonlocal factory_calls
+        factory_calls += 1
+        if factory_failure == "raises":
+            raise RuntimeError("factory failed")
+        return invalid
+
+    policy = PhysicalRequestPolicy(
+        visibility="dispatch_and_settlement",
+        pre_dispatch_control="executor",
+        retry_owner="executor",
+        replay="idempotent",
+        max_attempts=1,
+    )
+    capability = ContextSourceCapability(
+        source=SOURCE,
+        artifact_type=artifact,
+        uses=frozenset({"initial_binding"}),
+        execution="async",
+        resource_owner="caller" if ownership == "caller" else "sdk",
+        cancellation="cooperative_ack",
+        settlement="explicit_ack",
+        usage="exact",
+        request=policy,
+        safe_detachment="forbidden",
+    )
+    other_capability = replace(capability, source=OTHER_SOURCE, resource_owner="sdk")
+    declaration = InitialContextDecl(
+        target=first_target,
+        node=node,
+        port="input",
+        artifact_type=artifact,
+        source=SOURCE,
+        selector=ContextSelector(fields=()),
+        requirement="required",
+        bounds=RetrievalBounds(max_items=1, max_bytes=20, max_requests=1),
+        materialization=ContextMaterialization(kind="single", item_type=artifact),
+    )
+    running = await start_initial_binding(
+        data=data,
+        workflow=workflow,
+        declarations=(declaration, replace(declaration, target=second_target, source=OTHER_SOURCE)),
+        capabilities=(capability, other_capability),
+        resources=(
+            ContextResource(
+                source=SOURCE,
+                capability=capability,
+                lease=ResourceLease.create(owner="caller", safe_detachment="forbidden", handle=first)
+                if ownership == "caller"
+                else None,
+                factory=None if ownership == "caller" else lambda: first,
+            ),
+            ContextResource(
+                source=OTHER_SOURCE, capability=other_capability, lease=None, factory=cast(Any, failed_factory)
+            ),
+        ),
+        limits=BindingLimits(
+            max_declarations=2,
+            max_sources=2,
+            max_capabilities=2,
+            max_selector_fields=0,
+            max_selector_bytes=0,
+            max_items=2,
+            max_bytes=40,
+            max_requests=2,
+            max_resources=2,
+        ),
+    )
+    result = await running.wait()
+    assert result is await running.wait()
+    assert result.context is None and result.receipt.terminal == "failed"
+    assert all(item.terminal == "failed" for item in result.receipt.sources)
+    assert factory_calls == 1 and first.calls == result.receipt.requests.dispatched_count == 0
+    assert first.closes == (0 if ownership == "caller" else 1)
+    assert invalid.closes == (1 if factory_failure == "invalid" else 0)
+    facts = result.receipt.cleanup
+    associations = result.receipt.cleanup_associations
+    assert len(facts) == len(associations) == (2 if factory_failure == "invalid" else 1)
+    assert facts[0].resource == associations[0].resource
+    assert associations[0].targets == frozenset({first_target})
+    assert associations[0].purpose == "accounting"
+    assert (
+        facts[0].disposition
+        == {
+            "sdk": "closed",
+            "sdk-close-failed": "close_failed",
+            "caller": "left_open",
+        }[ownership]
+    )
+    if factory_failure == "invalid":
+        assert facts[1].resource == associations[1].resource
+        assert facts[1].disposition == "closed"
+        assert associations[1].targets == frozenset({second_target})
+
+
+@pytest.mark.parametrize("case", ["exact-one-many", "latest-empty", "latest-collection"])
+def test_initial_version_selection_rejects_incompatible_declarations(case: str) -> None:
+    workflow, node, artifact = _context_workflow()
+    del workflow
+    data = _data(1)
+    base = InitialContextDecl(
+        target=next(iter(data.targets)),
+        node=node,
+        port="input",
+        artifact_type=artifact,
+        source=SOURCE,
+        selector=ContextSelector(fields=()),
+        requirement="required",
+        bounds=RetrievalBounds(max_items=1, max_bytes=20, max_requests=1),
+        materialization=ContextMaterialization(kind="single", item_type=artifact),
+    )
+    with pytest.raises(EffectRejected) as error:
+        if case == "exact-one-many":
+            replace(base, bounds=replace(base.bounds, max_items=2))
+        elif case == "latest-empty":
+            replace(base, version_selection="latest", bounds=replace(base.bounds, max_items=0))
+        else:
+            replace(base, version_selection="latest", materialization=replace(base.materialization, kind="collection"))
+    assert error.value.code.value == "contradictory"
