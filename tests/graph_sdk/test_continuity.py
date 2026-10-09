@@ -313,3 +313,32 @@ def test_initial_support_requires_qualified_binding_location() -> None:
         assert state.view(limits=limits()) == before
 
     asyncio.run(run())
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+def test_session_group_count_precedes_unicode_validation(reverse: bool) -> None:
+    from anonymizer.engine.graph_sdk.continuity import (
+        ContinuityScope,
+        StateGroupRef,
+        TargetStateGroup,
+        begin_continuity,
+    )
+    from tests.graph_sdk.test_preparation import _data
+
+    data = _data(2)
+    targets = tuple(data.targets)
+    groups = tuple(
+        TargetStateGroup(target=target, group=StateGroupRef(name=name))
+        for target, name in zip(targets, ("\ud800", "normal"), strict=True)
+    )
+    scope = ContinuityScope(lifetime="per_call", state=None, groups=tuple(reversed(groups)) if reverse else groups)
+    for bound, expected in [(1, EffectCode.LIMIT_EXCEEDED), (2, EffectCode.INVALID_VALUE)]:
+        with pytest.raises(EffectRejected) as failure:
+            begin_continuity(data=data, scope=scope, limits=limits(max_groups=bound))
+        assert failure.value.code is expected
+    valid = ContinuityScope(
+        lifetime="per_call",
+        state=None,
+        groups=tuple(TargetStateGroup(target=t, group=StateGroupRef(name=str(i))) for i, t in enumerate(targets)),
+    )
+    assert len(begin_continuity(data=data, scope=valid, limits=limits(max_groups=2)).groups) == 2

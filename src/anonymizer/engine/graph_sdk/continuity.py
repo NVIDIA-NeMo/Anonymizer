@@ -157,9 +157,11 @@ def begin_continuity(
     )
     for group in groups:
         require_instance(group, TargetStateGroup)
-        _text(group.group.name, limits.max_name_bytes)
+        _text_bound(group.group.name, limits.max_name_bytes)
     if len({group.group for group in groups}) > limits.max_groups:
         reject(EffectCode.LIMIT_EXCEEDED)
+    for group in groups:
+        _text(group.group.name, limits.max_name_bytes)
     if any(group.target.graph != data.graph or group.target not in data.targets for group in groups):
         reject(EffectCode.FOREIGN_OWNER)
     if len({group.target for group in groups}) != len(groups):
