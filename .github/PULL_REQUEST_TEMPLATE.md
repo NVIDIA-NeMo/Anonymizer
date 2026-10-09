@@ -1,5 +1,5 @@
 ## Related Issue
-<!-- Use "Fixes #123", "Closes #123", or "Resolves #123". External contributors must link a maintainer-triaged issue. -->
+<!-- Use "Fixes #123", "Closes #123", or "Resolves #123". External contributors must link an open issue labeled `triaged` by a maintainer before submitting; otherwise the PR is closed. -->
 <!-- For maintainer-owned changes where no issue is needed, write: "No linked issue required: <reason>". -->
 
 ## Plan Document
@@ -18,7 +18,7 @@
 
 ## Contributor Checklist
 - [ ] PR title follows Conventional Commits, for example `fix: handle empty entity list`
-- [ ] Related issue is linked, or a maintainer-owned no-issue reason is documented above
+- [ ] Related issue is linked and, for external contributions, open and labeled `triaged`; or a maintainer-owned no-issue reason is documented above
 - [ ] For non-trivial changes, a plan document is linked above, or the no-plan reason is documented above
 - [ ] Public API impact checked; `skills/anonymizer/SKILL.md` updated if needed
 - [ ] No real PII added to tests, docs, notebooks, fixtures, or artifacts
