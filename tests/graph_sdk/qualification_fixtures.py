@@ -64,6 +64,7 @@ def _inputs(execution: AdmittedExecutionPlan, result: ExecutionResult, *, decisi
 @dataclass
 class _RecoveringTransport:
     failure: FailureClass | None = None
+    failures: tuple[FailureClass | None, ...] = ()
     unknown_usage: bool = False
     fail_close: bool = False
     calls: int = 0
@@ -79,8 +80,15 @@ class _RecoveringTransport:
             if self.unknown_usage and self.calls == 1
             else ExactUsage(input_units=1, output_units=1),
         )
-        if self.calls == 1 and self.failure is not None:
-            return TransportFailure(failure=self.failure, settlement=settlement)
+        failure = (
+            self.failures[self.calls - 1]
+            if self.calls <= len(self.failures)
+            else self.failure
+            if self.calls == 1
+            else None
+        )
+        if failure is not None:
+            return TransportFailure(failure=failure, settlement=settlement)
         item = request.associations[0]
         return TransportSuccess(
             results=(
