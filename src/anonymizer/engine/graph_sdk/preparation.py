@@ -5,15 +5,18 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Literal, Never, SupportsIndex, TypeAlias
+from typing import Literal, TypeAlias
 
 from anonymizer.engine.graph_sdk._workflow import reachable_workflows
 from anonymizer.engine.graph_sdk.capabilities import (
     ImplementationCapability,
     ImplementationSelection,
     PreparationCode,
-    PreparationRejected,
     SelectedImplementation,
+    _integer,
+    _PrivateValue,
+    _reject,
+    _text,
     config_size,
     validate_capability,
 )
@@ -34,44 +37,6 @@ from anonymizer.graph.workflow import (
 
 PreparationPurpose: TypeAlias = Literal["protection", "execution_only"]
 _PREPARED_KEY = object()
-
-
-def _reject(code: PreparationCode) -> Never:
-    raise PreparationRejected(code) from None
-
-
-class _PrivateValue:
-    __slots__ = ()
-
-    def __repr__(self) -> str:
-        return f"<{type(self).__name__}>"
-
-    def __copy__(self) -> _PrivateValue:
-        return self
-
-    def __deepcopy__(self, memo: dict[int, Any]) -> _PrivateValue:
-        del memo
-        return self
-
-    def __reduce_ex__(self, protocol: SupportsIndex, /) -> Never:
-        del protocol
-        raise TypeError("preparation value serialization is not supported")
-
-
-def _integer(value: object, *, positive: bool = False) -> int:
-    if isinstance(value, bool) or not isinstance(value, int):
-        _reject(PreparationCode.INVALID_TYPE)
-    if value < (1 if positive else 0):
-        _reject(PreparationCode.INVALID_VALUE)
-    return value
-
-
-def _text(value: object) -> str:
-    if not isinstance(value, str):
-        _reject(PreparationCode.INVALID_TYPE)
-    if not value:
-        _reject(PreparationCode.INVALID_VALUE)
-    return value
 
 
 @dataclass(frozen=True, slots=True, kw_only=True, repr=False)

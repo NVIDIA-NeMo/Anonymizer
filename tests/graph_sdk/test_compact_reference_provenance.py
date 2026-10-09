@@ -49,3 +49,23 @@ def test_evidence_regeneration_preserves_corpus_and_semantic_manifest(tmp_path: 
         for filename, row in adoption["files"].items()
         if filename.startswith("p7_reference/")
     }
+
+
+def test_publication_regeneration_and_reduced_source_provenance() -> None:
+    from tests.graph_sdk.reference.publication_v3.reference import encode_json, generate_cases, generate_text_cases
+
+    directory = ROOT / "publication_v3"
+    retirement = json.loads((directory / "retirement.json").read_bytes())
+    assert (
+        hashlib.sha256((directory / "reference.py").read_bytes()).hexdigest() == retirement["maintained_source_sha256"]
+    )
+    assert hashlib.sha256((directory / "retirement.patch").read_bytes()).hexdigest() == retirement["patch_sha256"]
+    manifest = json.loads((directory / "manifest.json").read_bytes())
+    for name, generate in (("full-six", generate_cases), ("simple-text", generate_text_cases)):
+        first = b"".join(encode_json(row) + b"\n" for row in generate())
+        second = b"".join(encode_json(row) + b"\n" for row in generate())
+        assert first == second
+        assert hashlib.sha256(first).hexdigest() == manifest["corpora"][name]["cases_sha256"]
+        assert retirement["frozen_source_sha256"] == manifest["corpora"][name]["generator_sha256"]
+        if name == "simple-text":
+            assert first == (directory / "cases.jsonl").read_bytes()
