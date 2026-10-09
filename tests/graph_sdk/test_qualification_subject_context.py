@@ -10,7 +10,16 @@ from dataclasses import dataclass, replace
 import pytest
 
 from anonymizer.engine.graph_sdk._effect_values import EffectCode, EffectRejected
-from anonymizer.engine.graph_sdk.context import admit_context_plan
+from anonymizer.engine.graph_sdk.binding import start_initial_binding
+from anonymizer.engine.graph_sdk.context import (
+    BindingLimits,
+    ContextMaterialization,
+    ContextSelector,
+    ContextSourceRef,
+    InitialContextDecl,
+    RetrievalBounds,
+    admit_context_plan,
+)
 from anonymizer.engine.graph_sdk.data import AtomicGroup, DataGraph, DataLimits, DatumDependency
 from anonymizer.engine.graph_sdk.evidence import AssessmentSubmission, admit_qualification, evidence_revision_view
 from anonymizer.engine.graph_sdk.executor import (
@@ -45,6 +54,8 @@ from anonymizer.engine.graph_sdk.requests import (
     TextArtifactValue,
 )
 from anonymizer.graph.workflow import (
+    ContextInputRef,
+    ContextUse,
     CoverageAtom,
     DynamicScope,
     EvidencePromise,
@@ -75,6 +86,7 @@ class _SeparateAssessment:
     returned_evidence_port: str = "evidence"
     additional_evidence: bool = False
     calls: int = 0
+    consumed_context_ports: frozenset[str] = frozenset()
 
     async def run(self, request: tuple[AssociationInput, ...]) -> LocalCompleted:
         self.calls += 1
@@ -112,7 +124,7 @@ class _SeparateAssessment:
                     association=item.association,
                     outcome="ok",
                     outputs=outputs,
-                    consumed_context_ports=frozenset(),
+                    consumed_context_ports=self.consumed_context_ports,
                 ),
             ),
             assessments=()
@@ -153,20 +165,25 @@ async def _execute_separate_subject_context(
     returned_evidence_port: str = "evidence",
     provenance_edge_limit: int | None = None,
     additional_coverage: frozenset[CoverageAtom] | None = None,
+    versioned_context_dependencies: frozenset[str] | None = None,
 ) -> tuple[AdmittedExecutionPlan, ExecutionResult]:
     base, node, artifact = _workflow(with_input=True)
     raw = base.workflow
     coverage = coverage if coverage is not None else frozenset({CoverageAtom(kind="field", name="text")})
     read = StateEffect(kind="read", name="read")
+    context_ports = ("context",) if versioned_context_dependencies is None else ("a", "b")
+    consumed = frozenset(context_ports) if versioned_context_dependencies is None else versioned_context_dependencies
+    assert consumed <= frozenset(context_ports)
+    assert versioned_context_dependencies is None or additional_coverage is None
     operation = replace(
         raw.interface,
-        inputs=tuple(InputPort(name=name, artifact_type=artifact) for name in ("subject", "context")),
+        inputs=tuple(InputPort(name=name, artifact_type=artifact) for name in ("subject", *context_ports)),
         outputs=tuple(OutputPort(name=name, artifact_type=artifact) for name in ("result", "evidence")),
         output_dependencies=(
-            OutputDependency(output="result", inputs=frozenset({"subject", "context"}), identity_input="subject"),
+            OutputDependency(output="result", inputs=frozenset({"subject", *context_ports}), identity_input="subject"),
             OutputDependency(
                 output="evidence",
-                inputs=frozenset({"subject", "context"}) if extra_evidence_dependency else frozenset({"context"}),
+                inputs=consumed | {"subject"} if extra_evidence_dependency else consumed,
                 identity_input=None,
             ),
         ),
@@ -175,13 +192,18 @@ async def _execute_separate_subject_context(
                 raw.interface.outcomes[0],
                 produced_ports=frozenset({"result", "evidence"}),
                 state_effects=frozenset({read}) if environment else frozenset(),
+                context=frozenset(
+                    ContextUse(port=port, meaning="source", capture="whole_artifact") for port in context_ports
+                )
+                if versioned_context_dependencies is not None
+                else frozenset(),
                 evidence=frozenset(
                     {
                         EvidencePromise(
                             name="checked",
                             meaning="test assessment",
                             subject_port="subject",
-                            consumed_ports=frozenset({"context"}),
+                            consumed_ports=consumed,
                             coverage=coverage,
                         )
                     }
@@ -240,8 +262,13 @@ async def _execute_separate_subject_context(
         ),
         nodes=(OperationNode(id=node, operation=operation),),
         input_bindings=tuple(
-            InputBinding(source=WorkflowInputRef(port=name), destination=NodeInputRef(node=node, port=name))
-            for name in ("subject", "context")
+            InputBinding(
+                source=ContextInputRef(port=name)
+                if versioned_context_dependencies is not None and name in context_ports
+                else WorkflowInputRef(port=name),
+                destination=NodeInputRef(node=node, port=name),
+            )
+            for name in ("subject", *context_ports)
         ),
         output_bindings=tuple(
             OutputBinding(source=NodeOutputRef(node=node, port=name), destination=WorkflowOutputRef(port=name))
@@ -257,11 +284,11 @@ async def _execute_separate_subject_context(
                 outcome="ok",
                 meaning="test assessment",
                 subject_port="subject",
-                consumed_ports=frozenset({"context"}),
+                consumed_ports=consumed,
                 coverage=coverage if requirement_coverage is None else requirement_coverage,
             ),
         ),
-        limits=replace(raw.limits, max_bindings=5),
+        limits=replace(raw.limits, max_bindings=4 + len(context_ports)),
     )
     workflow = admit_activation_workflow(
         workflow=static, scopes=(DynamicScope(workflow=static, maps=(), loops=(), joins=()),), limits=base.limits
@@ -290,6 +317,52 @@ async def _execute_separate_subject_context(
             max_group_members=target_count,
         ),
     )
+    bound_context = None
+    if versioned_context_dependencies is not None:
+        from tests.graph_sdk.qualification_fixtures import _BindingProvider, _initial_resource
+
+        providers = tuple(
+            _BindingProvider(ContextSourceRef(name=port, revision=1), versions=(1, 2)) for port in context_ports
+        )
+        resources = tuple(_initial_resource(provider) for provider in providers)
+        binding = await (
+            await start_initial_binding(
+                data=data,
+                workflow=workflow,
+                declarations=tuple(
+                    InitialContextDecl(
+                        target=target,
+                        node=node,
+                        port=port,
+                        artifact_type=artifact,
+                        source=resource.source,
+                        selector=ContextSelector(fields=()),
+                        requirement="required",
+                        bounds=RetrievalBounds(max_items=2, max_bytes=2, max_requests=1),
+                        materialization=ContextMaterialization(kind="single", item_type=artifact),
+                        version_selection="latest",
+                    )
+                    for target in targets
+                    for port, resource in zip(context_ports, resources, strict=True)
+                ),
+                capabilities=tuple(resource.capability for resource in resources),
+                resources=resources,
+                limits=BindingLimits(
+                    max_declarations=2 * target_count,
+                    max_sources=2,
+                    max_capabilities=2,
+                    max_selector_fields=0,
+                    max_selector_bytes=0,
+                    max_items=4 * target_count,
+                    max_bytes=4 * target_count,
+                    max_requests=2 * target_count,
+                    max_resources=2,
+                ),
+            )
+        ).wait()
+        assert binding.receipt.terminal == "success" and binding.context is not None
+        assert all(provider.calls == target_count and provider.closes == 1 for provider in providers)
+        bound_context = binding.context
     prepared = _prepare(
         workflow=workflow,
         capability=capability,
@@ -303,6 +376,7 @@ async def _execute_separate_subject_context(
             BoundInput(target=target, source=source, port=name, artifact_type=artifact)
             for target in targets
             for name, source in (("subject", target), ("context", context_source))
+            if versioned_context_dependencies is None or name == "subject"
         ),
         state=StateRevisionView(
             revisions=frozenset({StateRevision(effect=read, revision=1)}) if environment else frozenset()
@@ -313,7 +387,7 @@ async def _execute_separate_subject_context(
     supported_findings = frozenset(target_findings) if target_findings else frozenset({finding})
     admitted = admit_execution_plan(
         context=admit_context_plan(
-            prepared=prepared, bound_context=None, adaptive_retrievals=(), context_capabilities=()
+            prepared=prepared, bound_context=bound_context, adaptive_retrievals=(), context_capabilities=()
         ),
         capabilities=(capability,),
         policies=(
@@ -357,8 +431,9 @@ async def _execute_separate_subject_context(
             max_finding_code_bytes=16,
             max_absence_queries=1 if environment else 0,
             max_assessment_facts=(1 + (additional_coverage is not None)) * target_count,
-            max_port_facts=(4 + (additional_coverage is not None)) * target_count,
-            max_provenance_edges=(3 + (additional_coverage is not None)) * target_count
+            max_port_facts=(3 + len(context_ports) + (additional_coverage is not None)) * target_count,
+            max_provenance_edges=(1 + len(context_ports) + len(consumed) + (additional_coverage is not None))
+            * target_count
             if provenance_edge_limit is None
             else provenance_edge_limit,
         ),
@@ -368,6 +443,7 @@ async def _execute_separate_subject_context(
         tuple(zip(target_labels, target_findings, strict=True)) if target_findings else (),
         returned_evidence_port,
         additional_coverage is not None,
+        consumed_context_ports=frozenset(context_ports) if versioned_context_dependencies is not None else frozenset(),
     )
     running = await start_execution(
         admitted=admitted,
@@ -387,7 +463,10 @@ async def _execute_separate_subject_context(
             limits=ExecutionLimits(
                 max_local_in_flight=1,
                 max_remote_outstanding=0,
-                max_runtime_artifacts=(3 + (additional_coverage is not None)) * target_count,
+                max_runtime_artifacts=(
+                    3 + (additional_coverage is not None) + (3 if versioned_context_dependencies is not None else 0)
+                )
+                * target_count,
                 max_runtime_artifact_bytes=32 * target_count,
                 max_collection_items=0,
             ),
