@@ -217,10 +217,14 @@ class OperationExecutionPolicy(PrivateValue):
     implementations: tuple[ExecutionImplementation, ...]
     result_outcomes: frozenset[str]
     runtime_outcomes: tuple[RuntimeOutcome, ...]
+    initial_request_purpose: Literal["initial", "repair"] = "initial"
 
     def __post_init__(self) -> None:
         require_instance(self.node, NodeId)
         require_literal(self.kind, frozenset({"local", "external", "decision"}))
+        require_literal(self.initial_request_purpose, frozenset({"initial", "repair"}))
+        if self.initial_request_purpose == "repair" and (self.kind != "external" or self.request is None):
+            reject(EffectCode.CONTRADICTORY)
         if self.request is not None:
             require_instance(self.request, PhysicalRequestPolicy)
         require_literal(self.safe_detachment, frozenset({"forbidden", "independent_after_dispatch"}))

@@ -753,7 +753,12 @@ def evidence_validity(*, evidence: VerifiedEvidence, current: EvidenceRevisionVi
                 (reference.artifact, artifacts.get((reference.artifact.invocation, reference.artifact.key)))
             )
         elif isinstance(reference, DecisionRef):
-            comparisons.append((reference, decisions.get((reference.artifact.invocation, reference.artifact.key))))
+            key = (reference.artifact.invocation, reference.artifact.key)
+            selected = artifacts.get(key)
+            if selected != reference.artifact:
+                comparisons.append((reference.artifact, selected))
+            else:
+                comparisons.append((reference, decisions.get(key)))
         elif isinstance(reference, AbsenceRef):
             comparisons.append((reference, absences.get((reference.invocation, reference.query))))
         else:

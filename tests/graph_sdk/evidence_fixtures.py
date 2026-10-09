@@ -10,6 +10,7 @@ from dataclasses import dataclass, fields, replace
 from anonymizer.engine.graph_sdk.binding import start_initial_binding
 from anonymizer.engine.graph_sdk.capabilities import ImplementationRef, ImplementationSelection
 from anonymizer.engine.graph_sdk.context import (
+    AdaptiveRetrievalDecl,
     BindingLimits,
     ContextMaterialization,
     ContextResource,
@@ -59,6 +60,7 @@ from anonymizer.engine.graph_sdk.requests import (
     TextArtifactValue,
 )
 from anonymizer.engine.graph_sdk.resources import ResourceLease
+from anonymizer.graph._values import DatumId
 from anonymizer.graph.activation import ActivationLimits
 from anonymizer.graph.workflow import (
     ContextInputRef,
@@ -179,12 +181,15 @@ async def _execute_assessment(
     decision_hop: bool = False,
     separate_decision_subject: bool = False,
     external_failover: bool = False,
+    external_shared: bool = False,
+    adaptive_resource: ContextResource | None = None,
     coverage: frozenset[CoverageAtom] = frozenset(),
     target_count: int = 1,
     nested: bool = False,
     nested_depth: int = 0,
     rename_ports: bool = False,
     data: ValidatedDataGraph | None = None,
+    bound_input_source: DatumId | None = None,
     execution_only: bool = False,
     finding: AssessmentFinding | None = None,
     resource: ResourceLease | None = None,
@@ -204,6 +209,8 @@ async def _execute_assessment(
     assert not initial_resources or not (nested or rename_ports or decision_input or external or root_passthrough)
     assert not separate_decision_subject or (decision_input and candidate_input and root_passthrough)
     assert not decision_hop or decision_input
+    assert adaptive_resource is None or (external is not None and not external_shared)
+    assert not external_shared or external is not None
     assert not external_failover or external is not None
     predecessor = decision_input or external is not None
     request_policy = (
@@ -519,6 +526,8 @@ async def _execute_assessment(
         )
         for index, item in enumerate(nodes)
     )
+    if external_shared:
+        capabilities = (replace(capabilities[0], attribution="keyed_shared_request"), *capabilities[1:])
     fallback = replace(capabilities[0], implementation=ImplementationRef(name="evidence-fixture-fallback", revision=1))
     all_capabilities = (*capabilities, fallback) if external_failover else capabilities
     prepared = prepare(
@@ -541,7 +550,13 @@ async def _execute_assessment(
         bound_inputs=()
         if initial_resources
         else tuple(
-            BoundInput(target=target, source=target, port=root_input, artifact_type=artifact) for target in data.targets
+            BoundInput(
+                target=target,
+                source=target if bound_input_source is None else bound_input_source,
+                port=root_input,
+                artifact_type=artifact,
+            )
+            for target in data.targets
         ),
         state=StateRevisionView(
             revisions=frozenset({StateRevision(effect=read, revision=3)}) if environment else frozenset()
@@ -558,7 +573,21 @@ async def _execute_assessment(
     )
     admitted = admit_execution_plan(
         context=admit_context_plan(
-            prepared=prepared, bound_context=bound_context, adaptive_retrievals=(), context_capabilities=()
+            prepared=prepared,
+            bound_context=bound_context,
+            adaptive_retrievals=(
+                AdaptiveRetrievalDecl(
+                    node=decision_node,
+                    source=adaptive_resource.source,
+                    selector_ports=("input",),
+                    output_port=evidence_port,
+                    bounds=RetrievalBounds(max_items=1, max_bytes=32, max_requests=2),
+                    materialization=ContextMaterialization(kind="single", item_type=artifact),
+                ),
+            )
+            if adaptive_resource
+            else (),
+            context_capabilities=(adaptive_resource.capability,) if adaptive_resource else (),
         ),
         capabilities=all_capabilities,
         policies=tuple(
@@ -662,12 +691,13 @@ async def _execute_assessment(
             )
             for item, capability in zip(nodes, capabilities, strict=True)
         ),
-        context_resources=(),
+        context_resources=(adaptive_resource,) if adaptive_resource else (),
         limits=execution_limits
         or ExecutionLimits(
             max_local_in_flight=1,
             max_remote_outstanding=1 if external is not None else 0,
-            max_runtime_artifacts=(1 + initial_item_limit + int(auxiliary_output)) * target_count,
+            max_runtime_artifacts=(1 + initial_item_limit + int(auxiliary_output) + int(adaptive_resource is not None))
+            * target_count,
             max_runtime_artifact_bytes=100,
             max_collection_items=0,
         ),

@@ -11,6 +11,7 @@ import pytest
 
 from anonymizer.engine.graph_sdk._effect_values import EffectCode, EffectRejected
 from anonymizer.engine.graph_sdk.binding import start_initial_binding
+from anonymizer.engine.graph_sdk.capabilities import ImplementationRef, ImplementationSelection
 from anonymizer.engine.graph_sdk.context import (
     BindingLimits,
     ContextMaterialization,
@@ -26,7 +27,10 @@ from anonymizer.engine.graph_sdk.executor import (
     AdmittedExecutionPlan,
     AssessmentFinding,
     AssessmentLimits,
+    DecisionDeclaration,
     DecisionLimits,
+    DecisionOutcome,
+    DecisionResponse,
     EvidenceProductionDecl,
     ExecutionImplementation,
     ExecutionLimits,
@@ -44,6 +48,7 @@ from anonymizer.engine.graph_sdk.preparation import (
     PreparationConfiguration,
     StateRevision,
     StateRevisionView,
+    prepare,
 )
 from anonymizer.engine.graph_sdk.qualification import qualify
 from anonymizer.engine.graph_sdk.requests import (
@@ -53,7 +58,9 @@ from anonymizer.engine.graph_sdk.requests import (
     SemanticAssociation,
     TextArtifactValue,
 )
+from anonymizer.graph.activation import ActivationLimits
 from anonymizer.graph.workflow import (
+    ArtifactType,
     ContextInputRef,
     ContextUse,
     CoverageAtom,
@@ -61,6 +68,7 @@ from anonymizer.graph.workflow import (
     EvidencePromise,
     InputBinding,
     InputPort,
+    NodeId,
     NodeInputRef,
     NodeOutputRef,
     OperationNode,
@@ -68,15 +76,17 @@ from anonymizer.graph.workflow import (
     OutputDependency,
     OutputPort,
     ProtectionRequirement,
+    SequenceEdge,
     StateEffect,
     WorkflowInputRef,
     WorkflowOutputRef,
     admit_activation_workflow,
     admit_static_workflow,
 )
+from tests.graph_sdk.test_decision_scheduling import _Callback
 from tests.graph_sdk.test_effects_production_conformance import _valid_runtime_rows, _ZeroClock
 from tests.graph_sdk.test_evidence import _qualification_limits
-from tests.graph_sdk.test_preparation import _capability, _prepare, _workflow
+from tests.graph_sdk.test_preparation import _capability, _limits, _workflow
 
 
 @dataclass
@@ -167,6 +177,10 @@ async def _execute_separate_subject_context(
     additional_coverage: frozenset[CoverageAtom] | None = None,
     versioned_context_dependencies: frozenset[str] | None = None,
     versioned_context_ports: tuple[str, ...] = ("a", "b"),
+    decision_context: bool = False,
+    context_from_subject: bool = False,
+    independent_context_sources: bool = False,
+    context_artifact_type: ArtifactType | None = None,
 ) -> tuple[AdmittedExecutionPlan, ExecutionResult]:
     base, node, artifact = _workflow(with_input=True)
     raw = base.workflow
@@ -176,13 +190,28 @@ async def _execute_separate_subject_context(
     context_ports = ("context",) if versioned_context_dependencies is None else versioned_context_ports
     consumed = frozenset(context_ports) if versioned_context_dependencies is None else versioned_context_dependencies
     assert consumed <= frozenset(context_ports)
+    assert not context_from_subject or len(target_labels) == 1
+    assert context_artifact_type is None or versioned_context_dependencies is None
+    assert not decision_context or (versioned_context_dependencies is not None and "b" in context_ports)
     assert versioned_context_dependencies is None or additional_coverage is None
     operation = replace(
         raw.interface,
-        inputs=tuple(InputPort(name=name, artifact_type=artifact) for name in ("subject", *context_ports)),
+        inputs=tuple(
+            InputPort(
+                name=name,
+                artifact_type=context_artifact_type
+                if name != "subject" and context_artifact_type is not None
+                else artifact,
+            )
+            for name in ("subject", *context_ports)
+        ),
         outputs=tuple(OutputPort(name=name, artifact_type=artifact) for name in ("result", "evidence")),
         output_dependencies=(
-            OutputDependency(output="result", inputs=frozenset({"subject", *context_ports}), identity_input="subject"),
+            OutputDependency(
+                output="result",
+                inputs=frozenset({"subject"}) if decision_context else frozenset({"subject", *context_ports}),
+                identity_input="subject",
+            ),
             OutputDependency(
                 output="evidence",
                 inputs=consumed | {"subject"} if extra_evidence_dependency else consumed,
@@ -252,32 +281,74 @@ async def _execute_separate_subject_context(
                 for outcome in operation.outcomes
             ),
         )
+    decision_node = NodeId.new(workflow=raw.workflow)
+    decision_operation = replace(
+        operation,
+        inputs=(InputPort(name="b", artifact_type=artifact),),
+        outputs=(OutputPort(name="approved", artifact_type=artifact),),
+        output_dependencies=(OutputDependency(output="approved", inputs=frozenset({"b"}), identity_input="b"),),
+        outcomes=tuple(
+            replace(
+                outcome,
+                produced_ports=frozenset({"approved"}),
+                evidence=frozenset(),
+                context=frozenset({ContextUse(port="b", meaning="source", capture="whole_artifact")}),
+                state_effects=frozenset(),
+            )
+            for outcome in operation.outcomes
+        ),
+    )
+    nodes = (OperationNode(id=node, operation=operation),)
+    if decision_context:
+        nodes = (OperationNode(id=decision_node, operation=decision_operation), *nodes)
+    interface = replace(
+        operation,
+        outcomes=tuple(
+            replace(
+                outcome,
+                ceiling=replace(
+                    outcome.ceiling,
+                    max_activations=len(nodes),
+                    max_input_bytes=32 * len(nodes),
+                    max_output_bytes=32 * len(nodes),
+                ),
+            )
+            for outcome in operation.outcomes
+        ),
+    )
     static = admit_static_workflow(
         workflow=raw.workflow,
-        interface=operation
+        interface=interface
         if expose_evidence
         else replace(
-            operation,
+            interface,
             outputs=tuple(port for port in operation.outputs if port.name == "result"),
             output_dependencies=tuple(dep for dep in operation.output_dependencies if dep.output == "result"),
-            outcomes=tuple(replace(outcome, produced_ports=frozenset({"result"})) for outcome in operation.outcomes),
+            outcomes=tuple(replace(outcome, produced_ports=frozenset({"result"})) for outcome in interface.outcomes),
         ),
-        nodes=(OperationNode(id=node, operation=operation),),
+        nodes=nodes,
         input_bindings=tuple(
             InputBinding(
-                source=ContextInputRef(port=name)
+                source=NodeOutputRef(node=decision_node, port="approved")
+                if decision_context and name == "b"
+                else ContextInputRef(port=name)
                 if versioned_context_dependencies is not None and name in context_ports
                 else WorkflowInputRef(port=name),
                 destination=NodeInputRef(node=node, port=name),
             )
             for name in ("subject", *context_ports)
+        )
+        + (
+            (InputBinding(source=ContextInputRef(port="b"), destination=NodeInputRef(node=decision_node, port="b")),)
+            if decision_context
+            else ()
         ),
         output_bindings=tuple(
             OutputBinding(source=NodeOutputRef(node=node, port=name), destination=WorkflowOutputRef(port=name))
             for name in (("result", "evidence") if expose_evidence else ("result",))
         ),
         outcome_bindings=tuple(raw.outcome_bindings),
-        sequence=(),
+        sequence=(SequenceEdge(before=decision_node, after=node),) if decision_context else (),
         choices=(),
         protection=()
         if execution_only
@@ -290,18 +361,38 @@ async def _execute_separate_subject_context(
                 coverage=coverage if requirement_coverage is None else requirement_coverage,
             ),
         ),
-        limits=replace(raw.limits, max_bindings=4 + len(context_ports)),
+        limits=replace(
+            raw.limits,
+            max_bindings=4 + len(context_ports) + int(decision_context),
+            max_nodes=len(nodes),
+            max_sequence_edges=int(decision_context),
+        ),
     )
     workflow = admit_activation_workflow(
-        workflow=static, scopes=(DynamicScope(workflow=static, maps=(), loops=(), joins=()),), limits=base.limits
+        workflow=static,
+        scopes=(DynamicScope(workflow=static, maps=(), loops=(), joins=()),),
+        limits=replace(base.limits, max_activation_occurrences=len(nodes)),
     )
-    capability = _capability(workflow)
+    capabilities = tuple(
+        replace(
+            _capability(workflow),
+            operation=next(declared.operation for declared in workflow.workflow.nodes if declared.id == item.id),
+            implementation=ImplementationRef(name=f"separate-context-{index}", revision=1),
+        )
+        for index, item in enumerate(nodes)
+    )
+    capability = capabilities[-1]
     graph = DataGraph.new()
     targets = []
     for label in target_labels:
         graph, target = graph.add_text(label)
         targets.append(target)
-    graph, context_source = graph.add_text("X")
+    context_sources = {}
+    for index, target in enumerate(targets):
+        if index == 0 or independent_context_sources:
+            graph, context_source = graph.add_text("X")
+        context_sources[target] = context_source
+    context_count = len(set(context_sources.values()))
     target_count = len(targets)
     data = graph.validate(
         targets=tuple(targets),
@@ -312,9 +403,9 @@ async def _execute_separate_subject_context(
         atomic=tuple(AtomicGroup(members=tuple(targets[index] for index in group)) for group in atomic_groups),
         output_regions=(),
         limits=DataLimits(
-            max_datums=target_count + 1,
+            max_datums=target_count + context_count,
             max_targets=target_count,
-            max_text_bytes=sum(len(label.encode()) for label in target_labels) + 1,
+            max_text_bytes=sum(len(label.encode()) for label in target_labels) + context_count,
             max_declarations=len(dependencies) + len(atomic_groups),
             max_group_members=target_count,
         ),
@@ -334,7 +425,7 @@ async def _execute_separate_subject_context(
                 declarations=tuple(
                     InitialContextDecl(
                         target=target,
-                        node=node,
+                        node=decision_node if decision_context and port == "b" else node,
                         port=port,
                         artifact_type=artifact,
                         source=resource.source,
@@ -365,9 +456,15 @@ async def _execute_separate_subject_context(
         assert binding.receipt.terminal == "success" and binding.context is not None
         assert all(provider.calls == target_count and provider.closes == 1 for provider in providers)
         bound_context = binding.context
-    prepared = _prepare(
+    prepared = prepare(
         workflow=workflow,
-        capability=capability,
+        capabilities=capabilities,
+        selections=tuple(
+            ImplementationSelection(node=item.id, implementation=cap.implementation, configuration=cap.configuration)
+            for item, cap in zip(nodes, capabilities, strict=True)
+        ),
+        limits=_limits(capabilities=len(capabilities)),
+        activation_limits=ActivationLimits(max_events=3 * len(nodes), max_entries=len(nodes), max_parent_depth=1),
         data=data,
         configuration=PreparationConfiguration(
             purpose="execution_only" if execution_only else "protection",
@@ -375,9 +472,16 @@ async def _execute_separate_subject_context(
             hard_request_limit=None,
         ),
         bound_inputs=tuple(
-            BoundInput(target=target, source=source, port=name, artifact_type=artifact)
+            BoundInput(
+                target=target,
+                source=target if context_from_subject else source,
+                port=name,
+                artifact_type=context_artifact_type
+                if name != "subject" and context_artifact_type is not None
+                else artifact,
+            )
             for target in targets
-            for name, source in (("subject", target), ("context", context_source))
+            for name, source in (("subject", target), ("context", context_sources[target]))
             if versioned_context_dependencies is None or name == "subject"
         ),
         state=StateRevisionView(
@@ -391,7 +495,7 @@ async def _execute_separate_subject_context(
         context=admit_context_plan(
             prepared=prepared, bound_context=bound_context, adaptive_retrievals=(), context_capabilities=()
         ),
-        capabilities=(capability,),
+        capabilities=capabilities,
         policies=(
             OperationExecutionPolicy(
                 node=node,
@@ -409,8 +513,39 @@ async def _execute_separate_subject_context(
                 result_outcomes=frozenset({"ok"}),
                 runtime_outcomes=_valid_runtime_rows("local", frozenset({"ok"})),
             ),
+        )
+        + (
+            (
+                OperationExecutionPolicy(
+                    node=decision_node,
+                    kind="decision",
+                    request=None,
+                    safe_detachment="forbidden",
+                    implementations=(
+                        ExecutionImplementation(
+                            implementation=capabilities[0].implementation,
+                            configuration=capabilities[0].configuration,
+                            capability=capabilities[0],
+                            request=None,
+                        ),
+                    ),
+                    result_outcomes=frozenset(),
+                    runtime_outcomes=_valid_runtime_rows("decision", frozenset()),
+                ),
+            )
+            if decision_context
+            else ()
         ),
-        decisions=(),
+        decisions=(
+            DecisionDeclaration(
+                node=decision_node,
+                artifact_port="b",
+                outcomes=(DecisionOutcome(decision="approve", outcome="ok"),),
+                max_lifetime_ns=10,
+            ),
+        )
+        if decision_context
+        else (),
         assessment_productions=()
         if execution_only
         else tuple(
@@ -433,8 +568,11 @@ async def _execute_separate_subject_context(
             max_finding_code_bytes=16,
             max_absence_queries=1 if environment else 0,
             max_assessment_facts=(1 + (additional_coverage is not None)) * target_count,
-            max_port_facts=(3 + len(context_ports) + (additional_coverage is not None)) * target_count,
-            max_provenance_edges=(1 + len(context_ports) + len(consumed) + (additional_coverage is not None))
+            max_port_facts=(3 + len(context_ports) + 2 * int(decision_context) + (additional_coverage is not None))
+            * target_count,
+            max_provenance_edges=(
+                1 + len(context_ports) + len(consumed) + int(decision_context) + (additional_coverage is not None)
+            )
             * target_count
             if provenance_edge_limit is None
             else provenance_edge_limit,
@@ -449,7 +587,7 @@ async def _execute_separate_subject_context(
     )
     running = await start_execution(
         admitted=admitted,
-        capabilities=(capability,),
+        capabilities=capabilities,
         services=ExecutionServices(
             handles=(
                 ImplementationHandle(
@@ -460,6 +598,20 @@ async def _execute_separate_subject_context(
                     transport=None,
                     resource=None,
                 ),
+            )
+            + (
+                (
+                    ImplementationHandle(
+                        implementation=capabilities[0].implementation,
+                        operation=decision_operation,
+                        configuration=capabilities[0].configuration,
+                        local=_Callback(decision=True),
+                        transport=None,
+                        resource=None,
+                    ),
+                )
+                if decision_context
+                else ()
             ),
             context_resources=(),
             limits=ExecutionLimits(
@@ -472,11 +624,26 @@ async def _execute_separate_subject_context(
                 max_runtime_artifact_bytes=32 * target_count,
                 max_collection_items=0,
             ),
-            decision_limits=DecisionLimits(max_pending=0, max_lifetime_ns=0),
+            decision_limits=DecisionLimits(
+                max_pending=target_count if decision_context else 0, max_lifetime_ns=10 if decision_context else 0
+            ),
             clock=_ZeroClock(),
             absence_revisions=((0, 1),) if environment and not execution_only else (),
         ),
     )
+    if decision_context:
+        async with asyncio.timeout(2):
+            submitted = set()
+            while len(submitted) < target_count:
+                for wait in running.pending_decisions():
+                    if wait.wait not in submitted:
+                        running.submit_decision(
+                            DecisionResponse(
+                                wait=wait.wait, workflow=wait.workflow, artifact=wait.artifact, decision="approve"
+                            )
+                        )
+                        submitted.add(wait.wait)
+                await asyncio.sleep(0)
     result = await running.wait()
     assert callback.calls == target_count
     return admitted, result

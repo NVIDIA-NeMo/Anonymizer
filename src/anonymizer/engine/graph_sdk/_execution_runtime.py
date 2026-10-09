@@ -102,6 +102,7 @@ from anonymizer.graph.activation import (
 )
 from anonymizer.graph.workflow import (
     AdmittedWorkflow,
+    ArtifactType,
     SubgraphNode,
 )
 
@@ -190,10 +191,15 @@ class _InvocationRuntime:
 
     def _initialize_root_inputs(self) -> None:
         datum_text = {item.id: item.text for item in self.prepared.data.datums}
+        references: dict[tuple[DatumId, ArtifactType], ArtifactRef] = {}
         for bound in self.prepared.bound_inputs:
-            reference = ArtifactRef(invocation=self.invocation, key=self.facts.next_artifact, version=1)
-            self.facts.next_artifact += 1
-            self.facts.values[reference] = TextArtifactValue(text=datum_text[bound.source])
+            lineage = (bound.source, bound.artifact_type)
+            reference = references.get(lineage)
+            if reference is None:
+                reference = ArtifactRef(invocation=self.invocation, key=self.facts.next_artifact, version=1)
+                self.facts.next_artifact += 1
+                self.facts.values[reference] = TextArtifactValue(text=datum_text[bound.source])
+                references[lineage] = reference
             self.root_inputs[bound.target, bound.port] = reference
             self.facts.provenance.append(
                 ArtifactProvenanceFact(

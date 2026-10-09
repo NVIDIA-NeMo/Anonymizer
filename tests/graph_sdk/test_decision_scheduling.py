@@ -11,6 +11,7 @@ import pytest
 
 from anonymizer.engine.graph_sdk.capabilities import ImplementationRef, ImplementationSelection
 from anonymizer.engine.graph_sdk.context import admit_context_plan
+from anonymizer.engine.graph_sdk.data import DataGraph, DataLimits
 from anonymizer.engine.graph_sdk.executor import (
     DecisionDeclaration,
     DecisionLimits,
@@ -52,7 +53,7 @@ from tests.graph_sdk.test_effects_production_conformance import (
     _valid_runtime_rows,
     _ZeroClock,
 )
-from tests.graph_sdk.test_preparation import _capability, _data, _limits, _workflow
+from tests.graph_sdk.test_preparation import _capability, _limits, _workflow
 
 
 @dataclass
@@ -150,14 +151,27 @@ async def _assert_scheduling(case_id: str, local_capacity: int) -> None:
         )
         for index, operation in enumerate(operations)
     )
-    data = _data(1)
-    target = next(iter(data.targets))
+    graph = DataGraph.new()
+    graph, target = graph.add_text("left")
+    graph, right_source = graph.add_text("right")
+    data = graph.validate(
+        targets=(target,),
+        source_relations=(),
+        contexts=(),
+        dependencies=(),
+        coherence=(),
+        atomic=(),
+        output_regions=(),
+        limits=DataLimits(max_datums=2, max_targets=1, max_text_bytes=16, max_declarations=0, max_group_members=0),
+    )
     prepared = prepare(
         data=data,
         workflow=workflow,
         activation_limits=ActivationLimits(max_events=9, max_entries=3, max_parent_depth=1),
         bound_inputs=tuple(
-            BoundInput(target=target, source=target, port=name, artifact_type=artifact_type)
+            BoundInput(
+                target=target, source=target if name == "left" else right_source, port=name, artifact_type=artifact_type
+            )
             for name in ("left", "right")
         ),
         configuration=PreparationConfiguration(

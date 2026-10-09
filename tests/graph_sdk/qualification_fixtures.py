@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from anonymizer.engine.graph_sdk.context import (
     ContextResource,
@@ -75,6 +75,8 @@ def _inputs(
 class _RecoveringTransport:
     failure: FailureClass | None = None
     failures: tuple[FailureClass | None, ...] = ()
+    reverse_results: bool = False
+    envelopes: list[DispatchEnvelope] = field(default_factory=list)
     unknown_usage: bool = False
     fail_close: bool = False
     calls: int = 0
@@ -82,6 +84,7 @@ class _RecoveringTransport:
 
     async def dispatch(self, request: DispatchEnvelope) -> TransportResult:
         self.calls += 1
+        self.envelopes.append(request)
         settlement = ExternalSettlement(
             request=request.request,
             disposition="completed",
@@ -99,9 +102,8 @@ class _RecoveringTransport:
         )
         if failure is not None:
             return TransportFailure(failure=failure, settlement=settlement)
-        item = request.associations[0]
         return TransportSuccess(
-            results=(
+            results=tuple(
                 AssociationResult(
                     association=item.association,
                     outcome="ok",
@@ -114,7 +116,8 @@ class _RecoveringTransport:
                             value=item.inputs[0].value,
                         ),
                     ),
-                ),
+                )
+                for item in (tuple(reversed(request.associations)) if self.reverse_results else request.associations)
             ),
             settlement=settlement,
         )

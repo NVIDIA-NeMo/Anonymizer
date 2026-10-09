@@ -275,7 +275,7 @@ async def _run_external_batch(
         return {**completed, **{association: (mapping, (), ()) for association in associations}}
 
     implementation_index = 0
-    purpose: Literal["initial", "retry", "correction", "failover"] = "initial"
+    purpose: Literal["initial", "repair", "retry", "correction", "failover"] = policy.initial_request_purpose
     while True:
         if len(authority.state.remote_outstanding) >= limits.max_remote_outstanding:
             return failed(_mapping(policy, "request_limit_exhausted", None, None))

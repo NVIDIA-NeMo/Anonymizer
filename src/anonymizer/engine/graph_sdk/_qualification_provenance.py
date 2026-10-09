@@ -110,11 +110,17 @@ class _ProvenanceValidator:
     def _validate_artifact_allocations(self) -> None:
         allocated: dict[tuple[object, ...], int] = {}
         owners: dict[int, tuple[object, ...]] = {}
+        roots = {
+            (item.target, item.port): (item.source, item.artifact_type) for item in self.context.prepared.bound_inputs
+        }
         for fact in self.context.result.provenance:
             key = fact.key
             if isinstance(key, BoundInputKey):
                 lineage = (BoundInputKey, key.binding_artifact.declaration, key.binding_artifact.key)
                 version = key.binding_artifact.version
+            elif isinstance(key, RootInputKey):
+                lineage = (RootInputKey, *roots[key.target, key.port])
+                version = 1
             elif isinstance(key, MapItemKey):
                 lineage = (MapItemKey, key.expander, key.target, key.item_key)
                 version = key.item_version

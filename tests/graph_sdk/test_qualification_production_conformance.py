@@ -779,6 +779,7 @@ def _run_propagation(case: dict[str, Any], events: list[dict[str, Any]]) -> dict
     execution, result = asyncio.run(
         _execute_separate_subject_context(
             target_labels=tuple(labels),
+            independent_context_sources=True,
             target_findings=tuple(
                 AssessmentFinding(status=assessments[label]["finding"] if assessments else "satisfied", code="observed")
                 for label in labels

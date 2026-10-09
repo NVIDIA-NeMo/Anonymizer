@@ -12,6 +12,7 @@ from anonymizer.engine.graph_sdk._effect_values import (
     reject,
     require_count,
     require_instance,
+    require_literal,
 )
 from anonymizer.engine.graph_sdk._execution_topology import _node_operation, _workflow_owners
 from anonymizer.engine.graph_sdk._execution_values import (
@@ -136,7 +137,11 @@ def admit_execution_plan(
                 for item in context.context_capabilities
                 if item.source == adaptive.source and "adaptive_retrieval" in item.uses
             )
-            if policy.kind != "external" or policy.request != source.request:
+            if (
+                policy.kind != "external"
+                or policy.request != source.request
+                or policy.initial_request_purpose != "initial"
+            ):
                 reject(EffectCode.CONTRADICTORY)
             if any(item.capability.attribution != "per_task" for item in policy.implementations):
                 reject(EffectCode.UNSUPPORTED)
@@ -321,6 +326,9 @@ def _add_materialization_schema(
 
 
 def _validate_policy(policy: OperationExecutionPolicy, has_decision: bool) -> None:
+    require_literal(policy.initial_request_purpose, frozenset({"initial", "repair"}))
+    if policy.initial_request_purpose == "repair" and (policy.kind != "external" or policy.request is None):
+        reject(EffectCode.CONTRADICTORY)
     if policy.request is not None and policy.request.retry_owner == "implementation":
         reject(EffectCode.UNSUPPORTED)
     capabilities = [item.capability for item in policy.implementations]
@@ -516,8 +524,9 @@ def _validate_services(admitted: AdmittedExecutionPlan, services: ExecutionServi
 def _validate_initial_materialization_capacity(admitted: AdmittedExecutionPlan, limits: ExecutionLimits) -> None:
     prepared = admitted.context.prepared
     datum_text = {item.id: item.text for item in prepared.data.datums}
-    artifact_count = len(prepared.bound_inputs)
-    artifact_bytes = sum(len(datum_text[item.source].encode()) for item in prepared.bound_inputs)
+    root_lineages = {(item.source, item.artifact_type) for item in prepared.bound_inputs}
+    artifact_count = len(root_lineages)
+    artifact_bytes = sum(len(datum_text[source].encode()) for source, _ in root_lineages)
     provenance_edges = 0
     context = admitted.context.bound_context
     if context is not None:
