@@ -203,21 +203,32 @@ async def _execute_separate_subject_context(
     context_from_subject: bool = False,
     independent_context_sources: bool = False,
     context_artifact_type: ArtifactType | None = None,
+    initial_subject: bool = False,
+    initial_collection: bool = False,
 ) -> tuple[AdmittedExecutionPlan, ExecutionResult]:
     base, node, artifact = _workflow(with_input=True)
     raw = base.workflow
     coverage = coverage if coverage is not None else frozenset({CoverageAtom(kind="field", name="text")})
     read = StateEffect(kind="read", name="read")
     assert versioned_context_ports in {("a",), ("b",), ("a", "b")}
+    assert not initial_subject or versioned_context_dependencies is None
+    assert not initial_collection or versioned_context_dependencies is not None
+    if initial_collection:
+        context_artifact_type = ArtifactType(name="text_collection", revision=1)
     context_ports = ("context",) if versioned_context_dependencies is None else versioned_context_ports
     consumed = frozenset(context_ports) if versioned_context_dependencies is None else versioned_context_dependencies
     assert consumed <= frozenset(context_ports)
     assert not context_from_subject or len(target_labels) == 1
-    assert context_artifact_type is None or versioned_context_dependencies is None
+    assert context_artifact_type is None or versioned_context_dependencies is None or initial_collection
     assert not (decision_context and ordinary_context_hop)
     context_hop = decision_context or ordinary_context_hop
     assert not context_hop or (versioned_context_dependencies is not None and "b" in context_ports)
     assert versioned_context_dependencies is None or additional_coverage is None
+    initial_ports = (
+        (("subject",) if initial_subject else context_ports)
+        if (initial_subject or versioned_context_dependencies is not None)
+        else ()
+    )
     operation = replace(
         raw.interface,
         inputs=tuple(
@@ -248,9 +259,9 @@ async def _execute_separate_subject_context(
                 produced_ports=frozenset({"result", "evidence"}),
                 state_effects=frozenset({read}) if environment else frozenset(),
                 context=frozenset(
-                    ContextUse(port=port, meaning="source", capture="whole_artifact") for port in context_ports
+                    ContextUse(port=port, meaning="source", capture="whole_artifact") for port in initial_ports
                 )
-                if versioned_context_dependencies is not None
+                if initial_ports
                 else frozenset(),
                 evidence=frozenset(
                     {
@@ -356,7 +367,7 @@ async def _execute_separate_subject_context(
                 source=NodeOutputRef(node=decision_node, port="approved")
                 if context_hop and name == "b"
                 else ContextInputRef(port=name)
-                if versioned_context_dependencies is not None and name in context_ports
+                if name in initial_ports
                 else WorkflowInputRef(port=name),
                 destination=NodeInputRef(node=node, port=name),
             )
@@ -435,11 +446,11 @@ async def _execute_separate_subject_context(
         ),
     )
     bound_context = None
-    if versioned_context_dependencies is not None:
+    if initial_ports:
         from tests.graph_sdk.qualification_fixtures import _BindingProvider, _initial_resource
 
         providers = tuple(
-            _BindingProvider(ContextSourceRef(name=port, revision=1), versions=(1, 2)) for port in context_ports
+            _BindingProvider(ContextSourceRef(name=port, revision=1), versions=(1, 2)) for port in initial_ports
         )
         resources = tuple(_initial_resource(provider) for provider in providers)
         binding = await (
@@ -451,16 +462,20 @@ async def _execute_separate_subject_context(
                         target=target,
                         node=decision_node if context_hop and port == "b" else node,
                         port=port,
-                        artifact_type=artifact,
+                        artifact_type=context_artifact_type
+                        if context_artifact_type is not None and initial_collection
+                        else artifact,
                         source=resource.source,
                         selector=ContextSelector(fields=()),
                         requirement="required",
                         bounds=RetrievalBounds(max_items=2, max_bytes=2, max_requests=1),
-                        materialization=ContextMaterialization(kind="single", item_type=artifact),
-                        version_selection="latest",
+                        materialization=ContextMaterialization(
+                            kind="collection" if initial_collection else "single", item_type=artifact
+                        ),
+                        version_selection="exact_one" if initial_collection else "latest",
                     )
                     for target in targets
-                    for port, resource in zip(context_ports, resources, strict=True)
+                    for port, resource in zip(initial_ports, resources, strict=True)
                 ),
                 capabilities=tuple(resource.capability for resource in resources),
                 resources=resources,
@@ -506,7 +521,7 @@ async def _execute_separate_subject_context(
             )
             for target in targets
             for name, source in (("subject", target), ("context", context_sources[target]))
-            if versioned_context_dependencies is None or name == "subject"
+            if name not in initial_ports and (versioned_context_dependencies is None or name == "subject")
         ),
         state=StateRevisionView(
             revisions=frozenset({StateRevision(effect=read, revision=1)}) if environment else frozenset()
@@ -597,7 +612,12 @@ async def _execute_separate_subject_context(
             max_port_facts=(3 + len(context_ports) + 2 * int(context_hop) + (additional_coverage is not None))
             * target_count,
             max_provenance_edges=(
-                1 + len(context_ports) + len(consumed) + int(context_hop) + (additional_coverage is not None)
+                1
+                + len(context_ports)
+                + len(consumed)
+                + int(context_hop)
+                + 2 * int(initial_collection)
+                + (additional_coverage is not None)
             )
             * target_count
             if provenance_edge_limit is None
@@ -609,7 +629,7 @@ async def _execute_separate_subject_context(
         tuple(zip(target_labels, target_findings, strict=True)) if target_findings else (),
         returned_evidence_port,
         additional_coverage is not None,
-        consumed_context_ports=frozenset(context_ports) if versioned_context_dependencies is not None else frozenset(),
+        consumed_context_ports=frozenset(initial_ports),
     )
     running = await start_execution(
         admitted=admitted,
@@ -643,12 +663,10 @@ async def _execute_separate_subject_context(
             limits=ExecutionLimits(
                 max_local_in_flight=1,
                 max_remote_outstanding=0,
-                max_runtime_artifacts=(
-                    3 + (additional_coverage is not None) + (3 if versioned_context_dependencies is not None else 0)
-                )
+                max_runtime_artifacts=(3 + (additional_coverage is not None) + (3 if initial_ports else 0))
                 * target_count,
                 max_runtime_artifact_bytes=32 * target_count,
-                max_collection_items=0,
+                max_collection_items=2 if initial_collection else 0,
             ),
             decision_limits=DecisionLimits(
                 max_pending=target_count if decision_context else 0, max_lifetime_ns=10 if decision_context else 0

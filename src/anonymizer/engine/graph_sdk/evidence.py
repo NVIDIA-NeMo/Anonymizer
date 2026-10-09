@@ -774,6 +774,8 @@ def evidence_validity(*, evidence: VerifiedEvidence, current: EvidenceRevisionVi
         comparisons.append((artifact, artifacts.get((artifact.invocation, artifact.key))))
     else:
         comparisons.append((evidence.subject, candidates.get(evidence.subject.target)))
+        artifact = evidence.subject.artifact
+        comparisons.append((artifact, artifacts.get((artifact.invocation, artifact.key))))
     for reference in evidence.reference.consumed:
         if isinstance(reference, CandidateRef):
             comparisons.append((reference, candidates.get(reference.target)))
