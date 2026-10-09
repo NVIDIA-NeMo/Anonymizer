@@ -155,6 +155,7 @@ if TYPE_CHECKING:
     from anonymizer.engine.graph_sdk.inspection import bind_inspection_source as bind_inspection_source
     from anonymizer.engine.graph_sdk.inspection import diagnose as diagnose
     from anonymizer.engine.graph_sdk.inspection import diagnose_binding as diagnose_binding
+    from anonymizer.engine.graph_sdk.inspection import diagnose_observations as diagnose_observations
     from anonymizer.engine.graph_sdk.inspection import encode_inspection as encode_inspection
     from anonymizer.engine.graph_sdk.inspection import explain as explain
     from anonymizer.engine.graph_sdk.inspection import inspect as inspect
@@ -294,6 +295,7 @@ if TYPE_CHECKING:
     from anonymizer.graph.workflow import admit_static_workflow as admit_static_workflow
 
 _EXPORTS: dict[str, str] = {
+    "diagnose_observations": "anonymizer.engine.graph_sdk.inspection",
     "BindingRejected": "anonymizer.engine.graph_sdk.binding",
     "AbsenceRef": "anonymizer.engine.graph_sdk.records",
     "MapItemKey": "anonymizer.engine.graph_sdk.executor",
@@ -587,6 +589,7 @@ def __dir__() -> list[str]:
 
 
 __all__ = [
+    "diagnose_observations",
     "BindingRejected",
     "AbsenceRef",
     "MapItemKey",

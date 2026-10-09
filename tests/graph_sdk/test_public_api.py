@@ -213,3 +213,147 @@ def test_bundled_skill_template_imports_and_configuration_still_work(tmp_path: P
     assert data.data_summary and config.detect.gliner_threshold == 0.3
     assert config.rewrite.risk_tolerance == "low"
     assert config.rewrite.max_repair_iterations == 3
+
+
+@pytest.mark.parametrize("selected", ["a", "b", "both"])
+def test_public_two_target_current_artifact_selection(selected: str) -> None:
+    example = runpy.run_path(str(EXAMPLE))
+    plan, services, transform, verifier = example["build"](verified=True, texts=("Alice A", "Alice B"))
+    result = g.execute_sync(admitted=plan, capabilities=plan.capabilities, services=services)
+    admitted, all_current = example["qualification_inputs"](plan, result)
+    candidates = result.final_outputs
+    expected = {
+        item.target
+        for item in (candidates[:1] if selected == "a" else candidates[1:] if selected == "b" else candidates)
+    }
+    artifacts = {item.artifact for item in result.ports if item.target in expected}
+    current = g.evidence_revision_view(
+        admitted=admitted,
+        result=result,
+        artifacts=tuple(ref for ref, _ in result.artifacts if ref in artifacts),
+        absences=(),
+        configurations=all_current.configurations,
+        state=all_current.state,
+    )
+    qualified = g.qualify(admitted=admitted, result=result, current=current)
+    assert len(qualified.verified) == len(result.assessments) == 2
+    assert {item.target for item in qualified.qualified} == expected
+    assert {item.candidate for item in qualified.qualified} == {
+        item.candidate for item in candidates if item.target in expected
+    }
+    source = g.bind_projection_source(execution=result, qualification=qualified, continuity=None)
+    first = g.project_protected(source=source)
+    assert {item.target for item in first.items} == expected
+    assert g.project_protected(source=source) == first
+    assert g.qualify(admitted=admitted, result=result, current=current) == qualified
+    assert (transform.calls, verifier.calls) == (2, 2)
+
+
+@pytest.mark.parametrize("invalid", ["admitted", "result", "current"])
+@pytest.mark.parametrize("observed", [False, True])
+def test_public_qualification_validates_each_outer_argument(invalid: str, observed: bool) -> None:
+    example = runpy.run_path(str(EXAMPLE))
+    plan, services, transform, verifier = example["build"](verified=True)
+    result = g.execute_sync(admitted=plan, capabilities=plan.capabilities, services=services)
+    admitted, current = example["qualification_inputs"](plan, result)
+    arguments: dict[str, Any] = dict(admitted=admitted, result=result, current=current)
+    arguments[invalid] = None
+    session = g.begin_observations(
+        limits=g.ObservationLimits(
+            max_pairs=2,
+            max_events=4,
+            max_nodes=200,
+            max_depth=12,
+            max_encoded_bytes=8192,
+            max_duration_ns=1_000_000_000,
+            max_count=100,
+        ),
+        clock=example["Clock"](),
+        sink=None,
+    )
+    assert isinstance(session, g.ObservationSession)
+    with pytest.raises(g.EffectRejected) as caught:
+        if observed:
+            g.observed_qualify(observations=session, **arguments)
+        else:
+            g.qualify(**arguments)
+    assert caught.value.code == g.EffectCode.INVALID_TYPE
+    receipt = session.close()
+    assert isinstance(receipt, g.ObservationReceipt)
+    assert len(receipt.pairs) == int(observed)
+    if observed:
+        assert receipt.pairs[0].terminal.reasons == frozenset({"invalid_input"})
+    assert (transform.calls, verifier.calls) == (1, 1)
+
+
+@pytest.mark.parametrize("bound", ["max_submissions", "max_verified_evidence"])
+def test_public_retained_count_precedes_member_allocation(bound: str) -> None:
+    example = runpy.run_path(str(EXAMPLE))
+    plan, services, transform, verifier = example["build"](verified=True, texts=("Alice A", "Alice B"))
+    result = g.execute_sync(admitted=plan, capabilities=plan.capabilities, services=services)
+    original_admitted, current = example["qualification_inputs"](plan, result)
+    admitted = g.admit_qualification(
+        execution=plan, productions=plan.assessment_productions, limits=replace(original_admitted.limits, **{bound: 1})
+    )
+    original = result.assessments
+    try:
+        # Deliberate malformed producer state: the count rejection must precede
+        # construction/validation of either retained-member wrapper.
+        object.__setattr__(result, "assessments", (object(), original[1]))
+        with pytest.raises(g.EffectRejected) as over:
+            g.qualify(admitted=admitted, result=result, current=current)
+        assert over.value.code == g.EffectCode.LIMIT_EXCEEDED
+        object.__setattr__(result, "assessments", (object(),))
+        with pytest.raises(g.EffectRejected) as member:
+            g.qualify(admitted=admitted, result=result, current=current)
+        assert member.value.code == g.EffectCode.INVALID_TYPE
+    finally:
+        object.__setattr__(result, "assessments", original)
+    assert (transform.calls, verifier.calls) == (2, 2)
+
+
+def test_public_diagnosis_after_prepare_rejection() -> None:
+    example = runpy.run_path(str(EXAMPLE))
+    session = g.begin_observations(
+        limits=g.ObservationLimits(
+            max_pairs=2,
+            max_events=4,
+            max_nodes=200,
+            max_depth=12,
+            max_encoded_bytes=8192,
+            max_duration_ns=1_000_000_000,
+            max_count=100,
+        ),
+        clock=example["Clock"](),
+        sink=None,
+    )
+    assert isinstance(session, g.ObservationSession)
+    with pytest.raises(g.PreparationRejected):
+        cast(Any, g.observed_prepare)(
+            observations=session,
+            data=None,
+            workflow=None,
+            activation_limits=None,
+            bound_inputs=(),
+            configuration=None,
+            state=None,
+            selections=(),
+            capabilities=(),
+            limits=None,
+        )
+    receipt = session.close()
+    assert isinstance(receipt, g.ObservationReceipt)
+    diagnosis = g.diagnose_observations(
+        observations=receipt,
+        limits=g.InspectionLimits(
+            max_pairs=2,
+            max_events=4,
+            max_nodes=200,
+            max_depth=12,
+            max_encoded_bytes=8192,
+            max_count=1_000_000_000,
+            max_reason_counts=17,
+        ),
+    )
+    assert diagnosis.terminal_unknown and not diagnosis.observation_failed
+    assert any(item.reason == "invalid_input" for item in diagnosis.reasons)

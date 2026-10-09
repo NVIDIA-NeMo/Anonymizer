@@ -126,21 +126,27 @@ def runtime_outcomes() -> tuple[g.RuntimeOutcome, ...]:
 
 
 def build(
-    *, verified: bool, decision: bool = False
+    *, verified: bool, decision: bool = False, texts: tuple[str, ...] = ("Alice uses alice@example.test",)
 ) -> tuple[g.AdmittedExecutionPlan, g.ExecutionServices, Transform, Verifier]:
     """Declare a transform and, optionally, a separate verifier with exact candidate evidence."""
     assert not (verified and decision)
     data = g.DataGraph.new()
-    data, target = data.add_text("Alice uses alice@example.test")
+    targets = []
+    for text_value in texts:
+        data, target = data.add_text(text_value)
+        targets.append(target)
+    count = len(targets)
     validated = data.validate(
-        targets=(target,),
+        targets=tuple(targets),
         source_relations=(),
         contexts=(),
         dependencies=(),
         coherence=(),
         atomic=(),
         output_regions=(),
-        limits=g.DataLimits(max_datums=1, max_targets=1, max_text_bytes=1024, max_declarations=0, max_group_members=0),
+        limits=g.DataLimits(
+            max_datums=count, max_targets=count, max_text_bytes=1024 * count, max_declarations=0, max_group_members=0
+        ),
     )
     text = g.ArtifactType(name="text", revision=1)
     owner = g.WorkflowId.new()
@@ -295,7 +301,9 @@ def build(
         data=validated,
         workflow=workflow,
         activation_limits=g.ActivationLimits(max_events=8, max_entries=2, max_parent_depth=1),
-        bound_inputs=(g.BoundInput(target=target, port="input", source=target, artifact_type=text),),
+        bound_inputs=tuple(
+            g.BoundInput(target=target, port="input", source=target, artifact_type=text) for target in targets
+        ),
         configuration=g.PreparationConfiguration(
             purpose="protection" if verified else "execution_only",
             required_protection_outcomes=frozenset({"ok"}) if verified else frozenset(),
@@ -308,12 +316,12 @@ def build(
         ),
         capabilities=capabilities,
         limits=g.PreparationLimits(
-            max_bound_inputs=1,
+            max_bound_inputs=count,
             max_state_revisions=0,
             max_selections=2,
             max_config_depth=2,
             max_config_atoms=4,
-            max_total_activation_slots=2,
+            max_total_activation_slots=2 * count,
             max_capabilities=2,
         ),
     )
@@ -381,9 +389,9 @@ def build(
             max_findings_per_production=2,
             max_finding_code_bytes=32,
             max_absence_queries=0,
-            max_assessment_facts=1,
-            max_port_facts=8,
-            max_provenance_edges=8,
+            max_assessment_facts=count,
+            max_port_facts=8 * count,
+            max_provenance_edges=8 * count,
         ),
     )
     transform_callback, verifier_callback = Decision() if decision else Transform(), Verifier()
@@ -404,8 +412,8 @@ def build(
         limits=g.ExecutionLimits(
             max_local_in_flight=1,
             max_remote_outstanding=0,
-            max_runtime_artifacts=8,
-            max_runtime_artifact_bytes=8192,
+            max_runtime_artifacts=8 * count,
+            max_runtime_artifact_bytes=8192 * count,
             max_collection_items=0,
         ),
         decision_limits=g.DecisionLimits(
@@ -417,21 +425,22 @@ def build(
 
 
 def qualification_inputs(admitted: g.AdmittedExecutionPlan, result: g.ExecutionResult):
+    count = len(admitted.context.prepared.data.targets)
     qualification = g.admit_qualification(
         execution=admitted,
         productions=admitted.assessment_productions,
         limits=g.QualificationLimits(
             max_productions=1,
-            max_submissions=1,
-            max_port_facts=8,
+            max_submissions=count,
+            max_port_facts=8 * count,
             max_consumed_per_assessment=8,
             max_coverage_atoms=4,
-            max_verified_evidence=1,
+            max_verified_evidence=count,
             max_required_decisions=0,
             max_fixed_point_steps=8,
-            max_revision_entries=16,
+            max_revision_entries=16 * count,
             max_absence_revisions=0,
-            max_provenance_edges=16,
+            max_provenance_edges=16 * count,
         ),
     )
     current = g.evidence_revision_view(
@@ -439,7 +448,7 @@ def qualification_inputs(admitted: g.AdmittedExecutionPlan, result: g.ExecutionR
         result=result,
         artifacts=tuple(ref for ref, _ in result.artifacts),
         absences=(),
-        configurations=tuple((item.node, item.environment.configuration) for item in result.assessments),
+        configurations=tuple(dict.fromkeys((item.node, item.environment.configuration) for item in result.assessments)),
         state=admitted.context.prepared.state,
     )
     return qualification, current
