@@ -105,60 +105,59 @@ def _state_wire(
     require_instance(decisions, tuple)
     if len(decisions) > limits.max_decisions:
         reject(EffectCode.LIMIT_EXCEEDED)
-    _text(namespace.name, limits.max_name_bytes)
-    require_count(revision)
+    # Project the closed native types without applying later semantic phases.
+    # The wire validator owns the same ordering for load and encode.
     total = 0
-    groups: Counter[StateGroupRef] = Counter()
-    keys = []
+    for decision in decisions:
+        if type(decision) is RetainedDecision and type(decision.supports) is frozenset:
+            total += len(decision.supports)
+            if len(decision.supports) > limits.max_supports_per_decision or total > limits.max_total_supports:
+                reject(EffectCode.LIMIT_EXCEEDED)
     rows: list[_JSON] = []
     for decision in decisions:
         require_instance(decision, RetainedDecision)
-        supports = decision.supports
-        require_instance(supports, frozenset)
-        total += len(supports)
-        if len(supports) > limits.max_supports_per_decision or total > limits.max_total_supports:
-            reject(EffectCode.LIMIT_EXCEEDED)
+        require_instance(decision.supports, frozenset)
         require_instance(decision.reference, StateDecisionRef)
         key = decision.reference.key
         require_instance(key, StateDecisionKey)
         require_instance(key.group, StateGroupRef)
         require_instance(key.subject, StateSubjectRef)
-        _text(key.group.name, limits.max_name_bytes)
-        _text(key.slot, limits.max_slot_bytes)
-        _stable_ref(key.subject, limits)
-        require_count(decision.reference.revision, positive=True)
-        for support in supports:
+        for support in decision.supports:
             require_instance(support, StateSupportRef)
-            _stable_ref(support, limits)
-        if len({(s.kind, s.name) for s in supports}) != len(supports):
-            reject(EffectCode.DUPLICATE)
-        if not supports:
-            reject(EffectCode.MISSING)
-        groups[key.group] += 1
-        keys.append(_key_order(key))
+        value = decision.value
+        if type(value) is TextArtifactValue:
+            wire_value: dict[str, _JSON] = {"tag": "text", "text": value.text}
+        elif type(value) is TextCollectionValue:
+            require_instance(value.items, tuple)
+            if 3 + 4 * len(value.items) > limits.max_value_atoms:
+                reject(EffectCode.LIMIT_EXCEEDED)
+            items: list[_JSON] = []
+            for item in value.items:
+                require_instance(item, TextCollectionItem)
+                require_instance(item.value, TextArtifactValue)
+                items.append({"key": item.key, "version": item.version, "text": item.value.text})
+            wire_value = {"tag": "collection", "items": items}
+        else:
+            reject(EffectCode.INVALID_TYPE)
         rows.append(
             {
                 "group": key.group.name,
                 "subject": _reference_wire(key.subject),
                 "slot": key.slot,
                 "revision": decision.reference.revision,
-                "value": _value_wire(decision.value, limits),
-                "supports": [_reference_wire(s) for s in sorted(supports, key=_support_order)],
+                "value": wire_value,
+                "supports": [_reference_wire(s) for s in sorted(decision.supports, key=_support_order)],
             }
         )
-    if len(groups) > limits.max_groups or any(n > limits.max_decisions_per_group for n in groups.values()):
-        reject(EffectCode.LIMIT_EXCEEDED)
-    if len(set(keys)) != len(keys):
-        reject(EffectCode.DUPLICATE)
-    if keys != sorted(keys):
-        reject(EffectCode.CONTRADICTORY)
-    return {
+    wire: dict[str, _JSON] = {
         "format": SNAPSHOT_FORMAT,
         "version": SNAPSHOT_VERSION,
         "namespace": namespace.name,
         "revision": revision,
         "decisions": rows,
     }
+    _snapshot_from_wire(wire, limits)
+    return wire
 
 
 def _check_json_depth(raw: bytes, maximum: int) -> None:
@@ -316,15 +315,77 @@ def _read_value(value: object, limits: ContinuityLimits) -> ArtifactValue:
     return result
 
 
-def _pairs(pairs: list[tuple[str, _JSON]]) -> dict[str, _JSON]:
-    if len({key for key, _ in pairs}) != len(pairs):
-        reject(EffectCode.DUPLICATE)
-    return dict(pairs)
+def _text_bound(value: object, bound: int) -> None:
+    # Malformed member types and Unicode belong to the following scalar phase.
+    if type(value) is not str:
+        return
+    if len(value) > bound:
+        reject(EffectCode.LIMIT_EXCEEDED)
+    used = 0
+    for offset in range(0, len(value), 1024):
+        used += len(value[offset : offset + 1024].encode("utf-8", "surrogatepass"))
+        if used > bound:
+            reject(EffectCode.LIMIT_EXCEEDED)
 
 
-def _no_number(value: str) -> None:
-    del value
-    reject(EffectCode.INVALID_TYPE)
+def _snapshot_bounds(root: dict[str, _JSON], rows: list[_JSON], limits: ContinuityLimits) -> None:
+    _text_bound(root["namespace"], limits.max_name_bytes)
+    total = 0
+    groups: Counter[str] = Counter()
+    for member in rows:
+        if type(member) is not dict:
+            continue
+        group = member.get("group")
+        if type(group) is str:
+            groups[group] += 1
+        _text_bound(group, limits.max_name_bytes)
+        _text_bound(member.get("slot"), limits.max_slot_bytes)
+        supports = member.get("supports")
+        if type(supports) is list:
+            total += len(supports)
+            if len(supports) > limits.max_supports_per_decision or total > limits.max_total_supports:
+                reject(EffectCode.LIMIT_EXCEEDED)
+        refs = [member.get("subject"), *(supports if type(supports) is list else [])]
+        for ref in refs:
+            if type(ref) is dict:
+                _text_bound(ref.get("kind"), limits.max_name_bytes)
+                _text_bound(ref.get("name"), limits.max_name_bytes)
+        value = member.get("value")
+        if type(value) is not dict:
+            continue
+        if value.get("tag") == "text":
+            if limits.max_value_atoms < 3 or limits.max_value_depth < 2:
+                reject(EffectCode.LIMIT_EXCEEDED)
+            _text_bound(value.get("text"), limits.max_value_bytes)
+        elif value.get("tag") == "collection":
+            items = value.get("items")
+            if type(items) is not list:
+                continue
+            if 3 + 4 * len(items) > limits.max_value_atoms or (4 if items else 2) > limits.max_value_depth:
+                reject(EffectCode.LIMIT_EXCEEDED)
+            used = 0
+            for item in items:
+                if type(item) is dict and type(item.get("text")) is str:
+                    text = cast(str, item["text"])
+                    _text_bound(text, limits.max_value_bytes - used)
+                    used += len(text.encode("utf-8", "surrogatepass"))
+    if len(groups) > limits.max_groups or any(n > limits.max_decisions_per_group for n in groups.values()):
+        reject(EffectCode.LIMIT_EXCEEDED)
+
+
+def _value_members(value: object, limits: ContinuityLimits) -> None:
+    if type(value) is not dict or type(value.get("tag")) is not str:
+        reject(EffectCode.INVALID_TYPE)
+    if value.get("tag") == "text":
+        row = _fields(value, {"tag", "text"})
+        _text(row["text"], limits.max_value_bytes, empty=True)
+    elif value.get("tag") == "collection":
+        row = _fields(value, {"tag", "items"})
+        for member in _array(row["items"], max(0, (limits.max_value_atoms - 3) // 4)):
+            item = _fields(member, {"key", "version", "text"})
+            require_count(item["key"])
+            require_count(item["version"], positive=True)
+            _text(item["text"], limits.max_value_bytes, empty=True)
 
 
 def _parse_integer(raw: str) -> int:
@@ -341,55 +402,89 @@ def _decode(raw: bytes, limits: ContinuityLimits) -> ContinuitySnapshot:
     if len(raw) > limits.max_snapshot_bytes:
         reject(EffectCode.LIMIT_EXCEEDED)
     _check_json_depth(raw, limits.max_snapshot_depth)
+    duplicate_members = False
+
+    def pairs(items: list[tuple[str, _JSON]]) -> dict[str, _JSON]:
+        nonlocal duplicate_members
+        duplicate_members |= len({key for key, _ in items}) != len(items)
+        return dict(items)
+
     try:
-        parsed = json.loads(
-            raw.decode("utf-8", "strict"),
-            object_pairs_hook=_pairs,
-            parse_int=_parse_integer,
-            parse_float=_no_number,
-            parse_constant=_no_number,
-        )
+        parsed = json.loads(raw.decode("utf-8", "strict"), object_pairs_hook=pairs, parse_int=_parse_integer)
     except (UnicodeDecodeError, json.JSONDecodeError, RecursionError):
         reject(EffectCode.INVALID_VALUE)
+    snapshot = _snapshot_from_wire(parsed, limits, duplicate_members=duplicate_members)
+    encode_snapshot(snapshot=snapshot, limits=limits)
+    return snapshot
+
+
+def _snapshot_from_wire(
+    parsed: object, limits: ContinuityLimits, *, duplicate_members: bool = False
+) -> ContinuitySnapshot:
     root = _fields(parsed, {"format", "version", "namespace", "revision", "decisions"})
     rows = _array(root["decisions"], limits.max_decisions)
+    _snapshot_bounds(root, rows, limits)
     namespace = StateNamespace(name=_text(root["namespace"], limits.max_name_bytes))
     revision = require_count(root["revision"])
     version = require_count(root["version"])
     if type(root["format"]) is not str:
         reject(EffectCode.INVALID_TYPE)
-    if root["format"] != SNAPSHOT_FORMAT or version != SNAPSHOT_VERSION:
-        reject(EffectCode.UNSUPPORTED)
-    decisions = []
-    total_supports = 0
+    # Finish scalar/closed-shape admission for every row before semantic phases.
+    keys = []
+    supports_by_row = []
     for member in rows:
         row = _fields(member, {"group", "subject", "slot", "revision", "value", "supports"})
-        supports_raw = _array(row["supports"], limits.max_supports_per_decision)
-        total_supports += len(supports_raw)
-        if total_supports > limits.max_total_supports:
-            reject(EffectCode.LIMIT_EXCEEDED)
         subject_kind, subject_name, subject_version = _read_ref(row["subject"], limits)
-        supports = [
-            StateSupportRef(kind=k, name=n, version=v) for k, n, v in (_read_ref(item, limits) for item in supports_raw)
-        ]
-        support_keys = [_support_order(s) for s in supports]
-        if len(set(support_keys)) != len(support_keys):
-            reject(EffectCode.DUPLICATE)
-        if support_keys != sorted(support_keys):
-            reject(EffectCode.CONTRADICTORY)
         key = StateDecisionKey(
             group=StateGroupRef(name=_text(row["group"], limits.max_name_bytes)),
             subject=StateSubjectRef(kind=subject_kind, name=subject_name, version=subject_version),
             slot=_text(row["slot"], limits.max_slot_bytes),
         )
+        require_count(row["revision"], positive=True)
+        supports_raw = _array(row["supports"], limits.max_supports_per_decision)
+        supports_by_row.append(
+            [
+                StateSupportRef(kind=k, name=n, version=v)
+                for k, n, v in (_read_ref(item, limits) for item in supports_raw)
+            ]
+        )
+        _value_members(row["value"], limits)
+        keys.append(key)
+    if duplicate_members or len(set(keys)) != len(keys):
+        reject(EffectCode.DUPLICATE)
+    for member, supports in zip(rows, supports_by_row, strict=True):
+        if len({(s.kind, s.name) for s in supports}) != len(supports):
+            reject(EffectCode.DUPLICATE)
+        row = cast(dict[str, _JSON], member)
+        value = cast(dict[str, _JSON], row["value"])
+        if value["tag"] == "collection":
+            items = cast(list[dict[str, _JSON]], value["items"])
+            coordinates = [(item["key"], item["version"]) for item in items]
+            if len(set(coordinates)) != len(coordinates):
+                reject(EffectCode.DUPLICATE)
+    if any(not supports for supports in supports_by_row):
+        reject(EffectCode.MISSING)
+    if root["format"] != SNAPSHOT_FORMAT or version != SNAPSHOT_VERSION:
+        reject(EffectCode.UNSUPPORTED)
+    for member in rows:
+        row = cast(dict[str, _JSON], member)
+        if cast(dict[str, _JSON], row["value"])["tag"] not in {"text", "collection"}:
+            reject(EffectCode.UNSUPPORTED)
+    if keys != sorted(keys, key=_key_order):
+        reject(EffectCode.CONTRADICTORY)
+    decisions = []
+    for member, key, supports in zip(rows, keys, supports_by_row, strict=True):
+        row = cast(dict[str, _JSON], member)
+        if supports != sorted(supports, key=_support_order):
+            reject(EffectCode.CONTRADICTORY)
         decisions.append(
             RetainedDecision(
-                reference=StateDecisionRef(key=key, revision=require_count(row["revision"], positive=True)),
+                reference=StateDecisionRef(key=key, revision=cast(int, row["revision"])),
                 value=_read_value(row["value"], limits),
                 supports=frozenset(supports),
             )
         )
-    snapshot = ContinuitySnapshot(
+    return ContinuitySnapshot(
         _key=_CONTINUITY_KEY,
         format=SNAPSHOT_FORMAT,
         version=SNAPSHOT_VERSION,
@@ -397,8 +492,6 @@ def _decode(raw: bytes, limits: ContinuityLimits) -> ContinuitySnapshot:
         revision=revision,
         decisions=tuple(decisions),
     )
-    encode_snapshot(snapshot=snapshot, limits=limits)
-    return snapshot
 
 
 def load_snapshot(*, path: os.PathLike[str], limits: ContinuityLimits) -> ContinuitySnapshot:

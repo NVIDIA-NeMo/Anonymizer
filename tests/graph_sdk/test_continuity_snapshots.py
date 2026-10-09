@@ -244,3 +244,75 @@ def test_bounded_large_integer_revision_does_not_depend_on_python_digit_limit(tm
     path.write_bytes(raw)
     snapshot = load_snapshot(path=path, limits=limits())
     assert encode_snapshot(snapshot=snapshot, limits=limits()) == raw
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+@pytest.mark.parametrize("fault", ["version", "supports", "duplicate", "group", "value"])
+def test_snapshot_mixed_faults_follow_global_phase_order(tmp_path: Path, reverse: bool, fault: str) -> None:
+    source = wire()
+    first = source["decisions"][0]
+    second = copy.deepcopy(first)
+    second["slot"] = "other"
+    source["decisions"].append(second)
+    bounds = limits()
+    if fault == "version":
+        source["version"] = 1
+        second["revision"] = True
+        expected = EffectCode.INVALID_TYPE
+    elif fault == "supports":
+        first["supports"] = []
+        bounds = limits(max_total_supports=0)
+        expected = EffectCode.LIMIT_EXCEEDED
+    elif fault == "duplicate":
+        first["supports"] *= 2
+        second["revision"] = True
+        expected = EffectCode.INVALID_TYPE
+    elif fault == "group":
+        first["revision"] = True
+        bounds = limits(max_decisions_per_group=1)
+        expected = EffectCode.LIMIT_EXCEEDED
+    else:
+        first["value"] = {"tag": "future"}
+        second["supports"] = []
+        expected = EffectCode.MISSING
+    if reverse:
+        source["decisions"].reverse()
+    path = tmp_path / "mixed.json"
+    original = json.dumps(source).encode()
+    path.write_bytes(original)
+    with pytest.raises(EffectRejected) as failure:
+        load_snapshot(path=path, limits=bounds)
+    assert failure.value.code is expected
+    assert path.read_bytes() == original
+    assert list(tmp_path.iterdir()) == [path]
+
+
+def test_encoding_bounds_precede_earlier_duplicate_support(tmp_path: Path) -> None:
+    from dataclasses import replace
+
+    from anonymizer.engine.graph_sdk._continuity_values import _CONTINUITY_KEY, StateSupportRef
+
+    source = wire()
+    source["decisions"].append({**copy.deepcopy(source["decisions"][0]), "slot": "other"})
+    snapshot = load(tmp_path / "source.json", source)
+    first, second = snapshot.decisions
+    support = next(iter(first.supports))
+    first = replace(
+        first, supports=frozenset({support, StateSupportRef(kind=support.kind, name=support.name, version=2)})
+    )
+    # Private factory injection isolates encoding admission without mutating a state.
+    malformed = ContinuitySnapshot(
+        _key=_CONTINUITY_KEY,
+        format=snapshot.format,
+        version=snapshot.version,
+        namespace=snapshot.namespace,
+        revision=snapshot.revision,
+        decisions=(first, second),
+    )
+    destination = tmp_path / "destination.json"
+    destination.write_bytes(b"existing")
+    with pytest.raises(EffectRejected) as failure:
+        write_snapshot(path=destination, snapshot=malformed, limits=limits(max_decisions_per_group=1))
+    assert failure.value.code is EffectCode.LIMIT_EXCEEDED
+    assert destination.read_bytes() == b"existing"
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["destination.json", "source.json"]

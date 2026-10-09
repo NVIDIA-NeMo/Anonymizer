@@ -259,3 +259,57 @@ def test_alternating_commit_exact_work_bound_preserves_state_on_exhaustion() -> 
             assert state.view(limits=limits()) == before
 
     asyncio.run(run())
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+@pytest.mark.parametrize("fault", ["duplicate", "missing"])
+def test_admission_mixed_faults_follow_global_phase_order(reverse: bool, fault: str) -> None:
+    from dataclasses import replace
+
+    from anonymizer.engine.graph_sdk.continuity import admit_continuity
+
+    async def run() -> None:
+        state = create_continuity_state(namespace=StateNamespace(name="history"), limits=limits())
+        _, admitted = await prepare_case("sole_b", state)
+        first, second = admitted.declarations
+        if fault == "duplicate":
+            declarations = (replace(first, outcome="absent"), replace(second, supports=second.supports * 2))
+            expected = EffectCode.DUPLICATE
+        else:
+            declarations = (replace(first, change="invalid"), replace(second, outcome="absent"))
+            expected = EffectCode.MISSING
+        before = state.view(limits=limits())
+        with pytest.raises(EffectRejected) as failure:
+            admit_continuity(
+                prepared=admitted.prepared,
+                session=admitted.session,
+                declarations=tuple(reversed(declarations)) if reverse else declarations,
+                limits=limits(),
+            )
+        assert failure.value.code is expected
+        assert state.view(limits=limits()) == before
+
+    asyncio.run(run())
+
+
+def test_initial_support_requires_qualified_binding_location() -> None:
+    from anonymizer.engine.graph_sdk.evidence import AssessmentSubmission
+    from anonymizer.engine.graph_sdk.qualification import qualify
+
+    async def run() -> None:
+        state = create_continuity_state(namespace=StateNamespace(name="history"), limits=limits())
+        graph, admitted = await prepare_case("sole_b", state)
+        only_a = qualify(
+            admitted=graph.qualified._admitted,
+            result=graph.result,
+            current=graph.current,
+            submissions=tuple(AssessmentSubmission(fact=f) for f in graph.result.assessments if f.outcome == "A"),
+        )
+        assert len(only_a.qualified) == 1
+        before = state.view(limits=limits())
+        with pytest.raises(EffectRejected) as failure:
+            commit_qualified(admitted=admitted, execution=graph.result, qualification=only_a)
+        assert failure.value.code is EffectCode.MISSING
+        assert state.view(limits=limits()) == before
+
+    asyncio.run(run())

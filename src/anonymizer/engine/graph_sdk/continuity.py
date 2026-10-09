@@ -7,7 +7,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from threading import RLock
 
-from anonymizer.engine.graph_sdk._continuity_codec import _encode_state, _stable_ref, _text, _value_wire
+from anonymizer.engine.graph_sdk._continuity_codec import _encode_state, _stable_ref, _text, _text_bound, _value_wire
 from anonymizer.engine.graph_sdk._continuity_codec import encode_snapshot as encode_snapshot
 from anonymizer.engine.graph_sdk._continuity_codec import load_snapshot as load_snapshot
 from anonymizer.engine.graph_sdk._continuity_codec import write_snapshot as write_snapshot
@@ -206,6 +206,18 @@ def admit_continuity(
         total += len(declaration.supports)
         if len(declaration.supports) > limits.max_supports_per_decision or total > limits.max_total_supports:
             reject(EffectCode.LIMIT_EXCEEDED)
+        _text_bound(declaration.key.group.name, limits.max_name_bytes)
+        _text_bound(declaration.key.slot, limits.max_slot_bytes)
+        _text_bound(declaration.key.subject.kind, limits.max_name_bytes)
+        _text_bound(declaration.key.subject.name, limits.max_name_bytes)
+        _text_bound(declaration.outcome, limits.max_name_bytes)
+        _text_bound(declaration.port, limits.max_name_bytes)
+        for support in declaration.supports:
+            _text_bound(support.reference.kind, limits.max_name_bytes)
+            _text_bound(support.reference.name, limits.max_name_bytes)
+            _text_bound(support.outcome, limits.max_name_bytes)
+            _text_bound(support.promise, limits.max_name_bytes)
+    for declaration in declarations:
         _text(declaration.key.group.name, limits.max_name_bytes)
         _text(declaration.key.slot, limits.max_slot_bytes)
         _stable_ref(declaration.key.subject, limits)
@@ -234,6 +246,7 @@ def admit_continuity(
         bindings = [(s.node, s.outcome, s.promise) for s in declaration.supports]
         if len(set(refs)) != len(refs) or len(set(bindings)) != len(bindings):
             reject(EffectCode.DUPLICATE)
+    for declaration in declarations:
         if not declaration.supports:
             reject(EffectCode.MISSING)
         outcomes = {o.name: o for o in nodes[declaration.node].operation.outcomes}
@@ -253,20 +266,25 @@ def admit_continuity(
             promise = next((p for p in assessor.evidence if p.name == support.promise), None)
             if promise is None:
                 reject(EffectCode.MISSING)
-            if assessor.category != "success" or not support.required_coverage <= promise.coverage:
-                reject(EffectCode.UNSUPPORTED)
-        if declaration.change not in {"create", "reuse", "supersede"}:
-            reject(EffectCode.UNSUPPORTED)
-        if declaration.change != "create" and declaration.prior is None:
+        if declaration.change in {"reuse", "supersede"} and declaration.prior is None:
             reject(EffectCode.MISSING)
-        if declaration.change == "create" and declaration.prior is not None:
-            reject(EffectCode.CONTRADICTORY)
-        if declaration.prior is not None and declaration.prior.key != declaration.key:
-            reject(EffectCode.CONTRADICTORY)
     read_effect = StateEffect(kind="read", name=session.base.namespace.name)
     actual = [r.revision for r in prepared.state.revisions if r.effect == read_effect]
     if declarations and not actual:
         reject(EffectCode.MISSING)
+    for declaration in declarations:
+        if declaration.change not in {"create", "reuse", "supersede"}:
+            reject(EffectCode.UNSUPPORTED)
+        for support in declaration.supports:
+            assessor = next(o for o in nodes[support.node].operation.outcomes if o.name == support.outcome)
+            promise = next(p for p in assessor.evidence if p.name == support.promise)
+            if assessor.category != "success" or not support.required_coverage <= promise.coverage:
+                reject(EffectCode.UNSUPPORTED)
+    for declaration in declarations:
+        if declaration.change == "create" and declaration.prior is not None:
+            reject(EffectCode.CONTRADICTORY)
+        if declaration.prior is not None and declaration.prior.key != declaration.key:
+            reject(EffectCode.CONTRADICTORY)
     if actual and actual != [session.base.revision + 1]:
         reject(EffectCode.CONTRADICTORY)
     if limits != session.limits:
