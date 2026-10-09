@@ -195,6 +195,8 @@ def advance_requests(*, state: RequestState, event: RequestEvent) -> RequestStat
             defects=defects,
             local_in_flight=state.local_in_flight - {request},
         )
+    if request not in state.dispatched:
+        reject(EffectCode.MISSING)
     if isinstance(event, ObserveSettlement):
         return _observe_settlement(state, event.settlement)
     if isinstance(event, RejectSettlement):
@@ -211,8 +213,6 @@ def advance_requests(*, state: RequestState, event: RequestEvent) -> RequestStat
             request=request, code="invalid_settlement", association=None, terminal=None, settlement=None
         )
         return replace(interim, defects=_append_unique(interim.defects, defect))
-    if request not in state.dispatched:
-        reject(EffectCode.MISSING)
     if isinstance(event, AcceptFailure):
         require_literal(event.failure, _FAILURES)
         terminal = RequestTerminalFact(request=request, category="failure", failure=event.failure, results=())

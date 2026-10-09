@@ -1,0 +1,67 @@
+{
+  "source_bundle": "P7-evidence-reference-v1",
+  "accepted_pins": {
+    "P7-foundation-references-v2/manifest.json": "1ac59764cb84ca7c1fd292adc10fb99115b496421f641a29847d1369633d41c4",
+    "P7-evidence-reference-v1/frozen.json": "5059312a82582bb6c1f002f9f934e9c51fb358a9c45c27fce849748aac92f78c",
+    "P7-cleanup-attribution-amendment-v1.md": "4dc743ecbbb3c87a3e4bcd4d310428e689e23956178d919454f279bc5e275a92",
+    "P7-compact-reference-review-420.md": "deec5cffd53216629fa923b62bad138e267ef12c090a420f102fefd45e644919"
+  },
+  "files": {
+    "README.md": {
+      "frozen_sha256": "400023127c57c58f589a804569fb8be243a7f128f782dc71e01a630e8838cc64",
+      "adopted_sha256": "400023127c57c58f589a804569fb8be243a7f128f782dc71e01a630e8838cc64",
+      "relocated": false
+    },
+    "frozen.json": {
+      "frozen_sha256": "5059312a82582bb6c1f002f9f934e9c51fb358a9c45c27fce849748aac92f78c",
+      "adopted_sha256": "5059312a82582bb6c1f002f9f934e9c51fb358a9c45c27fce849748aac92f78c",
+      "relocated": false
+    },
+    "manifest.json": {
+      "frozen_sha256": "1f2ea97139e760e2ebd67855faa025ad9bd54da731b11c2102ff87fb6e60a999",
+      "adopted_sha256": "1f2ea97139e760e2ebd67855faa025ad9bd54da731b11c2102ff87fb6e60a999",
+      "relocated": false
+    },
+    "inputs.json": {
+      "frozen_sha256": "0d0f35fbdccfdf2a92e24e00f951f7778b1c95c70bd266fb4821c480543eb2bc",
+      "adopted_sha256": "0d0f35fbdccfdf2a92e24e00f951f7778b1c95c70bd266fb4821c480543eb2bc",
+      "relocated": false
+    },
+    "evidence.json": {
+      "frozen_sha256": "c3f9b1f991639667a68e8da117bf2259755419513646617fd634c653521fb5ee",
+      "adopted_sha256": "c3f9b1f991639667a68e8da117bf2259755419513646617fd634c653521fb5ee",
+      "relocated": false
+    },
+    "cases.jsonl": {
+      "frozen_sha256": "adf9a12a89af35519ef523de1ccd3fa54ae011111f4711cd317017b4b239d3f6",
+      "adopted_sha256": "adf9a12a89af35519ef523de1ccd3fa54ae011111f4711cd317017b4b239d3f6",
+      "relocated": false
+    },
+    "coverage-draft.json": {
+      "frozen_sha256": "6dc9f712be43702b54faafd45849a4357b43a0b8649c13d18674d776e5c33d8d",
+      "adopted_sha256": "6dc9f712be43702b54faafd45849a4357b43a0b8649c13d18674d776e5c33d8d",
+      "relocated": false
+    },
+    "p7_reference/test_model.py": {
+      "frozen_sha256": "867b3f9f8c7d3bb5b2fd6789f0b087b7b03a0e3dfc1c90920968ec34bc85a85e",
+      "adopted_sha256": "d56fae4fbab2df0a187c9076fd344a25c262dfde634dba0769121b8380ab45b8",
+      "relocated": true
+    },
+    "p7_reference/__init__.py": {
+      "frozen_sha256": "c7de873048c83f4b436900955e7ebd13cfe5473ea0a6002c84b09df99d0e5353",
+      "adopted_sha256": "c7de873048c83f4b436900955e7ebd13cfe5473ea0a6002c84b09df99d0e5353",
+      "relocated": false
+    },
+    "p7_reference/fixtures.py": {
+      "frozen_sha256": "3616c551e1a56cfbb9402e00790d613359a6a049b77619c993f8dff7265e3c13",
+      "adopted_sha256": "3fb8ba3772c0e9fc5024e5831171b874603dad8e57f2e52cbe482981e0fa6180",
+      "relocated": true
+    },
+    "p7_reference/model.py": {
+      "frozen_sha256": "4d22c928e9cdc5feac870a054da6e6d783b7596803961745c2d99611466d0e57",
+      "adopted_sha256": "4d22c928e9cdc5feac870a054da6e6d783b7596803961745c2d99611466d0e57",
+      "relocated": false
+    }
+  },
+  "changes": "Only package import qualification and matching calibration sys.modules module identity relocation. Original manifests remain unchanged; adopted generator source hashes differ while corpus bytes remain fixed."
+}
