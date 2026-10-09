@@ -6,8 +6,16 @@ from __future__ import annotations
 import json
 import logging
 
+import pandas as pd
 import pytest
 
+from anonymizer.config.replace_strategies import Redact
+from anonymizer.engine.constants import (
+    COL_FINAL_ENTITIES,
+    COL_REPLACED_TEXT,
+    COL_REPLACEMENT_APPLICATION,
+    COL_TEXT,
+)
 from anonymizer.engine.detection.postprocess import (
     EntitySpan,
     apply_augmented_entities,
@@ -22,6 +30,7 @@ from anonymizer.engine.detection.postprocess import (
     parse_raw_entities,
     resolve_overlaps,
 )
+from anonymizer.engine.replace.strategies import apply_local_replace_strategy
 
 
 def test_normalize_label_strips_and_casefolds() -> None:
@@ -42,6 +51,58 @@ def test_parse_raw_entities_parses_valid_spans() -> None:
     entities = parse_raw_entities(raw_response=raw, text=text)
     assert len(entities) == 1
     assert entities[0].label == "phone_number"
+
+
+def test_parse_raw_entities_uses_source_slice_for_benign_detector_normalization() -> None:
+    text = "Alice joined Acme"
+    raw = json.dumps(
+        {
+            "entities": [
+                {
+                    "text": "alice",
+                    "label": "first_name",
+                    "start": 0,
+                    "end": 5,
+                    "score": 0.9,
+                }
+            ]
+        }
+    )
+
+    entities = parse_raw_entities(raw_response=raw, text=text)
+
+    assert entities[0].value == "Alice"
+    result = apply_local_replace_strategy(
+        pd.DataFrame({COL_TEXT: [text], COL_FINAL_ENTITIES: [{"entities": [entities[0].as_dict()]}]}),
+        strategy=Redact(),
+    )
+    assert result[COL_REPLACED_TEXT].iloc[0] == "[REDACTED_FIRST_NAME] joined Acme"
+    assert result[COL_REPLACEMENT_APPLICATION].iloc[0] == {
+        "targeted_span_count": 1,
+        "applied_span_count": 1,
+        "skipped_span_count": 0,
+        "skipped_span_label_counts": {},
+    }
+
+
+def test_parse_raw_entities_rejects_material_detector_text_mismatch() -> None:
+    text = "Alice joined Acme"
+    raw = json.dumps(
+        {
+            "entities": [
+                {
+                    "text": "Alice",
+                    "label": "first_name",
+                    "start": 13,
+                    "end": 17,
+                    "score": 0.9,
+                }
+            ]
+        }
+    )
+
+    with pytest.raises(ValueError, match=r"source span at offsets \[13, 17\)"):
+        parse_raw_entities(raw_response=raw, text=text)
 
 
 def test_overlap_resolution_prefers_longer_span() -> None:
