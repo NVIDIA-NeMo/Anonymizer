@@ -39,6 +39,7 @@ from anonymizer.engine.graph_sdk.observations import (
     _PRODUCER,
     ObservationSession,
     _exception_terminal,
+    _requirements,
     _Span,
     binding_observation_requirements,
     reserve_observation_scope,
@@ -133,7 +134,9 @@ async def start_initial_binding(
         try:
             reserve_observation_scope(
                 session=observations,
-                requirements=binding_observation_requirements(
+                requirements=_requirements(1, 1, observations.limits)
+                if not isinstance(limits, BindingLimits)
+                else binding_observation_requirements(
                     data=data,
                     workflow=workflow,
                     declarations=declarations,

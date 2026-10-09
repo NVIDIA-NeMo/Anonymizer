@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import replace
+from typing import Any, cast
 
 import pytest
 
@@ -657,3 +658,62 @@ def test_worst_schema_forecast_dominates_wide_integer_encoding() -> None:
     raw = encode_inspection(value=receipt, limits=inspection_limits(max_count=maximum, max_encoded_bytes=1000000))
     assert len(raw) <= need.max_encoded_bytes_required
     assert b"1" + b"0" * 5000 in raw
+
+
+@pytest.mark.parametrize("boundary", ["context_admission", "execution_admission", "qualification", "projection"])
+def test_pure_validation_rejection_still_closes_entered_boundary(boundary: str) -> None:
+    from anonymizer.engine.graph_sdk import observations as api
+
+    observer = session(pairs=0)
+    functions = {
+        "context_admission": (
+            api.observed_context_admission,
+            dict(prepared=None, bound_context=None, adaptive_retrievals=(), context_capabilities=()),
+        ),
+        "execution_admission": (
+            api.observed_execution_admission,
+            dict(
+                context=None,
+                capabilities=(),
+                policies=(),
+                decisions=(),
+                assessment_productions=(),
+                assessment_limits=None,
+            ),
+        ),
+        "qualification": (api.observed_qualify, dict(admitted=None, result=None, current=None, submissions=())),
+        "projection": (api.observed_project_protected, dict(source=None)),
+    }
+    function, kwargs = functions[boundary]
+    with pytest.raises(EffectRejected) as caught:
+        cast(Any, function)(observations=observer, **kwargs)
+    assert caught.value.code == EffectCode.INVALID_TYPE
+    receipt = observer.close()
+    assert isinstance(receipt, ObservationReceipt)
+    assert receipt.pairs[0].start.boundary == boundary
+    assert all(
+        pair.terminal.outcome == "failure" and pair.terminal.reasons == frozenset({"invalid_input"})
+        for pair in receipt.pairs
+    )
+
+
+def test_binding_invalid_limits_returns_original_rejection_and_complete_pair(monkeypatch) -> None:
+    import asyncio
+
+    from anonymizer.engine.graph_sdk.binding import start_initial_binding
+    from tests.graph_sdk import test_binding as fixture
+
+    observer = session(pairs=0)
+
+    async def start(**kwargs):
+        kwargs["limits"] = None
+        return await start_initial_binding(**kwargs, observations=observer)
+
+    monkeypatch.setattr(fixture, "start_initial_binding", start)
+    provider = fixture._Provider()
+    with pytest.raises(EffectRejected) as caught:
+        asyncio.run(fixture._initial_running(provider))
+    assert caught.value.code == EffectCode.INVALID_TYPE and provider.calls == 0
+    receipt = observer.close()
+    assert isinstance(receipt, ObservationReceipt)
+    assert len(receipt.pairs) == 1 and receipt.pairs[0].terminal.reasons == frozenset({"invalid_input"})
