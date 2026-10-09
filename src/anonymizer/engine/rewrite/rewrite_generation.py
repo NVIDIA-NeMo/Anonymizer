@@ -508,7 +508,7 @@ class RewriteGenerationWorkflow:
                 name=COL_REPLACEMENT_MAP_FOR_PROMPT,
                 generator_function=_filter_replacement_map_for_prompt,
             ),
-            *GeneralizationWorkflow().columns(selected_models=selected_models, privacy_goal=privacy_goal),
+            *GeneralizationWorkflow().columns(selected_models=selected_models),
             CustomColumnConfig(
                 name=COL_REWRITE_TAGGED_TEXT,
                 generator_function=_prepare_rewrite_tagged_text,

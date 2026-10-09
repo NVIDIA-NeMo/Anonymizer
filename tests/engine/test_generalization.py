@@ -13,19 +13,15 @@ from data_designer.config.column_configs import CustomColumnConfig
 from data_designer.interface.data_designer import DataDesigner
 
 from anonymizer.config.models import RewriteModelSelection
-from anonymizer.config.rewrite import PrivacyGoal
 from anonymizer.engine.constants import (
     COL_DISPOSITION_COVERAGE,
     COL_DISPOSITION_LATENT_ENTITIES,
     COL_GENERALIZATION_NEEDS_REVIEW,
-    COL_GENERALIZATION_REVIEW_DIAGNOSTICS,
-    COL_GENERALIZATION_REVIEW_INPUT,
     COL_GENERALIZATION_SUGGESTIONS,
     COL_GENERALIZATION_TARGETS,
     COL_RAW_GENERALIZATION_SUGGESTIONS,
     COL_REPLACEMENT_MAP,
     COL_REPLACEMENT_MAP_FOR_PROMPT,
-    COL_REVIEWED_GENERALIZATION_SUGGESTIONS,
     COL_REWRITE_ACTIONS,
     COL_REWRITE_DISPOSITION_BLOCK,
     COL_SENSITIVITY_DISPOSITION,
@@ -74,111 +70,50 @@ def _row() -> dict[str, Any]:
         }
     }
     build_generalization_targets(row)
-    row[COL_GENERALIZATION_REVIEW_INPUT] = [{"entity_id": 2, "suggested_value": "a professional"}]
-    row[COL_REVIEWED_GENERALIZATION_SUGGESTIONS] = {"defects": [], "generalization_suggestions": [_suggestion()]}
+    row[COL_RAW_GENERALIZATION_SUGGESTIONS] = {
+        "generalization_suggestions": [{"entity_id": 2, "suggested_value": "a professional"}]
+    }
     return row
 
 
-@pytest.mark.parametrize("review_value", ["a professional", None])
-def test_initial_omission_is_preserved(review_value: str | None, caplog: pytest.LogCaptureFixture) -> None:
+@pytest.mark.parametrize("value", [None, "   ", "patent attorney", " Patent Attorney ", "a professional"])
+def test_candidates_are_validated_directly(value: str | None) -> None:
     row = _row()
-    row[COL_GENERALIZATION_REVIEW_INPUT][0]["suggested_value"] = None
-    reviewed = row[COL_REVIEWED_GENERALIZATION_SUGGESTIONS]["generalization_suggestions"][0]
-    reviewed["suggested_value"] = review_value
+    raw = row[COL_RAW_GENERALIZATION_SUGGESTIONS]["generalization_suggestions"][0]
+    raw["suggested_value"] = value
     result = validate_generalization_suggestions(row)
-    canonical = result[COL_GENERALIZATION_SUGGESTIONS]["generalization_suggestions"][0]
-    assert canonical["suggested_value"] is None
-    assert canonical["status"] == "no_effective_generalization"
-    assert reviewed["suggested_value"] == review_value
-    assert reviewed["status"] == "ready"
-    assert bool(result[COL_GENERALIZATION_REVIEW_DIAGNOSTICS]) is (review_value is not None)
-    assert ("attempted to reverse" in caplog.text) is (review_value is not None)
+    suggestion = result[COL_GENERALIZATION_SUGGESTIONS]["generalization_suggestions"][0]
+    omission = value != "a professional"
+    assert suggestion["suggested_value"] == (None if omission else value)
+    assert suggestion["status"] == ("no_effective_generalization" if omission else "ready")
+    assert result[COL_GENERALIZATION_NEEDS_REVIEW] is omission
+    assert raw["suggested_value"] == value
+    GeneralizationSuggestion.model_validate(suggestion)
     result[COL_DISPOSITION_LATENT_ENTITIES] = ""
     actions = _build_rewrite_actions(result)[COL_REWRITE_ACTIONS]
-    assert actions["generalize"] == []
-    assert [action["entity_id"] for action in actions["remove"]] == [2]
-
-
-@pytest.mark.parametrize("status", ["ready", "needs_context_change", "no_effective_generalization"])
-def test_status_controls_review(status: str) -> None:
-    row = _row()
-    row[COL_REVIEWED_GENERALIZATION_SUGGESTIONS]["generalization_suggestions"][0] = _suggestion(status=status)
-    result = validate_generalization_suggestions(row)
-    assert result[COL_GENERALIZATION_NEEDS_REVIEW] is (status != "ready")
+    assert len(actions["remove"]) == int(omission)
+    assert len(actions["generalize"]) == int(not omission)
 
 
 @pytest.mark.parametrize("ids", [[], [1], [2, 2], [2, 3]])
 def test_rejects_missing_extra_or_duplicate_targets(ids: list[int]) -> None:
     row = _row()
-    row[COL_REVIEWED_GENERALIZATION_SUGGESTIONS] = {"generalization_suggestions": [_suggestion(i) for i in ids]}
+    row[COL_RAW_GENERALIZATION_SUGGESTIONS] = {
+        "generalization_suggestions": [{"entity_id": i, "suggested_value": "a professional"} for i in ids]
+    }
     with pytest.raises(ValueError, match="IDs must match"):
         validate_generalization_suggestions(row)
 
 
-@pytest.mark.parametrize("status", ["ready", "needs_context_change"])
-@pytest.mark.parametrize("value", ["patent attorney", " Patent Attorney "])
-def test_unchanged_value_becomes_removal(value: str, status: str) -> None:
-    row = _row()
-    row[COL_REVIEWED_GENERALIZATION_SUGGESTIONS]["generalization_suggestions"][0] = _suggestion(status=status)
-    suggestion = row[COL_REVIEWED_GENERALIZATION_SUGGESTIONS]["generalization_suggestions"][0]
-    suggestion["suggested_value"] = value
-    result = validate_generalization_suggestions(row)
-    canonical = result[COL_GENERALIZATION_SUGGESTIONS]["generalization_suggestions"][0]
-    assert canonical["status"] == "no_effective_generalization"
-    assert canonical["suggested_value"] is None
-    GeneralizationSuggestion.model_validate(canonical)
-    assert result[COL_GENERALIZATION_NEEDS_REVIEW] is True
-    assert suggestion["suggested_value"] == value
-    assert suggestion["status"] == status
-    result[COL_DISPOSITION_LATENT_ENTITIES] = ""
-    actions = _build_rewrite_actions(result)[COL_REWRITE_ACTIONS]
-    assert actions["generalize"] == []
-    assert [action["entity_id"] for action in actions["remove"]] == [2]
-    assert "Do not substitute" in actions["remove"][0]["rewrite_instruction"]
-
-
-@pytest.mark.parametrize("value", ["a professional", "patent attorney"])
-def test_rejects_unknown_dependencies(value: str) -> None:
-    row = _row()
-    suggestion = row[COL_REVIEWED_GENERALIZATION_SUGGESTIONS]["generalization_suggestions"][0]
-    suggestion["suggested_value"] = value
-    row[COL_REVIEWED_GENERALIZATION_SUGGESTIONS]["defects"] = [
-        {"entity_id": 2, "evidence": value or "empty wording", "problem": "Conflict", "conflicting_entity_ids": [99]}
+def test_workflow_has_only_generator_and_local_validation(stub_rewrite_model_selection: RewriteModelSelection) -> None:
+    columns = GeneralizationWorkflow().columns(selected_models=stub_rewrite_model_selection)
+    assert [column.name for column in columns] == [
+        COL_GENERALIZATION_TARGETS,
+        COL_RAW_GENERALIZATION_SUGGESTIONS,
+        COL_GENERALIZATION_SUGGESTIONS,
     ]
-    with pytest.raises(ValueError, match="unknown conflicting entity"):
-        validate_generalization_suggestions(row)
-
-
-@pytest.mark.parametrize("status", ["ready", "needs_context_change"])
-@pytest.mark.parametrize("value", [None, "", "   "])
-def test_suggestion_without_wording_becomes_removal(value: str | None, status: str) -> None:
-    row = _row()
-    suggestion = {**_suggestion(status=status), "suggested_value": value}
-    row[COL_REVIEWED_GENERALIZATION_SUGGESTIONS]["generalization_suggestions"] = [suggestion]
-    result = validate_generalization_suggestions(row)
-    canonical = result[COL_GENERALIZATION_SUGGESTIONS]["generalization_suggestions"][0]
-    assert canonical["status"] == "no_effective_generalization"
-    assert canonical["suggested_value"] is None
-    GeneralizationSuggestion.model_validate(canonical)
-    assert result[COL_GENERALIZATION_NEEDS_REVIEW] is True
-    assert suggestion["status"] == status
-    assert suggestion["suggested_value"] == value
-    result[COL_DISPOSITION_LATENT_ENTITIES] = ""
-    actions = _build_rewrite_actions(result)[COL_REWRITE_ACTIONS]
-    assert actions["generalize"] == []
-    assert [action["entity_id"] for action in actions["remove"]] == [2]
-    row[COL_REVIEWED_GENERALIZATION_SUGGESTIONS]["defects"] = [
-        {"entity_id": 2, "evidence": value or "empty wording", "problem": "Conflict", "conflicting_entity_ids": [99]}
-    ]
-    with pytest.raises(ValueError, match="unknown conflicting entity"):
-        validate_generalization_suggestions(row)
-
-
-def test_status_schema_requires_actionable_wording_or_limitation() -> None:
-    with pytest.raises(ValueError):
-        GeneralizationSuggestion.model_validate({**_suggestion(), "suggested_value": None})
-    omission = GeneralizationSuggestion.model_validate(_suggestion(status="no_effective_generalization"))
-    assert "rewrite_instruction" not in omission.model_dump()
+    assert isinstance(columns[2], CustomColumnConfig)
+    assert columns[2].generator_function is validate_generalization_suggestions
 
 
 @custom_column_generator(required_columns=[COL_GENERALIZATION_TARGETS, COL_REPLACEMENT_MAP_FOR_PROMPT])
@@ -192,42 +127,17 @@ def _generate_suggestions(row: dict[str, Any]) -> dict[str, Any]:
     return row
 
 
-@custom_column_generator(required_columns=[COL_GENERALIZATION_REVIEW_INPUT, COL_GENERALIZATION_TARGETS])
-def _review_suggestions(row: dict[str, Any]) -> dict[str, Any]:
-    assert normalize_payload(row[COL_GENERALIZATION_TARGETS]), "Empty targets must skip review"
-    candidates = normalize_payload(row[COL_GENERALIZATION_REVIEW_INPUT])
-    assert candidates == [{"entity_id": 2, "suggested_value": "a professional"}]
-    row[COL_REVIEWED_GENERALIZATION_SUGGESTIONS] = {
-        "defects": [
-            {
-                "entity_id": 2,
-                "evidence": "a professional",
-                "problem": "Insufficient contextual protection.",
-                "conflicting_entity_ids": [],
-            }
-        ],
-        "generalization_suggestions": [_suggestion(status="no_effective_generalization")],
-    }
-    return row
-
-
 def test_scheduler_filters_map_and_skips_empty_targets(
     tmp_path: Path,
     stub_rewrite_model_selection: RewriteModelSelection,
 ) -> None:
     columns = GeneralizationWorkflow().columns(
         selected_models=stub_rewrite_model_selection,
-        privacy_goal=PrivacyGoal(protect="Protect personal identity", preserve="Preserve document meaning"),
     )
     columns[1] = CustomColumnConfig(
         name=COL_RAW_GENERALIZATION_SUGGESTIONS,
         generator_function=_generate_suggestions,
         skip=columns[1].skip,
-    )
-    columns[3] = CustomColumnConfig(
-        name=COL_REVIEWED_GENERALIZATION_SUGGESTIONS,
-        generator_function=_review_suggestions,
-        skip=columns[3].skip,
     )
     columns.insert(
         0,
@@ -268,10 +178,10 @@ def test_scheduler_filters_map_and_skips_empty_targets(
         targets = normalize_payload(row[COL_GENERALIZATION_TARGETS])
         suggestions = normalize_payload(row[COL_GENERALIZATION_SUGGESTIONS])["generalization_suggestions"]
         assert len(suggestions) == len(targets)
-        assert bool(row[COL_GENERALIZATION_NEEDS_REVIEW]) == bool(targets)
+        assert not row[COL_GENERALIZATION_NEEDS_REVIEW]
         if targets:
-            assert suggestions[0]["status"] == "no_effective_generalization"
-            assert suggestions[0]["suggested_value"] is None
+            assert suggestions[0]["status"] == "ready"
+            assert suggestions[0]["suggested_value"] == "a professional"
             assert normalize_payload(row[COL_RAW_GENERALIZATION_SUGGESTIONS])["generalization_suggestions"] == [
                 {"entity_id": 2, "suggested_value": "a professional"}
             ]
@@ -280,51 +190,9 @@ def test_scheduler_filters_map_and_skips_empty_targets(
         assert "teacher" not in str(filtered)
 
 
-@pytest.mark.parametrize("target,conflicts", [(99, []), (2, [99])])
-def test_rejects_defects_with_unknown_ids(target: int, conflicts: list[int]) -> None:
-    row = _row()
-    row[COL_REVIEWED_GENERALIZATION_SUGGESTIONS]["defects"] = [
-        {
-            "entity_id": target,
-            "evidence": "a professional",
-            "problem": "Retains identifying evidence.",
-            "conflicting_entity_ids": conflicts,
-        }
-    ]
-    with pytest.raises(ValueError, match="defect"):
-        validate_generalization_suggestions(row)
-
-
-@pytest.mark.parametrize("value", [None, "a professional"])
-def test_minimal_candidates_and_compact_other_decisions(value: str | None) -> None:
-    from anonymizer.engine.constants import COL_GENERALIZATION_OTHER_DECISIONS
-    from anonymizer.engine.rewrite.generalization import prepare_generalization_review
-
-    row = _row()
-    assert row[COL_GENERALIZATION_TARGETS] == [
-        {"id": 2, "entity_label": "occupation", "entity_value": "patent attorney"}
-    ]
-    assert row[COL_GENERALIZATION_OTHER_DECISIONS] == [
-        {"id": 1, "entity_label": "name", "entity_value": "Alice", "protection_method_suggestion": "replace"}
-    ]
-    row[COL_RAW_GENERALIZATION_SUGGESTIONS] = {
-        "generalization_suggestions": [{"entity_id": 2, "suggested_value": value}]
-    }
-    assert prepare_generalization_review(row)[COL_GENERALIZATION_REVIEW_INPUT] == [
-        {"entity_id": 2, "suggested_value": value}
-    ]
-    row[COL_RAW_GENERALIZATION_SUGGESTIONS]["generalization_suggestions"][0]["entity_id"] = 99
-    with pytest.raises(ValueError, match="Candidate generalization IDs"):
-        prepare_generalization_review(row)
-
-
-def test_generator_and_reviewer_output_contracts() -> None:
-    from anonymizer.engine.rewrite.generalization import _get_generalization_prompt, _get_generalization_review_prompt
+def test_generator_output_contract() -> None:
+    from anonymizer.engine.rewrite.generalization import _get_generalization_prompt
     from anonymizer.engine.schemas.generalization import GeneralizationCandidate
 
     assert set(GeneralizationCandidate.model_fields) == {"entity_id", "suggested_value"}
-    assert "related_entity_ids" not in GeneralizationSuggestion.model_fields
     assert "privacy_goal" not in _get_generalization_prompt()
-    assert "Other protection decisions:" in _get_generalization_review_prompt(
-        PrivacyGoal(protect="Protect personal identity", preserve="Preserve document meaning")
-    )

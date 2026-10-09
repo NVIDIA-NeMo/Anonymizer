@@ -9,20 +9,20 @@ from pydantic import BaseModel, Field, model_validator
 
 
 class GeneralizationCandidate(BaseModel):
-    """Initial broader wording before document-wide review."""
+    """Broader wording proposed by the generalization generator."""
 
     entity_id: int = Field(ge=1)
     suggested_value: str | None = Field(min_length=1)
 
 
 class GeneralizationCandidates(BaseModel):
-    """Minimal generator output; protection decisions belong to review."""
+    """Minimal output from the generalization generator."""
 
     generalization_suggestions: list[GeneralizationCandidate]
 
 
 class GeneralizationSuggestion(BaseModel):
-    """Reviewed wording for one supplied generalization target."""
+    """Validated wording for one supplied generalization target."""
 
     entity_id: int = Field(ge=1)
     suggested_value: str | None = Field(min_length=1)
@@ -42,20 +42,4 @@ class GeneralizationSuggestion(BaseModel):
 class GeneralizationSuggestions(BaseModel):
     """Structured generalization output, validated against target IDs downstream."""
 
-    generalization_suggestions: list[GeneralizationSuggestion]
-
-
-class GeneralizationDefect(BaseModel):
-    """Concrete evidence of a defect in one candidate."""
-
-    entity_id: int = Field(ge=1)
-    evidence: str = Field(min_length=1)
-    problem: str = Field(min_length=1)
-    conflicting_entity_ids: list[int] = Field(default_factory=list)
-
-
-class GeneralizationReview(BaseModel):
-    """Defects are reported before the complete corrected suggestion set."""
-
-    defects: list[GeneralizationDefect]
     generalization_suggestions: list[GeneralizationSuggestion]

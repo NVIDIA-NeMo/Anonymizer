@@ -120,7 +120,6 @@ COL_GENERALIZATION_TARGETS = "_generalization_targets"
 COL_RAW_GENERALIZATION_SUGGESTIONS = "_raw_generalization_suggestions"
 COL_GENERALIZATION_SUGGESTIONS = "_generalization_suggestions"
 COL_GENERALIZATION_NEEDS_REVIEW = "_generalization_needs_review"
-COL_GENERALIZATION_REVIEW_DIAGNOSTICS = "_generalization_review_diagnostics"
 COL_REWRITE_DISPOSITION_BLOCK = "_rewrite_disposition_block"
 COL_REPLACEMENT_MAP_FOR_PROMPT = "_replacement_map_for_prompt"
 COL_REWRITE_TAGGED_TEXT = "_rewrite_tagged_text"
@@ -356,12 +355,6 @@ def _jinja(col: str, *, key: str | None = None) -> str:
     return "{{ " + expr + " }}"
 
 
-COL_REVIEWED_GENERALIZATION_SUGGESTIONS = "_reviewed_generalization_suggestions"
-
-COL_GENERALIZATION_REVIEW_INPUT = "_generalization_review_input"
-
 COL_REWRITE_ACTIONS = "_rewrite_actions"
 
 COL_REWRITE_ACTION_DIAGNOSTICS = "_rewrite_action_diagnostics"
-
-COL_GENERALIZATION_OTHER_DECISIONS = "_generalization_other_decisions"

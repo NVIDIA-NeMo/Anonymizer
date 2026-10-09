@@ -596,7 +596,7 @@ def test_columns_includes_generalization_step(
 ) -> None:
     workflow = RewriteGenerationWorkflow()
     cols = workflow.columns(selected_models=stub_rewrite_model_selection, privacy_goal=privacy_goal)
-    assert len(cols) == 11
+    assert len(cols) == 9
 
 
 def test_columns_has_llm_config_with_rewriter_alias(
@@ -606,7 +606,7 @@ def test_columns_has_llm_config_with_rewriter_alias(
     workflow = RewriteGenerationWorkflow()
     cols = workflow.columns(selected_models=stub_rewrite_model_selection, privacy_goal=privacy_goal)
     llm_cols = [c for c in cols if isinstance(c, LLMStructuredColumnConfig)]
-    assert len(llm_cols) == 3
+    assert len(llm_cols) == 2
     assert llm_cols[-1].name == COL_FULL_REWRITE
 
 
