@@ -235,6 +235,7 @@ async def _execute_membership(
     port_fact_headroom: int = 8,
     assessment_productions: tuple[EvidenceProductionDecl, ...] | None = None,
     map_expansions: tuple[MapExpansionDecl, ...] | None = None,
+    max_local_in_flight: int = 4,
 ):
     fixture = fixture or _map_fixture(
         control_only=control_only,
@@ -389,7 +390,7 @@ async def _execute_membership(
             handles=handles,
             context_resources=(),
             limits=ExecutionLimits(
-                max_local_in_flight=4,
+                max_local_in_flight=max_local_in_flight,
                 max_remote_outstanding=0,
                 max_runtime_artifacts=baseline_artifacts + artifact_headroom,
                 max_runtime_artifact_bytes=baseline_bytes + artifact_byte_headroom,
