@@ -8,7 +8,7 @@ import logging
 from typing import ClassVar, cast
 
 import pandas as pd
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from anonymizer.engine.constants import (
     COL_RELATIONAL_CONSISTENCY_INVALID_RELATIONS,
@@ -21,6 +21,7 @@ from anonymizer.engine.constants import (
 from anonymizer.engine.evaluation.judge_base import _BaseJudgeWorkflow
 from anonymizer.engine.prompt_utils import substitute_placeholders
 from anonymizer.engine.schemas import EntityReplacementMapSchema
+from anonymizer.engine.workflow_columns.evaluation.judge.config import JudgeKind
 
 logger = logging.getLogger("anonymizer.evaluation.replace.relational_consistency_judge")
 
@@ -62,6 +63,22 @@ class RelationalConsistencyJudgmentSchema(BaseModel):
         default_factory=list,
         description=("Every relation actually checked in this record. Empty when no checkable relations exist."),
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_positive_null_details(cls, value: object) -> object:
+        if not isinstance(value, dict) or value.get("all_consistent") is not True or value.get("relations") is not None:
+            return value
+        return {**value, "relations": []}
+
+    @model_validator(mode="after")
+    def validate_verdict_details_consistency(self) -> RelationalConsistencyJudgmentSchema:
+        has_failure = any(not relation.passes for relation in self.relations)
+        if self.all_consistent and has_failure:
+            raise ValueError("relations must not contain a failing check when all_consistent is True.")
+        if not self.all_consistent and not has_failure:
+            raise ValueError("relations must contain at least one failing check when all_consistent is False.")
+        return self
 
 
 # ---------------------------------------------------------------------------
@@ -218,9 +235,9 @@ the data does not contain.
 </edge_cases>
 
 <output_format>
-Return ONLY the JSON object that matches the required schema. Do NOT wrap your output in \
-``` or ```json markdown fences. Do NOT include any commentary, reasoning, preamble, or text \
-outside the JSON object. Your entire response must be a single valid JSON object.
+Return ONLY the JSON object that matches the required schema, wrapped in a single ```json \
+Markdown code fence. Do NOT include any commentary, reasoning, preamble, or text outside \
+the code fence.
 </output_format>
 """
     return substitute_placeholders(
@@ -276,6 +293,7 @@ class RelationalConsistencyJudgeWorkflow(_BaseJudgeWorkflow):
     VALID_COL: ClassVar[str] = COL_RELATIONAL_CONSISTENCY_VALID
     INVALID_COL: ClassVar[str] = COL_RELATIONAL_CONSISTENCY_INVALID_RELATIONS
     SCHEMA: ClassVar[type[BaseModel]] = RelationalConsistencyJudgmentSchema
+    JUDGE_KIND: ClassVar[JudgeKind] = JudgeKind.RELATIONAL_CONSISTENCY
     VERDICT_FIELD: ClassVar[str] = "all_consistent"
     DEFAULT_PAYLOAD: ClassVar[dict] = {"all_consistent": True, "relations": []}
     MODEL_ROLE: ClassVar[str] = "replace_relational_consistency_judge"

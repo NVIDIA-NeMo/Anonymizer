@@ -8,7 +8,7 @@ import logging
 from typing import ClassVar, cast
 
 import pandas as pd
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from anonymizer.engine.constants import (
     COL_DETECTION_INVALID_ENTITIES,
@@ -22,6 +22,7 @@ from anonymizer.engine.constants import (
 from anonymizer.engine.evaluation.judge_base import _BaseJudgeWorkflow
 from anonymizer.engine.prompt_utils import substitute_placeholders
 from anonymizer.engine.schemas import EntitiesByValueSchema
+from anonymizer.engine.workflow_columns.evaluation.judge.config import JudgeKind
 
 logger = logging.getLogger("anonymizer.evaluation.detection_judge")
 
@@ -50,6 +51,25 @@ class DetectionJudgmentSchema(BaseModel):
         default_factory=list,
         description="Every detected entity that is not a valid detection. Empty when all_valid is True.",
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_positive_null_details(cls, value: object) -> object:
+        if (
+            not isinstance(value, dict)
+            or value.get("all_valid") is not True
+            or value.get("invalid_entities") is not None
+        ):
+            return value
+        return {**value, "invalid_entities": []}
+
+    @model_validator(mode="after")
+    def validate_verdict_details_consistency(self) -> DetectionJudgmentSchema:
+        if self.all_valid and self.invalid_entities:
+            raise ValueError("invalid_entities must be empty when all_valid is True.")
+        if not self.all_valid and not self.invalid_entities:
+            raise ValueError("invalid_entities must be non-empty when all_valid is False.")
+        return self
 
 
 # ---------------------------------------------------------------------------
@@ -130,9 +150,9 @@ that are not in that mapping.
 </guidance>
 
 <output_format>
-Return ONLY the JSON object that matches the required schema. Do NOT wrap your output in \
-``` or ```json markdown fences. Do NOT include any commentary, reasoning, preamble, or text \
-outside the JSON object. Your entire response must be a single valid JSON object.
+Return ONLY the JSON object that matches the required schema, wrapped in a single ```json \
+Markdown code fence. Do NOT include any commentary, reasoning, preamble, or text outside \
+the code fence.
 </output_format>
 """
     return substitute_placeholders(
@@ -193,6 +213,7 @@ class DetectionJudgeWorkflow(_BaseJudgeWorkflow):
     VALID_COL: ClassVar[str] = COL_DETECTION_VALID
     INVALID_COL: ClassVar[str] = COL_DETECTION_INVALID_ENTITIES
     SCHEMA: ClassVar[type[BaseModel]] = DetectionJudgmentSchema
+    JUDGE_KIND: ClassVar[JudgeKind] = JudgeKind.DETECTION
     VERDICT_FIELD: ClassVar[str] = "all_valid"
     DEFAULT_PAYLOAD: ClassVar[dict] = {"all_valid": True, "invalid_entities": []}
     MODEL_ROLE: ClassVar[str] = "detection_validity_judge"
