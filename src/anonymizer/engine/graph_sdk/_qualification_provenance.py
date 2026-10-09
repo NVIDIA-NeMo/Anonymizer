@@ -317,7 +317,7 @@ class _ProvenanceValidator:
 
     def _bound_producer(self, fact: ArtifactProvenanceFact, key: BoundInputKey | InitialCollectionKey) -> None:
         bound = self.context.admitted.execution.context.bound_context
-        if bound is None or fact.decision:
+        if bound is None:
             reject(EffectCode.CONTRADICTORY)
         declaration = key.binding_artifact.declaration if isinstance(key, BoundInputKey) else key.declaration
         source = next((item for item in bound.receipt.sources if item.identity == declaration), None)
@@ -331,10 +331,13 @@ class _ProvenanceValidator:
             reject(EffectCode.FOREIGN_OWNER)
         items = [item for item in bound.artifacts if item.reference.declaration == declaration]
         if isinstance(key, BoundInputKey):
-            if fact.parents or not any(
-                item.reference == key.binding_artifact
-                and (item.target, item.node, item.port) == (key.target, key.node, key.port)
-                for item in items
+            matches = [item for item in items if item.reference == key.binding_artifact]
+            if not matches:
+                reject(EffectCode.MISSING)
+            if (
+                fact.parents
+                or fact.decision
+                or not any((item.target, item.node, item.port) == (key.target, key.node, key.port) for item in matches)
             ):
                 reject(EffectCode.CONTRADICTORY)
         else:
@@ -342,7 +345,7 @@ class _ProvenanceValidator:
                 BoundInputKey(target=key.target, node=key.node, port=key.port, binding_artifact=item.reference)
                 for item in items
             )
-            if source.declaration.materialization.kind != "collection" or fact.parents != expected:
+            if fact.decision or source.declaration.materialization.kind != "collection" or fact.parents != expected:
                 reject(EffectCode.CONTRADICTORY)
             value = dict(self.context.result.artifacts)[fact.artifact]
             if not isinstance(value, TextCollectionValue) or {(item.key, item.version) for item in value.items} != {
