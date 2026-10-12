@@ -102,3 +102,30 @@ A `MapItemPort` names an exact expander, expansion outcome, item input, member a
 `begin_observations` creates a session with explicit count, depth, byte and duration limits. Binding and execution reserve their complete observation scope before effects. Explicit `observed_*` wrappers cover pure preparation, admission, qualification, continuity and projection boundaries. `close()` returns a cached receipt or an `ObservationFailure`; it never returns a partial receipt. Clock or sink failures do not change the semantic execution result.
 
 Inspection binds the exact owners through `bind_inspection_source`, or `bind_binding_inspection_source` for initial binding alone. `explain`, `inspect` and `diagnose` provide bounded closed summaries; `encode_inspection` emits canonical JSON. Forecasts distinguish exact counts, known upper bounds and unknown values. Missing phases and unknown usage remain unknown. Content projection is separate from this content-free inspection encoder. Provider logging and arbitrary host callback side effects are outside the observation privacy boundary.
+
+## Staged delegated request receipts
+
+`DelegatedRequestContract` declares qualified or opaque coverage, fixed request
+slots from the prepared activation recipe, parser routes and follow-up kinds.
+Its usage requirement defaults to `exact`; `unknown_allowed` preserves unknown
+usage as unknown while still requiring complete request and remote-stop facts.
+Ordinary external operations retain exact-usage qualification.
+
+Qualified structural admission currently supports fixed sibling operation slots
+in one lexical container and target. `RequestChild.leaf` identifies a physical
+attempt separately from its semantic association. Qualification joins every used
+leaf to its admitted slot and canonical terminal, checks explicit predecessor and
+parser evidence, and confines recovery to the validated chain. A recovered leaf
+failure does not erase an unrelated semantic failure or a provenance defect.
+Record-only request reducer fixtures may omit `leaf`; protected child receipt
+qualification requires it.
+
+Delegated execution is rejected at service admission before creating an invocation
+or entering resources. The canonical qualification fixtures demonstrate retained
+record validation, not a runnable DD adapter. Opaque structural admission also
+remains unsupported because the current capability schema cannot express unknown
+physical request bounds truthfully. Hard-budget preparation retains its existing
+implementation-owned-retry rejection. Shared readiness, optional unused slots,
+transportless probes, dynamic child recipes and provider-error exhaustion await
+the activation-owned runtime integration. No provider hooks or DD execution paths
+are enabled by this contract.

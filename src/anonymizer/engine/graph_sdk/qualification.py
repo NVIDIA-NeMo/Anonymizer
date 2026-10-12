@@ -30,9 +30,12 @@ from anonymizer.engine.graph_sdk.executor import (
 from anonymizer.engine.graph_sdk.records import CandidateRef, CanonicalRecord, DecisionRef, EvidenceRef, TargetStatus
 from anonymizer.engine.graph_sdk.requests import (
     BindingRequestScope,
+    ChildEvidence,
     ExactUsage,
     InvocationRequestScope,
+    PhysicalRequestId,
     RequestAssociation,
+    RequestChain,
     RequestReceipt,
     RequestReservation,
     RequestTerminalFact,
@@ -206,6 +209,9 @@ class _Qualification:
         self.prepared = admitted.execution.context.prepared
         self.order = tuple(item.target for item in self.prepared.target_occurrences)
         self.nodes = admitted.execution.nodes
+        self.recovered_children: set[PhysicalRequestId] = set()
+        self.permissive_usage: set[PhysicalRequestId] = set()
+        self.failed_terminals: set[ActivationKey] = set()
         self.entries: dict[ActivationKey, ActivationEntry] = {}
         self.owners: dict[ActivationKey, DatumId] = {}
         self.withholding: dict[DatumId, set[WithholdingCode]] = {target: set() for target in self.order}
@@ -245,6 +251,9 @@ class _Qualification:
                 self.incomplete(target)
         self._memberships()
         self._terminals()
+        recovered_leaves = self._child_receipts()
+        for key in self.failed_terminals - recovered_leaves:
+            self.withholding[self.owners[key]].add("terminal_failure")
         for pending in self.result.pending_decisions:
             target = self.owners.get(pending.activation)
             if target is None:
@@ -351,7 +360,243 @@ class _Qualification:
             elif entry.status == "success":
                 reject(EffectCode.CONTRADICTORY)
             if entry.status != "success":
-                self.withholding[target].add("terminal_failure")
+                self.failed_terminals.add(key)
+
+    def _child_receipts(self) -> set[ActivationKey]:
+        """Independently join retained child requests to the admitted fixed recipe."""
+        receipt = self.result.requests
+        policies = {policy.node: policy for policy in self.admitted.execution.policies}
+        delegated = [policy for policy in policies.values() if policy.delegated is not None]
+        if (
+            not delegated
+            and not receipt.chains
+            and not receipt.child_evidence
+            and not any(dispatch.child is not None for dispatch in receipt.dispatches)
+        ):
+            return set()
+        bound = self.prepared.declared_request_upper_bound
+        containers = (
+            receipt.dispatches,
+            receipt.terminals,
+            receipt.settlements,
+            receipt.chains,
+            receipt.local_in_flight,
+            receipt.remote_outstanding,
+            receipt.cancel_requested,
+            receipt.denials,
+        )
+        if any(len(items) > bound for items in containers) or len(receipt.child_evidence) > 2 * bound:
+            reject(EffectCode.LIMIT_EXCEEDED)
+        if (
+            len(receipt.defects) > bound
+            or len(receipt.bindings) > self.prepared.total_activation_slots
+            or len(receipt.policies) > self.prepared.limits.max_capabilities
+            or any(len(binding.policies) > self.prepared.limits.max_capabilities for binding in receipt.bindings)
+        ):
+            reject(EffectCode.LIMIT_EXCEEDED)
+        terminals = {item.attempt: item for item in self.result.record.terminals if item.attempt is not None}
+        chains = {chain.chain: chain for chain in receipt.chains}
+        if len(chains) != len(receipt.chains) or len(set(receipt.child_evidence)) != len(receipt.child_evidence):
+            reject(EffectCode.DUPLICATE)
+        expected: set[ActivationKey] = set()
+        for owner in self.entries.values():
+            contract = policies.get(owner.template)
+            if contract is None or contract.delegated is None:
+                continue
+            target = self.owners[owner.activation]
+            offset = next(item.occurrence_offset for item in self.prepared.target_occurrences if item.target == target)
+            expected.update(
+                entry.activation
+                for entry in self.entries.values()
+                if entry.activation.occurrence - offset in contract.delegated.child_slots
+                and self.owners[entry.activation] == target
+            )
+        used: set[ActivationKey] = set()
+        recovered: set[ActivationKey] = set()
+        known_evidence: set[ChildEvidence] = set()
+        processed: set[PhysicalRequestId] = set()
+        for chain in receipt.chains:
+            chain.__post_init__()
+            if chain.chain.scope != receipt.scope or len(chain.associations) != 1 or chain.role != "generation":
+                reject(EffectCode.UNSUPPORTED)
+            association = next(iter(chain.associations))
+            if not isinstance(association, SemanticAssociation) or association.task not in terminals:
+                reject(EffectCode.FOREIGN_OWNER)
+            owner = terminals[association.task].activation
+            owner_policy = policies[self.entries[owner].template]
+            contract = owner_policy.delegated
+            if (
+                contract is None
+                or contract.mode != "qualified"
+                or owner_policy.request != chain.policy
+                or contract.routes != chain.routes
+                or contract.followups != chain.followups
+            ):
+                reject(EffectCode.CONTRADICTORY)
+            history = [
+                item for item in receipt.dispatches if item.child is not None and item.child.chain == chain.chain
+            ]
+            if not history or len(history) > chain.policy.max_attempts:
+                reject(EffectCode.LIMIT_EXCEEDED)
+            target = self.owners[owner]
+            offset = next(item.occurrence_offset for item in self.prepared.target_occurrences if item.target == target)
+            prior: RequestReservation | None = None
+            for dispatch in history:
+                dispatch.__post_init__()
+                child = dispatch.child
+                assert child is not None
+                child.__post_init__()
+                leaf = child.leaf
+                if (
+                    leaf is None
+                    or leaf not in terminals
+                    or leaf.activation not in expected
+                    or leaf.activation in used
+                    or self.owners[leaf.activation] != target
+                    or leaf.activation.parent != owner.parent
+                    or leaf.activation.occurrence - offset not in contract.child_slots
+                ):
+                    reject(EffectCode.FOREIGN_OWNER)
+                slot = self.prepared.reservation_recipe[leaf.activation.occurrence - offset]
+                if slot.parent_index is not None:
+                    if owner.parent is None or owner.parent.occurrence != offset + slot.parent_index:
+                        reject(EffectCode.FOREIGN_OWNER)
+                elif owner.parent is not None:
+                    reject(EffectCode.FOREIGN_OWNER)
+                if (
+                    dispatch.request in processed
+                    or dispatch.associations != chain.associations
+                    or dispatch.policy != chain.policy
+                    or child.role != chain.role
+                ):
+                    reject(EffectCode.CONTRADICTORY)
+                facts = [item for item in receipt.terminals if item.request == dispatch.request]
+                settlements = [item for item in receipt.settlements if item.request == dispatch.request]
+                if len(facts) != 1 or len(settlements) != 1 or terminals[leaf].category != facts[0].category:
+                    reject(EffectCode.CONTRADICTORY)
+                facts[0].__post_init__()
+                settlements[0].__post_init__()
+                if self.entries[leaf.activation].status not in {
+                    "success",
+                    "failure",
+                    "lost",
+                    "cancelled",
+                    "inconsistent",
+                }:
+                    reject(EffectCode.CONTRADICTORY)
+                if not self._child_edge(dispatch, prior, history, chain, receipt):
+                    reject(EffectCode.CONTRADICTORY)
+                for evidence in receipt.child_evidence:
+                    if evidence.chain != chain.chain or evidence.request != dispatch.request:
+                        continue
+                    evidence.__post_init__()
+                    if (
+                        facts[0].category != "failure"
+                        or facts[0].failure != "malformed_response"
+                        or settlements[0].disposition != "completed"
+                        or any(item.request == dispatch.request for item in receipt.defects)
+                    ):
+                        reject(EffectCode.CONTRADICTORY)
+                    if evidence.kind == "generation_exhausted":
+                        route = next(item for item in chain.routes if item.name == child.route)
+                        parsed = [
+                            item
+                            for item in history[: history.index(dispatch) + 1]
+                            if item.child is not None
+                            and item.child.route == child.route
+                            and ChildEvidence(chain=chain.chain, request=item.request, kind="parser_rejected")
+                            in known_evidence
+                        ]
+                        if (
+                            len(parsed) != route.parse_attempts
+                            or ChildEvidence(chain=chain.chain, request=dispatch.request, kind="parser_rejected")
+                            not in known_evidence
+                        ):
+                            reject(EffectCode.CONTRADICTORY)
+                    known_evidence.add(evidence)
+                if contract.usage_requirement == "unknown_allowed":
+                    self.permissive_usage.add(dispatch.request)
+                used.add(leaf.activation)
+                processed.add(dispatch.request)
+                prior = dispatch
+            last = history[-1]
+            terminal = next(item for item in receipt.terminals if item.request == last.request)
+            if terminal.category == "success" and any(
+                item.association == association and item.category == "success" for item in terminal.results
+            ):
+                for dispatch in history[:-1]:
+                    child = dispatch.child
+                    assert child is not None and child.leaf is not None
+                    fact = next(item for item in receipt.terminals if item.request == dispatch.request)
+                    if fact.category == "failure":
+                        self.recovered_children.add(dispatch.request)
+                        recovered.add(child.leaf.activation)
+        if known_evidence != set(receipt.child_evidence) or used != expected:
+            reject(EffectCode.CONTRADICTORY)
+        for dispatch in receipt.dispatches:
+            if dispatch.child is not None and dispatch.request not in processed:
+                reject(EffectCode.MISSING)
+            for association in dispatch.associations:
+                if isinstance(association, SemanticAssociation) and association.task in terminals:
+                    node = self.entries[terminals[association.task].activation].template
+                    if policies[node].delegated is not None and dispatch.request not in processed:
+                        reject(EffectCode.MISSING)
+        return recovered
+
+    def _child_edge(
+        self,
+        dispatch: RequestReservation,
+        prior: RequestReservation | None,
+        history: list[RequestReservation],
+        chain: RequestChain,
+        receipt: RequestReceipt,
+    ) -> bool:
+        child = dispatch.child
+        assert child is not None
+        purpose = "correction" if child.source_kind == "conversation_restart" else child.source_kind
+        if dispatch.purpose != purpose or child.route not in {route.name for route in chain.routes}:
+            return False
+        if prior is None:
+            return (
+                child.source_kind == "initial"
+                and child.predecessor is None
+                and child.evidence is None
+                and (child.route == chain.routes[0].name)
+            )
+        if child.source_kind not in chain.followups or child.predecessor != prior.request or prior.child is None:
+            return False
+        terminal = next((item for item in receipt.terminals if item.request == prior.request), None)
+        if terminal is None:
+            return False
+        if child.source_kind == "failover":
+            names = [route.name for route in chain.routes]
+            index = names.index(prior.child.route)
+            return (
+                index + 1 < len(names)
+                and child.route == names[index + 1]
+                and child.evidence
+                == ChildEvidence(chain=chain.chain, request=prior.request, kind="generation_exhausted")
+                and child.evidence in receipt.child_evidence
+                and chain.policy.replay == "idempotent"
+            )
+        if child.route != prior.child.route or not all(
+            self._followup(dispatch, terminal, item) for item in chain.associations
+        ):
+            return False
+        if child.source_kind == "retry":
+            return child.evidence is None
+        route = next(item for item in chain.routes if item.name == child.route)
+        parsed = sum(
+            item.child is not None
+            and item.child.route == child.route
+            and ChildEvidence(chain=chain.chain, request=item.request, kind="parser_rejected") in receipt.child_evidence
+            for item in history[: history.index(dispatch)]
+        )
+        return (
+            parsed < route.parse_attempts
+            and child.evidence == ChildEvidence(chain=chain.chain, request=prior.request, kind="parser_rejected")
+            and child.evidence in receipt.child_evidence
+        )
 
     def validate_assessment_inventory(self) -> None:
         """Require one retained fact per successful assessment-producing occurrence."""
@@ -438,8 +683,8 @@ class _Qualification:
             uncertain |= dispatch.request in receipt.local_in_flight or dispatch.request in receipt.remote_outstanding
             if settlements:
                 uncertain |= (
-                    not isinstance(settlements[0].usage, ExactUsage) or settlements[0].remote_stopped is not True
-                )
+                    not isinstance(settlements[0].usage, ExactUsage) and dispatch.request not in self.permissive_usage
+                ) or settlements[0].remote_stopped is not True
             if terminals:
                 terminal = terminals[0]
                 bad |= terminal.category in {"lost", "inconsistent", "cancelled"}
@@ -462,7 +707,7 @@ class _Qualification:
                             target = self._association_target(association)
                             if target is not None:
                                 self.withholding[target].add("request_accounting")
-            if dispatch.purpose in {"retry", "correction", "failover"}:
+            if dispatch.child is None and dispatch.purpose in {"retry", "correction", "failover"}:
                 for association in dispatch.associations:
                     predecessor = previous.get(association)
                     prior = next(
@@ -517,6 +762,8 @@ class _Qualification:
     def _recovered(
         self, dispatch: RequestReservation, receipt: RequestReceipt, association: RequestAssociation
     ) -> bool:
+        if dispatch.child is not None:
+            return dispatch.request in self.recovered_children
         later = False
         for successor in receipt.dispatches:
             if successor.request == dispatch.request:

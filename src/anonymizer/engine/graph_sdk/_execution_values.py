@@ -44,6 +44,8 @@ from anonymizer.engine.graph_sdk.requests import (
     AssociationInput,
     AssociationResult,
     BindingDeclarationId,
+    ChildRoute,
+    ChildSourceKind,
     DispatchEnvelope,
     FailureClass,
     PhysicalRequestPolicy,
@@ -82,7 +84,7 @@ from anonymizer.graph.workflow import (
     WorkflowInputRef,
 )
 
-ExecutionKind: TypeAlias = Literal["local", "external", "decision"]
+ExecutionKind: TypeAlias = Literal["local", "external", "decision", "delegated"]
 
 
 ArtifactRole: TypeAlias = Literal["artifact", "candidate", "decision", "evidence"]
@@ -210,6 +212,39 @@ class ExecutionImplementation(PrivateValue):
 
 
 @dataclass(frozen=True, slots=True, kw_only=True, repr=False)
+class DelegatedRequestContract(PrivateValue):
+    """Fixed recipe declaration; runtime delegation remains unavailable."""
+
+    mode: Literal["qualified", "opaque"]
+    child_slots: tuple[int, ...]
+    routes: tuple[ChildRoute, ...]
+    followups: frozenset[ChildSourceKind] = frozenset({"correction", "failover"})
+    usage_requirement: Literal["exact", "unknown_allowed"] = "exact"
+
+    def __post_init__(self) -> None:
+        require_literal(self.mode, frozenset({"qualified", "opaque"}))
+        require_literal(self.usage_requirement, frozenset({"exact", "unknown_allowed"}))
+        require_instance(self.child_slots, tuple)
+        for slot in self.child_slots:
+            require_count(slot)
+        if len(set(self.child_slots)) != len(self.child_slots):
+            reject(EffectCode.DUPLICATE)
+        require_instance(self.routes, tuple)
+        for route in self.routes:
+            require_instance(route, ChildRoute)
+            route.__post_init__()
+        if len({route.name for route in self.routes}) != len(self.routes):
+            reject(EffectCode.DUPLICATE)
+        if type(self.followups) is not frozenset or not self.followups <= {
+            "retry",
+            "correction",
+            "conversation_restart",
+            "failover",
+        }:
+            reject(EffectCode.INVALID_VALUE)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True, repr=False)
 class OperationExecutionPolicy(PrivateValue):
     node: NodeId
     kind: ExecutionKind
@@ -219,10 +254,16 @@ class OperationExecutionPolicy(PrivateValue):
     result_outcomes: frozenset[str]
     runtime_outcomes: tuple[RuntimeOutcome, ...]
     initial_request_purpose: Literal["initial", "repair"] = "initial"
+    delegated: DelegatedRequestContract | None = None
 
     def __post_init__(self) -> None:
         require_instance(self.node, NodeId)
-        require_literal(self.kind, frozenset({"local", "external", "decision"}))
+        require_literal(self.kind, frozenset({"local", "external", "decision", "delegated"}))
+        if self.delegated is not None:
+            require_instance(self.delegated, DelegatedRequestContract)
+            self.delegated.__post_init__()
+        if (self.kind == "delegated") != (self.delegated is not None):
+            reject(EffectCode.CONTRADICTORY)
         require_literal(self.initial_request_purpose, frozenset({"initial", "repair"}))
         if self.initial_request_purpose == "repair" and (self.kind != "external" or self.request is None):
             reject(EffectCode.CONTRADICTORY)

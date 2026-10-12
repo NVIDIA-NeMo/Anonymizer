@@ -157,6 +157,7 @@ def admit_execution_plan(
                 reject(EffectCode.CONTRADICTORY)
             if any(item.capability.attribution != "per_task" for item in policy.implementations):
                 reject(EffectCode.UNSUPPORTED)
+    _validate_delegated_recipes(prepared, policies)
     _validate_assessments(prepared, policies, assessment_productions, assessment_limits)
     _validate_execution_fact_capacity(prepared, assessment_productions, assessment_limits)
     return AdmittedExecutionPlan(
@@ -343,7 +344,7 @@ def _validate_policy(policy: OperationExecutionPolicy, has_decision: bool) -> No
     require_literal(policy.initial_request_purpose, frozenset({"initial", "repair"}))
     if policy.initial_request_purpose == "repair" and (policy.kind != "external" or policy.request is None):
         reject(EffectCode.CONTRADICTORY)
-    if policy.request is not None and policy.request.retry_owner == "implementation":
+    if policy.request is not None and policy.request.retry_owner == "implementation" and policy.kind != "delegated":
         reject(EffectCode.UNSUPPORTED)
     capabilities = [item.capability for item in policy.implementations]
     operation = capabilities[0].operation
@@ -395,6 +396,65 @@ def _validate_policy(policy: OperationExecutionPolicy, has_decision: bool) -> No
             reject(EffectCode.CONTRADICTORY)
 
 
+def _validate_delegated_recipes(prepared: PreparedPlan, policies: tuple[OperationExecutionPolicy, ...]) -> None:
+    """Select existing fixed sibling slots without compiling another inventory."""
+    claimed: set[int] = set()
+    recipe = prepared.reservation_recipe
+    by_node = {policy.node: policy for policy in policies}
+    for policy in policies:
+        contract = policy.delegated
+        if contract is None:
+            continue
+        contract.__post_init__()
+        request = policy.request
+        if contract.mode != "qualified":
+            reject(EffectCode.UNSUPPORTED)
+        if request is None or not contract.child_slots or not contract.routes:
+            reject(EffectCode.MISSING)
+        if (
+            request.visibility != "dispatch_and_settlement"
+            or request.pre_dispatch_control != "executor"
+            or request.retry_owner != "implementation"
+            or policy.safe_detachment != "forbidden"
+        ):
+            reject(EffectCode.UNSUPPORTED)
+        if any(
+            item.capability.request_visibility != request.visibility
+            or item.capability.pre_dispatch_control != request.pre_dispatch_control
+            or item.capability.retry_owner != request.retry_owner
+            or (contract.usage_requirement == "exact" and item.capability.usage != "exact")
+            for item in policy.implementations
+        ):
+            reject(EffectCode.UNSUPPORTED)
+        if len(contract.child_slots) > len(recipe):
+            reject(EffectCode.LIMIT_EXCEEDED)
+        if (
+            len(contract.child_slots) != request.max_attempts
+            or sum(route.parse_attempts for route in contract.routes) > request.max_attempts
+        ):
+            reject(EffectCode.LIMIT_EXCEEDED)
+        owners = [slot for slot in recipe if slot.template == policy.node]
+        if len(owners) != 1 or owners[0].iteration is not None:
+            reject(EffectCode.UNSUPPORTED)
+        for index in contract.child_slots:
+            if index >= len(recipe) or index in claimed:
+                reject(EffectCode.FOREIGN_OWNER)
+            slot = recipe[index]
+            leaf = by_node.get(slot.template)
+            if (
+                slot.index == owners[0].index
+                or slot.parent_index != owners[0].parent_index
+                or slot.iteration is not None
+                or leaf is None
+                or leaf.kind != "external"
+                or leaf.request is None
+                or leaf.request.max_attempts != 1
+                or sum(item.template == slot.template for item in recipe) != 1
+            ):
+                reject(EffectCode.UNSUPPORTED)
+            claimed.add(index)
+
+
 def _expected_runtime_keys(kind: ExecutionKind, results: frozenset[str]) -> set[tuple[str, str | None, str | None]]:
     keys: set[tuple[str, str | None, str | None]] = {("result", item, None) for item in results}
     failures = (
@@ -411,7 +471,7 @@ def _expected_runtime_keys(kind: ExecutionKind, results: frozenset[str]) -> set[
     )
     keys.update(("failure", None, item) for item in failures)
     conditions = {"cancel_before_start", "cancel_after_start", "artifact_limit_exhausted", "deadline_exhausted"}
-    if kind == "external":
+    if kind in {"external", "delegated"}:
         conditions |= {
             "cancel_after_dispatch",
             "lost",
@@ -466,6 +526,8 @@ def _validate_assessments(
 
 
 def _validate_services(admitted: AdmittedExecutionPlan, services: ExecutionServices) -> None:
+    if any(policy.kind == "delegated" for policy in admitted.policies):
+        reject(EffectCode.UNSUPPORTED)
     require_instance(services.limits, ExecutionLimits)
     require_instance(services.decision_limits, DecisionLimits)
     if any(item.max_lifetime_ns > services.decision_limits.max_lifetime_ns for item in admitted.decisions):

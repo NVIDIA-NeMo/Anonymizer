@@ -645,6 +645,7 @@ class RequestChild(PrivateValue):
     source_kind: ChildSourceKind
     predecessor: PhysicalRequestId | None = None
     evidence: ChildEvidence | None = None
+    leaf: TaskAttemptId | None = None
 
     def __post_init__(self) -> None:
         require_instance(self.chain, RequestChainId)
@@ -653,6 +654,12 @@ class RequestChild(PrivateValue):
         require_literal(
             self.source_kind, frozenset({"initial", "retry", "correction", "conversation_restart", "failover"})
         )
+        if self.leaf is not None:
+            require_instance(self.leaf, TaskAttemptId)
+            if not isinstance(self.chain.scope, InvocationRequestScope) or (
+                self.leaf.activation.invocation != self.chain.scope.invocation
+            ):
+                reject(EffectCode.FOREIGN_OWNER)
         if self.predecessor is not None:
             require_instance(self.predecessor, PhysicalRequestId)
             if self.predecessor.scope != self.chain.scope:
