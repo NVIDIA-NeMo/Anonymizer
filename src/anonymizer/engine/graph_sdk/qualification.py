@@ -476,6 +476,19 @@ class _Qualification:
                     reject(EffectCode.CONTRADICTORY)
                 facts[0].__post_init__()
                 settlements[0].__post_init__()
+                for summary in facts[0].results:
+                    summary.__post_init__()
+                    if summary.category == "success" and (
+                        summary.association != association
+                        or summary.outcome != self.entries[leaf.activation].outcome
+                        or summary.outcome != self.entries[owner].outcome
+                        or summary.outcome not in owner_policy.result_outcomes
+                        or not any(
+                            outcome.name == summary.outcome and outcome.category == "success"
+                            for outcome in self.nodes[self.entries[owner].template].operation.outcomes
+                        )
+                    ):
+                        reject(EffectCode.CONTRADICTORY)
                 if self.entries[leaf.activation].status not in {
                     "success",
                     "failure",
@@ -537,6 +550,10 @@ class _Qualification:
             if dispatch.child is not None and dispatch.request not in processed:
                 reject(EffectCode.MISSING)
             for association in dispatch.associations:
+                # Declared physical slots belong exclusively to their child dispatch;
+                # no ordinary or shared dispatch may reuse them as semantic owners.
+                if isinstance(association, SemanticAssociation) and association.task.activation in expected:
+                    reject(EffectCode.CONTRADICTORY)
                 if isinstance(association, SemanticAssociation) and association.task in terminals:
                     node = self.entries[terminals[association.task].activation].template
                     if policies[node].delegated is not None and dispatch.request not in processed:

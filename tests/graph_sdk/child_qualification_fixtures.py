@@ -93,6 +93,8 @@ def child_fixture(
     usage: Literal["exact", "unknown_allowed"] = "unknown_allowed",
     exact: bool = False,
     interleaved: bool = False,
+    alternate_outcome: bool = False,
+    ordinary_slot: bool = False,
 ):
     count = 4 if interleaved else 3 if failover else 2
     base, assessor, artifact_type = _adaptive_workflow(assessment=True, requests=0)
@@ -100,6 +102,7 @@ def child_fixture(
     assessment_op = next(iter(raw.nodes)).operation
     owner = NodeId.new(workflow=raw.workflow)
     leaves = tuple(NodeId.new(workflow=raw.workflow) for _ in range(count))
+    ordinary = (NodeId.new(workflow=raw.workflow),) if ordinary_slot else ()
     empty = replace(
         assessment_op,
         name="request",
@@ -116,6 +119,8 @@ def child_fixture(
             for outcome in assessment_op.outcomes
         ),
     )
+    if alternate_outcome:
+        empty = replace(empty, outcomes=(*empty.outcomes, replace(empty.outcomes[0], name="alternate")))
     owner_op = replace(
         empty,
         outcomes=tuple(
@@ -125,7 +130,7 @@ def child_fixture(
     nodes = (
         OperationNode(id=assessor, operation=assessment_op),
         OperationNode(id=owner, operation=owner_op),
-        *(OperationNode(id=node, operation=empty) for node in leaves),
+        *(OperationNode(id=node, operation=empty) for node in (*leaves, *ordinary)),
     )
     interface = replace(
         raw.interface,
@@ -135,7 +140,7 @@ def child_fixture(
                 ceiling=replace(
                     outcome.ceiling,
                     max_activations=len(nodes),
-                    max_model_requests=2 * count,
+                    max_model_requests=2 * count + len(ordinary),
                     max_input_bytes=100 * len(nodes),
                     max_output_bytes=100 * len(nodes),
                 ),
@@ -150,7 +155,7 @@ def child_fixture(
         input_bindings=tuple(raw.input_bindings),
         output_bindings=tuple(raw.output_bindings),
         outcome_bindings=tuple(raw.outcome_bindings),
-        sequence=tuple(SequenceEdge(before=node, after=assessor) for node in (owner, *leaves)),
+        sequence=tuple(SequenceEdge(before=node, after=assessor) for node in (owner, *leaves, *ordinary)),
         choices=(),
         protection=(
             ProtectionRequirement(
@@ -231,8 +236,10 @@ def child_fixture(
                         request=physical,
                     ),
                 ),
-                result_outcomes=frozenset({"ok"}),
-                runtime_outcomes=_valid_runtime_rows("external" if index else "local", frozenset({"ok"})),
+                result_outcomes=frozenset(outcome.name for outcome in node.operation.outcomes),
+                runtime_outcomes=_valid_runtime_rows(
+                    "external" if index else "local", frozenset(outcome.name for outcome in node.operation.outcomes)
+                ),
                 delegated=contract if index == 1 else None,
             )
         )
@@ -276,7 +283,7 @@ def child_fixture(
     state = advance_activation(state=state, event=Select(seeds=seeds))
     attempts = {node: TaskAttemptId.new(activation=key) for node, key in keys.items()}
     terminals = []
-    for node in (owner, *leaves, assessor):
+    for node in (owner, *leaves, *ordinary, assessor):
         key = keys[node]
         category = "failure" if node in (leaves[:2] if interleaved else leaves[:-1]) else "success"
         state = advance_activation(state=state, event=Start(activation=key))

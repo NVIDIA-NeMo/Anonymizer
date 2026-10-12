@@ -21,7 +21,14 @@ from anonymizer.engine.graph_sdk.executor import (
     start_execution,
 )
 from anonymizer.engine.graph_sdk.qualification import qualify
-from anonymizer.engine.graph_sdk.requests import RequestChainId, UnknownUsage
+from anonymizer.engine.graph_sdk.requests import (
+    ExactUsage,
+    PhysicalRequestId,
+    RequestChainId,
+    RequestPolicyBinding,
+    SemanticAssociation,
+    UnknownUsage,
+)
 from anonymizer.graph._values import ActivationKey, ContractViolation, InvocationId, TaskAttemptId
 from tests.graph_sdk.child_qualification_fixtures import child_fixture, result_with
 from tests.graph_sdk.effects_admission_fixtures import _ZeroClock
@@ -233,3 +240,78 @@ def test_interleaved_chains_use_their_explicit_predecessors() -> None:
     admitted, current, submissions = _inputs(execution, result)
     output = qualify(admitted=admitted, result=result, current=current, submissions=submissions)
     assert len(output.qualified) == 1 and not output.targets[0].withholding
+
+
+@pytest.mark.parametrize("outcome", ["NOT_DECLARED", "alternate"])
+def test_child_success_requires_declared_and_canonical_outcome(outcome: str) -> None:
+    execution, result = child_fixture(alternate_outcome=True)
+    admitted, current, submissions = _inputs(execution, result)
+    assert len(qualify(admitted=admitted, result=result, current=current, submissions=submissions).qualified) == 1
+    owner = next(policy for policy in execution.policies if policy.kind == "delegated")
+    assert (outcome in owner.result_outcomes) == (outcome == "alternate")
+    terminal = result.requests.terminals[-1]
+    changed = replace(terminal, results=(replace(terminal.results[0], outcome=outcome),))
+    result = result_with(
+        result, requests=replace(result.requests, terminals=(*result.requests.terminals[:-1], changed))
+    )
+    admitted, current, submissions = _inputs(execution, result)
+    with pytest.raises(EffectRejected, match="contradictory"):
+        qualify(admitted=admitted, result=result, current=current, submissions=submissions)
+
+
+@pytest.mark.parametrize("owned_slot", [True, False])
+@pytest.mark.parametrize("prepend", [True, False])
+def test_ordinary_dispatch_cannot_reuse_delegated_physical_slot(owned_slot: bool, prepend: bool) -> None:
+    execution, result = child_fixture(exact=True, ordinary_slot=True)
+    receipt = result.requests
+    last = receipt.dispatches[-1]
+    assert last.child is not None and last.child.leaf is not None
+    declared = next(policy.delegated for policy in execution.policies if policy.kind == "delegated")
+    assert declared is not None
+    entries = {entry.activation: entry for state in result.states for entry in state.entries}
+    task = (
+        last.child.leaf
+        if owned_slot
+        else next(
+            terminal.attempt
+            for terminal in result.record.terminals
+            if terminal.attempt is not None
+            and terminal.activation.occurrence not in declared.child_slots
+            and next(
+                policy for policy in execution.policies if policy.node == entries[terminal.activation].template
+            ).kind
+            == "external"
+        )
+    )
+    policy = next(policy.request for policy in execution.policies if policy.node == entries[task.activation].template)
+    assert policy is not None
+    association = SemanticAssociation(task=task)
+    request = PhysicalRequestId.new(scope=receipt.scope)
+    extra = replace(
+        last, request=request, purpose="initial", associations=frozenset({association}), policy=policy, child=None
+    )
+    terminal = replace(
+        receipt.terminals[-1],
+        request=request,
+        results=(replace(receipt.terminals[-1].results[0], association=association),),
+    )
+    settlement = replace(receipt.settlements[-1], request=request, usage=ExactUsage(input_units=1, output_units=1))
+    receipt = replace(
+        receipt,
+        dispatches=(extra, *receipt.dispatches) if prepend else (*receipt.dispatches, extra),
+        terminals=(*receipt.terminals, terminal),
+        settlements=(*receipt.settlements, settlement),
+        dispatched_count=3,
+        policies=receipt.policies | {policy},
+        bindings=receipt.bindings
+        | {RequestPolicyBinding.create(association=association, policies=frozenset({policy}))},
+    )
+    result = result_with(result, requests=receipt)
+    admitted, current, submissions = _inputs(execution, result)
+    if owned_slot:
+        with pytest.raises(EffectRejected, match="contradictory"):
+            qualify(admitted=admitted, result=result, current=current, submissions=submissions)
+    else:
+        output = qualify(admitted=admitted, result=result, current=current, submissions=submissions)
+        assert len(output.qualified) == 1 and not output.targets[0].withholding
+        assert len(result.requests.dispatches) == 3
