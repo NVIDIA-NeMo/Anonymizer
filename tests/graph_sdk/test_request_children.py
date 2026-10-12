@@ -392,3 +392,112 @@ def test_pending_children_share_the_association_attempt_bound() -> None:
     assert len(fixture.authority.state.reserved) == 2
     assert len(fixture.authority.state.denials) == 2
     assert all(item.category == "request_limit_stopped" for item in fixture.authority.state.denials)
+
+
+@pytest.mark.parametrize(
+    "ordering",
+    ["before_reserve", "before_dispatch", "earlier_support", "earlier_before_reserve", "earlier_before_dispatch"],
+)
+@pytest.mark.parametrize("conflict", ["terminal", "settlement"])
+def test_child_proof_rechecks_current_support(ordering: str, conflict: str) -> None:
+    earlier = ordering.startswith("earlier")
+    fixture = ChainFixture(parse_attempts=2 if earlier else 1)
+    for letter in "IP":
+        fixture.step(letter)
+    predecessor = fixture.last
+    assert predecessor is not None
+    first_terminal = fixture.authority.state.terminals[0]
+    successor = None
+    if earlier:
+        for letter in "CP":
+            fixture.step(letter)
+    if ordering != "earlier_support":
+        fixture.proof("generation_exhausted")
+        if ordering.endswith("before_dispatch"):
+            successor = fixture.reserve("failover", predecessor=fixture.last, evidence=fixture.evidence)
+    if conflict == "terminal":
+        fixture.authority.apply(AcceptFailure(request=predecessor, failure="permanent"))
+    else:
+        fixture.authority.apply(
+            ObserveSettlement(
+                settlement=ExternalSettlement(
+                    request=predecessor,
+                    disposition="unknown",
+                    usage=UnknownUsage(),
+                    remote_stopped=None,
+                )
+            )
+        )
+    before = fixture.authority.state
+    with pytest.raises(EffectRejected, match="contradictory"):
+        if ordering.endswith("before_reserve"):
+            fixture.reserve("failover", predecessor=fixture.last, evidence=fixture.evidence)
+        elif ordering.endswith("before_dispatch"):
+            assert successor is not None
+            fixture.authority.apply(Dispatch(request=successor))
+        else:
+            fixture.proof("generation_exhausted")
+    assert fixture.authority.state is before
+    assert fixture.authority.state.terminals[0] == first_terminal
+    assert len(fixture.authority.state.dispatched) == (2 if earlier else 1)
+    if successor is not None:
+        fixture.authority.apply(RequestCancel(request=successor))
+        assert not fixture.authority.state.reserved
+        assert successor not in fixture.authority.state.dispatched
+
+
+def test_child_dispatch_accepts_consistent_reobserved_support() -> None:
+    fixture = ChainFixture(parse_attempts=1)
+    for letter in "IPE":
+        fixture.step(letter)
+    predecessor = fixture.last
+    assert predecessor is not None
+    proof = fixture.evidence
+    successor = fixture.reserve("failover", predecessor=predecessor, evidence=proof)
+    fixture.authority.apply(AcceptFailure(request=predecessor, failure="malformed_response"))
+    fixture.authority.apply(
+        ObserveSettlement(
+            settlement=ExternalSettlement(
+                request=predecessor,
+                disposition="completed",
+                usage=UnknownUsage(),
+                remote_stopped=True,
+            )
+        )
+    )
+    fixture.settle(successor, malformed=False)
+    receipt = request_receipt(fixture.authority.state)
+    assert receipt.dispatched_count == 2 and not receipt.defects
+    assert [item.category for item in receipt.terminals] == ["failure", "success"]
+    assert proof in receipt.child_evidence
+
+
+def test_ordinary_followup_keeps_first_terminal_semantics() -> None:
+    fixture = ChainFixture()
+    fixture.authority = _RequestAuthority(
+        initialize_requests(
+            scope=fixture.scope,
+            hard_limit=3,
+            policies=frozenset({fixture.policy}),
+        )
+    )
+    fixture.authority.bind(
+        RequestPolicyBinding.create(
+            association=fixture.association,
+            policies=frozenset({fixture.policy}),
+        )
+    )
+    first = PhysicalRequestId.new(scope=fixture.scope)
+    fixture.authority.apply(
+        Reserve(request=first, purpose="initial", associations=fixture.chain.associations, policy=fixture.policy)
+    )
+    fixture.settle(first)
+    fixture.authority.apply(AcceptFailure(request=first, failure="permanent"))
+    successor = PhysicalRequestId.new(scope=fixture.scope)
+    fixture.authority.apply(
+        Reserve(request=successor, purpose="correction", associations=fixture.chain.associations, policy=fixture.policy)
+    )
+    fixture.authority.apply(Dispatch(request=successor))
+    assert len(fixture.authority.state.dispatched) == 2
+    assert fixture.authority.state.terminals[0].failure == "malformed_response"
+    assert fixture.authority.state.defects[0].code == "conflicting_terminal"

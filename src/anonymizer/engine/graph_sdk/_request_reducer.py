@@ -165,6 +165,8 @@ def advance_requests(*, state: RequestState, event: RequestEvent) -> RequestStat
         return _reserve(state, event)
     if isinstance(event, Dispatch):
         reservation = _reservation(state, request)
+        if reservation.child is not None:
+            _validate_child(state, reservation)
         return replace(
             state,
             reserved=state.reserved - {reservation},
@@ -358,7 +360,7 @@ def _child_history(state: RequestState, child: RequestChild) -> tuple[RequestRes
     return tuple(item for item in state.dispatches if item.child is not None and item.child.chain == child.chain)
 
 
-def _validate_child(state: RequestState, event: Reserve) -> None:
+def _validate_child(state: RequestState, event: Reserve | RequestReservation) -> None:
     child = event.child
     if state.cancelled:
         reject(EffectCode.REQUEST_CAUSALITY)
@@ -372,7 +374,10 @@ def _validate_child(state: RequestState, event: Reserve) -> None:
     purpose = "correction" if child.source_kind == "conversation_restart" else child.source_kind
     if purpose != event.purpose:
         reject(EffectCode.CONTRADICTORY)
-    if any(item.child is not None and item.child.chain == child.chain for item in state.reserved):
+    if any(
+        item.request != event.request and item.child is not None and item.child.chain == child.chain
+        for item in state.reserved
+    ):
         reject(EffectCode.PENDING_LIMIT)
     if event.request in {item.request for item in state.terminals}:
         reject(EffectCode.DUPLICATE)
@@ -395,6 +400,8 @@ def _validate_child(state: RequestState, event: Reserve) -> None:
     terminal = next((item for item in state.terminals if item.request == prior.request), None)
     if terminal is None:
         reject(EffectCode.MISSING_PREDECESSOR)
+    if any(item.request == prior.request for item in state.defects):
+        reject(EffectCode.CONTRADICTORY)
     if purpose == "failover":
         names = tuple(route.name for route in contract.routes)
         index = names.index(prior.child.route) + 1
@@ -428,20 +435,30 @@ def _validate_child(state: RequestState, event: Reserve) -> None:
 def _require_child_evidence(state: RequestState, child: RequestChild, kind: str) -> None:
     if child.evidence is None or child.evidence.kind != kind or child.evidence not in state.child_evidence:
         reject(EffectCode.MISSING_PREDECESSOR)
+    _validate_child_evidence(state, child.evidence)
 
 
 def _accept_child_evidence(state: RequestState, evidence: ChildEvidence) -> RequestState:
+    _validate_child_evidence(state, evidence)
+    if evidence in state.child_evidence:
+        reject(EffectCode.DUPLICATE)
+    history = tuple(item for item in state.dispatches if item.child is not None and item.child.chain == evidence.chain)
+    if history[-1].request != evidence.request:
+        reject(EffectCode.REQUEST_CAUSALITY)
+    return replace(state, child_evidence=(*state.child_evidence, evidence))
+
+
+def _validate_child_evidence(state: RequestState, evidence: ChildEvidence) -> None:
+    """Recheck historical proof support without changing its accepted facts."""
     require_instance(evidence, ChildEvidence)
     if evidence.chain.scope != state.scope:
         reject(EffectCode.FOREIGN_OWNER)
     if any(item.request == evidence.request for item in state.defects):
         reject(EffectCode.CONTRADICTORY)
-    if evidence in state.child_evidence:
-        reject(EffectCode.DUPLICATE)
     history = tuple(item for item in state.dispatches if item.child is not None and item.child.chain == evidence.chain)
-    if not history or history[-1].request != evidence.request:
+    prior = next((item for item in history if item.request == evidence.request), None)
+    if prior is None:
         reject(EffectCode.REQUEST_CAUSALITY)
-    prior = history[-1]
     assert prior.child is not None
     terminal = next((item for item in state.terminals if item.request == evidence.request), None)
     if terminal is None or terminal.category != "failure" or terminal.failure != "malformed_response":
@@ -451,15 +468,16 @@ def _accept_child_evidence(state: RequestState, evidence: ChildEvidence) -> Requ
     if evidence.kind == "generation_exhausted":
         contract = next(item for item in state.chains if item.chain == evidence.chain)
         route = next(item for item in contract.routes if item.name == prior.child.route)
-        parsed = {
-            item.request
-            for item in state.child_evidence
-            if item.chain == evidence.chain and item.kind == "parser_rejected"
-        }
         failures = {item.request for item in history if item.child is not None and item.child.route == route.name}
-        if evidence.request not in parsed or len(parsed & failures) != route.parse_attempts:
+        supports = tuple(
+            item
+            for item in state.child_evidence
+            if item.chain == evidence.chain and item.kind == "parser_rejected" and item.request in failures
+        )
+        if evidence.request not in {item.request for item in supports} or len(supports) != route.parse_attempts:
             reject(EffectCode.INVALID_FAILOVER)
-    return replace(state, child_evidence=(*state.child_evidence, evidence))
+        for support in supports:
+            _validate_child_evidence(state, support)
 
 
 def _reservation(state: RequestState, request: PhysicalRequestId) -> RequestReservation:
@@ -585,7 +603,7 @@ def _acceptance_summary(result: AssociationResult | RequestAssociationSummary) -
     )
 
 
-def _validate_followup(state: RequestState, event: Reserve) -> None:
+def _validate_followup(state: RequestState, event: Reserve | RequestReservation) -> None:
     if event.purpose not in {"retry", "correction", "failover"}:
         return
     rejection = _followup_rejection(state, event.purpose, event.associations, event.policy)
