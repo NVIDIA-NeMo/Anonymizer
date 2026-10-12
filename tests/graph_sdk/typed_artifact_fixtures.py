@@ -126,6 +126,7 @@ def span_graph(
     alias_filter: bool = False,
     span_type: ArtifactType = ENTITY_SPANS_TYPE,
     source_type: ArtifactType = TEXT_TYPE,
+    source_text: str = SOURCE,
 ) -> tuple[AdmittedExecutionPlan, tuple[ImplementationCapability, ...], ExecutionServices, tuple[NodeId, ...]]:
     base, _, _ = _workflow(with_input=True)
     raw = base.workflow
@@ -208,7 +209,7 @@ def span_graph(
         ),
     )
     graph = DataGraph.new()
-    graph, target = graph.add_text(SOURCE)
+    graph, target = graph.add_text(source_text)
     data = graph.validate(
         targets=(target,),
         source_relations=(),
@@ -305,7 +306,10 @@ async def execute_spans(
     mutate: Callable[[EntitySpansValue], EntitySpansValue] | None = None,
     ingress: IngressLimits = IngressLimits(),
     alias_filter: bool = False,
+    source_text: str = SOURCE,
 ) -> tuple[AdmittedExecutionPlan, ExecutionResult, tuple[NodeId, ...]]:
-    admitted, capabilities, services, nodes = span_graph(mutate=mutate, ingress=ingress, alias_filter=alias_filter)
+    admitted, capabilities, services, nodes = span_graph(
+        mutate=mutate, ingress=ingress, alias_filter=alias_filter, source_text=source_text
+    )
     result = await (await start_execution(admitted=admitted, capabilities=capabilities, services=services)).wait()
     return admitted, result, nodes

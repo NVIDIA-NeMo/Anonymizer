@@ -342,9 +342,10 @@ class _EvidenceFacts:
             reject(EffectCode.LIMIT_EXCEEDED)
         retained = dict(result.artifacts)
         for _, value in result.artifacts:
+            bounds = execution.ingress_limits if type(value) is EntitySpansValue else None
+            if not inspect_artifact(value, bounds):
+                reject(EffectCode.INVALID_VALUE)
             if type(value) is EntitySpansValue:
-                if not inspect_artifact(value, execution.ingress_limits):
-                    reject(EffectCode.INVALID_VALUE)
                 source = retained.get(value.source)
                 if type(source) is not TextArtifactValue or not value.matches_source(value.source, source.text):
                     reject(EffectCode.CONTRADICTORY)

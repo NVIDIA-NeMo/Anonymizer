@@ -8,6 +8,7 @@ import asyncio
 from dataclasses import dataclass
 from typing import Literal
 
+from anonymizer.engine.detection.artifacts import ENTITY_SPANS_TYPE
 from anonymizer.engine.graph_sdk._effect_values import EffectCode, EffectRejected, reject, require_instance
 from anonymizer.engine.graph_sdk._ingress import inspect_failure, inspect_source, inspect_source_identity
 from anonymizer.engine.graph_sdk._request_driver import _RequestAuthority, drive_request, late_source_event
@@ -474,6 +475,12 @@ def _validate_binding(
             reject(EffectCode.LIMIT_EXCEEDED)
         if any(not isinstance(item, expected) for item in values):
             reject(EffectCode.INVALID_TYPE)
+    if any(
+        artifact_type.name == ENTITY_SPANS_TYPE.name
+        for declaration in declarations
+        for artifact_type in (declaration.artifact_type, declaration.materialization.item_type)
+    ):
+        reject(EffectCode.UNSUPPORTED)
     sources = {item.source for item in declarations}
     if len(sources) > limits.max_sources:
         reject(EffectCode.LIMIT_EXCEEDED)

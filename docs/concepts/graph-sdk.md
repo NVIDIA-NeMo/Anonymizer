@@ -51,15 +51,20 @@ its source and its separate producing occurrence. Candidate payloads are
 validated at callback and saved-result boundaries for closed shapes, bounded
 content, and consistent cached counts.
 Every artifact carries exact content-byte and collection-item counts; counts
-cover all span string fields and span members, not Python object memory.
+cover all span string fields and span members, not Python object memory. Retained
+reads and inspection revalidate cached counts for text, text collections (including
+children), and spans. This consistency check preserves the separate admission
+budgets for root data, bound context, and callback results.
 Malformed Unicode, non-finite scores, mutable containers and forged counts are
 rejected. Publication and inspection consume the same counts.
 
 Candidate spans are transient: they cannot be root text bindings, retrieved text
 materializations, map item/membership schemas, or continuity decisions. Continuity
 admission rejects span decisions before execution, while existing text and text
-collection snapshots retain their format. Protected projections still require
-text candidates. Arbitrary domain schema registration and DataDesigner request
+collection snapshots retain their format. Initial binding rejects the reserved
+candidate-span type name at every revision before allocating binding identities,
+acquiring resources, or calling providers; custom text type names remain supported.
+Protected projections still require text candidates. Arbitrary domain schema registration and DataDesigner request
 accounting are separate implementation work.
 
 ## Saved results and current evidence

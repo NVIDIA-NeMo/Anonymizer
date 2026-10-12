@@ -41,6 +41,7 @@ from anonymizer.engine.graph_sdk.executor import (
     ExecutionResult,
     ExecutionServices,
     ImplementationHandle,
+    IngressLimits,
     InitialCollectionKey,
     LocalCompleted,
     OperationExecutionPolicy,
@@ -110,6 +111,7 @@ from tests.graph_sdk.test_preparation import _capability, _data, _limits
 class _Provider:
     source: ContextSourceRef
     calls: int = 0
+    values: tuple[str, str] = ("a", "b")
 
     async def retrieve(
         self,
@@ -120,7 +122,7 @@ class _Provider:
         bounds: RetrievalBounds,
     ) -> SourceResponse:
         del selector, bounds
-        value = ("a", "b")[self.calls]
+        value = self.values[self.calls]
         self.calls += 1
         return SourceResponse(
             source=self.source,
@@ -205,12 +207,12 @@ async def _assert_schema_case(case_id: str, allocations: list[BindingId]) -> Non
     _assert_distinct_site_result(fixture, bound, result)
 
 
-def _build_schema_fixture(case: dict[str, Any]) -> _SchemaFixture:
+def _build_schema_fixture(case: dict[str, Any], *, revision: int = 1) -> _SchemaFixture:
     raw = case["declaration"]["materializations"]
     nested = case["case_id"] == "materialization/nested_collection_schema"
     conflict = case["case_id"] == "materialization/conflicting_schema"
     types = {
-        name: ArtifactType(name=name, revision=1)
+        name: ArtifactType(name=name, revision=revision)
         for name in {"text", *(item["item_type"] for item in raw), *(item["output_type"] for item in raw)}
     }
     owner = WorkflowId.new()
@@ -457,7 +459,12 @@ def _assert_nested_rejection(fixture: _SchemaFixture, bound: BindingResult, prep
 
 
 async def _execute_distinct_sites(
-    fixture: _SchemaFixture, bound: BindingResult, prepared: PreparedPlan
+    fixture: _SchemaFixture,
+    bound: BindingResult,
+    prepared: PreparedPlan,
+    *,
+    ingress_limits: IngressLimits = IngressLimits(),
+    expected_texts: tuple[str, str] = ("a", "b"),
 ) -> ExecutionResult:
     case, nodes, capabilities = fixture.case, fixture.nodes, fixture.capabilities
     context = admit_context_plan(
@@ -485,8 +492,9 @@ async def _execute_distinct_sites(
         decisions=(),
         assessment_productions=(),
         assessment_limits=_assessment_limits(),
+        ingress_limits=ingress_limits,
     )
-    consumers = tuple(_SiteConsumer(port="context", expected_text=text) for text in ("a", "b"))
+    consumers = tuple(_SiteConsumer(port="context", expected_text=text) for text in expected_texts)
     limits = case["declaration"]["materialization_limits"]
     result = await (
         await start_execution(

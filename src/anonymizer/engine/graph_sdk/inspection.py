@@ -18,6 +18,7 @@ from anonymizer.engine.graph_sdk._execution_values import (
     OperationOutputKey,
     PublicationFailureFact,
 )
+from anonymizer.engine.graph_sdk._ingress import inspect_artifact
 from anonymizer.engine.graph_sdk.context import (
     AdmittedContextPlan,
     BindingArtifactRef,
@@ -748,6 +749,12 @@ def bind_inspection_source(
         reject(EffectCode.MISSING)
     if observations is not None:
         _consistency(observations)
+    if execution is not None:
+        if len(execution.artifacts) > limits.max_count:
+            reject(EffectCode.LIMIT_EXCEEDED)
+        for _, value in execution.artifacts:
+            if not inspect_artifact(value):
+                reject(EffectCode.INVALID_VALUE)
     return InspectionSource(
         _key=_OBSERVATION_KEY,
         limits=limits,
@@ -952,6 +959,8 @@ def _resources(
 
 
 def _artifact_bytes(value: ArtifactValue) -> int:
+    if not inspect_artifact(value):
+        reject(EffectCode.INVALID_VALUE)
     return value.shape.content_bytes
 
 
@@ -964,6 +973,8 @@ def inspect(*, source: InspectionSource) -> InspectionSummary:
     )
     routes = terminals = resources = proxy = None
     if execution is not None:
+        if len(execution.artifacts) > source.limits.max_count:
+            reject(EffectCode.LIMIT_EXCEEDED)
         terminals = TerminalCounts(
             **{
                 name: sum(fact.category == name for fact in execution.record.terminals)

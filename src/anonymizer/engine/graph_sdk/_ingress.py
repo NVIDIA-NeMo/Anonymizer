@@ -337,8 +337,32 @@ def inspect_source_identity(value: object, expected: ContextSourceRef) -> bool:
     )
 
 
-def inspect_artifact(value: object, limits: IngressLimits) -> bool:
-    """Revalidate a retained payload at a loaded-result boundary."""
+def inspect_artifact(value: object, limits: IngressLimits | None = None) -> bool:
+    """Check closed payload shape and exact counts, optionally under callback limits.
+
+    Retained roots and bound context have their own admission budgets. Without
+    callback limits, the cached dimensions are only scan ceilings: the traversal
+    must independently reproduce them. Understatements exhaust the scan; inflated
+    counts fail equality. Encoding remains chunked and the closed shape is flat.
+    """
+    if type(value) not in (TextArtifactValue, TextCollectionValue, EntitySpansValue):
+        return False
+    shape = getattr(value, "shape", None)
+    if (
+        type(shape) is not ArtifactShape
+        or type(shape.content_bytes) is not int
+        or shape.content_bytes < 0
+        or type(shape.items) is not int
+        or shape.items < 0
+    ):
+        return False
+    if limits is None:
+        limits = IngressLimits(
+            max_text_bytes=max(1, shape.content_bytes),
+            max_collection_items=max(1, shape.items),
+            max_metadata_items=1 + 3 * shape.items,
+            max_depth=5,
+        )
     try:
         return _IngressBudget(limits).artifact(value, 1)
     except _ExhaustedIngress:
