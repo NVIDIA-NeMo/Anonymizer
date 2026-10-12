@@ -77,7 +77,7 @@ records, and destructive conflict resolution occurs at several points.
 | The same decision payload is applied before and after augmentation | A decision can be replayed against a different merged or derived candidate that happens to carry the same constructed ID | Consume a decision exactly once and persist the resulting admission state |
 | Raw origins and accepted origins share the same entity representation | A rejected, malformed, or undecided origin can accidentally contribute provenance or propagation permission | Keep observations, validation results, and admitted candidates as distinct states |
 | Exact identity is compared inconsistently | Equivalent labels such as `token` and `TOKEN` may fail to coalesce and lose accepted provenance | Define semantic identity as normalized label plus exact source bounds |
-| Provenance is collapsed into a representative source string | Coalescing can discard an independently accepted origin or its propagation permission | Aggregate accepted origins explicitly and combine permissions monotonically |
+| Provenance is collapsed into a representative source string | Coalescing can discard an independently accepted origin, while unconditional permission union can let a disabled route regain authority | Apply configured source and route eligibility first, then aggregate eligible accepted origins and combine permissions only within configuration limits |
 | Overlapping detector candidates are suppressed before validation | A longer candidate that is later dropped or excluded can erase a valid shorter candidate before either decision is known | Retain every conflicting observation through validation and represent overlap compactly in the prompt |
 | Allowed/excluded checks can occur after an overlap winner is selected | An ineligible longer candidate can suppress an eligible shorter candidate and then be removed | Complete admission and eligibility checks before destructive reconciliation |
 | Parsing, augmentation, name splitting, and propagation resolve overlaps independently | Results can depend on which route produced a candidate and when it entered the workflow | Use one final reconciliation policy for all admitted and derived candidates |
@@ -149,14 +149,15 @@ is never consulted again downstream.
 
 ### Admitted candidate
 
-An admitted candidate is eligible for protection after its validation route and
-label-scope checks have completed. It contains:
+An admitted candidate is eligible for protection after its validation route,
+label scope, and configured source/route checks have completed. It contains:
 
 - immutable lineage back to its originating observation IDs;
 - the current label and exact source bounds;
 - accepted provenance references containing the observation ID, source kind,
-  and source instance only for origins that survived their route;
-- whether any accepted origin permits occurrence propagation;
+  and source instance only for origins that survived an enabled route;
+- whether any configuration-eligible accepted origin permits occurrence
+  propagation within the effective policy limits;
 - whether it is explicitly accepted or retained only by fallback protection;
 - source-native confidence retained only for comparisons where that score is
   meaningful.
@@ -191,13 +192,15 @@ The implementation must make the following properties true:
    same-source emissions are collapsed, overlapping alternatives remain
    independent candidates, and the prompt represents each candidate exactly
    once without duplicating the source excerpt.
-6. **Only accepted origins grant authority.** Rejected or undecided origins
-   cannot contribute accepted provenance or propagation permission.
-7. **Eligibility precedes suppression.** Excluded, disallowed, unsupported, or
-   route-rejected candidates cannot remove an otherwise eligible candidate.
+6. **Only accepted, configuration-eligible origins grant authority.** Rejected,
+   undecided, or disabled source routes cannot contribute accepted provenance
+   or propagation permission.
+7. **Eligibility precedes suppression.** Excluded, disallowed, unsupported,
+   disabled-source, or route-rejected candidates cannot remove an otherwise
+   eligible candidate.
 8. **Exact coalescing is normalized and lossless.** Equivalent label/span
-   candidates coalesce while retaining the union of accepted origins and the
-   most protective permitted propagation behavior.
+   candidates coalesce while retaining eligible accepted origins and the most
+   protective propagation behavior permitted by configuration.
 9. **Derivation cannot broaden authority.** Name splitting and occurrence
    propagation inherit permissions from an accepted parent; a span-restricted
    parent cannot create independently protected occurrences elsewhere.
@@ -225,16 +228,17 @@ source text
   |       -> apply each decision once                       |
   |       -> accepted / rejected / fallback-protected       |
   |                                                        |
-  |       apply label eligibility                           |
+  |       apply label + source/route eligibility            |
   |       -> admitted seed candidates                       |
   |                                                        v
   +-> augmentation using admitted seed context        candidate pool
           -> materialize exact source occurrences           |
-          -> apply label eligibility                         |
+          -> apply label + source/route eligibility          |
           -> admitted augmentation candidates                |
                                                              |
                  coalesce exact semantic identities <--------+
-                 preserve accepted provenance + permissions
+                 preserve eligible accepted provenance
+                 combine permissions within config limits
                                   |
                  derive permitted name parts and occurrences
                                   |
@@ -320,13 +324,22 @@ The admission transform owns validation consumption. It:
 2. computes the resulting label once, using the current proposed label for a
    valid `reclass` decision;
 3. records the terminal admission state;
-4. applies normalized allowed/excluded label checks to the resulting label;
+4. applies normalized label eligibility and configured source/route policy to
+   the resulting candidate;
 5. emits an admitted candidate or a rejection trace record.
 
 To preserve current behavior deliberately, an explicitly accepted detector
 candidate permits occurrence propagation, while a fallback-protected detector
 candidate does not. A valid reclassification is checked under its proposed
 label before it can enter reconciliation.
+
+Configuration is an authority ceiling, not another origin to merge. A source
+or detection route disabled for a label does not enter coalescing and cannot
+contribute provenance or propagation permission through an exact duplicate.
+When PR #265 is rebuilt on this lifecycle, `allow_model_detection=False` for a
+regex entity therefore makes model-origin candidates for that label ineligible;
+`validate_with_llm` independently selects the admission route for the regex
+observation itself.
 
 No later transform receives the raw decision map as an input. In particular,
 the finalization step must not reapply detector decisions to augmented,
@@ -355,10 +368,12 @@ Group admitted candidates by normalized label and exact bounds. Coalescing:
 
 - keeps the source value from authoritative offsets;
 - retains lineage to all contributing observations;
-- retains only accepted provenance;
-- allows propagation when at least one accepted origin independently permits
-  it;
-- does not let fallback-only or rejected origins add permissions;
+- retains provenance only from accepted origins whose source and route remain
+  enabled by configuration;
+- allows propagation when at least one such eligible accepted origin
+  independently permits it and configuration does not prohibit it;
+- does not let fallback-only, rejected, or configuration-disabled origins add
+  permissions;
 - retains calibrated score information by source rather than manufacturing a
   cross-source score.
 
@@ -516,7 +531,9 @@ cases:
 | Missing, null, or malformed decision | Exact detector span remains fallback-protected; it grants no accepted provenance or propagation |
 | Labels differ only by case or surrounding whitespace | Exact spans coalesce under normalized identity |
 | One exact origin is accepted and another is rejected | Only the accepted origin contributes provenance and permissions |
-| One exact accepted origin permits propagation and another does not | Coalesced candidate permits propagation without losing either accepted origin |
+| One exact accepted origin permits propagation and another does not | When both routes are configuration-eligible, the coalesced candidate permits propagation without losing either accepted origin |
+| A model origin duplicates a regex entity whose model-detection route is disabled | The model origin contributes no provenance or permission; the regex policy remains authoritative |
+| A model origin duplicates a regex entity whose model-detection route is enabled | Independently accepted origins may coalesce and combine behavior within the configured limits |
 | Excluded longer span overlaps allowed shorter span | Shorter candidate survives because eligibility runs first |
 | Same-source GLiNER alternatives have identical bounds | Native detector confidence breaks the label tie |
 | Cross-source candidates carry synthetic and native scores | Scores are not compared across calibration domains |
@@ -632,7 +649,9 @@ Maintainer review should confirm:
    protection but grant no accepted provenance or propagation permission.
 5. First valid result wins when duplicate validation decisions are returned.
 6. Eligibility completes before any candidate can suppress another.
-7. Exact coalescing unions accepted provenance and propagation permission.
+7. Exact coalescing retains accepted provenance and combines propagation
+   permission only among configuration-eligible origins; disabled routes cannot
+   regain authority during merging.
 8. All admitted and derived candidates use one final reconciliation policy.
 9. Source priority remains an internal centralized policy rather than a public
    configuration option.
