@@ -75,7 +75,7 @@ records, and destructive conflict resolution occurs at several points.
 |---|---|---|---|
 | IDs are constructed from label and offsets | Reclassification or exact-candidate coalescing can change the representative identity used to find a decision | `Seattle` is detected as `country_0_7` and reclassified as `city`; its ID still encodes `country`, while a later reconstructed `city_0_7` cannot correlate to the original decision. | Give every original observation an immutable row-local correlation ID independent of mutable semantic fields. |
 | The same decision payload is applied before and after augmentation | A decision can be replayed against a different merged or derived candidate that happens to carry the same constructed ID | The validator decides on detector candidate `token_10_20`; after augmentation and merging, the same ID may identify the representative of a different set of origins, but the old decision is applied again without checking that lineage. | Consume a decision exactly once and persist the resulting admission state; downstream transforms never receive the raw decision map. |
-| Raw origins and accepted origins share the same entity representation | A rejected, malformed, or undecided origin can accidentally contribute provenance or propagation permission | If the validator omits a detector candidate, the current fallback keeps the same `EntitySpan`; final occurrence expansion can then treat it like an explicitly accepted candidate and protect unrelated occurrences. | Keep observations, validation results, and admitted candidates as distinct states; fallback protection preserves only the exact span and grants no accepted authority. |
+| Raw origins and accepted origins share the same entity representation | A rejected or undecided origin can accidentally contribute provenance or propagation permission | If the validator omits a detector candidate, the current fallback keeps the same `EntitySpan`; final occurrence expansion can then treat it like an explicitly accepted candidate and protect unrelated occurrences. | Keep observations, validation results, and admitted candidates as distinct states; fallback protection preserves only the exact span and grants no accepted authority. |
 | Exact identity is compared inconsistently | Equivalent labels may fail to coalesce and lose accepted provenance | Detector label `token` and augmenter label `TOKEN` cover the same bounds, but case-sensitive comparison treats them as competing spans and retains only one representative. | Define semantic identity as normalized label plus exact source bounds, then coalesce equivalent eligible claims without discarding accepted origins. |
 | Provenance is collapsed into a representative source string | Coalescing can discard an independently accepted origin, while unconditional permission union can let a disabled route regain authority | The detector and augmenter independently accept the same email span, but overlap resolution retains one `source` string. With regex added, blindly combining origins could also let a model duplicate contribute even when `allow_model_detection=False`. | Apply configured source and route eligibility first, then aggregate eligible accepted origins and combine permissions only within configuration limits. |
 | Overlapping detector candidates are suppressed before validation | A longer candidate that is later dropped or excluded can erase a valid shorter candidate before either decision is known | GLiNER returns `John Doe` as `full_name` and `John` as `first_name`; parsing keeps only the longer span. If validation drops `John Doe`, the original `John` candidate is already gone. | Retain every conflicting observation through validation, represent the overlapping region once with a compact conflict group, and reconcile only admitted candidates. |
@@ -119,9 +119,20 @@ existing response safely:
 - `reclass` accepts it under a usable proposed label;
 - `drop` rejects it.
 
-Unknown IDs, duplicate decisions, missing decisions, and null decisions are
-handled by one documented policy and recorded in trace metadata. They must
-never be interpreted by matching mutable values, labels, or offsets.
+Structured output enforces the response shape and the keep/reclass/drop enum,
+but it cannot enforce row-dependent relationships between the response and the
+input candidates. Admission therefore applies the following semantic policy:
+
+- ignore and trace IDs that are not present in the row's candidate inventory;
+- for duplicate IDs, use the first usable decision in deterministic merged
+  order and trace later entries;
+- treat `keep` and `drop` as usable, and treat `reclass` as usable only when it
+  contains a non-empty proposed label;
+- when no usable decision exists for a known candidate, preserve only its exact
+  observed span as fallback protection.
+
+Candidate identity must never be inferred by matching echoed values, labels,
+or offsets.
 
 A `reclass` decision without a proposed label preserves the exact original span
 under its original eligible label as fallback protection. It does not grant
@@ -184,10 +195,10 @@ The implementation must make the following properties true:
    `text[start_position:end_position]`.
 2. **Observation identity is immutable.** Reclassification changes the semantic
    label but never changes the ID used to correlate the original decision.
-3. **Decisions are single-use.** Each valid decision is applied to its original
-   observation exactly once.
-4. **Unknown output is non-authoritative.** Unknown IDs and duplicate or
-   malformed validation entries cannot mutate a candidate.
+3. **Decisions are single-use.** Each selected usable decision is applied to
+   its original observation exactly once.
+4. **Unknown output is non-authoritative.** Unknown IDs and later duplicate
+   decisions cannot mutate a candidate.
 5. **Every retained observation reaches validation.** After redundant
    same-source emissions are collapsed, overlapping alternatives remain
    independent candidates, and the prompt represents each candidate exactly
@@ -311,10 +322,11 @@ separately in [issue #304](https://github.com/NVIDIA-NeMo/Anonymizer/issues/304)
 rather than added to issue #262.
 
 Chunk merging and decision application must share one duplicate policy. The
-proposed rule is first valid decision wins; later decisions for the same ID are
-ignored and counted in trace diagnostics. Missing or unusable decisions produce
-`fallback_protected`, preserving the exact observed span without granting
-accepted provenance or propagation.
+proposed rule is first usable decision wins in deterministic merged order;
+later decisions for the same ID are ignored and counted in trace diagnostics.
+If a known candidate has no usable decision, it becomes `fallback_protected`,
+preserving the exact observed span without granting accepted provenance or
+propagation.
 
 ### Step 3: Apply decisions once and admit candidates
 
@@ -501,11 +513,12 @@ reusing the lifecycle types and pure semantics.
 ### Trace diagnostics
 
 Persist JSON-compatible admission diagnostics in an internal workflow trace
-column. At minimum, record ignored unknown IDs, duplicate decisions, missing or
-malformed decisions, fallback reasons, reclassification fallback, and the
-accepted origin references retained after coalescing. Keep these diagnostics
-out of the public `COL_FINAL_ENTITIES` schema and final user dataframe; they are
-available through the existing trace dataframe for debugging and evaluation.
+column. At minimum, record ignored unknown IDs, duplicate decisions, candidates
+missing a usable decision, fallback reasons, reclassification fallback, and
+the accepted origin references retained after coalescing. Keep these
+diagnostics out of the public `COL_FINAL_ENTITIES` schema and final user
+dataframe; they are available through the existing trace dataframe for
+debugging and evaluation.
 
 ## Validation Strategy
 
@@ -527,8 +540,8 @@ cases:
 | Accepted seed candidates still overlap before augmentation | The augmenter sees one neutral group tag plus every seed in the structured inventory, without duplicated source text |
 | Augmented candidate constructs the same label/bounds as a seed | The seed decision is not replayed against the augmented candidate |
 | Unknown decision ID | No candidate is mutated; diagnostic is recorded |
-| Duplicate decision ID across or within chunks | First valid decision wins deterministically |
-| Missing, null, or malformed decision | Exact detector span remains fallback-protected; it grants no accepted provenance or propagation |
+| Duplicate decision ID across or within chunks | First usable decision wins deterministically |
+| Candidate is absent from the structured response | Exact detector span remains fallback-protected; it grants no accepted provenance or propagation |
 | Labels differ only by case or surrounding whitespace | Exact spans coalesce under normalized identity |
 | One exact origin is accepted and another is rejected | Only the accepted origin contributes provenance and permissions |
 | One exact accepted origin permits propagation and another does not | When both routes are configuration-eligible, the coalesced candidate permits propagation without losing either accepted origin |
@@ -554,9 +567,9 @@ limited to compactly representing overlapping candidates that were previously
 discarded. The comparison is a regression check rather than a model-contract
 experiment. Measure:
 
-- missing or null decisions;
+- candidates missing a usable decision;
 - unknown and duplicate IDs;
-- malformed structured outputs;
+- structured-output call or schema-validation failures at the workflow boundary;
 - keep/drop/reclass agreement and unresolved-decision handling;
 - per-label precision and recall;
 - candidate coverage;
@@ -647,7 +660,7 @@ Maintainer review should confirm:
    by eligibility rather than restored under the old label.
 4. Missing or unusable validator decisions retain exact-span fallback
    protection but grant no accepted provenance or propagation permission.
-5. First valid result wins when duplicate validation decisions are returned.
+5. First usable result wins when duplicate validation decisions are returned.
 6. Eligibility completes before any candidate can suppress another.
 7. Exact coalescing retains accepted provenance and combines propagation
    permission only among configuration-eligible origins; disabled routes cannot
