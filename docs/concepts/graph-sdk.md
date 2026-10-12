@@ -227,3 +227,10 @@ replaces caller resources.
 identity is allocated. These are driver witnesses with registered activation
 facts, not full graph or DataDesigner qualification. X3 must prove resource leases,
 correct-loop cleanup and owner integration before that service gate can open.
+
+The shared request driver retains an active cancellation hook through observer
+cancellation. A completed hook that self-cancels or raises an ordinary exception
+provides no stop confirmation: retained requests continue through Lost, drain and
+late settlement. The hook cannot cancel its caller by cancelling its own task.
+This uses the existing request authority and preserves the first terminal; it
+does not expand foreign service admission or ordinary call-lifetime profiles.

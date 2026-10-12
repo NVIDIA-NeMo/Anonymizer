@@ -285,8 +285,16 @@ async def _drive_request_body(
         authority.apply(RequestCancel(request=request))
         if request in authority.state.dispatched:
             try:
-                stopped = await foreign.cancel() if foreign is not None else await cancel(request)
-            except Exception:
+                stop_task = asyncio.ensure_future(foreign.cancel() if foreign is not None else cancel(request))
+                while not stop_task.done():
+                    try:
+                        await asyncio.shield(stop_task)
+                    except asyncio.CancelledError:
+                        # An observer cannot abandon an active hook. A completed
+                        # hook's self-cancellation is unconfirmed stop below.
+                        continue
+                stopped = stop_task.result()
+            except (Exception, asyncio.CancelledError):
                 pass
         if blocking is None and not drain_on_cancel:
             task.cancel()

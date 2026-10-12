@@ -42,7 +42,7 @@ TABLE = json.loads((Path(__file__).parent / "reference/foreign_entry/manifest.js
 
 
 class Harness:
-    def __init__(self, loop, *, hold=False, confirmed=False, timeout_ns=1_000_000_000):
+    def __init__(self, loop, *, hold=False, confirmed=False, timeout_ns=1_000_000_000, stop_hook=None):
         self.state, self.seed = _initialized()
         self.state = advance_activation(state=self.state, event=Select(seeds=frozenset({self.seed})))
         self.host_thread = get_ident()
@@ -64,6 +64,7 @@ class Harness:
             operation=operation,
             associations=(AssociationInput(association=self.association, inputs=()),),
         )
+        self.call_tasks = []
         self.counts = [0, 0]  # Actual inner entries, pure Start commits; never a request oracle.
         self.entered, self.stopping = Event(), Event()
         self.release = asyncio.Event()
@@ -73,6 +74,7 @@ class Harness:
         class Inner:
             async def dispatch(self, request):
                 assert asyncio.get_running_loop() is loop and get_ident() != owner.host_thread
+                owner.call_tasks.append(asyncio.current_task())
                 owner.counts[0] += 1
                 owner.entered.set()
                 if hold:
@@ -94,6 +96,8 @@ class Harness:
             async def cancel(self, request):
                 assert asyncio.get_running_loop() is loop
                 owner.stopping.set()
+                if stop_hook is not None:
+                    return await stop_hook(request)
                 return StopConfirmed(usage=ExactUsage(input_units=1, output_units=1)) if confirmed else StopUnknown()
 
         self.adapter = ForeignLoopTransport(inner=Inner(), loop=loop, gate_timeout_ns=timeout_ns)

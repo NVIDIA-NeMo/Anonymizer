@@ -30,9 +30,9 @@ TABLE = json.loads((Path(__file__).parent / "reference/delegated_execution/cance
 
 
 @pytest.mark.parametrize("caught", TABLE["live_variants"]["parent_catches"])
-@pytest.mark.parametrize("confirmed", TABLE["live_variants"]["stop_confirmed"])
+@pytest.mark.parametrize("confirmed, hook_failure", [(False, None), (True, None), (False, "raise"), (False, "self")])
 @pytest.mark.parametrize("cancel_owner", TABLE["live_variants"]["cancel_owner"])
-def test_cancelled_submitter_drains_live_child(monkeypatch, caught, confirmed, cancel_owner):
+def test_cancelled_submitter_drains_live_child(monkeypatch, caught, confirmed, cancel_owner, hook_failure):
     async def run():
         execution, services, submit, _ = _fixture(simple=True, parent_io=True)
         holder = {}
@@ -80,6 +80,13 @@ def test_cancelled_submitter_drains_live_child(monkeypatch, caught, confirmed, c
             async def cancel(self, request):
                 self.cancels += 1
                 stopping.set()
+                if hook_failure == "raise":
+                    raise asyncio.CancelledError
+                if hook_failure == "self":
+                    hook_task = asyncio.current_task()
+                    assert hook_task is not None
+                    hook_task.cancel()
+                    await asyncio.sleep(0)
                 return StopConfirmed(usage=ExactUsage(input_units=1, output_units=1)) if confirmed else StopUnknown()
 
         transport = Transport()
@@ -99,6 +106,7 @@ def test_cancelled_submitter_drains_live_child(monkeypatch, caught, confirmed, c
         try:
             await asyncio.wait_for(stopping.wait(), 2)
             await until(lambda: holder["parent"].done())
+            await until(lambda: bool(holder["owner"].runtime.request_authority.state.terminals))
             first = tuple(holder["owner"].runtime.request_authority.state.terminals)
             kind = "confirmed" if confirmed else "unknown"
             assert [item.category for item in first] == [TABLE["first_terminal"][kind]]
