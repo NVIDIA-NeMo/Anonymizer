@@ -1,0 +1,13 @@
+{
+  "schema": 1,
+  "alphabet": "IPCREV",
+  "complete_traces": [
+    "IPCPEV",
+    "IPRPEV"
+  ],
+  "exhaustive_max_length": 4,
+  "case_count": 1559,
+  "max_length": 6,
+  "max_dispatched": 3,
+  "digest": "c9dfe592eaed6713d4086e0f9d5269db4ef38bc8685b4cf5ffdeeedca1a1a071"
+}

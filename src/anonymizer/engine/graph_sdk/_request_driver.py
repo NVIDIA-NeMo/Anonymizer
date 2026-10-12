@@ -29,6 +29,7 @@ from anonymizer.engine.graph_sdk.requests import (
     RejectSettlement,
     RequestAssociation,
     RequestCancel,
+    RequestChain,
     RequestEvent,
     RequestPolicyBinding,
     RequestState,
@@ -38,6 +39,7 @@ from anonymizer.engine.graph_sdk.requests import (
     TransportLost,
     TransportSuccess,
     advance_requests,
+    bind_request_chain,
     bind_request_policies,
 )
 
@@ -92,6 +94,10 @@ class _RequestAuthority:
     def bind(self, binding: RequestPolicyBinding) -> None:
         with self._lock:
             self.state = bind_request_policies(state=self.state, binding=binding)
+
+    def bind_chain(self, chain: RequestChain) -> None:
+        with self._lock:
+            self.state = bind_request_chain(state=self.state, chain=chain)
 
 
 @dataclass(frozen=True, slots=True)

@@ -17,11 +17,13 @@ from anonymizer.engine.graph_sdk._effect_values import (
 from anonymizer.engine.graph_sdk._request_values import (
     _FAILURES,
     _PURPOSES,
+    AcceptChildEvidence,
     AcceptFailure,
     AcceptResult,
     AssociationResult,
     BindingAssociation,
     BindingRequestScope,
+    ChildEvidence,
     Dispatch,
     ExternalSettlement,
     InvocationRequestScope,
@@ -33,6 +35,8 @@ from anonymizer.engine.graph_sdk._request_values import (
     RequestAssociation,
     RequestAssociationSummary,
     RequestCancel,
+    RequestChain,
+    RequestChild,
     RequestDefect,
     RequestDenialFact,
     RequestEvent,
@@ -113,6 +117,8 @@ def request_receipt(state: RequestState) -> RequestReceipt:
         local_in_flight=state.local_in_flight,
         remote_outstanding=state.remote_outstanding,
         cancel_requested=state.cancel_requested,
+        chains=state.chains,
+        child_evidence=state.child_evidence,
     )
 
 
@@ -122,6 +128,7 @@ def advance_requests(*, state: RequestState, event: RequestEvent) -> RequestStat
     require_instance(
         event,
         (
+            AcceptChildEvidence,
             Reserve,
             Dispatch,
             AcceptResult,
@@ -134,6 +141,8 @@ def advance_requests(*, state: RequestState, event: RequestEvent) -> RequestStat
             RejectSettlement,
         ),
     )
+    if isinstance(event, AcceptChildEvidence):
+        return _accept_child_evidence(state, event.evidence)
     if isinstance(event, ScopeCancel):
         terminals = state.terminals
         defects = state.defects
@@ -275,14 +284,22 @@ def _reserve(state: RequestState, event: Reserve) -> RequestState:
     if any(not _association_in_scope(item, state.scope) for item in event.associations):
         reject(EffectCode.FOREIGN_OWNER)
     eligible = set(event.associations)
-    _validate_followup(state, event)
+    if event.child is None:
+        if any(chain.associations & event.associations for chain in state.chains):
+            reject(EffectCode.CROSS_POLICY)
+        _validate_followup(state, event)
+    else:
+        _validate_child(state, event)
+    attempts = (*state.dispatches, *state.reserved) if event.child is not None else state.dispatches
     exhausted = {
         item
         for item in eligible
-        if sum(item in reservation.associations for reservation in state.dispatches) >= event.policy.max_attempts
+        if sum(item in reservation.associations for reservation in attempts) >= event.policy.max_attempts
     }
     denials = state.denials
     if exhausted:
+        if event.child is not None:
+            exhausted = eligible.copy()
         denials += (
             RequestDenialFact(
                 request=event.request,
@@ -307,8 +324,142 @@ def _reserve(state: RequestState, event: Reserve) -> RequestState:
         purpose=event.purpose,
         associations=frozenset(eligible),
         policy=event.policy,
+        child=event.child,
     )
     return replace(state, reserved=state.reserved | {reservation}, denials=denials)
+
+
+def bind_request_chain(*, state: RequestState, chain: RequestChain) -> RequestState:
+    """Bind a child contract; runnable delegation/activation admission is separate."""
+    require_instance(state, RequestState)
+    require_instance(chain, RequestChain)
+    if state.cancelled:
+        reject(EffectCode.REQUEST_CAUSALITY)
+    if chain.chain.scope != state.scope:
+        reject(EffectCode.FOREIGN_OWNER)
+    if any(item.chain == chain.chain for item in state.chains):
+        reject(EffectCode.DUPLICATE)
+    if any(
+        not any(binding.association == association and chain.policy in binding.policies for binding in state.bindings)
+        for association in chain.associations
+    ):
+        reject(EffectCode.CROSS_POLICY)
+    if any(item.associations & chain.associations for item in (*state.dispatches, *state.reserved)):
+        reject(EffectCode.REQUEST_CAUSALITY)
+    if any(
+        sum(association in item.associations for item in state.chains) >= chain.policy.max_attempts
+        for association in chain.associations
+    ):
+        reject(EffectCode.LIMIT_EXCEEDED)
+    return replace(state, chains=(*state.chains, chain))
+
+
+def _child_history(state: RequestState, child: RequestChild) -> tuple[RequestReservation, ...]:
+    return tuple(item for item in state.dispatches if item.child is not None and item.child.chain == child.chain)
+
+
+def _validate_child(state: RequestState, event: Reserve) -> None:
+    child = event.child
+    if state.cancelled:
+        reject(EffectCode.REQUEST_CAUSALITY)
+    require_instance(child, RequestChild)
+    assert child is not None
+    contract = next((item for item in state.chains if item.chain == child.chain), None)
+    if contract is None or child.chain.scope != state.scope:
+        reject(EffectCode.FOREIGN_OWNER)
+    if contract.policy != event.policy or contract.associations != event.associations or contract.role != child.role:
+        reject(EffectCode.CROSS_POLICY)
+    purpose = "correction" if child.source_kind == "conversation_restart" else child.source_kind
+    if purpose != event.purpose:
+        reject(EffectCode.CONTRADICTORY)
+    if any(item.child is not None and item.child.chain == child.chain for item in state.reserved):
+        reject(EffectCode.PENDING_LIMIT)
+    if event.request in {item.request for item in state.terminals}:
+        reject(EffectCode.DUPLICATE)
+    if child.source_kind != "initial" and child.source_kind not in contract.followups:
+        reject(EffectCode.UNSUPPORTED)
+    history = _child_history(state, child)
+    if not history:
+        if (
+            purpose != "initial"
+            or child.predecessor is not None
+            or child.evidence is not None
+            or child.route != contract.routes[0].name
+        ):
+            reject(EffectCode.MISSING_PREDECESSOR)
+        return
+    prior = history[-1]
+    assert prior.child is not None
+    if purpose == "initial" or child.predecessor != prior.request:
+        reject(EffectCode.REQUEST_CAUSALITY)
+    terminal = next((item for item in state.terminals if item.request == prior.request), None)
+    if terminal is None:
+        reject(EffectCode.MISSING_PREDECESSOR)
+    if purpose == "failover":
+        names = tuple(route.name for route in contract.routes)
+        index = names.index(prior.child.route) + 1
+        if index >= len(names) or child.route != names[index]:
+            reject(EffectCode.INVALID_FAILOVER)
+        _require_child_evidence(state, child, "generation_exhausted")
+        if event.policy.replay != "idempotent":
+            reject(EffectCode.REPLAY_FORBIDDEN)
+    else:
+        if child.route != prior.child.route:
+            reject(EffectCode.CROSS_POLICY)
+        if purpose == "correction":
+            _require_child_evidence(state, child, "parser_rejected")
+            route = next(route for route in contract.routes if route.name == child.route)
+            parsed = sum(
+                item.kind == "parser_rejected"
+                and item.chain == child.chain
+                and any(
+                    row.request == item.request and row.child is not None and row.child.route == child.route
+                    for row in history
+                )
+                for item in state.child_evidence
+            )
+            if parsed >= route.parse_attempts:
+                reject(EffectCode.LIMIT_EXCEEDED)
+        elif child.evidence is not None:
+            reject(EffectCode.CONTRADICTORY)
+        _validate_followup(replace(state, dispatches=history), event)
+
+
+def _require_child_evidence(state: RequestState, child: RequestChild, kind: str) -> None:
+    if child.evidence is None or child.evidence.kind != kind or child.evidence not in state.child_evidence:
+        reject(EffectCode.MISSING_PREDECESSOR)
+
+
+def _accept_child_evidence(state: RequestState, evidence: ChildEvidence) -> RequestState:
+    require_instance(evidence, ChildEvidence)
+    if evidence.chain.scope != state.scope:
+        reject(EffectCode.FOREIGN_OWNER)
+    if any(item.request == evidence.request for item in state.defects):
+        reject(EffectCode.CONTRADICTORY)
+    if evidence in state.child_evidence:
+        reject(EffectCode.DUPLICATE)
+    history = tuple(item for item in state.dispatches if item.child is not None and item.child.chain == evidence.chain)
+    if not history or history[-1].request != evidence.request:
+        reject(EffectCode.REQUEST_CAUSALITY)
+    prior = history[-1]
+    assert prior.child is not None
+    terminal = next((item for item in state.terminals if item.request == evidence.request), None)
+    if terminal is None or terminal.category != "failure" or terminal.failure != "malformed_response":
+        reject(EffectCode.INVALID_CORRECTION)
+    if not any(item.request == evidence.request and item.disposition == "completed" for item in state.settlements):
+        reject(EffectCode.INVALID_SETTLEMENT)
+    if evidence.kind == "generation_exhausted":
+        contract = next(item for item in state.chains if item.chain == evidence.chain)
+        route = next(item for item in contract.routes if item.name == prior.child.route)
+        parsed = {
+            item.request
+            for item in state.child_evidence
+            if item.chain == evidence.chain and item.kind == "parser_rejected"
+        }
+        failures = {item.request for item in history if item.child is not None and item.child.route == route.name}
+        if evidence.request not in parsed or len(parsed & failures) != route.parse_attempts:
+            reject(EffectCode.INVALID_FAILOVER)
+    return replace(state, child_evidence=(*state.child_evidence, evidence))
 
 
 def _reservation(state: RequestState, request: PhysicalRequestId) -> RequestReservation:

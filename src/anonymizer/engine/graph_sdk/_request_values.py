@@ -558,12 +558,123 @@ class RequestDenialFact(PrivateValue):
         require_literal(self.category, frozenset({"budget_stopped", "request_limit_stopped"}))
 
 
+ChildSourceKind: TypeAlias = Literal["initial", "retry", "correction", "conversation_restart", "failover"]
+
+
+class RequestChainId(OpaqueIdentity):
+    """Graph-owner-issued identity; this does not register an activation."""
+
+    __slots__ = ("scope",)
+    scope: RequestScope
+
+    @classmethod
+    def new(cls, *, scope: RequestScope) -> RequestChainId:
+        require_instance(scope, (InvocationRequestScope, BindingRequestScope))
+        return cls._new(scope=scope)  # type: ignore[return-value]
+
+
+@dataclass(frozen=True, slots=True, kw_only=True, repr=False)
+class ChildRoute(PrivateValue):
+    name: str
+    parse_attempts: int
+
+    def __post_init__(self) -> None:
+        require_text(self.name)
+        require_count(self.parse_attempts, positive=True)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True, repr=False)
+class RequestChain(PrivateValue):
+    """Bounded, ordered fallback routes admitted by the request owner."""
+
+    chain: RequestChainId
+    associations: frozenset[RequestAssociation]
+    policy: PhysicalRequestPolicy
+    role: Literal["generation", "readiness"]
+    routes: tuple[ChildRoute, ...]
+    followups: frozenset[ChildSourceKind] = frozenset({"correction", "failover"})
+
+    def __post_init__(self) -> None:
+        require_instance(self.chain, RequestChainId)
+        require_instance(self.policy, PhysicalRequestPolicy)
+        require_literal(self.role, frozenset({"generation", "readiness"}))
+        if type(self.associations) is not frozenset or not self.associations:
+            reject(EffectCode.INVALID_TYPE)
+        for association in self.associations:
+            require_instance(association, (SemanticAssociation, BindingAssociation))
+            if not _association_in_scope(association, self.chain.scope):
+                reject(EffectCode.FOREIGN_OWNER)
+        if (
+            type(self.routes) is not tuple
+            or not self.routes
+            or any(type(route) is not ChildRoute for route in self.routes)
+        ):
+            reject(EffectCode.INVALID_TYPE)
+        if len({route.name for route in self.routes}) != len(self.routes):
+            reject(EffectCode.DUPLICATE)
+        if type(self.followups) is not frozenset or not self.followups <= {
+            "retry",
+            "correction",
+            "conversation_restart",
+            "failover",
+        }:
+            reject(EffectCode.INVALID_VALUE)
+        if sum(route.parse_attempts for route in self.routes) > self.policy.max_attempts:
+            reject(EffectCode.LIMIT_EXCEEDED)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True, repr=False)
+class ChildEvidence(PrivateValue):
+    chain: RequestChainId
+    request: PhysicalRequestId
+    kind: Literal["parser_rejected", "generation_exhausted"]
+
+    def __post_init__(self) -> None:
+        require_instance(self.chain, RequestChainId)
+        require_instance(self.request, PhysicalRequestId)
+        require_literal(self.kind, frozenset({"parser_rejected", "generation_exhausted"}))
+        if self.request.scope != self.chain.scope:
+            reject(EffectCode.FOREIGN_OWNER)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True, repr=False)
+class RequestChild(PrivateValue):
+    chain: RequestChainId
+    role: Literal["generation", "readiness"]
+    route: str
+    source_kind: ChildSourceKind
+    predecessor: PhysicalRequestId | None = None
+    evidence: ChildEvidence | None = None
+
+    def __post_init__(self) -> None:
+        require_instance(self.chain, RequestChainId)
+        require_literal(self.role, frozenset({"generation", "readiness"}))
+        require_text(self.route)
+        require_literal(
+            self.source_kind, frozenset({"initial", "retry", "correction", "conversation_restart", "failover"})
+        )
+        if self.predecessor is not None:
+            require_instance(self.predecessor, PhysicalRequestId)
+            if self.predecessor.scope != self.chain.scope:
+                reject(EffectCode.FOREIGN_OWNER)
+        if self.evidence is not None:
+            require_instance(self.evidence, ChildEvidence)
+            if self.evidence.chain != self.chain or self.evidence.request != self.predecessor:
+                reject(EffectCode.FOREIGN_OWNER)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True, repr=False)
+class AcceptChildEvidence(PrivateValue):
+    evidence: ChildEvidence
+
+
 @dataclass(frozen=True, slots=True, kw_only=True, repr=False)
 class RequestReservation(PrivateValue):
     request: PhysicalRequestId
     purpose: RequestPurpose
     associations: frozenset[RequestAssociation]
     policy: PhysicalRequestPolicy
+    child: RequestChild | None = None
 
     def __post_init__(self) -> None:
         require_instance(self.request, PhysicalRequestId)
@@ -575,6 +686,10 @@ class RequestReservation(PrivateValue):
         if not self.associations:
             reject(EffectCode.INVALID_VALUE)
         require_instance(self.policy, PhysicalRequestPolicy)
+        if self.child is not None:
+            require_instance(self.child, RequestChild)
+            if self.child.chain.scope != self.request.scope:
+                reject(EffectCode.FOREIGN_OWNER)
         if any(not _association_in_scope(item, self.request.scope) for item in self.associations):
             reject(EffectCode.FOREIGN_OWNER)
 
@@ -631,6 +746,8 @@ class RequestState(PrivateValue):
     remote_outstanding: frozenset[PhysicalRequestId]
     cancel_requested: frozenset[PhysicalRequestId]
     cancelled: bool
+    chains: tuple[RequestChain, ...] = ()
+    child_evidence: tuple[ChildEvidence, ...] = ()
 
 
 @dataclass(frozen=True, slots=True, kw_only=True, repr=False)
@@ -648,6 +765,8 @@ class RequestReceipt(PrivateValue):
     local_in_flight: frozenset[PhysicalRequestId]
     remote_outstanding: frozenset[PhysicalRequestId]
     cancel_requested: frozenset[PhysicalRequestId]
+    chains: tuple[RequestChain, ...] = ()
+    child_evidence: tuple[ChildEvidence, ...] = ()
 
 
 @dataclass(frozen=True, slots=True, kw_only=True, repr=False)
@@ -656,6 +775,7 @@ class Reserve(PrivateValue):
     purpose: RequestPurpose
     associations: frozenset[RequestAssociation]
     policy: PhysicalRequestPolicy
+    child: RequestChild | None = None
 
 
 @dataclass(frozen=True, slots=True, kw_only=True, repr=False)
@@ -712,7 +832,8 @@ class ObserveSettlement(PrivateValue):
 
 
 RequestEvent: TypeAlias = (
-    Reserve
+    AcceptChildEvidence
+    | Reserve
     | Dispatch
     | AcceptResult
     | AcceptFailure
