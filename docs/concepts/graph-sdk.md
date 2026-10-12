@@ -137,8 +137,8 @@ input resolution and output publication; a local assessor can qualify its
 produced candidate. The fixed physical
 slots are mandatory: returning before all slots execute fails the submission.
 Other external operations, adaptive retrieval and concurrent borrowed requests
-remain gated in this subset. The borrowed owner rejects other loops/tasks and
-expires when submission finishes. These are executable graph-owner fixtures;
+remain gated in this subset. The ordinary borrowed owner rejects other loops/tasks
+and expires when submission finishes. These are executable graph-owner fixtures;
 no DD provider route is enabled yet.
 
 An optional `DelegatedReadiness` descriptor names three additional fixed sibling
@@ -160,6 +160,35 @@ The local probe uses the existing local completion path; self-cancellation close
 its canonical attempt, and cancellation of its observer retains owned work until
 the callback drains. This adds no shared readiness across targets.
 
+The internal `WorkerDelegatedSubmitter` adds one bounded synchronous submission
+through the existing caller-owned `BlockingPool`. Its parent capability declares
+`resource_lifetime="caller_owned"`, and its `ImplementationHandle.resource` is a
+caller-owned `ResourceLease` for that exact submitter, with detachment forbidden.
+Missing, mismatched, SDK-owned or closed resources reject before submission.
+Cleanup records the caller lease as `left_open`; it does not close the pool or
+loop. The submitter declares one borrowed async loop, which the caller must keep
+running through drain. The worker receives an
+owner-issued capability whose context propagates through `asyncio.to_thread` and
+`run_coroutine_threadsafe`. Both the exact issued object and its context must match
+at the invocation owner; an expired capability, foreign context, undeclared loop
+or simultaneous callback is rejected before that request's effects. Ordinary
+same-loop submission retains its submitting-task restriction.
+
+The worker and each registered child remain retained through caught, propagated
+and repeated observer cancellation. Physical transports, classification, Start,
+terminal facts and publication still execute on the invocation loop. A worker
+submission is not a physical request. Cancellation before worker entry submits
+nothing; cancellation after physical entry preserves the first terminal and
+usable late settlement while draining local work. The caller owns the pool and
+borrowed loop; the executor neither closes nor replaces them. The pool must be
+open at service admission. These are live execution resources, not stateless
+handles: this invocation drains its retained worker and children without waiting
+for unrelated caller-pool work. Other captured values must satisfy the declared
+cross-thread/stateless profile. Arbitrary synchronous
+code cannot be stopped by cancelling an asyncio observer. Foreign-loop physical
+transports and owned-client close remain unsupported pending separate entry and
+resource-lifetime conformance. This does not enable a DataDesigner route.
+
 The shared asynchronous request driver now admits Dispatch inside the retained
 call task immediately before callable entry. The delegated path preflights Start,
 then commits Dispatch and the prepared Start without an intervening await.
@@ -170,7 +199,7 @@ Blocking transports retain their existing worker-entry boundary.
 Opaque structural admission remains unsupported because the capability schema
 cannot yet express unknown physical request bounds truthfully. Hard-budget
 preparation retains its implementation-owned-retry rejection. Optional unused
-slots, cross-loop draining, multi-target
+slots, foreign-transport entry and resource draining, multi-target
 shared ownership, dynamic recipes and provider-error exhaustion require later
 bounded integration units. Ordinary injected-runner compatibility must gain its
 explicit opaque path before production cutover.

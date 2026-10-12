@@ -71,6 +71,12 @@ class BlockingPool(PrivateValue):
         self._executor = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="anonymizer-graph")
 
     @property
+    def closed(self) -> bool:
+        """Whether this caller-owned pool has stopped admitting work."""
+        with self._lock:
+            return self._closed
+
+    @property
     def occupied(self) -> int:
         with self._lock:
             return self._active
@@ -195,6 +201,11 @@ class _BlockingAdapter(PrivateValue):
         self._lock = Lock()
         self._users = 0
         self._closed = False
+
+    @property
+    def closed(self) -> bool:
+        with self._lock:
+            return self._closed
 
     @property
     def local_users(self) -> int:

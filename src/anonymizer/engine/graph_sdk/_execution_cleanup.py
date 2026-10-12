@@ -74,7 +74,7 @@ async def _cleanup_execution(
     external_resources = {
         handle.resource.resource
         for policy in admitted.policies
-        if policy.kind == "external"
+        if policy.kind in {"external", "delegated"}
         for implementation in policy.implementations
         for handle in handles
         if handle.resource is not None

@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from inspect import iscoroutinefunction
 from itertools import product
 from typing import Literal
@@ -16,6 +17,7 @@ from anonymizer.engine.graph_sdk._effect_values import (
     require_instance,
     require_literal,
 )
+from anonymizer.engine.graph_sdk._execution_delegated import WorkerDelegatedSubmitter
 from anonymizer.engine.graph_sdk._execution_topology import _node_operation, _workflow_owners
 from anonymizer.engine.graph_sdk._execution_values import (
     _PLAN_KEY,
@@ -560,7 +562,7 @@ def _validate_assessments(
 
 
 def _validate_delegated_services(admitted: AdmittedExecutionPlan, services: ExecutionServices) -> None:
-    """Open only fixed, single-target, stateless generation on the invocation loop."""
+    """Open fixed single-target generation with explicit owner resource lifetimes."""
     prepared = admitted.context.prepared
     delegated = [policy for policy in admitted.policies if policy.delegated is not None]
     if delegated and (len(delegated) != 1 or admitted.context.adaptive_retrievals):
@@ -589,7 +591,9 @@ def _validate_delegated_services(admitted: AdmittedExecutionPlan, services: Exec
                 reject(EffectCode.UNSUPPORTED)
             implementation = owned.implementations[0]
             operation = implementation.capability.operation
-            if implementation.capability.resource_lifetime != "stateless":
+            if implementation.capability.resource_lifetime != "stateless" and not (
+                owned.node == policy.node and implementation.capability.resource_lifetime == "caller_owned"
+            ):
                 reject(EffectCode.UNSUPPORTED)
             if owned.node != policy.node and (operation.inputs or operation.outputs):
                 reject(EffectCode.UNSUPPORTED)
@@ -614,7 +618,18 @@ def _validate_delegated_services(admitted: AdmittedExecutionPlan, services: Exec
                 ),
                 None,
             )
-            if handle is None or handle.resource is not None:
+            if handle is None:
+                reject(EffectCode.UNSUPPORTED)
+            worker = type(handle.delegated) is WorkerDelegatedSubmitter
+            if worker:
+                if (
+                    implementation.capability.resource_lifetime != "caller_owned"
+                    or handle.resource is None
+                    or handle.resource.owner != "caller"
+                    or handle.resource.handle is not handle.delegated
+                ):
+                    reject(EffectCode.UNSUPPORTED)
+            elif handle.resource is not None or implementation.capability.resource_lifetime != "stateless":
                 reject(EffectCode.UNSUPPORTED)
             callback = (
                 handle.delegated.submit
@@ -627,7 +642,19 @@ def _validate_delegated_services(admitted: AdmittedExecutionPlan, services: Exec
                     else None
                 )
             )
-            if handle.delegated is not None and getattr(handle.delegated, "execution", None) != "same_loop":
+            if type(handle.delegated) is WorkerDelegatedSubmitter:
+                loop = handle.delegated.borrowed_loop
+                # Pool/loop are live caller-owned execution resources, not stateless
+                # provider handles. Their unrelated users do not belong to this invocation.
+                if (
+                    handle.delegated.closed
+                    or handle.delegated.pool.closed
+                    or not loop.is_running()
+                    or loop.is_closed()
+                    or loop is asyncio.get_running_loop()
+                ):
+                    reject(EffectCode.UNSUPPORTED)
+            elif handle.delegated is not None and getattr(handle.delegated, "execution", None) != "same_loop":
                 reject(EffectCode.UNSUPPORTED)
             if callback is None or not iscoroutinefunction(callback) or isinstance(handle.transport, BlockingTransport):
                 reject(EffectCode.UNSUPPORTED)

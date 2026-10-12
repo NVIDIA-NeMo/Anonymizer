@@ -1,18 +1,20 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Restricted same-loop borrowing of registered physical operation slots."""
+"""Restricted invocation-owned borrowing of registered physical operation slots."""
 
 from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable, Coroutine
+from contextvars import ContextVar, copy_context
 from dataclasses import replace
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar, Literal, TypeVar
 
 from anonymizer.engine.graph_sdk._effect_values import EffectCode, PrivateValue, reject, require_count
 from anonymizer.engine.graph_sdk._execution_dispatch import _mapping, _run_local
 from anonymizer.engine.graph_sdk._execution_state import _ExecutionJob
 from anonymizer.engine.graph_sdk._execution_values import (
+    DelegatedRequests,
     ImplementationHandle,
     LocalAssessmentResult,
     LocalCompleted,
@@ -22,6 +24,7 @@ from anonymizer.engine.graph_sdk._execution_values import (
 )
 from anonymizer.engine.graph_sdk._ingress import inspect_associations, inspect_failure
 from anonymizer.engine.graph_sdk._request_driver import drive_request
+from anonymizer.engine.graph_sdk.blocking import BlockingAffinity, BlockingPool, _BlockingAdapter, _BlockingInvocation
 from anonymizer.engine.graph_sdk.requests import (
     AcceptChildEvidence,
     AcceptFailure,
@@ -49,6 +52,101 @@ if TYPE_CHECKING:
     from anonymizer.engine.graph_sdk._execution_runtime import _InvocationRuntime
 
 
+_T = TypeVar("_T")
+_WORKER_BORROW: ContextVar[_WorkerBorrow | None] = ContextVar("graph_worker_borrow", default=None)
+
+
+class WorkerDelegatedSubmitter(_BlockingAdapter):
+    """One caller-owned pool and borrowed loop; all physical calls stay on the host loop.
+
+    The pool and loop are caller-owned execution resources, not stateless handles.
+    Other captured values must be stateless and cross-thread safe. The caller keeps
+    these resources live until this submission drains and owns their later close.
+    """
+
+    execution: ClassVar[Literal["worker"]] = "worker"
+
+    def __init__(
+        self,
+        *,
+        callback: Callable[[tuple[AssociationInput, ...], DelegatedRequests], LocalResult],
+        pool: BlockingPool,
+        affinity: BlockingAffinity,
+        borrowed_loop: asyncio.AbstractEventLoop,
+    ) -> None:
+        super().__init__(callback=callback, pool=pool, affinity=affinity)
+        if not isinstance(borrowed_loop, asyncio.AbstractEventLoop):
+            reject(EffectCode.INVALID_TYPE)
+        self._borrowed_loop = borrowed_loop
+
+    @property
+    def borrowed_loop(self) -> asyncio.AbstractEventLoop:
+        return self._borrowed_loop
+
+    async def submit(self, inputs: tuple[AssociationInput, ...], requests: DelegatedRequests) -> LocalResult:
+        # Only the invocation owner may issue the authenticated worker borrow.
+        reject(EffectCode.UNSUPPORTED)
+
+
+class _WorkerBorrow(PrivateValue):
+    def __init__(self, owner: _DelegatedOwner, adapter: WorkerDelegatedSubmitter) -> None:
+        self.owner = owner
+        self.adapter = adapter
+        self.loop = adapter.borrowed_loop
+        self.expired = False
+
+    def _check_origin(self) -> None:
+        if _WORKER_BORROW.get() is not self or self.expired:
+            reject(EffectCode.FOREIGN_OWNER)
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            reject(EffectCode.UNSUPPORTED)
+        if loop is not self.loop:
+            reject(EffectCode.UNSUPPORTED)
+
+    async def _call(self, operation: Callable[[], Coroutine[object, object, _T]]) -> _T:
+        self._check_origin()
+        future = asyncio.run_coroutine_threadsafe(self.owner._worker_call(self, operation), self.owner.loop)
+        try:
+            completion = asyncio.wrap_future(future)
+            # Observation may leave before a rejected/late callback finishes.
+            completion.add_done_callback(lambda done: None if done.cancelled() else done.exception())
+            return await asyncio.shield(completion)
+        except asyncio.CancelledError:
+            if future.done():
+                return future.result()
+            self.owner.loop.call_soon_threadsafe(self.owner._cancel_worker, self)
+            raise
+
+    async def request(
+        self,
+        slot: int,
+        *,
+        source_kind: ChildSourceKind = "initial",
+        predecessor: PhysicalRequestId | None = None,
+        evidence: ChildEvidence | None = None,
+    ) -> PhysicalRequestId:
+        return await self._call(
+            lambda: self.owner.request(slot, source_kind=source_kind, predecessor=predecessor, evidence=evidence)
+        )
+
+    async def readiness(self) -> PhysicalRequestId:
+        return await self._call(self.owner.readiness)
+
+    async def probe(self) -> None:
+        await self._call(self.owner.probe)
+
+    def parser_rejected(self, request: PhysicalRequestId) -> ChildEvidence:
+        self._check_origin()
+
+        async def accept() -> ChildEvidence:
+            return self.owner.parser_rejected(request)
+
+        # D may wait for I here: I never waits synchronously for D or a worker.
+        return asyncio.run_coroutine_threadsafe(self.owner._worker_call(self, accept), self.owner.loop).result()
+
+
 class _DelegatedOwner(PrivateValue):
     """Borrow one invocation owner; never own a separate ledger or scheduler."""
 
@@ -60,6 +158,8 @@ class _DelegatedOwner(PrivateValue):
         self.child: asyncio.Task[PhysicalRequestId | None] | None = None
         self.cancel_requested = False
         self.submission: asyncio.Task[LocalResult] | None = None
+        self.worker_borrow: _WorkerBorrow | None = None
+        self.worker_call: asyncio.Task[object] | None = None
         contract = job.policy.delegated
         policy = job.policy.request
         assert contract is not None and policy is not None
@@ -86,7 +186,8 @@ class _DelegatedOwner(PrivateValue):
 
     def parser_rejected(self, request: PhysicalRequestId) -> ChildEvidence:
         self._check()
-        if asyncio.current_task() is not self.submission:
+        task = asyncio.current_task()
+        if task is not self.submission and (self.worker_call is None or task is not self.worker_call):
             reject(EffectCode.UNSUPPORTED)
         evidence = ChildEvidence(chain=self.chain.chain, request=request, kind="parser_rejected")
         self.runtime.request_authority.apply(AcceptChildEvidence(evidence=evidence))
@@ -115,7 +216,8 @@ class _DelegatedOwner(PrivateValue):
 
     def _check_submission(self) -> None:
         self._check()
-        if asyncio.current_task() is not self.submission or self.active:
+        task = asyncio.current_task()
+        if (task is not self.submission and (self.worker_call is None or task is not self.worker_call)) or self.active:
             reject(EffectCode.UNSUPPORTED)
         if self.cancelled:
             reject(EffectCode.REQUEST_CAUSALITY)
@@ -128,6 +230,38 @@ class _DelegatedOwner(PrivateValue):
             if not self.child.done():
                 self.cancel_requested = True
             raise
+
+    def _cancel_worker(self, borrow: _WorkerBorrow) -> None:
+        if self.worker_borrow is borrow:
+            self.cancel_requested = True
+
+    async def _worker_call(self, borrow: _WorkerBorrow, operation: Callable[[], Coroutine[object, object, _T]]) -> _T:
+        self._check()
+        if self.worker_borrow is not borrow or _WORKER_BORROW.get() is not borrow or borrow.expired:
+            reject(EffectCode.FOREIGN_OWNER)
+        if self.worker_call is not None or self.active or self.cancelled:
+            reject(EffectCode.REQUEST_CAUSALITY)
+        self.worker_call = asyncio.current_task()
+        try:
+            return await operation()
+        finally:
+            self.worker_call = None
+
+    async def _submit_worker(self, adapter: WorkerDelegatedSubmitter) -> LocalResult:
+        borrow = _WorkerBorrow(self, adapter)
+        self.worker_borrow = borrow
+        context = copy_context()
+        context.run(_WORKER_BORROW.set, borrow)
+        invocation = _BlockingInvocation(adapter, lambda: context.run(adapter._callback, self.job.inputs, borrow))
+        try:
+            value = await invocation.run(lambda: not self.cancelled, self)
+            return (
+                value
+                if isinstance(value, (LocalCompleted, LocalFailure))
+                else LocalFailure(failure="malformed_response")
+            )
+        finally:
+            borrow.expired = True
 
     def _satisfied(self, slot: int, outcomes: frozenset[str]) -> bool:
         key = self.runtime.target_keys[self.job.target][slot]
@@ -400,7 +534,11 @@ class _DelegatedOwner(PrivateValue):
     ) -> tuple[RuntimeOutcome, tuple[AssociationResult, ...], tuple[LocalAssessmentResult, ...]]:
         assert handle.delegated is not None
         runtime = self.runtime
-        task = asyncio.create_task(handle.delegated.submit(self.job.inputs, self))
+        task = asyncio.create_task(
+            self._submit_worker(handle.delegated)
+            if type(handle.delegated) is WorkerDelegatedSubmitter
+            else handle.delegated.submit(self.job.inputs, self)
+        )
         self.submission = task
         try:
             while not task.done():
@@ -419,6 +557,10 @@ class _DelegatedOwner(PrivateValue):
             if self.child is not None:
                 await self._drain(self.child)
             await self._drain(task)
+            if self.worker_call is not None:
+                await self._drain(self.worker_call)
+            if self.child is not None:
+                await self._drain(self.child)
             complete = self.close()
         if not complete:
             return _mapping(self.job.policy, "failure", None, "implementation_exception"), (), ()
