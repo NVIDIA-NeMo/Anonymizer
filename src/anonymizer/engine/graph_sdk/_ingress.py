@@ -7,6 +7,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import cast
 
+from anonymizer.engine.detection.artifacts import EntitySpansValue, valid_entity_span, valid_span_source
+from anonymizer.engine.detection.postprocess import EntitySpan
+from anonymizer.engine.graph_sdk._artifact_shape import ArtifactShape
 from anonymizer.engine.graph_sdk._execution_values import AssessmentFinding, LocalAssessmentResult
 from anonymizer.engine.graph_sdk._ingress_values import IngressLimits
 from anonymizer.engine.graph_sdk._request_values import (
@@ -121,13 +124,43 @@ class _IngressBudget:
     def artifact(self, value: object, depth: int) -> bool:
         # Explicit work avoids Python recursion even for a caller-selected large
         # finite depth bound. Malformed known values still contribute to limits.
+        start_bytes = self.text_bytes + self.metadata_bytes
+        start_items = self.collection_items
         pending = [(value, depth, False)]
         valid = True
         while pending:
             current, current_depth, scalar_only = pending.pop()
             self.depth(current_depth)
             if type(current) is TextArtifactValue:
+                before = self.text_bytes
                 valid = self.text(current.text, current_depth + 1, payload=True) and valid
+                shape = getattr(current, "shape", None)
+                valid = (
+                    type(shape) is ArtifactShape
+                    and type(shape.content_bytes) is int
+                    and type(shape.items) is int
+                    and shape.content_bytes == self.text_bytes - before
+                    and shape.items == 0
+                    and valid
+                )
+                continue
+            if type(current) is EntitySpansValue:
+                valid = not scalar_only and valid_span_source(current.source) and valid
+                self.debit("metadata_items", 1)
+                self.depth(current_depth + 1)
+                if type(current.entities) is not tuple:
+                    valid = False
+                    continue
+                self.debit("collection_items", len(current.entities))
+                for entity in current.entities:
+                    self.depth(current_depth + 2)
+                    if type(entity) is not EntitySpan:
+                        valid = False
+                        continue
+                    valid = valid_entity_span(entity) and valid
+                    self.debit("metadata_items", 3)
+                    for text in (entity.entity_id, entity.value, entity.label, entity.source):
+                        valid = self.text(text, current_depth + 3, payload=True) and valid
                 continue
             if type(current) is not TextCollectionValue:
                 valid = False
@@ -153,7 +186,17 @@ class _IngressBudget:
                     valid = False
                 self.debit("metadata_items", 2)
                 pending.append((item.value, current_depth + 3, True))
-        return valid
+        if type(value) not in (TextArtifactValue, TextCollectionValue, EntitySpansValue):
+            return False
+        shape = getattr(value, "shape", None)
+        return (
+            valid
+            and type(shape) is ArtifactShape
+            and type(shape.content_bytes) is int
+            and type(shape.items) is int
+            and shape.content_bytes == self.text_bytes + self.metadata_bytes - start_bytes
+            and shape.items == self.collection_items - start_items
+        )
 
     def row(self, row: AssociationResult, depth: int) -> bool:
         self.depth(depth)
@@ -292,3 +335,11 @@ def inspect_source_identity(value: object, expected: ContextSourceRef) -> bool:
         and value.revision > 0
         and value == expected
     )
+
+
+def inspect_artifact(value: object, limits: IngressLimits) -> bool:
+    """Revalidate a retained payload at a loaded-result boundary."""
+    try:
+        return _IngressBudget(limits).artifact(value, 1)
+    except _ExhaustedIngress:
+        return False

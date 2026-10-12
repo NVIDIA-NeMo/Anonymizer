@@ -7,6 +7,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from threading import RLock
 
+from anonymizer.engine.detection.artifacts import ENTITY_SPANS_TYPE
 from anonymizer.engine.graph_sdk._continuity_codec import _encode_state, _stable_ref, _text, _text_bound, _value_wire
 from anonymizer.engine.graph_sdk._continuity_codec import encode_snapshot as encode_snapshot
 from anonymizer.engine.graph_sdk._continuity_codec import load_snapshot as load_snapshot
@@ -44,7 +45,7 @@ from anonymizer.engine.graph_sdk.executor import ExecutionResult, OperationOutpu
 from anonymizer.engine.graph_sdk.preparation import PreparedPlan
 from anonymizer.engine.graph_sdk.qualification import QualificationResult, QualifiedOutput
 from anonymizer.engine.graph_sdk.records import DecisionRef
-from anonymizer.engine.graph_sdk.requests import ArtifactValue
+from anonymizer.engine.graph_sdk.requests import ContinuityArtifactValue, TextArtifactValue, TextCollectionValue
 from anonymizer.graph._values import DatumId
 from anonymizer.graph.workflow import StateEffect
 
@@ -251,6 +252,11 @@ def admit_continuity(
     for declaration in declarations:
         if not declaration.supports:
             reject(EffectCode.MISSING)
+        if any(
+            port.name == declaration.port and port.artifact_type == ENTITY_SPANS_TYPE
+            for port in nodes[declaration.node].operation.outputs
+        ):
+            reject(EffectCode.UNSUPPORTED)
         outcomes = {o.name: o for o in nodes[declaration.node].operation.outcomes}
         outcome = outcomes.get(declaration.outcome)
         if outcome is None or declaration.port not in outcome.produced_ports:
@@ -300,7 +306,7 @@ def admit_continuity(
 class _Proposal:
     runtime: DecisionRef
     declaration: ContinuityDecisionDecl
-    value: ArtifactValue
+    value: ContinuityArtifactValue
     support_targets: tuple[frozenset[DatumId], ...]
 
 
@@ -342,6 +348,8 @@ def _proposals(
         value = artifacts.get(port.artifact)
         if value is None:
             reject(EffectCode.MISSING)
+        if not isinstance(value, (TextArtifactValue, TextCollectionValue)):
+            reject(EffectCode.UNSUPPORTED)
         _value_wire(value, admitted.limits)
         witnesses = []
         for support in declaration.supports:

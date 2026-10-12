@@ -4,9 +4,11 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Literal, TypeAlias, TypeVar
 
+from anonymizer.engine.detection.artifacts import EntitySpansValue
+from anonymizer.engine.graph_sdk._artifact_shape import ArtifactShape, content_bytes
 from anonymizer.engine.graph_sdk._effect_values import (
     EffectCode,
     OpaqueIdentity,
@@ -208,9 +210,11 @@ Usage: TypeAlias = ExactUsage | UnknownUsage
 @dataclass(frozen=True, slots=True, kw_only=True, repr=False)
 class TextArtifactValue(PrivateValue):
     text: str
+    shape: ArtifactShape = field(init=False, compare=False)
 
     def __post_init__(self) -> None:
         require_text(self.text, empty=True)
+        object.__setattr__(self, "shape", ArtifactShape(content_bytes(self.text)))
 
 
 @dataclass(frozen=True, slots=True, kw_only=True, repr=False)
@@ -228,6 +232,7 @@ class TextCollectionItem(PrivateValue):
 @dataclass(frozen=True, slots=True, kw_only=True, repr=False)
 class TextCollectionValue(PrivateValue):
     items: tuple[TextCollectionItem, ...]
+    shape: ArtifactShape = field(init=False, compare=False)
 
     def __post_init__(self) -> None:
         if not isinstance(self.items, tuple) or any(not isinstance(item, TextCollectionItem) for item in self.items):
@@ -237,9 +242,13 @@ class TextCollectionValue(PrivateValue):
             reject(EffectCode.DUPLICATE)
         if keys != sorted(keys):
             reject(EffectCode.INVALID_VALUE)
+        object.__setattr__(
+            self, "shape", ArtifactShape(sum(item.value.shape.content_bytes for item in self.items), len(self.items))
+        )
 
 
-ArtifactValue: TypeAlias = TextArtifactValue | TextCollectionValue
+ContinuityArtifactValue: TypeAlias = TextArtifactValue | TextCollectionValue
+ArtifactValue: TypeAlias = ContinuityArtifactValue | EntitySpansValue
 
 
 @dataclass(frozen=True, slots=True, kw_only=True, repr=False)
@@ -254,7 +263,7 @@ class PortArtifact(PrivateValue):
         require_instance(self.artifact_type, ArtifactType)
         if self.artifact is not None:
             require_instance(self.artifact, ArtifactRef)
-        require_instance(self.value, (TextArtifactValue, TextCollectionValue))
+        require_instance(self.value, (TextArtifactValue, TextCollectionValue, EntitySpansValue))
 
 
 @dataclass(frozen=True, slots=True, kw_only=True, repr=False)

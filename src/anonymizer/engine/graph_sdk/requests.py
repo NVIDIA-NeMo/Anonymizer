@@ -18,6 +18,7 @@ from anonymizer.engine.graph_sdk._request_values import BindingAssociation as Bi
 from anonymizer.engine.graph_sdk._request_values import BindingDeclarationId as BindingDeclarationId
 from anonymizer.engine.graph_sdk._request_values import BindingId as BindingId
 from anonymizer.engine.graph_sdk._request_values import BindingRequestScope as BindingRequestScope
+from anonymizer.engine.graph_sdk._request_values import ContinuityArtifactValue as ContinuityArtifactValue
 from anonymizer.engine.graph_sdk._request_values import Dispatch as Dispatch
 from anonymizer.engine.graph_sdk._request_values import DispatchEnvelope as DispatchEnvelope
 from anonymizer.engine.graph_sdk._request_values import ExactUsage as ExactUsage

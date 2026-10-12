@@ -31,6 +31,7 @@ from anonymizer.engine.graph_sdk._continuity_values import (
 from anonymizer.engine.graph_sdk._effect_values import EffectCode, reject, require_count, require_instance
 from anonymizer.engine.graph_sdk.requests import (
     ArtifactValue,
+    ContinuityArtifactValue,
     TextArtifactValue,
     TextCollectionItem,
     TextCollectionValue,
@@ -287,14 +288,14 @@ def _read_ref(value: object, limits: ContinuityLimits) -> tuple[str, str, int]:
     )
 
 
-def _read_value(value: object, limits: ContinuityLimits) -> ArtifactValue:
+def _read_value(value: object, limits: ContinuityLimits) -> ContinuityArtifactValue:
     if type(value) is not dict:
         reject(EffectCode.INVALID_TYPE)
     if type(value.get("tag")) is not str:
         reject(EffectCode.INVALID_TYPE)
     if value.get("tag") == "text":
         row = _fields(value, {"tag", "text"})
-        result: ArtifactValue = TextArtifactValue(text=_text(row["text"], limits.max_value_bytes, empty=True))
+        result: ContinuityArtifactValue = TextArtifactValue(text=_text(row["text"], limits.max_value_bytes, empty=True))
     elif value.get("tag") == "collection":
         row = _fields(value, {"tag", "items"})
         members = _array(row["items"], max(0, (limits.max_value_atoms - 3) // 4))

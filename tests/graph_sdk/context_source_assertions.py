@@ -749,7 +749,10 @@ async def _assert_context_execution(
         assert output_fact.parents == frozenset({inner_output.key})
     else:
         assert output_fact.parents == frozenset({source_fact.key})
-    values = dict(result.artifacts)
+    values = {
+        ref: value for ref, value in result.artifacts if isinstance(value, (TextArtifactValue, TextCollectionValue))
+    }
+    assert len(values) == len(result.artifacts)
     logical_bytes = sum(
         len(value.text.encode())
         if isinstance(value, TextArtifactValue)

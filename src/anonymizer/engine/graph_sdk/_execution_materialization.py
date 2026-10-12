@@ -188,8 +188,7 @@ def _observe_dynamic_membership(
         if len(facts.values) + len(selected) > limits.max_runtime_artifacts:
             reject(EffectCode.LIMIT_EXCEEDED)
         if (
-            sum(_artifact_bytes(item) for item in facts.values.values())
-            + sum(len(item.value.text.encode()) for item in collection.items)
+            sum(_artifact_bytes(item) for item in facts.values.values()) + collection.shape.content_bytes
             > limits.max_runtime_artifact_bytes
         ):
             reject(EffectCode.LIMIT_EXCEEDED)
@@ -569,6 +568,4 @@ def _materialize_bound_context(
 
 
 def _artifact_bytes(value: ArtifactValue) -> int:
-    if isinstance(value, TextArtifactValue):
-        return len(value.text.encode())
-    return sum(len(item.value.text.encode()) for item in value.items)
+    return value.shape.content_bytes

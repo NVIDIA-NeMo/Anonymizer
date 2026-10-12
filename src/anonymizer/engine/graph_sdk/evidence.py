@@ -8,6 +8,7 @@ from dataclasses import dataclass, fields, replace
 from itertools import product
 from typing import Literal
 
+from anonymizer.engine.detection.artifacts import ENTITY_SPANS_TYPE, EntitySpansValue
 from anonymizer.engine.graph_sdk._effect_values import (
     EffectCode,
     PrivateValue,
@@ -16,6 +17,7 @@ from anonymizer.engine.graph_sdk._effect_values import (
     require_instance,
 )
 from anonymizer.engine.graph_sdk._execution_topology import _lexical_path
+from anonymizer.engine.graph_sdk._ingress import inspect_artifact
 from anonymizer.engine.graph_sdk._workflow import reachable_workflows
 from anonymizer.engine.graph_sdk.capabilities import FrozenConfig, config_size
 from anonymizer.engine.graph_sdk.executor import (
@@ -40,7 +42,7 @@ from anonymizer.engine.graph_sdk.records import (
     ExpectedMembership,
     TerminalFact,
 )
-from anonymizer.engine.graph_sdk.requests import TextCollectionValue
+from anonymizer.engine.graph_sdk.requests import TextArtifactValue, TextCollectionValue
 from anonymizer.graph._values import ActivationKey, ArtifactRef, ContractViolation, DatumId
 from anonymizer.graph._workflow_composition import _project_evidence_port, _selected_nodes
 from anonymizer.graph.workflow import (
@@ -336,11 +338,29 @@ class _EvidenceFacts:
                 reject(EffectCode.FOREIGN_OWNER)
             bound._validate_inventory(source_mismatch=EffectCode.FOREIGN_OWNER)
             bound._validate_artifact_joins(source_mismatch=EffectCode.FOREIGN_OWNER)
+        if len(result.artifacts) > limits.max_port_facts:
+            reject(EffectCode.LIMIT_EXCEEDED)
+        retained = dict(result.artifacts)
+        for _, value in result.artifacts:
+            if type(value) is EntitySpansValue:
+                if not inspect_artifact(value, execution.ingress_limits):
+                    reject(EffectCode.INVALID_VALUE)
+                source = retained.get(value.source)
+                if type(source) is not TextArtifactValue or not value.matches_source(value.source, source.text):
+                    reject(EffectCode.CONTRADICTORY)
         references = [reference for reference, _ in result.artifacts]
         if len(references) != len(set(references)):
             reject(EffectCode.DUPLICATE)
         if frozenset(references) != record.artifacts:
             reject(EffectCode.CONTRADICTORY)
+        parents = {fact.key: fact.artifact for fact in result.provenance}
+        for fact in result.provenance:
+            value = retained.get(fact.artifact)
+            if type(value) is EntitySpansValue and not any(
+                parents.get(parent) == value.source or retained.get(parents.get(parent)) == value
+                for parent in fact.parents
+            ):
+                reject(EffectCode.CONTRADICTORY)
         ports: dict[tuple[ActivationKey, str], ExecutionPortFact] = {}
         target_offsets = {item.target: item.occurrence_offset for item in prepared.target_occurrences}
         for fact in result.ports:
@@ -358,6 +378,8 @@ class _EvidenceFacts:
                 reject(EffectCode.DUPLICATE)
             if fact.artifact not in record.artifacts:
                 reject(EffectCode.MISSING)
+            if (fact.artifact_type == ENTITY_SPANS_TYPE) != (type(retained[fact.artifact]) is EntitySpansValue):
+                reject(EffectCode.CONTRADICTORY)
             ports[key] = fact
         return cls(admitted=admitted, result=result, ports=ports, artifacts=record.artifacts)
 

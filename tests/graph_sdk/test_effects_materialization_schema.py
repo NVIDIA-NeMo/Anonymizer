@@ -529,7 +529,10 @@ def _assert_distinct_site_result(fixture: _SchemaFixture, bound: BindingResult, 
     bound_artifacts = {item.reference: item for item in bound.receipt.artifacts}
     names = {node: f"N{index}" for index, node in enumerate(nodes)}
     declarations_by_id = {fact.identity: f"D{index}" for index, fact in enumerate(bound.receipt.sources)}
-    values = dict(result.artifacts)
+    values = {
+        ref: value for ref, value in result.artifacts if isinstance(value, (TextArtifactValue, TextCollectionValue))
+    }
+    assert len(values) == len(result.artifacts)
     identities: dict[object, str] = {}
     artifacts = []
     for fact in result.provenance:

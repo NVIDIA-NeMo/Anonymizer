@@ -16,7 +16,7 @@ from anonymizer.engine.graph_sdk._effect_values import (
     require_instance,
     require_text,
 )
-from anonymizer.engine.graph_sdk.requests import ArtifactValue, TextArtifactValue, TextCollectionValue
+from anonymizer.engine.graph_sdk.requests import ContinuityArtifactValue, TextArtifactValue, TextCollectionValue
 from anonymizer.graph._values import DatumId
 from anonymizer.graph.workflow import CoverageAtom, NodeId
 
@@ -111,7 +111,7 @@ class StateDecisionRef(PrivateValue):
 @dataclass(frozen=True, slots=True, kw_only=True, repr=False)
 class RetainedDecision(PrivateValue):
     reference: StateDecisionRef
-    value: ArtifactValue
+    value: ContinuityArtifactValue
     supports: frozenset[StateSupportRef]
 
     def __post_init__(self) -> None:

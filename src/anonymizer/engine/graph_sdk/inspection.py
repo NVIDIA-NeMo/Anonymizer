@@ -952,13 +952,7 @@ def _resources(
 
 
 def _artifact_bytes(value: ArtifactValue) -> int:
-    from anonymizer.engine.graph_sdk.requests import TextArtifactValue
-
-    return (
-        len(value.text.encode("utf-8"))
-        if isinstance(value, TextArtifactValue)
-        else sum(len(item.value.text.encode("utf-8")) for item in value.items)
-    )
+    return value.shape.content_bytes
 
 
 def inspect(*, source: InspectionSource) -> InspectionSummary:

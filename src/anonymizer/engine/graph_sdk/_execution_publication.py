@@ -7,6 +7,7 @@ from __future__ import annotations
 from collections.abc import Mapping, MutableMapping, MutableSequence
 from typing import Literal
 
+from anonymizer.engine.detection.artifacts import ENTITY_SPANS_TYPE, EntitySpansValue
 from anonymizer.engine.graph_sdk._effect_values import (
     EffectCode,
     reject,
@@ -98,10 +99,7 @@ def _accept_outputs(
     new_outputs = [item for item in outputs if dependencies[item.port].identity_input is None]
     if len(facts.values) + len(new_outputs) > limits.max_runtime_artifacts:
         return "limit", ()
-    if any(
-        isinstance(item.value, TextCollectionValue) and len(item.value.items) > limits.max_collection_items
-        for item in outputs
-    ):
+    if any(item.value.shape.items > limits.max_collection_items for item in outputs):
         return "limit", ()
     if (
         sum(_artifact_bytes(item) for item in facts.values.values())
@@ -183,11 +181,22 @@ def _validate_output_shape(
     outputs = results[0].outputs
     present_inputs = {item.port for item in inputs[0].inputs}
     schemas = admitted.materialization_schemas
-    try:
-        for output in outputs:
-            _artifact_bytes(output.value)
-    except UnicodeEncodeError:
-        return False
+    dependencies = {item.output: item for item in operation.output_dependencies}
+    for output in outputs:
+        if type(output.value) is EntitySpansValue:
+            dependency = dependencies.get(output.port)
+            if dependency is not None and any(
+                item.port == dependency.identity_input and item.value == output.value for item in inputs[0].inputs
+            ):
+                continue
+            if dependency is None or not any(
+                item.port in dependency.inputs
+                and item.artifact is not None
+                and type(item.value) is TextArtifactValue
+                and output.value.matches_source(item.artifact, item.value.text)
+                for item in inputs[0].inputs
+            ):
+                return False
     return (
         len(outputs) == len(expected)
         and {item.port for item in outputs} == set(expected)
@@ -195,7 +204,9 @@ def _validate_output_shape(
             item.artifact is None
             and item.artifact_type == expected[item.port]
             and (
-                isinstance(item.value, TextCollectionValue)
+                type(item.value) is EntitySpansValue
+                if item.artifact_type == ENTITY_SPANS_TYPE
+                else isinstance(item.value, TextCollectionValue)
                 if schemas.get(item.artifact_type) == "collection"
                 else isinstance(item.value, TextArtifactValue)
             )

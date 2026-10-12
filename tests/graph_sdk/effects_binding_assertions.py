@@ -40,6 +40,7 @@ from anonymizer.engine.graph_sdk.requests import (
     PhysicalRequestId,
     PortArtifact,
     TextArtifactValue,
+    TextCollectionValue,
 )
 from anonymizer.engine.graph_sdk.resources import ResourceLease
 from anonymizer.graph.workflow import (
@@ -644,7 +645,10 @@ async def _assert_initial_execution_projection(
         assert consumer.calls == 1
         _assert_latest_publication(execution, bound_context.receipt, expected, declaration_names, target_names)
         return
-    values = dict(execution.artifacts)
+    values = {
+        ref: value for ref, value in execution.artifacts if isinstance(value, (TextArtifactValue, TextCollectionValue))
+    }
+    assert len(values) == len(execution.artifacts)
     bound_receipts = {item.reference: item for item in bound_context.receipt.artifacts}
     expected_by_identity = {item["identity"]: item for item in expected["artifacts"]}
     identities: dict[object, str] = {}

@@ -7,6 +7,7 @@ from __future__ import annotations
 from itertools import product
 from typing import Literal
 
+from anonymizer.engine.detection.artifacts import ENTITY_SPANS_TYPE
 from anonymizer.engine.graph_sdk._effect_values import (
     EffectCode,
     reject,
@@ -32,6 +33,7 @@ from anonymizer.engine.graph_sdk._execution_values import (
     RequestTransport,
 )
 from anonymizer.engine.graph_sdk._ingress_values import IngressLimits
+from anonymizer.engine.graph_sdk._workflow import reachable_workflows
 from anonymizer.engine.graph_sdk.blocking import BlockingTransport, _validate_provider_execution
 from anonymizer.engine.graph_sdk.capabilities import (
     ImplementationCapability,
@@ -91,6 +93,15 @@ def admit_execution_plan(
         reject(EffectCode.INVALID_TYPE)
     if not isinstance(decisions, tuple) or any(not isinstance(item, DecisionDeclaration) for item in decisions):
         reject(EffectCode.INVALID_TYPE)
+    # Candidate spans are transient values, never text context or map membership.
+    prepared_workflows = reachable_workflows(prepared.workflow)
+    for body in prepared_workflows:
+        for node in body.nodes:
+            for port in (*node.operation.inputs, *node.operation.outputs):
+                if port.artifact_type.name == ENTITY_SPANS_TYPE.name and port.artifact_type != ENTITY_SPANS_TYPE:
+                    reject(EffectCode.UNSUPPORTED)
+    if any(item.artifact_type == ENTITY_SPANS_TYPE for item in prepared.bound_inputs):
+        reject(EffectCode.UNSUPPORTED)
     _validate_map_expansions(context, map_expansions)
     workflow_owners = _workflow_owners(prepared.workflow.workflow)
     if any(item.node.workflow not in workflow_owners for item in policies):
@@ -314,6 +325,8 @@ def _add_materialization_schema(
     kind: Literal["single", "collection"],
     minimum: int,
 ) -> None:
+    if output_type == ENTITY_SPANS_TYPE or item_type == ENTITY_SPANS_TYPE:
+        reject(EffectCode.UNSUPPORTED)
     scalar = ("scalar", item_type, 1)
     existing_item = schemas.get(item_type)
     if existing_item is not None and existing_item[0] == "collection":

@@ -35,6 +35,7 @@ from anonymizer.engine.graph_sdk.requests import (
     PhysicalRequestId,
     SemanticAssociation,
     TextArtifactValue,
+    TextCollectionValue,
 )
 from anonymizer.engine.graph_sdk.resources import ResourceLease
 from anonymizer.graph.workflow import (
@@ -303,7 +304,10 @@ async def _assert_adaptive_materialization_case(case: dict[str, Any], *, late_mo
         "attempts",
     ):
         assert request_actual[key] == expected[key], (case["case_id"], key)
-    values = dict(result.artifacts)
+    values = {
+        ref: value for ref, value in result.artifacts if isinstance(value, (TextArtifactValue, TextCollectionValue))
+    }
+    assert len(values) == len(result.artifacts)
     if late_mode is not None:
         assert not any(isinstance(item.key, OperationOutputKey) for item in result.provenance)
         assert not any(item.port == "context" and item.node == node for item in result.ports)

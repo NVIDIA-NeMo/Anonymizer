@@ -36,6 +36,32 @@ The admission functions return factory-protected values. Keep those values and p
 
 `LocalCallable.run` receives typed `AssociationInput` values and returns typed results. `ImplementationHandle` binds the callback to its admitted implementation, operation and configuration. An `AssessmentFinding` must come from an admitted evidence production with a supported finding and the exact evidence port. The example's verifier is a separate callback; the transform cannot turn its execution-only result into Protected content by selecting a projection name.
 
+## Internal candidate-span artifacts
+
+The engine also supports the closed artifact type `anonymizer.candidate-spans`,
+revision 1. Its `EntitySpansValue` contains an immutable tuple of the existing
+`EntitySpan` records and the exact source `ArtifactRef`. These are candidate
+detections, not accepted subject identity or protection evidence. The local
+witness produces spans, filters them, and renders a text candidate through the
+existing replacement algorithm; ordinary Anonymizer execution is unchanged.
+
+Publication checks exact offsets and substrings against a declared text input,
+including the source artifact version. An identity-preserving span alias keeps
+its source and its separate producing occurrence. Candidate payloads are
+validated at callback and saved-result boundaries for closed shapes, bounded
+content, and consistent cached counts.
+Every artifact carries exact content-byte and collection-item counts; counts
+cover all span string fields and span members, not Python object memory.
+Malformed Unicode, non-finite scores, mutable containers and forged counts are
+rejected. Publication and inspection consume the same counts.
+
+Candidate spans are transient: they cannot be root text bindings, retrieved text
+materializations, map item/membership schemas, or continuity decisions. Continuity
+admission rejects span decisions before execution, while existing text and text
+collection snapshots retain their format. Protected projections still require
+text candidates. Arbitrary domain schema registration and DataDesigner request
+accounting are separate implementation work.
+
 ## Saved results and current evidence
 
 Ordinary public `qualify` consumes all retained accepted assessments. There is no public assessment-subset selector. It does not execute the graph again. You can construct another `evidence_revision_view` for the same saved result to describe which artifacts, absences, configurations and state revisions remain current, then qualify again. Selective artifact requalification can withhold a candidate that was previously releasable. Restoring the same valid current view can restore qualification without another callback.
