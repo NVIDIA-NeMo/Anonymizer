@@ -36,6 +36,7 @@ from anonymizer.engine.graph_sdk._execution_values import (
     OperationExecutionPolicy,
     RequestTransport,
 )
+from anonymizer.engine.graph_sdk._foreign_transport import ForeignLoopTransport
 from anonymizer.engine.graph_sdk._ingress_values import IngressLimits
 from anonymizer.engine.graph_sdk._workflow import reachable_workflows
 from anonymizer.engine.graph_sdk.blocking import BlockingTransport, _validate_provider_execution
@@ -661,6 +662,9 @@ def _validate_delegated_services(admitted: AdmittedExecutionPlan, services: Exec
 
 
 def _validate_services(admitted: AdmittedExecutionPlan, services: ExecutionServices) -> None:
+    # X2 has a driver witness only; X3 must admit resource/loop lifetime first.
+    if any(isinstance(handle.transport, ForeignLoopTransport) for handle in services.handles):
+        reject(EffectCode.UNSUPPORTED)
     require_instance(services.limits, ExecutionLimits)
     require_instance(services.decision_limits, DecisionLimits)
     if any(item.max_lifetime_ns > services.decision_limits.max_lifetime_ns for item in admitted.decisions):

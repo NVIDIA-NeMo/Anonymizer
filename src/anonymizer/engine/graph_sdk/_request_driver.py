@@ -11,6 +11,7 @@ from threading import RLock
 from typing import Protocol
 
 from anonymizer.engine.graph_sdk._effect_values import EffectCode, reject
+from anonymizer.engine.graph_sdk._foreign_transport import _ForeignInvocation
 from anonymizer.engine.graph_sdk._ingress import (
     inspect_failure,
     inspect_settlement,
@@ -48,6 +49,16 @@ from anonymizer.engine.graph_sdk.requests import (
 class _Cancellation(Protocol):
     @property
     def cancelled(self) -> bool: ...
+
+
+@dataclass(slots=True)
+class _RetainedCancellation:
+    source: _Cancellation
+    observer_cancelled: bool = False
+
+    @property
+    def cancelled(self) -> bool:
+        return self.observer_cancelled or self.source.cancelled
 
 
 @dataclass(slots=True)
@@ -151,6 +162,7 @@ async def drive_request(
     accept_late: Callable[[object], AcceptResult | AcceptFailure | None] | None = None,
     *,
     blocking: _BlockingInvocation | None = None,
+    foreign: _ForeignInvocation | None = None,
     prepare_dispatch: Callable[[], Callable[[], None]] | None = None,
     drain_on_cancel: bool = False,
 ) -> _PhysicalCompletion:
@@ -166,20 +178,33 @@ async def drive_request(
         if current is not None:
             spans.append(_Span("request_reconciliation", session=current[0], parent=current[1]))
 
+    retained = _RetainedCancellation(control) if foreign is not None else None
     try:
-        result = await _drive_request_body(
+        body = _drive_request_body(
             authority,
             request,
-            control,
+            retained if retained is not None else control,
             invoke,
             cancel,
             accept_late,
             blocking=blocking,
+            foreign=foreign,
             prepare_dispatch=prepare_dispatch,
-            drain_on_cancel=drain_on_cancel,
+            drain_on_cancel=drain_on_cancel or foreign is not None,
             dispatched=dispatched,
             reconciling=reconciling,
         )
+        if retained is None:
+            result = await body
+        else:
+            task = asyncio.create_task(body)
+            while not task.done():
+                try:
+                    await asyncio.shield(task)
+                except asyncio.CancelledError:
+                    if not task.done():
+                        retained.observer_cancelled = True
+            result = task.result()
         if spans:
             authority.observe_completion(request, tuple(spans))
         return result
@@ -199,19 +224,36 @@ async def _drive_request_body(
     accept_late: Callable[[object], AcceptResult | AcceptFailure | None] | None = None,
     *,
     blocking: _BlockingInvocation | None = None,
+    foreign: _ForeignInvocation | None = None,
     prepare_dispatch: Callable[[], Callable[[], None]] | None = None,
     drain_on_cancel: bool = False,
     dispatched: Callable[[], None],
     reconciling: Callable[[], None],
 ) -> _PhysicalCompletion:
     """Drive one reserved request without publishing callback payloads."""
-    if blocking is not None and prepare_dispatch is not None:
+    if (blocking is not None and (prepare_dispatch is not None or foreign is not None)) or (
+        foreign is not None and foreign.envelope.request != request
+    ):
         reject(EffectCode.UNSUPPORTED)
     if control.cancelled:
         authority.apply(RequestCancel(request=request))
         return _PhysicalCompletion(None, True, True, True)
 
     async def call() -> object:
+        if foreign is not None:
+
+            def before() -> bool:
+                if control.cancelled:
+                    return False
+                commit = prepare_dispatch() if prepare_dispatch is not None else None
+                if not authority.dispatch_if_active(request, control):
+                    return False
+                if commit is not None:
+                    commit()
+                dispatched()
+                return True
+
+            return await foreign.run(before)
         if blocking is None:
             if control.cancelled:
                 return _NOT_STARTED
@@ -238,10 +280,12 @@ async def _drive_request_body(
     cancelled = control.cancelled and not task.done()
     stopped: object = None
     if cancelled:
+        if foreign is not None:
+            foreign.invalidate()
         authority.apply(RequestCancel(request=request))
         if request in authority.state.dispatched:
             try:
-                stopped = await cancel(request)
+                stopped = await foreign.cancel() if foreign is not None else await cancel(request)
             except Exception:
                 pass
         if blocking is None and not drain_on_cancel:

@@ -203,3 +203,27 @@ slots, foreign-transport entry and resource draining, multi-target
 shared ownership, dynamic recipes and provider-error exhaustion require later
 bounded integration units. Ordinary injected-runner compatibility must gain its
 explicit opaque path before production cutover.
+
+The internal X2 foreign-entry driver witness binds a transport and cancellation
+hook to one exact borrowed loop. Its retained task reaches the final send boundary
+on that loop and synchronously waits for a non-awaiting invocation-loop gate.
+That gate preflights the registered Start, admits Dispatch through the existing
+request authority, and commits Start. Acceptance returns directly into the bound
+transport coroutine without another asynchronous suspension. The foreign thread
+must hold no host, client, request or adapter lock while waiting; the invocation
+loop must never synchronously wait for that thread.
+
+A timeout or cancellation that wins before acceptance invalidates the queued gate;
+a later callback cannot start or charge the request. If acceptance wins, the
+retained stack enters the original transport once despite observer cancellation.
+The driver retains classification and late settlement through repeated observer
+cancellation. Loop stop/resume tests keep the same borrowed loop and demonstrate
+that public completion waits for its retained work. Permanently losing that loop
+violates the required lifetime and cannot establish successful completion or
+confirmed remote stop. Neither cancellation nor request accounting closes or
+replaces caller resources.
+
+`ForeignLoopTransport` remains rejected by service admission before invocation
+identity is allocated. These are driver witnesses with registered activation
+facts, not full graph or DataDesigner qualification. X3 must prove resource leases,
+correct-loop cleanup and owner integration before that service gate can open.
