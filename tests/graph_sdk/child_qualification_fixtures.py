@@ -95,8 +95,11 @@ def child_fixture(
     interleaved: bool = False,
     alternate_outcome: bool = False,
     ordinary_slot: bool = False,
+    simple: bool = False,
+    stateless: bool = False,
+    unready: bool = False,
 ):
-    count = 4 if interleaved else 3 if failover else 2
+    count = 1 if simple else 4 if interleaved else 3 if failover else 2
     base, assessor, artifact_type = _adaptive_workflow(assessment=True, requests=0)
     raw = base.workflow
     assessment_op = next(iter(raw.nodes)).operation
@@ -155,7 +158,10 @@ def child_fixture(
         input_bindings=tuple(raw.input_bindings),
         output_bindings=tuple(raw.output_bindings),
         outcome_bindings=tuple(raw.outcome_bindings),
-        sequence=tuple(SequenceEdge(before=node, after=assessor) for node in (owner, *leaves, *ordinary)),
+        sequence=(
+            *tuple(SequenceEdge(before=node, after=assessor) for node in (owner, *leaves, *ordinary)),
+            *((SequenceEdge(before=owner, after=leaves[0]),) if unready else ()),
+        ),
         choices=(),
         protection=(
             ProtectionRequirement(
@@ -181,6 +187,7 @@ def child_fixture(
             max_physical_requests_per_activation=count if index == 1 else int(index > 1),
             retry_owner="implementation" if index == 1 else "executor" if index > 1 else "none",
             usage="unknown" if index > 0 and usage != "exact" else "exact",
+            resource_lifetime="stateless" if stateless else "executor_owned" if index > 0 else "stateless",
         )
         for index, node in enumerate(nodes)
     )
@@ -214,7 +221,7 @@ def child_fixture(
         child_slots=tuple(slot.index for slot in prepared.reservation_recipe if slot.template in leaves),
         routes=(ChildRoute(name="primary", parse_attempts=2), ChildRoute(name="fallback", parse_attempts=1))
         if failover
-        else (ChildRoute(name="primary", parse_attempts=2),),
+        else (ChildRoute(name="primary", parse_attempts=1 if simple else 2),),
         usage_requirement=usage,
     )
     policies = []

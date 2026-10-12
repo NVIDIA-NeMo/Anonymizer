@@ -14,6 +14,7 @@ from anonymizer.engine.graph_sdk._effect_values import (
     reject,
 )
 from anonymizer.engine.graph_sdk._execution_cleanup import _acquire_context_resources, _cleanup_execution
+from anonymizer.engine.graph_sdk._execution_delegated import _DelegatedOwner
 from anonymizer.engine.graph_sdk._execution_dispatch import (
     _external_association_result,
     _immediate_execution_result,
@@ -133,6 +134,12 @@ class _InvocationRuntime:
         self.control = control
         self.prepared = self.admitted.context.prepared
         self.policies = {item.node: item for item in self.admitted.policies}
+        self.delegated_slots = {
+            self.prepared.reservation_recipe[index].template: policy.node
+            for policy in self.admitted.policies
+            if policy.delegated is not None
+            for index in policy.delegated.child_slots
+        }
         self.handles = {
             (item.implementation, item.operation, item.configuration): item for item in self.services.handles
         }
@@ -281,6 +288,22 @@ class _InvocationRuntime:
     def _schedule_entry(
         self, state_index: int, target: DatumId, entry: ActivationEntry, external_jobs: list[_ExecutionJob]
     ) -> bool:
+        if entry.template in self.delegated_slots:
+            owner = next(
+                item
+                for item in self.states[state_index].entries
+                if item.template == self.delegated_slots[entry.template]
+                and item.activation.parent == entry.activation.parent
+            )
+            if self.control.cancelled or owner.status not in {"ready", "unstarted", "running"}:
+                if self.control.cancelled:
+                    self.cancelled_unstarted.add(entry.activation)
+                self.states[state_index] = advance_activation(
+                    state=self.states[state_index],
+                    event=CloseUnstarted(activation=entry.activation, category="blocked"),
+                )
+                return True
+            return False
         policy = self.policies.get(entry.template)
         if policy is None:
             return self._start_subgraph(state_index, target, entry)
@@ -484,6 +507,8 @@ class _InvocationRuntime:
                         self.services.limits,
                         self.request_resources,
                     )
+        elif policy.kind == "delegated":
+            coroutine = _DelegatedOwner(self, job).run(handle)
         elif policy.kind == "decision":
             coroutine = _run_decision(
                 self.admitted, policy, handle, job.association, job.inputs, job.activation, self.services, self.control

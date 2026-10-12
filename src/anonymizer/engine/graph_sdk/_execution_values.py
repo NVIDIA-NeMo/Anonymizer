@@ -44,10 +44,12 @@ from anonymizer.engine.graph_sdk.requests import (
     AssociationInput,
     AssociationResult,
     BindingDeclarationId,
+    ChildEvidence,
     ChildRoute,
     ChildSourceKind,
     DispatchEnvelope,
     FailureClass,
+    PhysicalRequestId,
     PhysicalRequestPolicy,
     RequestReceipt,
     RuntimeCondition,
@@ -213,7 +215,7 @@ class ExecutionImplementation(PrivateValue):
 
 @dataclass(frozen=True, slots=True, kw_only=True, repr=False)
 class DelegatedRequestContract(PrivateValue):
-    """Fixed recipe declaration; runtime delegation remains unavailable."""
+    """Fixed recipe declaration for bounded delegated requests."""
 
     mode: Literal["qualified", "opaque"]
     child_slots: tuple[int, ...]
@@ -615,6 +617,29 @@ class LocalCallable(Protocol):
     async def run(self, request: tuple[AssociationInput, ...]) -> LocalResult: ...
 
 
+class DelegatedRequests(Protocol):
+    """Invocation-owned access to declared physical sibling slots."""
+
+    async def request(
+        self,
+        slot: int,
+        *,
+        source_kind: ChildSourceKind = "initial",
+        predecessor: PhysicalRequestId | None = None,
+        evidence: ChildEvidence | None = None,
+    ) -> PhysicalRequestId: ...
+
+    def parser_rejected(self, request: PhysicalRequestId) -> ChildEvidence: ...
+
+
+@runtime_checkable
+class DelegatedCallable(Protocol):
+    @property
+    def execution(self) -> Literal["same_loop"]: ...
+
+    async def submit(self, inputs: tuple[AssociationInput, ...], requests: DelegatedRequests) -> LocalResult: ...
+
+
 class MonotonicClock(Protocol):
     def now_ns(self) -> int: ...
 
@@ -654,6 +679,7 @@ class ImplementationHandle(PrivateValue):
     transport: RequestTransport | None
     resource: ResourceLease | None
     measurement: NodeMeasurement | None = None
+    delegated: DelegatedCallable | None = None
 
 
 @dataclass(frozen=True, slots=True, kw_only=True, repr=False)

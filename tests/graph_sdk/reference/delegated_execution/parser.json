@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "graphs": 1,
+  "trace_count": 1,
+  "alphabet": [
+    "success",
+    "parser_rejected",
+    "reject",
+    "close"
+  ],
+  "bounds": {
+    "activations": 4,
+    "physical_requests": 1,
+    "parent_submissions": 1
+  },
+  "physical_terminals": [
+    "success"
+  ],
+  "independence": []
+}

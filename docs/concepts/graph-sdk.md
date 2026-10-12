@@ -120,12 +120,38 @@ failure does not erase an unrelated semantic failure or a provenance defect.
 Record-only request reducer fixtures may omit `leaf`; protected child receipt
 qualification requires it.
 
-Delegated execution is rejected at service admission before creating an invocation
-or entering resources. The canonical qualification fixtures demonstrate retained
-record validation, not a runnable DD adapter. Opaque structural admission also
-remains unsupported because the current capability schema cannot express unknown
-physical request bounds truthfully. Hard-budget preparation retains its existing
-implementation-owned-retry rejection. Shared readiness, optional unused slots,
-transportless probes, dynamic child recipes and provider-error exhaustion await
-the activation-owned runtime integration. No provider hooks or DD execution paths
-are enabled by this contract.
+A bounded runtime subset now submits one generation fragment once through an
+`ImplementationHandle.delegated` callable declaring `execution="same_loop"`.
+The invocation supplies restricted request-slot access to `submit(inputs, requests)`.
+Its `request(slot, ...)` method uses the declared leaf transport, and
+`parser_rejected(request)` accepts evidence for a subsequent declared correction
+after completed settlement and an initial malformed-response terminal. It cannot
+reclassify a successful terminal.
+The same invocation owns slot registration, Start, Dispatch, terminal publication
+and the request ledger. The parent makes no physical request and adds no charge.
+
+Service admission currently permits one delegated owner and one target, one
+parser route, correction-only follow-ups, stateless asynchronous transports, and
+empty input/output ports on the physical leaves. The parent uses normal typed
+input resolution and output publication; a local assessor can qualify its
+produced candidate. The fixed physical
+slots are mandatory: returning before all slots execute fails the submission.
+Other external operations, adaptive retrieval and concurrent borrowed requests
+remain gated in this subset. The borrowed owner rejects other loops/tasks and
+expires when submission finishes. These are executable graph-owner fixtures;
+no DD provider route is enabled yet.
+
+The shared asynchronous request driver now admits Dispatch inside the retained
+call task immediately before callable entry. The delegated path preflights Start,
+then commits Dispatch and the prepared Start without an intervening await.
+Cancellation before that entry cancels the unused reservation without a charge;
+post-entry cancellation retains the existing known-stop or Lost accounting.
+Blocking transports retain their existing worker-entry boundary.
+
+Opaque structural admission remains unsupported because the capability schema
+cannot yet express unknown physical request bounds truthfully. Hard-budget
+preparation retains its implementation-owned-retry rejection. Readiness,
+transportless probes, optional unused slots, cross-loop draining, multi-target
+shared ownership, dynamic recipes and provider-error exhaustion require later
+bounded integration units. Ordinary injected-runner compatibility must gain its
+explicit opaque path before production cutover.

@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from inspect import iscoroutinefunction
 from itertools import product
 from typing import Literal
 
@@ -22,6 +23,7 @@ from anonymizer.engine.graph_sdk._execution_values import (
     AssessmentLimits,
     DecisionDeclaration,
     DecisionLimits,
+    DelegatedCallable,
     EvidenceProductionDecl,
     ExecutionKind,
     ExecutionLimits,
@@ -525,9 +527,56 @@ def _validate_assessments(
             reject(EffectCode.LIMIT_EXCEEDED)
 
 
-def _validate_services(admitted: AdmittedExecutionPlan, services: ExecutionServices) -> None:
-    if any(policy.kind == "delegated" for policy in admitted.policies):
+def _validate_delegated_services(admitted: AdmittedExecutionPlan, services: ExecutionServices) -> None:
+    """Open only fixed, single-target, stateless generation on the invocation loop."""
+    prepared = admitted.context.prepared
+    delegated = [policy for policy in admitted.policies if policy.delegated is not None]
+    if delegated and (len(delegated) != 1 or admitted.context.adaptive_retrievals):
         reject(EffectCode.UNSUPPORTED)
+    for policy in delegated:
+        contract = policy.delegated
+        if contract is None:
+            continue
+        if len(prepared.target_occurrences) != 1 or len(contract.routes) != 1:
+            reject(EffectCode.UNSUPPORTED)
+        if not contract.followups <= {"correction"}:
+            reject(EffectCode.UNSUPPORTED)
+        nodes = {policy.node, *(prepared.reservation_recipe[index].template for index in contract.child_slots)}
+        if any(item.kind == "external" and item.node not in nodes for item in admitted.policies):
+            reject(EffectCode.UNSUPPORTED)
+        for owned in (item for item in admitted.policies if item.node in nodes):
+            if len(owned.implementations) != 1 or owned.result_outcomes != policy.result_outcomes:
+                reject(EffectCode.UNSUPPORTED)
+            implementation = owned.implementations[0]
+            operation = implementation.capability.operation
+            if implementation.capability.resource_lifetime != "stateless":
+                reject(EffectCode.UNSUPPORTED)
+            if owned.node != policy.node and (operation.inputs or operation.outputs):
+                reject(EffectCode.UNSUPPORTED)
+            handle = next(
+                (
+                    item
+                    for item in services.handles
+                    if item.implementation == implementation.implementation
+                    and item.operation == operation
+                    and item.configuration == implementation.configuration
+                ),
+                None,
+            )
+            if handle is None or handle.resource is not None:
+                reject(EffectCode.UNSUPPORTED)
+            callback = (
+                handle.delegated.submit
+                if handle.delegated is not None
+                else (handle.transport.dispatch if handle.transport is not None else None)
+            )
+            if handle.delegated is not None and getattr(handle.delegated, "execution", None) != "same_loop":
+                reject(EffectCode.UNSUPPORTED)
+            if callback is None or not iscoroutinefunction(callback) or isinstance(handle.transport, BlockingTransport):
+                reject(EffectCode.UNSUPPORTED)
+
+
+def _validate_services(admitted: AdmittedExecutionPlan, services: ExecutionServices) -> None:
     require_instance(services.limits, ExecutionLimits)
     require_instance(services.decision_limits, DecisionLimits)
     if any(item.max_lifetime_ns > services.decision_limits.max_lifetime_ns for item in admitted.decisions):
@@ -549,6 +598,7 @@ def _validate_services(admitted: AdmittedExecutionPlan, services: ExecutionServi
         not isinstance(item, ImplementationHandle) for item in services.handles
     ):
         reject(EffectCode.INVALID_TYPE)
+    _validate_delegated_services(admitted, services)
     retained = [item for policy in admitted.policies for item in policy.implementations]
     if len(services.handles) > admitted.context.prepared.limits.max_capabilities:
         reject(EffectCode.LIMIT_EXCEEDED)
@@ -570,10 +620,13 @@ def _validate_services(admitted: AdmittedExecutionPlan, services: ExecutionServi
         key = (handle.implementation, handle.operation, handle.configuration)
         capability = capability_by_key[key]
         policy = policy_by_key[key]
-        if (handle.local is None) == (handle.transport is None):
+        if sum(item is not None for item in (handle.local, handle.transport, handle.delegated)) != 1:
             reject(EffectCode.CONTRADICTORY)
         if policy.kind == "external":
             if handle.transport is None or not isinstance(handle.transport, RequestTransport):
+                reject(EffectCode.INVALID_TYPE)
+        elif policy.kind == "delegated":
+            if handle.delegated is None or not isinstance(handle.delegated, DelegatedCallable):
                 reject(EffectCode.INVALID_TYPE)
         elif handle.local is None or not isinstance(handle.local, LocalCallable):
             reject(EffectCode.INVALID_TYPE)

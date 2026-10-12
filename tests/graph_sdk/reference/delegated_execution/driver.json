@@ -1,0 +1,48 @@
+{
+  "alphabet": [
+    "schedule",
+    "cancel",
+    "dispatch",
+    "commit_start",
+    "invoke",
+    "settle"
+  ],
+  "bounds": {
+    "activation_commits": 1,
+    "requests": 1
+  },
+  "cases": {
+    "after_dispatch": [
+      1,
+      1,
+      1
+    ],
+    "before_driver": [
+      0,
+      0,
+      0
+    ],
+    "before_task_entry": [
+      0,
+      0,
+      0
+    ],
+    "normal": [
+      1,
+      1,
+      0
+    ]
+  },
+  "columns": [
+    "dispatches",
+    "invoke_entries",
+    "cancel_calls"
+  ],
+  "independence": [],
+  "trace_count": 8,
+  "variants": [
+    "ordinary",
+    "prepared_leaf"
+  ],
+  "version": 1
+}

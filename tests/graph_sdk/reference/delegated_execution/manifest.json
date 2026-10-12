@@ -1,0 +1,60 @@
+{
+  "alphabet": [
+    "submit",
+    "reserve",
+    "start",
+    "dispatch",
+    "settle",
+    "malformed",
+    "parser_evidence",
+    "success",
+    "close",
+    "publish",
+    "reject",
+    "cancel"
+  ],
+  "bounds": {
+    "max_activations": 4,
+    "max_dispatches": 2,
+    "max_submissions": 1,
+    "physical_leaves": 2,
+    "targets": 1
+  },
+  "graphs": 2,
+  "independence": [],
+  "negative_cases": [
+    "duplicate_slot",
+    "foreign_slot",
+    "unready_slot",
+    "exhausted_slots",
+    "cancel_before_dispatch",
+    "rejected_dispatch",
+    "cross_loop",
+    "missing_handle",
+    "blocking_transport"
+  ],
+  "traces": [
+    {
+      "dispatches": 1,
+      "leaves": 1,
+      "name": "success",
+      "physical_terminals": [
+        "success"
+      ],
+      "qualified": true,
+      "submissions": 1
+    },
+    {
+      "dispatches": 2,
+      "leaves": 2,
+      "name": "correction",
+      "physical_terminals": [
+        "failure",
+        "success"
+      ],
+      "qualified": true,
+      "submissions": 1
+    }
+  ],
+  "version": 1
+}

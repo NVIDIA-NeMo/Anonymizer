@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 from threading import RLock
 from typing import Protocol
 
+from anonymizer.engine.graph_sdk._effect_values import EffectCode, reject
 from anonymizer.engine.graph_sdk._ingress import (
     inspect_failure,
     inspect_settlement,
@@ -150,6 +151,7 @@ async def drive_request(
     accept_late: Callable[[object], AcceptResult | AcceptFailure | None] | None = None,
     *,
     blocking: _BlockingInvocation | None = None,
+    prepare_dispatch: Callable[[], Callable[[], None]] | None = None,
 ) -> _PhysicalCompletion:
     """Observe actual dispatch, including delayed ordinary-worker starts."""
     current = _CURRENT.get()
@@ -172,6 +174,7 @@ async def drive_request(
             cancel,
             accept_late,
             blocking=blocking,
+            prepare_dispatch=prepare_dispatch,
             dispatched=dispatched,
             reconciling=reconciling,
         )
@@ -194,18 +197,27 @@ async def _drive_request_body(
     accept_late: Callable[[object], AcceptResult | AcceptFailure | None] | None = None,
     *,
     blocking: _BlockingInvocation | None = None,
+    prepare_dispatch: Callable[[], Callable[[], None]] | None = None,
     dispatched: Callable[[], None],
     reconciling: Callable[[], None],
 ) -> _PhysicalCompletion:
     """Drive one reserved request without publishing callback payloads."""
+    if blocking is not None and prepare_dispatch is not None:
+        reject(EffectCode.UNSUPPORTED)
     if control.cancelled:
         authority.apply(RequestCancel(request=request))
         return _PhysicalCompletion(None, True, True, True)
-    if blocking is None:
-        authority.apply(Dispatch(request=request))
-        dispatched()
 
     async def call() -> object:
+        if blocking is None:
+            if control.cancelled:
+                return _NOT_STARTED
+            commit = prepare_dispatch() if prepare_dispatch is not None else None
+            authority.apply(Dispatch(request=request))
+            if commit is not None:
+                commit()
+            dispatched()
+            return await invoke()
         if blocking is not None:
 
             def before() -> bool:
@@ -249,6 +261,10 @@ async def _drive_request_body(
         if not cancelled:
             authority.apply(RequestCancel(request=request))
         return _PhysicalCompletion(None, True, True, True)
+    if request not in authority.state.dispatched:
+        if any(item.request == request for item in authority.state.reserved):
+            authority.apply(RequestCancel(request=request))
+        return _PhysicalCompletion(None, True, True, True, raised)
     confirmed = type(stopped) is StopConfirmed and inspect_usage(stopped.usage)
     if cancelled:
         if blocking is not None:
