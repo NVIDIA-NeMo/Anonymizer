@@ -76,7 +76,7 @@ records, and destructive conflict resolution occurs at several points.
 
 | Current behavior | Failure it permits | Concrete example | Proposed resolution |
 |---|---|---|---|
-| IDs are constructed from label and offsets | Reclassification or exact-candidate coalescing can change the representative identity used to find a decision | `Seattle` is detected as `country_0_7` and reclassified as `city`; its ID still encodes `country`, while a later reconstructed `city_0_7` cannot correlate to the original decision. | Give every original observation an immutable source-batch reference independent of mutable semantic fields, then use short request-local aliases only for validation. |
+| IDs are constructed from label and offsets | Reclassification or exact-candidate coalescing can change the representative identity used to find a decision | `Seattle` is detected as `country_0_7` and reclassified as `city`; its ID still encodes `country`, while a later reconstructed `city_0_7` cannot correlate to the original decision. | Give every original observation an immutable reference within its `DetectionResult`, independent of mutable semantic fields, then use short request-local aliases only for validation. |
 | The same decision payload is applied before and after augmentation | A decision can be replayed against a different merged or derived candidate that happens to carry the same constructed ID | The validator decides on detector candidate `token_10_20`; after augmentation and merging, the same ID may identify the representative of a different set of origins, but the old decision is applied again without checking that lineage. | Consume a decision exactly once and persist the resulting admission state; downstream transforms never receive the raw decision map. |
 | Chunk responses are merged against a row-wide candidate inventory | A response can decide a candidate assigned to a different validation request | Chunk A owns `c1` but returns `c2=drop`; chunk B owns `c2` and returns `c2=keep`. Row-wide lookup plus first-wins merging allows chunk A to override chunk B. | Bind aliases and decisions to the exact dispatched request inventory; wrong-request aliases have no authority, and response ordering is independent of completion order. |
 | Raw origins and accepted origins share the same entity representation | A rejected or undecided origin can accidentally contribute provenance or propagation permission | If the validator omits a detector candidate, the current fallback keeps the same `EntitySpan`; final occurrence expansion can then treat it like an explicitly accepted candidate and protect unrelated occurrences. | Keep observations, validation results, and admitted candidates as distinct states; fallback protection preserves only the exact span and grants no accepted authority. |
@@ -100,15 +100,15 @@ claim has passed its configured validation route.
 Required fields:
 
 - `observation_id`: immutable identifier allocated by the producing backend
-  before its batch is published;
-- `source_batch_id`: immutable identifier for that backend result;
+  before its result is published;
+- `detection_result_id`: immutable identifier for that detector invocation;
 - exact source `value` taken from `text[start:end]`;
 - original `label`, `start_position`, and `end_position`;
 - source kind and source instance identity;
 - source-native score when one exists;
 - validation route and initial propagation policy.
 
-The pair `(source_batch_id, observation_id)` is the immutable observation
+The pair `(detection_result_id, observation_id)` is the immutable observation
 reference. It is source-scoped, survives collection and downstream reuse, and
 must be allocated independently of backend completion order. It does not
 promise stability across separate anonymizer runs and must not be rebuilt after
@@ -200,9 +200,9 @@ label scope, and configured source/route checks have completed. It contains:
 
 - immutable lineage back to its originating observation references;
 - the current label and exact source bounds;
-- accepted provenance references containing the source batch ID, observation
-  ID, source kind, and source instance only for origins that survived an
-  enabled route;
+- accepted provenance references containing the detection result ID,
+  observation ID, source kind, and source instance only for origins that
+  survived an enabled route;
 - whether any configuration-eligible accepted origin permits occurrence
   propagation within the effective policy limits;
 - whether it is explicitly accepted or retained only by fallback protection;
@@ -230,9 +230,10 @@ The implementation must make the following properties true:
 
 1. **Source offsets are authoritative.** Every materialized span value equals
    `text[start_position:end_position]`.
-2. **Observation identity is immutable.** Backends assign source-batch-scoped
-   observation references before publication. Reclassification and collection
-   never replace them, and allocation never depends on completion order.
+2. **Observation identity is immutable.** Backends assign observation IDs
+   within an immutable `DetectionResult` before publication. Reclassification
+   and collection never replace them, and allocation never depends on
+   completion order.
 3. **Validation authority is request-scoped.** A decision may affect only the
    observation bound to its alias in that dispatched request inventory.
 4. **Decisions are single-use.** Each selected usable decision is applied to
@@ -280,8 +281,8 @@ The implementation must make the following properties true:
 ```text
 source text
   |
-  +-> detector backend -> observation batch ---------------+
-  |       assign immutable source-batch references          |
+  +-> detector backend -> DetectionResult -----------------+
+  |       assign immutable result-scoped references         |
   |       retain all conflicting alternatives              |
   |                                                        |
   |       build request inventory + short aliases          |
@@ -318,12 +319,13 @@ source text
 ### Step 1: Produce observations through a narrow backend contract
 
 Introduce a private `_EntityDetectionBackend` contract whose successful result
-is an ordered observation batch. A batch contains its immutable source batch
-ID, source record reference, backend kind and instance, ordered observations,
-and an explicit successful status. A successful empty batch is distinct from a
-terminal backend failure. The initial request contract contains source text and
-the effective label set; any later dependency on upstream detector context must
-be represented as an explicit typed input rather than inferred from execution
+is one ordered `DetectionResult` for a detector invocation on a source record.
+The result contains its immutable detection result ID, source record reference,
+backend kind and instance, ordered observations, and an explicit successful
+status. A successful result with no observations is distinct from a terminal
+backend failure. The initial request contract contains source text and the
+effective label set; any later dependency on upstream detector context must be
+represented as an explicit typed input rather than inferred from execution
 order or silently ignored.
 
 The backend owns detector-specific execution and translation into source-bound
@@ -331,22 +333,23 @@ observations. The shared lifecycle owns validation admission, label and route
 eligibility, provenance, propagation, derivation, and reconciliation. Adapt
 GLiNER first while preserving the existing DataDesigner execution and export
 path. PR #265 adds regex as another backend producer. Collection retains each
-backend's original observation references; forwarding observations through a
-later backend cannot manufacture a second supporting origin.
+backend's original `DetectionResult` and observation references; forwarding
+observations through a later backend cannot manufacture a second supporting
+origin.
 
 For this PR, GLiNER consumes source text and the effective label set; it does
 not consume an earlier backend's observations merely because it executes later.
 When PR #265 defines a regex-to-GLiNER context mode, that dependency must be a
 typed input. GLiNER then publishes only its new claims under GLiNER observation
-references, while collection preserves the original regex batch alongside the
-new GLiNER batch. Forwarded regex observations retain their regex identity and
+references, while collection preserves the original regex result alongside the
+new GLiNER result. Forwarded regex observations retain their regex identity and
 route restrictions and are not republished as GLiNER support.
 
 The private contract is synchronous or declarative as required by the existing
 DataDesigner workflow. It does not prescribe an asynchronous graph execution
 API. A later graph binding may own dependencies, retries, request association,
 resource limits, and execution artifacts while consuming the same observation
-batches and lifecycle semantics.
+results and lifecycle semantics.
 
 ### Step 2: Parse without destructive conflict resolution
 
@@ -613,7 +616,7 @@ should be separated as follows.
 
 Update `src/anonymizer/engine/schemas/detection.py` to represent:
 
-- immutable source-batch and observation IDs;
+- immutable detection-result and observation IDs;
 - validation request inventories and their request-local aliases;
 - explicit successful-empty and terminal-failure backend results;
 - the existing validator response associated with its authoritative request;
@@ -626,18 +629,19 @@ the existing DataDesigner plugin boundary.
 
 ### Detector backend boundary
 
-Add a private `_EntityDetectionBackend` contract and observation-batch result
+Add a private `_EntityDetectionBackend` contract and `DetectionResult` schema
 under `src/anonymizer/engine/detection/`. The first adapter wraps the existing
 GLiNER declaration and parsing path without bypassing `NddAdapter.run_workflow()`
 or changing the public `Detect` API. The boundary publishes source-bound
 observations and success/failure state; it does not own validation, eligibility,
 coalescing, propagation, or reconciliation.
 
-The contract must distinguish a successful empty result from failure, assign
-observation references before publishing the batch, and preserve references
-when batches are collected. Its initial inputs are explicit source text and the
-effective label set. Any future backend reuse adds a typed input and defined
-behavior; unsupported input fails clearly rather than being silently ignored.
+The contract must distinguish a successful result with no observations from
+failure, assign observation references before publishing the result, and
+preserve references when results are collected. Its initial inputs are explicit
+source text and the effective label set. Any future backend reuse adds a typed
+input and defined behavior; unsupported input fails clearly rather than being
+silently ignored.
 
 ### Pure detection semantics
 
@@ -708,14 +712,14 @@ cases:
 
 | Scenario | Required result |
 |---|---|
-| Detector succeeds with no observations | Backend emits a successful empty batch rather than a failure |
-| Detector fails terminally | Backend failure remains distinguishable from a successful empty batch and follows failed-record behavior |
+| Detector succeeds with no observations | Backend emits a successful `DetectionResult` with an empty observation list rather than a failure |
+| Detector fails terminally | Backend failure remains distinguishable from a successful result with no observations and follows failed-record behavior |
 | GLiNER executes after another backend without a typed data binding | It consumes only source text and effective labels; execution order alone does not alter its observations |
-| An upstream observation batch is explicitly reused by a later backend | Collection preserves the original batch and adds only the later backend's new claims; forwarded observations do not gain another supporting origin |
-| Observation batches and request inventories are serialized and restored | Immutable references, alias bindings, geometry, policy, ordering, and success/failure state survive the round trip |
+| An upstream `DetectionResult` is explicitly reused by a later backend | Collection preserves the original result and adds only the later backend's new claims; forwarded observations do not gain another supporting origin |
+| Detection results and request inventories are serialized and restored | Immutable references, alias bindings, geometry, policy, ordering, and success/failure state survive the round trip |
 | Redundant exact emissions from one source and route | One observation reaches validation, retaining the highest score from that calibrated source |
 | Exact emissions from different sources or routes | They remain independent through admission so each decision and permission is preserved |
-| Observation batches complete in different orders | Their preassigned observation references and collected result are unchanged |
+| Detection results complete in different orders | Their preassigned observation references and collected output are unchanged |
 | Candidate is reclassified | Original observation reference remains valid; resulting semantic identity uses the new normalized label |
 | Reclass decision has no proposed label | Original exact span remains fallback-protected under its original eligible label and propagation is disabled |
 | Reclass decision proposes an excluded or disallowed label | Candidate is rejected by eligibility before reconciliation and is not restored under its old label |
@@ -807,11 +811,11 @@ quantify the change.
 ### Separate observation, request, and semantic identity
 
 Three identities add terminology, but they serve different lifetimes. An
-immutable source-batch observation reference preserves detector lineage; a
-short request-local alias constrains one validation response; normalized
-label/bounds identity makes coalescing correct after reclassification. Reusing
-one identity across those jobs causes decision replay, cross-chunk authority,
-and mutable provenance.
+immutable `(detection_result_id, observation_id)` reference preserves detector
+lineage; a short request-local alias constrains one validation response;
+normalized label/bounds identity makes coalescing correct after
+reclassification. Reusing one identity across those jobs causes decision
+replay, cross-chunk authority, and mutable provenance.
 
 ### Preserve fallback protection without granting authority
 
@@ -841,7 +845,7 @@ contract in PR #267, and measure missed sensitive coverage after its rebase.
 1. **Completed:** land PR #282 and base this work on the resulting `main`.
 2. Add lifecycle types, the private backend contract, and characterization
    tests for current behavior.
-3. Adapt GLiNER to publish ordered observation batches with immutable references
+3. Adapt GLiNER to publish an ordered `DetectionResult` with immutable references
    while preserving the existing DataDesigner execution and export path.
 4. Add validation request inventories and compact conflict-group input with
    explicit source geometry while preserving the existing response schema and
@@ -856,7 +860,7 @@ contract in PR #267, and measure missed sensitive coverage after its rebase.
 10. Rebase PR #267 so it changes the augmenter prompt to plain source text and
    removes seed hints while reusing shared augmentation admission and final
    reconciliation; drop its route-specific `resolve_overlaps()` filtering.
-11. Rebase or reconstruct PR #265 so regex contributes observation batches and
+11. Rebase or reconstruct PR #265 so regex contributes detection results and
    route policy through these shared contracts rather than owning separate merge
    and decision-replay machinery.
 12. Document these semantics as invariants for the later graph/SDK detection
@@ -867,9 +871,10 @@ contract in PR #267, and measure missed sensitive coverage after its rebase.
 Maintainer review should verify that the implementation preserves these
 settled invariants:
 
-1. Backends allocate immutable source-batch observation references before
-   publication; validation uses separate short aliases scoped to one dispatched
-   request inventory, and semantic identity remains normalized label plus bounds.
+1. Backends allocate immutable observation references within a
+   `DetectionResult` before publication; validation uses separate short aliases
+   scoped to one dispatched request inventory, and semantic identity remains
+   normalized label plus bounds.
 2. The current validation response schema and model roles remain unchanged;
    prompt input changes only to represent overlapping candidates compactly.
 3. A `reclass` decision without a proposed label retains exact-span fallback
