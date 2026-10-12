@@ -44,7 +44,7 @@ class _StrictJudgeResponseRecipe(PydanticResponseRecipe):
                 return self.data_type.model_validate(decoded, strict=True)
             except IndexError:
                 raise ParserException(
-                    "No parsable JSON structure within ```json markdown fence.",
+                    "No parsable JSON found: expected a ```json markdown fence or a complete bare JSON response.",
                     source=response,
                 ) from None
             except Exception as exc:

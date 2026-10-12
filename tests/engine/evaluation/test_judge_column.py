@@ -7,6 +7,7 @@ import asyncio
 import json
 import subprocess
 import sys
+from collections.abc import Callable
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
@@ -82,6 +83,10 @@ class _ModelRegistry:
 
 def _fenced(payload: dict[str, Any]) -> str:
     return f"```json\n{json.dumps(payload)}\n```"
+
+
+def _bare(payload: dict[str, Any]) -> str:
+    return json.dumps(payload)
 
 
 def _make_generator(
@@ -179,6 +184,14 @@ def test_parser_normalizes_positive_null_details(
     assert parsed.model_dump(mode="python")[detail_field] == []
 
 
+@pytest.mark.parametrize("serialize", [_bare, _fenced])
+def test_parser_accepts_bare_and_fenced_json(serialize: Callable[[dict[str, Any]], str]) -> None:
+    payload = {"all_valid": True, "invalid_entities": []}
+    generator, _, _ = _make_generator()
+
+    assert generator.response_recipe.parse(serialize(payload)).model_dump(mode="python") == payload
+
+
 @pytest.mark.parametrize("invalid_verdict", ["true", 1])
 def test_parser_rejects_coerced_boolean_verdicts(invalid_verdict: str | int) -> None:
     generator, _, _ = _make_generator()
@@ -270,8 +283,8 @@ def test_workflow_column_config_uses_judge_column_with_matching_schema(
     assert isinstance(column, JudgeColumnConfig)
     assert column.name == workflow_cls.RAW_COL
     assert _JUDGE_SCHEMAS[JudgeKind(column.judge_kind)] is workflow_cls.SCHEMA
-    assert "wrapped in a single ```json Markdown code fence" in column.prompt
-    assert "Do NOT wrap your output" not in column.prompt
+    assert "Do NOT wrap your output in ``` or ```json markdown fences" in column.prompt
+    assert "wrapped in a single ```json Markdown code fence" not in column.prompt
 
 
 def test_generator_prompt_includes_response_schema_instructions() -> None:
@@ -288,8 +301,8 @@ def test_generator_prompt_includes_response_schema_instructions() -> None:
 def test_sync_generator_corrects_invalid_response_and_returns_structured_output() -> None:
     generator, client, facade = _make_generator(
         sync_responses=[
-            _fenced({"all_valid": "true", "invalid_entities": []}),
-            _fenced({"all_valid": True, "invalid_entities": None}),
+            _bare({"all_valid": "true", "invalid_entities": []}),
+            _bare({"all_valid": True, "invalid_entities": None}),
         ],
         correction_steps=1,
     )
