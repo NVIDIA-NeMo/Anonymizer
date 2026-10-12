@@ -465,6 +465,13 @@ accepted provenance or propagation permission. For conflicts within the same
 seed-support tier, span coverage applies; for identical bounds, explicit
 acceptance wins at step 4.
 
+This precedence is a settled internal policy, not a user-facing option. A
+fallback-protected seed wins over overlapping augmentation because allowing an
+augmentation-only candidate to replace it would break the exact-span privacy
+guarantee when the augmenter emits a narrower span. When the augmenter emits a
+broader overlap, the minimal-span contract used by PR #267 treats that output
+as over-broad rather than attempting to split residual text around the seed.
+
 Source priority is an internal reconciliation policy, not a user-facing
 configuration knob. It must not depend on which route happens to be passed
 first by a caller. For the sources on `main`, the initial order is detector,
@@ -711,9 +718,10 @@ contract in PR #267, and measure missed sensitive coverage after its rebase.
 11. Document these semantics as invariants for the later graph/SDK detection
     stage and preserve them when its execution assembly changes.
 
-## Review Decisions Requested
+## Review Checklist
 
-Maintainer review should confirm:
+Maintainer review should verify that the implementation preserves these
+settled invariants:
 
 1. Candidate IDs are short, immutable, row-local correlation tokens and are
    separate from normalized semantic identity.
