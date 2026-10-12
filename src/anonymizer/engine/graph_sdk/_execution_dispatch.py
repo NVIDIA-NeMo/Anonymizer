@@ -36,7 +36,12 @@ from anonymizer.engine.graph_sdk._ingress import (
     inspect_source_identity,
 )
 from anonymizer.engine.graph_sdk._ingress_values import IngressLimits
-from anonymizer.engine.graph_sdk._request_driver import _RequestAuthority, drive_request, late_source_event
+from anonymizer.engine.graph_sdk._request_driver import (
+    _Cancellation,
+    _RequestAuthority,
+    drive_request,
+    late_source_event,
+)
 from anonymizer.engine.graph_sdk.blocking import BlockingContextProvider, BlockingTransport
 from anonymizer.engine.graph_sdk.capabilities import (
     FrozenConfig,
@@ -92,7 +97,7 @@ async def _run_local(
     handle: ImplementationHandle,
     association: SemanticAssociation,
     inputs: tuple[AssociationInput, ...],
-    control: _ExecutionControl,
+    control: _Cancellation,
     ingress: IngressLimits,
 ) -> tuple[RuntimeOutcome, tuple[AssociationResult, ...], tuple[LocalAssessmentResult, ...]]:
     if handle.local is None:

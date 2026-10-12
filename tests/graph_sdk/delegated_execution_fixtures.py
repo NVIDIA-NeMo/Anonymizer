@@ -6,22 +6,27 @@ from __future__ import annotations
 
 from dataclasses import replace
 
-from anonymizer.engine.graph_sdk.capabilities import ImplementationSelection
+from anonymizer.engine.graph_sdk.capabilities import ImplementationRef, ImplementationSelection
 from anonymizer.engine.graph_sdk.context import admit_context_plan
-from anonymizer.engine.graph_sdk.executor import AdmittedExecutionPlan, admit_execution_plan
+from anonymizer.engine.graph_sdk.executor import AdmittedExecutionPlan, DelegatedReadiness, admit_execution_plan
 from anonymizer.engine.graph_sdk.preparation import prepare
+from anonymizer.engine.graph_sdk.requests import ChildRoute
 from anonymizer.graph.workflow import (
     DynamicScope,
     InputBinding,
+    NodeId,
     NodeInputRef,
     NodeOutputRef,
+    OperationNode,
+    SequenceEdge,
     WorkflowInputRef,
     admit_activation_workflow,
     admit_static_workflow,
 )
+from tests.graph_sdk.effects_admission_fixtures import _valid_runtime_rows
 
 
-def with_parent_publication(execution: AdmittedExecutionPlan) -> AdmittedExecutionPlan:
+def with_parent_publication(execution: AdmittedExecutionPlan, *, readiness: bool = False) -> AdmittedExecutionPlan:
     prepared = execution.context.prepared
     base = prepared.workflow
     raw = base.workflow
@@ -60,9 +65,78 @@ def with_parent_publication(execution: AdmittedExecutionPlan) -> AdmittedExecuti
         else node
         for node in raw.nodes
     )
+    source_policies = tuple(execution.policies)
+    sequence = tuple(raw.sequence)
+    interface = raw.interface
+    readiness_nodes = ()
+    if readiness:
+        physical = next(item for item in execution.policies if item.kind == "external")
+        empty = execution.nodes[physical.node].operation
+        readiness_nodes = tuple(NodeId.new(workflow=raw.workflow) for _ in range(3))
+        additions = []
+        for index, node in enumerate(readiness_nodes):
+            local = index == 2
+            names = ("available", "async_required") if local else ("ready",)
+            operation = replace(
+                empty,
+                name="probe" if local else "readiness",
+                outcomes=tuple(
+                    replace(
+                        empty.outcomes[0],
+                        name=name,
+                        ceiling=replace(empty.outcomes[0].ceiling, max_model_requests=0 if local else 1),
+                    )
+                    for name in names
+                ),
+            )
+            source = assessor if local else physical
+            impl = source.implementations[0]
+            impl = replace(
+                impl,
+                implementation=ImplementationRef(name=f"readiness-{index}", revision=1),
+                capability=replace(
+                    impl.capability,
+                    implementation=ImplementationRef(name=f"readiness-{index}", revision=1),
+                    operation=operation,
+                    usage="exact",
+                ),
+            )
+            additions.append(
+                replace(
+                    source,
+                    node=node,
+                    implementations=(impl,),
+                    result_outcomes=frozenset(names),
+                    runtime_outcomes=_valid_runtime_rows("local" if local else "external", frozenset(names)),
+                )
+            )
+            nodes += (OperationNode(id=node, operation=operation),)
+        source_policies += tuple(additions)
+        semantic, _, probe = readiness_nodes
+        sequence += (
+            SequenceEdge(before=semantic, after=probe),
+            SequenceEdge(before=probe, after=physical.node),
+            *(SequenceEdge(before=node, after=assessor.node) for node in readiness_nodes),
+        )
+        interface = replace(
+            interface,
+            outcomes=tuple(
+                replace(
+                    outcome,
+                    ceiling=replace(
+                        outcome.ceiling,
+                        max_activations=6,
+                        max_model_requests=4,
+                        max_input_bytes=600,
+                        max_output_bytes=600,
+                    ),
+                )
+                for outcome in interface.outcomes
+            ),
+        )
     static = admit_static_workflow(
         workflow=raw.workflow,
-        interface=raw.interface,
+        interface=interface,
         nodes=nodes,
         input_bindings=(
             InputBinding(
@@ -80,34 +154,36 @@ def with_parent_publication(execution: AdmittedExecutionPlan) -> AdmittedExecuti
             replace(binding, source=NodeOutputRef(node=owner.node, port="context")) for binding in raw.output_bindings
         ),
         outcome_bindings=tuple(raw.outcome_bindings),
-        sequence=tuple(raw.sequence),
+        sequence=sequence,
         choices=(),
         protection=tuple(raw.protection_requirements),
-        limits=replace(raw.limits, max_bindings=5),
+        limits=replace(raw.limits, max_bindings=5, max_nodes=len(nodes), max_sequence_edges=len(sequence)),
     )
     workflow = admit_activation_workflow(
-        workflow=static, scopes=(DynamicScope(workflow=static, maps=(), loops=(), joins=()),), limits=base.limits
+        workflow=static,
+        scopes=(DynamicScope(workflow=static, maps=(), loops=(), joins=()),),
+        limits=replace(base.limits, max_activation_occurrences=len(nodes)),
     )
     by_node = {node.id: node.operation for node in nodes}
     capabilities = tuple(
         replace(implementation.capability, operation=by_node[policy.node])
-        for policy in execution.policies
+        for policy in source_policies
         for implementation in policy.implementations
     )
     updated = prepare(
         data=prepared.data,
         workflow=workflow,
         capabilities=capabilities,
-        activation_limits=prepared.activation_limits,
+        activation_limits=replace(prepared.activation_limits, max_entries=len(nodes), max_events=3 * len(nodes)),
         selections=tuple(
             ImplementationSelection(
                 node=policy.node,
                 implementation=policy.implementations[0].implementation,
                 configuration=policy.implementations[0].configuration,
             )
-            for policy in execution.policies
+            for policy in source_policies
         ),
-        limits=prepared.limits,
+        limits=replace(prepared.limits, max_capabilities=len(capabilities)),
         configuration=prepared.configuration,
         bound_inputs=tuple(prepared.bound_inputs),
         state=prepared.state,
@@ -117,6 +193,19 @@ def with_parent_publication(execution: AdmittedExecutionPlan) -> AdmittedExecuti
     contract = replace(
         owner.delegated, child_slots=tuple(slot.index for slot in updated.reservation_recipe if slot.template in leaves)
     )
+    if readiness:
+        indices = {slot.template: slot.index for slot in updated.reservation_recipe}
+        contract = replace(
+            contract,
+            readiness=DelegatedReadiness(
+                owner_slot=indices[readiness_nodes[0]],
+                request_slot=indices[readiness_nodes[1]],
+                probe_slot=indices[readiness_nodes[2]],
+                route=ChildRoute(name="health", parse_attempts=1),
+                ready_outcome="ready",
+                probe_outcomes=frozenset({"available", "async_required"}),
+            ),
+        )
     policies = tuple(
         replace(
             policy,
@@ -129,7 +218,7 @@ def with_parent_publication(execution: AdmittedExecutionPlan) -> AdmittedExecuti
             ),
             delegated=contract if policy.node == owner.node else None,
         )
-        for policy in execution.policies
+        for policy in source_policies
     )
     return admit_execution_plan(
         context=admit_context_plan(

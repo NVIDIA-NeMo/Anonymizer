@@ -438,7 +438,7 @@ def _validate_delegated_recipes(prepared: PreparedPlan, policies: tuple[Operatio
         owners = [slot for slot in recipe if slot.template == policy.node]
         if len(owners) != 1 or owners[0].iteration is not None:
             reject(EffectCode.UNSUPPORTED)
-        for index in contract.child_slots:
+        for index in contract.owned_slots:
             if index >= len(recipe) or index in claimed:
                 reject(EffectCode.FOREIGN_OWNER)
             slot = recipe[index]
@@ -448,13 +448,45 @@ def _validate_delegated_recipes(prepared: PreparedPlan, policies: tuple[Operatio
                 or slot.parent_index != owners[0].parent_index
                 or slot.iteration is not None
                 or leaf is None
-                or leaf.kind != "external"
-                or leaf.request is None
-                or leaf.request.max_attempts != 1
+                or (
+                    leaf.kind != "local"
+                    if contract.readiness is not None and index == contract.readiness.probe_slot
+                    else leaf.kind != "external" or leaf.request is None or leaf.request.max_attempts != 1
+                )
                 or sum(item.template == slot.template for item in recipe) != 1
             ):
                 reject(EffectCode.UNSUPPORTED)
             claimed.add(index)
+        readiness = contract.readiness
+        if readiness is not None:
+            semantic, physical, probe = (by_node[recipe[index].template] for index in readiness.slots)
+            if (
+                semantic.request != physical.request
+                or semantic.result_outcomes != physical.result_outcomes
+                or readiness.ready_outcome not in semantic.result_outcomes
+                or not readiness.probe_outcomes <= probe.result_outcomes
+                or any(
+                    not any(
+                        row.name == name and row.category == "success"
+                        for row in item.implementations[0].capability.operation.outcomes
+                    )
+                    for item, names in ((semantic, {readiness.ready_outcome}), (probe, readiness.probe_outcomes))
+                    for name in names
+                )
+                or any(
+                    item.capability.usage != "exact" for item in (*semantic.implementations, *physical.implementations)
+                )
+                or semantic.request is None
+                or semantic.request.visibility != "dispatch_and_settlement"
+                or semantic.request.pre_dispatch_control != "executor"
+                or any(
+                    item.capability.request_visibility != semantic.request.visibility
+                    or item.capability.pre_dispatch_control != semantic.request.pre_dispatch_control
+                    or item.capability.retry_owner != semantic.request.retry_owner
+                    for item in (*semantic.implementations, *physical.implementations)
+                )
+            ):
+                reject(EffectCode.UNSUPPORTED)
 
 
 def _expected_runtime_keys(kind: ExecutionKind, results: frozenset[str]) -> set[tuple[str, str | None, str | None]]:
@@ -541,11 +573,19 @@ def _validate_delegated_services(admitted: AdmittedExecutionPlan, services: Exec
             reject(EffectCode.UNSUPPORTED)
         if not contract.followups <= {"correction"}:
             reject(EffectCode.UNSUPPORTED)
-        nodes = {policy.node, *(prepared.reservation_recipe[index].template for index in contract.child_slots)}
+        nodes = {policy.node, *(prepared.reservation_recipe[index].template for index in contract.owned_slots)}
         if any(item.kind == "external" and item.node not in nodes for item in admitted.policies):
             reject(EffectCode.UNSUPPORTED)
         for owned in (item for item in admitted.policies if item.node in nodes):
-            if len(owned.implementations) != 1 or owned.result_outcomes != policy.result_outcomes:
+            readiness = contract.readiness
+            readiness_nodes = (
+                set()
+                if readiness is None
+                else {prepared.reservation_recipe[index].template for index in readiness.slots}
+            )
+            if len(owned.implementations) != 1 or (
+                owned.node not in readiness_nodes and owned.result_outcomes != policy.result_outcomes
+            ):
                 reject(EffectCode.UNSUPPORTED)
             implementation = owned.implementations[0]
             operation = implementation.capability.operation
@@ -553,6 +593,17 @@ def _validate_delegated_services(admitted: AdmittedExecutionPlan, services: Exec
                 reject(EffectCode.UNSUPPORTED)
             if owned.node != policy.node and (operation.inputs or operation.outputs):
                 reject(EffectCode.UNSUPPORTED)
+            if readiness is not None and owned.node == prepared.reservation_recipe[readiness.owner_slot].template:
+                if (
+                    sum(
+                        item.implementation == implementation.implementation
+                        for row in admitted.policies
+                        for item in row.implementations
+                    )
+                    != 1
+                ):
+                    reject(EffectCode.UNSUPPORTED)
+                continue
             handle = next(
                 (
                     item
@@ -568,7 +619,13 @@ def _validate_delegated_services(admitted: AdmittedExecutionPlan, services: Exec
             callback = (
                 handle.delegated.submit
                 if handle.delegated is not None
-                else (handle.transport.dispatch if handle.transport is not None else None)
+                else (
+                    handle.transport.dispatch
+                    if handle.transport is not None
+                    else handle.local.run
+                    if handle.local is not None
+                    else None
+                )
             )
             if handle.delegated is not None and getattr(handle.delegated, "execution", None) != "same_loop":
                 reject(EffectCode.UNSUPPORTED)
@@ -599,7 +656,12 @@ def _validate_services(admitted: AdmittedExecutionPlan, services: ExecutionServi
     ):
         reject(EffectCode.INVALID_TYPE)
     _validate_delegated_services(admitted, services)
-    retained = [item for policy in admitted.policies for item in policy.implementations]
+    borrowed = {
+        admitted.context.prepared.reservation_recipe[policy.delegated.readiness.owner_slot].template
+        for policy in admitted.policies
+        if policy.delegated is not None and policy.delegated.readiness is not None
+    }
+    retained = [item for policy in admitted.policies if policy.node not in borrowed for item in policy.implementations]
     if len(services.handles) > admitted.context.prepared.limits.max_capabilities:
         reject(EffectCode.LIMIT_EXCEEDED)
     handle_keys = [(item.implementation, item.operation, item.configuration) for item in services.handles]

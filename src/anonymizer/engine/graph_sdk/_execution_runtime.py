@@ -138,7 +138,7 @@ class _InvocationRuntime:
             self.prepared.reservation_recipe[index].template: policy.node
             for policy in self.admitted.policies
             if policy.delegated is not None
-            for index in policy.delegated.child_slots
+            for index in policy.delegated.owned_slots
         }
         self.handles = {
             (item.implementation, item.operation, item.configuration): item for item in self.services.handles

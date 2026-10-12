@@ -214,6 +214,37 @@ class ExecutionImplementation(PrivateValue):
 
 
 @dataclass(frozen=True, slots=True, kw_only=True, repr=False)
+class DelegatedReadiness(PrivateValue):
+    """One semantic readiness obligation, physical child and local probe."""
+
+    owner_slot: int
+    request_slot: int
+    probe_slot: int
+    route: ChildRoute
+    ready_outcome: str
+    probe_outcomes: frozenset[str]
+
+    def __post_init__(self) -> None:
+        for slot in self.slots:
+            require_count(slot)
+        if len(set(self.slots)) != 3:
+            reject(EffectCode.DUPLICATE)
+        require_instance(self.route, ChildRoute)
+        self.route.__post_init__()
+        if self.route.parse_attempts != 1:
+            reject(EffectCode.UNSUPPORTED)
+        require_text(self.ready_outcome)
+        if type(self.probe_outcomes) is not frozenset or not 1 <= len(self.probe_outcomes) <= 2:
+            reject(EffectCode.INVALID_VALUE)
+        for outcome in self.probe_outcomes:
+            require_text(outcome)
+
+    @property
+    def slots(self) -> tuple[int, ...]:
+        return self.owner_slot, self.request_slot, self.probe_slot
+
+
+@dataclass(frozen=True, slots=True, kw_only=True, repr=False)
 class DelegatedRequestContract(PrivateValue):
     """Fixed recipe declaration for bounded delegated requests."""
 
@@ -222,8 +253,12 @@ class DelegatedRequestContract(PrivateValue):
     routes: tuple[ChildRoute, ...]
     followups: frozenset[ChildSourceKind] = frozenset({"correction", "failover"})
     usage_requirement: Literal["exact", "unknown_allowed"] = "exact"
+    readiness: DelegatedReadiness | None = None
 
     def __post_init__(self) -> None:
+        if self.readiness is not None:
+            require_instance(self.readiness, DelegatedReadiness)
+            self.readiness.__post_init__()
         require_literal(self.mode, frozenset({"qualified", "opaque"}))
         require_literal(self.usage_requirement, frozenset({"exact", "unknown_allowed"}))
         require_instance(self.child_slots, tuple)
@@ -244,6 +279,10 @@ class DelegatedRequestContract(PrivateValue):
             "failover",
         }:
             reject(EffectCode.INVALID_VALUE)
+
+    @property
+    def owned_slots(self) -> tuple[int, ...]:
+        return self.child_slots + (() if self.readiness is None else self.readiness.slots)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True, repr=False)
@@ -628,6 +667,10 @@ class DelegatedRequests(Protocol):
         predecessor: PhysicalRequestId | None = None,
         evidence: ChildEvidence | None = None,
     ) -> PhysicalRequestId: ...
+
+    async def readiness(self) -> PhysicalRequestId: ...
+
+    async def probe(self) -> None: ...
 
     def parser_rejected(self, request: PhysicalRequestId) -> ChildEvidence: ...
 

@@ -399,17 +399,43 @@ class _Qualification:
         if len(chains) != len(receipt.chains) or len(set(receipt.child_evidence)) != len(receipt.child_evidence):
             reject(EffectCode.DUPLICATE)
         expected: set[ActivationKey] = set()
+        readiness_owners = {}
+        physical_owners = {}
+        probes: set[ActivationKey] = set()
         for owner in self.entries.values():
             contract = policies.get(owner.template)
             if contract is None or contract.delegated is None:
                 continue
             target = self.owners[owner.activation]
             offset = next(item.occurrence_offset for item in self.prepared.target_occurrences if item.target == target)
+            descriptor = contract.delegated.readiness
+            physical_slots = contract.delegated.child_slots + (() if descriptor is None else (descriptor.request_slot,))
+            if descriptor is not None:
+                semantic = next(
+                    entry.activation
+                    for entry in self.entries.values()
+                    if entry.activation.occurrence == offset + descriptor.owner_slot
+                    and self.owners[entry.activation] == target
+                )
+                readiness_owners[semantic] = (owner.activation, contract.delegated)
+                probes.update(
+                    entry.activation
+                    for entry in self.entries.values()
+                    if entry.activation.occurrence == offset + descriptor.probe_slot
+                    and self.owners[entry.activation] == target
+                )
+            physical_owners.update(
+                {
+                    entry.activation: owner.activation
+                    for entry in self.entries.values()
+                    if entry.activation.occurrence - offset in physical_slots
+                    and self.owners[entry.activation] == target
+                }
+            )
             expected.update(
                 entry.activation
                 for entry in self.entries.values()
-                if entry.activation.occurrence - offset in contract.delegated.child_slots
-                and self.owners[entry.activation] == target
+                if entry.activation.occurrence - offset in physical_slots and self.owners[entry.activation] == target
             )
         used: set[ActivationKey] = set()
         recovered: set[ActivationKey] = set()
@@ -417,7 +443,11 @@ class _Qualification:
         processed: set[PhysicalRequestId] = set()
         for chain in receipt.chains:
             chain.__post_init__()
-            if chain.chain.scope != receipt.scope or len(chain.associations) != 1 or chain.role != "generation":
+            if (
+                chain.chain.scope != receipt.scope
+                or len(chain.associations) != 1
+                or chain.role not in {"generation", "readiness"}
+            ):
                 reject(EffectCode.UNSUPPORTED)
             association = next(iter(chain.associations))
             if not isinstance(association, SemanticAssociation) or association.task not in terminals:
@@ -425,17 +455,57 @@ class _Qualification:
             owner = terminals[association.task].activation
             owner_policy = policies[self.entries[owner].template]
             contract = owner_policy.delegated
+            slots = () if contract is None else contract.child_slots
+            routes = () if contract is None else contract.routes
+            followups = frozenset() if contract is None else contract.followups
+            if chain.role == "readiness":
+                relation = readiness_owners.get(owner)
+                if relation is None:
+                    reject(EffectCode.FOREIGN_OWNER)
+                _, contract = relation
+                descriptor = contract.readiness
+                assert descriptor is not None
+                slots, routes, followups = (descriptor.request_slot,), (descriptor.route,), frozenset()
+            elif contract is not None and contract.readiness is not None:
+                descriptor = contract.readiness
+                target = self.owners[owner]
+                offset = next(
+                    item.occurrence_offset for item in self.prepared.target_occurrences if item.target == target
+                )
+                for index, outcomes in (
+                    (descriptor.owner_slot, frozenset({descriptor.ready_outcome})),
+                    (descriptor.probe_slot, descriptor.probe_outcomes),
+                ):
+                    dependency = next(
+                        entry
+                        for entry in self.entries.values()
+                        if entry.activation.occurrence == offset + index and self.owners[entry.activation] == target
+                    )
+                    if (
+                        dependency.status != "success"
+                        or dependency.outcome not in outcomes
+                        or not any(
+                            row.activation == dependency.activation and row.attempt is not None
+                            for row in terminals.values()
+                        )
+                    ):
+                        if any(
+                            item.child is not None and item.child.chain == chain.chain for item in receipt.dispatches
+                        ):
+                            reject(EffectCode.CONTRADICTORY)
             if (
                 contract is None
                 or contract.mode != "qualified"
                 or owner_policy.request != chain.policy
-                or contract.routes != chain.routes
-                or contract.followups != chain.followups
+                or routes != chain.routes
+                or followups != chain.followups
             ):
                 reject(EffectCode.CONTRADICTORY)
             history = [
                 item for item in receipt.dispatches if item.child is not None and item.child.chain == chain.chain
             ]
+            if not history and contract.readiness is not None and self.entries[owner].status != "success":
+                continue
             if not history or len(history) > chain.policy.max_attempts:
                 reject(EffectCode.LIMIT_EXCEEDED)
             target = self.owners[owner]
@@ -454,7 +524,7 @@ class _Qualification:
                     or leaf.activation in used
                     or self.owners[leaf.activation] != target
                     or leaf.activation.parent != owner.parent
-                    or leaf.activation.occurrence - offset not in contract.child_slots
+                    or leaf.activation.occurrence - offset not in slots
                 ):
                     reject(EffectCode.FOREIGN_OWNER)
                 slot = self.prepared.reservation_recipe[leaf.activation.occurrence - offset]
@@ -527,7 +597,7 @@ class _Qualification:
                         ):
                             reject(EffectCode.CONTRADICTORY)
                     known_evidence.add(evidence)
-                if contract.usage_requirement == "unknown_allowed":
+                if chain.role == "generation" and contract.usage_requirement == "unknown_allowed":
                     self.permissive_usage.add(dispatch.request)
                 used.add(leaf.activation)
                 processed.add(dispatch.request)
@@ -544,7 +614,16 @@ class _Qualification:
                     if fact.category == "failure":
                         self.recovered_children.add(dispatch.request)
                         recovered.add(child.leaf.activation)
-        if known_evidence != set(receipt.child_evidence) or used != expected:
+        unused = expected - used
+        if any(
+            physical_owners[key] not in {relation[0] for relation in readiness_owners.values()}
+            or self.entries[key].status != "blocked"
+            or self.entries[physical_owners[key]].status == "success"
+            or any(row.activation == key for row in terminals.values())
+            for key in unused
+        ):
+            reject(EffectCode.CONTRADICTORY)
+        if known_evidence != set(receipt.child_evidence) or used - expected:
             reject(EffectCode.CONTRADICTORY)
         for dispatch in receipt.dispatches:
             if dispatch.child is not None and dispatch.request not in processed:
@@ -552,11 +631,13 @@ class _Qualification:
             for association in dispatch.associations:
                 # Declared physical slots belong exclusively to their child dispatch;
                 # no ordinary or shared dispatch may reuse them as semantic owners.
-                if isinstance(association, SemanticAssociation) and association.task.activation in expected:
+                if isinstance(association, SemanticAssociation) and association.task.activation in expected | probes:
                     reject(EffectCode.CONTRADICTORY)
                 if isinstance(association, SemanticAssociation) and association.task in terminals:
                     node = self.entries[terminals[association.task].activation].template
-                    if policies[node].delegated is not None and dispatch.request not in processed:
+                    if (
+                        policies[node].delegated is not None or association.task.activation in readiness_owners
+                    ) and dispatch.request not in processed:
                         reject(EffectCode.MISSING)
         return recovered
 

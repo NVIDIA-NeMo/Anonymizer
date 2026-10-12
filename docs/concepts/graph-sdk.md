@@ -141,6 +141,25 @@ remain gated in this subset. The borrowed owner rejects other loops/tasks and
 expires when submission finishes. These are executable graph-owner fixtures;
 no DD provider route is enabled yet.
 
+An optional `DelegatedReadiness` descriptor names three additional fixed sibling
+slots: a semantic readiness obligation, its distinct physical request leaf, and
+a local capability probe. `requests.readiness()` starts and closes the semantic
+obligation through that one physical request; `requests.probe()` executes the
+actual local callable after readiness succeeds. Generation requires the declared
+readiness result and a declared successful probe continuation, such as
+`available` or `async_required`. Discovering that a synchronous client is
+unavailable can therefore permit asynchronous generation without recording a
+physical probe request. Readiness failure or a probe failure stops generation.
+
+Readiness requires exact usage and has one route with no retries. Its descriptor
+is the only authorization for a semantic external node to borrow the submitting
+owner rather than supply an independent transport handle. Qualification joins
+that node's canonical attempt to its declared request leaf and rejects extra
+ordinary charges involving the semantic owner, physical leaves or local probe.
+The local probe uses the existing local completion path; self-cancellation closes
+its canonical attempt, and cancellation of its observer retains owned work until
+the callback drains. This adds no shared readiness across targets.
+
 The shared asynchronous request driver now admits Dispatch inside the retained
 call task immediately before callable entry. The delegated path preflights Start,
 then commits Dispatch and the prepared Start without an intervening await.
@@ -150,8 +169,8 @@ Blocking transports retain their existing worker-entry boundary.
 
 Opaque structural admission remains unsupported because the capability schema
 cannot yet express unknown physical request bounds truthfully. Hard-budget
-preparation retains its implementation-owned-retry rejection. Readiness,
-transportless probes, optional unused slots, cross-loop draining, multi-target
+preparation retains its implementation-owned-retry rejection. Optional unused
+slots, cross-loop draining, multi-target
 shared ownership, dynamic recipes and provider-error exhaustion require later
 bounded integration units. Ordinary injected-runner compatibility must gain its
 explicit opaque path before production cutover.
