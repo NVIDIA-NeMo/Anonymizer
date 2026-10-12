@@ -26,8 +26,11 @@ The intended sequence is:
    entity values.
 2. Implement the lifecycle in this plan on `main` without changing the public
    `Detect` API.
-3. Rebase or reconstruct PR #265 on the resulting internal contracts.
-4. Preserve these contracts when detection is later represented as graph/SDK
+3. Rebase [PR #267](https://github.com/NVIDIA-NeMo/Anonymizer/pull/267) so its
+   clean-slate augmentation prompt uses the shared augmentation-admission and
+   final-reconciliation contracts rather than a route-specific overlap filter.
+4. Rebase or reconstruct PR #265 on the resulting internal contracts.
+5. Preserve these contracts when detection is later represented as graph/SDK
    stages.
 
 ## Why This Is a Separate Change
@@ -95,7 +98,7 @@ claim has passed its configured validation route.
 
 Required fields:
 
-- `candidate_id`: immutable, short, row-local correlation token such as `c0001`;
+- `candidate_id`: immutable, short, row-local correlation token such as `c1`;
 - exact source `value` taken from `text[start:end]`;
 - original `label`, `start_position`, and `end_position`;
 - source kind and source instance identity;
@@ -158,6 +161,12 @@ an undecided observation cannot grant accepted provenance or authorize broader
 occurrence propagation. A decision is consumed while producing this result and
 is never consulted again downstream.
 
+`fallback_protected` is internal lifecycle state, not an entity label or a new
+public result field. When such a candidate survives final reconciliation, the
+public entity retains its ordinary label and exact bounds. The fallback status
+and reason remain available only in internal admitted-candidate state and trace
+diagnostics.
+
 ### Admitted candidate
 
 An admitted candidate is eligible for protection after its validation route,
@@ -215,13 +224,20 @@ The implementation must make the following properties true:
 9. **Derivation cannot broaden authority.** Name splitting and occurrence
    propagation inherit permissions from an accepted parent; a span-restricted
    parent cannot create independently protected occurrences elsewhere.
-10. **Scores are compared only within their calibration domain.** A GLiNER
+10. **Augmentation admission is prompt-independent.** Augmenter outputs never
+    consume seed-validator decisions, whether the augmenter prompt uses seed
+    context or plain source text.
+11. **Seed protection precedes augmentation.** An admitted seed or authorized
+    seed-derived candidate cannot be displaced by an augmentation-only
+    candidate; this ordering does not grant fallback protection accepted
+    provenance or propagation permission.
+12. **Scores are compared only within their calibration domain.** A GLiNER
    confidence may rank otherwise equivalent GLiNER alternatives, but it is not
    compared with synthetic `1.0` values from augmentation or derived spans.
-11. **Reconciliation is deterministic.** Input ordering, validation chunking,
+13. **Reconciliation is deterministic.** Input ordering, validation chunking,
     or detector execution order cannot change the final result for the same set
     of observations and decisions.
-12. **Final spans are valid and non-overlapping.** Every output span is within
+14. **Final spans are valid and non-overlapping.** Every output span is within
     source bounds, contains the exact source value, and survives one final
     overlap policy.
 
@@ -242,8 +258,10 @@ source text
   |       apply label + source/route eligibility            |
   |       -> admitted seed candidates                       |
   |                                                        v
-  +-> augmentation using admitted seed context        candidate pool
+  +-> augmentation model ------------------------------ candidate pool
+          prompt construction is independent of admission   |
           -> materialize exact source occurrences           |
+          -> assign candidate IDs                            |
           -> apply label + source/route eligibility          |
           -> admitted augmentation candidates                |
                                                              |
@@ -284,7 +302,7 @@ decision. The response contract and model roles remain unchanged in this PR:
 {
   "decisions": [
     {
-      "id": "c0001",
+      "id": "c1",
       "value": "Alice",
       "label": "first_name",
       "decision": "keep",
@@ -292,7 +310,7 @@ decision. The response contract and model roles remain unchanged in this PR:
       "reason": "person name in context"
     },
     {
-      "id": "c0002",
+      "id": "c2",
       "value": "Seattle",
       "label": "country",
       "decision": "reclass",
@@ -357,22 +375,29 @@ No later transform receives the raw decision map as an input. In particular,
 the finalization step must not reapply detector decisions to augmented,
 coalesced, propagated, or name-derived entities.
 
-### Step 4: Augment from admitted seed context
+### Step 4: Admit augmentation through a separate route
 
-The augmentation prompt continues to see the accepted/fallback-protected seed
-spans needed to avoid duplicate discovery. When admitted seed candidates still
-overlap, reuse the neutral candidate-group rendering so the source text appears
-once and no accepted seed is silently omitted. The structured seed inventory
-includes the group-to-candidate mapping and remains authoritative for the
-augmenter. Augmenter output is materialized against the original source text
-and goes through the same bounds, exact-value, label-normalization, and
-eligibility checks before joining the candidate pool.
+Augmenter prompt construction is independent of augmentation admission. This
+foundational PR preserves the current seed-aware prompt. While that prompt
+remains, admitted seed candidates are rendered without silently omitting
+overlapping alternatives: use one neutral candidate-group tag for the source
+region and keep the group-to-candidate mapping in the structured seed
+inventory. PR #267 can later switch the prompt to plain source text and remove
+seed hints without changing the output-admission contract described here.
 
-Augmentation is already a model decision rather than a high-recall detector
-observation, so it does not reuse the seed validator decision map. The
-augmenter value is materialized at all exact source occurrences in this step;
-those materialized candidates do not receive a second, implicit propagation
-pass.
+Unlike seed validation, augmentation is open-ended structured extraction: it
+does not answer an expected inventory of candidate IDs. Unknown-ID, duplicate-
+decision, and missing-decision policies therefore do not apply. Each augmenter
+suggestion is instead materialized at its exact source occurrences, and each
+materialized occurrence receives a new row-local candidate ID and augmenter
+origin. It then passes bounds, exact-value, label-normalization, and configured
+source/route eligibility checks before joining the candidate pool.
+
+Augmentation output is already a model decision rather than a high-recall
+detector observation, so it does not reuse the seed validator decision map.
+Exact duplicate suggestions are handled by semantic coalescing, not by an
+augmentation-specific overlap pass. Materialized augmentation candidates do
+not receive a second, implicit propagation pass.
 
 ### Step 5: Coalesce exact semantic identities
 
@@ -411,24 +436,45 @@ Run one pure final reconciliation function after all candidates are admitted,
 coalesced, and derived. The comparator must be documented in one place and
 must provide a total, deterministic order.
 
+A seed-supported candidate is backed by a pre-augmentation detector or regex
+observation that was admitted as either accepted or fallback-protected, or is
+an authorized derivation of an accepted seed. This reconciliation classification
+does not turn fallback protection into accepted provenance or grant propagation
+permission; it only prevents a later augmentation result from displacing an
+already protected seed span. It is derived from lineage and admission state,
+not stored as a separate boolean.
+
 The initial policy is:
 
-1. prefer the longer source span;
-2. prefer the earlier start, then earlier end;
-3. for identical bounds with incompatible labels, prefer an explicitly
+1. prefer a seed-supported candidate over an augmentation-only candidate;
+2. within the same seed-support tier, prefer the longer source span;
+3. prefer the earlier start, then earlier end;
+4. for identical bounds with incompatible labels, prefer an explicitly
    accepted candidate over a fallback-protected candidate;
-4. use the centrally defined internal source priority;
-5. within the same calibrated detector source and identical bounds, prefer the
+5. use the centrally defined internal source priority;
+6. within the same calibrated detector source and identical bounds, prefer the
    higher native confidence;
-6. use normalized label and immutable lineage as stable final tie-breakers.
+7. use normalized label and immutable lineage as stable final tie-breakers.
+
+Step 1 preserves the precedence intended by PR #267: an admitted seed such as
+validated `Seattle`/`city` beats an overlapping augmentation such as
+`near downtown Seattle`/`address`, even though the augmenter span is longer.
+Fallback-protected seeds receive the same reconciliation precedence so their
+exact protected span cannot be displaced, but they still contribute no
+accepted provenance or propagation permission. For conflicts within the same
+seed-support tier, span coverage applies; for identical bounds, explicit
+acceptance wins at step 4.
 
 Source priority is an internal reconciliation policy, not a user-facing
 configuration knob. It must not depend on which route happens to be passed
 first by a caller. For the sources on `main`, the initial order is detector,
-augmenter, then derived observations. Fallback protection is ranked by step 3
-rather than being allowed to inherit detector priority. PR #265 can extend the
-centralized source table for custom regex and built-in regex without adding
-another merge implementation.
+augmenter, then derived observations. Seed support is derived from lineage and
+admission state before this source tie-break, so an authorized derivation
+inherits its accepted parent's precedence while an augmentation-derived
+candidate does not. Within the seed-supported tier, fallback protection is
+ranked by span coverage and step 4 rather than being treated as accepted
+provenance. PR #265 can extend the centralized source table for custom regex
+and built-in regex without adding another merge implementation.
 
 ## Affected Subsystems
 
@@ -471,6 +517,8 @@ Refactor `src/anonymizer/engine/detection/postprocess.py` around pure helpers fo
 - source-bound observation construction;
 - decision indexing and single-use application;
 - compact validation conflict groups for overlapping candidates;
+- augmentation-output materialization without overlap suppression or seed-
+  decision replay;
 - normalized eligibility;
 - exact-identity coalescing;
 - permission-preserving derivation;
@@ -537,8 +585,12 @@ cases:
 | Detector candidates overlap | Every candidate is represented once in the validation template; the source excerpt contains one neutral group tag rather than duplicated alternative tags |
 | A longer overlapping candidate is dropped | An independently accepted shorter candidate remains eligible for final reconciliation |
 | One overlap group crosses a validation chunk boundary | Each chunk maps the neutral group only to its pending candidate IDs; every candidate receives at most one merged decision |
-| Accepted seed candidates still overlap before augmentation | The augmenter sees one neutral group tag plus every seed in the structured inventory, without duplicated source text |
+| Accepted seed candidates still overlap while the current seed-aware augmenter prompt remains | The augmenter sees one neutral group tag plus every seed in the structured inventory, without duplicated source text; PR #267 can later remove this prompt dependency without changing admission |
 | Augmented candidate constructs the same label/bounds as a seed | The seed decision is not replayed against the augmented candidate |
+| Augmenter returns duplicate suggestions for the same label/value | Materialized exact identities coalesce deterministically without an augmentation-specific overlap pass |
+| Longer augmentation candidate overlaps an admitted seed | The seed-supported candidate wins regardless of span length, preserving the precedence required by PR #267 |
+| Fallback-protected seed overlaps an augmentation candidate | The seed span keeps reconciliation precedence without gaining accepted provenance or propagation permission |
+| Candidate derived from an accepted seed overlaps augmentation | The derived candidate inherits seed support through lineage and uses the same final reconciler |
 | Unknown decision ID | No candidate is mutated; diagnostic is recorded |
 | Duplicate decision ID across or within chunks | First usable decision wins deterministically |
 | Candidate is absent from the structured response | Exact detector span remains fallback-protected; it grants no accepted provenance or propagation |
@@ -627,6 +679,16 @@ A fixed internal priority is less flexible than user-configurable precedence,
 but it gives stable behavior and keeps public configuration small. The policy
 can evolve in one place as new detector sources are added.
 
+### Preserve seed spans across clean-slate augmentation
+
+PR #267 intentionally makes augmentation operate on plain text and relies on a
+minimal-span extraction contract. That increases duplicate and overlapping
+model discoveries. Giving admitted seed spans reconciliation precedence over
+augmentation-only candidates prevents an unvalidated relabeling from replacing
+an already protected seed, but it can discard a broader augmentation span that
+contains the seed. Preserve this policy centrally, test the minimal-span prompt
+contract in PR #267, and measure missed sensitive coverage after its rebase.
+
 ## Rollout Plan
 
 1. **Completed:** land PR #282 and base this work on the resulting `main`.
@@ -640,10 +702,13 @@ can evolve in one place as new detector sources are added.
    the admitted-candidate contract.
 7. Replace route-specific overlap calls with the single final reconciler.
 8. Run focused, full, export, and benchmark validation.
-9. Rebase or reconstruct PR #265 so regex contributes observations and route
+9. Rebase PR #267 so it changes the augmenter prompt to plain source text and
+   removes seed hints while reusing shared augmentation admission and final
+   reconciliation; drop its route-specific `resolve_overlaps()` filtering.
+10. Rebase or reconstruct PR #265 so regex contributes observations and route
    policy through these shared contracts rather than owning separate merge and
    decision-replay machinery.
-10. Document these semantics as invariants for the later graph/SDK detection
+11. Document these semantics as invariants for the later graph/SDK detection
     stage and preserve them when its execution assembly changes.
 
 ## Review Decisions Requested
@@ -665,7 +730,13 @@ Maintainer review should confirm:
 7. Exact coalescing retains accepted provenance and combines propagation
    permission only among configuration-eligible origins; disabled routes cannot
    regain authority during merging.
-8. All admitted and derived candidates use one final reconciliation policy.
-9. Source priority remains an internal centralized policy rather than a public
+8. Seed-supported candidates receive precedence over augmentation-only
+   candidates in the final reconciler, without converting fallback protection
+   into accepted provenance or propagation authority.
+9. Augmenter prompt construction is independent of output admission: this PR
+   preserves the current seed-aware prompt, and PR #267 may later switch it to
+   plain text without adding another merge path.
+10. All admitted and derived candidates use one final reconciliation policy.
+11. Source priority remains an internal centralized policy rather than a public
    configuration option.
-10. The graph/SDK refactor consumes these semantics instead of redefining them.
+12. The graph/SDK refactor consumes these semantics instead of redefining them.
