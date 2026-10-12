@@ -174,7 +174,10 @@ def test_delegated_structural_admission_is_closed(change: str) -> None:
         elif change == "wrong_slot":
             policy = replace(policy, delegated=replace(contract, child_slots=(99, 100)))
         elif change == "owner_slot":
-            policy = replace(policy, delegated=replace(contract, child_slots=(1, 2)))
+            owner_slot = next(
+                slot.index for slot in execution.context.prepared.reservation_recipe if slot.template == policy.node
+            )
+            policy = replace(policy, delegated=replace(contract, child_slots=(owner_slot, contract.child_slots[0])))
         elif change == "missing_slot":
             policy = replace(policy, delegated=replace(contract, child_slots=(2,)))
         elif change == "ordinary_retry":

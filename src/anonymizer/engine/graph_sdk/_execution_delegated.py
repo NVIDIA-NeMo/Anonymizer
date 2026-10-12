@@ -57,7 +57,8 @@ class _DelegatedOwner(PrivateValue):
         self.job = job
         self.loop = asyncio.get_running_loop()
         self.closed = False
-        self.active = False
+        self.child: asyncio.Task[PhysicalRequestId] | None = None
+        self.cancel_requested = False
         self.submission: asyncio.Task[LocalResult] | None = None
         contract = job.policy.delegated
         policy = job.policy.request
@@ -102,11 +103,36 @@ class _DelegatedOwner(PrivateValue):
         self._check()
         if asyncio.current_task() is not self.submission:
             reject(EffectCode.UNSUPPORTED)
+        if self.cancel_requested:
+            reject(EffectCode.REQUEST_CAUSALITY)
+        if self.active:
+            reject(EffectCode.UNSUPPORTED)
+        self.child = asyncio.create_task(self._request(slot, source_kind, predecessor, evidence))
+        try:
+            return await asyncio.shield(self.child)
+        except asyncio.CancelledError:
+            if not self.child.done():
+                self.cancel_requested = True
+            raise
+
+    @property
+    def active(self) -> bool:
+        return self.child is not None and not self.child.done()
+
+    @property
+    def cancelled(self) -> bool:
+        return self.cancel_requested or self.runtime.control.cancelled
+
+    async def _request(
+        self,
+        slot: int,
+        source_kind: ChildSourceKind,
+        predecessor: PhysicalRequestId | None,
+        evidence: ChildEvidence | None,
+    ) -> PhysicalRequestId:
         require_count(slot)
         if slot not in self.contract.child_slots:
             reject(EffectCode.FOREIGN_OWNER)
-        if self.active:
-            reject(EffectCode.UNSUPPORTED)
         runtime = self.runtime
         key = runtime.target_keys[self.job.target][slot]
         entry = next(item for item in runtime.states[self.job.state_index].entries if item.activation == key)
@@ -114,7 +140,7 @@ class _DelegatedOwner(PrivateValue):
             reject(EffectCode.DUPLICATE)
         if entry.status != "ready":
             reject(EffectCode.REQUEST_CAUSALITY)
-        if runtime.control.cancelled:
+        if self.cancelled:
             reject(EffectCode.REQUEST_CAUSALITY)
         if len(runtime.request_authority.state.remote_outstanding) >= runtime.services.limits.max_remote_outstanding:
             reject(EffectCode.LIMIT_EXCEEDED)
@@ -169,58 +195,66 @@ class _DelegatedOwner(PrivateValue):
             runtime._start_observed_activation(leaf.activation, operation=True)
             return await transport.dispatch(envelope)
 
-        self.active = True
-        try:
-            completion = await drive_request(
-                authority,
-                request,
-                runtime.control,
-                invoke,
-                transport.cancel,
-                prepare_dispatch=lambda: self._prepare(leaf, attempt),
-            )
-            if request not in authority.state.dispatched:
-                reject(EffectCode.REQUEST_CAUSALITY)
-            value = completion.value
-            results: tuple[AssociationResult, ...] = ()
-            if completion.cancelled:
-                mapping = _mapping(policy, "cancel_after_dispatch" if completion.stop_confirmed else "lost", None, None)
-            elif type(value) is TransportSuccess:
-                invalid = inspect_associations(value.results, self.chain.associations, runtime.admitted.ingress_limits)
-                if invalid is None:
-                    authority.apply(AcceptResult(request=request, results=()))
-                    mapping = _mapping(policy, "request_inconsistent", None, None)
-                elif (
-                    not completion.settlement_valid
-                    or invalid
-                    or len(value.results) != 1
-                    or value.results[0].outcome not in policy.result_outcomes
-                    or value.results[0].outputs
-                    or value.results[0].consumed_context_ports
-                ):
-                    authority.apply(AcceptFailure(request=request, failure="malformed_response"))
-                    mapping = _mapping(policy, "failure", None, "malformed_response")
-                else:
-                    authority.apply(AcceptResult(request=request, results=value.results))
-                    results = (replace(value.results[0], association=leaf.association),)
-                    mapping = _mapping(policy, "result", value.results[0].outcome, None)
-            elif type(value) is TransportFailure:
-                failure = inspect_failure(value.failure) if completion.settlement_valid else "malformed_response"
-                authority.apply(AcceptFailure(request=request, failure=failure))
-                mapping = _mapping(policy, "failure", None, failure)
+        completion = await drive_request(
+            authority,
+            request,
+            self,
+            invoke,
+            transport.cancel,
+            prepare_dispatch=lambda: self._prepare(leaf, attempt),
+            drain_on_cancel=True,
+        )
+        if request not in authority.state.dispatched:
+            reject(EffectCode.REQUEST_CAUSALITY)
+        value = completion.value
+        results: tuple[AssociationResult, ...] = ()
+        if completion.cancelled:
+            mapping = _mapping(policy, "cancel_after_dispatch" if completion.stop_confirmed else "lost", None, None)
+        elif type(value) is TransportSuccess:
+            invalid = inspect_associations(value.results, self.chain.associations, runtime.admitted.ingress_limits)
+            if invalid is None:
+                authority.apply(AcceptResult(request=request, results=()))
+                mapping = _mapping(policy, "request_inconsistent", None, None)
+            elif (
+                not completion.settlement_valid
+                or invalid
+                or len(value.results) != 1
+                or value.results[0].outcome not in policy.result_outcomes
+                or value.results[0].outputs
+                or value.results[0].consumed_context_ports
+            ):
+                authority.apply(AcceptFailure(request=request, failure="malformed_response"))
+                mapping = _mapping(policy, "failure", None, "malformed_response")
             else:
-                authority.apply(MarkLost(request=request))
-                mapping = _mapping(policy, "lost", None, None)
-            mapping, results, checkpoint, staged = runtime._stage_outputs(leaf, mapping, results, ())
-            runtime._advance_completed(leaf, mapping, results, checkpoint, staged)
-            runtime.control.scheduler_changed.set()
-            span = runtime._operation_spans[leaf.activation]
-            span.outcome = mapping.category
-            span.finish()
-            runtime._close_observed_activations()
-            return request
-        finally:
-            self.active = False
+                authority.apply(AcceptResult(request=request, results=value.results))
+                results = (replace(value.results[0], association=leaf.association),)
+                mapping = _mapping(policy, "result", value.results[0].outcome, None)
+        elif type(value) is TransportFailure:
+            failure = inspect_failure(value.failure) if completion.settlement_valid else "malformed_response"
+            authority.apply(AcceptFailure(request=request, failure=failure))
+            mapping = _mapping(policy, "failure", None, failure)
+        else:
+            authority.apply(MarkLost(request=request))
+            mapping = _mapping(policy, "lost", None, None)
+        mapping, results, checkpoint, staged = runtime._stage_outputs(leaf, mapping, results, ())
+        runtime._advance_completed(leaf, mapping, results, checkpoint, staged)
+        runtime.control.scheduler_changed.set()
+        span = runtime._operation_spans[leaf.activation]
+        span.outcome = mapping.category
+        span.finish()
+        runtime._close_observed_activations()
+        return request
+
+    async def _drain(self, task: asyncio.Task[object]) -> None:
+        while not task.done():
+            try:
+                await asyncio.shield(task)
+            except asyncio.CancelledError:
+                self.cancel_requested = True
+            except Exception:
+                break
+        if not task.cancelled():
+            task.exception()  # Retrieve failures even when the submitting observer left.
 
     def _prepare(self, leaf: _ExecutionJob, attempt: TaskAttemptId) -> Callable[[], None]:
         self._check()
@@ -263,10 +297,16 @@ class _DelegatedOwner(PrivateValue):
                 await asyncio.sleep(0)
             result = task.result()
         except asyncio.CancelledError:
+            self.cancel_requested = True
+            if not task.done():
+                task.cancel()
             return _mapping(self.job.policy, "cancel_after_start", None, None), (), ()
         except Exception:
             return _mapping(self.job.policy, "failure", None, "implementation_exception"), (), ()
         finally:
+            if self.child is not None:
+                await self._drain(self.child)
+            await self._drain(task)
             complete = self.close()
         if not complete:
             return _mapping(self.job.policy, "failure", None, "implementation_exception"), (), ()

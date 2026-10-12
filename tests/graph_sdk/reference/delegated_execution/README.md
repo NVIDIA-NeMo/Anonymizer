@@ -33,3 +33,20 @@ malformed-response terminal plus completed settlement; it rejects a correction
 after terminal success, with one dispatch and no contradictory facts.
 
 Parser guard SHA-256: `b6654120a76f119fa9f0d0c4ddbad2f05921460e6c7463c26254a32c13681f5e`.
+
+The cancellation correction adds `cancellation.json`: one admitted graph and
+13 event-driven traces. Eight live-call cases cross propagated/caught submission
+cancellation, confirmed/unknown stop, and repeated owner cancellation. Two cases
+retain already-available completion; two reject pre-entry cancellation without
+charge; one preserves rejection of another task's borrowed request. The table
+bounds three activations and one physical request. Live cases retain the first
+terminal, drain before public return, incorporate late settlement and withhold
+protected release. Observer cancellation does not detach the call task.
+
+Cancellation SHA-256: `d9da9134ef10251824264b0b5b8571ece41069b85a3ad529bce8c76e5b8725e7`.
+
+The initial table spelled the confirmed stop settlement `cancelled`; that is a
+terminal category, not a valid settlement disposition. It was corrected to the
+existing `stopped` disposition before the successful comparison. The original
+table and failing run remain in campaign evidence; prior reference tables are
+unchanged.

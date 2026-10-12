@@ -152,6 +152,7 @@ async def drive_request(
     *,
     blocking: _BlockingInvocation | None = None,
     prepare_dispatch: Callable[[], Callable[[], None]] | None = None,
+    drain_on_cancel: bool = False,
 ) -> _PhysicalCompletion:
     """Observe actual dispatch, including delayed ordinary-worker starts."""
     current = _CURRENT.get()
@@ -175,6 +176,7 @@ async def drive_request(
             accept_late,
             blocking=blocking,
             prepare_dispatch=prepare_dispatch,
+            drain_on_cancel=drain_on_cancel,
             dispatched=dispatched,
             reconciling=reconciling,
         )
@@ -198,6 +200,7 @@ async def _drive_request_body(
     *,
     blocking: _BlockingInvocation | None = None,
     prepare_dispatch: Callable[[], Callable[[], None]] | None = None,
+    drain_on_cancel: bool = False,
     dispatched: Callable[[], None],
     reconciling: Callable[[], None],
 ) -> _PhysicalCompletion:
@@ -241,11 +244,11 @@ async def _drive_request_body(
                 stopped = await cancel(request)
             except Exception:
                 pass
-        if blocking is None:
+        if blocking is None and not drain_on_cancel:
             task.cancel()
         else:
-            # Publish the first semantic terminal while the actual worker still
-            # owns its slot. Its eventual value can only settle usage.
+            # Retain the initiated call until local drain, independently of the
+            # first terminal. Its eventual value can only settle usage.
             if request in authority.state.dispatched:
                 if type(stopped) is StopConfirmed and inspect_usage(stopped.usage):
                     authority.apply(StopAcknowledged(request=request, usage=stopped.usage))
@@ -267,7 +270,7 @@ async def _drive_request_body(
         return _PhysicalCompletion(None, True, True, True, raised)
     confirmed = type(stopped) is StopConfirmed and inspect_usage(stopped.usage)
     if cancelled:
-        if blocking is not None:
+        if blocking is not None or drain_on_cancel:
             pass  # Already terminal; only late metadata may be added below.
         elif confirmed:
             assert isinstance(stopped, StopConfirmed)
