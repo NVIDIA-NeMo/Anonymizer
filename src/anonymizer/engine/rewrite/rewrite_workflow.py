@@ -32,7 +32,7 @@ from anonymizer.engine.constants import (
     COL_WEIGHTED_LEAKAGE_RATE,
 )
 from anonymizer.engine.evaluation.detection_judge import DetectionJudgeWorkflow
-from anonymizer.engine.ndd.adapter import RECORD_ID_COLUMN, FailedRecord, NddAdapter
+from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter
 from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceWorkflow
 from anonymizer.engine.rewrite.domain_classification import DomainClassificationWorkflow
 from anonymizer.engine.rewrite.evaluate import EvaluateWorkflow
@@ -46,7 +46,12 @@ from anonymizer.engine.rewrite.rewrite_generation import (
 )
 from anonymizer.engine.rewrite.sensitivity_disposition import SensitivityDispositionWorkflow
 from anonymizer.engine.rewrite.workflow_utils import derive_seed_columns, select_seed_cols
-from anonymizer.engine.row_partitioning import merge_and_reorder, resolve_source_positions, split_rows
+from anonymizer.engine.row_partitioning import (
+    merge_and_reorder,
+    resolve_source_positions,
+    restore_diagnostic_columns,
+    split_rows,
+)
 from anonymizer.engine.schemas import EntitiesByValueSchema
 from anonymizer.measurement import stage_timer
 
@@ -141,47 +146,13 @@ def _join_preserving(
     target: pd.DataFrame,
     source: pd.DataFrame,
     defaults: dict[str, object],
+    *,
+    source_positions: tuple[int, ...] | None = None,
 ) -> pd.DataFrame:
-    """Left-join source columns onto target, preserving all target rows.
-
-    When source returns fewer rows than target (e.g. a judge timed out or the
-    NDD adapter dropped a row), missing rows receive the values in ``defaults``
-    instead of being removed from the result.  Used for non-critical/diagnostic
-    steps where losing a row from the output is worse than surfacing a null.
-    """
+    """Keep complete-stage trace columns; default diagnostics after row drops."""
     if len(source) == len(target):
-        return _join_new_columns(target, source)
-
-    logger.warning(
-        "Source returned %d of %d rows; defaulting %d missing row(s).",
-        len(source),
-        len(target),
-        len(target) - len(source),
-    )
-    result = target.copy()
-    source_by_id = source.set_index(RECORD_ID_COLUMN)
-    known_ids = set(source_by_id.index)
-
-    for col, default in defaults.items():
-        result[col] = default
-
-    for idx, record_id in result[RECORD_ID_COLUMN].items():
-        if record_id in known_ids:
-            row = source_by_id.loc[record_id]
-            for col in defaults:
-                result.at[idx, col] = row.get(col)
-
-    return result
-
-
-def _join_judge_columns(target: pd.DataFrame, source: pd.DataFrame) -> pd.DataFrame:
-    """Merge holistic judge columns preserving all rows.
-
-    Thin wrapper around ``_join_preserving`` with the holistic-judge defaults.
-    ``COL_NEEDS_HUMAN_REVIEW`` is not touched here; it is set by the
-    evaluate-repair loop based on objective metrics.
-    """
-    return _join_preserving(target, source, defaults={COL_JUDGE_EVALUATION: None})
+        defaults = dict.fromkeys(column for column in source if column not in target)
+    return restore_diagnostic_columns(target, source, defaults, source_positions=source_positions)
 
 
 def _apply_passthrough_defaults(
@@ -483,7 +454,12 @@ class RewriteWorkflow:
                 workflow_name="rewrite-final-judge",
                 preview_num_records=effective_preview,
             )
-            df = _join_judge_columns(df, judge_result.dataframe)
+            df = _join_preserving(
+                df,
+                judge_result.dataframe,
+                {COL_JUDGE_EVALUATION: None},
+                source_positions=judge_result.source_positions,
+            )
             return df, judge_result.failed_records
         except Exception:
             logger.debug("Rewrite judge workflow failed; scores may be unavailable.", exc_info=True)
@@ -544,6 +520,7 @@ class RewriteWorkflow:
                     entity_rows,
                     detection_result.dataframe,
                     defaults={COL_DETECTION_VALID: None, COL_DETECTION_INVALID_ENTITIES: None},
+                    source_positions=detection_result.source_positions,
                 )
                 all_failed.extend(detection_result.failed_records)
                 # Convert bool all_valid → 0–1 fraction so detection validity sits on the

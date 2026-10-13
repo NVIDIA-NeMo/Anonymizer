@@ -29,9 +29,10 @@ from anonymizer.engine.evaluation.judge_base import _BaseJudgeWorkflow
 from anonymizer.engine.evaluation.replace.attribute_fidelity_judge import AttributeFidelityJudgeWorkflow
 from anonymizer.engine.evaluation.replace.relational_consistency_judge import RelationalConsistencyJudgeWorkflow
 from anonymizer.engine.evaluation.replace.type_fidelity_judge import TypeFidelityJudgeWorkflow
-from anonymizer.engine.ndd.adapter import RECORD_ID_COLUMN, FailedRecord, NddAdapter
+from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter
 from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceWorkflow
 from anonymizer.engine.replace.strategies import apply_local_replace_strategy, apply_replacement_map
+from anonymizer.engine.row_partitioning import restore_diagnostic_columns
 from anonymizer.measurement import stage_timer
 
 if TYPE_CHECKING:
@@ -220,11 +221,8 @@ class ReplacementWorkflow:
         prepared = dataframe
         for judge in active:
             prepared = judge.prepare(prepared)
-        # Attach record IDs upfront so we can join (possibly row-shrunken) judge
-        # output back onto the full prepared frame. The adapter would attach
-        # these itself; doing it here lets us treat evaluation as non-critical:
-        # rows the LLM drops still appear in the result with "Unavailable"
-        # verdicts instead of disappearing from a previously successful run.
+        # Retain the adapter's record-ID column in the public trace. Diagnostic
+        # correspondence uses source positions, including when IDs repeat.
         adapter = cast(NddAdapter, self._adapter)
         prepared = adapter._attach_record_ids(prepared)
 
@@ -243,19 +241,13 @@ class ReplacementWorkflow:
                 preview_num_records=preview_num_records,
             )
             failed_records.extend(run_result.failed_records)
-            # Left-join the judge output columns onto the full prepared frame.
-            # Rows missing from run_result.dataframe (LLM parse failures,
-            # timeouts, etc.) keep NaN for the raw judge columns; each judge's
-            # postprocess() converts that to *_valid=None ("Unavailable").
             new_cols = [c for c in run_result.dataframe.columns if c not in prepared.columns]
-            if new_cols:
-                judged_df = prepared.merge(
-                    run_result.dataframe[[RECORD_ID_COLUMN, *new_cols]],
-                    on=RECORD_ID_COLUMN,
-                    how="left",
-                )
-            else:
-                judged_df = prepared
+            judged_df = restore_diagnostic_columns(
+                prepared,
+                run_result.dataframe,
+                dict.fromkeys(new_cols),
+                source_positions=run_result.source_positions,
+            ).reset_index(drop=True)
         except Exception:
             logger.debug("Replace judges workflow failed; evaluation scores may be unavailable.", exc_info=True)
             judged_df = prepared

@@ -437,6 +437,7 @@ def test_detection_judge_partial_row_loss_preserves_all_rows(
     wf._detection_judge_wf.evaluate.return_value = Mock(
         dataframe=det_df,
         failed_records=[FailedRecord(record_id="rec-1", step="rewrite-detection-judge", reason="timeout")],
+        source_positions=None,
     )
     adapter.run_workflow.return_value = WorkflowRunResult(dataframe=judge_df, failed_records=[])
 

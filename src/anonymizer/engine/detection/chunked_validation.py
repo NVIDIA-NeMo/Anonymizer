@@ -18,7 +18,7 @@ Failure contract. Each chunk attempts its round-robin primary first and
 fails over sequentially to the rest of the pool; a chunk only fails when
 every pool member has raised. The first failing chunk re-raises out of
 the generator, DataDesigner drops the row, and
-``NddAdapter._detect_missing_records`` surfaces it as a ``FailedRecord``.
+``NddAdapter.run_workflow`` source-position accounting surfaces it as a ``FailedRecord``.
 Raw text never silently leaks through as unscrubbed output.
 
 Concurrency. Async plugin execution dispatches chunks with ``asyncio.gather``
@@ -323,7 +323,7 @@ def _dispatch_chunk(
     exception (no alternate alias to try). Multi-alias pools get
     ``len(pool)`` total attempts. If every pool member raises, the *last*
     exception propagates so DataDesigner records the row as a
-    ``FailedRecord`` via ``NddAdapter._detect_missing_records``.
+    ``FailedRecord`` via ``NddAdapter.run_workflow`` source-position accounting.
 
     Each failover attempt is logged at WARNING so operators can correlate
     degraded pool members with run-level failure-rate spikes.

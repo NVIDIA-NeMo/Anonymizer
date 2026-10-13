@@ -140,6 +140,8 @@ def test_rewrite_evaluation_interrupt_does_not_start_coverage(monkeypatch, error
         ("Annotate", False, True),
         ("Substitute", True, False),
         ("Rewrite", True, False),
+        ("Rewrite", True, True),
+        ("Substitute", True, True),
     ],
 )
 def test_saved_evaluate_real_dd_preserves_rows_and_metrics(evaluation_dd, monkeypatch, strategy, validity, drop):
@@ -150,7 +152,12 @@ def test_saved_evaluate_real_dd_preserves_rows_and_metrics(evaluation_dd, monkey
     from anonymizer.config.anonymizer_config import EvaluateConfig, Rewrite
     from anonymizer.config.models import EvaluateModelSelection
     from anonymizer.config.replace_strategies import Annotate, Hash, Substitute
-    from anonymizer.engine.constants import COL_ENTITIES_BY_VALUE, COL_JUDGE_EVALUATION, COL_REPLACEMENT_MAP
+    from anonymizer.engine.constants import (
+        COL_DETECTION_JUDGE,
+        COL_ENTITIES_BY_VALUE,
+        COL_JUDGE_EVALUATION,
+        COL_REPLACEMENT_MAP,
+    )
     from anonymizer.engine.ndd.adapter import RECORD_ID_COLUMN
     from tests.engine.test_detection_source_frame import public_anonymizer
 
@@ -214,7 +221,7 @@ def test_saved_evaluate_real_dd_preserves_rows_and_metrics(evaluation_dd, monkey
                 {"replacements": [{"original": "Alice", "label": "first_name", "synthetic": "Beth"}]},
                 {"replacements": []},
             ],
-            RECORD_ID_COLUMN: ["keep", "drop"],
+            RECORD_ID_COLUMN: ["drop" if drop and strategy in {"Rewrite", "Substitute"} else "keep", "drop"],
             "extra": [17, 29],
         }
     )
@@ -255,6 +262,7 @@ def test_saved_evaluate_real_dd_preserves_rows_and_metrics(evaluation_dd, monkey
         for column in ("type_fidelity_valid", "relational_consistency_valid", "attribute_fidelity_valid"):
             assert result.dataframe[column].tolist() == [True, True]
     if rewritten:
+        assert result.trace_dataframe[COL_DETECTION_JUDGE].iloc[0]["all_valid"] is True
         assert result.dataframe[COL_JUDGE_EVALUATION].iloc[0]["privacy"]["score"] == "high"
         assert pd.isna(result.dataframe[COL_JUDGE_EVALUATION].iloc[1])
     assert len(calls) >= 2

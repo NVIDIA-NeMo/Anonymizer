@@ -186,6 +186,14 @@ contains content and strategy configuration, not execution resources; evaluating
 it creates fresh authority without reusing historical runtime identities. Judge
 calls remain opaque, and evaluation does not establish a Protected claim.
 
+Native diagnostic joins use validated adapter source positions, so repeated record
+IDs cannot transfer judgments between rows. Dropped judge outputs leave their
+source rows in place with unavailable scores. Standalone judges compose positions
+through passthrough partitions; saved-result evaluation uses the same joins.
+These positions describe host row correspondence, not graph artifact identity.
+Legacy injected results may explicitly omit positions and retain their existing
+unassociated compatibility path.
+
 ## Saved results and current evidence
 
 Ordinary public `qualify` consumes all retained accepted assessments. There is no public assessment-subset selector. It does not execute the graph again. You can construct another `evidence_revision_view` for the same saved result to describe which artifacts, absences, configurations and state revisions remain current, then qualify again. Selective artifact requalification can withhold a candidate that was previously releasable. Restoring the same valid current view can restore qualification without another callback.

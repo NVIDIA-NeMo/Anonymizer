@@ -815,7 +815,7 @@ class TestChunkedValidateRowFailurePropagation:
         """With failover enabled, a chunk only fails when *every* pool member raises.
 
         Downstream DD reporting then turns that row into a FailedRecord via
-        ``NddAdapter._detect_missing_records`` — no unscrubbed passthrough.
+        ``NddAdapter.run_workflow`` source-position accounting — no unscrubbed passthrough.
         """
         spans = [
             _entity_span("a", "Alice", "first_name", 0, 5),

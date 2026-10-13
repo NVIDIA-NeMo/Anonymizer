@@ -82,3 +82,30 @@ def resolve_source_positions(
     ):
         raise AnonymizerWorkflowError("Workflow result has invalid source correspondence")
     return positions
+
+
+def restore_diagnostic_columns(
+    target: pd.DataFrame,
+    returned: pd.DataFrame,
+    defaults: dict[str, object],
+    *,
+    source_positions: tuple[int, ...] | None = None,
+) -> pd.DataFrame:
+    """Restore diagnostic outputs to their sources, defaulting dropped rows.
+
+    Keep input columns, order and index. Complete outputs retain their dtypes;
+    partial outputs use the caller's defaults, including literal None values.
+    """
+    positions = resolve_source_positions(target, returned, source_positions)
+    result = target.copy()
+    for column, default in defaults.items():
+        if len(positions) == len(target) and column in returned:
+            order = sorted(range(len(positions)), key=positions.__getitem__)
+            result[column] = returned[column].iloc[order].array
+        else:
+            result[column] = default
+            if column in returned:
+                column_index = result.columns.get_loc(column)
+                for row_index, source_index in enumerate(positions):
+                    result.iat[source_index, column_index] = returned[column].iloc[row_index]
+    return result
