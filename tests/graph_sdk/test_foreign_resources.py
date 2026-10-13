@@ -31,6 +31,8 @@ async def fixture(
     pool,
     *,
     owner="sdk",
+    base=None,
+    held_transport=None,
     close_result="success",
     hold=False,
     hold_stop=False,
@@ -39,7 +41,11 @@ async def fixture(
     lifetime=None,
     detachment="forbidden",
 ):
-    execution, services, submit, generation, readiness, probe = _ready_fixture()
+    if base is None:
+        execution, services, submit, generation, _, _ = _ready_fixture()
+    else:
+        execution, services, submit = base
+        generation = held_transport
     parent = next(h.delegated for h in services.handles if h.delegated)
 
     async def foreign(inputs, borrowed):
@@ -59,6 +65,7 @@ async def fixture(
             assert self.loop is loop
             self.transport = transport
             self.closes = 0
+            self.close_result = close_result
             self.closed = False
             self.entered, self.stopping = Event(), Event()
             self.release = asyncio.Event()
@@ -88,6 +95,11 @@ async def fixture(
             self.stopping.set()
             if hold_stop:
                 await self.stop_release.wait()
+            if stop_self_cancel == "task":
+                task = asyncio.current_task()
+                assert task is not None
+                task.cancel()
+                await asyncio.sleep(0)
             if stop_self_cancel:
                 raise asyncio.CancelledError
             return StopConfirmed(usage=ExactUsage(input_units=1, output_units=1)) if confirmed else StopUnknown()
@@ -100,9 +112,9 @@ async def fixture(
             self.close_entered.set()
             if self.hold_close:
                 await self.close_release.wait()
-            if close_result == "exception":
+            if self.close_result == "exception":
                 raise RuntimeError("close failed")
-            if close_result == "self_cancel":
+            if self.close_result == "self_cancel":
                 raise asyncio.CancelledError
             self.closed = True
 
@@ -111,12 +123,15 @@ async def fixture(
             factory=lambda: Client(transport), owner=owner, gate_timeout_ns=1_000_000_000, exclusive=True
         )
 
-    handles = []
+    handles, registered = [], {}
     for h in services.handles:
         if h.transport is None:
             handles.append(h)
             continue
-        adapter = await asyncio.wrap_future(asyncio.run_coroutine_threadsafe(construct(h.transport), loop))
+        adapter = registered.get(id(h.transport))
+        if adapter is None:
+            adapter = await asyncio.wrap_future(asyncio.run_coroutine_threadsafe(construct(h.transport), loop))
+            registered[id(h.transport)] = adapter
         adapters[h.implementation] = adapter
         handles.append(replace(h, transport=adapter, resource=adapter.lease))
     previous = execution.context.prepared
@@ -335,7 +350,8 @@ def test_foreign_public_cancel_drains_before_close(monkeypatch, stop_self_cancel
         "independent_detachment",
     ],
 )
-def test_foreign_resource_rejection_precedes_invocation(monkeypatch, bad):
+@pytest.mark.parametrize("optional", [False, True])
+def test_foreign_resource_rejection_precedes_invocation(monkeypatch, bad, optional):
     from anonymizer.engine.graph_sdk._effect_values import EffectRejected
     from anonymizer.engine.graph_sdk.resources import ResourceLease
     from anonymizer.graph._values import InvocationId
@@ -346,6 +362,7 @@ def test_foreign_resource_rejection_precedes_invocation(monkeypatch, bad):
                 loop,
                 pool,
                 owner="caller" if bad == "wrong_owner" else "sdk",
+                base=_optional_base() if optional else None,
                 lifetime="executor_owned" if bad == "wrong_owner" else "stateless" if bad == "stateless" else None,
                 detachment="independent_after_dispatch" if bad == "independent_detachment" else "forbidden",
             )
@@ -387,14 +404,17 @@ def test_foreign_resource_rejection_precedes_invocation(monkeypatch, bad):
     asyncio.run(run())
 
 
-def test_claim_is_atomic_deduplicated_and_concurrent_admission_is_single_use(monkeypatch):
+@pytest.mark.parametrize("optional", [False, True])
+def test_claim_is_atomic_deduplicated_and_concurrent_admission_is_single_use(monkeypatch, optional):
     from anonymizer.engine.graph_sdk._effect_values import EffectRejected
     from anonymizer.graph._values import InvocationId
 
     async def run():
         async with _loop_and_pool() as (loop, pool):
-            execution, services, submit, clients, _, adapters = await fixture(loop, pool, owner="caller")
-            free, occupied = tuple(adapters.values())
+            execution, services, submit, clients, _, adapters = await fixture(
+                loop, pool, owner="caller", base=_optional_base() if optional else None
+            )
+            free, occupied, *_ = tuple(adapters.values())
             ForeignLoopTransport.claim_many((occupied, occupied))
             with pytest.raises(EffectRejected):
                 ForeignLoopTransport.claim_many((free, occupied))
@@ -411,7 +431,9 @@ def test_claim_is_atomic_deduplicated_and_concurrent_admission_is_single_use(mon
             assert not free._claimed and not alias._claimed
             for a in adapters.values():
                 await a.close()
-            execution, services, submit, clients, _, adapters = await fixture(loop, pool, owner="caller")
+            execution, services, submit, clients, _, adapters = await fixture(
+                loop, pool, owner="caller", base=_optional_base() if optional else None
+            )
             outcomes = await asyncio.gather(
                 *(
                     start_execution(admitted=execution, capabilities=execution.capabilities, services=services)
@@ -478,7 +500,8 @@ def test_pre_accept_cancellation_has_no_physical_start_or_charge(monkeypatch):
     asyncio.run(run())
 
 
-def test_caller_pool_unrelated_work_is_not_drained():
+@pytest.mark.parametrize("optional", [False, True])
+def test_caller_pool_unrelated_work_is_not_drained(optional):
     from anonymizer.engine.graph_sdk.blocking import BlockingPool
 
     async def run():
@@ -497,7 +520,9 @@ def test_caller_pool_unrelated_work_is_not_drained():
             pending = asyncio.create_task(pool._run(unrelated, lambda: True, Control()))
             try:
                 await until(entered.is_set)
-                execution, services, _, clients, worker, adapters = await fixture(loop, pool, owner="caller")
+                execution, services, _, clients, worker, adapters = await fixture(
+                    loop, pool, owner="caller", base=_optional_base() if optional else None
+                )
                 result = await _execute(execution, services)
                 assert len(_qualify(execution, result).qualified) == 1
                 assert not pending.done() and pool.occupied == 1 and worker.local_users == 0
@@ -562,3 +587,9 @@ def test_live_stop_hook_is_a_resource_user_after_send_completes():
                 await running.wait()
 
     asyncio.run(run())
+
+
+def _optional_base():
+    from tests.graph_sdk.test_optional_tail import optional_fixture
+
+    return optional_fixture(readiness="available")

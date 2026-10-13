@@ -361,7 +361,7 @@ def test_optional_shape_and_position_rejection(bad):
     assert not result.requests.dispatches and all(row.unused_retry is None for row in result.record.terminals)
 
 
-def test_foreign_optional_tail_stays_closed_before_identity(monkeypatch):
+def test_unregistered_foreign_optional_tail_rejects_before_identity(monkeypatch):
     from anonymizer.engine.graph_sdk._foreign_transport import ForeignLoopTransport
     from anonymizer.engine.graph_sdk.executor import start_execution
     from anonymizer.graph._values import InvocationId
@@ -382,7 +382,7 @@ def test_foreign_optional_tail_stays_closed_before_identity(monkeypatch):
             )
 
             def forbidden(*args, **kwargs):
-                raise AssertionError("foreign two-slot admission reached invocation/resource claims")
+                raise AssertionError("unregistered foreign admission reached invocation/resource claims")
 
             monkeypatch.setattr(InvocationId, "new", forbidden)
             monkeypatch.setattr(ForeignLoopTransport, "claim_many", forbidden)

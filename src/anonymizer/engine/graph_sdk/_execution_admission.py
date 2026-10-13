@@ -572,7 +572,7 @@ def _validate_assessments(
 
 
 def _validate_delegated_services(admitted: AdmittedExecutionPlan, services: ExecutionServices) -> None:
-    """Open fixed single-target generation with explicit owner resource lifetimes."""
+    """Admit fixed generation and its declared optional correction with owned resources."""
     prepared = admitted.context.prepared
     delegated = [policy for policy in admitted.policies if policy.delegated is not None]
     if delegated and (len(delegated) != 1 or admitted.context.adaptive_retrievals):
@@ -590,7 +590,10 @@ def _validate_delegated_services(admitted: AdmittedExecutionPlan, services: Exec
         ]
         if foreign and (
             contract.readiness is None
-            or len(contract.child_slots) != 1
+            or not (
+                len(contract.child_slots) == 1
+                or (len(contract.child_slots) == 2 and contract.optional_tail == contract.child_slots[1:])
+            )
             or any(
                 type(handle.transport) is not ForeignLoopTransport
                 for handle in services.handles

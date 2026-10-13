@@ -30,4 +30,14 @@ successful completion witness.
 The registered profile requires a fresh loop-created client, exclusive adapter
 use for one invocation, and a caller-maintained live loop. Claiming an adapter
 cannot establish safety for undisclosed raw-client aliases. This fixture neither
-uses providers nor enables DD routes, opaque execution or optional request slots.
+uses providers nor enables DD routes or opaque execution.
+
+`optional_tail.json` adds the literal expectations frozen in the foreign optional
+handoff before executor comparison. It keeps all original tables unchanged.
+Public cases cross both probe continuations, SDK/caller ownership and G success
+versus Q correction. Three distinct registered clients close even when only two
+send; a separately declared shared adapter closes one client once while retaining
+separate physical request identities. Q cancelled after Reserve but before entry
+retains a cancelled reservation terminal, with no Q Start, charge or settlement.
+The new fixture uses the original resource constructor and worker path through a
+base-fixture argument; it does not copy the executor or create canonical facts.

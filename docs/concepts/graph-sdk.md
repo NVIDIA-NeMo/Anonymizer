@@ -137,7 +137,8 @@ input resolution and output publication; a local assessor can qualify its
 produced candidate. Fixed physical slots are mandatory by default: returning
 before all slots execute fails the submission.
 
-Same-loop and X1 worker submissions may declare `optional_tail=(Q,)` for exactly
+Same-loop and worker submissions, including the registered foreign-client profile,
+may declare `optional_tail=(Q,)` for exactly
 two generation slots `(G, Q)`, one route with two parse attempts and correction-only
 follow-ups. G must be initial; Q may execute only as its authenticated correction.
 Successful G can leave Q blocked without a Start, attempt or physical request.
@@ -212,7 +213,7 @@ Blocking transports retain their existing worker-entry boundary.
 Opaque structural admission remains unsupported because the capability schema
 cannot yet express unknown physical request bounds truthfully. Hard-budget
 preparation retains its implementation-owned-retry rejection. Broader optional
-tails, foreign optional-slot profiles, multi-target shared ownership,
+tails, multi-target shared ownership,
 dynamic recipes and provider-error exhaustion require later
 bounded integration units. Ordinary injected-runner compatibility must gain its
 explicit opaque path before production cutover.
@@ -250,7 +251,8 @@ does not expand foreign service admission or ordinary call-lifetime profiles.
 
 
 The registered foreign-client profile uses one worker owner, one target, one shared
-readiness obligation, one local probe and one mandatory generation leaf. Every
+readiness obligation, one local probe and either one mandatory generation leaf
+or the declared `(G, Q)` optional-correction shape. Every
 physical leaf uses a `ForeignLoopTransport` registered on the worker's declared
 borrowed loop. `ForeignLoopTransport.create(factory=..., owner=...,
 exclusive=True, gate_timeout_ns=...)` runs the client factory on its actual loop
@@ -279,7 +281,10 @@ successful drain or confirmed remote stop.
 Caller-owned clients, pools and loops stay open. Only this invocation's users
 drain; unrelated caller-pool work does not delay its result. The adapter is spent
 after that invocation, while the caller's client remains available for subsequent
-caller use. The local public fixture executes two actual foreign sends, publishes
-a typed candidate, and qualifies it through the existing local assessment path.
-Broader recipes, shared targets, optional slots, opaque execution and actual DD
+caller use. The public optional-tail fixture executes two sends when G succeeds
+or three when Q corrects malformed G, publishes a typed candidate, and qualifies
+it through the existing local assessment path. All registered SDK-owned clients,
+including an unsent Q client, close once on their creation loop after actual users
+drain. Its cleanup association remains required even without a Q request.
+Broader recipes, shared targets, additional optional shapes, opaque execution and actual DD
 provider routes remain separate admission work.
