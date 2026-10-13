@@ -2,9 +2,9 @@
 # SPDX-License-Identifier: Apache-2.0
 """Actual DD detection/Redact development profile, using the single graph executor.
 
-Validator capacity is an explicit admission declaration, not a public input
-limit. Canonical chunk membership closes unused capacity per source. Source-bound
-Redact assessments and shared receipts are qualified; retry chains remain incomplete.
+Validator capacity follows the existing nonoverlapping detector span bound.
+An explicit capacity remains available for bounded development controls. Canonical chunk membership closes unused capacity per source. Source-bound
+Redact assessments, shared receipts and DD conversation restarts are qualified.
 The public facade does not use this profile.
 """
 
@@ -24,7 +24,10 @@ from anonymizer.config.models import DetectionModelSelection
 from anonymizer.engine.constants import COL_AUGMENTED_ENTITIES, COL_RAW_DETECTED, COL_TEXT, COL_VALIDATION_DECISIONS
 from anonymizer.engine.detection._graph_invocation import DetectionRedactInvocation
 from anonymizer.engine.detection.artifacts import ENTITY_SPANS_TYPE
-from anonymizer.engine.detection.detection_workflow import EntityDetectionWorkflow
+from anonymizer.engine.detection.detection_workflow import (
+    _DEFAULT_VALIDATION_MAX_ENTITIES_PER_CALL,
+    EntityDetectionWorkflow,
+)
 from anonymizer.engine.graph_sdk._execution_delegated import WorkerDelegatedSubmitter
 from anonymizer.engine.graph_sdk._foreign_transport import ForeignLoopTransport
 from anonymizer.engine.graph_sdk.blocking import BlockingAffinity, BlockingPool
@@ -186,24 +189,40 @@ async def execute_detection_redact(
     model_configs: list[ModelConfig],
     selected_models: DetectionModelSelection,
     detection_options: Mapping[str, Any],
-    validation_chunks: int,
+    validation_chunks: int | None = None,
     pool: BlockingPool,
     limits: ExecutionLimits,
 ) -> ExecutionResult:
     """Admit and execute the named real-DD profile without a second workflow runner."""
-    if type(validation_chunks) is not int or validation_chunks < 1 or source.empty:
-        raise ValueError("development profile requires nonempty sources and declared validator capacity")
+    if source.empty:
+        raise ValueError("development profile requires nonempty sources")
+    if validation_chunks is None:
+        chunk_size = detection_options.get(
+            "validation_max_entities_per_call", _DEFAULT_VALIDATION_MAX_ENTITIES_PER_CALL
+        )
+        if type(chunk_size) is not int or chunk_size < 1:
+            raise ValueError("validation_max_entities_per_call must be a positive integer")
+        # parse_raw_entities admits only nonempty, in-range, nonoverlapping spans.
+        # Thus detector-only validation has at most one candidate per character.
+        # This reserves capacity from existing input, without limiting public input.
+        characters = max(len(text) for text in source[COL_TEXT])
+        validation_chunks = max(1, (characters + chunk_size - 1) // chunk_size)
+    if type(validation_chunks) is not int or validation_chunks < 1:
+        raise ValueError("validator capacity must be a positive integer")
     generations = (
         (COL_RAW_DETECTED, 0),
         *((COL_VALIDATION_DECISIONS, i) for i in range(validation_chunks)),
         (COL_AUGMENTED_ENTITIES, 0),
     )
+    run_config = detection._adapter._data_designer.run_config
+    parser_capacity = (run_config.max_conversation_correction_steps + 1) * (run_config.max_conversation_restarts + 1)
+    group_sizes = (parser_capacity,) + (1,) * validation_chunks + (parser_capacity,)
     graph = DataGraph.new()
     targets = []
     for text in source[COL_TEXT]:
         graph, target = graph.add_text(text)
         targets.append(target)
-    count = len(generations)
+    count = sum(group_sizes)
     size = len(targets)
     byte_limit = limits.max_runtime_artifact_bytes
     data = graph.validate(
@@ -448,6 +467,11 @@ async def execute_detection_redact(
         ),
     )
     slots = {slot.template: slot.index for slot in prepared.reservation_recipe}
+    groups = []
+    position = 0
+    for length in group_sizes:
+        groups.append(tuple(slots[leaf] for leaf in leaves[position : position + length]))
+        position += length
     policies = []
     for node, cap in zip(ids, capabilities, strict=True):
         request = (
@@ -465,12 +489,12 @@ async def execute_detection_redact(
             DelegatedRequestContract(
                 mode="qualified",
                 child_slots=tuple(slots[leaf] for leaf in leaves),
-                generation_groups=tuple((slots[leaf],) for leaf in leaves),
+                generation_groups=tuple(groups),
                 selection=DelegatedGenerationSelection(
-                    port="validation_chunks", slots=tuple(slots[leaf] for leaf in leaves[1:-1])
+                    port="validation_chunks", slots=tuple(group[0] for group in groups[1:-1])
                 ),
-                routes=(ChildRoute(name="primary", parse_attempts=1),),
-                followups=frozenset(),
+                routes=(ChildRoute(name="primary", parse_attempts=parser_capacity),),
+                followups=frozenset({"correction", "conversation_restart"}),
                 readiness=DelegatedReadiness(
                     owner_slot=slots[readiness],
                     request_slot=slots[readiness_request],
@@ -549,7 +573,7 @@ async def execute_detection_redact(
             model_configs,
             selected_models,
             physical,
-            dict(zip(generations, (slots[leaf] for leaf in leaves), strict=True)),
+            dict(zip(generations, groups, strict=True)),
             detection_options,
             "redacted",
             "ok",

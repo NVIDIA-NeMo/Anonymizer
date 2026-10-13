@@ -160,6 +160,12 @@ class _WorkerBorrow(PrivateValue):
     async def probe(self) -> None:
         await self._call(self.owner.probe)
 
+    async def aparser_rejected(self, request: PhysicalRequestId) -> ChildEvidence:
+        async def accept() -> ChildEvidence:
+            return self.owner.parser_rejected(request)
+
+        return await self._call(accept)
+
     def parser_rejected(self, request: PhysicalRequestId) -> ChildEvidence:
         self._check_origin()
 
@@ -245,6 +251,9 @@ class _DelegatedOwner(PrivateValue):
     def _check(self) -> None:
         if self.closed or asyncio.get_running_loop() is not self.loop:
             reject(EffectCode.UNSUPPORTED)
+
+    async def aparser_rejected(self, request: PhysicalRequestId) -> ChildEvidence:
+        return self.parser_rejected(request)
 
     def parser_rejected(self, request: PhysicalRequestId) -> ChildEvidence:
         self._check()
@@ -661,7 +670,7 @@ class _DelegatedOwner(PrivateValue):
         self.closed = True
         incomplete: set[SemanticAssociation] = set()
         for job in self.jobs.values():
-            unused = None if self.cancelled or self.request_rejected else self.runtime._unused_tail(job)
+            unused = {} if self.cancelled or self.request_rejected else self.runtime._unused_tails(job)
             for slot in (
                 self.contract.child_slots
                 if self.runtime.frame.invocation_source is not None
@@ -671,7 +680,7 @@ class _DelegatedOwner(PrivateValue):
                 state = self.runtime.frame.sources[job.target].state
                 entry = next(item for item in state.entries if item.activation == key)
                 if entry.status in {"ready", "unstarted"}:
-                    if unused is None or unused[0] != key:
+                    if key not in unused:
                         incomplete.add(job.association)
                     self.runtime.frame.sources[job.target].state = advance_activation(
                         state=state, event=CloseUnstarted(activation=key, category="blocked")
@@ -763,6 +772,8 @@ class _DelegatedOwner(PrivateValue):
             job = self.jobs[item.association]
             source = runtime.frame.sources[job.target]
             missing = {slot for slot in self.contract.child_slots if source.keys[slot] not in runtime.attempts}
+            retry_unused = {key.occurrence for key in runtime._unused_tails(job)}
+            missing -= {slot for slot in missing if source.keys[slot].occurrence in retry_unused}
             if missing != set(omitted):
                 return self._failure("failure", "implementation_exception")
             readiness = self.contract.readiness

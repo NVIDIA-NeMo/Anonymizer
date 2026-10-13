@@ -580,9 +580,7 @@ class _InvocationRuntime:
                 and mapping.category == "success"
                 and any(key[0] == job.target and key[1] == job.activation for key in self.facts.produced)
             ):
-                unused = self._unused_tail(job)
-                if unused is not None:
-                    self.blocked_reasons[unused[0]] = unused[1]
+                self.blocked_reasons.update(self._unused_tails(job))
                 selection = job.policy.delegated.selection
                 if selection is not None:
                     value = next(
@@ -651,58 +649,61 @@ class _InvocationRuntime:
                     )
                 )
 
-    def _unused_tail(self, job: _ExecutionJob) -> tuple[ActivationKey, UnusedRetryCapacity] | None:
-        """Check provisional capacity against this invocation's live facts, without stamping."""
+    def _unused_tails(self, job: _ExecutionJob) -> dict[ActivationKey, UnusedRetryCapacity]:
+        """Close only unentered suffixes of successfully completed generation chains."""
         contract = job.policy.delegated
         state = self.request_authority.state
-        if not contract or not contract.optional_tail or self.control.cancelled or state.cancelled:
-            return None
+        if not contract or not (contract.optional_tail or contract.generation_groups):
+            return {}
         if (
-            state.reserved
-            or state.denials
-            or state.defects
+            self.control.cancelled
+            or state.cancelled
+            or state.reserved
             or state.cancel_requested
             or state.local_in_flight
-            or state.remote_outstanding
+            or (contract.optional_tail and (state.denials or state.defects or state.remote_outstanding))
         ):
-            return None
-        g, q = (self.frame.sources[job.target].keys[index] for index in contract.child_slots)
-        entries = {item.activation: item for item in self.frame.sources[job.target].state.entries}
-        if (
-            q in self.attempts
-            or entries[q].status not in {"ready", "unstarted", "blocked"}
-            or entries[g].status != "success"
-        ):
-            return None
-        chains = [item for item in state.chains if item.associations == {job.association}]
-        if len(chains) != 1:
-            return None
-        history = [row for row in state.dispatches if row.child is not None and row.child.chain == chains[0].chain]
-        if len(history) != 1:
-            return None
-        request = history[0]
-        child = request.child
-        if child is None or child.leaf != self.attempts.get(g) or child.source_kind != "initial":
-            return None
-        terminal = [row for row in state.terminals if row.request == request.request]
-        settlement = [row for row in state.settlements if row.request == request.request]
-        if (
-            len(terminal) != 1
-            or terminal[0].category != "success"
-            or len(terminal[0].results) != 1
-            or terminal[0].results[0].category != "success"
-            or len(settlement) != 1
-            or settlement[0].disposition != "completed"
-            or settlement[0].remote_stopped is not True
-            or (contract.usage_requirement == "exact" and not isinstance(settlement[0].usage, ExactUsage))
-        ):
-            return None
+            return {}
+        source = self.frame.sources[job.target]
+        entries = {item.activation: item for item in source.state.entries}
         if contract.readiness is not None:
-            readiness = self.frame.invocation_source or self.frame.sources[job.target]
+            readiness = self.frame.invocation_source or source
             statuses = {item.activation: item.status for item in readiness.state.entries}
             if any(statuses[readiness.keys[index]] != "success" for index in contract.readiness.slots):
-                return None
-        return q, UnusedRetryCapacity(owner=job.association.task, after=self.attempts[g])
+                return {}
+        unused = {}
+        for group in contract.generations:
+            keys = tuple(source.keys[index] for index in group)
+            entered = tuple(key for key in keys if key in self.attempts)
+            if not entered or entered != keys[: len(entered)] or len(entered) == len(keys):
+                continue
+            last = entered[-1]
+            if entries[last].status != "success":
+                continue
+            history = [
+                row for row in state.dispatches if row.child is not None and row.child.leaf == self.attempts[last]
+            ]
+            if len(history) != 1:
+                continue
+            request = history[0]
+            terminals = [row for row in state.terminals if row.request == request.request]
+            settlements = [row for row in state.settlements if row.request == request.request]
+            if (
+                len(terminals) != 1
+                or terminals[0].category != "success"
+                or len(settlements) != 1
+                or settlements[0].disposition != "completed"
+                or settlements[0].remote_stopped is not True
+                or (
+                    contract.optional_tail
+                    and contract.usage_requirement == "exact"
+                    and not isinstance(settlements[0].usage, ExactUsage)
+                )
+            ):
+                continue
+            cause = UnusedRetryCapacity(owner=job.association.task, after=self.attempts[last])
+            unused.update((key, cause) for key in keys[len(entered) :])
+        return unused
 
     def _stage_outputs(
         self,

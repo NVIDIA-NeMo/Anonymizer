@@ -312,7 +312,7 @@ def test_real_dd_whole_frame_uses_invocation_readiness_and_source_requests(
     assert any(fact.disposition == "closed" for fact in result.cleanup)
 
 
-async def run_graph_profile(scripted_detection, source, options, chunks=1, artifact_limit=16):
+async def run_graph_profile(scripted_detection, source, options, chunks=1, artifact_limit=16, remote_limit=1):
     from anonymizer.engine.detection._graph_profile import execute_detection_redact
     from anonymizer.engine.graph_sdk.blocking import BlockingPool
     from anonymizer.engine.graph_sdk.executor import ExecutionLimits
@@ -330,7 +330,7 @@ async def run_graph_profile(scripted_detection, source, options, chunks=1, artif
             pool=pool,
             limits=ExecutionLimits(
                 max_local_in_flight=1,
-                max_remote_outstanding=1,
+                max_remote_outstanding=remote_limit,
                 max_runtime_artifacts=artifact_limit,
                 max_runtime_artifact_bytes=10000,
                 max_collection_items=16,

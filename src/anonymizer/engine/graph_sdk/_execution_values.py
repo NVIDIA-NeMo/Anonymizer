@@ -775,6 +775,8 @@ class DelegatedRequests(Protocol):
 
     def parser_rejected(self, request: PhysicalRequestId) -> ChildEvidence: ...
 
+    async def aparser_rejected(self, request: PhysicalRequestId) -> ChildEvidence: ...
+
 
 @runtime_checkable
 class DelegatedCallable(Protocol):

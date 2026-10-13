@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import fields, replace
+from typing import Any
 
 import httpx
 import pandas as pd
@@ -476,7 +477,9 @@ def test_completed_response_without_usage_is_settled_but_never_fabricated(script
     assert not result._retained_resources
 
 
-@pytest.mark.parametrize("fault", ["membership", "source_port", "omission_reason"])
+@pytest.mark.parametrize(
+    "fault", ["membership", "source_port", "omission_reason", "missing_provenance", "missing_all_provenance"]
+)
 def test_retained_chunk_closure_rejects_changed_membership_or_authority(scripted_detection, fault):
     from anonymizer.engine.detection._graph_profile import qualify_detection_redact
     from anonymizer.engine.graph_sdk.requests import TextCollectionValue
@@ -496,6 +499,9 @@ def test_retained_chunk_closure_rejects_changed_membership_or_authority(scripted
             (reference, TextCollectionValue(items=()) if reference == first.artifact else value)
             for reference, value in result.artifacts
         )
+    elif fault in {"missing_provenance", "missing_all_provenance"}:
+        removed = {first.artifact} if fault == "missing_provenance" else {first.artifact, second.artifact}
+        updates["provenance"] = tuple(fact for fact in result.provenance if fact.artifact not in removed)
     elif fault == "source_port":
         raw = object.__new__(type(first))
         for field in fields(first):
@@ -531,7 +537,7 @@ def test_raw_generation_selection_missing_field_rejects(field):
         raw.__post_init__()
 
 
-def test_default_augmenter_restart_remains_explicitly_unqualified(scripted_detection, monkeypatch):
+def test_default_augmenter_restart_preserves_legacy_and_qualifies(scripted_detection, monkeypatch):
     import json
 
     from anonymizer.engine.detection.detection_workflow import EntityDetectionWorkflow
@@ -559,7 +565,177 @@ def test_default_augmenter_restart_remains_explicitly_unqualified(scripted_detec
     attempted.clear()
     calls.clear()
     result = asyncio.run(run_graph_profile(scripted_detection, _source(), _options()))
-    assert not result.final_outputs and not result.frames
-    assert len(attempted) <= 2
-    assert result.requests.dispatched_count == sum(calls.values())
+    from anonymizer.engine.constants import COL_FINAL_ENTITIES
+    from anonymizer.engine.detection._graph_profile import qualify_detection_redact
+
+    assert len(result.final_outputs) == len(qualify_detection_redact(result).qualified) == 2
+    assert (
+        result.frames[0].project(result)[COL_FINAL_ENTITIES].tolist() == legacy.dataframe[COL_FINAL_ENTITIES].tolist()
+    )
+    assert len(attempted) == 3
+    assert result.requests.dispatched_count == sum(calls.values()) == 8
+    restarts = [row for row in result.requests.dispatches if row.child.source_kind == "conversation_restart"]
+    assert len(restarts) == 1
+    predecessor = restarts[0].child.predecessor
+    terminal = next(row for row in result.requests.terminals if row.request == predecessor)
+    assert terminal.failure == "malformed_response"
+    assert next(row for row in result.requests.settlements if row.request == predecessor).disposition == "completed"
     assert all(state.complete for state in result.states)
+
+    from anonymizer.graph._values import ContractViolation
+    from tests.graph_sdk.child_qualification_fixtures import result_with
+
+    unused = next(row for row in result.record.terminals if row.unused_retry is not None)
+    foreign = next(
+        row.attempt
+        for row in result.record.terminals
+        if row.attempt is not None and row.attempt not in (unused.unused_retry.owner, unused.unused_retry.after)
+    )
+    forged = replace(unused, unused_retry=replace(unused.unused_retry, after=foreign))
+    mutations = (
+        result_with(result, requests=replace(result.requests, child_evidence=())),
+        result_with(
+            result,
+            record=replace(
+                result.record, terminals=tuple(forged if row is unused else row for row in result.record.terminals)
+            ),
+        ),
+    )
+    for changed in mutations:
+        with pytest.raises((EffectRejected, ContractViolation)):
+            qualify_detection_redact(changed)
+
+
+@pytest.mark.parametrize(
+    "rejected,qualified,sends,corrections,restarts", [(5, 2, 12, 0, 5), (6, 1, 12, 0, 5), (2, 2, 9, 1, 1)]
+)
+def test_default_restart_capacity_preserves_exhaustion_and_peer(
+    scripted_detection, monkeypatch, rejected, qualified, sends, corrections, restarts
+):
+    import json
+
+    from anonymizer.engine.constants import COL_FINAL_ENTITIES
+    from anonymizer.engine.detection._graph_profile import qualify_detection_redact
+    from anonymizer.engine.detection.detection_workflow import EntityDetectionWorkflow
+    from anonymizer.engine.ndd.adapter import NddAdapter
+
+    designer, models, selected, calls = scripted_detection
+    designer.set_run_config(
+        designer.run_config.model_copy(
+            update={
+                "max_conversation_correction_steps": corrections,
+                "max_conversation_restarts": restarts,
+            }
+        )
+    )
+    count = min(rejected + 1, (corrections + 1) * (restarts + 1))
+    attempts = []
+
+    def response(request, answer):
+        body = json.loads(request.content)
+        messages = json.dumps(body["messages"])
+        if "Find untagged sensitive entities" in messages and "travels." in messages:
+            attempts.append(request.content)
+            if len(attempts) <= rejected:
+                payload = answer.json()
+                payload["choices"][0]["message"]["content"] = "not structured output"
+                return httpx.Response(200, json=payload)
+        return answer
+
+    _modify_dd_responses(scripted_detection, monkeypatch, response)
+    legacy = EntityDetectionWorkflow(NddAdapter(designer)).run(
+        _source(), model_configs=models, selected_models=selected, **_options()
+    )
+    assert len(legacy.dataframe) == qualified
+    assert len(attempts) == count
+    attempts.clear()
+    calls.clear()
+    result = asyncio.run(run_graph_profile(scripted_detection, _source(), _options()))
+    assert len(attempts) == count
+    assert result.requests.dispatched_count == sum(calls.values()) == sends
+    assert len(result.final_outputs) == len(qualify_detection_redact(result).qualified) == qualified
+    projected = result.frames[0].project(result)
+    assert projected[COL_FINAL_ENTITIES].tolist() == legacy.dataframe[COL_FINAL_ENTITIES].tolist()
+    assert result.frames[0].failed_records == tuple(legacy.failed_records)
+    assert sum(row.failure == "malformed_response" for row in result.requests.terminals) == rejected
+    assert all(state.complete for state in result.states) and result.invocation_state.complete
+    assert not result.requests.remote_outstanding
+    if corrections:
+        kinds = [row.child.source_kind for row in result.requests.dispatches if row.child.source_kind != "initial"]
+        assert kinds == ["correction", "conversation_restart"]
+
+
+@pytest.mark.parametrize("preview", [True, False])
+def test_all_failed_dd_sources_raise_legacy_and_withhold_graph(scripted_detection, preview):
+    from anonymizer.engine.detection._graph_profile import qualify_detection_redact
+    from anonymizer.engine.detection.detection_workflow import EntityDetectionWorkflow
+    from anonymizer.engine.ndd.adapter import NddAdapter
+    from anonymizer.interface.errors import AnonymizerWorkflowError
+
+    designer, models, selected, calls = scripted_detection
+    source = pd.DataFrame({COL_TEXT: ["Alice fails.", "Alice fails."], "extra": [17, 29]})
+    options: dict[str, Any] = {**_options(), "preview_num_records": 2 if preview else None}
+    with pytest.raises(AnonymizerWorkflowError, match="scripted row failure"):
+        EntityDetectionWorkflow(NddAdapter(designer)).run(
+            source, model_configs=models, selected_models=selected, **options
+        )
+    calls.clear()
+    result = asyncio.run(run_graph_profile(scripted_detection, source, options))
+    assert not result.final_outputs and not result.frames and not qualify_detection_redact(result).qualified
+    assert result.requests.dispatched_count == sum(calls.values()) == 3
+    assert all(state.complete for state in result.states) and result.invocation_state.complete
+
+
+@pytest.mark.parametrize("chunk_size,expected", [(1, 8), (2, 7)])
+def test_admission_derives_validator_capacity_without_input_cap(scripted_detection, chunk_size, expected):
+    from anonymizer.engine.detection._graph_profile import qualify_detection_redact
+
+    source = pd.DataFrame({COL_TEXT: ["Alice travels.", "Alice Bob stays."]})
+    result = asyncio.run(
+        run_graph_profile(
+            scripted_detection,
+            source,
+            {**_options(), "validation_max_entities_per_call": chunk_size},
+            chunks=None,
+        )
+    )
+    contract = next(policy.delegated for policy in result._execution.policies if policy.delegated)
+    assert len(contract.selection.slots) == (len("Alice Bob stays.") + chunk_size - 1) // chunk_size
+    assert result.requests.dispatched_count == expected
+    assert len(result.final_outputs) == len(qualify_detection_redact(result).qualified) == 2
+
+
+def test_unknown_remote_source_retains_peer_content_but_remains_unqualified(scripted_detection, monkeypatch):
+    import json
+
+    from anonymizer.engine.detection._graph_profile import qualify_detection_redact
+
+    physicals = []
+    initialize = NddPhysicalTransport.__init__
+
+    def initialized(self):
+        initialize(self)
+        physicals.append(self)
+
+    def response(request, answer):
+        messages = json.dumps(json.loads(request.content)["messages"])
+        if "Find untagged sensitive entities" in messages and "travels." in messages:
+            raise httpx.ReadError("scripted uncertain source", request=request)
+        return answer
+
+    monkeypatch.setattr(NddPhysicalTransport, "__init__", initialized)
+    _modify_dd_responses(scripted_detection, monkeypatch, response)
+    try:
+        result = asyncio.run(run_graph_profile(scripted_detection, _source(), _options(), remote_limit=2))
+        assert result.requests.dispatched_count == 7
+        assert len(result.requests.remote_outstanding) == 1
+        assert len(result.final_outputs) == 1
+        # Lost physical work has no settlement; this profile has not yet qualified
+        # that retained receipt, so the public route must remain gated.
+        with pytest.raises(EffectRejected):
+            qualify_detection_redact(result)
+        assert result.frames[0].project(result)[COL_TEXT].tolist() == ["Alice stays."]
+        assert len(result._retained_resources) == 1 and not physicals[0].closed
+    finally:
+        for physical in physicals:
+            asyncio.run_coroutine_threadsafe(physical.close(), physical.loop).result(timeout=10)

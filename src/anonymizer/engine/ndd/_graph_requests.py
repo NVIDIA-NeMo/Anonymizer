@@ -2,16 +2,16 @@
 # SPDX-License-Identifier: Apache-2.0
 """Version-qualified DD HTTP entry borrowed from the invocation request owner.
 
-This development binding supports one physical attempt per declared generation.
+This development binding observes each actual parser attempt in its generation chain.
 The caller registers NddPhysicalTransport with ForeignLoopTransport before
-execution. Its cleanup closes actual DD clients after the worker drains. Parser
-corrections and provider retries remain unsupported by this binding.
+execution. Its cleanup closes actual DD clients after the worker drains. DD owns
+conversation restarts and correction turns; provider retries remain unsupported.
 """
 
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
@@ -21,6 +21,7 @@ from typing import Any
 
 import httpx
 from data_designer.engine.models.clients.retry import create_retry_transport
+from data_designer.engine.models.parsers.errors import ParserException
 
 from anonymizer.engine.graph_sdk._execution_values import DelegatedRequests
 from anonymizer.engine.graph_sdk.requests import (
@@ -28,6 +29,7 @@ from anonymizer.engine.graph_sdk.requests import (
     DispatchEnvelope,
     ExactUsage,
     ExternalSettlement,
+    PhysicalRequestId,
     StopUnknown,
     TransportFailure,
     TransportSuccess,
@@ -43,9 +45,31 @@ class _Exchange:
     transport: httpx.AsyncBaseTransport
     request: httpx.Request
     response: httpx.Response | None = None
+    error: Exception | None = None
 
 
 _EXCHANGE: ContextVar[_Exchange] = ContextVar("anonymizer_dd_physical_exchange")
+
+
+@dataclass
+class _Generation:
+    parser: Callable[[str], Any]
+    correction_steps: int = 0
+    content: str | None = None
+    value: Any = None
+    error: Exception | None = None
+    previous: PhysicalRequestId | None = None
+    attempts: int = 0
+
+    def parse(self, content: str) -> Any:
+        if content != self.content:
+            raise AnonymizerWorkflowError("DD parser content differs from the physical receipt")
+        if self.error is not None:
+            raise self.error
+        return self.value
+
+
+_GENERATION: ContextVar[_Generation | None] = ContextVar("anonymizer_dd_generation", default=None)
 
 
 class NddPhysicalTransport:
@@ -87,8 +111,12 @@ class NddPhysicalTransport:
             or (work is not None and request.associations[0].association != work.association)
         ):
             raise AnonymizerWorkflowError("DD physical exchange has invalid source ownership")
-        response = await exchange.transport.handle_async_request(exchange.request)
-        await response.aread()
+        try:
+            response = await exchange.transport.handle_async_request(exchange.request)
+            await response.aread()
+        except Exception as error:
+            exchange.error = error
+            raise
         exchange.response = response
         try:
             payload = response.json()
@@ -114,6 +142,21 @@ class NddPhysicalTransport:
             )
         if not isinstance(payload, dict):
             return TransportFailure(failure="malformed_response", settlement=settlement)
+        generation = _GENERATION.get()
+        if work is not None and generation is not None:
+            try:
+                content = (payload["choices"][0]["message"]["content"] or "").strip()
+            except (KeyError, IndexError, TypeError, AttributeError):
+                return TransportFailure(failure="malformed_response", settlement=settlement)
+            generation.content, generation.error = content, None
+            try:
+                generation.value = generation.parser(content)
+            except Exception as error:
+                generation.error = error
+                return TransportFailure(
+                    failure="malformed_response" if isinstance(error, ParserException) else "permanent",
+                    settlement=settlement,
+                )
         return TransportSuccess(
             results=(
                 AssociationResult(
@@ -134,7 +177,10 @@ class NddRequestBridge:
     """Bind actual DD generation identity to pre-admitted independent chains."""
 
     def __init__(
-        self, requests: DelegatedRequests, slots: Mapping[tuple[str, int], int], physical: NddPhysicalTransport
+        self,
+        requests: DelegatedRequests,
+        slots: Mapping[tuple[str, int], int | tuple[int, ...]],
+        physical: NddPhysicalTransport,
     ) -> None:
         self.physical = physical
         self.requests = requests
@@ -176,12 +222,37 @@ class NddRequestBridge:
                         slot = bridge.slots.get((work.column, work.generation))
                         if slot is None:
                             raise AnonymizerWorkflowError("DD generation has no admitted physical slot")
-                        await bridge.requests.request(slot, association=work.association)
+                        slots = (slot,) if isinstance(slot, int) else slot
+                        generation = _GENERATION.get()
+                        attempt = generation.attempts if generation is not None else 0
+                        if attempt >= len(slots):
+                            raise AnonymizerWorkflowError("DD generation exceeded its admitted parser capacity")
+                        previous = generation.previous if generation is not None else None
+                        evidence = await bridge.requests.aparser_rejected(previous) if previous is not None else None
+                        physical = await bridge.requests.request(
+                            slots[attempt],
+                            association=work.association,
+                            source_kind=(
+                                "initial"
+                                if previous is None
+                                else "conversation_restart"
+                                if generation is not None and attempt % (generation.correction_steps + 1) == 0
+                                else "correction"
+                            ),
+                            predecessor=previous,
+                            evidence=evidence,
+                        )
+                        if generation is not None:
+                            generation.previous = physical
+                            generation.attempts += 1
+                    if exchange.error is not None:
+                        raise exchange.error
                     if exchange.response is None:
                         raise AnonymizerWorkflowError("DD physical request did not return a response")
                     return exchange.response
-                except BaseException:
-                    bridge.rejected = True
+                except BaseException as error:
+                    if error is not exchange.error:
+                        bridge.rejected = True
                     raise
                 finally:
                     _EXCHANGE.reset(token)
@@ -201,6 +272,35 @@ class NddRequestBridge:
                     bridge.rejected = True
                     raise AnonymizerWorkflowError("DD physical transport must be explicitly registered")
                 inner._transport = Gate(inner)
+                generate = result.agenerate
+
+                async def agenerate(*args: Any, **kwargs: Any) -> Any:
+                    work = current_source_work()
+                    if work is None:
+                        return await generate(*args, **kwargs)
+                    slots = bridge.slots.get((work.column, work.generation))
+                    capacity = len(slots) if isinstance(slots, tuple) else 1
+                    corrections = kwargs.get("max_correction_steps", 0)
+                    restarts = kwargs.get("max_conversation_restarts", 0)
+                    if (
+                        type(corrections) is not int
+                        or corrections < 0
+                        or type(restarts) is not int
+                        or restarts < 0
+                        or (corrections + 1) * (restarts + 1) > capacity
+                        or kwargs.get("tool_alias") is not None
+                    ):
+                        bridge.rejected = True
+                        raise AnonymizerWorkflowError("DD parser policy exceeds admitted generation capacity")
+                    generation = _Generation(kwargs.get("parser", lambda value: value), corrections)
+                    kwargs["parser"] = generation.parse
+                    token = _GENERATION.set(generation)
+                    try:
+                        return await generate(*args, **kwargs)
+                    finally:
+                        _GENERATION.reset(token)
+
+                result.agenerate = agenerate
                 return result
 
             provider.model_registry._model_facade_factory = facade

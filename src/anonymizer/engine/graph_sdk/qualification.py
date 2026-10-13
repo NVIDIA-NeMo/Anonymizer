@@ -772,6 +772,11 @@ class _Qualification:
             ports = [port for port in self.result.ports if port.activation == owner and port.port == selection.port]
             if len(ports) != 1 or ports[0].artifact not in values:
                 reject(EffectCode.MISSING)
+            port = ports[0]
+            expected = OperationOutputKey(target=self.owners[owner], activation=owner, port=selection.port)
+            provenance = [fact for fact in self.result.provenance if fact.key == expected]
+            if len(provenance) != 1 or provenance[0].artifact != port.artifact:
+                reject(EffectCode.MISSING)
             omitted = selection.omitted(values[ports[0].artifact])
             offset = self.offset(owner)
             for slot in omitted:
@@ -810,9 +815,11 @@ class _Qualification:
             offset = next(
                 row.occurrence_offset for row in self.prepared.target_occurrences if row.target == self.owners[key]
             )
+            group = next((group for group in contract.generations if key.occurrence - offset in group), ())
             if (
-                contract.optional_tail != (key.occurrence - offset,)
-                or contract.child_slots[0] != generation.occurrence - offset
+                not group
+                or generation.occurrence - offset not in group
+                or group.index(generation.occurrence - offset) >= group.index(key.occurrence - offset)
                 or key.parent != owner.parent
                 or generation.parent != owner.parent
                 or terminal.attempt is not None
@@ -831,27 +838,54 @@ class _Qualification:
             ):
                 reject(EffectCode.CONTRADICTORY)
             association = SemanticAssociation(task=cause.owner)
-            chains = [row for row in receipt.chains if row.associations == {association}]
+            chains = [
+                row
+                for row in receipt.chains
+                if row.associations == {association}
+                and any(
+                    item.child is not None and item.child.chain == row.chain and item.child.leaf == cause.after
+                    for item in receipt.dispatches
+                )
+            ]
             if len(chains) != 1:
                 reject(EffectCode.CONTRADICTORY)
             history = [
                 row for row in receipt.dispatches if row.child is not None and row.child.chain == chains[0].chain
             ]
-            if len(history) != 1 or history[0].child is None or history[0].child.leaf != cause.after:
+            if (
+                not history
+                or history[-1].child is None
+                or history[-1].child.leaf != cause.after
+                or tuple(
+                    item.child.leaf.activation.occurrence - offset
+                    for item in history
+                    if item.child is not None and item.child.leaf is not None
+                )
+                != group[: group.index(generation.occurrence - offset) + 1]
+            ):
                 reject(EffectCode.CONTRADICTORY)
-            request = history[0].request
+            request = history[-1].request
             settlements = [row for row in receipt.settlements if row.request == request]
             physical = [row for row in receipt.terminals if row.request == request]
             if (
-                receipt.denials
-                or receipt.defects
-                or receipt.cancel_requested
-                or receipt.local_in_flight
-                or receipt.remote_outstanding
+                (
+                    contract.optional_tail
+                    and (
+                        receipt.denials
+                        or receipt.defects
+                        or receipt.cancel_requested
+                        or receipt.local_in_flight
+                        or receipt.remote_outstanding
+                    )
+                )
                 or len(settlements) != 1
                 or settlements[0].disposition != "completed"
                 or settlements[0].remote_stopped is not True
-                or (contract.usage_requirement == "exact" and not isinstance(settlements[0].usage, ExactUsage))
+                or (
+                    contract.optional_tail
+                    and contract.usage_requirement == "exact"
+                    and not isinstance(settlements[0].usage, ExactUsage)
+                )
                 or len(physical) != 1
                 or physical[0].category != "success"
                 or receipt.dispatched_count != len(receipt.dispatches)

@@ -56,7 +56,7 @@ class DetectionRedactInvocation:
     model_configs: list[ModelConfig]
     selected_models: DetectionModelSelection
     physical: NddPhysicalTransport
-    slots: Mapping[tuple[str, int], int]
+    slots: Mapping[tuple[str, int], int | tuple[int, ...]]
     detection_options: Mapping[str, Any]
     output_port: str
     outcome: str
