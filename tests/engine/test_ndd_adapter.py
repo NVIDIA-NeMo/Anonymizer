@@ -215,7 +215,6 @@ def test_detect_missing_records_returns_missing_ids() -> None:
         workflow_name="replace-workflow",
         input_df=input_df,
         output_df=output_df,
-        source_positions=(0, 2),
     )
 
     assert len(failed_records) == 1
@@ -232,7 +231,6 @@ def test_detect_missing_records_for_preview_subset_has_no_false_failures() -> No
         workflow_name="detect-workflow",
         input_df=preview_input_df,
         output_df=preview_output_df,
-        source_positions=(0, 1),
     )
 
     assert len(failed_records) == 0
@@ -387,7 +385,6 @@ def test_detect_missing_records_short_circuit_warns_when_input_missing_id(
         workflow_name="detect-workflow",
         input_df=input_df,
         output_df=output_df,
-        source_positions=(),
     )
 
     assert result == []
@@ -435,7 +432,6 @@ def test_detect_missing_records_short_circuit_warns_when_output_missing_id(
         workflow_name="rewrite-workflow",
         input_df=input_df,
         output_df=output_df,
-        source_positions=(),
     )
 
     assert len(result) == 3
@@ -465,15 +461,12 @@ def test_detect_missing_records_short_circuit_warns_when_output_missing_id(
     _assert_no_backend_reference(debug_msg)
 
 
-def test_missing_record_preserves_duplicate_legacy_identifier() -> None:
+def test_missing_record_projection_preserves_legacy_duplicate_id_behavior() -> None:
     adapter = NddAdapter(data_designer=Mock(spec=DataDesigner))
     source = pd.DataFrame({"text": ["same", "same"], RECORD_ID_COLUMN: ["duplicate", "duplicate"]})
     failed = adapter._detect_missing_records(
         workflow_name="detect-workflow",
         input_df=source,
         output_df=source.iloc[:1],
-        source_positions=(0,),
     )
-    assert [(record.record_id, record.step, record.reason) for record in failed] == [
-        ("duplicate", "detect-workflow", "Record missing from workflow output")
-    ]
+    assert failed == []

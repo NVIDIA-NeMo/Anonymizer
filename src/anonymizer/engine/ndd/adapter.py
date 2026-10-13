@@ -455,7 +455,6 @@ class NddAdapter:
                 else workflow_input_df
             ),
             output_df=output_df,
-            source_positions=source_positions,
         )
         _success_model_usage = usage_probe.model_usage()
         with self._run_lock:
@@ -568,7 +567,6 @@ class NddAdapter:
         workflow_name: str,
         input_df: pd.DataFrame,
         output_df: pd.DataFrame,
-        source_positions: tuple[int, ...],
     ) -> list[FailedRecord]:
         if RECORD_ID_COLUMN not in input_df.columns:
             logger.warning(
@@ -615,12 +613,9 @@ class NddAdapter:
                 for record_id in input_df[RECORD_ID_COLUMN].astype(str).tolist()
             ]
 
-        returned = set(source_positions)
-        missing_ids = sorted(
-            record_id
-            for position, record_id in enumerate(input_df[RECORD_ID_COLUMN].astype(str).tolist())
-            if position not in returned
-        )
+        input_ids = set(input_df[RECORD_ID_COLUMN].astype(str).tolist())
+        output_ids = set(output_df[RECORD_ID_COLUMN].astype(str).tolist())
+        missing_ids = sorted(input_ids - output_ids)
         return [
             FailedRecord(
                 record_id=record_id,

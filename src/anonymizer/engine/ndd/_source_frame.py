@@ -34,7 +34,7 @@ class WorkflowSourceFrame:
 
     def project(self, returned: pd.DataFrame, *, requested: int | None = None) -> tuple[pd.DataFrame, tuple[int, ...]]:
         """Validate one result per source and remove private transport identity."""
-        if returned.empty:
+        if len(returned) == 0:
             return returned.drop(columns=self.key_column, errors="ignore"), ()
         if list(returned.columns).count(self.key_column) != 1:
             raise AnonymizerWorkflowError("Workflow output has no source correspondence")

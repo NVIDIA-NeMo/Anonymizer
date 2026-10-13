@@ -52,3 +52,11 @@ def test_preview_cannot_publish_an_unrequested_source() -> None:
     frame = WorkflowSourceFrame.capture(pd.DataFrame({"text": ["a", "b"]}))
     with pytest.raises(AnonymizerWorkflowError, match="source correspondence"):
         frame.project(frame.seed().iloc[[1]], requested=1)
+
+
+def test_nonzero_rows_without_columns_reject_missing_correspondence() -> None:
+    frame = WorkflowSourceFrame.capture(pd.DataFrame({"text": ["a", "b"]}))
+    returned = pd.DataFrame(index=pd.Index([0]))
+    assert len(returned) == 1 and returned.empty
+    with pytest.raises(AnonymizerWorkflowError, match="source correspondence"):
+        frame.project(returned)
