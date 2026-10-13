@@ -153,6 +153,15 @@ arbitrary object cells remain unavailable. These opaque frames are separate from
 artifacts. The separate qualified DataDesigner development route retains its existing source,
 physical-request and evidence checks.
 
+Public `Anonymizer.evaluate()` admits a fresh execution-only invocation for its
+whole-frame judge sequence, including injected evaluation runners. It preserves
+the caller thread, judge selection, optional detection-validity checks and existing
+noncritical failure metrics. Its canonical frame retains the pre-judge trace,
+returned content and any prior live execution owner. A pickled public result
+contains content and strategy configuration, not execution resources; evaluating
+it creates fresh authority without reusing historical runtime identities. Judge
+calls remain opaque, and evaluation does not establish a Protected claim.
+
 ## Saved results and current evidence
 
 Ordinary public `qualify` consumes all retained accepted assessments. There is no public assessment-subset selector. It does not execute the graph again. You can construct another `evidence_revision_view` for the same saved result to describe which artifacts, absences, configurations and state revisions remain current, then qualify again. Selective artifact requalification can withhold a candidate that was previously releasable. Restoring the same valid current view can restore qualification without another callback.

@@ -10,7 +10,7 @@ child-request admission and its narrower backend conformance requirements.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from concurrent.futures import Future
 from contextvars import copy_context
 from dataclasses import dataclass, replace
@@ -227,6 +227,75 @@ def run_detection_redact(
         else None
     )
     selected_limits = replace(limits) if limits is not None else None
+
+    async def operation(
+        pool: BlockingPool,
+        handoff: Callable[[Callable[[], LocalCompleted | LocalFailure]], LocalCompleted | LocalFailure],
+    ) -> ReplacementResult:
+        if replacement is not None:
+            from anonymizer.engine.detection._opaque_redact import _InjectedRedact, execute_injected_redact
+
+            assert replacement_models is not None and replace_method is not None
+            result = await execute_injected_redact(
+                _InjectedRedact(
+                    source,
+                    detection,
+                    replacement,
+                    model_configs,
+                    selected_models,
+                    replacement_models,
+                    detection_options,
+                    replace_method,
+                    handoff,
+                ),
+                pool,
+            )
+            return project_detection_redact(result)
+        if opaque:
+            from anonymizer.engine.detection._opaque_redact import execute_injected_redact
+
+            assert local_config is not None
+            result = await execute_injected_redact(
+                DetectionRedactInvocation(
+                    source,
+                    (),
+                    detection,
+                    model_configs,
+                    selected_models,
+                    local_config,
+                    None,
+                    {},
+                    detection_options,
+                    "redacted",
+                    "ok",
+                ),
+                pool,
+            )
+            return project_detection_redact(result)
+        result = await execute_detection_redact(
+            source,
+            detection=detection,
+            model_configs=model_configs,
+            selected_models=selected_models,
+            detection_options=detection_options,
+            replace_method=cast(Redact, selected_method),
+            pool=pool,
+            limits=selected_limits,
+        )
+        return project_detection_redact(result)
+
+    return _run_sync_profile(operation, caller_callbacks=replacement is not None)
+
+
+def _run_sync_profile(
+    operation: Callable[
+        [BlockingPool, Callable[[Callable[[], LocalCompleted | LocalFailure]], LocalCompleted | LocalFailure]],
+        Awaitable[ReplacementResult],
+    ],
+    *,
+    caller_callbacks: bool,
+) -> ReplacementResult:
+    """Host one graph invocation while preserving synchronous caller-thread callbacks."""
     started = Event()
     cancellation: list[tuple[asyncio.AbstractEventLoop, asyncio.Task[Any]]] = []
     callbacks: Queue[tuple[Callable[[], LocalCompleted | LocalFailure], Future[LocalCompleted | LocalFailure]]] = Queue(
@@ -264,57 +333,7 @@ def run_detection_redact(
         started.set()
         pool = BlockingPool(max_workers=1)
         try:
-            if replacement is not None:
-                from anonymizer.engine.detection._opaque_redact import _InjectedRedact, execute_injected_redact
-
-                assert replacement_models is not None and replace_method is not None
-                result = await execute_injected_redact(
-                    _InjectedRedact(
-                        source,
-                        detection,
-                        replacement,
-                        model_configs,
-                        selected_models,
-                        replacement_models,
-                        detection_options,
-                        replace_method,
-                        handoff,
-                    ),
-                    pool,
-                )
-                return project_detection_redact(result)
-            if opaque:
-                from anonymizer.engine.detection._opaque_redact import execute_injected_redact
-
-                assert local_config is not None
-                result = await execute_injected_redact(
-                    DetectionRedactInvocation(
-                        source,
-                        (),
-                        detection,
-                        model_configs,
-                        selected_models,
-                        local_config,
-                        None,
-                        {},
-                        detection_options,
-                        "redacted",
-                        "ok",
-                    ),
-                    pool,
-                )
-                return project_detection_redact(result)
-            result = await execute_detection_redact(
-                source,
-                detection=detection,
-                model_configs=model_configs,
-                selected_models=selected_models,
-                detection_options=detection_options,
-                replace_method=cast(Redact, selected_method),
-                pool=pool,
-                limits=selected_limits,
-            )
-            return project_detection_redact(result)
+            return await operation(pool, handoff)
         finally:
             await pool.close()
 
@@ -333,7 +352,7 @@ def run_detection_redact(
     thread.start()
     interrupted: BaseException | None = None
     try:
-        if replacement is not None:
+        if caller_callbacks:
             while not completion.done():
                 serve_callback()
         return completion.result()
@@ -966,7 +985,7 @@ def qualify_detection_redact(result: ExecutionResult) -> QualificationResult:
 
 
 def project_detection_redact(result: ExecutionResult) -> ReplacementResult:
-    """Project only qualified canonical content, preserving whole-workflow errors."""
+    """Project canonical content under its selected purpose, preserving original errors."""
     for failure in result.submission_failures:
         # Failure projection does not upgrade eligibility or alter physical history.
         # Keeping the canonical execution on the raised error also retains any
@@ -984,7 +1003,7 @@ def project_detection_redact(result: ExecutionResult) -> ReplacementResult:
         if result.invocation_state is None or any(
             entry.status != "success" for entry in result.invocation_state.entries
         ):
-            raise AnonymizerWorkflowError("Injected Redact invocation did not complete")
+            raise AnonymizerWorkflowError("Opaque invocation did not complete")
         return ReplacementResult(
             dataframe=frame.project(result), failed_records=list(frame.failed_records), _execution=result
         )

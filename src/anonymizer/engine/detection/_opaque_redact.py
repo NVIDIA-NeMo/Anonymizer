@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Replacement consumers under nonqualifying graph execution."""
+"""Whole-frame compatibility consumers under nonqualifying graph execution."""
 
 from __future__ import annotations
 
@@ -57,7 +57,7 @@ from anonymizer.engine.graph_sdk.preparation import (
 )
 from anonymizer.engine.graph_sdk.requests import AssociationInput
 from anonymizer.engine.graph_sdk.resources import ResourceLease
-from anonymizer.engine.replace.replace_runner import ReplacementWorkflow
+from anonymizer.engine.replace.replace_runner import ReplacementResult, ReplacementWorkflow
 from anonymizer.graph.activation import ActivationLimits
 from anonymizer.graph.workflow import (
     ArtifactType,
@@ -140,25 +140,81 @@ class _InjectedRedact:
         )
 
 
+@dataclass(frozen=True)
+class _EvaluationInvocation:
+    """One judge callback with an independently retained prior execution owner."""
+
+    source: pd.DataFrame
+    evaluate: Callable[[DelegatedRequests], ReplacementResult | LocalFailure]
+    retained_owner: object | None
+    handoff: Callable[[Callable[[], LocalCompleted | LocalFailure]], LocalCompleted | LocalFailure]
+
+    def run(self, inputs: tuple[AssociationInput, ...], requests: DelegatedRequests) -> LocalCompleted | LocalFailure:
+        def evaluate() -> LocalCompleted | LocalFailure:
+            if requests.cancelled:
+                return LocalFailure(failure="implementation_exception")
+            started = perf_counter()
+            result = self.evaluate(requests)
+            if isinstance(result, LocalFailure):
+                return result
+            return LocalCompleted(
+                results=(),
+                frame=InvocationFrame(
+                    dataframe=result.dataframe,
+                    detected_dataframe=self.source,
+                    detection_failures=(),
+                    replacement_failures=tuple(result.failed_records),
+                    detection_elapsed=0.0,
+                    replacement_elapsed=perf_counter() - started,
+                    retained_owner=(self.retained_owner, result._execution),
+                ),
+            )
+
+        return self.handoff(evaluate)
+
+
+def run_evaluation(
+    source: pd.DataFrame,
+    evaluate: Callable[[DelegatedRequests], ReplacementResult | LocalFailure],
+    *,
+    retained_owner: object | None,
+) -> ReplacementResult:
+    """Evaluate a retained public frame under fresh, nonqualifying graph authority."""
+    from anonymizer.engine.detection._graph_profile import _run_sync_profile, project_detection_redact
+
+    async def operation(
+        pool: BlockingPool,
+        handoff: Callable[[Callable[[], LocalCompleted | LocalFailure]], LocalCompleted | LocalFailure],
+    ) -> ReplacementResult:
+        result = await execute_injected_redact(_EvaluationInvocation(source, evaluate, retained_owner, handoff), pool)
+        return project_detection_redact(result)
+
+    return _run_sync_profile(operation, caller_callbacks=True)
+
+
 async def execute_injected_redact(
-    callback: _InjectedRedact | DetectionRedactInvocation, pool: BlockingPool
+    callback: _InjectedRedact | DetectionRedactInvocation | _EvaluationInvocation, pool: BlockingPool
 ) -> ExecutionResult:
     from anonymizer.engine.detection._graph_profile import _await_profile_execution, _Clock, _runtime_rows
 
     authenticated = isinstance(callback, DetectionRedactInvocation)
-    preview = callback.detection_options.get("preview_num_records")
+    preview = (
+        None if isinstance(callback, _EvaluationInvocation) else callback.detection_options.get("preview_num_records")
+    )
     source = callback.source if preview is None else callback.source.iloc[:preview]
+    # Evaluation owns a whole public frame; it makes no semantic source-association claim.
+    texts = () if isinstance(callback, _EvaluationInvocation) else tuple(source[COL_TEXT])
     graph = DataGraph.new()
     targets = []
-    for text in source[COL_TEXT]:
+    for text in texts:
         graph, target = graph.add_text(text)
         if authenticated:
             targets.append(target)
     if authenticated:
         callback = replace(callback, targets=tuple(targets))
     size = len(targets)
-    characters = max((len(text) for text in source[COL_TEXT]), default=0)
-    total_characters = sum(len(text) for text in source[COL_TEXT])
+    characters = max((len(text) for text in texts), default=0)
+    total_characters = sum(len(text) for text in texts)
     text_type = ArtifactType(name="anonymizer.text", revision=1)
     outputs = (
         (
@@ -177,9 +233,9 @@ async def execute_injected_redact(
         atomic=(),
         output_regions=(),
         limits=DataLimits(
-            max_datums=len(source),
+            max_datums=len(texts),
             max_targets=size,
-            max_text_bytes=sum(content_bytes(text) for text in source[COL_TEXT]),
+            max_text_bytes=sum(content_bytes(text) for text in texts),
             max_declarations=0,
             max_group_members=0,
         ),
@@ -187,7 +243,11 @@ async def execute_injected_redact(
     owner = WorkflowId.new()
     node = NodeId.new(workflow=owner)
     operation = OperationSpec(
-        name="dd-detection-replace" if authenticated else "opaque-detection-replace",
+        name="opaque-evaluation"
+        if isinstance(callback, _EvaluationInvocation)
+        else "dd-detection-replace"
+        if authenticated
+        else "opaque-detection-replace",
         inputs=(InputPort(name="source", artifact_type=text_type),) if size else (),
         outputs=outputs,
         output_dependencies=tuple(
