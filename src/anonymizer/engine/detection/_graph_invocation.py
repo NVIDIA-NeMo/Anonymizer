@@ -17,7 +17,7 @@ from typing import Any, cast
 import pandas as pd
 from data_designer.config import ModelConfig
 
-from anonymizer.config.models import DetectionModelSelection, ReplaceModelSelection
+from anonymizer.config.models import DetectionModelSelection
 from anonymizer.config.replace_strategies import Redact
 from anonymizer.engine.constants import COL_FINAL_ENTITIES, COL_REPLACED_TEXT
 from anonymizer.engine.detection._frame_publication import FramePublication
@@ -39,7 +39,7 @@ from anonymizer.engine.graph_sdk.requests import (
     TextCollectionValue,
 )
 from anonymizer.engine.ndd._graph_requests import NddPhysicalTransport, NddRequestBridge
-from anonymizer.engine.replace.replace_runner import ReplacementWorkflow
+from anonymizer.engine.replace.strategies import apply_local_replace_strategy
 from anonymizer.engine.schemas import EntitiesSchema
 from anonymizer.graph._values import ArtifactRef, DatumId
 from anonymizer.graph.workflow import ArtifactType
@@ -88,13 +88,8 @@ class DetectionRedactInvocation:
             raise AnonymizerWorkflowError("DD graph detection has unclosed source results")
         successful = tuple(frame.associations[position] for position in positions)
         rows = {association: index for index, association in enumerate(successful)}
-        protected = ReplacementWorkflow().run(
-            detected.dataframe,
-            replace_method=Redact(),
-            model_configs=self.model_configs,
-            selected_models=ReplaceModelSelection(replacement_generator=self.selected_models.entity_augmenter),
-        )
-        text = dict(zip(successful, protected.dataframe[COL_REPLACED_TEXT], strict=True))
+        protected = apply_local_replace_strategy(detected.dataframe, strategy=Redact())
+        text = dict(zip(successful, protected[COL_REPLACED_TEXT], strict=True))
         spans = {
             item.association: EntitySpansValue(
                 source=cast(ArtifactRef, item.inputs[0].artifact),
@@ -163,10 +158,10 @@ class DetectionRedactInvocation:
             results=results,
             failed_sources=frozenset(set(frame.associations) - set(successful)),
             frame=FramePublication.capture(
-                protected.dataframe,
+                protected,
                 associations=successful,
                 text_ports=((COL_REPLACED_TEXT, self.output_port),),
-                failed_records=tuple(detected.failed_records + protected.failed_records),
+                failed_records=tuple(detected.failed_records),
                 opaque_source=self.source,
                 span_ports=((COL_FINAL_ENTITIES, "spans", tuple(spans[association] for association in successful)),),
             ),

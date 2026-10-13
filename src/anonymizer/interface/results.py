@@ -3,7 +3,9 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import dataclass, field
+from typing import Self
 
 import pandas as pd
 
@@ -19,6 +21,27 @@ class _DisplayMixin:
     trace_dataframe: pd.DataFrame
     resolved_text_column: str
     _display_cycle_index: int
+    _execution: object | None
+
+    def __getstate__(self) -> dict[str, object]:
+        """Save public data while leaving live execution resources in this process."""
+        return {key: value for key, value in self.__dict__.items() if key != "_execution"}
+
+    def __setstate__(self, state: dict[str, object]) -> None:
+        self.__dict__.update(state)
+        self._execution = None
+
+    def __copy__(self) -> Self:
+        copied = object.__new__(type(self))
+        copied.__dict__.update(self.__dict__)
+        return copied
+
+    def __deepcopy__(self, memo: dict[int, object]) -> Self:
+        copied = object.__new__(type(self))
+        memo[id(self)] = copied
+        copied.__dict__.update(deepcopy(self.__getstate__(), memo))
+        copied._execution = self._execution
+        return copied
 
     def display_record(self, index: int | None = None) -> None:
         """Render a record with entity highlights and replacement map in a notebook.
@@ -86,6 +109,7 @@ class AnonymizerResult(_DisplayMixin):
     data_summary: str | None = None
     excluded_entity_labels: list[str] | None = None
     _display_cycle_index: int = field(default=0, init=False, repr=False)
+    _execution: object | None = field(default=None, init=False, repr=False, compare=False)
 
     def __repr__(self) -> str:
         return (
@@ -141,6 +165,7 @@ class PreviewResult(_DisplayMixin):
     data_summary: str | None = None
     excluded_entity_labels: list[str] | None = None
     _display_cycle_index: int = field(default=0, init=False, repr=False)
+    _execution: object | None = field(default=None, init=False, repr=False, compare=False)
 
     def __repr__(self) -> str:
         return (

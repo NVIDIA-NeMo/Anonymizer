@@ -369,7 +369,7 @@ class Anonymizer:
         result: AnonymizerResult | None = None
         try:
             result = self._run_internal(config=config, data=data, context=context, preview_num_records=num_records)
-            return PreviewResult(
+            preview_result = PreviewResult(
                 dataframe=result.dataframe,
                 trace_dataframe=result.trace_dataframe,
                 resolved_text_column=result.resolved_text_column,
@@ -381,6 +381,8 @@ class Anonymizer:
                 excluded_entity_labels=config.detect.excluded_entity_labels,
                 data_summary=result.data_summary,
             )
+            preview_result._execution = result._execution
+            return preview_result
         except KeyboardInterrupt:
             status = TaskStatusEnum.CANCELED
             raise
@@ -611,6 +613,7 @@ class Anonymizer:
                 data_summary=data_summary,
             )
 
+        result._execution = getattr(output, "_execution", None)
         if result.failed_records:
             logger.debug("%d evaluation failed record(s).", len(result.failed_records))
             for failure in result.failed_records:
@@ -744,6 +747,7 @@ class Anonymizer:
             if label_counts:
                 summary = ", ".join(f"{label}={count}" for label, count in label_counts.most_common())
                 logger.info(LOG_INDENT + "labels: %s", summary)
+        execution = None
         if config.replace is not None:
             strategy_name = type(config.replace).__name__
             logger.info("🔄 Running %s replacement", strategy_name)
@@ -757,6 +761,7 @@ class Anonymizer:
             )
             replace_elapsed = time.perf_counter() - t0
             final_df = replace_result.dataframe
+            execution = getattr(replace_result, "_execution", None)
             post_detection_failures = replace_result.failed_records
             logger.info(
                 LOG_INDENT + "📋 Replacement complete (%d failed) [%.1fs]",
@@ -810,7 +815,7 @@ class Anonymizer:
             text_column=COL_TEXT,
             validation_max_entities_per_call=config.detect.validation_max_entities_per_call,
         )
-        return AnonymizerResult(
+        result = AnonymizerResult(
             dataframe=_build_user_dataframe(renamed_trace, resolved_text_column=text_col),
             trace_dataframe=renamed_trace,
             resolved_text_column=text_col,
@@ -821,6 +826,8 @@ class Anonymizer:
             excluded_entity_labels=config.detect.excluded_entity_labels,
             data_summary=data.data_summary,
         )
+        result._execution = execution
+        return result
 
     def _validate_preflight_config(self, config: AnonymizerConfig) -> None:
         """Run semantic preflight checks shared by validate, run, and preview."""

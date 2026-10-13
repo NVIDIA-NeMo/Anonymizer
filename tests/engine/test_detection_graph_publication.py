@@ -233,17 +233,17 @@ def test_unknown_remote_retains_registered_resource(scripted_detection, monkeypa
 
 
 def test_redact_check_records_candidate_mismatch_with_exact_span_dependencies(scripted_detection, monkeypatch):
+    import anonymizer.engine.detection._graph_invocation as invocation
     from anonymizer.engine.constants import COL_REPLACED_TEXT
-    from anonymizer.engine.replace.replace_runner import ReplacementWorkflow
 
-    original = ReplacementWorkflow.run
+    original = invocation.apply_local_replace_strategy
 
     def changed(*args, **kwargs):
         returned = original(*args, **kwargs)
-        returned.dataframe.loc[returned.dataframe.index[0], COL_REPLACED_TEXT] = "Alice travels."
+        returned.loc[returned.index[0], COL_REPLACED_TEXT] = "Alice travels."
         return returned
 
-    monkeypatch.setattr(ReplacementWorkflow, "run", changed)
+    monkeypatch.setattr(invocation, "apply_local_replace_strategy", changed)
     result = asyncio.run(run_graph_profile(scripted_detection, _source(), _options()))
     values = dict(result.artifacts)
     checks_by_target = {port.target: port for port in result.ports if port.port == "assessment"}
@@ -960,3 +960,192 @@ def test_invocation_owned_preparation_rejects_before_dd_effects(scripted_detecti
     with pytest.raises(PreparationRejected):
         asyncio.run(run_graph_profile(scripted_detection, source, _options(), chunks=None))
     assert not scripted_detection[3]
+
+
+@pytest.mark.parametrize("active_loop", [False, True])
+def test_synchronous_graph_profile_owns_pool_and_reuses_dd_loop(scripted_detection, monkeypatch, active_loop):
+    from anonymizer.engine.detection._graph_profile import run_detection_redact
+    from anonymizer.engine.graph_sdk.blocking import BlockingPool
+    from anonymizer.engine.graph_sdk.executor import ExecutionLimits
+    from anonymizer.engine.replace.replace_runner import ReplacementWorkflow
+
+    pools = []
+    original = BlockingPool.__init__
+
+    def capture(self, **kwargs):
+        original(self, **kwargs)
+        pools.append(self)
+
+    def retired(*args, **kwargs):
+        raise AssertionError("graph Redact must not construct the generic replacement dispatcher")
+
+    monkeypatch.setattr(BlockingPool, "__init__", capture)
+    monkeypatch.setattr(ReplacementWorkflow, "run", retired)
+    designer, models, selected, calls = scripted_detection
+
+    def run():
+        return run_detection_redact(
+            _source(),
+            detection=detection_tests.EntityDetectionWorkflow(detection_tests.NddAdapter(designer)),
+            model_configs=models,
+            selected_models=selected,
+            detection_options=_options(),
+            limits=ExecutionLimits(
+                max_local_in_flight=1,
+                max_remote_outstanding=1,
+                max_runtime_artifacts=16,
+                max_runtime_artifact_bytes=10000,
+                max_collection_items=32,
+            ),
+        )
+
+    async def nested():
+        loop = asyncio.get_running_loop()
+        result = run()
+        assert asyncio.get_running_loop() is loop and loop.is_running()
+        return result
+
+    projected = asyncio.run(nested()) if active_loop else run()
+    assert projected.dataframe[detection_tests.COL_REPLACED_TEXT].tolist() == [
+        "[REDACTED_FIRST_NAME] travels.",
+        "[REDACTED_FIRST_NAME] stays.",
+    ]
+    assert projected._execution is not None
+    assert projected._execution.requests.dispatched_count == 7
+    assert calls == {"readiness": 1, "detector": 2, "validator": 2, "augmenter": 2}
+    assert len(pools) == 1 and pools[0].closed and pools[0].occupied == 0
+    assert not projected._execution._retained_resources
+
+
+@pytest.mark.parametrize("lost", [False, True])
+def test_synchronous_profile_interrupt_drains_actual_callback(scripted_detection, monkeypatch, lost):
+    from concurrent.futures import Future
+    from threading import Event
+
+    import anonymizer.engine.detection._graph_profile as profile
+    from anonymizer.engine.graph_sdk.executor import ExecutionLimits, RunningExecution
+
+    entered, release = Event(), Event()
+    physicals = []
+    dispatch = NddPhysicalTransport.dispatch
+    cancel = RunningExecution.request_cancel
+
+    async def held(self, request):
+        if not physicals:
+            physicals.append(self)
+            entered.set()
+            await asyncio.to_thread(release.wait)
+        return await dispatch(self, request)
+
+    class InterruptedFuture(Future):
+        def result(self, timeout=None):
+            assert entered.wait(10)
+            raise KeyboardInterrupt
+
+    def stop(self):
+        assert not physicals[0].closed
+        cancel(self)
+        release.set()
+
+    if lost:
+
+        def lose(request, answer):
+            raise httpx.ReadError("scripted readiness uncertainty during cancellation", request=request)
+
+        _modify_dd_responses(scripted_detection, monkeypatch, lose)
+    monkeypatch.setattr(NddPhysicalTransport, "dispatch", held)
+    monkeypatch.setattr(profile, "Future", InterruptedFuture)
+    monkeypatch.setattr(RunningExecution, "request_cancel", stop)
+    designer, models, selected, _ = scripted_detection
+    try:
+        with pytest.raises(KeyboardInterrupt) as interrupted:
+            profile.run_detection_redact(
+                _source(),
+                detection=detection_tests.EntityDetectionWorkflow(detection_tests.NddAdapter(designer)),
+                model_configs=models,
+                selected_models=selected,
+                detection_options=_options(),
+                limits=ExecutionLimits(
+                    max_local_in_flight=1,
+                    max_remote_outstanding=1,
+                    max_runtime_artifacts=16,
+                    max_runtime_artifact_bytes=10000,
+                    max_collection_items=32,
+                ),
+            )
+        result = getattr(interrupted.value, "_anonymizer_execution")
+        assert result.requests.dispatched_count == 1
+        assert len(physicals) == 1 and physicals[0].closed is not lost
+        if lost:
+            assert len(result.requests.remote_outstanding) == 1
+            assert len(result._retained_resources) == 1
+            assert result._retained_resources[0].handle.owns(physicals[0])
+            assert all(not client._inner._closed for client in physicals[0].clients)
+        else:
+            assert not result.requests.remote_outstanding and not result._retained_resources
+            assert all(client._inner._closed for client in physicals[0].clients)
+    finally:
+        release.set()
+        for physical in physicals:
+            if not physical.closed:
+                asyncio.run_coroutine_threadsafe(physical.close(), physical.loop).result(timeout=10)
+
+
+def test_actual_lost_lease_survives_public_result_and_preview_projection(scripted_detection, monkeypatch, tmp_path):
+    import json
+    import pickle
+
+    from anonymizer import AnonymizerConfig, AnonymizerInput
+    from anonymizer.config.replace_strategies import Redact
+    from anonymizer.engine.detection._graph_profile import run_detection_redact
+    from anonymizer.engine.graph_sdk._foreign_transport import ForeignLoopTransport
+    from anonymizer.engine.graph_sdk.executor import ExecutionLimits
+    from tests.interface.test_anonymizer_interface import _make_anonymizer
+
+    def response(request, answer):
+        body = json.loads(request.content)
+        messages = json.dumps(body["messages"])
+        if "Find untagged sensitive entities" in messages and "travels." in messages:
+            raise httpx.ReadError("scripted uncertain source", request=request)
+        return answer
+
+    _modify_dd_responses(scripted_detection, monkeypatch, response)
+    designer, models, selected, _ = scripted_detection
+    projected = run_detection_redact(
+        _source(),
+        detection=detection_tests.EntityDetectionWorkflow(detection_tests.NddAdapter(designer)),
+        model_configs=models,
+        selected_models=selected,
+        detection_options=_options(),
+        limits=ExecutionLimits(
+            max_local_in_flight=1,
+            max_remote_outstanding=2,
+            max_runtime_artifacts=16,
+            max_runtime_artifact_bytes=10000,
+            max_collection_items=32,
+        ),
+    )
+    execution = projected._execution
+    assert execution is not None and execution.requests.dispatched_count == 7
+    assert len(execution.requests.remote_outstanding) == 1
+    (lease,) = execution._retained_resources
+    assert isinstance(lease.handle, ForeignLoopTransport)
+    physical = lease.handle._created_inner
+    assert isinstance(physical, NddPhysicalTransport)
+    try:
+        assert not physical.closed and all(not client._inner._closed for client in physical.clients)
+        path = tmp_path / "public-input.csv"
+        _source().rename(columns={COL_TEXT: "text"}).to_csv(path, index=False)
+        facade, _, _, _ = _make_anonymizer(replace_return=projected)
+        data, config = AnonymizerInput(source=str(path)), AnonymizerConfig(replace=Redact())
+        for public in (facade.run(config=config, data=data), facade.preview(config=config, data=data, num_records=2)):
+            assert public._execution is execution
+            assert public._execution._retained_resources[0] is lease
+            restored = pickle.loads(pickle.dumps(public))
+            assert restored._execution is None
+            pd.testing.assert_frame_equal(restored.dataframe, public.dataframe)
+            pd.testing.assert_frame_equal(restored.trace_dataframe, public.trace_dataframe)
+            assert restored.failed_records == public.failed_records
+            assert not physical.closed
+    finally:
+        asyncio.run_coroutine_threadsafe(physical.close(), physical.loop).result(timeout=10)

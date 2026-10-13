@@ -12,7 +12,10 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Mapping
+from concurrent.futures import Future
+from contextvars import copy_context
 from dataclasses import dataclass, replace
+from threading import Event, Thread
 from time import monotonic_ns
 from typing import Any, cast
 
@@ -182,6 +185,93 @@ def _runtime_rows(names: tuple[str, ...], external: bool) -> tuple[RuntimeOutcom
         for condition, category in conditions.items()
     ]
     return tuple(rows)
+
+
+def run_detection_redact(
+    source: pd.DataFrame,
+    *,
+    detection: EntityDetectionWorkflow,
+    model_configs: list[ModelConfig],
+    selected_models: DetectionModelSelection,
+    detection_options: Mapping[str, Any],
+    limits: ExecutionLimits,
+) -> ReplacementResult:
+    """Run the admitted profile synchronously with one owned callback worker.
+
+    The caller supplies the finite execution envelope. A notebook's active loop
+    stays untouched; the host thread runs the same authoritative async executor,
+    while actual DD clients remain on DD's existing foreign loop.
+    """
+    started = Event()
+    cancellation: list[tuple[asyncio.AbstractEventLoop, asyncio.Task[Any]]] = []
+
+    async def run() -> ReplacementResult:
+        task = asyncio.current_task()
+        assert task is not None
+        cancellation.append((asyncio.get_running_loop(), task))
+        started.set()
+        pool = BlockingPool(max_workers=1)
+        try:
+            result = await execute_detection_redact(
+                source,
+                detection=detection,
+                model_configs=model_configs,
+                selected_models=selected_models,
+                detection_options=detection_options,
+                pool=pool,
+                limits=limits,
+            )
+            return project_detection_redact(result)
+        finally:
+            await pool.close()
+
+    completion: Future[ReplacementResult] = Future()
+
+    def host() -> None:
+        try:
+            completion.set_result(asyncio.run(run()))
+        except BaseException as error:
+            completion.set_exception(error)
+        finally:
+            started.set()
+
+    context = copy_context()
+    thread = Thread(target=lambda: context.run(host), name="anonymizer-graph-host")
+    thread.start()
+    interrupted: KeyboardInterrupt | None = None
+    try:
+        return completion.result()
+    except KeyboardInterrupt as error:
+        interrupted = error
+        raise
+    finally:
+        # Cancellation only requests a stop. Keep the host and pool alive until
+        # the existing executor has drained the actual callback and client work.
+        while thread.is_alive():
+            try:
+                if interrupted is not None:
+                    started.wait()
+                    if cancellation:
+                        loop, task = cancellation[0]
+                        if not loop.is_closed():
+                            try:
+                                loop.call_soon_threadsafe(task.cancel)
+                            except RuntimeError:
+                                if not loop.is_closed():
+                                    raise
+                thread.join()
+            except KeyboardInterrupt as error:
+                interrupted = error
+        if interrupted is not None:
+            failure = completion.exception()
+            owner = (
+                getattr(failure, "_anonymizer_execution", None)
+                if failure is not None
+                else completion.result()._execution
+            )
+            if owner is not None:
+                setattr(interrupted, "_anonymizer_execution", owner)
+            raise interrupted
 
 
 async def execute_detection_redact(
@@ -659,13 +749,14 @@ async def execute_detection_redact(
         completion = asyncio.create_task(running.wait())
         try:
             return await asyncio.shield(completion)
-        except asyncio.CancelledError:
+        except asyncio.CancelledError as error:
             running.request_cancel()
             while not completion.done():
                 try:
                     await asyncio.shield(completion)
                 except asyncio.CancelledError:
                     continue
+            setattr(error, "_anonymizer_execution", completion.result())
             raise
     finally:
         if not handed_to_runtime and not physical.closed:
