@@ -4,15 +4,21 @@
 
 from __future__ import annotations
 
-from itertools import product
-
 ALPHABET = "IPCREV"
 COMPLETE = ("IPCPEV", "IPRPEV")
 
 
 def cases() -> tuple[str, ...]:
-    bounded = {"".join(items) for size in range(5) for items in product(ALPHABET, repeat=size)}
-    return tuple(sorted(bounded | {word[:size] for word in COMPLETE for size in (5, 6)}))
+    """Keep valid prefixes and the first illegal transition within length four."""
+    prefixes = {word[:size] for word in COMPLETE for size in range(len(word) + 1)}
+    invalid = {
+        prefix + letter
+        for prefix in prefixes
+        if len(prefix) < 4
+        for letter in ALPHABET
+        if prefix + letter not in prefixes
+    }
+    return tuple(sorted(prefixes | invalid))
 
 
 def expected(trace: str) -> tuple[bool, int]:

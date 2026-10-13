@@ -176,7 +176,10 @@ class ChainFixture:
 
 def test_reference_manifest_is_frozen() -> None:
     manifest = json.loads((Path(__file__).parent / "reference/request_children/manifest.json").read_text())
-    assert len(cases()) == manifest["case_count"] == 1559
+    assert manifest["corpus_version"] == 2
+    assert len(cases()) == manifest["case_count"] == 35
+    assert sum(expected(trace)[0] for trace in cases()) == manifest["valid_case_count"] == 11
+    assert all(expected(trace)[0] or expected(trace[:-1])[0] for trace in cases())
     assert hashlib.sha256(json.dumps(cases(), separators=(",", ":")).encode()).hexdigest() == manifest["digest"]
 
 
@@ -184,20 +187,58 @@ def test_reference_manifest_is_frozen() -> None:
 def test_bounded_child_language(trace: str) -> None:
     fixture = ChainFixture()
     accepted = True
+    executed = ""
+    before = fixture.authority.state
+    try:
+        for letter in trace:
+            before = fixture.authority.state
+            executed += letter
+            fixture.step(letter)
+    except EffectRejected:
+        accepted = False
+        assert fixture.authority.state == before
+    verdict, _ = expected(trace)
+    assert accepted == verdict
+    assert executed == trace
+    prefix = trace if accepted else trace[:-1]
+    _, dispatched = expected(prefix)
+    receipt = request_receipt(fixture.authority.state)
+    assert receipt.dispatched_count == len(receipt.terminals) == len(receipt.settlements) == dispatched
+    assert [(row.category, row.failure) for row in receipt.terminals] == [
+        ("success", None) if letter == "V" else ("failure", "malformed_response")
+        for letter in prefix
+        if letter in "ICRV"
+    ]
+    assert len(receipt.child_evidence) == prefix.count("P") + prefix.count("E")
+    assert not receipt.defects and not fixture.authority.state.reserved
+    assert receipt.chains == (fixture.chain,)
+
+
+@pytest.mark.parametrize(
+    ("trace", "budget", "parse_attempts", "accepted", "dispatched"),
+    [
+        ("IPEV", 3, 1, True, 2),
+        ("IPCPEV", 3, 2, True, 3),
+        ("IPRPEV", 3, 2, True, 3),
+        ("IPCPEV", 2, 2, False, 2),
+        ("IPCPEV", 4, 2, True, 3),
+        ("IPEV", 3, 2, False, 1),
+        ("IPCPEV", 3, 3, False, 2),
+    ],
+)
+def test_child_language_bound_controls(
+    trace: str, budget: int, parse_attempts: int, accepted: bool, dispatched: int
+) -> None:
+    fixture = ChainFixture(budget=budget, parse_attempts=parse_attempts)
+    completed = True
     try:
         for letter in trace:
             fixture.step(letter)
     except EffectRejected:
-        accepted = False
-    verdict, dispatched = expected(trace)
-    assert accepted == verdict
-    if accepted:
-        receipt = request_receipt(fixture.authority.state)
-        assert receipt.dispatched_count == dispatched
-        assert len(receipt.terminals) == dispatched
-        assert not receipt.defects
-        assert receipt.chains == (fixture.chain,)
-        assert receipt.child_evidence == fixture.authority.state.child_evidence
+        completed = False
+    assert completed is accepted
+    receipt = request_receipt(fixture.authority.state)
+    assert receipt.dispatched_count == len(receipt.terminals) == len(receipt.settlements) == dispatched
 
 
 def test_interleaved_chains_use_explicit_predecessor() -> None:

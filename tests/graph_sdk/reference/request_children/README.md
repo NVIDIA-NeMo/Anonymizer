@@ -44,13 +44,28 @@ The independent reference recognizes prefixes of two explicit words:
 | V | Declared fallback dispatch, completed settlement, successful first terminal |
 
 The first route permits two parser attempts; the fallback permits one. The alphabet
-is `IPCREV`. Before comparing production behavior, `manifest.json` freezes all
-1,555 words of length zero through four, plus four longer valid prefixes: 1,559
-cases, length at most six, at most three dispatched requests on an accepted trace.
-Its SHA-256 covers the compact JSON encoding of the sorted case tuple. Accepted
-traces must agree on dispatch and terminal counts without defects. Rejected traces
-must raise a content-free effect rejection. Separate tests cover foreign owners,
-interleaved chains, evidence forgery, binding order/count bounds, undeclared routes
-and source kinds, budgets, unused reservations, and immutable terminals.
+is `IPCREV`, with no independent events within this single chain. Corpus version 2
+retains all 11 valid prefixes and the 24 first-invalid prefixes of length at most
+four. The generator derives both sets directly from the two complete words,
+without production imports. `manifest.json` freezes these 35 cases before product
+comparison: length at most six and at most three dispatched requests. Its SHA-256
+covers the compact JSON encoding of the sorted case tuple.
+
+Version 1 enumerated all 1,555 words of length zero through four plus four longer
+valid prefixes. Every removed word maps to its shortest invalid prefix, since the
+test stops at that rejection and never executes the remaining suffix. All valid
+words remain. The previous generator and manifest are retained in Git revision
+`5b921b15e327dbc6177732fcbf75283b64303ea5`; the new manifest records its corpus
+digest. This reduction applies only to the fixed three-request budget and
+two-attempt first route. Seven literal controls vary the request and parser bounds;
+they do not use this fixed-language oracle.
+
+Every retained trace checks dispatch, terminal, settlement and accepted-evidence
+counts. Rejected traces must fail at the first illegal transition without changing
+request state; earlier accepted terminals remain visible. Separate tests still
+cover foreign owners, interleaved chains, evidence forgery, binding order/count
+bounds, undeclared routes and source kinds, budgets, unused reservations,
+conflicting support, and immutable terminals. The change reduces repeated
+executions, not the amount of product functionality or the maintained Python size.
 
 The existing ordinary reference oracles and their case sets remain unchanged.
