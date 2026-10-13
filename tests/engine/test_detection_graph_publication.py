@@ -1149,3 +1149,91 @@ def test_actual_lost_lease_survives_public_result_and_preview_projection(scripte
             assert not physical.closed
     finally:
         asyncio.run_coroutine_threadsafe(physical.close(), physical.loop).result(timeout=10)
+
+
+def test_async_acquisition_and_close_drain_repeated_cancellation(scripted_detection, monkeypatch):
+    from threading import Event
+
+    import anonymizer.engine.detection._graph_profile as profile
+
+    acquired, release_acquire, closing, release_close = Event(), Event(), Event(), Event()
+    physicals, acquisitions = [], []
+    initialize, close = NddPhysicalTransport.__init__, NddPhysicalTransport.close
+    submit = asyncio.run_coroutine_threadsafe
+
+    def held_init(self):
+        initialize(self)
+        physicals.append(self)
+        acquired.set()
+        assert release_acquire.wait(10)
+
+    async def held_close(self):
+        closing.set()
+        assert await asyncio.to_thread(release_close.wait, 10)
+        await close(self)
+
+    def track(coroutine, loop):
+        future = submit(coroutine, loop)
+        if coroutine.__qualname__.endswith("create_resource"):
+            acquisitions.append(future)
+        return future
+
+    async def unexpected_handoff(**kwargs):
+        raise AssertionError("cancelled acquisition must not start the graph invocation")
+
+    monkeypatch.setattr(NddPhysicalTransport, "__init__", held_init)
+    monkeypatch.setattr(NddPhysicalTransport, "close", held_close)
+    monkeypatch.setattr(asyncio, "run_coroutine_threadsafe", track)
+    monkeypatch.setattr(profile, "start_execution", unexpected_handoff)
+
+    async def run():
+        task = asyncio.create_task(run_graph_profile(scripted_detection, _source(), _options()))
+        try:
+            assert await asyncio.to_thread(acquired.wait, 10)
+            task.cancel("acquisition interrupted")
+            await asyncio.sleep(0)
+            task.cancel("observer interrupted again")
+            await asyncio.sleep(0)
+            assert not task.done() and not physicals[0].closed
+            assert len(acquisitions) == 1 and not acquisitions[0].cancelled()
+            release_acquire.set()
+            assert await asyncio.to_thread(closing.wait, 10)
+            task.cancel("interrupted while closing")
+            await asyncio.sleep(0)
+            assert not task.done() and not physicals[0].closed
+            release_close.set()
+            with pytest.raises(asyncio.CancelledError, match="acquisition interrupted") as interrupted:
+                await task
+            assert not hasattr(interrupted.value, "_anonymizer_execution")
+            assert physicals[0].closed and not physicals[0].clients
+            assert acquisitions[0].done() and not acquisitions[0].cancelled()
+            assert physicals[0].loop.is_running()
+            assert not scripted_detection[3]
+        finally:
+            release_acquire.set()
+            release_close.set()
+
+    asyncio.run(run())
+
+
+def test_failed_transport_acquisition_closes_its_actual_physical_resource(scripted_detection, monkeypatch):
+    import anonymizer.engine.detection._graph_profile as profile
+
+    physicals = []
+    initialize = NddPhysicalTransport.__init__
+    failure = RuntimeError("scripted transport declaration rejection")
+
+    def capture(self):
+        initialize(self)
+        physicals.append(self)
+
+    def reject(**kwargs):
+        raise failure
+
+    monkeypatch.setattr(NddPhysicalTransport, "__init__", capture)
+    monkeypatch.setattr(profile.ForeignLoopTransport, "create", reject)
+    with pytest.raises(RuntimeError, match="scripted transport declaration rejection") as caught:
+        asyncio.run(run_graph_profile(scripted_detection, _source(), _options()))
+    assert caught.value is failure
+    assert len(physicals) == 1 and physicals[0].closed and not physicals[0].clients
+    assert physicals[0].loop.is_running() and not scripted_detection[3]

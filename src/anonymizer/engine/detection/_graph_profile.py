@@ -689,14 +689,37 @@ async def execute_detection_redact(
 
     async def create_resource() -> tuple[NddPhysicalTransport, ForeignLoopTransport]:
         physical = NddPhysicalTransport()
-        transport = ForeignLoopTransport.create(
-            factory=lambda: physical, owner="sdk", gate_timeout_ns=1_000_000_000, exclusive=True
-        )
-        return physical, transport
+        try:
+            transport = ForeignLoopTransport.create(
+                factory=lambda: physical, owner="sdk", gate_timeout_ns=1_000_000_000, exclusive=True
+            )
+            return physical, transport
+        except BaseException:
+            await physical.close()
+            raise
 
-    physical, transport = await asyncio.wrap_future(asyncio.run_coroutine_threadsafe(create_resource(), loop))
+    acquisition = asyncio.wrap_future(asyncio.run_coroutine_threadsafe(create_resource(), loop))
+    transport = None
     handed_to_runtime = False
+    interrupted: asyncio.CancelledError | None = None
     try:
+        # Cancelling this observer must not cancel or abandon the foreign factory.
+        # Own its actual completion before either transferring or closing the lease.
+        while True:
+            try:
+                physical, transport = await asyncio.shield(acquisition)
+                break
+            except asyncio.CancelledError as error:
+                if acquisition.cancelled():
+                    raise
+                if interrupted is None:
+                    interrupted = error
+            except BaseException as error:
+                if interrupted is not None:
+                    raise interrupted from error
+                raise
+        if interrupted is not None:
+            raise interrupted
         consumer = DetectionRedactInvocation(
             source,
             tuple(targets),
@@ -759,8 +782,8 @@ async def execute_detection_redact(
             setattr(error, "_anonymizer_execution", completion.result())
             raise
     finally:
-        if not handed_to_runtime and not physical.closed:
-            await asyncio.wrap_future(asyncio.run_coroutine_threadsafe(physical.close(), loop))
+        if not handed_to_runtime and transport is not None:
+            await transport.close()
 
 
 def qualify_detection_redact(result: ExecutionResult) -> QualificationResult:
