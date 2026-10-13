@@ -35,30 +35,19 @@ from anonymizer.engine.graph_sdk.preparation import (
 from anonymizer.engine.graph_sdk.requests import AssociationInput, AssociationResult, SemanticAssociation
 from anonymizer.graph.activation import ActivationLimits
 from anonymizer.graph.workflow import (
-    DynamicLimits,
     DynamicScope,
-    InputBinding,
     InputPort,
-    NodeId,
-    NodeInputRef,
-    NodeOutcomeRef,
     NodeOutputRef,
     OperationNode,
-    OutcomeBinding,
     OutputBinding,
     OutputDependency,
     OutputPort,
-    SequenceEdge,
-    SubgraphNode,
-    WorkflowId,
-    WorkflowInputRef,
-    WorkflowLimits,
-    WorkflowOutcomeRef,
     WorkflowOutputRef,
     admit_activation_workflow,
     admit_static_workflow,
 )
 from tests.graph_sdk.test_preparation import _capability, _data, _limits, _prepare, _workflow
+from tests.graph_sdk.workflow_fixtures import _shared_body_workflow
 
 
 @dataclass
@@ -410,8 +399,6 @@ def test_shared_nested_body_executes_each_real_occurrence() -> None:
 async def _assert_shared_nested_body() -> None:
     body_dynamic, child, artifact_type = _workflow(with_input=True)
     body = body_dynamic.workflow
-    owner = WorkflowId.new()
-    first, second = (NodeId.new(workflow=owner) for _ in range(2))
     interface = replace(
         body.interface,
         name="shared-body-root",
@@ -420,60 +407,7 @@ async def _assert_shared_nested_body() -> None:
             replace(outcome, ceiling=replace(outcome.ceiling, max_activations=4)) for outcome in body.interface.outcomes
         ),
     )
-    root = admit_static_workflow(
-        workflow=owner,
-        interface=interface,
-        nodes=(
-            SubgraphNode(id=first, operation=body.interface, body=body),
-            SubgraphNode(id=second, operation=body.interface, body=body),
-        ),
-        input_bindings=(
-            InputBinding(
-                source=WorkflowInputRef(port="outer"),
-                destination=NodeInputRef(node=first, port="input"),
-            ),
-            InputBinding(
-                source=WorkflowInputRef(port="outer"),
-                destination=NodeInputRef(node=second, port="input"),
-            ),
-        ),
-        output_bindings=(),
-        outcome_bindings=tuple(
-            OutcomeBinding(
-                source=NodeOutcomeRef(node=second, outcome=outcome.name),
-                destination=WorkflowOutcomeRef(outcome=outcome.name),
-            )
-            for outcome in body.interface.outcomes
-        ),
-        sequence=(SequenceEdge(before=first, after=second),),
-        choices=(),
-        protection=(),
-        limits=WorkflowLimits(
-            max_nodes=4,
-            max_bindings=3,
-            max_sequence_edges=1,
-            max_choices=0,
-            max_branch_members=0,
-            max_subgraph_depth=2,
-            max_choice_states=1,
-        ),
-    )
-    workflow = admit_activation_workflow(
-        workflow=root,
-        scopes=(
-            DynamicScope(workflow=root, maps=(), joins=(), loops=()),
-            DynamicScope(workflow=body, maps=(), joins=(), loops=()),
-        ),
-        limits=DynamicLimits(
-            max_maps=0,
-            max_joins=0,
-            max_loops=0,
-            max_children_per_map=0,
-            max_iterations_per_loop=0,
-            max_dynamic_depth=2,
-            max_activation_occurrences=4,
-        ),
-    )
+    workflow, first, second = _shared_body_workflow(body, interface, max_bindings=3, input_binding=("outer", "input"))
     capability = _capability(body_dynamic)
     data = _data(1)
     target = next(iter(data.targets))

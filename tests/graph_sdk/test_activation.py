@@ -43,6 +43,7 @@ from anonymizer.graph.workflow import (
     admit_activation_workflow,
     admit_static_workflow,
 )
+from tests.graph_sdk.workflow_fixtures import _shared_body_workflow
 
 
 def _outcome(name: str, category: OutcomeClass) -> OutcomeSpec:
@@ -742,8 +743,6 @@ def test_subgraph_start_materializes_body_and_derives_parent_terminal() -> None:
 def test_initialization_allows_shared_body_under_distinct_parent_templates() -> None:
     body_workflow, child = _single()
     body = body_workflow.workflow
-    owner = WorkflowId.new()
-    first_parent, second_parent = (NodeId.new(workflow=owner) for _ in range(2))
     interface = OperationSpec(
         name="shared-body-root",
         inputs=(),
@@ -751,51 +750,7 @@ def test_initialization_allows_shared_body_under_distinct_parent_templates() -> 
         output_dependencies=(),
         outcomes=tuple(_interface_outcome(outcome, 4) for outcome in body.interface.outcomes),
     )
-    root = admit_static_workflow(
-        workflow=owner,
-        interface=interface,
-        nodes=(
-            SubgraphNode(id=first_parent, operation=body.interface, body=body),
-            SubgraphNode(id=second_parent, operation=body.interface, body=body),
-        ),
-        input_bindings=(),
-        output_bindings=(),
-        outcome_bindings=tuple(
-            OutcomeBinding(
-                source=NodeOutcomeRef(node=second_parent, outcome=outcome.name),
-                destination=WorkflowOutcomeRef(outcome=outcome.name),
-            )
-            for outcome in body.interface.outcomes
-        ),
-        sequence=(SequenceEdge(before=first_parent, after=second_parent),),
-        choices=(),
-        protection=(),
-        limits=WorkflowLimits(
-            max_nodes=4,
-            max_bindings=2,
-            max_sequence_edges=1,
-            max_choices=0,
-            max_branch_members=0,
-            max_subgraph_depth=2,
-            max_choice_states=1,
-        ),
-    )
-    workflow = admit_activation_workflow(
-        workflow=root,
-        scopes=(
-            DynamicScope(workflow=root, maps=(), joins=(), loops=()),
-            DynamicScope(workflow=body, maps=(), joins=(), loops=()),
-        ),
-        limits=DynamicLimits(
-            max_maps=0,
-            max_joins=0,
-            max_loops=0,
-            max_children_per_map=0,
-            max_iterations_per_loop=0,
-            max_dynamic_depth=2,
-            max_activation_occurrences=4,
-        ),
-    )
+    workflow, first_parent, second_parent = _shared_body_workflow(body, interface, max_bindings=2)
     invocation = InvocationId.new(plan=PlanId.new())
     first_key = ActivationKey(invocation=invocation, occurrence=0, parent=None, iteration=None)
     second_key = ActivationKey(invocation=invocation, occurrence=1, parent=None, iteration=None)

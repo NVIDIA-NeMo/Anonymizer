@@ -14,11 +14,9 @@ from anonymizer.engine.graph_sdk._effect_values import EffectRejected
 from anonymizer.engine.graph_sdk.binding import start_initial_binding
 from anonymizer.engine.graph_sdk.blocking import BlockingContextProvider
 from anonymizer.engine.graph_sdk.context import (
-    BindingLimits,
     ContextMaterialization,
     ContextResource,
     ContextSelector,
-    ContextSourceCapability,
     ContextSourceRef,
     InitialContextDecl,
     RetrievalBounds,
@@ -33,7 +31,6 @@ from anonymizer.engine.graph_sdk.requests import (
     ExactUsage,
     ExternalSettlement,
     PhysicalRequestId,
-    PhysicalRequestPolicy,
     RequestAssociation,
     StopConfirmed,
 )
@@ -49,6 +46,7 @@ from anonymizer.graph.workflow import (
     admit_activation_workflow,
     admit_static_workflow,
 )
+from tests.graph_sdk.context_source_fixtures import _initial_binding_fixture
 from tests.graph_sdk.test_preparation import _capability, _data, _prepare, _workflow
 
 
@@ -287,37 +285,9 @@ async def _assert_late_initial_binding(mode: str, acknowledge_stop: bool, *, lat
     workflow, node, artifact = _context_workflow()
     data = _data(1)
     target = next(iter(data.targets))
-    policy = PhysicalRequestPolicy(
-        visibility="dispatch_and_settlement",
-        pre_dispatch_control="executor",
-        retry_owner="executor",
-        replay="idempotent",
-        max_attempts=1,
-    )
-    capability = ContextSourceCapability(
-        source=SOURCE,
-        artifact_type=artifact,
-        uses=frozenset({"initial_binding"}),
-        execution="async",
-        resource_owner="caller",
-        cancellation="cooperative_ack",
-        settlement="explicit_ack",
-        usage="exact",
-        request=policy,
-        safe_detachment="forbidden",
-    )
-    declaration = InitialContextDecl(
-        target=target,
-        node=node,
-        port="input",
-        artifact_type=artifact,
-        source=SOURCE,
-        selector=ContextSelector(fields=()),
-        requirement="required",
-        bounds=RetrievalBounds(max_items=1, max_bytes=20, max_requests=1),
-        materialization=ContextMaterialization(kind="single", item_type=artifact),
-        version_selection="latest" if latest else "exact_one",
-    )
+    binding = _initial_binding_fixture(source=SOURCE, target=target, node=node, artifact=artifact)
+    capability = binding.capability
+    declaration = replace(binding.declaration, version_selection="latest" if latest else "exact_one")
     provider = _LateProvider(mode=mode, acknowledge_stop=acknowledge_stop)
     running = await start_initial_binding(
         data=data,
@@ -332,17 +302,7 @@ async def _assert_late_initial_binding(mode: str, acknowledge_stop: bool, *, lat
                 factory=None,
             ),
         ),
-        limits=BindingLimits(
-            max_declarations=1,
-            max_sources=1,
-            max_capabilities=1,
-            max_selector_fields=0,
-            max_selector_bytes=0,
-            max_items=1,
-            max_bytes=20,
-            max_requests=1,
-            max_resources=1,
-        ),
+        limits=binding.limits,
     )
     await provider.started.wait()
     running.request_cancel()
@@ -373,37 +333,10 @@ async def _assert_context_source_requires_exact_initial_declaration() -> None:
     workflow, node, artifact = _context_workflow()
     data = _data(1)
     target = next(iter(data.targets))
-    policy = PhysicalRequestPolicy(
-        visibility="dispatch_and_settlement",
-        pre_dispatch_control="executor",
-        retry_owner="executor",
-        replay="idempotent",
-        max_attempts=1,
-    )
-    capability = ContextSourceCapability(
-        source=SOURCE,
-        artifact_type=artifact,
-        uses=frozenset({"initial_binding"}),
-        execution="async",
-        resource_owner="caller",
-        cancellation="cooperative_ack",
-        settlement="explicit_ack",
-        usage="exact",
-        request=policy,
-        safe_detachment="forbidden",
-    )
+    binding = _initial_binding_fixture(source=SOURCE, target=target, node=node, artifact=artifact)
+    capability = binding.capability
     provider = _Provider()
-    base = InitialContextDecl(
-        target=target,
-        node=node,
-        port="input",
-        artifact_type=artifact,
-        source=SOURCE,
-        selector=ContextSelector(fields=()),
-        requirement="required",
-        bounds=RetrievalBounds(max_items=1, max_bytes=20, max_requests=1),
-        materialization=ContextMaterialization(kind="single", item_type=artifact),
-    )
+    base = binding.declaration
     absent = NodeId.new(workflow=node.workflow)
     cases = (
         ((), "missing"),
@@ -427,17 +360,7 @@ async def _assert_context_source_requires_exact_initial_declaration() -> None:
                         factory=None,
                     ),
                 ),
-                limits=BindingLimits(
-                    max_declarations=2,
-                    max_sources=1,
-                    max_capabilities=1,
-                    max_selector_fields=0,
-                    max_selector_bytes=0,
-                    max_items=1,
-                    max_bytes=20,
-                    max_requests=1,
-                    max_resources=1,
-                ),
+                limits=replace(binding.limits, max_declarations=2),
             )
         assert rejected.value.code.value == code
     assert provider.calls == 0
@@ -457,36 +380,11 @@ async def _initial_running(provider):
     workflow, node, artifact = _context_workflow()
     data = _data(1)
     target = next(iter(data.targets))
-    policy = PhysicalRequestPolicy(
-        visibility="dispatch_and_settlement",
-        pre_dispatch_control="executor",
-        retry_owner="executor",
-        replay="idempotent",
-        max_attempts=1,
+    binding = _initial_binding_fixture(source=SOURCE, target=target, node=node, artifact=artifact)
+    capability = replace(
+        binding.capability, execution="blocking" if isinstance(provider, BlockingContextProvider) else "async"
     )
-    capability = ContextSourceCapability(
-        source=SOURCE,
-        artifact_type=artifact,
-        uses=frozenset({"initial_binding"}),
-        execution="blocking" if isinstance(provider, BlockingContextProvider) else "async",
-        resource_owner="caller",
-        cancellation="cooperative_ack",
-        settlement="explicit_ack",
-        usage="exact",
-        request=policy,
-        safe_detachment="forbidden",
-    )
-    declaration = InitialContextDecl(
-        target=target,
-        node=node,
-        port="input",
-        artifact_type=artifact,
-        source=SOURCE,
-        selector=ContextSelector(fields=()),
-        requirement="required",
-        bounds=RetrievalBounds(max_items=1, max_bytes=20, max_requests=1),
-        materialization=ContextMaterialization(kind="single", item_type=artifact),
-    )
+    declaration = binding.declaration
     lease = ResourceLease.create(owner="caller", safe_detachment="forbidden", handle=provider)
     running = await start_initial_binding(
         data=data,
@@ -494,17 +392,7 @@ async def _initial_running(provider):
         declarations=(declaration,),
         capabilities=(capability,),
         resources=(ContextResource(source=SOURCE, capability=capability, lease=lease, factory=None),),
-        limits=BindingLimits(
-            max_declarations=1,
-            max_sources=1,
-            max_capabilities=1,
-            max_selector_fields=0,
-            max_selector_bytes=0,
-            max_items=1,
-            max_bytes=20,
-            max_requests=1,
-            max_resources=1,
-        ),
+        limits=binding.limits,
     )
     return running, data, workflow, target
 
@@ -545,25 +433,8 @@ def test_initial_binding_retains_matching_settlement_for_malformed_and_oversize_
 async def _assert_initial_binding_boundary_settlements(*, latest: bool) -> None:
     workflow, node, artifact = _context_workflow()
     data = _data(1)
-    policy = PhysicalRequestPolicy(
-        visibility="dispatch_and_settlement",
-        pre_dispatch_control="executor",
-        retry_owner="executor",
-        replay="idempotent",
-        max_attempts=1,
-    )
-    capability = ContextSourceCapability(
-        source=SOURCE,
-        artifact_type=artifact,
-        uses=frozenset({"initial_binding"}),
-        execution="async",
-        resource_owner="caller",
-        cancellation="cooperative_ack",
-        settlement="explicit_ack",
-        usage="exact",
-        request=policy,
-        safe_detachment="forbidden",
-    )
+    binding = _initial_binding_fixture(source=SOURCE, target=next(iter(data.targets)), node=node, artifact=artifact)
+    capability = binding.capability
     for mode, expected_request, expected_source in (
         ("malformed", "failure", "failed"),
         ("foreign_lost", "failure", "failed"),
@@ -575,16 +446,9 @@ async def _assert_initial_binding_boundary_settlements(*, latest: bool) -> None:
         provider = _BoundaryProvider(mode=mode)
         item_limit = 2 if latest and mode != "versions" else 1
         byte_limit = 20 if mode == "versions" else 2
-        declaration = InitialContextDecl(
-            target=next(iter(data.targets)),
-            node=node,
-            port="input",
-            artifact_type=artifact,
-            source=SOURCE,
-            selector=ContextSelector(fields=()),
-            requirement="required",
+        declaration = replace(
+            binding.declaration,
             bounds=RetrievalBounds(max_items=item_limit, max_bytes=byte_limit, max_requests=1),
-            materialization=ContextMaterialization(kind="single", item_type=artifact),
             version_selection="latest" if latest else "exact_one",
         )
         result = await (
@@ -601,17 +465,7 @@ async def _assert_initial_binding_boundary_settlements(*, latest: bool) -> None:
                         factory=None,
                     ),
                 ),
-                limits=BindingLimits(
-                    max_declarations=1,
-                    max_sources=1,
-                    max_capabilities=1,
-                    max_selector_fields=0,
-                    max_selector_bytes=0,
-                    max_items=item_limit,
-                    max_bytes=byte_limit,
-                    max_requests=1,
-                    max_resources=1,
-                ),
+                limits=replace(binding.limits, max_items=item_limit, max_bytes=byte_limit),
             )
         ).wait()
         assert result.receipt.terminal == "failed"
@@ -627,35 +481,11 @@ async def _assert_initial_binding_boundary_settlements(*, latest: bool) -> None:
 async def _assert_initial_binding_retry(*, latest: bool, correction: bool) -> None:
     workflow, node, artifact = _context_workflow()
     data = _data(1)
-    policy = PhysicalRequestPolicy(
-        visibility="dispatch_and_settlement",
-        pre_dispatch_control="executor",
-        retry_owner="executor",
-        replay="idempotent",
-        max_attempts=2,
-    )
-    capability = ContextSourceCapability(
-        source=SOURCE,
-        artifact_type=artifact,
-        uses=frozenset({"initial_binding"}),
-        execution="async",
-        resource_owner="caller",
-        cancellation="cooperative_ack",
-        settlement="explicit_ack",
-        usage="exact",
-        request=policy,
-        safe_detachment="forbidden",
-    )
-    declaration = InitialContextDecl(
-        target=next(iter(data.targets)),
-        node=node,
-        port="input",
-        artifact_type=artifact,
-        source=SOURCE,
-        selector=ContextSelector(fields=()),
-        requirement="required",
+    binding = _initial_binding_fixture(source=SOURCE, target=next(iter(data.targets)), node=node, artifact=artifact)
+    capability = replace(binding.capability, request=replace(binding.capability.request, max_attempts=2))
+    declaration = replace(
+        binding.declaration,
         bounds=RetrievalBounds(max_items=2 if latest else 1, max_bytes=20, max_requests=2),
-        materialization=ContextMaterialization(kind="single", item_type=artifact),
         version_selection="latest" if latest else "exact_one",
     )
     provider = _RetryProvider(latest=latest, correction=correction)
@@ -673,17 +503,7 @@ async def _assert_initial_binding_retry(*, latest: bool, correction: bool) -> No
                     factory=None,
                 ),
             ),
-            limits=BindingLimits(
-                max_declarations=1,
-                max_sources=1,
-                max_capabilities=1,
-                max_selector_fields=0,
-                max_selector_bytes=0,
-                max_items=2 if latest else 1,
-                max_bytes=20,
-                max_requests=2,
-                max_resources=1,
-            ),
+            limits=replace(binding.limits, max_items=2 if latest else 1, max_requests=2),
         )
     ).wait()
     assert provider.calls == 2
@@ -737,37 +557,10 @@ async def _assert_failed_acquisition_cleanup(factory_failure: str, ownership: st
             raise RuntimeError("factory failed")
         return invalid
 
-    policy = PhysicalRequestPolicy(
-        visibility="dispatch_and_settlement",
-        pre_dispatch_control="executor",
-        retry_owner="executor",
-        replay="idempotent",
-        max_attempts=1,
-    )
-    capability = ContextSourceCapability(
-        source=SOURCE,
-        artifact_type=artifact,
-        uses=frozenset({"initial_binding"}),
-        execution="async",
-        resource_owner="caller" if ownership == "caller" else "sdk",
-        cancellation="cooperative_ack",
-        settlement="explicit_ack",
-        usage="exact",
-        request=policy,
-        safe_detachment="forbidden",
-    )
+    binding = _initial_binding_fixture(source=SOURCE, target=first_target, node=node, artifact=artifact)
+    capability = replace(binding.capability, resource_owner="caller" if ownership == "caller" else "sdk")
     other_capability = replace(capability, source=OTHER_SOURCE, resource_owner="sdk")
-    declaration = InitialContextDecl(
-        target=first_target,
-        node=node,
-        port="input",
-        artifact_type=artifact,
-        source=SOURCE,
-        selector=ContextSelector(fields=()),
-        requirement="required",
-        bounds=RetrievalBounds(max_items=1, max_bytes=20, max_requests=1),
-        materialization=ContextMaterialization(kind="single", item_type=artifact),
-    )
+    declaration = binding.declaration
     running = await start_initial_binding(
         data=data,
         workflow=workflow,
@@ -786,12 +579,11 @@ async def _assert_failed_acquisition_cleanup(factory_failure: str, ownership: st
                 source=OTHER_SOURCE, capability=other_capability, lease=None, factory=cast(Any, failed_factory)
             ),
         ),
-        limits=BindingLimits(
+        limits=replace(
+            binding.limits,
             max_declarations=2,
             max_sources=2,
             max_capabilities=2,
-            max_selector_fields=0,
-            max_selector_bytes=0,
             max_items=2,
             max_bytes=40,
             max_requests=2,

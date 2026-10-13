@@ -40,6 +40,7 @@ from anonymizer.engine.graph_sdk.requests import (
     StopConfirmed,
 )
 from anonymizer.engine.graph_sdk.resources import ResourceLease
+from anonymizer.graph._values import DatumId
 from anonymizer.graph.workflow import (
     ArtifactType,
     ContextInputRef,
@@ -80,6 +81,60 @@ SOURCE = ContextSourceRef(name="context-source", revision=1)
 CONTEXT_CASES = tuple(
     json.loads((Path(__file__).parent / "reference" / "context_source_v3" / "cases.json").read_bytes())["cases"]
 )
+
+
+@dataclass(frozen=True)
+class _InitialBindingFixture:
+    capability: ContextSourceCapability
+    declaration: InitialContextDecl
+    limits: BindingLimits
+
+
+def _initial_binding_fixture(
+    *, source: ContextSourceRef, target: DatumId, node: NodeId, artifact: ArtifactType
+) -> _InitialBindingFixture:
+    return _InitialBindingFixture(
+        capability=ContextSourceCapability(
+            source=source,
+            artifact_type=artifact,
+            uses=frozenset({"initial_binding"}),
+            execution="async",
+            resource_owner="caller",
+            cancellation="cooperative_ack",
+            settlement="explicit_ack",
+            usage="exact",
+            request=PhysicalRequestPolicy(
+                visibility="dispatch_and_settlement",
+                pre_dispatch_control="executor",
+                retry_owner="executor",
+                replay="idempotent",
+                max_attempts=1,
+            ),
+            safe_detachment="forbidden",
+        ),
+        declaration=InitialContextDecl(
+            target=target,
+            node=node,
+            port="input",
+            artifact_type=artifact,
+            source=source,
+            selector=ContextSelector(fields=()),
+            requirement="required",
+            bounds=RetrievalBounds(max_items=1, max_bytes=20, max_requests=1),
+            materialization=ContextMaterialization(kind="single", item_type=artifact),
+        ),
+        limits=BindingLimits(
+            max_declarations=1,
+            max_sources=1,
+            max_capabilities=1,
+            max_selector_fields=0,
+            max_selector_bytes=0,
+            max_items=1,
+            max_bytes=20,
+            max_requests=1,
+            max_resources=1,
+        ),
+    )
 
 
 @dataclass

@@ -52,9 +52,7 @@ from anonymizer.graph.workflow import (
     OutcomeBinding,
     OutcomeSpec,
     ResourceCeiling,
-    SequenceEdge,
     StateEffect,
-    SubgraphNode,
     WorkflowId,
     WorkflowInputRef,
     WorkflowLimits,
@@ -62,6 +60,7 @@ from anonymizer.graph.workflow import (
     admit_activation_workflow,
     admit_static_workflow,
 )
+from tests.graph_sdk.workflow_fixtures import _shared_body_workflow
 
 
 def _data(target_count: int) -> ValidatedDataGraph:
@@ -335,8 +334,6 @@ def test_prepare_two_targets_builds_real_p3_reservations() -> None:
 def test_shared_subgraph_body_is_selected_once_and_reserved_per_parent() -> None:
     body_dynamic, child, _ = _workflow()
     body = body_dynamic.workflow
-    owner = WorkflowId.new()
-    first, second = (NodeId.new(workflow=owner) for _ in range(2))
     root_interface = replace(
         body.interface,
         name="shared-body-root",
@@ -348,51 +345,7 @@ def test_shared_subgraph_body_is_selected_once_and_reserved_per_parent() -> None
             for outcome in body.interface.outcomes
         ),
     )
-    root = admit_static_workflow(
-        workflow=owner,
-        interface=root_interface,
-        nodes=(
-            SubgraphNode(id=first, operation=body.interface, body=body),
-            SubgraphNode(id=second, operation=body.interface, body=body),
-        ),
-        input_bindings=(),
-        output_bindings=(),
-        outcome_bindings=tuple(
-            OutcomeBinding(
-                source=NodeOutcomeRef(node=second, outcome=outcome.name),
-                destination=WorkflowOutcomeRef(outcome=outcome.name),
-            )
-            for outcome in body.interface.outcomes
-        ),
-        sequence=(SequenceEdge(before=first, after=second),),
-        choices=(),
-        protection=(),
-        limits=WorkflowLimits(
-            max_nodes=4,
-            max_bindings=1,
-            max_sequence_edges=1,
-            max_choices=0,
-            max_branch_members=0,
-            max_subgraph_depth=2,
-            max_choice_states=1,
-        ),
-    )
-    workflow = admit_activation_workflow(
-        workflow=root,
-        scopes=(
-            DynamicScope(workflow=root, maps=(), joins=(), loops=()),
-            DynamicScope(workflow=body, maps=(), joins=(), loops=()),
-        ),
-        limits=DynamicLimits(
-            max_maps=0,
-            max_joins=0,
-            max_loops=0,
-            max_children_per_map=0,
-            max_iterations_per_loop=0,
-            max_dynamic_depth=2,
-            max_activation_occurrences=4,
-        ),
-    )
+    workflow, first, second = _shared_body_workflow(body, root_interface, max_bindings=1)
     capability = _capability(body_dynamic)
     plan = prepare(
         data=_data(1),
