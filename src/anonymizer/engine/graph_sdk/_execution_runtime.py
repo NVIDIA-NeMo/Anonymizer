@@ -16,7 +16,6 @@ from anonymizer.engine.graph_sdk._effect_values import (
 from anonymizer.engine.graph_sdk._execution_cleanup import _acquire_context_resources, _cleanup_execution
 from anonymizer.engine.graph_sdk._execution_delegated import _DelegatedOwner
 from anonymizer.engine.graph_sdk._execution_dispatch import (
-    _external_association_result,
     _immediate_execution_result,
     _mapping,
     _run_adaptive,
@@ -24,6 +23,7 @@ from anonymizer.engine.graph_sdk._execution_dispatch import (
     _run_external_batch,
     _run_local,
 )
+from anonymizer.engine.graph_sdk._execution_frame import _InvocationFrame
 from anonymizer.engine.graph_sdk._execution_materialization import (
     _bridge_structural_map_membership,
     _dynamic_membership_value,
@@ -58,7 +58,6 @@ from anonymizer.engine.graph_sdk._execution_values import (
     _FACT_KEY,
     _RESULT_KEY,
     AdmittedExecutionPlan,
-    ArtifactProvenanceFact,
     ExecutionPortFact,
     ExecutionResult,
     ExecutionServices,
@@ -67,7 +66,6 @@ from anonymizer.engine.graph_sdk._execution_values import (
     OperationExecutionPolicy,
     ProvenanceKey,
     PublicationFailureFact,
-    RootInputKey,
     RuntimeOutcome,
 )
 from anonymizer.engine.graph_sdk._request_driver import _RequestAuthority
@@ -86,7 +84,6 @@ from anonymizer.engine.graph_sdk.requests import (
     PhysicalRequestId,
     ScopeCancel,
     SemanticAssociation,
-    TextArtifactValue,
     initialize_requests,
     request_receipt,
 )
@@ -103,18 +100,12 @@ from anonymizer.graph._values import (
 )
 from anonymizer.graph.activation import (
     ActivationEntry,
-    ActivationSeed,
-    ActivationState,
     CloseUnstarted,
     ObserveTerminal,
-    Select,
     Start,
     advance_activation,
-    initialize_activation,
 )
 from anonymizer.graph.workflow import (
-    AdmittedWorkflow,
-    ArtifactType,
     SubgraphNode,
 )
 
@@ -164,9 +155,8 @@ class _InvocationRuntime:
         self.context_leases, self.failed_context_sources, self.adaptive_acquisitions = _acquire_context_resources(
             self.services.context_resources, invocation
         )
-        self.states: list[ActivationState] = []
-        self.target_keys: dict[DatumId, dict[int, ActivationKey]] = {}
-        self._initialize_activations()
+        self.facts = _ExecutionFacts()
+        self.frame = _InvocationFrame(self.prepared, invocation, self.facts)
         scope = InvocationRequestScope(invocation=self.invocation)
         self.request_authority = _RequestAuthority(
             state=initialize_requests(
@@ -176,11 +166,8 @@ class _InvocationRuntime:
             )
         )
         self.request_resources: dict[PhysicalRequestId, ResourceId] = {}
-        self.facts = _ExecutionFacts()
-        self.root_inputs: dict[tuple[DatumId, str], ArtifactRef] = {}
         self.subgraph_inputs: dict[tuple[DatumId, ActivationKey, str], ArtifactRef] = {}
         self.subgraph_input_parents: dict[tuple[DatumId, ActivationKey, str], ProvenanceKey] = {}
-        self._initialize_root_inputs()
         self.facts.next_artifact = _materialize_bound_context(
             self.admitted,
             self.invocation,
@@ -194,59 +181,7 @@ class _InvocationRuntime:
         self.cancelled_unstarted: set[ActivationKey] = set()
         self.blocked_reasons: dict[ActivationKey, str | UnusedRetryCapacity] = {}
         self.publication_failures: list[PublicationFailureFact] = []
-        self.jobs: dict[_ExecutionTask, _ExecutionJob] = {}
-        self.physical_jobs: dict[asyncio.Task[object], asyncio.Task[object]] = {}
-
-    def _initialize_activations(self) -> None:
-        for target_map in self.prepared.target_occurrences:
-            keys: dict[int, ActivationKey] = {}
-            for slot in self.prepared.reservation_recipe:
-                keys[slot.index] = ActivationKey(
-                    invocation=self.invocation,
-                    occurrence=target_map.occurrence_offset + slot.index,
-                    parent=keys.get(slot.parent_index),
-                    iteration=slot.iteration,
-                )
-            self.target_keys[target_map.target] = keys
-            reservations = frozenset(
-                (
-                    ActivationSeed(template=slot.template, activation=keys[slot.index])
-                    for slot in self.prepared.reservation_recipe
-                )
-            )
-            initialized = initialize_activation(
-                workflow=self.prepared.workflow,
-                invocation=self.invocation,
-                reservations=reservations,
-                limits=self.prepared.activation_limits,
-            )
-            self.states.append(
-                advance_activation(
-                    state=initialized, event=Select(seeds=_initial_seeds(self.prepared.workflow.workflow, reservations))
-                )
-            )
-
-    def _initialize_root_inputs(self) -> None:
-        datum_text = {item.id: item.text for item in self.prepared.data.datums}
-        references: dict[tuple[DatumId, ArtifactType], ArtifactRef] = {}
-        for bound in self.prepared.bound_inputs:
-            lineage = (bound.source, bound.artifact_type)
-            reference = references.get(lineage)
-            if reference is None:
-                reference = ArtifactRef(invocation=self.invocation, key=self.facts.next_artifact, version=1)
-                self.facts.next_artifact += 1
-                self.facts.values[reference] = TextArtifactValue(text=datum_text[bound.source])
-                references[lineage] = reference
-            self.root_inputs[bound.target, bound.port] = reference
-            self.facts.provenance.append(
-                ArtifactProvenanceFact(
-                    _key=_FACT_KEY,
-                    key=RootInputKey(target=bound.target, port=bound.port),
-                    artifact=reference,
-                    parents=frozenset(),
-                    decision=False,
-                )
-            )
+        self.submissions: dict[_ExecutionTask, tuple[_ExecutionJob, ...]] = {}
 
     async def run(self) -> ExecutionResult:
         try:
@@ -267,7 +202,7 @@ class _InvocationRuntime:
             self._operation_spans[activation] = _Span("operation", session=span.session, parent=span.ordinal)
 
     def _close_observed_activations(self) -> None:
-        for state in self.states:
+        for state in self.frame.states:
             for entry in state.entries:
                 span = self._activation_spans.get(entry.activation)
                 if (
@@ -282,9 +217,9 @@ class _InvocationRuntime:
         while True:
             scheduled = self._schedule_ready()
             self._close_observed_activations()
-            if all((state.complete for state in self.states)) and (not self.jobs):
+            if all((state.complete for state in self.frame.states)) and (not self.submissions):
                 break
-            if not self.jobs:
+            if not self.submissions:
                 if not scheduled:
                     break
                 continue
@@ -294,48 +229,45 @@ class _InvocationRuntime:
     def _schedule_ready(self) -> bool:
         scheduled = False
         external_jobs: list[_ExecutionJob] = []
-        for state_index, (target_map, state) in enumerate(
-            zip(self.prepared.target_occurrences, self.states, strict=True)
-        ):
+        for target, source in self.frame.sources.items():
+            state = source.state
             ready = sorted(
                 (item for item in state.entries if item.status == "ready"), key=lambda item: item.activation.occurrence
             )
             for entry in ready:
-                scheduled = self._schedule_entry(state_index, target_map.target, entry, external_jobs) or scheduled
+                scheduled = self._schedule_entry(target, entry, external_jobs) or scheduled
         self._dispatch_external(external_jobs)
         return scheduled
 
-    def _schedule_entry(
-        self, state_index: int, target: DatumId, entry: ActivationEntry, external_jobs: list[_ExecutionJob]
-    ) -> bool:
+    def _schedule_entry(self, target: DatumId, entry: ActivationEntry, external_jobs: list[_ExecutionJob]) -> bool:
         if entry.template in self.delegated_slots:
             owner = next(
                 item
-                for item in self.states[state_index].entries
+                for item in self.frame.sources[target].state.entries
                 if item.template == self.delegated_slots[entry.template]
                 and item.activation.parent == entry.activation.parent
             )
             if self.control.cancelled or owner.status not in {"ready", "unstarted", "running"}:
                 if self.control.cancelled:
                     self.cancelled_unstarted.add(entry.activation)
-                self.states[state_index] = advance_activation(
-                    state=self.states[state_index],
+                self.frame.sources[target].state = advance_activation(
+                    state=self.frame.sources[target].state,
                     event=CloseUnstarted(activation=entry.activation, category="blocked"),
                 )
                 return True
             return False
         policy = self.policies.get(entry.template)
         if policy is None:
-            return self._start_subgraph(state_index, target, entry)
-        decision_jobs = sum((item.policy.kind == "decision" for item in self.jobs.values()))
+            return self._start_subgraph(target, entry)
+        decision_jobs = sum((item.policy.kind == "decision" for jobs in self.submissions.values() for item in jobs))
         if policy.kind == "decision" and decision_jobs >= self.services.decision_limits.max_pending:
             if self.services.decision_limits.max_pending == 0:
                 reject(EffectCode.PENDING_LIMIT)
             return False
         if _operation_has_omitted_context(self.admitted, target, entry.template):
             self.blocked_reasons[entry.activation] = "omitted_optional"
-            self.states[state_index] = advance_activation(
-                state=self.states[state_index],
+            self.frame.sources[target].state = advance_activation(
+                state=self.frame.sources[target].state,
                 event=CloseUnstarted(activation=entry.activation, category="blocked"),
             )
             return True
@@ -343,12 +275,13 @@ class _InvocationRuntime:
         local_jobs = sum(
             (
                 item.policy.kind != "external" and item.activation not in waiting_activations
-                for item in self.jobs.values()
+                for jobs in self.submissions.values()
+                for item in jobs
             )
         )
-        remote_jobs = len(
-            {self.physical_jobs.get(task, task) for task, item in self.jobs.items() if item.policy.kind == "external"}
-        ) + len(_group_external_jobs(external_jobs))
+        remote_jobs = sum(jobs[0].policy.kind == "external" for jobs in self.submissions.values()) + len(
+            _group_external_jobs(external_jobs)
+        )
         joins_pending_batch = any(
             (item.node == entry.template and item.policy == policy for item in external_jobs)
         ) and all((item.capability.attribution == "keyed_shared_request" for item in policy.implementations))
@@ -367,19 +300,19 @@ class _InvocationRuntime:
         )
         if remote_capacity_stalled and remote_jobs:
             return False
-        self._start_operation(state_index, target, entry, policy, external_jobs, remote_capacity_stalled)
+        self._start_operation(target, entry, policy, external_jobs, remote_capacity_stalled)
         return True
 
-    def _start_subgraph(self, state_index: int, target: DatumId, entry: ActivationEntry) -> bool:
+    def _start_subgraph(self, target: DatumId, entry: ActivationEntry) -> bool:
         if isinstance(self.admitted.nodes[entry.template], SubgraphNode):
             try:
                 _materialize_subgraph_inputs(
                     self.admitted,
                     target,
-                    self.states[state_index],
+                    self.frame.sources[target].state,
                     entry.activation,
                     entry.template,
-                    self.root_inputs,
+                    self.frame.root_inputs,
                     self.subgraph_inputs,
                     self.subgraph_input_parents,
                     self.facts.produced,
@@ -388,21 +321,20 @@ class _InvocationRuntime:
             except EffectRejected as exc:
                 if exc.code != EffectCode.MISSING:
                     raise
-                self.states[state_index] = advance_activation(
-                    state=self.states[state_index],
+                self.frame.sources[target].state = advance_activation(
+                    state=self.frame.sources[target].state,
                     event=CloseUnstarted(activation=entry.activation, category="blocked"),
                 )
                 return True
             self._start_observed_activation(entry.activation, operation=False)
-            self.states[state_index] = advance_activation(
-                state=self.states[state_index], event=Start(activation=entry.activation)
+            self.frame.sources[target].state = advance_activation(
+                state=self.frame.sources[target].state, event=Start(activation=entry.activation)
             )
             return True
         return False
 
     def _start_operation(
         self,
-        state_index: int,
         target: DatumId,
         entry: ActivationEntry,
         policy: OperationExecutionPolicy,
@@ -411,8 +343,9 @@ class _InvocationRuntime:
     ) -> None:
         if self.control.cancelled:
             self.cancelled_unstarted.add(entry.activation)
-            self.states[state_index] = advance_activation(
-                state=self.states[state_index], event=CloseUnstarted(activation=entry.activation, category="blocked")
+            self.frame.sources[target].state = advance_activation(
+                state=self.frame.sources[target].state,
+                event=CloseUnstarted(activation=entry.activation, category="blocked"),
             )
             return
         attempt = TaskAttemptId.new(activation=entry.activation)
@@ -423,9 +356,9 @@ class _InvocationRuntime:
                 target,
                 entry.template,
                 entry.activation,
-                self.states[state_index],
+                self.frame.sources[target].state,
                 association,
-                self.root_inputs,
+                self.frame.root_inputs,
                 self.subgraph_inputs,
                 self.subgraph_input_parents,
                 self.facts.produced,
@@ -435,18 +368,18 @@ class _InvocationRuntime:
         except EffectRejected as exc:
             if exc.code != EffectCode.MISSING:
                 raise
-            self.states[state_index] = advance_activation(
-                state=self.states[state_index], event=CloseUnstarted(activation=entry.activation, category="blocked")
+            self.frame.sources[target].state = advance_activation(
+                state=self.frame.sources[target].state,
+                event=CloseUnstarted(activation=entry.activation, category="blocked"),
             )
             return
         self._start_observed_activation(entry.activation, operation=True)
-        self.states[state_index] = advance_activation(
-            state=self.states[state_index], event=Start(activation=entry.activation)
+        self.frame.sources[target].state = advance_activation(
+            state=self.frame.sources[target].state, event=Start(activation=entry.activation)
         )
         self.attempts[entry.activation] = attempt
         implementation = policy.implementations[0]
         job = _ExecutionJob(
-            state_index=state_index,
             target=target,
             activation=entry.activation,
             node=entry.template,
@@ -541,7 +474,8 @@ class _InvocationRuntime:
             coroutine = _run_local(
                 policy, handle, job.association, job.inputs, self.control, self.admitted.ingress_limits
             )
-        self.jobs[asyncio.create_task(coroutine)] = job
+        task = asyncio.create_task(coroutine)
+        self.submissions[task] = (job,)
 
     def _dispatch_external(self, external_jobs: list[_ExecutionJob]) -> None:
         groups = _group_external_jobs(external_jobs)
@@ -558,38 +492,32 @@ class _InvocationRuntime:
                     self.request_resources,
                 )
             )
-            for job in group:
-                task = asyncio.create_task(_external_association_result(physical, job.association))
-                self.jobs[task] = job
-                self.physical_jobs[task] = physical
+            self.submissions[physical] = tuple(group)
 
     async def _process_completed(self) -> None:
         scheduler_wakeup = asyncio.create_task(self.control.scheduler_changed.wait())
         try:
-            completed, _ = await asyncio.wait((*self.jobs, scheduler_wakeup), return_when=asyncio.FIRST_COMPLETED)
+            completed, _ = await asyncio.wait(
+                (*self.submissions, scheduler_wakeup), return_when=asyncio.FIRST_COMPLETED
+            )
         finally:
             scheduler_wakeup.cancel()
             with suppress(asyncio.CancelledError):
                 await scheduler_wakeup
         if scheduler_wakeup in completed:
             self.control.scheduler_changed.clear()
-        pending_completed = {task for task in self.jobs if task in completed}
-        while pending_completed:
-            peers = await self._complete_group(next(iter(pending_completed)))
-            pending_completed.difference_update(peers)
+        for task in tuple(self.submissions):
+            if task in completed:
+                self._complete_submission(task)
 
-    async def _complete_group(self, first: _ExecutionTask) -> list[_ExecutionTask]:
-        physical = self.physical_jobs.get(first)
-        peers = (
-            [task for task in self.jobs if self.physical_jobs.get(task) is physical]
-            if physical is not None
-            else [first]
-        )
-        await asyncio.gather(*peers)
-        for task in peers:
-            job = self.jobs.pop(task)
-            self.physical_jobs.pop(task, None)
-            mapping, results, assessments = task.result()
+    def _complete_submission(self, task: _ExecutionTask) -> None:
+        jobs = self.submissions.pop(task)
+        returned = task.result()
+        if not isinstance(returned, dict):
+            (job,) = jobs
+            returned = {job.association: returned}
+        for job in jobs:
+            mapping, results, assessments = returned[job.association]
             accepted = mapping.condition == "result"
             mapping, results, checkpoint, staged_result = self._stage_outputs(job, mapping, results, assessments)
             mapping = self._advance_completed(job, mapping, results, checkpoint, staged_result)
@@ -662,7 +590,6 @@ class _InvocationRuntime:
                         failure=mapping.failure,
                     )
                 )
-        return peers
 
     def _unused_tail(self, job: _ExecutionJob) -> tuple[ActivationKey, UnusedRetryCapacity] | None:
         """Check provisional capacity against this invocation's live facts, without stamping."""
@@ -679,8 +606,8 @@ class _InvocationRuntime:
             or state.remote_outstanding
         ):
             return None
-        g, q = (self.target_keys[job.target][index] for index in contract.child_slots)
-        entries = {item.activation: item for item in self.states[job.state_index].entries}
+        g, q = (self.frame.sources[job.target].keys[index] for index in contract.child_slots)
+        entries = {item.activation: item for item in self.frame.sources[job.target].state.entries}
         if (
             q in self.attempts
             or entries[q].status not in {"ready", "unstarted", "blocked"}
@@ -714,7 +641,8 @@ class _InvocationRuntime:
         ):
             return None
         if contract.readiness is not None and any(
-            entries[self.target_keys[job.target][index]].status != "success" for index in contract.readiness.slots
+            entries[self.frame.sources[job.target].keys[index]].status != "success"
+            for index in contract.readiness.slots
         ):
             return None
         return q, UnusedRetryCapacity(owner=job.association.task, after=self.attempts[g])
@@ -795,7 +723,7 @@ class _InvocationRuntime:
         checkpoint: _FactCheckpoint | None,
         staged_result: bool,
     ) -> RuntimeOutcome:
-        prior_state = self.states[job.state_index]
+        prior_state = self.frame.sources[job.target].state
         candidate_state = advance_activation(
             state=prior_state,
             event=ObserveTerminal(activation=job.activation, outcome=mapping.outcome, category=mapping.category),
@@ -867,7 +795,7 @@ class _InvocationRuntime:
             )
         if checkpoint is not None:
             self.facts.commit(checkpoint)
-        self.states[job.state_index] = candidate_state
+        self.frame.sources[job.target].state = candidate_state
         return mapping
 
     async def _finalize(self) -> ExecutionResult:
@@ -883,14 +811,14 @@ class _InvocationRuntime:
         record = _canonical_record(
             self.admitted,
             self.invocation,
-            tuple(self.states),
-            self.target_keys,
+            self.frame.states,
+            self.frame.target_keys,
             self.attempts,
             frozenset(self.facts.values),
             frozenset(self.cancelled_unstarted),
             self.blocked_reasons,
         )
-        final_outputs = _final_outputs(self.prepared, tuple(self.states), self.facts.produced, self.facts.provenance)
+        final_outputs = _final_outputs(self.prepared, self.frame.states, self.facts.produced, self.facts.provenance)
         return ExecutionResult(
             _key=_RESULT_KEY,
             _execution=self.admitted,
@@ -902,7 +830,7 @@ class _InvocationRuntime:
                 for (target, activation, port), parent in self.facts.passthrough_parents.items()
             ),
             record=record,
-            states=tuple(self.states),
+            states=self.frame.states,
             requests=request_receipt(self.request_authority.state),
             cleanup=cleanup,
             pending_decisions=(),
@@ -914,8 +842,3 @@ class _InvocationRuntime:
             cleanup_associations=cleanup_associations,
             publication_failures=tuple(self.publication_failures),
         )
-
-
-def _initial_seeds(workflow: AdmittedWorkflow, reservations: frozenset[ActivationSeed]) -> frozenset[ActivationSeed]:
-    blocked = {member for choice in workflow.choices for branch in choice.branches for member in branch.members}
-    return frozenset(seed for seed in reservations if seed.activation.parent is None and seed.template not in blocked)

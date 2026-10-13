@@ -322,15 +322,18 @@ def _mark_assessment_subjects(
             (owner, occurrence, name) == (target, activation, port) and isinstance(producer, MapItemKey)
             for owner, occurrence, name, producer in facts.input_parents
         )
-        facts.ports[indexes[0]] = ExecutionPortFact(
-            _key=_FACT_KEY,
-            activation=fact.activation,
-            node=fact.node,
-            target=fact.target,
-            port=fact.port,
-            artifact=fact.artifact,
-            artifact_type=fact.artifact_type,
-            role="artifact" if item_subject else "candidate",
+        facts.replace_port(
+            indexes[0],
+            ExecutionPortFact(
+                _key=_FACT_KEY,
+                activation=fact.activation,
+                node=fact.node,
+                target=fact.target,
+                port=fact.port,
+                artifact=fact.artifact,
+                artifact_type=fact.artifact_type,
+                role="artifact" if item_subject else "candidate",
+            ),
         )
 
 

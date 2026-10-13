@@ -29,6 +29,7 @@ from data_designer.config.seed_source import LocalFileSeedSource
 from data_designer.config.utils.constants import TRACE_COLUMN_POSTFIX
 from data_designer.config.utils.trace_type import TraceType
 
+from anonymizer.engine.ndd._source_frame import WorkflowSourceFrame
 from anonymizer.interface.errors import AnonymizerWorkflowError
 from anonymizer.measurement import current_collector, record_ndd_workflow
 
@@ -59,6 +60,7 @@ class WorkflowRunResult:
 
     dataframe: pd.DataFrame
     failed_records: list[FailedRecord]
+    source_positions: tuple[int, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -338,6 +340,7 @@ class NddAdapter:
             `WorkflowRunResult` with the output DataFrame and any `FailedRecord` entries.
         """
         workflow_input_df = self._attach_record_ids(df=df)
+        source_frame = WorkflowSourceFrame.capture(workflow_input_df)
         logger.debug("NDD workflow '%s' starting with %d records", workflow_name, len(workflow_input_df))
         col_names = [c.name for c in columns]
         logger.debug("NDD workflow '%s': %d columns %s", workflow_name, len(col_names), col_names)
@@ -367,7 +370,7 @@ class NddAdapter:
 
         with tempfile.TemporaryDirectory(prefix=f"anonymizer_{workflow_name}_") as tmp_dir:
             seed_path = str(Path(tmp_dir) / "seed.parquet")
-            seed_source = LocalFileSeedSource.from_dataframe(workflow_input_df, seed_path)
+            seed_source = LocalFileSeedSource.from_dataframe(source_frame.seed(), seed_path)
 
             config_builder = DataDesignerConfigBuilder(model_configs=model_configs)
             config_builder.with_seed_dataset(seed_source, sampling_strategy=SamplingStrategy.ORDERED)
@@ -395,6 +398,7 @@ class NddAdapter:
                             output_df = workflow_input_df.iloc[0:0].copy()
                         else:
                             output_df = preview_results.dataset
+                    output_df, source_positions = source_frame.project(output_df, requested=record_count)
             except Exception as exc:
                 logger.warning(
                     "Workflow failed for %d input record(s) on model(s) %s: %s",
@@ -451,6 +455,7 @@ class NddAdapter:
                 else workflow_input_df
             ),
             output_df=output_df,
+            source_positions=source_positions,
         )
         _success_model_usage = usage_probe.model_usage()
         with self._run_lock:
@@ -468,7 +473,7 @@ class NddAdapter:
             column_names=col_names,
             model_usage=_success_model_usage,
         )
-        return WorkflowRunResult(dataframe=output_df, failed_records=failed_records)
+        return WorkflowRunResult(dataframe=output_df, failed_records=failed_records, source_positions=source_positions)
 
     def build_config(
         self,
@@ -563,6 +568,7 @@ class NddAdapter:
         workflow_name: str,
         input_df: pd.DataFrame,
         output_df: pd.DataFrame,
+        source_positions: tuple[int, ...],
     ) -> list[FailedRecord]:
         if RECORD_ID_COLUMN not in input_df.columns:
             logger.warning(
@@ -609,9 +615,12 @@ class NddAdapter:
                 for record_id in input_df[RECORD_ID_COLUMN].astype(str).tolist()
             ]
 
-        input_ids = set(input_df[RECORD_ID_COLUMN].astype(str).tolist())
-        output_ids = set(output_df[RECORD_ID_COLUMN].astype(str).tolist())
-        missing_ids = sorted(input_ids - output_ids)
+        returned = set(source_positions)
+        missing_ids = sorted(
+            record_id
+            for position, record_id in enumerate(input_df[RECORD_ID_COLUMN].astype(str).tolist())
+            if position not in returned
+        )
         return [
             FailedRecord(
                 record_id=record_id,

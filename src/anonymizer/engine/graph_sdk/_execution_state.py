@@ -6,9 +6,9 @@ from __future__ import annotations
 
 import asyncio
 from collections import ChainMap
-from collections.abc import MutableMapping, MutableSequence
+from collections.abc import MutableMapping
 from dataclasses import dataclass, field
-from typing import Generic, TypeAlias, TypeVar, cast, overload
+from typing import TypeAlias
 
 from anonymizer.engine.graph_sdk._execution_values import (
     ArtifactProvenanceFact,
@@ -50,132 +50,94 @@ class _ExecutionControl:
     measured_handles: dict[SemanticAssociation, ImplementationHandle] = field(default_factory=dict)
 
 
-_T = TypeVar("_T")
-
-
-class _FactList(MutableSequence[_T], Generic[_T]):
-    """Stage append and replacement operations without copying prior facts."""
-
-    def __init__(self, base: MutableSequence[_T]) -> None:
-        self.base = base
-        self.added: list[_T] = []
-        self.replaced: dict[int, _T] = {}
-
-    def __len__(self) -> int:
-        return len(self.base) + len(self.added)
-
-    @overload
-    def __getitem__(self, index: int) -> _T: ...
-
-    @overload
-    def __getitem__(self, index: slice) -> list[_T]: ...
-
-    def __getitem__(self, index: int | slice) -> _T | list[_T]:
-        if isinstance(index, slice):
-            return [self[i] for i in range(*index.indices(len(self)))]
-        if index < 0:
-            index += len(self)
-        if not 0 <= index < len(self):
-            raise IndexError(index)
-        if index >= len(self.base):
-            return self.added[index - len(self.base)]
-        return self.replaced[index] if index in self.replaced else self.base[index]
-
-    def __setitem__(self, index: int | slice, value: _T | object) -> None:
-        if not isinstance(index, int) or not 0 <= index < len(self):
-            raise TypeError("fact staging supports indexed replacement only")
-        item = cast(_T, value)
-        if index >= len(self.base):
-            self.added[index - len(self.base)] = item
-        else:
-            self.replaced[index] = item
-
-    def __delitem__(self, index: int | slice) -> None:
-        raise TypeError("fact staging cannot delete facts")
-
-    def insert(self, index: int, value: _T) -> None:
-        if index != len(self):
-            raise TypeError("fact staging can only append")
-        self.added.append(value)
-
-    def commit(self) -> None:
-        for index, value in self.replaced.items():
-            self.base[index] = value
-        self.base.extend(self.added)
-
-
 @dataclass(frozen=True, slots=True)
 class _FactCheckpoint:
     values: MutableMapping[ArtifactRef, ArtifactValue]
     produced: MutableMapping[tuple[DatumId, ActivationKey | NodeId, str], ArtifactRef]
-    provenance: MutableSequence[ArtifactProvenanceFact]
     passthrough_parents: MutableMapping[tuple[DatumId, ActivationKey, str], ProvenanceKey]
-    ports: MutableSequence[ExecutionPortFact]
-    assessments: MutableSequence[ExecutionAssessmentFact]
+    provenance: int
+    ports: int
+    assessments: int
     next_artifact: int
+    replaced_ports: dict[int, ExecutionPortFact] = field(default_factory=dict)
 
 
 @dataclass(slots=True)
 class _ExecutionFacts:
     values: MutableMapping[ArtifactRef, ArtifactValue] = field(default_factory=dict)
     produced: MutableMapping[tuple[DatumId, ActivationKey | NodeId, str], ArtifactRef] = field(default_factory=dict)
-    provenance: MutableSequence[ArtifactProvenanceFact] = field(default_factory=list)
-    ports: MutableSequence[ExecutionPortFact] = field(default_factory=list)
-    assessments: MutableSequence[ExecutionAssessmentFact] = field(default_factory=list)
+    provenance: list[ArtifactProvenanceFact] = field(default_factory=list)
+    ports: list[ExecutionPortFact] = field(default_factory=list)
+    assessments: list[ExecutionAssessmentFact] = field(default_factory=list)
     input_parents: list[tuple[DatumId, ActivationKey, str, ProvenanceKey]] = field(default_factory=list)
     passthrough_parents: MutableMapping[tuple[DatumId, ActivationKey, str], ProvenanceKey] = field(default_factory=dict)
     next_artifact: int = 0
 
+    _checkpoint: _FactCheckpoint | None = field(default=None, init=False, repr=False)
+
     def checkpoint(self) -> _FactCheckpoint:
-        """Open one association delta; authoritative containers remain untouched."""
-        assert not isinstance(self.values, ChainMap)
+        """Open a synchronous publication delta, without copying accepted facts."""
+        if self._checkpoint is not None:
+            raise RuntimeError("publication delta is already open")
         checkpoint = _FactCheckpoint(
             values=self.values,
             produced=self.produced,
-            provenance=self.provenance,
             passthrough_parents=self.passthrough_parents,
-            ports=self.ports,
-            assessments=self.assessments,
+            provenance=len(self.provenance),
+            ports=len(self.ports),
+            assessments=len(self.assessments),
             next_artifact=self.next_artifact,
         )
         self.values = ChainMap({}, self.values)
         self.produced = ChainMap({}, self.produced)
         self.passthrough_parents = ChainMap({}, self.passthrough_parents)
-        self.provenance = _FactList(self.provenance)
-        self.ports = _FactList(self.ports)
-        self.assessments = _FactList(self.assessments)
+        self._checkpoint = checkpoint
         return checkpoint
 
+    def replace_port(self, index: int, fact: ExecutionPortFact) -> None:
+        checkpoint = self._checkpoint
+        if checkpoint is not None and index < checkpoint.ports:
+            checkpoint.replaced_ports.setdefault(index, self.ports[index])
+        self.ports[index] = fact
+
     def commit(self, checkpoint: _FactCheckpoint) -> None:
-        if self.values is checkpoint.values:
+        if self._checkpoint is None:
             return  # already discarded
-        assert isinstance(self.values, ChainMap) and isinstance(self.produced, ChainMap)
-        assert isinstance(self.passthrough_parents, ChainMap)
-        assert isinstance(self.provenance, _FactList) and isinstance(self.ports, _FactList)
-        assert isinstance(self.assessments, _FactList)
+        if self._checkpoint is not checkpoint:
+            raise RuntimeError("publication checkpoint does not own the open delta")
+        if not (
+            isinstance(self.values, ChainMap)
+            and isinstance(self.produced, ChainMap)
+            and isinstance(self.passthrough_parents, ChainMap)
+        ):
+            raise RuntimeError("publication mapping has no open delta")
         checkpoint.values.update(self.values.maps[0])
         checkpoint.produced.update(self.produced.maps[0])
         checkpoint.passthrough_parents.update(self.passthrough_parents.maps[0])
-        self.provenance.commit()
-        self.ports.commit()
-        self.assessments.commit()
-        allocated = self.next_artifact
-        self.restore(checkpoint)
-        self.next_artifact = allocated
+        self._close(checkpoint)
 
     def restore(self, checkpoint: _FactCheckpoint) -> None:
+        if self._checkpoint is None:
+            return
+        if self._checkpoint is not checkpoint:
+            raise RuntimeError("publication checkpoint does not own the open delta")
+        del self.provenance[checkpoint.provenance :]
+        del self.ports[checkpoint.ports :]
+        del self.assessments[checkpoint.assessments :]
+        for index, fact in checkpoint.replaced_ports.items():
+            self.ports[index] = fact
+        self.next_artifact = checkpoint.next_artifact
+        self._close(checkpoint)
+
+    def _close(self, checkpoint: _FactCheckpoint) -> None:
         self.values = checkpoint.values
         self.produced = checkpoint.produced
-        self.provenance = checkpoint.provenance
         self.passthrough_parents = checkpoint.passthrough_parents
-        self.ports = checkpoint.ports
-        self.assessments = checkpoint.assessments
-        self.next_artifact = checkpoint.next_artifact
+        self._checkpoint = None
 
 
 @dataclass(frozen=True, slots=True)
 class _ExecutionJob:
-    state_index: int
     target: DatumId
     activation: ActivationKey
     node: NodeId
@@ -201,6 +163,6 @@ def _group_external_jobs(jobs: list[_ExecutionJob]) -> list[list[_ExecutionJob]]
     return groups
 
 
-_ExecutionTask: TypeAlias = asyncio.Task[
-    tuple[RuntimeOutcome, tuple[AssociationResult, ...], tuple[LocalAssessmentResult, ...]]
-]
+_OperationResult: TypeAlias = tuple[RuntimeOutcome, tuple[AssociationResult, ...], tuple[LocalAssessmentResult, ...]]
+_SubmissionResults: TypeAlias = dict[SemanticAssociation, _OperationResult]
+_ExecutionTask: TypeAlias = asyncio.Task[_OperationResult] | asyncio.Task[_SubmissionResults]

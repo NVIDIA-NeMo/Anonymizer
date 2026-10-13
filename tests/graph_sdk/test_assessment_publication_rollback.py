@@ -35,18 +35,18 @@ def _execute(
     restore = _ExecutionFacts.restore
 
     def observe(facts: _ExecutionFacts, checkpoint: _FactCheckpoint) -> None:
-        # Successful commits already append to checkpoint.assessments. Only a
-        # rejected, uncommitted assessment is absent from that authoritative base.
-        pending = [fact for fact in facts.assessments if all(fact is not prior for prior in checkpoint.assessments)]
+        # The checkpoint records the accepted prefix; rollback discards only
+        # appended facts, leaving the previously published peer intact.
+        pending = facts.assessments[checkpoint.assessments :]
         if pending:
             (rejected,) = pending
-            assert len(checkpoint.assessments) == 1
+            assert checkpoint.assessments == 1
             assert rejected.evidence_artifact in facts.values
             staged = facts.values[rejected.evidence_artifact]
             assert isinstance(staged, TextCollectionValue) and len(staged.items) == 2
             assert any(port.artifact == rejected.evidence_artifact for port in facts.ports)
             assert any(producer.artifact == rejected.evidence_artifact for producer in facts.provenance)
-            discarded.append(_Discard(tuple(checkpoint.assessments), rejected))
+            discarded.append(_Discard(tuple(facts.assessments[: checkpoint.assessments]), rejected))
         restore(facts, checkpoint)
         if pending and retain_rejected:
             # Fault injection retains the real staged fact. No assessment is

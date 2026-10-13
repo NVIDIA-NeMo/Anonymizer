@@ -276,10 +276,10 @@ class _DelegatedOwner(PrivateValue):
             borrow.expired = True
 
     def _satisfied(self, slot: int, outcomes: frozenset[str]) -> bool:
-        key = self.runtime.target_keys[self.job.target][slot]
+        key = self.runtime.frame.sources[self.job.target].keys[slot]
         return any(
             entry.activation == key and entry.status == "success" and entry.outcome in outcomes
-            for entry in self.runtime.states[self.job.state_index].entries
+            for entry in self.runtime.frame.sources[self.job.target].state.entries
         )
 
     async def readiness(self) -> PhysicalRequestId:
@@ -313,8 +313,10 @@ class _DelegatedOwner(PrivateValue):
         results: tuple[AssociationResult, ...] = ()
         try:
             request = await self._request(descriptor.request_slot, "initial", None, None, chain)
-            key = self.runtime.target_keys[self.job.target][descriptor.request_slot]
-            entry = next(item for item in self.runtime.states[self.job.state_index].entries if item.activation == key)
+            key = self.runtime.frame.sources[self.job.target].keys[descriptor.request_slot]
+            entry = next(
+                item for item in self.runtime.frame.sources[self.job.target].state.entries if item.activation == key
+            )
             if entry.status == "success":
                 assert entry.outcome is not None
                 mapping = _mapping(semantic.policy, "result", entry.outcome, None)
@@ -368,8 +370,8 @@ class _DelegatedOwner(PrivateValue):
         if slot not in self.contract.owned_slots:
             reject(EffectCode.FOREIGN_OWNER)
         runtime = self.runtime
-        key = runtime.target_keys[self.job.target][slot]
-        entry = next(item for item in runtime.states[self.job.state_index].entries if item.activation == key)
+        key = runtime.frame.sources[self.job.target].keys[slot]
+        entry = next(item for item in runtime.frame.sources[self.job.target].state.entries if item.activation == key)
         if key in runtime.attempts:
             reject(EffectCode.DUPLICATE)
         if entry.status != "ready":
@@ -380,7 +382,6 @@ class _DelegatedOwner(PrivateValue):
         policy = runtime.policies[entry.template]
         implementation = policy.implementations[0]
         return _ExecutionJob(
-            state_index=self.job.state_index,
             target=self.job.target,
             activation=key,
             node=entry.template,
@@ -533,10 +534,12 @@ class _DelegatedOwner(PrivateValue):
         self._check()
         runtime = self.runtime
         # Compute all rejecting activation work before the driver's authoritative Dispatch.
-        state = advance_activation(state=runtime.states[leaf.state_index], event=Start(activation=leaf.activation))
+        state = advance_activation(
+            state=runtime.frame.sources[leaf.target].state, event=Start(activation=leaf.activation)
+        )
 
         def commit() -> None:
-            runtime.states[leaf.state_index] = state
+            runtime.frame.sources[leaf.target].state = state
             runtime.attempts[leaf.activation] = attempt
 
         return commit
@@ -546,12 +549,12 @@ class _DelegatedOwner(PrivateValue):
         complete = True
         unused = None if self.cancelled or self.request_rejected else self.runtime._unused_tail(self.job)
         for slot in self.contract.owned_slots:
-            key = self.runtime.target_keys[self.job.target][slot]
-            state = self.runtime.states[self.job.state_index]
+            key = self.runtime.frame.sources[self.job.target].keys[slot]
+            state = self.runtime.frame.sources[self.job.target].state
             entry = next(item for item in state.entries if item.activation == key)
             if entry.status in {"ready", "unstarted"}:
                 complete &= unused is not None and unused[0] == key
-                self.runtime.states[self.job.state_index] = advance_activation(
+                self.runtime.frame.sources[self.job.target].state = advance_activation(
                     state=state,
                     event=CloseUnstarted(activation=key, category="blocked"),
                 )

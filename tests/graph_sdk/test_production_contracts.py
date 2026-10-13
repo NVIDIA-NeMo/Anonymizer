@@ -15,7 +15,9 @@ import pandas as pd
 import pytest
 from data_designer.config.column_configs import LLMTextColumnConfig
 from data_designer.config.column_types import ColumnConfigT
+from data_designer.config.config_builder import DataDesignerConfigBuilder
 from data_designer.config.models import ModelConfig
+from data_designer.config.seed_source import LocalFileSeedSource
 from data_designer.engine.models.clients.base import ModelClient
 from data_designer.engine.models.clients.errors import ProviderError, ProviderErrorKind
 from data_designer.engine.models.clients.model_request_executor import ModelRequestExecutor
@@ -175,7 +177,7 @@ def test_one_adapter_workflow_can_contain_two_backend_attempts(
 ) -> None:
     """Real DD retry policy; mocked provider and DD orchestration, no network."""
     frame = pd.DataFrame({COL_TEXT: ["synthetic input"], RECORD_ID_COLUMN: ["kept-1"]})
-    backend, provider, admission, failure = _make_retry_backend(frame=frame, exhausted=exhausted)
+    backend, provider, admission, failure = _make_retry_backend(exhausted=exhausted)
     adapter = NddAdapter(data_designer=backend)
     with (
         patch.object(admission, "acquire_sync", wraps=admission.acquire_sync) as acquire,
@@ -211,9 +213,7 @@ def test_one_adapter_workflow_can_contain_two_backend_attempts(
     provider.close.assert_not_called()
 
 
-def _make_retry_backend(
-    *, frame: pd.DataFrame, exhausted: bool
-) -> tuple[Mock, Mock, AdaptiveRequestAdmissionController, ProviderError]:
+def _make_retry_backend(*, exhausted: bool) -> tuple[Mock, Mock, AdaptiveRequestAdmissionController, ProviderError]:
     provider = Mock(spec=ModelClient)
     failure = ProviderError(kind=ProviderErrorKind.API_CONNECTION, message="synthetic connection failure")
     response = ChatCompletionResponse(message=AssistantMessage(content="synthetic output"))
@@ -229,9 +229,11 @@ def _make_retry_backend(
     )
     backend = Mock(spec=DataDesigner)
 
-    def preview(_builder: object, *, num_records: int) -> SimpleNamespace:
+    def preview(_builder: DataDesignerConfigBuilder, *, num_records: int) -> SimpleNamespace:
         executor.completion(ChatCompletionRequest(model="stub-model", messages=[]))
-        return SimpleNamespace(dataset=frame.iloc[:num_records].copy())
+        seed = _builder.get_seed_config()
+        assert seed is not None and isinstance(seed.source, LocalFileSeedSource)
+        return SimpleNamespace(dataset=pd.read_parquet(seed.source.path).iloc[:num_records].copy())
 
     backend.preview.side_effect = preview
     return backend, provider, admission, failure

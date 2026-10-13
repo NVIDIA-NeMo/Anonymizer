@@ -12,7 +12,9 @@ import pandas as pd
 import pytest
 from data_designer.config.column_configs import LLMTextColumnConfig
 from data_designer.config.column_types import ColumnConfigT
+from data_designer.config.config_builder import DataDesignerConfigBuilder
 from data_designer.config.models import ModelConfig
+from data_designer.config.seed_source import LocalFileSeedSource
 from data_designer.interface.data_designer import DataDesigner
 
 from anonymizer.engine.ndd import adapter as ndd_adapter
@@ -144,9 +146,11 @@ def test_run_workflow_accumulates_input_tokens_without_measurement_collector() -
         def _create_resource_provider(self, *_args: object, **_kwargs: object) -> SimpleNamespace:
             return SimpleNamespace(model_registry=ModelRegistry())
 
-        def preview(self, _config_builder: object, *, num_records: int) -> SimpleNamespace:
+        def preview(self, _config_builder: DataDesignerConfigBuilder, *, num_records: int) -> SimpleNamespace:
             self._create_resource_provider("preview-dataset", _config_builder)
-            return SimpleNamespace(dataset=input_df.iloc[:num_records].copy())
+            seed = _config_builder.get_seed_config()
+            assert seed is not None and isinstance(seed.source, LocalFileSeedSource)
+            return SimpleNamespace(dataset=pd.read_parquet(seed.source.path).iloc[:num_records].copy())
 
     adapter = NddAdapter(data_designer=cast(DataDesigner, UsageDataDesigner()))
 
@@ -211,6 +215,7 @@ def test_detect_missing_records_returns_missing_ids() -> None:
         workflow_name="replace-workflow",
         input_df=input_df,
         output_df=output_df,
+        source_positions=(0, 2),
     )
 
     assert len(failed_records) == 1
@@ -227,6 +232,7 @@ def test_detect_missing_records_for_preview_subset_has_no_false_failures() -> No
         workflow_name="detect-workflow",
         input_df=preview_input_df,
         output_df=preview_output_df,
+        source_positions=(0, 1),
     )
 
     assert len(failed_records) == 0
@@ -381,6 +387,7 @@ def test_detect_missing_records_short_circuit_warns_when_input_missing_id(
         workflow_name="detect-workflow",
         input_df=input_df,
         output_df=output_df,
+        source_positions=(),
     )
 
     assert result == []
@@ -428,6 +435,7 @@ def test_detect_missing_records_short_circuit_warns_when_output_missing_id(
         workflow_name="rewrite-workflow",
         input_df=input_df,
         output_df=output_df,
+        source_positions=(),
     )
 
     assert len(result) == 3
@@ -455,3 +463,17 @@ def test_detect_missing_records_short_circuit_warns_when_output_missing_id(
     assert "'label'" in debug_msg
     assert "'rewrite'" in debug_msg
     _assert_no_backend_reference(debug_msg)
+
+
+def test_missing_record_preserves_duplicate_legacy_identifier() -> None:
+    adapter = NddAdapter(data_designer=Mock(spec=DataDesigner))
+    source = pd.DataFrame({"text": ["same", "same"], RECORD_ID_COLUMN: ["duplicate", "duplicate"]})
+    failed = adapter._detect_missing_records(
+        workflow_name="detect-workflow",
+        input_df=source,
+        output_df=source.iloc[:1],
+        source_positions=(0,),
+    )
+    assert [(record.record_id, record.step, record.reason) for record in failed] == [
+        ("duplicate", "detect-workflow", "Record missing from workflow output")
+    ]

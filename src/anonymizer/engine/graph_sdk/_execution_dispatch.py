@@ -243,17 +243,6 @@ async def _run_decision(
     )
 
 
-async def _external_association_result(
-    physical: asyncio.Task[
-        dict[
-            SemanticAssociation, tuple[RuntimeOutcome, tuple[AssociationResult, ...], tuple[LocalAssessmentResult, ...]]
-        ]
-    ],
-    association: SemanticAssociation,
-) -> tuple[RuntimeOutcome, tuple[AssociationResult, ...], tuple[LocalAssessmentResult, ...]]:
-    return (await physical)[association]
-
-
 async def _run_external_batch(
     admitted: AdmittedExecutionPlan,
     policy: OperationExecutionPolicy,
