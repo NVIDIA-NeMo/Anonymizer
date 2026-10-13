@@ -19,6 +19,7 @@ from anonymizer.engine.graph_sdk._effect_values import (
     require_literal,
     require_text,
 )
+from anonymizer.engine.rewrite.artifacts import REWRITE_TYPES, RewriteArtifactValue
 from anonymizer.graph._values import ArtifactRef, InvocationId, TaskAttemptId
 from anonymizer.graph.workflow import ArtifactType, OperationSpec
 
@@ -248,7 +249,7 @@ class TextCollectionValue(PrivateValue):
 
 
 ContinuityArtifactValue: TypeAlias = TextArtifactValue | TextCollectionValue
-ArtifactValue: TypeAlias = ContinuityArtifactValue | EntitySpansValue
+ArtifactValue: TypeAlias = ContinuityArtifactValue | EntitySpansValue | RewriteArtifactValue
 
 
 @dataclass(frozen=True, slots=True, kw_only=True, repr=False)
@@ -263,7 +264,7 @@ class PortArtifact(PrivateValue):
         require_instance(self.artifact_type, ArtifactType)
         if self.artifact is not None:
             require_instance(self.artifact, ArtifactRef)
-        require_instance(self.value, (TextArtifactValue, TextCollectionValue, EntitySpansValue))
+        require_instance(self.value, (TextArtifactValue, TextCollectionValue, EntitySpansValue, *REWRITE_TYPES))
 
 
 @dataclass(frozen=True, slots=True, kw_only=True, repr=False)

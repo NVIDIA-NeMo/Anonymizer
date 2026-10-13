@@ -365,6 +365,7 @@ class OperationExecutionPolicy(PrivateValue):
     runtime_outcomes: tuple[RuntimeOutcome, ...]
     initial_request_purpose: Literal["initial", "repair"] = "initial"
     delegated: DelegatedRequestContract | None = None
+    submission_owner: NodeId | None = None
 
     def __post_init__(self) -> None:
         require_instance(self.node, NodeId)
@@ -372,7 +373,19 @@ class OperationExecutionPolicy(PrivateValue):
         if self.delegated is not None:
             require_instance(self.delegated, DelegatedRequestContract)
             self.delegated.__post_init__()
-        if (self.kind == "delegated") != (self.delegated is not None):
+        if not hasattr(self, "submission_owner"):
+            reject(EffectCode.INVALID_TYPE)
+        if self.submission_owner is not None:
+            require_instance(self.submission_owner, NodeId)
+            if (
+                self.submission_owner == self.node
+                or self.delegated is not None
+                or self.kind not in {"local", "delegated"}
+            ):
+                reject(EffectCode.CONTRADICTORY)
+        if (self.kind == "delegated") != (
+            self.delegated is not None or self.submission_owner is not None and self.kind == "delegated"
+        ):
             reject(EffectCode.CONTRADICTORY)
         require_literal(self.initial_request_purpose, frozenset({"initial", "repair"}))
         if self.initial_request_purpose == "repair" and (self.kind != "external" or self.request is None):
@@ -796,6 +809,10 @@ class DelegatedRequests(Protocol):
     def bind_frame(
         self, dataframe: pd.DataFrame, *, targets: tuple[DatumId, ...] | None = None, source_limit: int | None = None
     ) -> WorkflowSourceFrame: ...
+
+    async def enter_operation(self, slot: int, association: SemanticAssociation) -> AssociationInput | None: ...
+
+    async def complete_operation(self, association: SemanticAssociation, result: LocalResult) -> RuntimeOutcome: ...
 
     async def readiness(self) -> PhysicalRequestId: ...
 

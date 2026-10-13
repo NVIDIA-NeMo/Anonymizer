@@ -17,6 +17,7 @@ from anonymizer.interface.errors import AnonymizerWorkflowError
 
 if TYPE_CHECKING:
     from anonymizer.engine.graph_sdk.requests import SemanticAssociation
+    from anonymizer.engine.rewrite._semantic_evaluation import RewriteEvaluationBinding
 
 
 @dataclass(frozen=True, slots=True)
@@ -104,7 +105,9 @@ class WorkflowSourceFrame:
         return returned.iloc[order].drop(columns=self.key_column).reset_index(drop=True), positions
 
     @contextmanager
-    def bind_generators(self, designer: Any, columns: frozenset[str]) -> Iterator[set[int]]:
+    def bind_generators(
+        self, designer: Any, columns: frozenset[str], rewrite_binding: RewriteEvaluationBinding | None = None
+    ) -> Iterator[set[int]]:
         """Bind real DD row generators to issued associations, without exposing transport keys."""
         failed: set[int] = set()
         if not self.associations and not self.invocation_bound and not hasattr(designer, "_create_dataset_builder"):
@@ -158,11 +161,15 @@ class WorkflowSourceFrame:
                         body = {name: value for name, value in record.items() if name != self.key_column}
                         token = _SOURCE_WORK.set(SourceWork(association, _name))
                         try:
+                            if rewrite_binding is not None:
+                                body = await rewrite_binding.before(_name, association, body)
                             returned = await _original(body)
                             if not isinstance(returned, dict) or self.key_column in returned:
                                 raise AnonymizerWorkflowError(
                                     "Workflow generator returned invalid source correspondence"
                                 )
+                            if rewrite_binding is not None:
+                                await rewrite_binding.after(_name, association, returned)
                             return {**returned, self.key_column: key}
                         except BaseException:
                             failed.add(position)

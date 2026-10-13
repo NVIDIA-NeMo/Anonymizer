@@ -34,6 +34,7 @@ from anonymizer.engine.constants import (
 from anonymizer.engine.evaluation.detection_judge import DetectionJudgeWorkflow
 from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter
 from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceWorkflow
+from anonymizer.engine.rewrite._semantic_evaluation import RewriteEvaluationBinding
 from anonymizer.engine.rewrite.domain_classification import DomainClassificationWorkflow
 from anonymizer.engine.rewrite.evaluate import EvaluateWorkflow
 from anonymizer.engine.rewrite.final_judge import FinalJudgeWorkflow
@@ -47,6 +48,7 @@ from anonymizer.engine.rewrite.rewrite_generation import (
 from anonymizer.engine.rewrite.sensitivity_disposition import SensitivityDispositionWorkflow
 from anonymizer.engine.rewrite.workflow_utils import derive_seed_columns, select_seed_cols
 from anonymizer.engine.row_partitioning import (
+    ROW_ORDER_COL,
     merge_and_reorder,
     resolve_source_positions,
     restore_diagnostic_columns,
@@ -193,8 +195,9 @@ class RewriteWorkflow:
     via evaluate().
     """
 
-    def __init__(self, adapter: NddAdapter) -> None:
+    def __init__(self, adapter: NddAdapter, *, semantic_binding: RewriteEvaluationBinding | None = None) -> None:
         self._adapter = adapter
+        self._semantic_binding = semantic_binding
         self._domain_wf = DomainClassificationWorkflow()
         self._disposition_wf = SensitivityDispositionWorkflow()
         self._qa_wf = QAGenerationWorkflow()
@@ -273,6 +276,11 @@ class RewriteWorkflow:
                 columns=pipeline_columns,
                 workflow_name="rewrite-pipeline",
                 preview_num_records=preview_num_records,
+                **(
+                    self._semantic_binding.stage(pipeline_seed, tuple(entity_rows[ROW_ORDER_COL]))
+                    if self._semantic_binding
+                    else {}
+                ),
             )
             restore_empty_skipped_span_label_counts(pipeline_result.dataframe)
             entity_rows = _join_new_columns(
@@ -334,6 +342,7 @@ class RewriteWorkflow:
             columns=eval_columns,
             workflow_name="rewrite-evaluate-0",
             preview_num_records=preview_num_records,
+            **(self._semantic_binding.stage(eval_seed, tuple(df[ROW_ORDER_COL])) if self._semantic_binding else {}),
         )
         df = _join_new_columns(
             df,

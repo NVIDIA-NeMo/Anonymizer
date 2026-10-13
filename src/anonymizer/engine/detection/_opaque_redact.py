@@ -28,9 +28,10 @@ from anonymizer.engine.graph_sdk.capabilities import (
     ImplementationCapability,
     ImplementationRef,
     ImplementationSelection,
+    config_size,
 )
 from anonymizer.engine.graph_sdk.context import admit_context_plan
-from anonymizer.engine.graph_sdk.data import DataGraph, DataLimits
+from anonymizer.engine.graph_sdk.data import DataGraph, DataLimits, ValidatedDataGraph
 from anonymizer.engine.graph_sdk.executor import (
     AssessmentLimits,
     DecisionLimits,
@@ -51,6 +52,7 @@ from anonymizer.engine.graph_sdk.preparation import (
     BoundInput,
     PreparationConfiguration,
     PreparationLimits,
+    PreparedPlan,
     StateRevisionView,
     prepare,
 )
@@ -60,6 +62,7 @@ from anonymizer.engine.replace.replace_runner import ReplacementResult
 from anonymizer.engine.rewrite.rewrite_workflow import RewriteResult
 from anonymizer.graph.activation import ActivationLimits
 from anonymizer.graph.workflow import (
+    AdmittedWorkflow,
     ArtifactType,
     DynamicLimits,
     DynamicScope,
@@ -227,7 +230,6 @@ def run_evaluation(
 async def execute_injected_redact(
     callback: _DetectionInvocation | DetectionRedactInvocation | _EvaluationInvocation, pool: BlockingPool
 ) -> ExecutionResult:
-    from anonymizer.engine.detection._graph_profile import _await_profile_execution, _Clock, _runtime_rows
 
     authenticated = isinstance(callback, DetectionRedactInvocation)
     preview = (
@@ -338,94 +340,33 @@ async def execute_injected_redact(
             max_choice_states=1,
         ),
     )
-    workflow = admit_activation_workflow(
-        workflow=raw,
-        scopes=(DynamicScope(workflow=raw, maps=(), joins=(), loops=()),),
-        limits=DynamicLimits(
-            max_maps=0,
-            max_joins=0,
-            max_loops=0,
-            max_children_per_map=0,
-            max_iterations_per_loop=0,
-            max_dynamic_depth=1,
-            max_activation_occurrences=1,
-        ),
+    capability, policy = _frame_implementation(
+        node,
+        operation,
+        callback.redact_configuration if isinstance(callback, DetectionRedactInvocation) else FrozenConfig(fields=()),
+        aggregate=not authenticated,
     )
-    capability = ImplementationCapability(
-        implementation=ImplementationRef(name=operation.name, revision=1),
-        operation=operation,
-        configuration=callback.redact_configuration
-        if isinstance(callback, DetectionRedactInvocation)
-        else FrozenConfig(fields=()),
-        effect="external",
-        attribution="per_task" if authenticated else "aggregate_only",
-        request_visibility="none",
-        pre_dispatch_control="none",
-        retry_owner="implementation",
-        error_reporting="typed_terminal",
-        cancellation="unobservable",
-        settlement="uncertain_possible",
-        usage="unknown",
-        resource_lifetime="caller_owned",
-        max_physical_requests_per_activation=None,
+    prepared = _prepare_frame_plan(
+        data,
+        raw,
+        (capability,),
+        tuple(BoundInput(target=target, source=target, port="source", artifact_type=text_type) for target in targets),
+        invocation_owned=not targets,
     )
-    prepared = prepare(
-        data=data,
-        workflow=workflow,
-        activation_limits=ActivationLimits(max_events=3, max_entries=1, max_parent_depth=1),
-        bound_inputs=tuple(
-            BoundInput(target=target, source=target, port="source", artifact_type=text_type) for target in targets
-        ),
-        configuration=PreparationConfiguration(
-            purpose="execution_only",
-            required_protection_outcomes=frozenset(),
-            hard_request_limit=None,
-            invocation_owned=not targets,
-        ),
-        state=StateRevisionView(revisions=frozenset()),
-        selections=(
-            ImplementationSelection(
-                node=node, implementation=capability.implementation, configuration=capability.configuration
-            ),
-        ),
+    return await _execute_frame_plan(
+        prepared=prepared,
         capabilities=(capability,),
-        limits=PreparationLimits(
-            max_bound_inputs=size,
-            max_state_revisions=0,
-            max_selections=1,
-            max_config_depth=3,
-            max_config_atoms=12,
-            max_total_activation_slots=max(1, size),
-            max_capabilities=1,
+        callback=callback._run if isinstance(callback, DetectionRedactInvocation) else callback.run,
+        pool=pool,
+        borrowed_loop=asyncio.get_running_loop(),
+        limits=ExecutionLimits(
+            max_local_in_flight=1,
+            max_remote_outstanding=None,
+            max_runtime_artifacts=3 * size,
+            max_runtime_artifact_bytes=None,
+            max_collection_items=characters,
         ),
-    )
-    implementation = ExecutionImplementation(
-        implementation=capability.implementation,
-        configuration=capability.configuration,
-        capability=capability,
-        request=None,
-    )
-    execution = admit_execution_plan(
-        context=admit_context_plan(
-            prepared=prepared, bound_context=None, adaptive_retrievals=(), context_capabilities=()
-        ),
-        capabilities=(capability,),
-        policies=(
-            OperationExecutionPolicy(
-                node=node,
-                kind="delegated",
-                request=None,
-                safe_detachment="forbidden",
-                implementations=(implementation,),
-                result_outcomes=frozenset({"ok"}),
-                runtime_outcomes=_runtime_rows(("ok",), True),
-                delegated=DelegatedRequestContract(
-                    mode="opaque", child_slots=(), routes=(), followups=frozenset(), usage_requirement="unknown_allowed"
-                ),
-            ),
-        ),
-        decisions=(),
-        assessment_productions=(),
+        policies=(policy,),
         ingress_limits=IngressLimits(
             max_associations=max(1, size),
             max_outputs_per_association=2,
@@ -447,35 +388,175 @@ async def execute_injected_redact(
             max_provenance_edges=2 * size,
         ),
     )
+
+
+def _prepare_frame_plan(
+    data: ValidatedDataGraph,
+    raw: AdmittedWorkflow,
+    capabilities: tuple[ImplementationCapability, ...],
+    bound_inputs: tuple[BoundInput, ...],
+    *,
+    invocation_owned: bool = False,
+) -> PreparedPlan:
+    """Shared fixed-operation preparation for existing whole-frame consumers."""
+    count = len(raw.nodes)
+    workflow = admit_activation_workflow(
+        workflow=raw,
+        scopes=(DynamicScope(workflow=raw, maps=(), joins=(), loops=()),),
+        limits=DynamicLimits(
+            max_maps=0,
+            max_joins=0,
+            max_loops=0,
+            max_children_per_map=0,
+            max_iterations_per_loop=0,
+            max_dynamic_depth=1,
+            max_activation_occurrences=count,
+        ),
+    )
+    sizes = [config_size(cap.configuration) for cap in capabilities]
+    return prepare(
+        data=data,
+        workflow=workflow,
+        activation_limits=ActivationLimits(max_events=3 * count, max_entries=count, max_parent_depth=1),
+        bound_inputs=bound_inputs,
+        configuration=PreparationConfiguration(
+            purpose="execution_only",
+            required_protection_outcomes=frozenset(),
+            hard_request_limit=None,
+            invocation_owned=invocation_owned,
+        ),
+        state=StateRevisionView(revisions=frozenset()),
+        selections=tuple(
+            ImplementationSelection(
+                node=next(
+                    node.id for node in raw.nodes if isinstance(node, OperationNode) and node.operation == cap.operation
+                ),
+                implementation=cap.implementation,
+                configuration=cap.configuration,
+            )
+            for cap in capabilities
+        ),
+        capabilities=capabilities,
+        limits=PreparationLimits(
+            max_bound_inputs=len(bound_inputs),
+            max_state_revisions=0,
+            max_selections=count,
+            max_config_depth=max(size[0] for size in sizes),
+            max_config_atoms=sum(size[1] for size in sizes) * 2,
+            max_total_activation_slots=count * max(1, len(data.targets)),
+            max_capabilities=count,
+        ),
+    )
+
+
+async def _execute_frame_plan(
+    *,
+    prepared: PreparedPlan,
+    capabilities: tuple[ImplementationCapability, ...],
+    policies: tuple[OperationExecutionPolicy, ...],
+    callback: Callable[[tuple[AssociationInput, ...], DelegatedRequests], LocalCompleted | LocalFailure],
+    pool: BlockingPool,
+    borrowed_loop: asyncio.AbstractEventLoop,
+    limits: ExecutionLimits,
+    ingress_limits: IngressLimits,
+    assessment_limits: AssessmentLimits,
+) -> ExecutionResult:
+    """Run a single grouped submission with its admitted observed operations."""
+    from anonymizer.engine.detection._graph_profile import _await_profile_execution, _Clock
+
+    execution = admit_execution_plan(
+        context=admit_context_plan(
+            prepared=prepared, bound_context=None, adaptive_retrievals=(), context_capabilities=()
+        ),
+        capabilities=capabilities,
+        policies=policies,
+        decisions=(),
+        assessment_productions=(),
+        ingress_limits=ingress_limits,
+        assessment_limits=assessment_limits,
+    )
     worker = WorkerDelegatedSubmitter(
-        callback=callback._run if isinstance(callback, DetectionRedactInvocation) else callback.run,
+        callback=callback,
         pool=pool,
         affinity=BlockingAffinity(cross_thread=True, concurrency_safe=False, close_on_event_loop=False),
-        borrowed_loop=asyncio.get_running_loop(),
+        borrowed_loop=borrowed_loop,
     )
-    services = ExecutionServices(
-        handles=(
-            ImplementationHandle(
-                implementation=capability.implementation,
-                operation=operation,
-                configuration=capability.configuration,
-                local=None,
-                transport=None,
-                delegated=worker,
-                resource=ResourceLease.create(owner="caller", safe_detachment="forbidden", handle=worker),
-            ),
-        ),
-        context_resources=(),
-        limits=ExecutionLimits(
-            max_local_in_flight=1,
-            max_remote_outstanding=None,
-            max_runtime_artifacts=3 * size,
-            max_runtime_artifact_bytes=None,
-            max_collection_items=characters,
-        ),
-        decision_limits=DecisionLimits(max_pending=0, max_lifetime_ns=0),
-        clock=_Clock(),
+    handles = tuple(
+        ImplementationHandle(
+            implementation=cap.implementation,
+            operation=cap.operation,
+            configuration=cap.configuration,
+            local=None,
+            transport=None,
+            delegated=worker if policy.delegated is not None else None,
+            resource=ResourceLease.create(owner="caller", safe_detachment="forbidden", handle=worker)
+            if policy.delegated is not None
+            else None,
+        )
+        for policy, cap in zip(policies, capabilities, strict=True)
     )
     return await _await_profile_execution(
-        await start_execution(admitted=execution, capabilities=(capability,), services=services)
+        await start_execution(
+            admitted=execution,
+            capabilities=capabilities,
+            services=ExecutionServices(
+                handles=handles,
+                context_resources=(),
+                limits=limits,
+                decision_limits=DecisionLimits(max_pending=0, max_lifetime_ns=0),
+                clock=_Clock(),
+            ),
+        )
     )
+
+
+def _frame_implementation(
+    node: NodeId,
+    operation: OperationSpec,
+    configuration: FrozenConfig,
+    *,
+    submission_owner: NodeId | None = None,
+    local: bool = False,
+    aggregate: bool = False,
+) -> tuple[ImplementationCapability, OperationExecutionPolicy]:
+    from anonymizer.engine.detection._graph_profile import _runtime_rows
+
+    capability = ImplementationCapability(
+        implementation=ImplementationRef(name=operation.name, revision=1),
+        operation=operation,
+        configuration=configuration,
+        effect="local" if local else "external",
+        attribution="aggregate_only" if aggregate else "per_task",
+        request_visibility="none",
+        pre_dispatch_control="none",
+        retry_owner="none" if local else "implementation",
+        error_reporting="typed_terminal",
+        cancellation="cooperative_ack" if local else "unobservable",
+        settlement="synchronous" if local else "uncertain_possible",
+        usage="exact" if local else "unknown",
+        resource_lifetime="caller_owned" if submission_owner is None else "stateless",
+        max_physical_requests_per_activation=0 if local else None,
+    )
+    policy = OperationExecutionPolicy(
+        node=node,
+        kind="local" if local else "delegated",
+        request=None,
+        safe_detachment="forbidden",
+        implementations=(
+            ExecutionImplementation(
+                implementation=capability.implementation,
+                configuration=configuration,
+                capability=capability,
+                request=None,
+            ),
+        ),
+        result_outcomes=frozenset({"ok"}),
+        runtime_outcomes=_runtime_rows(("ok",), not local),
+        delegated=DelegatedRequestContract(
+            mode="opaque", child_slots=(), routes=(), followups=frozenset(), usage_requirement="unknown_allowed"
+        )
+        if submission_owner is None
+        else None,
+        submission_owner=submission_owner,
+    )
+    return capability, policy

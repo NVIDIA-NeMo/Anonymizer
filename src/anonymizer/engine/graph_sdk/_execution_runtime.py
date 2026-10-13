@@ -50,6 +50,7 @@ from anonymizer.engine.graph_sdk._execution_state import (
     _FactCheckpoint,
     _group_external_jobs,
     _InvocationJob,
+    _OperationJob,
 )
 from anonymizer.engine.graph_sdk._execution_topology import (
     _inherited_artifact_role,
@@ -136,6 +137,11 @@ class _InvocationRuntime:
             if policy.delegated is not None
             for index in policy.delegated.owned_slots
         }
+        self.delegated_slots.update(
+            (policy.node, policy.submission_owner)
+            for policy in self.admitted.policies
+            if policy.submission_owner is not None
+        )
         self.handles = {
             (item.implementation, item.operation, item.configuration): item for item in self.services.handles
         }
@@ -318,9 +324,13 @@ class _InvocationRuntime:
                 item
                 for item in self.frame.sources[target].state.entries
                 if item.template == self.delegated_slots[entry.template]
-                and item.activation.parent == entry.activation.parent
+                and (
+                    self.policies[entry.template].submission_owner is not None
+                    or item.activation.parent == entry.activation.parent
+                )
             )
-            if self.control.cancelled or owner.status not in {"ready", "unstarted", "running"}:
+            live_owner = any(job.activation == owner.activation for jobs in self.submissions.values() for job in jobs)
+            if self.control.cancelled or (owner.status not in {"ready", "unstarted", "running"} and not live_owner):
                 if self.control.cancelled:
                     self.cancelled_unstarted.add(entry.activation)
                 self.frame.sources[target].state = advance_activation(
@@ -430,23 +440,8 @@ class _InvocationRuntime:
                 event=CloseUnstarted(activation=entry.activation, category="blocked"),
             )
             return
-        attempt = TaskAttemptId.new(activation=entry.activation)
-        association = SemanticAssociation(task=attempt)
         try:
-            inputs, input_parents = _operation_inputs(
-                self.admitted,
-                target,
-                entry.template,
-                entry.activation,
-                self.frame.sources[target].state,
-                association,
-                self.frame.root_inputs,
-                self.subgraph_inputs,
-                self.subgraph_input_parents,
-                self.facts.produced,
-                self.facts.values,
-                self.facts.provenance,
-            )
+            job = self._bind_operation(target, entry, policy)
         except EffectRejected as exc:
             if exc.code != EffectCode.MISSING:
                 raise
@@ -459,18 +454,7 @@ class _InvocationRuntime:
         self.frame.sources[target].state = advance_activation(
             state=self.frame.sources[target].state, event=Start(activation=entry.activation)
         )
-        self.attempts[entry.activation] = attempt
-        implementation = policy.implementations[0]
-        job = _ExecutionJob(
-            target=target,
-            activation=entry.activation,
-            node=entry.template,
-            policy=policy,
-            implementation=implementation,
-            inputs=inputs,
-            input_parents=input_parents,
-            association=association,
-        )
+        self.attempts[entry.activation] = job.association.task
         self._record_input_ports(job)
         span = self._operation_spans[entry.activation]
         token = _CURRENT.set(
@@ -480,6 +464,36 @@ class _InvocationRuntime:
             self._launch_job(job, external_jobs, remote_capacity_stalled)
         finally:
             _CURRENT.reset(token)
+
+    def _bind_operation(
+        self, target: DatumId, entry: ActivationEntry, policy: OperationExecutionPolicy
+    ) -> _ExecutionJob:
+        """Bind one occurrence through the same artifact authority for every executor."""
+        association = SemanticAssociation(task=TaskAttemptId.new(activation=entry.activation))
+        inputs, parents = _operation_inputs(
+            self.admitted,
+            target,
+            entry.template,
+            entry.activation,
+            self.frame.sources[target].state,
+            association,
+            self.frame.root_inputs,
+            self.subgraph_inputs,
+            self.subgraph_input_parents,
+            self.facts.produced,
+            self.facts.values,
+            self.facts.provenance,
+        )
+        return _ExecutionJob(
+            target=target,
+            activation=entry.activation,
+            node=entry.template,
+            policy=policy,
+            implementation=policy.implementations[0],
+            inputs=inputs,
+            input_parents=parents,
+            association=association,
+        )
 
     def _record_input_ports(self, job: _ExecutionJob) -> None:
         self.facts.input_parents.extend(
@@ -609,97 +623,124 @@ class _InvocationRuntime:
             returned = {job.association: returned}
         for job in jobs:
             mapping, results, assessments = returned[job.association]
-            if isinstance(job, _InvocationJob):
-                source = self.frame.invocation_source
-                assert source is not None
-                source.state = advance_activation(
-                    state=source.state,
-                    event=ObserveTerminal(
-                        activation=job.activation, outcome=mapping.outcome, category=mapping.category
-                    ),
-                )
-                span = self._operation_spans[job.activation]
-                span.outcome = mapping.category
-                span.finish()
-                self._close_observed_activations()
-                continue
-            accepted = mapping.condition == "result"
-            mapping, results, checkpoint, staged_result = self._stage_outputs(job, mapping, results, assessments)
-            mapping = self._advance_completed(job, mapping, results, checkpoint, staged_result)
-            if (
-                job.policy.delegated is not None
-                and mapping.condition == "result"
-                and mapping.category == "success"
-                and any(key[0] == job.target and key[1] == job.activation for key in self.facts.produced)
-            ):
-                self.blocked_reasons.update(self._unused_tails(job))
-                selection = job.policy.delegated.selection
-                if selection is not None:
-                    value = next(
-                        output.value for item in results for output in item.outputs if output.port == selection.port
-                    )
-                    for slot in selection.omitted(value):
-                        self.blocked_reasons[self.frame.sources[job.target].keys[slot]] = "omitted_optional"
+            if any(policy.submission_owner == job.node for policy in self.policies.values()):
+                source = self.frame.occurrence(job.target if isinstance(job, _ExecutionJob) else None)
+                entry = next(row for row in source.state.entries if row.activation == job.activation)
+                if entry.status not in {"ready", "unstarted", "running"}:
+                    if mapping.category != "success":
+                        self.submission_failures.append(
+                            SubmissionFailure(
+                                associations=frozenset({job.association}),
+                                cause=RuntimeError("Delegated submission failed after semantic publication"),
+                            )
+                        )
+                    continue
+            self._complete_job(job, mapping, results, assessments)
+
+    def _complete_job(
+        self,
+        job: _OperationJob,
+        mapping: RuntimeOutcome,
+        results: tuple[AssociationResult, ...],
+        assessments: tuple[LocalAssessmentResult, ...] = (),
+    ) -> RuntimeOutcome:
+        """Commit an operation atomically and retain its final publication outcome."""
+        if isinstance(job, _InvocationJob):
+            source = self.frame.invocation_source
+            assert source is not None
+            source.state = advance_activation(
+                state=source.state,
+                event=ObserveTerminal(activation=job.activation, outcome=mapping.outcome, category=mapping.category),
+            )
             span = self._operation_spans[job.activation]
             span.outcome = mapping.category
-            if mapping.failure is not None:
-                span.reasons = frozenset(
-                    {"malformed_response" if mapping.failure == "malformed_response" else "provider_failure"}
+            span.finish()
+            self._close_observed_activations()
+            return mapping
+        assert isinstance(job, _ExecutionJob)
+        accepted = mapping.condition == "result"
+        mapping, results, checkpoint, staged_result = self._stage_outputs(job, mapping, results, assessments)
+        mapping = self._advance_completed(job, mapping, results, checkpoint, staged_result)
+        if (
+            job.policy.delegated is not None
+            and mapping.condition == "result"
+            and mapping.category == "success"
+            and any(key[0] == job.target and key[1] == job.activation for key in self.facts.produced)
+        ):
+            self.blocked_reasons.update(self._unused_tails(job))
+            selection = job.policy.delegated.selection
+            if selection is not None:
+                value = next(
+                    output.value for item in results for output in item.outputs if output.port == selection.port
                 )
-            elif mapping.condition in {"deadline_exhausted", "budget_exhausted", "request_limit_exhausted"}:
-                span.reasons = frozenset(
-                    {
-                        cast(
-                            ObservationReason,
-                            {
-                                "deadline_exhausted": "deadline",
-                                "budget_exhausted": "budget_stopped",
-                                "request_limit_exhausted": "request_limit_stopped",
-                            }[mapping.condition],
-                        )
-                    }
-                )
-            handle = self.handles[
+                for slot in selection.omitted(value):
+                    self.blocked_reasons[self.frame.sources[job.target].keys[slot]] = "omitted_optional"
+        span = self._operation_spans[job.activation]
+        span.outcome = mapping.category
+        if mapping.failure is not None:
+            span.reasons = frozenset(
+                {"malformed_response" if mapping.failure == "malformed_response" else "provider_failure"}
+            )
+        elif mapping.condition in {"deadline_exhausted", "budget_exhausted", "request_limit_exhausted"}:
+            span.reasons = frozenset(
+                {
+                    cast(
+                        ObservationReason,
+                        {
+                            "deadline_exhausted": "deadline",
+                            "budget_exhausted": "budget_stopped",
+                            "request_limit_exhausted": "request_limit_stopped",
+                        }[mapping.condition],
+                    )
+                }
+            )
+        handle = self.handles.get(
+            (
                 job.implementation.implementation,
                 job.implementation.capability.operation,
                 job.implementation.configuration,
-            ]
-            handle = self.control.measured_handles.pop(job.association, handle)
-            if span.session is not None and span.session._failure is None and handle.measurement is not None:
-                try:
-                    measurement = handle.measurement.terminal_measurement()
-                    route = (
-                        "context"
-                        if any(item.node == job.node for item in self.admitted.context.adaptive_retrievals)
-                        else job.policy.kind
-                    )
-                    if type(measurement) is WorkMeasurement and any(
-                        type(getattr(measurement, name)) is int
-                        and getattr(measurement, name) > span.session.limits.max_count
-                        for name in ("input_count", "output_count", "artifact_count", "artifact_bytes", "request_count")
-                    ):
-                        span.session._disable("capacity_contract")
-                    elif (
-                        not _valid_measurement(measurement, span.session.limits.max_count) or measurement.route != route
-                    ):
-                        span.session._disable("producer_contract")
-                    else:
-                        span.measurement = measurement
-                except BaseException:
-                    span.reasons = span.reasons | frozenset[ObservationReason]({"internal_failure"})
-            span.finish()
-            self._close_observed_activations()
-            if mapping.category == "blocked" and mapping.condition == "artifact_limit_exhausted":
-                self.blocked_reasons[job.activation] = mapping.condition
-            if mapping.condition == "artifact_limit_exhausted" or accepted and mapping.condition != "result":
-                self.publication_failures.append(
-                    PublicationFailureFact(
-                        association=job.association,
-                        target=job.target,
-                        condition=mapping.condition,
-                        failure=mapping.failure,
-                    )
+            )
+        )
+        handle = self.control.measured_handles.pop(job.association, handle)
+        if (
+            handle is not None
+            and span.session is not None
+            and span.session._failure is None
+            and handle.measurement is not None
+        ):
+            try:
+                measurement = handle.measurement.terminal_measurement()
+                route = (
+                    "context"
+                    if any(item.node == job.node for item in self.admitted.context.adaptive_retrievals)
+                    else job.policy.kind
                 )
+                if type(measurement) is WorkMeasurement and any(
+                    type(getattr(measurement, name)) is int
+                    and getattr(measurement, name) > span.session.limits.max_count
+                    for name in ("input_count", "output_count", "artifact_count", "artifact_bytes", "request_count")
+                ):
+                    span.session._disable("capacity_contract")
+                elif not _valid_measurement(measurement, span.session.limits.max_count) or measurement.route != route:
+                    span.session._disable("producer_contract")
+                else:
+                    span.measurement = measurement
+            except BaseException:
+                span.reasons = span.reasons | frozenset[ObservationReason]({"internal_failure"})
+        span.finish()
+        self._close_observed_activations()
+        if mapping.category == "blocked" and mapping.condition == "artifact_limit_exhausted":
+            self.blocked_reasons[job.activation] = mapping.condition
+        if mapping.condition == "artifact_limit_exhausted" or accepted and mapping.condition != "result":
+            self.publication_failures.append(
+                PublicationFailureFact(
+                    association=job.association,
+                    target=job.target,
+                    condition=mapping.condition,
+                    failure=mapping.failure,
+                )
+            )
+        return mapping
 
     def _unused_tails(self, job: _ExecutionJob) -> dict[ActivationKey, UnusedRetryCapacity]:
         """Close only unentered suffixes of successfully completed generation chains."""
@@ -930,6 +971,15 @@ class _InvocationRuntime:
             invocation_state=None if self.frame.invocation_source is None else self.frame.invocation_source.state,
         )
         final_outputs = _final_outputs(self.prepared, self.frame.states, self.facts.produced, self.facts.provenance)
+        failed_attempts = {
+            association.task for failure in self.submission_failures for association in failure.associations
+        }
+        failed_targets = {
+            target
+            for target, source in self.frame.sources.items()
+            if any(self.attempts.get(entry.activation) in failed_attempts for entry in source.state.entries)
+        }
+        final_outputs = tuple(output for output in final_outputs if output.target not in failed_targets)
         return ExecutionResult(
             _key=_RESULT_KEY,
             _execution=self.admitted,

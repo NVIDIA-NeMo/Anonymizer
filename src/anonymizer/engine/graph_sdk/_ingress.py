@@ -33,6 +33,7 @@ from anonymizer.engine.graph_sdk._request_values import (
     UnknownUsage,
 )
 from anonymizer.engine.graph_sdk.context import ContextSourceRef, SourceItem, SourceResponse
+from anonymizer.engine.rewrite.artifacts import REWRITE_TYPES, rewrite_content
 from anonymizer.graph._values import ArtifactRef, TaskAttemptId
 from anonymizer.graph.workflow import ArtifactType
 
@@ -146,6 +147,20 @@ class _IngressBudget:
                     and valid
                 )
                 continue
+            if type(current) in REWRITE_TYPES:
+                content = rewrite_content(current, self.limits.max_collection_items - self.collection_items)
+                if content is None or scalar_only:
+                    valid = False
+                    continue
+                atoms, items = content
+                self.debit("collection_items", items)
+                self.depth(current_depth + 1)
+                for atom in atoms:
+                    if type(atom) is str:
+                        valid = self.text(atom, current_depth + 2, payload=True) and valid
+                    else:
+                        self.debit("metadata_items", 1)
+                continue
             if type(current) is EntitySpansValue:
                 valid = not scalar_only and valid_span_source(current.source) and valid
                 self.debit("metadata_items", 1)
@@ -188,7 +203,7 @@ class _IngressBudget:
                     valid = False
                 self.debit("metadata_items", 2)
                 pending.append((item.value, current_depth + 3, True))
-        if type(value) not in (TextArtifactValue, TextCollectionValue, EntitySpansValue):
+        if type(value) not in (TextArtifactValue, TextCollectionValue, EntitySpansValue, *REWRITE_TYPES):
             return False
         shape = getattr(value, "shape", None)
         return (
@@ -347,7 +362,7 @@ def inspect_artifact(value: object, limits: IngressLimits | None = None) -> bool
     must independently reproduce them. Understatements exhaust the scan; inflated
     counts fail equality. Encoding remains chunked and the closed shape is flat.
     """
-    if type(value) not in (TextArtifactValue, TextCollectionValue, EntitySpansValue):
+    if type(value) not in (TextArtifactValue, TextCollectionValue, EntitySpansValue, *REWRITE_TYPES):
         return False
     shape = getattr(value, "shape", None)
     if (
@@ -362,7 +377,7 @@ def inspect_artifact(value: object, limits: IngressLimits | None = None) -> bool
         limits = IngressLimits(
             max_text_bytes=max(1, shape.content_bytes),
             max_collection_items=max(1, shape.items),
-            max_metadata_items=1 + 3 * shape.items,
+            max_metadata_items=5 + 3 * shape.items,
             max_depth=5,
         )
     try:

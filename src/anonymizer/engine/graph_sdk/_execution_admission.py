@@ -360,7 +360,12 @@ def _validate_policy(policy: OperationExecutionPolicy, has_decision: bool) -> No
     operation = capabilities[0].operation
     if any(item.operation != operation for item in capabilities):
         reject(EffectCode.CONTRADICTORY)
-    if policy.delegated is not None and policy.delegated.mode == "opaque":
+    if (
+        policy.submission_owner is not None
+        and policy.kind == "delegated"
+        or policy.delegated is not None
+        and policy.delegated.mode == "opaque"
+    ):
         if (
             policy.kind != "delegated"
             or policy.request is not None
@@ -422,6 +427,25 @@ def _validate_delegated_recipes(prepared: PreparedPlan, policies: tuple[Operatio
     claimed: set[int] = set()
     recipe = prepared.reservation_recipe
     by_node = {policy.node: policy for policy in policies}
+    for child in policies:
+        if child.submission_owner is None:
+            continue
+        owner = by_node.get(child.submission_owner)
+        if (
+            owner is None
+            or owner.delegated is None
+            or owner.delegated.mode != "opaque"
+            or child.implementations[0].capability.resource_lifetime != "stateless"
+        ):
+            reject(EffectCode.UNSUPPORTED)
+        if any(
+            slot.template == child.node and (slot.parent_index is not None or slot.iteration is not None)
+            for slot in recipe
+        ):
+            reject(EffectCode.UNSUPPORTED)
+        owner_slots = [slot for slot in recipe if slot.template == owner.node]
+        if len(owner_slots) != 1 or owner_slots[0].parent_index is not None or owner_slots[0].iteration is not None:
+            reject(EffectCode.UNSUPPORTED)
     for policy in policies:
         contract = policy.delegated
         if contract is None:
@@ -432,7 +456,12 @@ def _validate_delegated_recipes(prepared: PreparedPlan, policies: tuple[Operatio
             if (
                 prepared.configuration.purpose != "execution_only"
                 or prepared.configuration.hard_request_limit is not None
-                or len(recipe) != 1
+                or any(
+                    slot.template != policy.node
+                    and slot.template in by_node
+                    and by_node[slot.template].submission_owner != policy.node
+                    for slot in recipe
+                )
                 or contract.usage_requirement != "unknown_allowed"
                 or contract.child_slots
                 or contract.routes
@@ -813,6 +842,10 @@ def _validate_services(admitted: AdmittedExecutionPlan, services: ExecutionServi
         key = (handle.implementation, handle.operation, handle.configuration)
         capability = capability_by_key[key]
         policy = policy_by_key[key]
+        if policy.submission_owner is not None:
+            if any(item is not None for item in (handle.local, handle.transport, handle.delegated, handle.resource)):
+                reject(EffectCode.CONTRADICTORY)
+            continue
         if sum(item is not None for item in (handle.local, handle.transport, handle.delegated)) != 1:
             reject(EffectCode.CONTRADICTORY)
         if policy.kind == "external":

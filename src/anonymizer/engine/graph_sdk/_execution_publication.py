@@ -52,6 +52,7 @@ from anonymizer.engine.graph_sdk.requests import (
     TextArtifactValue,
     TextCollectionValue,
 )
+from anonymizer.engine.rewrite.artifacts import REWRITE_TYPES
 from anonymizer.graph._values import (
     ActivationKey,
     ArtifactRef,
@@ -205,7 +206,9 @@ def _validate_output_shape(
             item.artifact is None
             and item.artifact_type == expected[item.port]
             and (
-                type(item.value) is EntitySpansValue
+                REWRITE_TYPES.get(type(item.value)) == item.artifact_type
+                if item.artifact_type in REWRITE_TYPES.values()
+                else type(item.value) is EntitySpansValue
                 if item.artifact_type == ENTITY_SPANS_TYPE
                 else isinstance(item.value, TextCollectionValue)
                 if schemas.get(item.artifact_type) == "collection"

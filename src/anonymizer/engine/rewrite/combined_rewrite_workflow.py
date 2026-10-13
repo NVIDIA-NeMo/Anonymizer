@@ -48,6 +48,7 @@ from anonymizer.engine.replace.llm_replace_workflow import (
     _filter_replacement_map_to_input_entities,
     _get_replacement_mapping_prompt,
 )
+from anonymizer.engine.rewrite._semantic_evaluation import RewriteEvaluationBinding
 from anonymizer.engine.rewrite.domain_classification import DomainClassificationWorkflow
 from anonymizer.engine.rewrite.evaluate import EvaluateWorkflow
 from anonymizer.engine.rewrite.parsers import normalize_payload
@@ -66,7 +67,7 @@ from anonymizer.engine.rewrite.rewrite_workflow import (
 )
 from anonymizer.engine.rewrite.sensitivity_disposition import SensitivityDispositionWorkflow
 from anonymizer.engine.rewrite.workflow_utils import derive_seed_columns, select_seed_cols
-from anonymizer.engine.row_partitioning import merge_and_reorder, split_rows
+from anonymizer.engine.row_partitioning import ROW_ORDER_COL, merge_and_reorder, split_rows
 from anonymizer.engine.schemas import EntitiesByValueSchema, EntityReplacementMapSchema
 from anonymizer.measurement import stage_timer
 
@@ -105,13 +106,13 @@ class _FinalizationParams(BaseModel):
     flag_leakage_above: float | None
 
 
-def _iteration_column(column: str, iteration: int) -> str:
-    return f"{column}__iteration_{iteration}"
+def _iteration_column(column: str, iteration: int | None) -> str:
+    return column if iteration is None else f"{column}__iteration_{iteration}"
 
 
-def _evaluation_state(iteration: int, rewritten_text: str) -> EvaluationState:
+def _evaluation_state(iteration: int | None, rewritten_text: str) -> EvaluationState:
     return EvaluationState(
-        iteration=iteration,
+        iteration=0 if iteration is None else iteration,
         rewritten_text=rewritten_text,
         quality_reanswer=_iteration_column(COL_QUALITY_QA_REANSWER, iteration),
         privacy_reanswer=_iteration_column(COL_PRIVACY_QA_REANSWER, iteration),
@@ -202,13 +203,16 @@ def _remap_custom_column(
     mapping: dict[str, str],
     *,
     skip: SkipConfig | None = None,
+    additional_inputs: tuple[str, ...] = (),
 ) -> CustomColumnConfig:
     if not isinstance(column, CustomColumnConfig):
         raise TypeError(f"Expected CustomColumnConfig, got {type(column).__name__}")
 
     generator = column.generator_function
     metadata = generator.custom_column_metadata
-    required_columns = [mapping.get(name, name) for name in metadata["required_columns"]]
+    required_columns = list(
+        dict.fromkeys([*(mapping.get(name, name) for name in metadata["required_columns"]), *additional_inputs])
+    )
     side_effect_columns = [mapping.get(name, name) for name in metadata["side_effect_columns"]]
     model_aliases = list(metadata["model_aliases"])
     outputs = [column.name, *metadata["side_effect_columns"]]
@@ -387,8 +391,8 @@ def _finalization_column(
 class CombinedRewriteWorkflow(RewriteWorkflow):
     """Proof-of-concept rewrite workflow executed as one DataDesigner graph."""
 
-    def __init__(self, adapter: NddAdapter) -> None:
-        super().__init__(adapter)
+    def __init__(self, adapter: NddAdapter, *, semantic_binding: RewriteEvaluationBinding | None = None) -> None:
+        super().__init__(adapter, semantic_binding=semantic_binding)
 
     def build_graph(
         self,
@@ -522,6 +526,11 @@ class CombinedRewriteWorkflow(RewriteWorkflow):
                 columns=graph.columns,
                 workflow_name="rewrite-combined",
                 preview_num_records=preview_num_records,
+                **(
+                    self._semantic_binding.stage(seed, tuple(entity_rows[ROW_ORDER_COL]))
+                    if self._semantic_binding
+                    else {}
+                ),
             )
             restore_empty_skipped_span_label_counts(run_result.dataframe)
             entity_rows = _join_new_columns(
