@@ -274,6 +274,7 @@ class _EvidenceFacts:
     def from_result(cls, admitted: AdmittedQualification, result: ExecutionResult) -> _EvidenceFacts:
         limits = admitted.limits
         execution = admitted.execution
+        execution._validate_ingress_policy()
         prepared = execution.context.prepared
         bound = execution.context.bound_context
         if bound is not None:

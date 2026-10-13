@@ -32,6 +32,7 @@ from anonymizer.engine.detection.detection_workflow import (
     _DEFAULT_VALIDATION_MAX_ENTITIES_PER_CALL,
     EntityDetectionWorkflow,
 )
+from anonymizer.engine.graph_sdk._artifact_shape import content_bytes
 from anonymizer.engine.graph_sdk._execution_delegated import WorkerDelegatedSubmitter
 from anonymizer.engine.graph_sdk._foreign_transport import ForeignLoopTransport
 from anonymizer.engine.graph_sdk.blocking import BlockingAffinity, BlockingPool
@@ -56,6 +57,7 @@ from anonymizer.engine.graph_sdk.executor import (
     ExecutionResult,
     ExecutionServices,
     ImplementationHandle,
+    IngressLimits,
     LocalCompleted,
     OperationExecutionPolicy,
     RuntimeOutcome,
@@ -196,12 +198,13 @@ def run_detection_redact(
     model_configs: list[ModelConfig],
     selected_models: DetectionModelSelection,
     detection_options: Mapping[str, Any],
-    limits: ExecutionLimits,
+    limits: ExecutionLimits | None = None,
     replace_method: Redact | None = None,
 ) -> ReplacementResult:
     """Run the admitted profile synchronously with one owned callback worker.
 
-    The caller supplies the finite execution envelope. A notebook's active loop
+    Counts follow the selected source and declared work. Callers may explicitly
+    supply tighter count or byte limits. A notebook's active loop
     stays untouched; the host thread runs the same authoritative async executor,
     while actual DD clients remain on DD's existing foreign loop.
     """
@@ -289,10 +292,12 @@ async def execute_detection_redact(
     validation_chunks: int | None = None,
     replace_method: Redact | None = None,
     pool: BlockingPool,
-    limits: ExecutionLimits,
+    limits: ExecutionLimits | None = None,
 ) -> ExecutionResult:
     """Admit and execute the named real-DD profile without a second workflow runner."""
     redaction = redact_configuration(replace_method if replace_method is not None else Redact())
+    if limits is not None:
+        limits = replace(limits)
     preview = detection_options.get("preview_num_records")
     if preview is not None and (type(preview) is not int or preview < 0):
         raise ValueError("preview_num_records must be a nonnegative integer")
@@ -327,7 +332,20 @@ async def execute_detection_redact(
         targets.append(target)
     count = sum(group_sizes)
     size = len(targets)
+    if limits is None:
+        limits = ExecutionLimits(
+            max_local_in_flight=max(1, size + 1),
+            max_remote_outstanding=max(1, size * count + 2),
+            # Each source retains one root, three producer outputs and one assessment.
+            max_runtime_artifacts=5 * size,
+            max_runtime_artifact_bytes=None,
+            max_collection_items=max(
+                validation_chunks, max((len(text) for text in selected_source[COL_TEXT]), default=0)
+            ),
+        )
     byte_limit = limits.max_runtime_artifact_bytes
+    span_capacity = sum(len(text) for text in selected_source[COL_TEXT])
+    chunk_capacity = size * validation_chunks
     data = graph.validate(
         targets=tuple(targets),
         source_relations=(),
@@ -337,7 +355,13 @@ async def execute_detection_redact(
         atomic=(),
         output_regions=(),
         limits=DataLimits(
-            max_datums=size, max_targets=size, max_text_bytes=byte_limit, max_declarations=0, max_group_members=0
+            max_datums=size,
+            max_targets=size,
+            max_text_bytes=(
+                sum(content_bytes(text) for text in selected_source[COL_TEXT]) if byte_limit is None else byte_limit
+            ),
+            max_declarations=0,
+            max_group_members=0,
         ),
     )
     workflow_id = WorkflowId.new()
@@ -441,8 +465,8 @@ async def execute_detection_redact(
                         ceiling,
                         max_activations=len(nodes),
                         max_model_requests=3,
-                        max_input_bytes=byte_limit * len(nodes),
-                        max_output_bytes=byte_limit * len(nodes),
+                        max_input_bytes=None if byte_limit is None else byte_limit * len(nodes),
+                        max_output_bytes=None if byte_limit is None else byte_limit * len(nodes),
                     ),
                 ),
             ),
@@ -470,8 +494,8 @@ async def execute_detection_redact(
                         ceiling,
                         max_activations=len(nodes),
                         max_model_requests=2 * count + 2,
-                        max_input_bytes=byte_limit * len(nodes),
-                        max_output_bytes=byte_limit * len(nodes),
+                        max_input_bytes=None if byte_limit is None else byte_limit * len(nodes),
+                        max_output_bytes=None if byte_limit is None else byte_limit * len(nodes),
                     ),
                 ),
             ),
@@ -682,6 +706,21 @@ async def execute_detection_redact(
                 absence_queries=frozenset(),
                 supported_findings=frozenset({REDACT_MATCH, REDACT_MISMATCH}),
             ),
+        ),
+        ingress_limits=IngressLimits(
+            max_associations=max(1, size),
+            max_outputs_per_association=3,
+            # Final nonoverlapping spans are bounded by source characters;
+            # validation membership has one entry per admitted chunk per row.
+            max_collection_items=max(1, span_capacity + chunk_capacity),
+            max_assessments=max(1, size),
+            # Per row: association/outcome (2), three port/type names (6),
+            # span-source reference (1); three scalar fields per span and
+            # key/version per validation member. The assessment response is smaller.
+            max_metadata_items=max(9, 9 * size + 3 * span_capacity + 2 * chunk_capacity),
+            max_text_bytes=None,
+            max_metadata_bytes=None,
+            max_depth=10,
         ),
         assessment_limits=AssessmentLimits(
             max_productions=1,

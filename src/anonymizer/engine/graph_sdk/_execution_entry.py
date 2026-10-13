@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 
 from anonymizer.engine.graph_sdk._effect_values import (
     EffectCode,
@@ -127,6 +128,8 @@ async def start_execution(
             reject(EffectCode.CHANGED_FAILOVER_POLICY)
         _validate_services(admitted, services)
         _validate_absences(admitted, services)
+        # Callback-held service objects cannot widen the policy selected here.
+        services = replace(services, limits=replace(services.limits))
         ForeignLoopTransport.claim_many(
             tuple(handle.transport for handle in services.handles if type(handle.transport) is ForeignLoopTransport)
         )

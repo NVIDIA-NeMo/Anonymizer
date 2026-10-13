@@ -554,7 +554,7 @@ class _InvocationRuntime:
             )
         else:
             coroutine = _run_local(
-                policy, handle, job.association, job.inputs, self.control, self.admitted.ingress_limits
+                policy, handle, job.association, job.inputs, self.control, self.admitted._response_limits()
             )
         task = asyncio.create_task(coroutine)
         self.submissions[task] = (job,)

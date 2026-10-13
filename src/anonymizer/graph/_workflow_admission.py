@@ -741,7 +741,7 @@ def _compatible(target: OperationSpec, replacement: OperationSpec, *, allow_narr
         actual_ceiling = actual.ceiling
         if allow_narrower:
             if any(
-                replacement_value > target_value
+                target_value is not None and (replacement_value is None or replacement_value > target_value)
                 for replacement_value, target_value in zip(
                     (
                         actual_ceiling.max_activations,

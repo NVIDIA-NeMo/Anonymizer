@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Literal, Protocol, TypeAlias, runtime_checkable
 
@@ -634,6 +634,7 @@ class AdmittedExecutionPlan(PrivateValue):
     assessment_productions: tuple[EvidenceProductionDecl, ...]
     assessment_limits: AssessmentLimits
     ingress_limits: IngressLimits
+    _ingress_policy: tuple[int, int, int, int, int, int | None, int | None, int] = field(init=False, compare=False)
     nodes: Mapping[NodeId, Node] = field(compare=False)
     input_sources: Mapping[NodeInputRef, WorkflowInputRef | ContextInputRef | NodeOutputRef] = field(compare=False)
     materialization_schemas: Mapping[ArtifactType, Literal["scalar", "collection"]] = field(compare=False)
@@ -643,6 +644,9 @@ class AdmittedExecutionPlan(PrivateValue):
             raise TypeError("execution plans are created by admission")
         for name, value in values.items():
             object.__setattr__(self, name, value)
+        object.__setattr__(
+            self, "_ingress_policy", tuple(getattr(self.ingress_limits, item.name) for item in fields(IngressLimits))
+        )
         bodies = reachable_workflows(self.context.prepared.workflow)
         object.__setattr__(self, "nodes", MappingProxyType({node.id: node for body in bodies for node in body.nodes}))
         object.__setattr__(
@@ -653,6 +657,27 @@ class AdmittedExecutionPlan(PrivateValue):
             ),
         )
         object.__setattr__(self, "materialization_schemas", MappingProxyType(self._compile_materialization_schemas()))
+
+    def _validate_ingress_policy(self) -> None:
+        """Preserve the response envelope selected at admission, including absent byte limits."""
+        require_instance(self.ingress_limits, IngressLimits)
+        self.ingress_limits.__post_init__()
+        current = tuple(getattr(self.ingress_limits, item.name) for item in fields(IngressLimits))
+        if getattr(self, "_ingress_policy", None) != current:
+            reject(EffectCode.CONTRADICTORY)
+
+    def _response_limits(self) -> IngressLimits:
+        """Give the executor a detached copy of the issued response policy."""
+        return IngressLimits(
+            max_associations=self._ingress_policy[0],
+            max_outputs_per_association=self._ingress_policy[1],
+            max_collection_items=self._ingress_policy[2],
+            max_assessments=self._ingress_policy[3],
+            max_metadata_items=self._ingress_policy[4],
+            max_text_bytes=self._ingress_policy[5],
+            max_metadata_bytes=self._ingress_policy[6],
+            max_depth=self._ingress_policy[7],
+        )
 
     def _service_implementations(self) -> tuple[tuple[OperationExecutionPolicy, ExecutionImplementation], ...]:
         """Declared handle domain, excluding semantic work borrowed by a delegate."""
@@ -792,17 +817,20 @@ class MonotonicClock(Protocol):
 
 @dataclass(frozen=True, slots=True, kw_only=True, repr=False)
 class ExecutionLimits(PrivateValue):
+    """Finite work/item counts, with an optional explicitly selected retained-byte cap."""
+
     max_local_in_flight: int
     max_remote_outstanding: int
     max_runtime_artifacts: int
-    max_runtime_artifact_bytes: int
+    max_runtime_artifact_bytes: int | None
     max_collection_items: int
 
     def __post_init__(self) -> None:
         require_count(self.max_local_in_flight)
         require_count(self.max_remote_outstanding)
         require_count(self.max_runtime_artifacts)
-        require_count(self.max_runtime_artifact_bytes)
+        if self.max_runtime_artifact_bytes is not None:
+            require_count(self.max_runtime_artifact_bytes)
         require_count(self.max_collection_items)
 
 

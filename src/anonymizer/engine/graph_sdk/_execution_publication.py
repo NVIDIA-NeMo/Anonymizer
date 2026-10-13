@@ -102,7 +102,7 @@ def _accept_outputs(
         return "limit", ()
     if any(item.value.shape.items > limits.max_collection_items for item in outputs):
         return "limit", ()
-    if (
+    if limits.max_runtime_artifact_bytes is not None and (
         sum(_artifact_bytes(item) for item in facts.values.values())
         + sum(_artifact_bytes(item.value) for item in new_outputs)
         > limits.max_runtime_artifact_bytes

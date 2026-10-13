@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 import itertools
-from typing import TypeAlias
+from typing import TypeAlias, cast
 
 from anonymizer.graph._values import ContractViolation, ValidationCode
 from anonymizer.graph._workflow_analysis import (
@@ -379,7 +379,7 @@ def _validate_composition_path(
     evidence: set[EvidencePromise] = set()
     state_effects: set[StateEffect] = set()
     models: set[ModelRequirement] = set()
-    ceiling = [0, 0, 0, 0]
+    ceiling: list[int | None] = [0, 0, 0, 0]
     declared_items = frozenset(_map_item_ports(_visits(external_outcome.evidence)))
     for node in _visits(reachable):
         operation = operations[node]
@@ -424,10 +424,11 @@ def _validate_composition_path(
         state_effects.update(_visits(outcome.state_effects))
         models.update(_visits(outcome.model_requirements))
         values = outcome.ceiling
-        ceiling[0] += values.max_activations
-        ceiling[1] += values.max_model_requests
-        ceiling[2] += values.max_input_bytes
-        ceiling[3] += values.max_output_bytes
+        ceiling[0] = cast(int, ceiling[0]) + values.max_activations
+        ceiling[1] = cast(int, ceiling[1]) + values.max_model_requests
+        for index, bound in ((2, values.max_input_bytes), (3, values.max_output_bytes)):
+            prior = ceiling[index]
+            ceiling[index] = None if prior is None or bound is None else prior + bound
     dependencies = {item.output: item for item in _visits(interface.output_dependencies)}
     for output in _visits(produced_external):
         vertex = ("wo", None, output)
@@ -449,7 +450,7 @@ def _validate_composition_path(
         _reject(ValidationCode.CONTRADICTORY)
     actual = external_outcome.ceiling
     if any(
-        supplied < derived
+        supplied is not None and (derived is None or supplied < derived)
         for supplied, derived in zip(
             (actual.max_activations, actual.max_model_requests, actual.max_input_bytes, actual.max_output_bytes),
             ceiling,

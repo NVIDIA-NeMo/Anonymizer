@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from anonymizer.engine.constants import COL_TEXT
 from anonymizer.engine.graph_sdk._effect_values import EffectCode, reject
@@ -279,13 +279,27 @@ def _invocation_workflows(
                                 for node in raw.nodes
                                 if node.id in selected
                             ),
-                            max_input_bytes=sum(
-                                max(row.ceiling.max_input_bytes for row in node.operation.outcomes)
+                            max_input_bytes=None
+                            if any(
+                                row.ceiling.max_input_bytes is None
+                                for node in raw.nodes
+                                if node.id in selected
+                                for row in node.operation.outcomes
+                            )
+                            else sum(
+                                max(cast(int, row.ceiling.max_input_bytes) for row in node.operation.outcomes)
                                 for node in raw.nodes
                                 if node.id in selected
                             ),
-                            max_output_bytes=sum(
-                                max(row.ceiling.max_output_bytes for row in node.operation.outcomes)
+                            max_output_bytes=None
+                            if any(
+                                row.ceiling.max_output_bytes is None
+                                for node in raw.nodes
+                                if node.id in selected
+                                for row in node.operation.outcomes
+                            )
+                            else sum(
+                                max(cast(int, row.ceiling.max_output_bytes) for row in node.operation.outcomes)
                                 for node in raw.nodes
                                 if node.id in selected
                             ),

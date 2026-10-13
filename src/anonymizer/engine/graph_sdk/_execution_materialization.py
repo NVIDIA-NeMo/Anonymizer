@@ -187,7 +187,7 @@ def _observe_dynamic_membership(
     if declaration.item_input is not None:
         if len(facts.values) + len(selected) > limits.max_runtime_artifacts:
             reject(EffectCode.LIMIT_EXCEEDED)
-        if (
+        if limits.max_runtime_artifact_bytes is not None and (
             sum(_artifact_bytes(item) for item in facts.values.values()) + collection.shape.content_bytes
             > limits.max_runtime_artifact_bytes
         ):
@@ -560,8 +560,9 @@ def _materialize_bound_context(
                 )
             )
             produced[destination] = reference
-    if len(values) > limits.max_runtime_artifacts or sum(_artifact_bytes(item) for item in values.values()) > (
-        limits.max_runtime_artifact_bytes
+    if len(values) > limits.max_runtime_artifacts or (
+        limits.max_runtime_artifact_bytes is not None
+        and sum(_artifact_bytes(item) for item in values.values()) > limits.max_runtime_artifact_bytes
     ):
         reject(EffectCode.LIMIT_EXCEEDED)
     return next_artifact

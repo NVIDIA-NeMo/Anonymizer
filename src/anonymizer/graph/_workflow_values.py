@@ -338,18 +338,19 @@ class ModelRequirement(_PrivateValue):
 
 @dataclass(frozen=True, slots=True, kw_only=True, repr=False)
 class ResourceCeiling(_PrivateValue):
+    """Declared work ceilings; absent byte ceilings make no hard size promise."""
+
     max_activations: int
     max_model_requests: int
-    max_input_bytes: int
-    max_output_bytes: int
+    max_input_bytes: int | None
+    max_output_bytes: int | None
 
     def __post_init__(self) -> None:
         _validate_scalars(
             nonnegative_integers=(
                 self.max_activations,
                 self.max_model_requests,
-                self.max_input_bytes,
-                self.max_output_bytes,
+                *(value for value in (self.max_input_bytes, self.max_output_bytes) if value is not None),
             )
         )
 

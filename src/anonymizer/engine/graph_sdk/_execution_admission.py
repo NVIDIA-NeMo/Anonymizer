@@ -84,6 +84,7 @@ def admit_execution_plan(
     """Admit exact execution policies over one immutable prepared plan."""
     require_instance(context, AdmittedContextPlan)
     require_instance(ingress_limits, IngressLimits)
+    ingress_limits.__post_init__()
     prepared = context.prepared
     if not isinstance(capabilities, tuple):
         reject(EffectCode.INVALID_TYPE)
@@ -719,7 +720,9 @@ def _validate_services(admitted: AdmittedExecutionPlan, services: ExecutionServi
         policy.delegated is not None for policy in admitted.policies
     ):
         reject(EffectCode.UNSUPPORTED)
+    admitted._validate_ingress_policy()
     require_instance(services.limits, ExecutionLimits)
+    services.limits.__post_init__()
     require_instance(services.decision_limits, DecisionLimits)
     if any(item.max_lifetime_ns > services.decision_limits.max_lifetime_ns for item in admitted.decisions):
         reject(EffectCode.LIMIT_EXCEEDED)
@@ -822,7 +825,9 @@ def _validate_initial_materialization_capacity(admitted: AdmittedExecutionPlan, 
                 artifact_count += 1
                 artifact_bytes += item_bytes
                 provenance_edges += len(items)
-    if artifact_count > limits.max_runtime_artifacts or artifact_bytes > limits.max_runtime_artifact_bytes:
+    if artifact_count > limits.max_runtime_artifacts or (
+        limits.max_runtime_artifact_bytes is not None and artifact_bytes > limits.max_runtime_artifact_bytes
+    ):
         reject(EffectCode.LIMIT_EXCEEDED)
     if provenance_edges > admitted.assessment_limits.max_provenance_edges:
         reject(EffectCode.LIMIT_EXCEEDED)

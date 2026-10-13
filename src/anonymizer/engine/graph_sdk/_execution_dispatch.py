@@ -346,11 +346,11 @@ async def _run_external_batch(
                     purpose = "correction"
                     continue
                 return failed(_mapping(policy, "failure", None, failure))
-            invalid = inspect_associations(result.results, associations, admitted.ingress_limits)
+            invalid = inspect_associations(result.results, associations, admitted._response_limits())
             if invalid is None:
                 safe_rows = (
                     type(result.results) is tuple
-                    and len(result.results) <= admitted.ingress_limits.max_associations
+                    and len(result.results) <= admitted._response_limits().max_associations
                     and all(
                         type(row) is AssociationResult and _trusted_association(row.association)
                         for row in result.results
@@ -538,7 +538,7 @@ async def _run_adaptive_body(
                 _adaptive_success_outcome(policy),
                 declaration.source,
                 lambda response: (
-                    inspect_source(response, association, admitted.ingress_limits)
+                    inspect_source(response, association, admitted._response_limits())
                     and response.source == declaration.source
                     and bool(response.items)
                     and len({(item.key, item.version) for item in response.items}) == len(response.items)
@@ -568,7 +568,7 @@ async def _run_adaptive_body(
         )
         if type(result) is SourceResponse:
             valid = (
-                inspect_source(result, association, admitted.ingress_limits)
+                inspect_source(result, association, admitted._response_limits())
                 and result.source == declaration.source
                 and completion.settlement_valid
                 and bool(result.items)

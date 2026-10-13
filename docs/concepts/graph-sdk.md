@@ -48,8 +48,8 @@ existing replacement algorithm; ordinary Anonymizer execution is unchanged.
 Publication checks exact offsets and substrings against a declared text input,
 including the source artifact version. An identity-preserving span alias keeps
 its source and its separate producing occurrence. Candidate payloads are
-validated at callback and saved-result boundaries for closed shapes, bounded
-content, and consistent cached counts.
+validated at callback and saved-result boundaries for closed shapes, selected
+resource limits, and consistent cached counts.
 Every artifact carries exact content-byte and collection-item counts; counts
 cover all span string fields and span members, not Python object memory. Retained
 reads and inspection revalidate cached counts for text, text collections (including
@@ -66,6 +66,36 @@ candidate-span type name at every revision before allocating binding identities,
 acquiring resources, or calling providers; custom text type names remain supported.
 Protected projections still require text candidates. Arbitrary domain schema registration and DataDesigner request
 accounting are separate implementation work.
+
+## Count and byte policies
+
+Artifact, collection-item, request, activation and pending-work limits remain
+finite. `ResourceCeiling.max_input_bytes`, `max_output_bytes`,
+`ExecutionLimits.max_runtime_artifact_bytes`, and the text/metadata byte fields
+of `IngressLimits` accept `None` when no hard byte ceiling is selected.
+`IngressLimits` defaults to that byte policy; explicit finite ceilings still
+reject overflow. A workflow or replacement with no byte ceiling cannot satisfy
+a finite parent byte promise. The policy is fixed before effects; the executor
+does not enlarge it after receiving an output.
+
+Actual byte counts and independent UTF-8/shape checks remain mandatory. An absent
+ceiling does not claim bounded memory usage or a hard transport-response size.
+Context retrieval, observations and other explicitly bounded contracts retain
+their separate limits.
+
+The private detection/Redact profile derives count capacity from the selected
+source and declared work when no execution limits are supplied. Five retained
+artifacts per source is an upper bound: one root, three producer outputs and one
+assessment output. Final span count is bounded by source character count;
+validation membership is bounded by the admitted chunk capacity. Actual counts
+can be lower. Caller-supplied execution limits remain authoritative. This private
+profile policy does not switch ordinary public execution to the graph.
+
+This counts-first policy records the 2026-10-13 operator clarification that
+ordinary runs should not impose incidental byte or per-string ceilings. It
+qualifies the RFC's earlier mandatory-retained-byte-bound wording; it does not
+claim the absent ceiling meets that earlier hard-byte interpretation. Other
+admission, accounting, qualification and public-compatibility requirements remain.
 
 ## Saved results and current evidence
 

@@ -465,7 +465,7 @@ class _DelegatedOwner(PrivateValue):
         ]
         try:
             mapping, results, assessments = await _run_local(
-                job.policy, handle, job.association, job.inputs, self, self.runtime.admitted.ingress_limits
+                job.policy, handle, job.association, job.inputs, self, self.runtime.admitted._response_limits()
             )
         except asyncio.CancelledError:
             mapping, results, assessments = _mapping(job.policy, "cancel_after_start", None, None), (), ()
@@ -606,7 +606,7 @@ class _DelegatedOwner(PrivateValue):
         if completion.cancelled:
             mapping = _mapping(policy, "cancel_after_dispatch" if completion.stop_confirmed else "lost", None, None)
         elif type(value) is TransportSuccess:
-            invalid = inspect_associations(value.results, chain.associations, runtime.admitted.ingress_limits)
+            invalid = inspect_associations(value.results, chain.associations, runtime.admitted._response_limits())
             if invalid is None:
                 authority.apply(AcceptResult(request=request, results=()))
                 mapping = _mapping(policy, "request_inconsistent", None, None)
@@ -764,7 +764,7 @@ class _DelegatedOwner(PrivateValue):
         invalid = inspect_associations(
             result.results,
             frozenset(self.jobs) - failed_sources,
-            runtime.admitted.ingress_limits,
+            runtime.admitted._response_limits(),
             assessments=result.assessments,
         )
         if (

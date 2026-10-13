@@ -586,7 +586,10 @@ def admit_context_plan(
         ]
         if not producing or any(
             declaration.bounds.max_requests > outcome.ceiling.max_model_requests
-            or declaration.bounds.max_bytes > outcome.ceiling.max_output_bytes
+            or (
+                outcome.ceiling.max_output_bytes is not None
+                and declaration.bounds.max_bytes > outcome.ceiling.max_output_bytes
+            )
             for outcome in producing
         ):
             reject(EffectCode.LIMIT_EXCEEDED)

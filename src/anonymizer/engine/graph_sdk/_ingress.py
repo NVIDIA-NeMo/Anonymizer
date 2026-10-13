@@ -92,7 +92,8 @@ class _IngressBudget:
 
     def debit(self, name: str, count: int) -> None:
         used = getattr(self, name)
-        if count > getattr(self.limits, "max_" + name) - used:
+        ceiling = getattr(self.limits, "max_" + name)
+        if ceiling is not None and count > ceiling - used:
             raise _ExhaustedIngress
         setattr(self, name, used + count)
 
@@ -107,7 +108,8 @@ class _IngressBudget:
         name = "text_bytes" if payload else "metadata_bytes"
         if not payload:
             self.debit("metadata_items", 1)
-        if len(value) > getattr(self.limits, "max_" + name) - getattr(self, name):
+        ceiling = getattr(self.limits, "max_" + name)
+        if ceiling is not None and len(value) > ceiling - getattr(self, name):
             raise _ExhaustedIngress
         valid = True
         for offset in range(0, len(value), 1024):
