@@ -9,6 +9,7 @@ import re
 import time
 import uuid
 from collections import Counter
+from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, TypeGuard, cast
 
@@ -52,7 +53,7 @@ from anonymizer.engine.constants import (
 )
 from anonymizer.engine.detection._frame_publication import InvocationFrame
 from anonymizer.engine.detection._graph_profile import run_detection_redact
-from anonymizer.engine.detection._opaque_redact import run_evaluation
+from anonymizer.engine.detection._opaque_redact import run_detection_rewrite, run_evaluation
 from anonymizer.engine.detection.detection_workflow import EntityDetectionWorkflow
 from anonymizer.engine.evaluation.detection_judge import DetectionJudgeWorkflow
 from anonymizer.engine.evaluation.entity_coverage_judge import EntityCoverageWorkflow
@@ -736,8 +737,8 @@ class Anonymizer:
             preview_num_records=preview_num_records,
         )
         t0 = time.perf_counter()
-        graph_result = None
         opaque_replacement = config.replace is not None and not self._uses_graph_redact(config)
+        opaque_frame = opaque_replacement or config.rewrite is not None
         if config.replace is not None:
             logger.info("🔄 Running %s replacement with graph-owned detection", type(config.replace).__name__)
             graph_result = run_detection_redact(
@@ -754,21 +755,40 @@ class Anonymizer:
                     else {}
                 ),
             )
-            detected_df, detection_failures = graph_result.dataframe, graph_result.failed_records
-            if opaque_replacement:
-                assert graph_result._execution is not None
-                frame = graph_result._execution.frames[0]
-                assert isinstance(frame, InvocationFrame)
-                detected_df, detection_failures = frame.detected_dataframe, list(frame.detection_failures)
         else:
-            detection_result = self._detection_workflow.run(
+            assert config.rewrite is not None
+            privacy_goal = config.rewrite.privacy_goal
+            if privacy_goal is None:
+                raise InvalidConfigError("rewrite.privacy_goal must not be None")
+            logger.info("✏️ Running rewrite pipeline with graph-owned detection")
+            rewrite_runner = (
+                self._combined_rewrite_runner if config.rewrite.use_combined_graph else self._rewrite_runner
+            )
+            graph_result = run_detection_rewrite(
                 input_df,
+                detection=self._detection_workflow,
                 model_configs=self._model_configs,
                 selected_models=self._selected_models.detection,
-                **detection_options,
+                detection_options=detection_options,
+                rewrite=partial(
+                    rewrite_runner.run,
+                    model_configs=self._model_configs,
+                    selected_models=self._selected_models.rewrite,
+                    replace_model_selection=self._selected_models.replace,
+                    privacy_goal=privacy_goal,
+                    evaluation=config.rewrite.evaluation,
+                    data_summary=data.data_summary,
+                    preview_num_records=preview_num_records,
+                    strict_entity_protection=config.rewrite.strict_entity_protection,
+                ),
             )
-            detected_df, detection_failures = detection_result.dataframe, detection_result.failed_records
-        detection_elapsed = frame.detection_elapsed if opaque_replacement else time.perf_counter() - t0
+        detected_df, detection_failures = graph_result.dataframe, graph_result.failed_records
+        if opaque_frame:
+            assert graph_result._execution is not None
+            frame = graph_result._execution.frames[0]
+            assert isinstance(frame, InvocationFrame)
+            detected_df, detection_failures = frame.detected_dataframe, list(frame.detection_failures)
+        detection_elapsed = frame.detection_elapsed if opaque_frame else time.perf_counter() - t0
         entity_count = _count_entities(detected_df)
         detection_failed = len(detection_failures)
         logger.info(
@@ -783,47 +803,15 @@ class Anonymizer:
             if label_counts:
                 summary = ", ".join(f"{label}={count}" for label, count in label_counts.most_common())
                 logger.info(LOG_INDENT + "labels: %s", summary)
-        execution = None
-        if graph_result is not None:
-            final_df = graph_result.dataframe
-            execution = graph_result._execution
-            post_detection_failures = list(frame.replacement_failures) if opaque_replacement else []
-            logger.info(
-                LOG_INDENT + "📋 Replacement complete (%d failed) [%.1fs]",
-                len(post_detection_failures),
-                frame.replacement_elapsed if opaque_replacement else detection_elapsed,
-            )
-        elif config.rewrite is not None:
-            logger.info("✏️ Running rewrite pipeline")
-            t0 = time.perf_counter()
-            privacy_goal = config.rewrite.privacy_goal
-            if privacy_goal is None:
-                raise InvalidConfigError("rewrite.privacy_goal must not be None")
-            rewrite_runner = (
-                self._combined_rewrite_runner if config.rewrite.use_combined_graph else self._rewrite_runner
-            )
-            rewrite_result = rewrite_runner.run(
-                detected_df,
-                model_configs=self._model_configs,
-                selected_models=self._selected_models.rewrite,
-                replace_model_selection=self._selected_models.replace,
-                privacy_goal=privacy_goal,
-                evaluation=config.rewrite.evaluation,
-                data_summary=data.data_summary,
-                preview_num_records=preview_num_records,
-                strict_entity_protection=config.rewrite.strict_entity_protection,
-            )
-            rewrite_elapsed = time.perf_counter() - t0
-            final_df = rewrite_result.dataframe
-            post_detection_failures = rewrite_result.failed_records
-            logger.info(
-                LOG_INDENT + "📋 Rewrite complete (%d failed) [%.1fs]",
-                len(post_detection_failures),
-                rewrite_elapsed,
-            )
-        else:
-            final_df = detected_df
-            post_detection_failures = []
+        final_df = graph_result.dataframe
+        execution = graph_result._execution
+        post_detection_failures = list(frame.replacement_failures) if opaque_frame else []
+        logger.info(
+            LOG_INDENT + "📋 %s complete (%d failed) [%.1fs]",
+            "Rewrite" if config.rewrite is not None else "Replacement",
+            len(post_detection_failures),
+            frame.replacement_elapsed if opaque_frame else detection_elapsed,
+        )
 
         all_failures = [*detection_failures, *post_detection_failures]
         if all_failures:

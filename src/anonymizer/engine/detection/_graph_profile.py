@@ -14,6 +14,7 @@ from collections.abc import Awaitable, Callable, Mapping
 from concurrent.futures import Future
 from contextvars import copy_context
 from dataclasses import dataclass, replace
+from functools import partial
 from queue import Empty, Queue
 from threading import Event, Thread
 from time import monotonic_ns
@@ -233,20 +234,24 @@ def run_detection_redact(
         handoff: Callable[[Callable[[], LocalCompleted | LocalFailure]], LocalCompleted | LocalFailure],
     ) -> ReplacementResult:
         if replacement is not None:
-            from anonymizer.engine.detection._opaque_redact import _InjectedRedact, execute_injected_redact
+            from anonymizer.engine.detection._opaque_redact import _DetectionInvocation, execute_injected_redact
 
             assert replacement_models is not None and replace_method is not None
             result = await execute_injected_redact(
-                _InjectedRedact(
+                _DetectionInvocation(
                     source,
                     detection,
-                    replacement,
+                    partial(
+                        replacement.run,
+                        replace_method=replace_method,
+                        model_configs=model_configs,
+                        selected_models=replacement_models,
+                        preview_num_records=detection_options.get("preview_num_records"),
+                    ),
                     model_configs,
                     selected_models,
-                    replacement_models,
                     detection_options,
-                    replace_method,
-                    handoff,
+                    handoff=handoff,
                 ),
                 pool,
             )

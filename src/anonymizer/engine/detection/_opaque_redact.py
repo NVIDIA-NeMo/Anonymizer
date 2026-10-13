@@ -13,8 +13,7 @@ from typing import Any
 import pandas as pd
 from data_designer.config import ModelConfig
 
-from anonymizer.config.models import DetectionModelSelection, ReplaceModelSelection
-from anonymizer.config.replace_strategies import ReplaceMethod
+from anonymizer.config.models import DetectionModelSelection
 from anonymizer.engine.constants import COL_TEXT
 from anonymizer.engine.detection._frame_publication import InvocationFrame
 from anonymizer.engine.detection._graph_invocation import DetectionRedactInvocation
@@ -57,7 +56,8 @@ from anonymizer.engine.graph_sdk.preparation import (
 )
 from anonymizer.engine.graph_sdk.requests import AssociationInput
 from anonymizer.engine.graph_sdk.resources import ResourceLease
-from anonymizer.engine.replace.replace_runner import ReplacementResult, ReplacementWorkflow
+from anonymizer.engine.replace.replace_runner import ReplacementResult
+from anonymizer.engine.rewrite.rewrite_workflow import RewriteResult
 from anonymizer.graph.activation import ActivationLimits
 from anonymizer.graph.workflow import (
     ArtifactType,
@@ -88,15 +88,14 @@ from anonymizer.graph.workflow import (
 
 
 @dataclass(frozen=True)
-class _InjectedRedact:
+class _DetectionInvocation:
     source: pd.DataFrame
     detection: EntityDetectionWorkflow
-    replacement: ReplacementWorkflow
+    transform: Callable[[pd.DataFrame], ReplacementResult | RewriteResult]
     model_configs: list[ModelConfig]
     selected_models: DetectionModelSelection
-    replacement_models: ReplaceModelSelection
     detection_options: Mapping[str, Any]
-    replace_method: ReplaceMethod
+    name: str = "opaque-detection-replace"
     handoff: Callable[[Callable[[], LocalCompleted | LocalFailure]], LocalCompleted | LocalFailure] | None = None
 
     def run(self, inputs: tuple[AssociationInput, ...], requests: DelegatedRequests) -> LocalCompleted | LocalFailure:
@@ -119,13 +118,7 @@ class _InjectedRedact:
             return LocalFailure(failure="implementation_exception")
         detection_elapsed = perf_counter() - started
         started = perf_counter()
-        replaced = self.replacement.run(
-            detected.dataframe,
-            replace_method=self.replace_method,
-            model_configs=self.model_configs,
-            selected_models=self.replacement_models,
-            preview_num_records=self.detection_options.get("preview_num_records"),
-        )
+        replaced = self.transform(detected.dataframe)
         return LocalCompleted(
             results=(),
             frame=InvocationFrame(
@@ -173,6 +166,40 @@ class _EvaluationInvocation:
         return self.handoff(evaluate)
 
 
+def run_detection_rewrite(
+    source: pd.DataFrame,
+    *,
+    detection: EntityDetectionWorkflow,
+    model_configs: list[ModelConfig],
+    selected_models: DetectionModelSelection,
+    detection_options: Mapping[str, Any],
+    rewrite: Callable[[pd.DataFrame], RewriteResult],
+) -> ReplacementResult:
+    """Run the selected existing Rewrite schedule as one opaque invocation."""
+    from anonymizer.engine.detection._graph_profile import _run_sync_profile, project_detection_redact
+
+    async def operation(
+        pool: BlockingPool,
+        handoff: Callable[[Callable[[], LocalCompleted | LocalFailure]], LocalCompleted | LocalFailure],
+    ) -> ReplacementResult:
+        result = await execute_injected_redact(
+            _DetectionInvocation(
+                source,
+                detection,
+                rewrite,
+                model_configs,
+                selected_models,
+                detection_options,
+                name="opaque-detection-rewrite",
+                handoff=handoff,
+            ),
+            pool,
+        )
+        return project_detection_redact(result)
+
+    return _run_sync_profile(operation, caller_callbacks=True)
+
+
 def run_evaluation(
     source: pd.DataFrame,
     evaluate: Callable[[DelegatedRequests], ReplacementResult | LocalFailure],
@@ -193,7 +220,7 @@ def run_evaluation(
 
 
 async def execute_injected_redact(
-    callback: _InjectedRedact | DetectionRedactInvocation | _EvaluationInvocation, pool: BlockingPool
+    callback: _DetectionInvocation | DetectionRedactInvocation | _EvaluationInvocation, pool: BlockingPool
 ) -> ExecutionResult:
     from anonymizer.engine.detection._graph_profile import _await_profile_execution, _Clock, _runtime_rows
 
@@ -246,8 +273,8 @@ async def execute_injected_redact(
         name="opaque-evaluation"
         if isinstance(callback, _EvaluationInvocation)
         else "dd-detection-replace"
-        if authenticated
-        else "opaque-detection-replace",
+        if isinstance(callback, DetectionRedactInvocation)
+        else callback.name,
         inputs=(InputPort(name="source", artifact_type=text_type),) if size else (),
         outputs=outputs,
         output_dependencies=tuple(

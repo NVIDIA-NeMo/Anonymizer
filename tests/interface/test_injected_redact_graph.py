@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import pickle
 from dataclasses import replace
+from functools import partial
 
 import pandas as pd
 import pytest
@@ -165,7 +166,7 @@ def test_cancellation_drains_detection_without_starting_replacement():
     import asyncio
     from threading import Event
 
-    from anonymizer.engine.detection._opaque_redact import _InjectedRedact, execute_injected_redact
+    from anonymizer.engine.detection._opaque_redact import _DetectionInvocation, execute_injected_redact
     from anonymizer.engine.graph_sdk.blocking import BlockingPool
 
     entered, release = Event(), Event()
@@ -180,15 +181,13 @@ def test_cancellation_drains_detection_without_starting_replacement():
 
     async def run():
         pool = BlockingPool(max_workers=1)
-        callback = _InjectedRedact(
+        callback = _DetectionInvocation(
             pd.DataFrame({COL_TEXT: ["same"]}),
             detector,
-            replacement,
+            partial(replacement.run, replace_method=Redact()),
             anonymizer._model_configs,
             anonymizer._selected_models.detection,
-            anonymizer._selected_models.replace,
             {},
-            Redact(),
         )
         task = asyncio.create_task(execute_injected_redact(callback, pool))
         try:
@@ -260,19 +259,17 @@ def test_empty_injected_frame_still_calls_both_callbacks(tmp_path):
 def _execute_callback():
     import asyncio
 
-    from anonymizer.engine.detection._opaque_redact import _InjectedRedact, execute_injected_redact
+    from anonymizer.engine.detection._opaque_redact import _DetectionInvocation, execute_injected_redact
     from anonymizer.engine.graph_sdk.blocking import BlockingPool
 
     anonymizer, detector, replacement, _ = _make_anonymizer()
-    callback = _InjectedRedact(
+    callback = _DetectionInvocation(
         pd.DataFrame({COL_TEXT: ["same"]}),
         detector,
-        replacement,
+        partial(replacement.run, replace_method=Redact()),
         anonymizer._model_configs,
         anonymizer._selected_models.detection,
-        anonymizer._selected_models.replace,
         {},
-        Redact(),
     )
 
     async def run():
@@ -308,9 +305,9 @@ def test_opaque_core_rejects_unsupported_selected_finite_ceiling(monkeypatch, fi
 @pytest.mark.parametrize("fault", [None, "missing_dataframe", "wrong_dataframe", "wrong_failures"])
 def test_opaque_frame_is_validated_before_publication(monkeypatch, fault):
     from anonymizer.engine.detection._graph_profile import project_detection_redact
-    from anonymizer.engine.detection._opaque_redact import _InjectedRedact
+    from anonymizer.engine.detection._opaque_redact import _DetectionInvocation
 
-    original = _InjectedRedact.run
+    original = _DetectionInvocation.run
 
     def callback(self, inputs, requests):
         result = original(self, inputs, requests)
@@ -327,7 +324,7 @@ def test_opaque_frame_is_validated_before_publication(monkeypatch, fault):
             object.__setattr__(frame, "detection_failures", ["not a FailedRecord"])
         return replace(result, frame=frame)
 
-    monkeypatch.setattr(_InjectedRedact, "run", callback)
+    monkeypatch.setattr(_DetectionInvocation, "run", callback)
     run, _, _ = _execute_callback()
     result = run()
     assert [terminal.category for terminal in result.record.terminals] == ["success" if fault is None else "failure"]

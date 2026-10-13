@@ -153,6 +153,14 @@ arbitrary object cells remain unavailable. These opaque frames are separate from
 artifacts. The separate qualified DataDesigner development route retains its existing source,
 physical-request and evidence checks.
 
+Public Rewrite run and preview use the same invocation owner for detection and
+one selected existing Rewrite runner. Both the sequential and combined DD
+schedules, including their repair loops, retain their existing behavior. Injected
+runners keep their original whole-frame arguments and caller thread. The result
+retains ordered detection and Rewrite failures and a transient execution owner.
+This compatibility path has unknown physical request counts and no per-row
+semantic lineage or Protected claim; the existing stage controllers remain in use.
+
 Public `Anonymizer.evaluate()` admits a fresh execution-only invocation for its
 whole-frame judge sequence, including injected evaluation runners. It preserves
 the caller thread, judge selection, optional detection-validity checks and existing
