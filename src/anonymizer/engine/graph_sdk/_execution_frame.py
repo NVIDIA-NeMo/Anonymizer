@@ -46,6 +46,8 @@ from anonymizer.graph.workflow import (
 if TYPE_CHECKING:
     import pandas as pd
 
+    from anonymizer.engine.detection._frame_publication import FramePublication
+
 
 @dataclass(slots=True)
 class _SourceOccurrence:
@@ -73,6 +75,7 @@ class _InvocationFrame:
         self.invocation_source: _SourceOccurrence | None = None
         self.sources: dict[DatumId, _SourceOccurrence] = {}
         self.root_inputs: dict[tuple[DatumId, str], ArtifactRef] = {}
+        self.publications: list[FramePublication] = []
         self._initialize_activations()
         self._initialize_root_inputs()
 

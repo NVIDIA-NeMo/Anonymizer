@@ -28,7 +28,6 @@ from anonymizer.engine.graph_sdk.requests import (
     DispatchEnvelope,
     ExactUsage,
     ExternalSettlement,
-    PhysicalRequestId,
     StopUnknown,
     TransportFailure,
     TransportSuccess,
@@ -39,6 +38,7 @@ from anonymizer.interface.errors import AnonymizerWorkflowError
 
 @dataclass
 class _Exchange:
+    owner: NddPhysicalTransport
     transport: httpx.AsyncBaseTransport
     request: httpx.Request
     response: httpx.Response | None = None
@@ -74,15 +74,16 @@ class NddPhysicalTransport:
             if isinstance(result, BaseException):
                 raise result
 
-    async def dispatch(self, envelope: DispatchEnvelope) -> TransportSuccess | TransportFailure:
+    async def dispatch(self, request: DispatchEnvelope) -> TransportSuccess | TransportFailure:
         if self.closed or asyncio.get_running_loop() is not self.loop:
             raise AnonymizerWorkflowError("DD physical resource is not live on its owning loop")
         exchange = _EXCHANGE.get()
         work = current_source_work()
         if (
-            exchange.response is not None
-            or len(envelope.associations) != 1
-            or (work is not None and envelope.associations[0].association != work.association)
+            exchange.owner is not self
+            or exchange.response is not None
+            or len(request.associations) != 1
+            or (work is not None and request.associations[0].association != work.association)
         ):
             raise AnonymizerWorkflowError("DD physical exchange has invalid source ownership")
         response = await exchange.transport.handle_async_request(exchange.request)
@@ -93,7 +94,7 @@ class NddPhysicalTransport:
         if type(incoming) is not int or type(outgoing) is not int or min(incoming, outgoing) < 0:
             raise AnonymizerWorkflowError("DD response has no exact physical usage")
         settlement = ExternalSettlement(
-            request=envelope.request,
+            request=request.request,
             disposition="completed",
             remote_stopped=True,
             usage=ExactUsage(input_units=incoming, output_units=outgoing),
@@ -105,7 +106,7 @@ class NddPhysicalTransport:
         return TransportSuccess(
             results=(
                 AssociationResult(
-                    association=envelope.associations[0].association,
+                    association=request.associations[0].association,
                     outcome="ready" if current_source_work() is None else "ok",
                     outputs=(),
                     consumed_context_ports=frozenset(),
@@ -114,7 +115,7 @@ class NddPhysicalTransport:
             settlement=settlement,
         )
 
-    async def cancel(self, request: PhysicalRequestId) -> StopUnknown:
+    async def cancel(self, request: object) -> StopUnknown:
         return StopUnknown()
 
 
@@ -131,6 +132,7 @@ class NddRequestBridge:
 
     @contextmanager
     def bind(self, designer: Any) -> Iterator[None]:
+        self.requests.require_transport(self.physical)
         if version("data-designer") != "0.9.1":
             raise AnonymizerWorkflowError("DD graph request binding requires DataDesigner 0.9.1")
         original = designer._create_resource_provider
@@ -152,7 +154,7 @@ class NddRequestBridge:
                         strip_rate_limit_codes=True,
                         transport=httpx.AsyncHTTPTransport(limits=self.model._limits),
                     )
-                exchange = _Exchange(self.inner, request)
+                exchange = _Exchange(bridge.physical, self.inner, request)
                 token = _EXCHANGE.set(exchange)
                 try:
                     work = current_source_work()
@@ -179,6 +181,7 @@ class NddRequestBridge:
 
             def facade(*args: Any, **kwargs: Any) -> Any:
                 result = factory(*args, **kwargs)
+                bridge.physical.register(result._client)
                 inner = result._client._inner
                 if inner._retry_config.max_retries != 0 or inner._aclient is not None or inner._client is not None:
                     bridge.rejected = True
@@ -186,7 +189,6 @@ class NddRequestBridge:
                 if inner._transport is not None and not isinstance(inner._transport, httpx.AsyncBaseTransport):
                     bridge.rejected = True
                     raise AnonymizerWorkflowError("DD physical transport must be explicitly registered")
-                bridge.physical.register(result._client)
                 inner._transport = Gate(inner)
                 return result
 

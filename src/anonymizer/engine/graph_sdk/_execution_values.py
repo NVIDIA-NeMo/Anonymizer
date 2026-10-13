@@ -93,6 +93,7 @@ from anonymizer.graph.workflow import (
 if TYPE_CHECKING:
     import pandas as pd
 
+    from anonymizer.engine.detection._frame_publication import FramePublication, PublishedFrame
     from anonymizer.engine.ndd._source_frame import WorkflowSourceFrame
 
 
@@ -274,8 +275,8 @@ class DelegatedRequestContract(PrivateValue):
         require_literal(self.mode, frozenset({"qualified", "opaque"}))
         require_literal(self.usage_requirement, frozenset({"exact", "unknown_allowed"}))
         require_instance(self.child_slots, tuple)
-        require_instance(self.optional_tail, tuple)
-        require_instance(self.generation_groups, tuple)
+        require_instance(getattr(self, "optional_tail", None), tuple)
+        require_instance(getattr(self, "generation_groups", None), tuple)
         for group in self.generation_groups:
             require_instance(group, tuple)
             if not group:
@@ -682,6 +683,7 @@ class RequestTransport(Protocol):
 class LocalCompleted(PrivateValue):
     results: tuple[AssociationResult, ...]
     assessments: tuple[LocalAssessmentResult, ...] = ()
+    frame: FramePublication | None = None
 
 
 @dataclass(frozen=True, slots=True, kw_only=True, repr=False)
@@ -705,6 +707,8 @@ class LocalCallable(Protocol):
 
 class DelegatedRequests(Protocol):
     """Invocation-owned access to declared physical sibling slots."""
+
+    def require_transport(self, transport: object) -> None: ...
 
     async def request(
         self,
@@ -907,11 +911,13 @@ class ExecutionResult(PrivateValue):
     provenance: tuple[ArtifactProvenanceFact, ...]
     cleanup_associations: tuple[CleanupAssociation, ...]
     publication_failures: tuple[PublicationFailureFact, ...]
+    frames: tuple[PublishedFrame, ...]
 
     def __init__(self, *, _key: object, **values: object) -> None:
         if _key is not _RESULT_KEY:
             raise TypeError("execution results are created by the executor")
         object.__setattr__(self, "invocation_state", None)
+        object.__setattr__(self, "frames", ())
         for name, value in values.items():
             object.__setattr__(self, name, value)
 

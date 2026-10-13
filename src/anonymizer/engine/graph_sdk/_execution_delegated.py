@@ -8,7 +8,7 @@ import asyncio
 from collections.abc import Callable, Coroutine
 from contextvars import ContextVar, copy_context
 from dataclasses import replace
-from typing import TYPE_CHECKING, ClassVar, Literal, TypeVar
+from typing import TYPE_CHECKING, ClassVar, Literal, TypeVar, cast
 
 from anonymizer.engine.graph_sdk._effect_values import EffectCode, EffectRejected, PrivateValue, reject, require_count
 from anonymizer.engine.graph_sdk._execution_dispatch import _mapping, _run_local
@@ -129,6 +129,11 @@ class _WorkerBorrow(PrivateValue):
             self.owner.loop.call_soon_threadsafe(self.owner._cancel_worker, self)
             raise
 
+    def require_transport(self, transport: object) -> None:
+        if _WORKER_BORROW.get() is not self or self.expired:
+            reject(EffectCode.FOREIGN_OWNER)
+        self.owner._require_transport(transport)
+
     def bind_frame(self, dataframe: pd.DataFrame, *, targets: tuple[DatumId, ...] | None = None) -> WorkflowSourceFrame:
         if _WORKER_BORROW.get() is not self or self.expired:
             reject(EffectCode.FOREIGN_OWNER)
@@ -204,6 +209,25 @@ class _DelegatedOwner(PrivateValue):
                 runtime.request_authority.bind_chain(chain)
                 for slot in group:
                     self.chains[job.association, slot] = chain
+
+    def require_transport(self, transport: object) -> None:
+        self._check_submission()
+        self._require_transport(transport)
+
+    def _require_transport(self, transport: object) -> None:
+        if self.closed:
+            reject(EffectCode.FOREIGN_OWNER)
+        slots = self.contract.child_slots + (
+            () if self.contract.readiness is None else (self.contract.readiness.request_slot,)
+        )
+        for slot in slots:
+            node = self.runtime.prepared.reservation_recipe[slot].template
+            implementation = self.runtime.policies[node].implementations[0]
+            handle = self.runtime.handles[
+                implementation.implementation, implementation.capability.operation, implementation.configuration
+            ]
+            if type(handle.transport) is not ForeignLoopTransport or not handle.transport.owns(transport):
+                reject(EffectCode.FOREIGN_OWNER)
 
     def bind_frame(self, dataframe: pd.DataFrame, *, targets: tuple[DatumId, ...] | None = None) -> WorkflowSourceFrame:
         self._check_submission()
@@ -710,6 +734,17 @@ class _DelegatedOwner(PrivateValue):
             or any(item.outcome not in self.policy.result_outcomes for item in result.results)
         ):
             return self._failure("failure", "malformed_response")
+        frame = getattr(result, "frame", False)
+        if frame is not None:
+            from anonymizer.engine.detection._frame_publication import FramePublication
+
+            try:
+                valid_frame = type(frame) is FramePublication and frame.matches(result.results)
+            except (AttributeError, TypeError, ValueError):
+                valid_frame = False
+            if not valid_frame:
+                return self._failure("failure", "malformed_response")
+            runtime.frame.publications.append(cast(FramePublication, frame))
         return {
             item.association: (
                 _mapping(self.policy, "result", item.outcome, None),

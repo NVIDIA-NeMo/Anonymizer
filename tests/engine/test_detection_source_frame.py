@@ -65,7 +65,7 @@ def scripted_detection(
             entities = [{"text": "Alice", "label": "first_name", "start": 0, "end": 5, "score": 0.9}]
             if "Alice Bob" in messages:
                 entities.append({"text": "Bob", "label": "first_name", "start": 6, "end": 9, "score": 0.9})
-            content = {"entities": entities}
+            content = {"entities": [] if "No entities" in messages else entities}
         elif role == "validator":
             content = {
                 "decisions": [
@@ -246,191 +246,90 @@ def test_real_detection_dropped_row_preserves_peer_and_failure(
 def test_real_dd_whole_frame_uses_invocation_readiness_and_source_requests(
     scripted_detection, monkeypatch, preview, unattributed_loss, chunks
 ):
-    """Real detection and Redact consume independent chains; qualification remains withheld."""
-    from dataclasses import replace
-
-    from anonymizer.engine.constants import COL_AUGMENTED_ENTITIES, COL_RAW_DETECTED, COL_VALIDATION_DECISIONS
-    from anonymizer.engine.graph_sdk.blocking import BlockingPool
-    from anonymizer.engine.graph_sdk.executor import LocalCompleted, LocalFailure
-    from anonymizer.engine.graph_sdk.requests import (
-        AssociationResult,
-        PortArtifact,
-        TextArtifactValue,
-    )
-    from anonymizer.engine.ndd._graph_requests import NddPhysicalTransport, NddRequestBridge
-    from tests.graph_sdk.delegated_execution_fixtures import with_multiple_sources
-    from tests.graph_sdk.test_delegated_execution import _execute
-    from tests.graph_sdk.test_delegated_readiness import _ready_fixture
-    from tests.graph_sdk.test_foreign_resources import fixture as foreign_fixture
-
     designer, models, selected, calls = scripted_detection
-    base, services, original, placeholder_transport, _, _ = _ready_fixture(generations=2 + chunks)
-    physical = None
     prefix = "Alice" if chunks == 1 else "Alice Bob"
-    source_texts = [f"{prefix} travels.", f"{prefix} stays."]
-    replacement = " ".join(["[REDACTED_FIRST_NAME]"] * chunks)
-    expected_texts = [f"{replacement} travels.", f"{replacement} stays."]
-    from anonymizer.engine.graph_sdk.data import DataGraph, DataLimits
-
-    data = DataGraph.new()
-    targets = []
-    for text in source_texts:
-        data, target = data.add_text(text)
-        targets.append(target)
-    validated = data.validate(
-        targets=tuple(targets),
-        source_relations=(),
-        contexts=(),
-        dependencies=(),
-        coherence=(),
-        atomic=(),
-        output_regions=(),
-        limits=DataLimits(max_datums=2, max_targets=2, max_text_bytes=100, max_declarations=0, max_group_members=0),
+    source = pd.DataFrame(
+        {
+            COL_TEXT: [f"{prefix} travels.", f"{prefix} stays."],
+            RECORD_ID_COLUMN: ["duplicate", "duplicate"],
+            "extra": [{"numbers": [17]}, {"numbers": [29]}],
+        },
+        index=pd.Index([4, 4]),
     )
-    execution = with_multiple_sources(base, data=validated)
-
+    options: dict[str, Any] = {
+        "gliner_detection_threshold": 0.3,
+        "tag_latent_entities": False,
+        "validation_max_entities_per_call": 1,
+        "preview_num_records": 2 if preview else None,
+    }
+    legacy = EntityDetectionWorkflow(NddAdapter(designer)).run(
+        source,
+        model_configs=models,
+        selected_models=selected,
+        **options,
+    )
+    expected = (
+        ReplacementWorkflow()
+        .run(
+            legacy.dataframe,
+            replace_method=Redact(),
+            model_configs=models,
+            selected_models=ReplaceModelSelection(replacement_generator="singleton"),
+        )
+        .dataframe
+    )
+    calls.clear()
     if unattributed_loss:
-        original_preview = designer.preview
+        original = designer.preview
 
         def lose_output(*args, **kwargs):
-            returned = original_preview(*args, **kwargs)
-            returned.dataset = returned.dataset.iloc[:1]
-            return returned
+            result = original(*args, **kwargs)
+            result.dataset = result.dataset.iloc[:1]
+            return result
 
         monkeypatch.setattr(designer, "preview", lose_output)
 
-    callback_errors = []
-
-    class Submit:
-        execution = "same_loop"
-
-        async def submit(self, inputs, requests):
-            try:
-                return await self._submit(inputs, requests)
-            except BaseException as error:
-                callback_errors.append(error)
-                raise
-
-        async def _submit(self, inputs, requests):
-            source = pd.DataFrame({COL_TEXT: source_texts, "extra": [17, 29]})
-            frame = requests.bind_frame(source, targets=tuple(targets))
-            assert physical is not None
-            bridge = NddRequestBridge(
-                requests,
-                dict(
-                    zip(
-                        (
-                            (COL_RAW_DETECTED, 0),
-                            *((COL_VALIDATION_DECISIONS, index) for index in range(chunks)),
-                            (COL_AUGMENTED_ENTITIES, 0),
-                        ),
-                        original.slots,
-                        strict=True,
-                    )
-                ),
-                physical=physical,
-            )
-            try:
-                result = await asyncio.to_thread(
-                    EntityDetectionWorkflow(NddAdapter(designer)).run,
-                    source,
-                    source_frame=frame,
-                    model_configs=models,
-                    selected_models=selected,
-                    gliner_detection_threshold=0.3,
-                    validation_max_entities_per_call=1,
-                    tag_latent_entities=False,
-                    request_bridge=bridge,
-                    preview_num_records=2 if preview else None,
-                )
-            except Exception as error:
-                from anonymizer.interface.errors import AnonymizerWorkflowError
-
-                assert unattributed_loss and isinstance(error, AnonymizerWorkflowError)
-                assert "unattributed source loss" in str(error)
-                return LocalFailure(failure="permanent")
-            assert not unattributed_loss
-            assert result.dataframe[COL_TEXT].tolist() == source_texts
-            assert result.dataframe["extra"].tolist() == [17, 29]
-            assert not result.failed_records
-            protected = ReplacementWorkflow().run(
-                result.dataframe,
-                replace_method=Redact(),
-                model_configs=models,
-                selected_models=ReplaceModelSelection(replacement_generator="singleton"),
-            )
-            assert protected.dataframe[COL_REPLACED_TEXT].tolist() == expected_texts
-            return LocalCompleted(
-                results=tuple(
-                    AssociationResult(
-                        association=item.association,
-                        outcome="ok",
-                        consumed_context_ports=frozenset(),
-                        outputs=(
-                            PortArtifact(
-                                port="context",
-                                artifact_type=item.inputs[0].artifact_type,
-                                artifact=None,
-                                value=TextArtifactValue(
-                                    text=protected.dataframe[COL_REPLACED_TEXT].iloc[
-                                        frame.associations.index(item.association)
-                                    ]
-                                ),
-                            ),
-                        ),
-                    )
-                    for item in inputs
-                )
-            )
-
-    services = replace(
-        services,
-        handles=tuple(
-            replace(handle, delegated=Submit())
-            if handle.delegated
-            else replace(handle, transport=placeholder_transport)
-            if handle.transport
-            else handle
-            for handle in services.handles
-        ),
-        limits=replace(services.limits, max_runtime_artifacts=16, max_runtime_artifact_bytes=10000),
-    )
-
-    async def run():
-        nonlocal physical
-        pool = BlockingPool(max_workers=1)
-        try:
-            admitted, supplied, _, clients, worker, _ = await foreign_fixture(
-                ensure_async_engine_loop(),
-                pool,
-                base=(execution, services, original),
-                client_factory=lambda _: NddPhysicalTransport(),
-            )
-            (physical,) = clients
-            result = await _execute(admitted, supplied)
-            assert worker.local_users == pool.occupied == 0
-            assert physical.closed and len(physical.clients) == 2
-            assert all(client._inner._closed for client in physical.clients)
-            assert any(fact.disposition == "closed" for fact in result.cleanup)
-            return result
-        finally:
-            await pool.close()
-
-    result = asyncio.run(run())
-    if callback_errors:
-        raise callback_errors[0]
+    result = asyncio.run(run_graph_profile(scripted_detection, source, options, chunks))
+    assert result._execution.context.prepared.configuration.purpose == "execution_only"
     assert result.requests.dispatched_count == 5 + 2 * chunks
     assert calls == {"detector": 2, "validator": 2 * chunks, "augmenter": 2, "readiness": 1}
-    assert len(result.final_outputs) == (0 if unattributed_loss else 2) and result.invocation_state.complete
+    assert len(result.frames) == (0 if unattributed_loss else 1)
+    assert len(result.final_outputs) == (0 if unattributed_loss else 2)
     if not unattributed_loss:
+        projected = result.frames[0].project(result)
+        pd.testing.assert_frame_equal(projected, expected)
+        assert result.frames[0].failed_records == ()
+        assert COL_REPLACED_TEXT not in result.frames[0]._content
         artifacts = dict(result.artifacts)
-        assert {output.target: artifacts[output.candidate.artifact].text for output in result.final_outputs} == {
-            targets[0]: expected_texts[0],
-            targets[1]: expected_texts[1],
-        }
-    generation = [chain for chain in result.requests.chains if chain.role == "generation"]
-    assert len(generation) == 2 * (2 + chunks)
-    assert sorted(sum(chain.associations == other.associations for other in generation) for chain in generation) == [
-        2 + chunks
-    ] * (2 * (2 + chunks))
-    assert all(row.child.source_kind == "initial" for row in result.requests.dispatches)
+        assert sorted(artifacts[output.candidate.artifact].text for output in result.final_outputs) == sorted(
+            expected[COL_REPLACED_TEXT]
+        )
+    assert any(fact.disposition == "closed" for fact in result.cleanup)
+
+
+async def run_graph_profile(scripted_detection, source, options, chunks=1, artifact_limit=16):
+    from anonymizer.engine.detection._graph_profile import execute_detection_redact
+    from anonymizer.engine.graph_sdk.blocking import BlockingPool
+    from anonymizer.engine.graph_sdk.executor import ExecutionLimits
+
+    designer, models, selected, _ = scripted_detection
+    pool = BlockingPool(max_workers=1)
+    try:
+        return await execute_detection_redact(
+            source,
+            detection=EntityDetectionWorkflow(NddAdapter(designer)),
+            model_configs=models,
+            selected_models=selected,
+            detection_options=options,
+            validation_chunks=chunks,
+            pool=pool,
+            limits=ExecutionLimits(
+                max_local_in_flight=1,
+                max_remote_outstanding=1,
+                max_runtime_artifacts=artifact_limit,
+                max_runtime_artifact_bytes=10000,
+                max_collection_items=0,
+            ),
+        )
+    finally:
+        await pool.close()

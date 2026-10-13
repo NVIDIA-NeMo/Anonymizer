@@ -893,4 +893,9 @@ class _InvocationRuntime:
             provenance=tuple(self.facts.provenance),
             cleanup_associations=cleanup_associations,
             publication_failures=tuple(self.publication_failures),
+            frames=tuple(
+                bound
+                for publication in self.frame.publications
+                if (bound := publication.bind(tuple(self.facts.ports))) is not None
+            ),
         )

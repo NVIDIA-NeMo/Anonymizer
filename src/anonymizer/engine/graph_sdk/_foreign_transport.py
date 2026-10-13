@@ -22,7 +22,7 @@ from anonymizer.engine.graph_sdk._effect_values import (
 )
 from anonymizer.engine.graph_sdk._execution_values import RequestTransport
 from anonymizer.engine.graph_sdk.blocking import _NOT_STARTED
-from anonymizer.engine.graph_sdk.requests import DispatchEnvelope, PhysicalRequestId, StopResult, TransportResult
+from anonymizer.engine.graph_sdk.requests import DispatchEnvelope, StopResult, TransportResult
 from anonymizer.engine.graph_sdk.resources import CloseableResource, ResourceLease, ResourceOwner
 
 
@@ -103,6 +103,10 @@ class ForeignLoopTransport(PrivateValue):
         result._lease = ResourceLease.create(owner=owner, safe_detachment="forbidden", handle=result)
         return result
 
+    def owns(self, transport: object) -> bool:
+        """Authenticate the exact registered implementation resource before client creation."""
+        return self._lease is not None and self._created_inner is transport and self._inner is transport
+
     @property
     def lease(self) -> ResourceLease:
         if self._lease is None:
@@ -177,7 +181,7 @@ class ForeignLoopTransport(PrivateValue):
     async def dispatch(self, request: DispatchEnvelope) -> TransportResult:
         reject(EffectCode.UNSUPPORTED)
 
-    async def cancel(self, request: PhysicalRequestId) -> StopResult:
+    async def cancel(self, request: object) -> StopResult:
         reject(EffectCode.UNSUPPORTED)
 
     def _invocation(self, envelope: DispatchEnvelope) -> _ForeignInvocation:
