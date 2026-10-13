@@ -135,12 +135,14 @@ class _DetectionInvocation:
 
 @dataclass(frozen=True)
 class _EvaluationInvocation:
-    """One judge callback with an independently retained prior execution owner."""
+    """One compatibility callback with an independently retained prior execution owner."""
 
     source: pd.DataFrame
     evaluate: Callable[[DelegatedRequests], ReplacementResult | LocalFailure]
     retained_owner: object | None
     handoff: Callable[[Callable[[], LocalCompleted | LocalFailure]], LocalCompleted | LocalFailure]
+
+    name: str = "opaque-evaluation"
 
     def run(self, inputs: tuple[AssociationInput, ...], requests: DelegatedRequests) -> LocalCompleted | LocalFailure:
         def evaluate() -> LocalCompleted | LocalFailure:
@@ -205,6 +207,7 @@ def run_evaluation(
     evaluate: Callable[[DelegatedRequests], ReplacementResult | LocalFailure],
     *,
     retained_owner: object | None,
+    name: str = "opaque-evaluation",
 ) -> ReplacementResult:
     """Evaluate a retained public frame under fresh, nonqualifying graph authority."""
     from anonymizer.engine.detection._graph_profile import _run_sync_profile, project_detection_redact
@@ -213,7 +216,9 @@ def run_evaluation(
         pool: BlockingPool,
         handoff: Callable[[Callable[[], LocalCompleted | LocalFailure]], LocalCompleted | LocalFailure],
     ) -> ReplacementResult:
-        result = await execute_injected_redact(_EvaluationInvocation(source, evaluate, retained_owner, handoff), pool)
+        result = await execute_injected_redact(
+            _EvaluationInvocation(source, evaluate, retained_owner, handoff, name), pool
+        )
         return project_detection_redact(result)
 
     return _run_sync_profile(operation, caller_callbacks=True)
@@ -270,11 +275,7 @@ async def execute_injected_redact(
     owner = WorkflowId.new()
     node = NodeId.new(workflow=owner)
     operation = OperationSpec(
-        name="opaque-evaluation"
-        if isinstance(callback, _EvaluationInvocation)
-        else "dd-detection-replace"
-        if isinstance(callback, DetectionRedactInvocation)
-        else callback.name,
+        name="dd-detection-replace" if isinstance(callback, DetectionRedactInvocation) else callback.name,
         inputs=(InputPort(name="source", artifact_type=text_type),) if size else (),
         outputs=outputs,
         output_dependencies=tuple(

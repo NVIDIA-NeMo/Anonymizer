@@ -153,6 +153,22 @@ arbitrary object cells remain unavailable. These opaque frames are separate from
 artifacts. The separate qualified DataDesigner development route retains its existing source,
 physical-request and evidence checks.
 
+The registered chunked-validation plugin admits each synchronous or asynchronous
+row callback as its own opaque invocation. Its unchanged dictionary payload is
+retained in the existing compatibility frame and projected only after completion.
+The async path keeps model calls on the caller's borrowed DD loop and preserves
+its context; neither entry point closes caller-owned clients or loops. Failed
+chunks retain their live siblings until they drain. A synchronous bridge timeout
+still raises its original timeout error, but waits for actual coroutine completion;
+it cannot promise finite drain when a borrowed loop or request never finishes.
+Each call has an independent scope, including calls made inside an enclosing
+Anonymizer invocation; original context preserves any already-registered request
+owner without inventing a shared parent from rows or model registries.
+This covers the owned validation plugin only. Native external readiness, detection,
+augmentation and the enclosing create/preview launch remain outside that scope.
+The native builder, nine columns, plugin kinds, JSON and partition contract remain
+unchanged. Validation completion supplies no Protected or complete-request claim.
+
 Public Rewrite run and preview use the same invocation owner for detection and
 one selected existing Rewrite runner. Both the sequential and combined DD
 schedules, including their repair loops, retain their existing behavior. Injected

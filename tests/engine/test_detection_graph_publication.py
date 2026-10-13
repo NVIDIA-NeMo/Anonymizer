@@ -1013,7 +1013,8 @@ def test_synchronous_graph_profile_owns_pool_and_reuses_dd_loop(scripted_detecti
     assert projected._execution is not None
     assert projected._execution.requests.dispatched_count == 7
     assert calls == {"readiness": 1, "detector": 2, "validator": 2, "augmenter": 2}
-    assert len(pools) == 1 and pools[0].closed and pools[0].occupied == 0
+    # One outer profile plus the two independently admitted validator rows.
+    assert len(pools) == 3 and all(pool.closed and pool.occupied == 0 for pool in pools)
     assert not projected._execution._retained_resources
 
 

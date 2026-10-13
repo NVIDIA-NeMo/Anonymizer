@@ -6,14 +6,19 @@ from __future__ import annotations
 import asyncio
 import concurrent.futures
 from collections.abc import Callable
+from contextvars import copy_context
 from typing import Any
 
+import pandas as pd
 from data_designer.config.column_configs import GenerationStrategy
 from data_designer.engine.column_generators.generators.base import (
     ColumnGeneratorCellByCell,
     ColumnGeneratorWithModelRegistry,
 )
 
+from anonymizer.engine.constants import COL_VALIDATION_DECISIONS
+from anonymizer.engine.detection._graph_profile import project_detection_redact
+from anonymizer.engine.detection._opaque_redact import _EvaluationInvocation, execute_injected_redact, run_evaluation
 from anonymizer.engine.detection.chunked_validation import (
     ChunkedValidationParams,
     chunked_validate_row,
@@ -27,6 +32,9 @@ from anonymizer.engine.detection.custom_columns import (
     parse_detected_entities,
     prepare_validation_inputs,
 )
+from anonymizer.engine.graph_sdk._execution_values import DelegatedRequests
+from anonymizer.engine.graph_sdk.blocking import BlockingPool
+from anonymizer.engine.replace.replace_runner import ReplacementResult
 from anonymizer.engine.workflow_columns.detection.config import (
     ChunkedValidationConfig,
     DetectionTransformConfig,
@@ -88,7 +96,12 @@ class _AsyncBridgedModelFacade:
         try:
             return future.result(timeout=bridge_timeout)
         except concurrent.futures.TimeoutError as exc:
-            future.cancel()
+            # A cancelled concurrent Future cannot prove the borrowed coroutine
+            # stopped. Preserve its actual completion before releasing the row.
+            try:
+                future.result()
+            except BaseException:
+                pass
             from data_designer.engine.models.errors import ModelTimeoutError
 
             raise ModelTimeoutError(f"model.generate() bridge timed out after {bridge_timeout:.0f}s") from exc
@@ -137,11 +150,56 @@ class ChunkedValidationGenerator(ColumnGeneratorWithModelRegistry[ChunkedValidat
     def generate(self, data: dict[str, Any]) -> dict[str, Any]:  # ty: ignore[invalid-method-override]
         raw_models = {alias: self.get_model(alias) for alias in self.config.pool}
         models = {alias: _AsyncBridgedModelFacade(model) for alias, model in raw_models.items()}
-        return chunked_validate_row(data, self._params(raw_models), models)
+
+        def validate(requests: DelegatedRequests) -> ReplacementResult:
+            del requests
+            row = chunked_validate_row(data, self._params(raw_models), models)
+            return ReplacementResult(dataframe=pd.DataFrame({COL_VALIDATION_DECISIONS: [row]}), failed_records=[])
+
+        result = run_evaluation(
+            pd.DataFrame({COL_VALIDATION_DECISIONS: [data]}),
+            validate,
+            retained_owner=None,
+            name="opaque-chunked-validation",
+        )
+        return result.dataframe.at[0, COL_VALIDATION_DECISIONS]
 
     async def agenerate(self, data: dict[str, Any]) -> dict[str, Any]:  # ty: ignore[invalid-method-override]
         models = {alias: self.get_model(alias) for alias in self.config.pool}
-        return await chunked_validate_row_async(data, self._params(models), models)
+        loop = asyncio.get_running_loop()
+        context = copy_context()
+        params = self._params(models)
+
+        def validate(requests: DelegatedRequests) -> ReplacementResult:
+            del requests
+            future = context.run(
+                asyncio.run_coroutine_threadsafe, chunked_validate_row_async(data, params, models), loop
+            )
+            row = future.result()
+            return ReplacementResult(dataframe=pd.DataFrame({COL_VALIDATION_DECISIONS: [row]}), failed_records=[])
+
+        pool = BlockingPool(max_workers=1)
+        try:
+            execution = await execute_injected_redact(
+                _EvaluationInvocation(
+                    pd.DataFrame({COL_VALIDATION_DECISIONS: [data]}),
+                    validate,
+                    None,
+                    lambda callback: callback(),
+                    "opaque-chunked-validation",
+                ),
+                pool,
+            )
+            if execution.invocation_state is not None and any(
+                entry.status == "cancelled" for entry in execution.invocation_state.entries
+            ):
+                error = asyncio.CancelledError()
+                setattr(error, "_anonymizer_execution", execution)
+                raise error
+            result = project_detection_redact(execution)
+            return result.dataframe.at[0, COL_VALIDATION_DECISIONS]
+        finally:
+            await pool.close()
 
 
 def _derive_max_parallel_chunks(models: dict[str, Any]) -> int:

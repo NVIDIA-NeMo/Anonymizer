@@ -12,8 +12,7 @@ validator pool. The per-chunk decisions are merged into a
 
 Public entry point: :func:`make_chunked_validation_generator`, which
 produces a ``@custom_column_generator``-decorated function bound to a
-concrete pool. Plugin columns call :func:`chunked_validate_row_async`
-directly. The helpers below are exposed for unit testing.
+concrete pool. Plugin columns invoke the same helpers under their opaque graph owner. The helpers below are exposed for unit testing.
 
 Failure contract. Each chunk attempts its round-robin primary first and
 fails over sequentially to the rest of the pool; a chunk only fails when
@@ -621,9 +620,22 @@ async def chunked_validate_row_async(
         chunk_results: list[RawValidationDecisionsSchema] = []
     else:
         semaphore = asyncio.Semaphore(_chunk_worker_count(params, len(dispatch_kwargs_per_chunk)))
-        chunk_results = await asyncio.gather(
-            *[_bounded_dispatch_chunk_async(semaphore, kwargs) for kwargs in dispatch_kwargs_per_chunk]
-        )
+        tasks = [
+            asyncio.create_task(_bounded_dispatch_chunk_async(semaphore, kwargs))
+            for kwargs in dispatch_kwargs_per_chunk
+        ]
+        try:
+            chunk_results = await asyncio.gather(*tasks)
+        except BaseException:
+            # gather may report the first failed chunk while siblings still use
+            # borrowed DD clients. Retain those users before releasing the row.
+            drained = asyncio.gather(*tasks, return_exceptions=True)
+            while not drained.done():
+                try:
+                    await asyncio.shield(drained)
+                except asyncio.CancelledError:
+                    continue
+            raise
 
     row[COL_VALIDATION_DECISIONS] = merge_chunk_decisions(chunk_results, candidates)
     return row
