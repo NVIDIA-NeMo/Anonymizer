@@ -34,6 +34,9 @@ class PublishedFrame:
     failed_records: tuple[FailedRecord, ...]
     _opaque: tuple[object, ...]
 
+    _sources: tuple[SemanticAssociation, ...]
+    _ports: tuple[str, ...]
+
     def project(self, result: ExecutionResult) -> pd.DataFrame:
         if not any(self is frame for frame in result.frames):
             raise ValueError("frame belongs to a different execution")
@@ -47,6 +50,16 @@ class PublishedFrame:
             or type(getattr(self, "_opaque", None)) is not tuple
         ):
             raise ValueError("malformed retained frame")
+        if (
+            type(getattr(self, "_sources", None)) is not tuple
+            or len(self._sources) != len(self._content)
+            or any(type(source) is not SemanticAssociation for source in self._sources)
+            or len(set(self._sources)) != len(self._sources)
+            or type(getattr(self, "_ports", None)) is not tuple
+            or len(self._ports) != len(self._text)
+            or any(type(port) is not str or not port for port in self._ports)
+        ):
+            raise ValueError("malformed retained frame source binding")
         for binding in self._text:
             if (
                 type(binding) is not tuple
@@ -67,7 +80,18 @@ class PublishedFrame:
             raise ValueError("malformed retained frame columns")
         values = dict(result.artifacts)
         projected = _copy_frame(self._content, self._opaque)
-        for column, references in self._text:
+        for (column, references), port in zip(self._text, self._ports, strict=True):
+            for source, reference in zip(self._sources, references, strict=True):
+                matches = [
+                    fact for fact in result.ports if fact.activation == source.task.activation and fact.port == port
+                ]
+                if (
+                    len(matches) != 1
+                    or matches[0].artifact != reference
+                    or port
+                    not in {output.name for output in result._execution.nodes[matches[0].node].operation.outputs}
+                ):
+                    raise ValueError("frame reference differs from its accepted source output port")
             text = [values[reference] for reference in references]
             if any(type(value) not in (TextArtifactValue, EntitySpansValue) for value in text):
                 raise ValueError("frame reference has an unsupported artifact")
@@ -204,4 +228,12 @@ class FramePublication:
                     return None
                 references.append(matches[0])
             text.append((column, tuple(references)))
-        return PublishedFrame(self._content, self._columns, tuple(text), self.failed_records, self._opaque)
+        return PublishedFrame(
+            self._content,
+            self._columns,
+            tuple(text),
+            self.failed_records,
+            self._opaque,
+            self.associations,
+            tuple(port for _, port, _ in self._text),
+        )

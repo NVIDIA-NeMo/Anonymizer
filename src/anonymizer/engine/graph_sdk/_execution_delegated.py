@@ -657,9 +657,9 @@ class _DelegatedOwner(PrivateValue):
 
         return commit
 
-    def close(self) -> bool:
+    def close(self) -> frozenset[SemanticAssociation]:
         self.closed = True
-        complete = True
+        incomplete: set[SemanticAssociation] = set()
         for job in self.jobs.values():
             unused = None if self.cancelled or self.request_rejected else self.runtime._unused_tail(job)
             for slot in (
@@ -671,7 +671,8 @@ class _DelegatedOwner(PrivateValue):
                 state = self.runtime.frame.sources[job.target].state
                 entry = next(item for item in state.entries if item.activation == key)
                 if entry.status in {"ready", "unstarted"}:
-                    complete &= unused is not None and unused[0] == key
+                    if unused is None or unused[0] != key:
+                        incomplete.add(job.association)
                     self.runtime.frame.sources[job.target].state = advance_activation(
                         state=state, event=CloseUnstarted(activation=key, category="blocked")
                     )
@@ -679,11 +680,11 @@ class _DelegatedOwner(PrivateValue):
         if source is not None:
             for entry in tuple(source.state.entries):
                 if entry.status in {"ready", "unstarted"}:
-                    complete = False
+                    incomplete.update(self.jobs)
                     source.state = advance_activation(
                         state=source.state, event=CloseUnstarted(activation=entry.activation, category="blocked")
                     )
-        return complete
+        return frozenset(incomplete)
 
     def _failure(self, condition: str, failure: FailureClass | None = None) -> _SubmissionResults:
         return {association: (_mapping(self.policy, condition, None, failure), (), ()) for association in self.jobs}
@@ -718,15 +719,23 @@ class _DelegatedOwner(PrivateValue):
                 await self._drain(worker_call)
             if self.child is not None:
                 await self._drain(self.child)
-            complete = self.close()
-        if not complete:
-            return self._failure("failure", "implementation_exception")
+            incomplete = self.close()
         if type(result) is LocalFailure:
             return self._failure("failure", inspect_failure(result.failure))
         if type(result) is not LocalCompleted:
             return self._failure("failure", "malformed_response")
+        failed_sources = getattr(result, "failed_sources", None)
+        if (
+            type(failed_sources) is not frozenset
+            or any(type(source) is not SemanticAssociation for source in failed_sources)
+            or not failed_sources <= self.jobs.keys()
+        ):
+            return self._failure("failure", "malformed_response")
         invalid = inspect_associations(
-            result.results, frozenset(self.jobs), runtime.admitted.ingress_limits, assessments=result.assessments
+            result.results,
+            frozenset(self.jobs) - failed_sources,
+            runtime.admitted.ingress_limits,
+            assessments=result.assessments,
         )
         if (
             invalid is None
@@ -734,6 +743,11 @@ class _DelegatedOwner(PrivateValue):
             or any(item.outcome not in self.policy.result_outcomes for item in result.results)
         ):
             return self._failure("failure", "malformed_response")
+        successful = tuple(
+            item for item in result.results if _mapping(self.policy, "result", item.outcome, None).category == "success"
+        )
+        if any(item.association in incomplete for item in successful):
+            return self._failure("failure", "implementation_exception")
         frame = getattr(result, "frame", False)
         if frame is not None:
             from anonymizer.engine.detection._frame_publication import FramePublication
@@ -741,7 +755,7 @@ class _DelegatedOwner(PrivateValue):
             try:
                 accepted_frame = (
                     frame.accept(
-                        result.results,
+                        successful,
                         opaque=tuple(
                             value
                             for job in self.jobs.values()
@@ -757,11 +771,17 @@ class _DelegatedOwner(PrivateValue):
                 return self._failure("failure", "malformed_response")
             runtime.frame.publications.append(accepted_frame)
         return {
-            item.association: (
-                _mapping(self.policy, "result", item.outcome, None),
-                (item,),
-                tuple(value for value in result.assessments if value.association == item.association),
-            )
-            for item in result.results
-            if isinstance(item.association, SemanticAssociation)
+            **{
+                source: (_mapping(self.policy, "failure", None, "implementation_exception"), (), ())
+                for source in failed_sources
+            },
+            **{
+                item.association: (
+                    _mapping(self.policy, "result", item.outcome, None),
+                    (item,),
+                    tuple(value for value in result.assessments if value.association == item.association),
+                )
+                for item in result.results
+                if isinstance(item.association, SemanticAssociation)
+            },
         }

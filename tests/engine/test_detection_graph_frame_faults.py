@@ -45,14 +45,18 @@ async def run_case(fault="valid", limited=False):
                     ),
                 ),
             )
-            source = pd.DataFrame({COL_TEXT: [value.value.text]})
+            source = pd.DataFrame({COL_TEXT: [value.value.text], "opaque": [{"original": []}]})
+            requests.bind_frame(source)
+            saved["original"] = source["opaque"].iloc[0]
             content = source.assign(**{COL_REPLACED_TEXT: [candidate], "trace": [{"accepted": [1, 2]}]})
+            if fault == "rebind":
+                requests.bind_frame(content)
             frame = FramePublication.capture(
                 content,
                 associations=(row.association,),
                 text_ports=((COL_REPLACED_TEXT, "context"),),
                 failed_records=(),
-                opaque_source=source,
+                opaque_source=content if fault == "rebind" else source,
             )
             if fault == "empty_text":
                 frame = FramePublication(content, content.columns, (row.association,), (), (), ())
@@ -130,5 +134,28 @@ def test_retained_frame_shape_rejects_with_value_error(bad):
             if field.name != bad:
                 object.__setattr__(raw, field.name, getattr(frame, field.name))
         frame = raw
+    with pytest.raises(ValueError):
+        frame.project(result_with(result, frames=(frame,)))
+
+
+@pytest.mark.parametrize("rebind", [False, True])
+def test_source_rebinding_cannot_exempt_generated_content_from_snapshot(rebind):
+    _, result, saved = asyncio.run(run_case("rebind" if rebind else "valid"))
+    assert result.frames[0].project(result)["opaque"].iloc[0] is saved["original"]
+    saved["content"]["trace"].iloc[0]["accepted"].clear()
+    saved["callback_frame"]._content["trace"].iloc[0]["accepted"].clear()
+    assert result.frames[0].project(result)["trace"].iloc[0]["accepted"] == [1, 2]
+
+
+@pytest.mark.parametrize("replacement", ["root", "assessment"])
+def test_retained_frame_reference_must_belong_to_bound_output_port(replacement):
+    from tests.graph_sdk.child_qualification_fixtures import result_with
+
+    _, result, _ = asyncio.run(run_case())
+    frame = result.frames[0]
+    actual = frame._text[0][1][0]
+    candidates = [ref for ref, value in result.artifacts if ref != actual and type(value) is TextArtifactValue]
+    reference = candidates[0] if replacement == "root" else candidates[-1]
+    frame = replace(frame, _text=((COL_REPLACED_TEXT, (reference,)),))
     with pytest.raises(ValueError):
         frame.project(result_with(result, frames=(frame,)))

@@ -119,7 +119,11 @@ async def _run_local(
         return _mapping(policy, "failure", None, inspect_failure(result.failure)), (), ()
     if type(result) is LocalDecisionWait:
         return _mapping(policy, "failure", None, "implementation_exception"), (), ()
-    if type(result) is not LocalCompleted or getattr(result, "frame", False) is not None:
+    if (
+        type(result) is not LocalCompleted
+        or getattr(result, "frame", False) is not None
+        or getattr(result, "failed_sources", None) != frozenset()
+    ):
         return _mapping(policy, "failure", None, "implementation_exception"), (), ()
     invalid = inspect_associations(result.results, frozenset({association}), ingress, assessments=result.assessments)
     if invalid is None or invalid:

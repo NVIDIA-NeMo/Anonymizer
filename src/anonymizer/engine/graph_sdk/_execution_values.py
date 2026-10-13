@@ -684,6 +684,7 @@ class LocalCompleted(PrivateValue):
     results: tuple[AssociationResult, ...]
     assessments: tuple[LocalAssessmentResult, ...] = ()
     frame: FramePublication | None = None
+    failed_sources: frozenset[SemanticAssociation] = frozenset()
 
 
 @dataclass(frozen=True, slots=True, kw_only=True, repr=False)

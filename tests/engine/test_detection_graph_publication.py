@@ -258,7 +258,6 @@ def test_real_redact_evidence_retains_source_candidate_and_span_versions(scripte
         evidence_validity,
         verify_evidence,
     )
-    from anonymizer.engine.graph_sdk.qualification import qualify_retained
     from tests.graph_sdk.evidence_fixtures import _qualification_limits
 
     result = asyncio.run(run_graph_profile(scripted_detection, _source(), _options()))
@@ -294,9 +293,10 @@ def test_real_redact_evidence_retains_source_candidate_and_span_versions(scripte
     artifacts = tuple(reference for reference, _ in result.artifacts)
     current = view(artifacts)
     assert all(evidence_validity(evidence=item, current=current) == "current" for item in verified)
-    with pytest.raises(EffectRejected) as error:
-        qualify_retained(admitted=admitted, result=result, current=current)
-    assert error.value.code.value == "unsupported"  # Shared request reconciliation remains unqualified.
+    from anonymizer.engine.detection._graph_profile import qualify_detection_redact
+
+    qualified = qualify_detection_redact(result)
+    assert len(qualified.qualified) == 2
 
     for port, consumed in verified[0].consumed_by_port:
         reference = consumed.artifact if hasattr(consumed, "artifact") else consumed
@@ -337,3 +337,50 @@ def test_redact_evidence_projection_rejects_incomplete_dependencies(scripted_det
         asyncio.run(run_graph_profile(scripted_detection, _source(), _options()))
     assert error.value.code.value == code
     assert scripted_detection[3] == {}
+
+
+def test_dropped_source_preserves_peer_candidate_and_legacy_failure(scripted_detection):
+    from anonymizer.engine.constants import COL_REPLACED_TEXT
+    from anonymizer.engine.ndd.adapter import RECORD_ID_COLUMN
+
+    source = pd.DataFrame(
+        {COL_TEXT: ["Alice travels.", "Alice fails."], RECORD_ID_COLUMN: ["keep", "drop"], "extra": [17, 29]}
+    )
+    result = asyncio.run(run_graph_profile(scripted_detection, source, _options()))
+    assert len(result.final_outputs) == 1
+    projected = result.frames[0].project(result)
+    assert projected[COL_REPLACED_TEXT].tolist() == ["[REDACTED_FIRST_NAME] travels."]
+    assert projected["extra"].tolist() == [17]
+    assert [failure.record_id for failure in result.frames[0].failed_records] == ["drop"]
+    from anonymizer.engine.detection._graph_profile import qualify_detection_redact
+
+    assert len(qualify_detection_redact(result).qualified) == 1
+    assert all(state.complete for state in result.states)
+
+
+@pytest.mark.parametrize("fault", ["overlap", "foreign", "unattributed", "duplicate"])
+def test_delegated_source_partition_rejects_uncorrelated_completion(scripted_detection, monkeypatch, fault):
+    from anonymizer.engine.detection._graph_invocation import DetectionRedactInvocation
+    from anonymizer.engine.graph_sdk.requests import SemanticAssociation
+    from anonymizer.graph._values import TaskAttemptId
+
+    original = DetectionRedactInvocation._run
+
+    def corrupted(self, inputs, requests):
+        result = original(self, inputs, requests)
+        association = result.results[0].association
+        assert isinstance(association, SemanticAssociation)
+        if fault == "unattributed":
+            return replace(result, results=result.results[1:])
+        if fault == "duplicate":
+            raw = replace(result)
+            object.__setattr__(raw, "failed_sources", (association, association))
+            return raw
+        if fault == "foreign":
+            association = SemanticAssociation(task=TaskAttemptId.new(activation=association.task.activation))
+        return replace(result, failed_sources=frozenset({association}))
+
+    monkeypatch.setattr(DetectionRedactInvocation, "_run", corrupted)
+    result = asyncio.run(run_graph_profile(scripted_detection, _source(), _options()))
+    assert not result.final_outputs and not result.frames
+    assert all(state.complete for state in result.states)

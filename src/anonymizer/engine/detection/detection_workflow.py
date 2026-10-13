@@ -86,6 +86,7 @@ _DEFAULT_VALIDATION_EXCERPT_WINDOW_CHARS: int = AnonymizerDetectConfig.model_fie
 class EntityDetectionResult:
     dataframe: pd.DataFrame
     failed_records: list[FailedRecord]
+    source_positions: tuple[int, ...] = ()
 
 
 class EntityDetectionWorkflow:
@@ -140,7 +141,11 @@ class EntityDetectionWorkflow:
             **({"request_bridge": request_bridge} if request_bridge is not None else {}),
         )
         detected_df = detection_result.dataframe.copy()
-        return EntityDetectionResult(dataframe=detected_df, failed_records=detection_result.failed_records)
+        return EntityDetectionResult(
+            dataframe=detected_df,
+            failed_records=detection_result.failed_records,
+            source_positions=detection_result.source_positions if source_frame is not None else (),
+        )
 
     def _build_detection_spec(
         self,
@@ -477,6 +482,7 @@ class EntityDetectionWorkflow:
             result = EntityDetectionResult(
                 dataframe=final_df,
                 failed_records=final_failures,
+                source_positions=detected_result.source_positions if source_frame is not None else (),
             )
             measurement.update(
                 output_row_count=len(result.dataframe),

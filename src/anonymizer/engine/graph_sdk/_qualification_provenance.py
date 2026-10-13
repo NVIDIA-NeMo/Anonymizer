@@ -93,7 +93,7 @@ class _ProvenanceValidator:
                 binding.destination.outcome
                 for binding in self.context.prepared.workflow.workflow.outcome_bindings
                 for key, entry in self.context.entries.items()
-                if self.context.owners[key] == output.target
+                if self.context.owners.get(key) == output.target
                 and entry.template == binding.source.node
                 and entry.status == "success"
                 and entry.outcome == binding.source.outcome
@@ -147,7 +147,7 @@ class _ProvenanceValidator:
         for target, activation, port, parent in self.context.result._input_parents:
             if (
                 activation not in self.context.entries
-                or target != self.context.owners[activation]
+                or target != self.context.owners.get(activation)
                 or parent.target != target
             ):
                 reject(EffectCode.FOREIGN_OWNER)
@@ -207,7 +207,7 @@ class _ProvenanceValidator:
         for target, activation, port, parent in self.context.result._passthrough_parents:
             if (
                 activation not in self.context.entries
-                or target != self.context.owners[activation]
+                or target != self.context.owners.get(activation)
                 or parent.target != target
             ):
                 reject(EffectCode.FOREIGN_OWNER)
@@ -257,7 +257,7 @@ class _ProvenanceValidator:
             entry = self.context.entries.get(key.activation)
             if entry is None:
                 reject(EffectCode.MISSING)
-            if self.context.owners[key.activation] != key.target:
+            if self.context.owners.get(key.activation) != key.target:
                 reject(EffectCode.FOREIGN_OWNER)
             port = self.context.facts.ports.get((key.activation, key.port))
             if port is None or port.artifact != fact.artifact or port.node != entry.template:
@@ -370,8 +370,8 @@ class _ProvenanceValidator:
             reject(EffectCode.MISSING)
         if (
             key.member.parent != key.expander
-            or self.context.owners[key.member] != key.target
-            or self.context.owners[key.expander] != key.target
+            or self.context.owners.get(key.member) != key.target
+            or self.context.owners.get(key.expander) != key.target
         ):
             reject(EffectCode.FOREIGN_OWNER)
         declaration = next(

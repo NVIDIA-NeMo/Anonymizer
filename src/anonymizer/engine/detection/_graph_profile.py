@@ -3,8 +3,8 @@
 """Actual DD detection/Redact development profile, using the single graph executor.
 
 Fixed generation counts are explicit admission declarations, not public input
-limits. Source-bound Redact assessments are admitted, but shared request
-reconciliation, variable chunk closure and retry chains remain incomplete.
+limits. Source-bound Redact assessments and shared request receipts are qualified.
+Variable chunk closure and retry chains remain incomplete.
 The public facade does not use this profile.
 """
 
@@ -36,6 +36,7 @@ from anonymizer.engine.graph_sdk.capabilities import (
 )
 from anonymizer.engine.graph_sdk.context import admit_context_plan
 from anonymizer.engine.graph_sdk.data import DataGraph, DataLimits
+from anonymizer.engine.graph_sdk.evidence import QualificationLimits, admit_qualification, evidence_revision_view
 from anonymizer.engine.graph_sdk.executor import (
     AssessmentLimits,
     DecisionLimits,
@@ -60,6 +61,7 @@ from anonymizer.engine.graph_sdk.preparation import (
     StateRevisionView,
     prepare,
 )
+from anonymizer.engine.graph_sdk.qualification import QualificationResult, qualify_retained
 from anonymizer.engine.graph_sdk.requests import AssociationInput, AssociationResult, ChildRoute, PhysicalRequestPolicy
 from anonymizer.engine.graph_sdk.resources import ResourceLease
 from anonymizer.engine.ndd._graph_requests import NddPhysicalTransport
@@ -129,7 +131,13 @@ class _ProfileLocal:
 
 def _runtime_rows(names: tuple[str, ...], external: bool) -> tuple[RuntimeOutcome, ...]:
     rows = [
-        RuntimeOutcome(condition="result", reported_outcome=name, failure=None, outcome=name, category="success")
+        RuntimeOutcome(
+            condition="result",
+            reported_outcome=name,
+            failure=None,
+            outcome=name,
+            category="success",
+        )
         for name in names
     ]
     rows += [
@@ -589,3 +597,40 @@ async def execute_detection_redact(
     finally:
         if not handed_to_runtime and not physical.closed:
             await asyncio.wrap_future(asyncio.run_coroutine_threadsafe(physical.close(), loop))
+
+
+def qualify_detection_redact(result: ExecutionResult) -> QualificationResult:
+    """Reconcile this profile's source checks and physical receipts before release."""
+    execution = result._execution
+    prepared = execution.context.prepared
+    limits = execution.assessment_limits
+    admitted = admit_qualification(
+        execution=execution,
+        productions=execution.assessment_productions,
+        limits=QualificationLimits(
+            max_productions=limits.max_productions,
+            max_submissions=limits.max_assessment_facts,
+            max_port_facts=limits.max_port_facts,
+            max_consumed_per_assessment=3,
+            max_coverage_atoms=0,
+            max_verified_evidence=limits.max_assessment_facts,
+            max_required_decisions=0,
+            max_fixed_point_steps=len(prepared.target_occurrences) + 1,
+            max_revision_entries=limits.max_port_facts + prepared.limits.max_capabilities,
+            max_absence_revisions=0,
+            max_provenance_edges=limits.max_provenance_edges,
+        ),
+    )
+    current = evidence_revision_view(
+        admitted=admitted,
+        result=result,
+        artifacts=tuple(reference for reference, _ in result.artifacts),
+        absences=(),
+        configurations=tuple(
+            (policy.node, policy.implementations[0].configuration)
+            for policy in execution.policies
+            if any(production.node == policy.node for production in execution.assessment_productions)
+        ),
+        state=prepared.state,
+    )
+    return qualify_retained(admitted=admitted, result=result, current=current)

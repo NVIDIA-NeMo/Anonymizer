@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, fields, replace
+from dataclasses import dataclass, field, fields, replace
 from itertools import product
 from typing import Literal
 
@@ -169,8 +169,8 @@ class VerifiedEvidence(PrivateValue):
     environment: AssessmentEnvironment
     finding: AssessmentFinding
     coverage: frozenset[CoverageAtom]
-    _admitted: AdmittedQualification
-    _result: ExecutionResult
+    _admitted: AdmittedQualification = field(hash=False)
+    _result: ExecutionResult = field(hash=False)
 
     def __init__(self, *, _key: object, **values: object) -> None:
         if _key is not _EVIDENCE_KEY:

@@ -76,18 +76,18 @@ class DetectionRedactInvocation:
             request_bridge=bridge,
             **self.detection_options,
         )
-        # Partial-row completion needs an admitted source-failure outcome before
-        # this development profile can publish it. Do not infer source identity
-        # from public legacy IDs, which can legitimately repeat.
-        if len(detected.dataframe) != len(frame.associations):
+        positions = detected.source_positions
+        if len(positions) != len(detected.dataframe):
             raise AnonymizerWorkflowError("DD graph detection has unclosed source results")
+        successful = tuple(frame.associations[position] for position in positions)
+        rows = {association: index for index, association in enumerate(successful)}
         protected = ReplacementWorkflow().run(
             detected.dataframe,
             replace_method=Redact(),
             model_configs=self.model_configs,
             selected_models=ReplaceModelSelection(replacement_generator=self.selected_models.entity_augmenter),
         )
-        text = dict(zip(frame.associations, protected.dataframe[COL_REPLACED_TEXT], strict=True))
+        text = dict(zip(successful, protected.dataframe[COL_REPLACED_TEXT], strict=True))
         spans = {
             item.association: EntitySpansValue(
                 source=cast(ArtifactRef, item.inputs[0].artifact),
@@ -102,11 +102,12 @@ class DetectionRedactInvocation:
                         entity.source,
                     )
                     for entity in EntitiesSchema.from_raw(
-                        detected.dataframe[COL_FINAL_ENTITIES].iloc[frame.associations.index(item.association)]
+                        detected.dataframe[COL_FINAL_ENTITIES].iloc[rows[item.association]]
                     ).entities
                 ),
             )
             for item in inputs
+            if item.association in rows
         }
         results = tuple(
             AssociationResult(
@@ -121,22 +122,22 @@ class DetectionRedactInvocation:
                         port=self.output_port,
                         artifact_type=item.inputs[0].artifact_type,
                         artifact=None,
-                        value=TextArtifactValue(text=text[cast(SemanticAssociation, item.association)]),
+                        value=TextArtifactValue(text=text[item.association]),
                     ),
                 ),
             )
             for item in inputs
+            if item.association in rows
         )
         return LocalCompleted(
             results=results,
+            failed_sources=frozenset(set(frame.associations) - set(successful)),
             frame=FramePublication.capture(
                 protected.dataframe,
-                associations=frame.associations,
+                associations=successful,
                 text_ports=((COL_REPLACED_TEXT, self.output_port),),
                 failed_records=tuple(detected.failed_records + protected.failed_records),
                 opaque_source=self.source,
-                span_ports=(
-                    (COL_FINAL_ENTITIES, "spans", tuple(spans[association] for association in frame.associations)),
-                ),
+                span_ports=((COL_FINAL_ENTITIES, "spans", tuple(spans[association] for association in successful)),),
             ),
         )

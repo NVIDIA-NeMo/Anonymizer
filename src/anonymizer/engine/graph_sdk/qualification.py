@@ -47,8 +47,9 @@ from anonymizer.engine.graph_sdk.requests import (
 )
 from anonymizer.engine.graph_sdk.resources import CleanupAssociation, CleanupFact, ResourceId, ResourceOwner
 from anonymizer.graph._values import ActivationKey, DatumId
-from anonymizer.graph.activation import ActivationEntry
+from anonymizer.graph.activation import ActivationEntry, ActivationState
 from anonymizer.graph.workflow import (
+    AdmittedActivationWorkflow,
     MapItemPort,
     NodeId,
     ProtectionRequirement,
@@ -259,6 +260,7 @@ class _Qualification:
         self.failed_terminals: set[ActivationKey] = set()
         self.entries: dict[ActivationKey, ActivationEntry] = {}
         self.owners: dict[ActivationKey, DatumId] = {}
+        self.shared: set[ActivationKey] = set()
         self.withholding: dict[DatumId, set[WithholdingCode]] = {target: set() for target in self.order}
         self.closed = {target: True for target in self.order}
         self.uncertain: set[DatumId] = set()
@@ -273,23 +275,41 @@ class _Qualification:
         self.closed[target] = False
         self.withholding[target].add("incomplete_membership")
 
+    def affected(self, activation: ActivationKey) -> frozenset[DatumId]:
+        return frozenset(self.order) if activation in self.shared else frozenset({self.owners[activation]})
+
+    def offset(self, activation: ActivationKey) -> int:
+        if activation in self.shared:
+            return self.prepared.total_activation_slots
+        return next(
+            item.occurrence_offset
+            for item in self.prepared.target_occurrences
+            if item.target == self.owners[activation]
+        )
+
     def reconcile(self) -> None:
         record = self.result.record
-        if getattr(self.result, "invocation_state", None) is not None or (
-            any(
-                policy.delegated is not None and (len(self.order) > 1 or policy.delegated.generation_groups)
-                for policy in self.admitted.execution.policies
-            )
-        ):
-            reject(EffectCode.UNSUPPORTED)
+        execution = self.admitted.execution
+        invocation = getattr(self.result, "invocation_state", None)
+        if (invocation is None) != (execution.invocation_workflow is None):
+            reject(EffectCode.MISSING)
         if len(self.result.states) != len(self.order):
             reject(EffectCode.MISSING)
-        for target, state in zip(self.order, self.result.states, strict=True):
-            if state.invocation != record.invocation or state.workflow is not self.prepared.workflow:
+        states: list[tuple[DatumId | None, ActivationState, AdmittedActivationWorkflow, int]] = [
+            (target, state, execution.target_workflow, occurrence.occurrence_offset)
+            for target, state, occurrence in zip(
+                self.order, self.result.states, self.prepared.target_occurrences, strict=True
+            )
+        ]
+        if invocation is not None:
+            assert execution.invocation_workflow is not None
+            states.append((None, invocation, execution.invocation_workflow, self.prepared.total_activation_slots))
+        for target, state, workflow, offset in states:
+            if state.invocation != record.invocation or state.workflow is not workflow:
                 reject(EffectCode.FOREIGN_OWNER)
+            templates = {node.id for scope in state.workflow.scopes for node in scope.workflow.nodes}
             expected = {
-                self.prepared.target_occurrences[self.order.index(target)].occurrence_offset + slot.index: slot
-                for slot in self.prepared.reservation_recipe
+                offset + slot.index: slot for slot in self.prepared.reservation_recipe if slot.template in templates
             }
             for entry in state.entries:
                 if entry.activation in self.entries:
@@ -298,14 +318,19 @@ class _Qualification:
                 if slot is None or entry.template != slot.template:
                     reject(EffectCode.FOREIGN_OWNER)
                 self.entries[entry.activation] = entry
-                self.owners[entry.activation] = target
+                if target is None:
+                    self.shared.add(entry.activation)
+                else:
+                    self.owners[entry.activation] = target
             if not state.complete:
-                self.incomplete(target)
+                for affected in self.order if target is None else (target,):
+                    self.incomplete(affected)
         self._memberships()
         self._terminals()
         recovered_leaves = self._child_receipts()
         for key in self.failed_terminals - recovered_leaves:
-            self.withholding[self.owners[key]].add("terminal_failure")
+            for target in self.affected(key):
+                self.withholding[target].add("terminal_failure")
         for pending in self.result.pending_decisions:
             target = self.owners.get(pending.activation)
             if target is None:
@@ -316,10 +341,13 @@ class _Qualification:
 
     def _memberships(self) -> None:
         expected: dict[ActivationKey | None, set[ActivationKey]] = {None: set()}
-        closed: dict[ActivationKey | None, bool] = {None: all(state.complete for state in self.result.states)}
+        closed: dict[ActivationKey | None, bool] = {
+            None: all(state.complete for state in self.result.states)
+            and (self.result.invocation_state is None or self.result.invocation_state.complete)
+        }
         for key, entry in self.entries.items():
             if key.parent is not None and (
-                key.parent not in self.entries or self.owners[key.parent] != self.owners[key]
+                key.parent not in self.entries or self.owners.get(key.parent) != self.owners.get(key)
             ):
                 reject(EffectCode.FOREIGN_OWNER)
             expected.setdefault(key.parent, set()).add(key)
@@ -368,7 +396,7 @@ class _Qualification:
         all_members: set[ActivationKey] = set()
         for parent, members in expected.items():
             membership = observed.get(parent)
-            affected = set(self.order) if parent is None else {self.owners[parent]}
+            affected = set(self.order) if parent is None else self.affected(parent)
             if membership is None or membership.members != frozenset(members) or membership.closed != closed[parent]:
                 for target in affected:
                     self.incomplete(target)
@@ -386,10 +414,10 @@ class _Qualification:
         if set(terminals) - set(self.entries):
             reject(EffectCode.MISSING)
         for key, entry in self.entries.items():
-            target = self.owners[key]
             terminal = terminals.get(key)
             if terminal is None:
-                self.incomplete(target)
+                for target in self.affected(key):
+                    self.incomplete(target)
                 continue
             terminal.__post_init__()
             structural = isinstance(self.nodes[entry.template], SubgraphNode)
@@ -452,47 +480,50 @@ class _Qualification:
             reject(EffectCode.DUPLICATE)
         expected: set[ActivationKey] = set()
         readiness_owners = {}
+        readiness_dependents: set[ActivationKey] = set()
         physical_owners = {}
         probes: set[ActivationKey] = set()
         for owner in self.entries.values():
-            contract = policies.get(owner.template)
-            if contract is None or contract.delegated is None:
+            policy = policies.get(owner.template)
+            if policy is None or policy.delegated is None:
                 continue
-            target = self.owners[owner.activation]
-            offset = next(item.occurrence_offset for item in self.prepared.target_occurrences if item.target == target)
-            descriptor = contract.delegated.readiness
-            physical_slots = contract.delegated.child_slots + (() if descriptor is None else (descriptor.request_slot,))
+            contract = policy.delegated
+            offset = self.offset(owner.activation)
+            descriptor = contract.readiness
             if descriptor is not None:
+                readiness_offset = self.prepared.total_activation_slots if self.shared else offset
                 semantic = next(
                     entry.activation
                     for entry in self.entries.values()
-                    if entry.activation.occurrence == offset + descriptor.owner_slot
-                    and self.owners[entry.activation] == target
+                    if entry.activation.occurrence == readiness_offset + descriptor.owner_slot
                 )
-                readiness_owners[semantic] = (owner.activation, contract.delegated)
-                probes.update(
+                physical = next(
                     entry.activation
                     for entry in self.entries.values()
-                    if entry.activation.occurrence == offset + descriptor.probe_slot
-                    and self.owners[entry.activation] == target
+                    if entry.activation.occurrence == readiness_offset + descriptor.request_slot
                 )
-            physical_owners.update(
-                {
-                    entry.activation: owner.activation
+                probe = next(
+                    entry.activation
                     for entry in self.entries.values()
-                    if entry.activation.occurrence - offset in physical_slots
-                    and self.owners[entry.activation] == target
-                }
-            )
-            expected.update(
-                entry.activation
-                for entry in self.entries.values()
-                if entry.activation.occurrence - offset in physical_slots and self.owners[entry.activation] == target
-            )
+                    if entry.activation.occurrence == readiness_offset + descriptor.probe_slot
+                )
+                readiness_owners[semantic] = contract
+                readiness_dependents.add(owner.activation)
+                probes.add(probe)
+                physical_owners[physical] = semantic
+                expected.add(physical)
+            for entry in self.entries.values():
+                if (
+                    entry.activation.occurrence - offset in contract.child_slots
+                    and self.owners.get(entry.activation) == self.owners[owner.activation]
+                ):
+                    physical_owners[entry.activation] = owner.activation
+                    expected.add(entry.activation)
         used: set[ActivationKey] = set()
         recovered: set[ActivationKey] = set()
         known_evidence: set[ChildEvidence] = set()
         processed: set[PhysicalRequestId] = set()
+        used_groups: set[tuple[ActivationKey, tuple[int, ...]]] = set()
         for chain in receipt.chains:
             chain.__post_init__()
             if (
@@ -514,24 +545,19 @@ class _Qualification:
                 relation = readiness_owners.get(owner)
                 if relation is None:
                     reject(EffectCode.FOREIGN_OWNER)
-                _, contract = relation
+                contract = relation
                 descriptor = contract.readiness
                 assert descriptor is not None
                 slots, routes, followups = (descriptor.request_slot,), (descriptor.route,), frozenset()
             elif contract is not None and contract.readiness is not None:
                 descriptor = contract.readiness
-                target = self.owners[owner]
-                offset = next(
-                    item.occurrence_offset for item in self.prepared.target_occurrences if item.target == target
-                )
+                offset = self.prepared.total_activation_slots if self.shared else self.offset(owner)
                 for index, outcomes in (
                     (descriptor.owner_slot, frozenset({descriptor.ready_outcome})),
                     (descriptor.probe_slot, descriptor.probe_outcomes),
                 ):
                     dependency = next(
-                        entry
-                        for entry in self.entries.values()
-                        if entry.activation.occurrence == offset + index and self.owners[entry.activation] == target
+                        entry for entry in self.entries.values() if entry.activation.occurrence == offset + index
                     )
                     if (
                         dependency.status != "success"
@@ -560,8 +586,16 @@ class _Qualification:
                 continue
             if not history or len(history) > chain.policy.max_attempts:
                 reject(EffectCode.LIMIT_EXCEEDED)
-            target = self.owners[owner]
-            offset = next(item.occurrence_offset for item in self.prepared.target_occurrences if item.target == target)
+            offset = self.offset(owner)
+            if chain.role == "generation" and contract.generation_groups:
+                first = history[0].child
+                if first is None or first.leaf is None:
+                    reject(EffectCode.MISSING)
+                groups = [group for group in contract.generations if first.leaf.activation.occurrence - offset in group]
+                if len(groups) != 1 or (owner, groups[0]) in used_groups:
+                    reject(EffectCode.CONTRADICTORY)
+                slots = groups[0]
+                used_groups.add((owner, slots))
             prior: RequestReservation | None = None
             for dispatch in history:
                 dispatch.__post_init__()
@@ -574,7 +608,7 @@ class _Qualification:
                     or leaf not in terminals
                     or leaf.activation not in expected
                     or leaf.activation in used
-                    or self.owners[leaf.activation] != target
+                    or self.owners.get(leaf.activation) != self.owners.get(owner)
                     or leaf.activation.parent != owner.parent
                     or leaf.activation.occurrence - offset not in slots
                 ):
@@ -675,10 +709,26 @@ class _Qualification:
                     if fact.category == "failure":
                         self.recovered_children.add(dispatch.request)
                         recovered.add(child.leaf.activation)
+        for entry in self.entries.values():
+            policy = policies.get(entry.template)
+            if policy is None or policy.delegated is None or not policy.delegated.generation_groups:
+                continue
+            entered = any(row.activation == entry.activation for row in terminals.values())
+            own_chains = [
+                chain
+                for chain in receipt.chains
+                if chain.role == "generation"
+                and any(
+                    isinstance(association, SemanticAssociation) and association.task.activation == entry.activation
+                    for association in chain.associations
+                )
+            ]
+            if len(own_chains) != (len(policy.delegated.generations) if entered else 0):
+                reject(EffectCode.MISSING)
         omitted = self._unused_children(expected - used, physical_owners)
         unused = expected - used - omitted
         if any(
-            physical_owners[key] not in {relation[0] for relation in readiness_owners.values()}
+            physical_owners[key] not in readiness_dependents | readiness_owners.keys()
             or self.entries[key].status != "blocked"
             or self.entries[physical_owners[key]].status == "success"
             or any(row.activation == key for row in terminals.values())
@@ -768,7 +818,6 @@ class _Qualification:
                 or len(physical) != 1
                 or physical[0].category != "success"
                 or receipt.dispatched_count != len(receipt.dispatches)
-                or len(receipt.dispatches) != 1 + (contract.readiness is not None)
                 or len(receipt.terminals) != len(receipt.dispatches)
                 or len(receipt.settlements) != len(receipt.dispatches)
                 or any(
@@ -879,15 +928,15 @@ class _Qualification:
                 reject(EffectCode.FOREIGN_OWNER)
             self._requests(binding)
 
-    def _association_target(self, association: RequestAssociation) -> DatumId | None:
+    def _association_targets(self, association: RequestAssociation) -> frozenset[DatumId]:
         if isinstance(association, SemanticAssociation):
             terminal = next((item for item in self.result.record.terminals if item.attempt == association.task), None)
-            return None if terminal is None else self.owners.get(terminal.activation)
+            return frozenset() if terminal is None else self.affected(terminal.activation)
         bound = self.admitted.execution.context.bound_context
         if bound is None:
-            return None
+            return frozenset()
         source = next((item for item in bound.receipt.sources if item.identity == association.declaration), None)
-        return None if source is None else source.declaration.target
+        return frozenset() if source is None else frozenset({source.declaration.target})
 
     def _requests(self, receipt: RequestReceipt) -> None:
         requests = {item.request: item for item in receipt.dispatches}
@@ -899,11 +948,11 @@ class _Qualification:
             unlocalized = True
         previous: dict[RequestAssociation, RequestReservation] = {}
         for dispatch in receipt.dispatches:
-            targets = {self._association_target(item) for item in dispatch.associations}
-            if None in targets or dispatch.request.scope != receipt.scope:
+            targets = [self._association_targets(item) for item in dispatch.associations]
+            if not all(targets) or dispatch.request.scope != receipt.scope:
                 unlocalized = True
                 continue
-            affected = {item for item in targets if item is not None}
+            affected = set().union(*targets)
             terminals = [item for item in receipt.terminals if item.request == dispatch.request]
             settlements = [item for item in receipt.settlements if item.request == dispatch.request]
             uncertain = len(terminals) != 1 or len(settlements) != 1
@@ -935,14 +984,12 @@ class _Qualification:
                         if summary.category != "success" and not self._recovered(
                             dispatch, receipt, summary.association
                         ):
-                            target = self._association_target(summary.association)
-                            if target is not None:
+                            for target in self._association_targets(summary.association):
                                 self.withholding[target].add("request_accounting")
                 elif terminal.category == "failure":
                     for association in dispatch.associations:
                         if not self._recovered(dispatch, receipt, association):
-                            target = self._association_target(association)
-                            if target is not None:
+                            for target in self._association_targets(association):
                                 self.withholding[target].add("request_accounting")
             if dispatch.child is None and dispatch.purpose in {"retry", "correction", "failover"}:
                 for association in dispatch.associations:
@@ -1299,7 +1346,7 @@ class _Qualification:
         expanders = [
             key
             for key, entry in self.entries.items()
-            if self.owners[key] == target
+            if self.owners.get(key) == target
             and entry.template == endpoint.expander
             and entry.status == "success"
             and entry.outcome == endpoint.expansion_outcome

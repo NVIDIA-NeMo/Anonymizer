@@ -160,7 +160,9 @@ class _InvocationFrame:
         ):
             reject(EffectCode.CONTRADICTORY)
         for job, cells in zip(jobs, dataframe.itertuples(index=False, name=None), strict=True):
-            self.sources[job.target].opaque_cells = cells
+            source = self.sources[job.target]
+            if not source.opaque_cells:
+                source.opaque_cells = cells
         return WorkflowSourceFrame.capture(dataframe, associations=tuple(job.association for job in jobs))
 
     def _initialize_root_inputs(self) -> None:

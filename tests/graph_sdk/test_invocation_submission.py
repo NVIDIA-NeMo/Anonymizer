@@ -92,9 +92,7 @@ def test_shared_readiness_has_no_target_and_each_source_has_its_own_leaf(readine
         artifacts[output.candidate.artifact] == TextArtifactValue(text="candidate:" + source_text[output.target])
         for output in result.final_outputs
     )
-    with pytest.raises(EffectRejected) as unsupported:
-        _qualify(execution, result)
-    assert unsupported.value.code == EffectCode.UNSUPPORTED
+    assert len(_qualify(execution, result).qualified) == (0 if readiness_failure else 2)
 
 
 @pytest.mark.parametrize("targets", [1, 2])
