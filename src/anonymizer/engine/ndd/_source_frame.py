@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Iterator
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
@@ -93,6 +93,7 @@ class WorkflowSourceFrame:
         if not self.associations:
             yield failed
             return
+        storage_bindings = ExitStack()
         original_builder = designer._create_dataset_builder
         sources = {
             key: (index, association)
@@ -101,7 +102,22 @@ class WorkflowSourceFrame:
 
         def builder(*args: Any, **kwargs: Any) -> Any:
             result = original_builder(*args, **kwargs)
+            storage_bindings.enter_context(self._bind_storage(result.artifact_storage))
             original_initialize = result._initialize_generators_and_graph
+
+            def write_config() -> None:
+                from data_designer.config.config_builder import BuilderConfig
+                from data_designer.engine.storage.artifact_storage import SDG_CONFIG_FILENAME
+
+                config = result._data_designer_config
+                public = config.model_copy(
+                    update={"columns": [column for column in config.columns if column.name != self.key_column]}
+                )
+                storage = result.artifact_storage
+                storage.mkdir_if_needed(storage.base_dataset_path)
+                BuilderConfig(data_designer=public).to_json(storage.base_dataset_path / SDG_CONFIG_FILENAME)
+
+            result._write_builder_config = write_config
 
             def initialize() -> Any:
                 generators, graph = original_initialize()
@@ -144,3 +160,54 @@ class WorkflowSourceFrame:
             yield failed
         finally:
             designer._create_dataset_builder = original_builder
+            storage_bindings.close()
+
+    @contextmanager
+    def _bind_storage(self, storage: Any) -> Iterator[None]:
+        """Keep only batch-order identity in memory across DD's parquet round trip."""
+        from data_designer.engine.storage.artifact_storage import BatchStage
+
+        write = storage.write_parquet_file
+        load = storage.load_dataset
+        batches: dict[str, tuple[str, ...]] = {}
+
+        def write_file(
+            parquet_file_name: str,
+            dataframe: pd.DataFrame,
+            batch_stage: Any,
+            subfolder: str | None = None,
+        ) -> Any:
+            if batch_stage in {BatchStage.PARTIAL_RESULT, BatchStage.FINAL_RESULT}:
+                if subfolder or list(dataframe.columns).count(self.key_column) != 1:
+                    raise AnonymizerWorkflowError("Workflow storage has no source correspondence")
+                keys = tuple(dataframe[self.key_column])
+                if any(type(key) is not str or key not in self.keys for key in keys) or len(set(keys)) != len(keys):
+                    raise AnonymizerWorkflowError("Workflow storage has invalid source correspondence")
+                batches[parquet_file_name] = keys
+            return write(
+                parquet_file_name,
+                dataframe.drop(columns=self.key_column, errors="ignore"),
+                batch_stage,
+                subfolder=subfolder,
+            )
+
+        def load_dataset(batch_stage: Any = BatchStage.FINAL_RESULT) -> pd.DataFrame:
+            dataframe = load(batch_stage)
+            if batch_stage != BatchStage.FINAL_RESULT:
+                return dataframe
+            paths = sorted(storage.final_dataset_path.glob("*.parquet"))
+            if not paths or any(path.name not in batches for path in paths):
+                raise AnonymizerWorkflowError("Workflow storage has unknown source batches")
+            keys = tuple(key for path in paths for key in batches[path.name])
+            if len(keys) != len(dataframe) or len(set(keys)) != len(keys) or self.key_column in dataframe:
+                raise AnonymizerWorkflowError("Workflow storage has invalid source batches")
+            dataframe[self.key_column] = keys
+            return dataframe
+
+        object.__setattr__(storage, "write_parquet_file", write_file)
+        object.__setattr__(storage, "load_dataset", load_dataset)
+        try:
+            yield
+        finally:
+            object.__setattr__(storage, "write_parquet_file", write)
+            object.__setattr__(storage, "load_dataset", load)

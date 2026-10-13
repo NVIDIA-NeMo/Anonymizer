@@ -935,6 +935,14 @@ class DecisionResponse(PrivateValue):
         require_text(self.decision)
 
 
+@dataclass(frozen=True, slots=True, kw_only=True, repr=False)
+class SubmissionFailure(PrivateValue):
+    """Original callback error retained for domain projection, never qualification."""
+
+    associations: frozenset[SemanticAssociation]
+    cause: Exception
+
+
 _RESULT_KEY = object()
 
 
@@ -960,12 +968,14 @@ class ExecutionResult(PrivateValue):
     cleanup_associations: tuple[CleanupAssociation, ...]
     publication_failures: tuple[PublicationFailureFact, ...]
     frames: tuple[PublishedFrame, ...]
+    submission_failures: tuple[SubmissionFailure, ...]
 
     def __init__(self, *, _key: object, **values: object) -> None:
         if _key is not _RESULT_KEY:
             raise TypeError("execution results are created by the executor")
         object.__setattr__(self, "invocation_state", None)
         object.__setattr__(self, "frames", ())
+        object.__setattr__(self, "submission_failures", ())
         object.__setattr__(self, "_retained_resources", ())
         for name, value in values.items():
             object.__setattr__(self, name, value)

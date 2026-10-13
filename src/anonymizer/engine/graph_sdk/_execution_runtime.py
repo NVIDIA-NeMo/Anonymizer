@@ -67,6 +67,7 @@ from anonymizer.engine.graph_sdk._execution_values import (
     ProvenanceKey,
     PublicationFailureFact,
     RuntimeOutcome,
+    SubmissionFailure,
 )
 from anonymizer.engine.graph_sdk._request_driver import _RequestAuthority
 from anonymizer.engine.graph_sdk.observations import (
@@ -187,6 +188,7 @@ class _InvocationRuntime:
         self.cancelled_unstarted: set[ActivationKey] = set()
         self.blocked_reasons: dict[ActivationKey, str | UnusedRetryCapacity] = {}
         self.publication_failures: list[PublicationFailureFact] = []
+        self.submission_failures: list[SubmissionFailure] = []
         self.submissions: dict[_ExecutionTask, tuple[_ExecutionJob, ...]] = {}
 
     async def run(self) -> ExecutionResult:
@@ -912,6 +914,7 @@ class _InvocationRuntime:
             provenance=tuple(self.facts.provenance),
             cleanup_associations=cleanup_associations,
             publication_failures=tuple(self.publication_failures),
+            submission_failures=tuple(self.submission_failures),
             frames=tuple(
                 bound
                 for publication in self.frame.publications

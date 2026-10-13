@@ -667,7 +667,7 @@ def test_default_restart_capacity_preserves_exhaustion_and_peer(
 
 @pytest.mark.parametrize("preview", [True, False])
 def test_all_failed_dd_sources_raise_legacy_and_withhold_graph(scripted_detection, preview):
-    from anonymizer.engine.detection._graph_profile import qualify_detection_redact
+    from anonymizer.engine.detection._graph_profile import project_detection_redact, qualify_detection_redact
     from anonymizer.engine.detection.detection_workflow import EntityDetectionWorkflow
     from anonymizer.engine.ndd.adapter import NddAdapter
     from anonymizer.interface.errors import AnonymizerWorkflowError
@@ -675,7 +675,7 @@ def test_all_failed_dd_sources_raise_legacy_and_withhold_graph(scripted_detectio
     designer, models, selected, calls = scripted_detection
     source = pd.DataFrame({COL_TEXT: ["Alice fails.", "Alice fails."], "extra": [17, 29]})
     options: dict[str, Any] = {**_options(), "preview_num_records": 2 if preview else None}
-    with pytest.raises(AnonymizerWorkflowError, match="scripted row failure"):
+    with pytest.raises(AnonymizerWorkflowError, match="scripted row failure") as legacy:
         EntityDetectionWorkflow(NddAdapter(designer)).run(
             source, model_configs=models, selected_models=selected, **options
         )
@@ -684,6 +684,12 @@ def test_all_failed_dd_sources_raise_legacy_and_withhold_graph(scripted_detectio
     assert not result.final_outputs and not result.frames and not qualify_detection_redact(result).qualified
     assert result.requests.dispatched_count == sum(calls.values()) == 3
     assert all(state.complete for state in result.states) and result.invocation_state.complete
+    with pytest.raises(AnonymizerWorkflowError) as projected:
+        project_detection_redact(result)
+    assert str(projected.value) == str(legacy.value)
+    assert type(projected.value.__cause__) is type(legacy.value.__cause__)
+    assert projected.value is result.submission_failures[0].cause
+    assert getattr(projected.value, "_anonymizer_execution") is result
 
 
 @pytest.mark.parametrize("chunk_size,expected", [(1, 8), (2, 7)])
@@ -705,7 +711,7 @@ def test_admission_derives_validator_capacity_without_input_cap(scripted_detecti
     assert len(result.final_outputs) == len(qualify_detection_redact(result).qualified) == 2
 
 
-def test_unknown_remote_source_retains_peer_content_but_remains_unqualified(scripted_detection, monkeypatch):
+def test_unknown_remote_source_retains_resource_and_qualifies_independent_peer(scripted_detection, monkeypatch):
     import json
 
     from anonymizer.engine.detection._graph_profile import qualify_detection_redact
@@ -730,12 +736,99 @@ def test_unknown_remote_source_retains_peer_content_but_remains_unqualified(scri
         assert result.requests.dispatched_count == 7
         assert len(result.requests.remote_outstanding) == 1
         assert len(result.final_outputs) == 1
-        # Lost physical work has no settlement; this profile has not yet qualified
-        # that retained receipt, so the public route must remain gated.
-        with pytest.raises(EffectRejected):
-            qualify_detection_redact(result)
+        # Lost remains charged and uncertain; an authenticated retained lease
+        # does not invalidate the independently verified successful source.
+        assert len(qualify_detection_redact(result).qualified) == 1
         assert result.frames[0].project(result)[COL_TEXT].tolist() == ["Alice stays."]
         assert len(result._retained_resources) == 1 and not physicals[0].closed
+        from anonymizer.engine.detection._graph_profile import project_detection_redact
+
+        projected = project_detection_redact(result)
+        assert projected._execution is result
+        assert projected.dataframe[COL_TEXT].tolist() == ["Alice stays."]
+        missing_lease = object.__new__(type(result))
+        for field in fields(result):
+            object.__setattr__(
+                missing_lease, field.name, () if field.name == "_retained_resources" else getattr(result, field.name)
+            )
+        assert not qualify_detection_redact(missing_lease).qualified
+        from anonymizer.engine.graph_sdk.resources import ResourceLease
+
+        for retained in (
+            result._retained_resources * 2,
+            (ResourceLease.create(owner="sdk", safe_detachment="forbidden", handle=physicals[0]),),
+        ):
+            object.__setattr__(missing_lease, "_retained_resources", retained)
+            assert not qualify_detection_redact(missing_lease).qualified
+        missing = object.__new__(type(result))
+        for field in fields(result):
+            object.__setattr__(
+                missing,
+                field.name,
+                replace(result.requests, remote_outstanding=frozenset())
+                if field.name == "requests"
+                else getattr(result, field.name),
+            )
+        with pytest.raises(EffectRejected):
+            qualify_detection_redact(missing)
     finally:
         for physical in physicals:
             asyncio.run_coroutine_threadsafe(physical.close(), physical.loop).result(timeout=10)
+
+
+@pytest.mark.parametrize("failed", [False, True])
+def test_create_projection_keeps_source_identity_out_of_persisted_parquet(scripted_detection, tmp_path, failed):
+    from anonymizer.engine.constants import COL_REPLACED_TEXT
+    from anonymizer.engine.detection._graph_profile import project_detection_redact
+
+    source = pd.DataFrame(
+        {COL_TEXT: ["Alice travels.", "Alice fails." if failed else "Alice stays."], "extra": [17, 29]}
+    )
+    result = asyncio.run(run_graph_profile(scripted_detection, source, {**_options(), "preview_num_records": None}))
+    projected = project_detection_redact(result)
+    assert projected.dataframe["extra"].tolist() == ([17] if failed else [17, 29])
+    assert projected.dataframe[COL_REPLACED_TEXT].tolist() == (
+        ["[REDACTED_FIRST_NAME] travels."]
+        if failed
+        else ["[REDACTED_FIRST_NAME] travels.", "[REDACTED_FIRST_NAME] stays."]
+    )
+    paths = list((tmp_path / "artifacts").rglob("*.parquet"))
+    assert paths
+    for path in paths:
+        assert not any(name.startswith("_anonymizer_source_") for name in pd.read_parquet(path).columns)
+    for path in (tmp_path / "artifacts").rglob("*.json"):
+        assert "_anonymizer_source_" not in path.read_text()
+
+
+@pytest.mark.parametrize("fault", [None, "foreign", "duplicate", "unregistered_batch"])
+def test_private_storage_batch_identity_is_ordered_and_closed(tmp_path, fault):
+    from data_designer.engine.storage.artifact_storage import ArtifactStorage, BatchStage
+
+    from anonymizer.engine.ndd._source_frame import WorkflowSourceFrame
+    from anonymizer.interface.errors import AnonymizerWorkflowError
+
+    source = WorkflowSourceFrame.capture(pd.DataFrame({COL_TEXT: ["first", "second"]}))
+    storage = ArtifactStorage(artifact_path=tmp_path, dataset_name="identity")
+    original_write = storage.write_parquet_file
+    with source._bind_storage(storage):
+        if fault in {"foreign", "duplicate"}:
+            invalid = source.seed()
+            invalid[source.key_column] = [source.keys[0], "foreign" if fault == "foreign" else source.keys[0]]
+            with pytest.raises(AnonymizerWorkflowError, match="invalid source correspondence"):
+                storage.write_batch_to_parquet_file(0, invalid, BatchStage.PARTIAL_RESULT)
+            assert not list(tmp_path.rglob("*.parquet"))
+            return
+        for index in (1, 0):
+            storage.write_batch_to_parquet_file(index, source.seed().iloc[[index]], BatchStage.PARTIAL_RESULT)
+            storage.move_partial_result_to_final_file_path(index)
+        if fault == "unregistered_batch":
+            original_write("batch_99999.parquet", pd.DataFrame({COL_TEXT: ["unregistered"]}), BatchStage.FINAL_RESULT)
+            with pytest.raises(AnonymizerWorkflowError, match="unknown source batches"):
+                storage.load_dataset()
+        else:
+            returned, positions = source.project(storage.load_dataset())
+            assert returned[COL_TEXT].tolist() == ["first", "second"]
+            assert positions == (0, 1)
+        for path in tmp_path.rglob("*.parquet"):
+            assert source.key_column not in pd.read_parquet(path).columns
+    assert storage.write_parquet_file == original_write

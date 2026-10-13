@@ -26,6 +26,7 @@ from anonymizer.engine.graph_sdk._execution_values import (
     LocalFailure,
     LocalResult,
     RuntimeOutcome,
+    SubmissionFailure,
 )
 from anonymizer.engine.graph_sdk._foreign_transport import ForeignLoopTransport
 from anonymizer.engine.graph_sdk._ingress import inspect_associations, inspect_failure
@@ -718,7 +719,8 @@ class _DelegatedOwner(PrivateValue):
             if not task.done():
                 task.cancel()
             return self._failure("cancel_after_start")
-        except Exception:
+        except Exception as error:
+            runtime.submission_failures.append(SubmissionFailure(associations=frozenset(self.jobs), cause=error))
             return self._failure("failure", "implementation_exception")
         finally:
             if self.child is not None:

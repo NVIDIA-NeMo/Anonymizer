@@ -76,6 +76,7 @@ from anonymizer.engine.replace._graph_redact import (
     REDACT_MISMATCH,
     RedactAssessment,
 )
+from anonymizer.engine.replace.replace_runner import ReplacementResult
 from anonymizer.graph.activation import ActivationLimits
 from anonymizer.graph.workflow import (
     ArtifactType,
@@ -106,6 +107,7 @@ from anonymizer.graph.workflow import (
     admit_activation_workflow,
     admit_static_workflow,
 )
+from anonymizer.interface.errors import AnonymizerWorkflowError
 
 
 class _Clock:
@@ -666,3 +668,22 @@ def qualify_detection_redact(result: ExecutionResult) -> QualificationResult:
         state=prepared.state,
     )
     return qualify_retained(admitted=admitted, result=result, current=current)
+
+
+def project_detection_redact(result: ExecutionResult) -> ReplacementResult:
+    """Project only qualified canonical content, preserving whole-workflow errors."""
+    for failure in result.submission_failures:
+        # Failure projection does not upgrade eligibility or alter physical history.
+        # Keeping the canonical execution on the raised error also retains any
+        # forbidden-detachment lease while the caller handles the failure.
+        setattr(failure.cause, "_anonymizer_execution", result)
+        raise failure.cause
+    qualified = qualify_detection_redact(result)
+    if len(result.frames) != 1 or len(qualified.qualified) != len(result.final_outputs):
+        error = AnonymizerWorkflowError("Detection/Redact execution did not qualify all returned sources")
+        setattr(error, "_anonymizer_execution", result)
+        raise error
+    frame = result.frames[0]
+    return ReplacementResult(
+        dataframe=frame.project(result), failed_records=list(frame.failed_records), _execution=result
+    )

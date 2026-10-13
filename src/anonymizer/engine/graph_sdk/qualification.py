@@ -45,7 +45,13 @@ from anonymizer.engine.graph_sdk.requests import (
     RequestTerminalFact,
     SemanticAssociation,
 )
-from anonymizer.engine.graph_sdk.resources import CleanupAssociation, CleanupFact, ResourceId, ResourceOwner
+from anonymizer.engine.graph_sdk.resources import (
+    CleanupAssociation,
+    CleanupFact,
+    ResourceId,
+    ResourceLease,
+    ResourceOwner,
+)
 from anonymizer.graph._values import ActivationKey, DatumId
 from anonymizer.graph.activation import ActivationEntry, ActivationState
 from anonymizer.graph.workflow import (
@@ -640,10 +646,16 @@ class _Qualification:
                     reject(EffectCode.CONTRADICTORY)
                 facts = [item for item in receipt.terminals if item.request == dispatch.request]
                 settlements = [item for item in receipt.settlements if item.request == dispatch.request]
-                if len(facts) != 1 or len(settlements) != 1 or terminals[leaf].category != facts[0].category:
+                if len(facts) != 1 or terminals[leaf].category != facts[0].category:
                     reject(EffectCode.CONTRADICTORY)
                 facts[0].__post_init__()
-                settlements[0].__post_init__()
+                unsettled_loss = (
+                    facts[0].category == "lost" and not settlements and dispatch.request in receipt.remote_outstanding
+                )
+                if len(settlements) != 1 and not unsettled_loss:
+                    reject(EffectCode.CONTRADICTORY)
+                for settlement in settlements:
+                    settlement.__post_init__()
                 for summary in facts[0].results:
                     summary.__post_init__()
                     if summary.category == "success" and (
@@ -674,6 +686,7 @@ class _Qualification:
                     if (
                         facts[0].category != "failure"
                         or facts[0].failure != "malformed_response"
+                        or not settlements
                         or settlements[0].disposition != "completed"
                         or any(item.request == dispatch.request for item in receipt.defects)
                     ):
@@ -890,7 +903,7 @@ class _Qualification:
                 or physical[0].category != "success"
                 or receipt.dispatched_count != len(receipt.dispatches)
                 or len(receipt.terminals) != len(receipt.dispatches)
-                or len(receipt.settlements) != len(receipt.dispatches)
+                or (contract.optional_tail and len(receipt.settlements) != len(receipt.dispatches))
                 or any(
                     isinstance(row.association, SemanticAssociation) and row.association.task.activation == key
                     for row in receipt.bindings
@@ -1241,6 +1254,59 @@ class _Qualification:
             detachments[row.resource] = row.safe_detachment
         return registered if len(seen) == len(expected) else None
 
+    def _retained_request_resource(self, resource: ResourceId) -> bool:
+        """Authenticate forbidden-detachment retention against a live Lost request."""
+        leases = getattr(self.result, "_retained_resources", ())
+        if not isinstance(leases, tuple) or len(leases) > self.prepared.limits.max_capabilities:
+            return False
+        matching = [
+            lease
+            for lease in leases
+            if isinstance(lease, ResourceLease) and getattr(lease, "resource", None) == resource
+        ]
+        if (
+            len(matching) != 1
+            or getattr(matching[0], "owner", None) != "sdk"
+            or getattr(matching[0], "safe_detachment", None) != "forbidden"
+            or getattr(matching[0], "handle", None) is None
+        ):
+            return False
+        for dispatch in self.result.requests.dispatches:
+            if dispatch.request not in self.result.requests.remote_outstanding or dispatch.child is None:
+                continue
+            terminals = [fact for fact in self.result.requests.terminals if fact.request == dispatch.request]
+            if len(terminals) != 1 or terminals[0].category != "lost":
+                continue
+            if any(
+                fact.request == dispatch.request and fact.remote_stopped for fact in self.result.requests.settlements
+            ):
+                continue
+            leaf = dispatch.child.leaf
+            if leaf is None or leaf.activation not in self.entries:
+                continue
+            policy = next(
+                item for item in self.admitted.execution.policies if item.node == self.entries[leaf.activation].template
+            )
+            if policy.safe_detachment != "forbidden":
+                continue
+            for implementation in policy.implementations:
+                if any(
+                    row.resource == resource
+                    and row.owner == "sdk"
+                    and row.safe_detachment == "forbidden"
+                    and _matches_admitted_key(
+                        (
+                            implementation.implementation,
+                            implementation.capability.operation,
+                            implementation.configuration,
+                        ),
+                        (row.implementation, row.operation, row.configuration),
+                    )
+                    for row in self.result.implementation_resources
+                ):
+                    return True
+        return False
+
     def _cleanup_ledger(
         self,
         cleanup: tuple[CleanupFact, ...],
@@ -1299,6 +1365,12 @@ class _Qualification:
                 and association.purpose != "accounting"
                 or fact.disposition == "left_open"
                 and fact.owner != "caller"
+                and not (
+                    not binding
+                    and registered is not None
+                    and association.purpose == "accounting"
+                    and self._retained_request_resource(resource)
+                )
             ):
                 for codes in self.withholding.values():
                     codes.add("inconsistent_attribution")
