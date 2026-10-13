@@ -69,8 +69,8 @@ accounting are separate implementation work.
 
 ## Count and byte policies
 
-Artifact, collection-item, request, activation and pending-work limits remain
-finite. `ResourceCeiling.max_input_bytes`, `max_output_bytes`,
+Artifact, collection-item, activation and pending-work limits remain finite.
+Physical request bounds may be explicitly unknown for opaque execution as described below. `ResourceCeiling.max_input_bytes`, `max_output_bytes`,
 `ExecutionLimits.max_runtime_artifact_bytes`, and the text/metadata byte fields
 of `IngressLimits` accept `None` when no hard byte ceiling is selected.
 `IngressLimits` defaults to that byte policy; explicit finite ceilings still
@@ -96,6 +96,31 @@ ordinary runs should not impose incidental byte or per-string ceilings. It
 qualifies the RFC's earlier mandatory-retained-byte-bound wording; it does not
 claim the absent ceiling meets that earlier hard-byte interpretation. Other
 admission, accounting, qualification and public-compatibility requirements remain.
+
+## Injected Redact callbacks
+
+Injected detection or replacement runners for Redact execute once on the whole
+frame through the same graph executor. The compatibility result retains their
+DataFrames, failed records and original errors. It does not infer source
+associations from returned row positions, indexes or text, and it makes no
+Protected claim. Saved public results retain their ordinary content and exclude
+live execution resources.
+
+This path declares external work with unknown physical request visibility, usage
+and upper bound. Its recorded dispatch inventory contains only observed SDK
+requests; an empty inventory does not mean the callback performed no external
+work. Inspection reports unknown totals and rejects hard-request-budget support.
+A selected hard request budget is rejected before effects. The private profile
+also rejects supplied execution limits it cannot guarantee. Its one callback
+uses existing worker admission and draining; cancellation does not establish
+that hidden remote work stopped.
+
+The operation owns one compatibility result containing detection and replacement
+frames. Their row counts are observed after return, without assuming they match
+the input cardinality. Direct string-cell byte sizes are measured; sizes of
+arbitrary object cells remain unavailable. These opaque frames are separate from per-source semantic
+artifacts. The qualified DataDesigner route retains its existing source,
+physical-request and evidence checks.
 
 ## Saved results and current evidence
 

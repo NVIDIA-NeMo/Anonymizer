@@ -461,6 +461,32 @@ class _Qualification:
         ):
             return set()
         bound = self.prepared.declared_request_upper_bound
+        if bound is None:
+            if (
+                self.prepared.configuration.purpose != "execution_only"
+                or not isinstance(receipt.scope, InvocationRequestScope)
+                or receipt.scope.invocation != self.result.record.invocation
+                or receipt.dispatched_count != 0
+                or receipt.budget_limit is not None
+                or any(
+                    (
+                        receipt.dispatches,
+                        receipt.chains,
+                        receipt.child_evidence,
+                        receipt.terminals,
+                        receipt.settlements,
+                        receipt.defects,
+                        receipt.bindings,
+                        receipt.policies,
+                        receipt.denials,
+                        receipt.local_in_flight,
+                        receipt.remote_outstanding,
+                        receipt.cancel_requested,
+                    )
+                )
+            ):
+                reject(EffectCode.CONTRADICTORY)
+            return set()
         containers = (
             receipt.dispatches,
             receipt.terminals,

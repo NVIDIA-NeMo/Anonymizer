@@ -585,7 +585,10 @@ def admit_context_plan(
             outcome for outcome in node.operation.outcomes if declaration.output_port in outcome.produced_ports
         ]
         if not producing or any(
-            declaration.bounds.max_requests > outcome.ceiling.max_model_requests
+            (
+                outcome.ceiling.max_model_requests is not None
+                and declaration.bounds.max_requests > outcome.ceiling.max_model_requests
+            )
             or (
                 outcome.ceiling.max_output_bytes is not None
                 and declaration.bounds.max_bytes > outcome.ceiling.max_output_bytes

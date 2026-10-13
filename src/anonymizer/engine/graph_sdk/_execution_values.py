@@ -94,7 +94,7 @@ from anonymizer.graph.workflow import (
 if TYPE_CHECKING:
     import pandas as pd
 
-    from anonymizer.engine.detection._frame_publication import FramePublication, PublishedFrame
+    from anonymizer.engine.detection._frame_publication import FramePublication, InvocationFrame, PublishedFrame
     from anonymizer.engine.ndd._source_frame import WorkflowSourceFrame
 
 
@@ -752,7 +752,7 @@ class RequestTransport(Protocol):
 class LocalCompleted(PrivateValue):
     results: tuple[AssociationResult, ...]
     assessments: tuple[LocalAssessmentResult, ...] = ()
-    frame: FramePublication | None = None
+    frame: FramePublication | InvocationFrame | None = None
     failed_sources: frozenset[SemanticAssociation] = frozenset()
 
 
@@ -777,6 +777,9 @@ class LocalCallable(Protocol):
 
 class DelegatedRequests(Protocol):
     """Invocation-owned access to declared physical sibling slots."""
+
+    @property
+    def cancelled(self) -> bool: ...
 
     def require_transport(self, transport: object) -> None: ...
 
@@ -996,7 +999,7 @@ class ExecutionResult(PrivateValue):
     provenance: tuple[ArtifactProvenanceFact, ...]
     cleanup_associations: tuple[CleanupAssociation, ...]
     publication_failures: tuple[PublicationFailureFact, ...]
-    frames: tuple[PublishedFrame, ...]
+    frames: tuple[PublishedFrame | InvocationFrame, ...]
     submission_failures: tuple[SubmissionFailure, ...]
 
     def __init__(self, *, _key: object, **values: object) -> None:

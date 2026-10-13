@@ -51,6 +51,7 @@ from anonymizer.engine.constants import (
     COL_WEIGHTED_LEAKAGE_RATE,
     DEFAULT_ENTITY_LABELS,
 )
+from anonymizer.engine.detection._frame_publication import InvocationFrame
 from anonymizer.engine.detection._graph_profile import run_detection_redact
 from anonymizer.engine.detection.detection_workflow import EntityDetectionWorkflow
 from anonymizer.engine.evaluation.detection_judge import DetectionJudgeWorkflow
@@ -733,7 +734,8 @@ class Anonymizer:
         )
         t0 = time.perf_counter()
         graph_result = None
-        if self._uses_graph_redact(config):
+        injected_redact = not self._owns_detection_and_replacement and type(config.replace) is Redact
+        if self._uses_graph_redact(config) or injected_redact:
             logger.info("🔄 Running Redact replacement with graph-owned detection")
             graph_result = run_detection_redact(
                 input_df,
@@ -742,8 +744,18 @@ class Anonymizer:
                 selected_models=self._selected_models.detection,
                 detection_options=detection_options,
                 replace_method=cast(Redact, config.replace),
+                **(
+                    {"replacement": self._replace_runner, "replacement_models": self._selected_models.replace}
+                    if injected_redact
+                    else {}
+                ),
             )
             detected_df, detection_failures = graph_result.dataframe, graph_result.failed_records
+            if injected_redact:
+                assert graph_result._execution is not None
+                frame = graph_result._execution.frames[0]
+                assert isinstance(frame, InvocationFrame)
+                detected_df, detection_failures = frame.detected_dataframe, list(frame.detection_failures)
         else:
             detection_result = self._detection_workflow.run(
                 input_df,
@@ -752,7 +764,7 @@ class Anonymizer:
                 **detection_options,
             )
             detected_df, detection_failures = detection_result.dataframe, detection_result.failed_records
-        detection_elapsed = time.perf_counter() - t0
+        detection_elapsed = frame.detection_elapsed if injected_redact else time.perf_counter() - t0
         entity_count = _count_entities(detected_df)
         detection_failed = len(detection_failures)
         logger.info(
@@ -771,10 +783,11 @@ class Anonymizer:
         if graph_result is not None:
             final_df = graph_result.dataframe
             execution = graph_result._execution
-            post_detection_failures = []
+            post_detection_failures = list(frame.replacement_failures) if injected_redact else []
             logger.info(
-                LOG_INDENT + "📋 Replacement complete (0 additional failures) [%.1fs including detection]",
-                detection_elapsed,
+                LOG_INDENT + "📋 Replacement complete (%d failed) [%.1fs]",
+                len(post_detection_failures),
+                frame.replacement_elapsed if injected_redact else detection_elapsed,
             )
         elif config.replace is not None:
             strategy_name = type(config.replace).__name__

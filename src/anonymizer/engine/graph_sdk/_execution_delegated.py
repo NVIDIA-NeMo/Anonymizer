@@ -106,6 +106,10 @@ class _WorkerBorrow(PrivateValue):
         self.loop = adapter.borrowed_loop
         self.expired = False
 
+    @property
+    def cancelled(self) -> bool:
+        return self.expired or self.owner.cancelled
+
     def _check_origin(self) -> None:
         if _WORKER_BORROW.get() is not self or self.expired:
             reject(EffectCode.FOREIGN_OWNER)
@@ -208,10 +212,11 @@ class _DelegatedOwner(PrivateValue):
         self.worker_gate = asyncio.Lock()
         contract = self.policy.delegated
         policy = self.policy.request
-        assert contract is not None and policy is not None
+        assert contract is not None
         self.contract = contract
         self.chains: dict[tuple[SemanticAssociation, int], RequestChain] = {}
         for job in jobs:
+            assert policy is not None
             runtime.request_authority.bind(
                 RequestPolicyBinding.create(association=job.association, policies=frozenset({policy}))
             )
@@ -749,6 +754,22 @@ class _DelegatedOwner(PrivateValue):
             incomplete = self.close()
         if type(result) is LocalFailure:
             return self._failure("failure", inspect_failure(result.failure))
+        if self.contract.mode == "opaque":
+            if self.cancelled:
+                return self._failure("cancel_after_start")
+            from anonymizer.engine.detection._frame_publication import InvocationFrame
+
+            if (
+                self.invocation_job is None
+                or type(result) is not LocalCompleted
+                or result.results
+                or result.assessments
+                or result.failed_sources
+                or type(result.frame) is not InvocationFrame
+            ):
+                return self._failure("failure", "malformed_response")
+            runtime.frame.publications.append(result.frame)
+            return {self.invocation_job.association: (_mapping(self.policy, "result", "ok", None), (), ())}
         if self.invocation_job is not None:
             # A source-free submission has no per-source result to publish.
             return self._failure("failure", "malformed_response")

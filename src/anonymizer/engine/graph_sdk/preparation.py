@@ -205,7 +205,7 @@ class PreparedPlan(_PrivateValue):
     target_occurrences: tuple[TargetOccurrenceMap, ...]
     activation_slots_per_target: int
     total_activation_slots: int
-    declared_request_upper_bound: int
+    declared_request_upper_bound: int | None
     eligibility: ProtectionEligibility
     limits: PreparationLimits
 
@@ -225,7 +225,7 @@ class PreparedPlan(_PrivateValue):
         target_occurrences: tuple[TargetOccurrenceMap, ...],
         activation_slots_per_target: int,
         total_activation_slots: int,
-        declared_request_upper_bound: int,
+        declared_request_upper_bound: int | None,
         eligibility: ProtectionEligibility,
         limits: PreparationLimits,
     ) -> None:
@@ -361,13 +361,15 @@ def prepare(
         _reject(PreparationCode.CONTRADICTORY)
     for capability in capabilities:
         validate_capability(capability)
-    request_per_target = sum(
-        max(
-            (outcome.ceiling.max_model_requests for outcome in operation_nodes[slot.template].operation.outcomes),
-            default=0,
-        )
+    request_bounds = [
+        [outcome.ceiling.max_model_requests for outcome in operation_nodes[slot.template].operation.outcomes]
         for slot in recipe
         if slot.template in operation_nodes
+    ]
+    request_per_target = (
+        None
+        if any(None in bounds for bounds in request_bounds)
+        else sum(max((value for value in bounds if value is not None), default=0) for bounds in request_bounds)
     )
     return PreparedPlan(
         _key=_PREPARED_KEY,
@@ -383,7 +385,7 @@ def prepare(
         target_occurrences=target_occurrences,
         activation_slots_per_target=len(recipe),
         total_activation_slots=total_slots,
-        declared_request_upper_bound=request_per_target * occurrence_count,
+        declared_request_upper_bound=None if request_per_target is None else request_per_target * occurrence_count,
         eligibility=eligibility,
         limits=limits,
     )
@@ -505,7 +507,7 @@ def _select_implementations(
         ]
         if (
             len(matches) != 1
-            or matches[0].attribution == "aggregate_only"
+            or (matches[0].attribution == "aggregate_only" and matches[0].request_visibility != "none")
             or matches[0].error_reporting != "typed_terminal"
         ):
             _reject(PreparationCode.UNSUPPORTED_CAPABILITY)

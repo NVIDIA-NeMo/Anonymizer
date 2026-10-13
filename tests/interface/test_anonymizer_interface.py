@@ -1128,10 +1128,16 @@ def test_public_projection_retains_live_owner_without_saving_it(stub_input, prev
         if preview
         else anonymizer.run(config=config, data=stub_input)
     )
-    assert result._execution is owner
-    assert copy(result)._execution is owner
+    from anonymizer.engine.detection._frame_publication import InvocationFrame
+    from anonymizer.engine.graph_sdk.executor import ExecutionResult
+
+    execution = result._execution
+    assert isinstance(execution, ExecutionResult)
+    frame = execution.frames[0]
+    assert isinstance(frame, InvocationFrame) and frame.retained_owner is owner
+    assert copy(result)._execution is execution
     cloned = deepcopy(result)
-    assert cloned._execution is owner and cloned.dataframe is not result.dataframe
+    assert cloned._execution is execution and cloned.dataframe is not result.dataframe
     pd.testing.assert_frame_equal(cloned.dataframe, result.dataframe)
     assert detector.run.call_count == runner.run.call_count == 1
     restored = pickle.loads(pickle.dumps(result))

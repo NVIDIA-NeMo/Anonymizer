@@ -458,6 +458,7 @@ def test_hard_budget_zero_is_allowed_only_for_controllable_external_work() -> No
     )
     plan = _prepare(workflow=workflow, capability=capability, configuration=configuration)
     assert plan.configuration.hard_request_limit == 0
+    assert plan.declared_request_upper_bound is not None
     for budget in (1, plan.declared_request_upper_bound, plan.declared_request_upper_bound + 1):
         assert (
             _prepare(

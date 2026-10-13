@@ -231,7 +231,7 @@ class ImplementationCapability(_PrivateValue):
     settlement: SettlementGuarantee
     usage: UsageCertainty
     resource_lifetime: ResourceLifetime
-    max_physical_requests_per_activation: int
+    max_physical_requests_per_activation: int | None
 
     def __post_init__(self) -> None:
         if (
@@ -268,7 +268,8 @@ class ImplementationCapability(_PrivateValue):
         )
         if any(value not in options for value, options in zip(values, allowed, strict=True)):
             _reject(PreparationCode.INVALID_VALUE)
-        _integer(self.max_physical_requests_per_activation)
+        if self.max_physical_requests_per_activation is not None:
+            _integer(self.max_physical_requests_per_activation)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True, repr=False)
@@ -298,8 +299,12 @@ class SelectedImplementation(_PrivateValue):
 
 def validate_capability(capability: ImplementationCapability) -> None:
     """Validate one complete declaration before selection or recheck."""
-    maximum = max((outcome.ceiling.max_model_requests for outcome in capability.operation.outcomes), default=0)
-    if capability.max_physical_requests_per_activation > maximum:
+    bounds = [outcome.ceiling.max_model_requests for outcome in capability.operation.outcomes]
+    maximum = None if None in bounds else max((value for value in bounds if value is not None), default=0)
+    if maximum is not None and (
+        capability.max_physical_requests_per_activation is None
+        or capability.max_physical_requests_per_activation > maximum
+    ):
         _reject(PreparationCode.CONTRADICTORY)
     if capability.effect == "local":
         valid = (
@@ -312,7 +317,16 @@ def validate_capability(capability: ImplementationCapability) -> None:
             and capability.resource_lifetime in {"stateless", "caller_owned"}
         )
     else:
-        valid = capability.max_physical_requests_per_activation > 0 and capability.request_visibility != "none"
+        valid = (
+            capability.max_physical_requests_per_activation is None
+            and capability.request_visibility == "none"
+            and capability.pre_dispatch_control == "none"
+            and capability.usage == "unknown"
+        ) or (
+            capability.max_physical_requests_per_activation is not None
+            and capability.max_physical_requests_per_activation > 0
+            and capability.request_visibility != "none"
+        )
     if not valid:
         _reject(PreparationCode.CONTRADICTORY)
 

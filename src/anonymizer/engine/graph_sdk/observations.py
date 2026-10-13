@@ -255,7 +255,7 @@ def prepared_observation_requirements(*, prepared: PreparedPlan, limits: Observa
     return _requirements(
         1
         + 4 * prepared.total_activation_slots
-        + 2 * prepared.declared_request_upper_bound
+        + 2 * (prepared.declared_request_upper_bound or 0)
         + 2 * prepared.limits.max_capabilities,
         4 + 2 * _recipe_depth(prepared.reservation_recipe),
         limits,
@@ -273,7 +273,7 @@ def execution_observation_requirements(
     resources = sum(len(policy.implementations) for policy in execution.policies)
     resources += len(execution.context.context_capabilities)
     return _requirements(
-        1 + 4 * prepared.total_activation_slots + 2 * prepared.declared_request_upper_bound + resources,
+        1 + 4 * prepared.total_activation_slots + 2 * (prepared.declared_request_upper_bound or 0) + resources,
         4 + 2 * _recipe_depth(prepared.reservation_recipe),
         limits,
     )

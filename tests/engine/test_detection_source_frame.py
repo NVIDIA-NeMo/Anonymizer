@@ -458,7 +458,9 @@ def test_public_graph_preserves_failed_source_order_and_injected_result(scripted
     legacy = public_anonymizer(
         scripted_detection, detection_workflow=EntityDetectionWorkflow(NddAdapter(designer))
     ).run(config=config, data=data)
-    assert legacy._execution is None
+    assert legacy._execution is not None
+    assert legacy._execution._execution.context.prepared.declared_request_upper_bound is None
+    assert not legacy._execution.final_outputs
     calls.clear()
     result = public_anonymizer(scripted_detection).run(config=config, data=data)
     assert result._execution is not None

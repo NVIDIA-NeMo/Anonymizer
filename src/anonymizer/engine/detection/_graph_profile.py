@@ -23,7 +23,7 @@ import pandas as pd
 from data_designer.config import ModelConfig
 from data_designer.engine.dataset_builders.utils.async_concurrency import ensure_async_engine_loop
 
-from anonymizer.config.models import DetectionModelSelection
+from anonymizer.config.models import DetectionModelSelection, ReplaceModelSelection
 from anonymizer.config.replace_strategies import Redact
 from anonymizer.engine.constants import COL_AUGMENTED_ENTITIES, COL_RAW_DETECTED, COL_TEXT, COL_VALIDATION_DECISIONS
 from anonymizer.engine.detection._graph_invocation import DetectionRedactInvocation
@@ -60,6 +60,7 @@ from anonymizer.engine.graph_sdk.executor import (
     IngressLimits,
     LocalCompleted,
     OperationExecutionPolicy,
+    RunningExecution,
     RuntimeOutcome,
     admit_execution_plan,
     start_execution,
@@ -83,7 +84,7 @@ from anonymizer.engine.replace._graph_redact import (
     RedactAssessment,
     redact_configuration,
 )
-from anonymizer.engine.replace.replace_runner import ReplacementResult
+from anonymizer.engine.replace.replace_runner import ReplacementResult, ReplacementWorkflow
 from anonymizer.graph.activation import ActivationLimits
 from anonymizer.graph.workflow import (
     ArtifactType,
@@ -200,6 +201,8 @@ def run_detection_redact(
     detection_options: Mapping[str, Any],
     limits: ExecutionLimits | None = None,
     replace_method: Redact | None = None,
+    replacement: ReplacementWorkflow | None = None,
+    replacement_models: ReplaceModelSelection | None = None,
 ) -> ReplacementResult:
     """Run the admitted profile synchronously with one owned callback worker.
 
@@ -208,6 +211,8 @@ def run_detection_redact(
     stays untouched; the host thread runs the same authoritative async executor,
     while actual DD clients remain on DD's existing foreign loop.
     """
+    if replacement is not None and limits is not None:
+        raise ValueError("Opaque injected execution cannot guarantee caller-supplied execution limits")
     selected_redact = replace_method.model_copy(deep=True) if replace_method is not None else Redact()
     selected_limits = replace(limits) if limits is not None else None
     started = Event()
@@ -220,6 +225,24 @@ def run_detection_redact(
         started.set()
         pool = BlockingPool(max_workers=1)
         try:
+            if replacement is not None:
+                from anonymizer.engine.detection._opaque_redact import _InjectedRedact, execute_injected_redact
+
+                assert replacement_models is not None and replace_method is not None
+                result = await execute_injected_redact(
+                    _InjectedRedact(
+                        source,
+                        detection,
+                        replacement,
+                        model_configs,
+                        selected_models,
+                        replacement_models,
+                        detection_options,
+                        replace_method,
+                    ),
+                    pool,
+                )
+                return project_detection_redact(result)
             result = await execute_detection_redact(
                 source,
                 detection=detection,
@@ -818,21 +841,26 @@ async def execute_detection_redact(
         )
         running = await start_execution(admitted=admitted, capabilities=capabilities, services=services)
         handed_to_runtime = True
-        completion = asyncio.create_task(running.wait())
-        try:
-            return await asyncio.shield(completion)
-        except asyncio.CancelledError as error:
-            running.request_cancel()
-            while not completion.done():
-                try:
-                    await asyncio.shield(completion)
-                except asyncio.CancelledError:
-                    continue
-            setattr(error, "_anonymizer_execution", completion.result())
-            raise
+        return await _await_profile_execution(running)
     finally:
         if not handed_to_runtime and transport is not None:
             await transport.close()
+
+
+async def _await_profile_execution(running: RunningExecution) -> ExecutionResult:
+    """Retain the actual owner until cancellation and callback settlement finish."""
+    completion = asyncio.create_task(running.wait())
+    try:
+        return await asyncio.shield(completion)
+    except asyncio.CancelledError as error:
+        running.request_cancel()
+        while not completion.done():
+            try:
+                await asyncio.shield(completion)
+            except asyncio.CancelledError:
+                continue
+        setattr(error, "_anonymizer_execution", completion.result())
+        raise
 
 
 def qualify_detection_redact(result: ExecutionResult) -> QualificationResult:
@@ -880,6 +908,21 @@ def project_detection_redact(result: ExecutionResult) -> ReplacementResult:
         # forbidden-detachment lease while the caller handles the failure.
         setattr(failure.cause, "_anonymizer_execution", result)
         raise failure.cause
+    from anonymizer.engine.detection._frame_publication import InvocationFrame
+
+    if (
+        result._execution.context.prepared.configuration.purpose == "execution_only"
+        and len(result.frames) == 1
+        and type(result.frames[0]) is InvocationFrame
+    ):
+        frame = result.frames[0]
+        if result.invocation_state is None or any(
+            entry.status != "success" for entry in result.invocation_state.entries
+        ):
+            raise AnonymizerWorkflowError("Injected Redact invocation did not complete")
+        return ReplacementResult(
+            dataframe=frame.project(result), failed_records=list(frame.failed_records), _execution=result
+        )
     qualified = qualify_detection_redact(result)
     if len(result.frames) != 1 or len(qualified.qualified) != len(result.final_outputs):
         error = AnonymizerWorkflowError("Detection/Redact execution did not qualify all returned sources")

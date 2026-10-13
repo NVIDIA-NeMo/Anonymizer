@@ -46,7 +46,7 @@ from anonymizer.graph.workflow import (
 if TYPE_CHECKING:
     import pandas as pd
 
-    from anonymizer.engine.detection._frame_publication import FramePublication
+    from anonymizer.engine.detection._frame_publication import FramePublication, InvocationFrame
 
 
 @dataclass(slots=True)
@@ -76,7 +76,7 @@ class _InvocationFrame:
         self.invocation_source: _SourceOccurrence | None = None
         self.sources: dict[DatumId, _SourceOccurrence] = {}
         self.root_inputs: dict[tuple[DatumId, str], ArtifactRef] = {}
-        self.publications: list[FramePublication] = []
+        self.publications: list[FramePublication | InvocationFrame] = []
         self._initialize_activations()
         self._initialize_root_inputs()
 
@@ -275,7 +275,7 @@ def _invocation_workflows(
                         ceiling=ResourceCeiling(
                             max_activations=len(selected),
                             max_model_requests=sum(
-                                max(row.ceiling.max_model_requests for row in node.operation.outcomes)
+                                max(cast(int, row.ceiling.max_model_requests) for row in node.operation.outcomes)
                                 for node in raw.nodes
                                 if node.id in selected
                             ),

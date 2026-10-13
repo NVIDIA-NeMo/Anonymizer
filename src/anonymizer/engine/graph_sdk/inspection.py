@@ -835,7 +835,8 @@ def explain(*, source: InspectionSource) -> ExplainSummary:
         )
         support = (
             "supported"
-            if capability_control
+            if ceiling is not None
+            and capability_control
             and all(
                 policy is not None
                 and policy.visibility == "dispatch_and_settlement"
@@ -852,7 +853,7 @@ def explain(*, source: InspectionSource) -> ExplainSummary:
             requests=RequestForecast(
                 planned=planned,
                 conditional=conditional,
-                upper_bound=CountEstimate(knowledge="known_upper", value=ceiling),
+                upper_bound=_unknown() if ceiling is None else CountEstimate(knowledge="known_upper", value=ceiling),
             ),
             hard_budget_support=support,
         ),
@@ -888,7 +889,7 @@ def _forecast_split(execution: AdmittedExecutionPlan) -> tuple[CountEstimate, Co
     if any(workflow.sequence for workflow in workflows):
         return _unknown(), _unknown()
     planned = sum(slot.template in external for slot in prepared.reservation_recipe) * len(prepared.target_occurrences)
-    if planned > prepared.declared_request_upper_bound:
+    if prepared.declared_request_upper_bound is None or planned > prepared.declared_request_upper_bound:
         return _unknown(), _unknown()
     return _exact(planned), CountEstimate(
         knowledge="known_upper", value=prepared.declared_request_upper_bound - planned
@@ -969,7 +970,8 @@ def inspect(*, source: InspectionSource) -> InspectionSummary:
     binding = None if source.binding is None else source.binding.receipt
     execution = source.execution
     counts, usage = _account(
-        None if binding is None else binding.requests, None if execution is None else execution.requests
+        None if binding is None else binding.requests,
+        None if execution is None or source.prepared.declared_request_upper_bound is None else execution.requests,
     )
     routes = terminals = resources = proxy = None
     if execution is not None:
@@ -984,11 +986,13 @@ def inspect(*, source: InspectionSource) -> InspectionSummary:
         kinds = dict.fromkeys(("local", "external", "decision", "context"), 0)
         policies = {policy.node: policy.kind for policy in execution._execution.policies}
         adaptive = {item.node for item in execution._execution.context.adaptive_retrievals}
-        entries = {entry.activation: entry for state in execution.states for entry in state.entries}
+        states = execution.states + (() if execution.invocation_state is None else (execution.invocation_state,))
+        entries = {entry.activation: entry for state in states for entry in state.entries}
         for terminal in execution.record.terminals:
             if terminal.attempt is not None:
                 entry = entries[terminal.activation]
-                kinds["context" if entry.template in adaptive else policies[entry.template]] += 1
+                kind = "context" if entry.template in adaptive else policies[entry.template]
+                kinds["external" if kind == "delegated" else kind] += 1
         routes = RouteCounts(**kinds)
         receipts = (execution.requests,) if binding is None else (binding.requests, execution.requests)
         cleanup = execution.cleanup if binding is None else binding.cleanup + execution.cleanup

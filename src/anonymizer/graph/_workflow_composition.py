@@ -425,8 +425,7 @@ def _validate_composition_path(
         models.update(_visits(outcome.model_requirements))
         values = outcome.ceiling
         ceiling[0] = cast(int, ceiling[0]) + values.max_activations
-        ceiling[1] = cast(int, ceiling[1]) + values.max_model_requests
-        for index, bound in ((2, values.max_input_bytes), (3, values.max_output_bytes)):
+        for index, bound in ((1, values.max_model_requests), (2, values.max_input_bytes), (3, values.max_output_bytes)):
             prior = ceiling[index]
             ceiling[index] = None if prior is None or bound is None else prior + bound
     dependencies = {item.output: item for item in _visits(interface.output_dependencies)}

@@ -237,3 +237,49 @@ class FramePublication:
             self.associations,
             tuple(port for _, port, _ in self._text),
         )
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class InvocationFrame:
+    """Opaque compatibility content owned by one execution, without row provenance."""
+
+    dataframe: pd.DataFrame
+    detected_dataframe: pd.DataFrame
+    detection_failures: tuple[FailedRecord, ...]
+    replacement_failures: tuple[FailedRecord, ...]
+    detection_elapsed: float
+    replacement_elapsed: float
+    retained_owner: object | None = None
+
+    @property
+    def row_counts(self) -> tuple[int, int]:
+        return len(self.detected_dataframe), len(self.dataframe)
+
+    @property
+    def text_bytes(self) -> int:
+        """Observed direct string cells; arbitrary object-cell sizes remain unavailable."""
+        from anonymizer.engine.graph_sdk._artifact_shape import content_bytes
+
+        return sum(
+            content_bytes(value)
+            for frame in (self.detected_dataframe, self.dataframe)
+            for row in frame.itertuples(index=False, name=None)
+            for value in row
+            if isinstance(value, str)
+        )
+
+    @property
+    def failed_records(self) -> tuple[FailedRecord, ...]:
+        return self.detection_failures + self.replacement_failures
+
+    def bind(self, ports: tuple[ExecutionPortFact, ...]) -> InvocationFrame:
+        if ports:
+            raise ValueError("opaque invocation cannot publish semantic ports")
+        return self
+
+    def project(self, result: ExecutionResult) -> pd.DataFrame:
+        if not any(self is frame for frame in result.frames):
+            raise ValueError("frame belongs to a different execution")
+        if result._execution.context.prepared.configuration.purpose != "execution_only":
+            raise ValueError("opaque frame cannot establish protection")
+        return self.dataframe.copy()

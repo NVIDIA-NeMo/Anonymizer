@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from typing import cast
 
 from anonymizer.engine.graph_sdk.capabilities import ImplementationRef, ImplementationSelection
 from anonymizer.engine.graph_sdk.context import admit_context_plan
@@ -118,6 +119,7 @@ def with_parent_publication(execution: AdmittedExecutionPlan, *, readiness: bool
             SequenceEdge(before=probe, after=physical.node),
             *(SequenceEdge(before=node, after=assessor.node) for node in readiness_nodes),
         )
+        assert all(outcome.ceiling.max_model_requests is not None for outcome in interface.outcomes)
         interface = replace(
             interface,
             outcomes=tuple(
@@ -126,7 +128,7 @@ def with_parent_publication(execution: AdmittedExecutionPlan, *, readiness: bool
                     ceiling=replace(
                         outcome.ceiling,
                         max_activations=len(nodes),
-                        max_model_requests=outcome.ceiling.max_model_requests + 2,
+                        max_model_requests=cast(int, outcome.ceiling.max_model_requests) + 2,
                         max_input_bytes=100 * len(nodes),
                         max_output_bytes=100 * len(nodes),
                     ),
