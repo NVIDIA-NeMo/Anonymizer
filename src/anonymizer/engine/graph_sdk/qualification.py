@@ -9,7 +9,10 @@ from typing import Literal, get_args
 
 from anonymizer.engine.graph_sdk._effect_values import EffectCode, PrivateValue, reject, require_instance
 from anonymizer.engine.graph_sdk._execution_topology import _lexical_path
-from anonymizer.engine.graph_sdk._execution_values import ImplementationResourceRegistration
+from anonymizer.engine.graph_sdk._execution_values import (
+    AdaptiveResourceAcquisition,
+    ImplementationResourceRegistration,
+)
 from anonymizer.engine.graph_sdk._qualification_provenance import _ProvenanceValidator
 from anonymizer.engine.graph_sdk.evidence import (
     AdmittedQualification,
@@ -1006,6 +1009,8 @@ class _Qualification:
 
     def cleanup_accounting(self) -> bool:
         registered = self._registered_handle_resources()
+        if registered is not None:
+            registered = self._registered_adaptive_resources(registered)
         if registered is None:
             for codes in self.withholding.values():
                 codes.add("inconsistent_attribution")
@@ -1057,6 +1062,60 @@ class _Qualification:
             detachments[row.resource] = row.safe_detachment
         return resources
 
+    def _registered_adaptive_resources(
+        self, registered: dict[ResourceId, ResourceOwner]
+    ) -> dict[ResourceId, ResourceOwner] | None:
+        """Join each admitted adaptive capability to its actual transfer outcome."""
+        rows = getattr(self.result, "adaptive_acquisitions", None)
+        if not isinstance(rows, tuple):
+            reject(EffectCode.INVALID_TYPE)
+        if len(rows) > self.prepared.limits.max_capabilities:
+            reject(EffectCode.LIMIT_EXCEEDED)
+        for row in rows:
+            require_instance(row, AdaptiveResourceAcquisition)
+            row.__post_init__()
+        expected = tuple(
+            cap for cap in self.admitted.execution.context.context_capabilities if "adaptive_retrieval" in cap.uses
+        )
+        seen: set[int] = set()
+        detachments = {row.resource: row.safe_detachment for row in self.result.implementation_resources}
+        for row in rows:
+            index = next((i for i, cap in enumerate(expected) if _matches_admitted_key(cap, row.capability)), None)
+            if index is None or index in seen:
+                return None
+            seen.add(index)
+            capability = expected[index]
+            if (
+                row.invocation != self.result.record.invocation
+                or row.owner != capability.resource_owner
+                or row.safe_detachment != capability.safe_detachment
+            ):
+                return None
+            if row.resource is None:
+                if row.owner != "sdk":
+                    return None
+                nodes = {
+                    item.node
+                    for item in self.admitted.execution.context.adaptive_retrievals
+                    if item.source == capability.source and item.materialization.item_type == capability.artifact_type
+                }
+                if any(
+                    isinstance(association, SemanticAssociation)
+                    and (entry := self.entries.get(association.task.activation)) is not None
+                    and entry.template in nodes
+                    for dispatch in self.result.requests.dispatches
+                    for association in dispatch.associations
+                ):
+                    return None
+                continue
+            if row.resource in registered and (
+                registered[row.resource] != row.owner or detachments[row.resource] != row.safe_detachment
+            ):
+                return None
+            registered[row.resource] = row.owner
+            detachments[row.resource] = row.safe_detachment
+        return registered if len(seen) == len(expected) else None
+
     def _cleanup_ledger(
         self,
         cleanup: tuple[CleanupFact, ...],
@@ -1097,13 +1156,8 @@ class _Qualification:
             or facts.keys() != associations.keys()
             or registered is not None
             and (
-                not registered.keys() <= facts.keys()
+                facts.keys() != registered.keys()
                 or any(facts[resource].owner != owner for resource, owner in registered.items() if resource in facts)
-                or not any(
-                    "adaptive_retrieval" in capability.uses
-                    for capability in self.admitted.execution.context.context_capabilities
-                )
-                and facts.keys() != registered.keys()
             )
         ):
             for codes in self.withholding.values():

@@ -51,6 +51,7 @@ from anonymizer.engine.graph_sdk.context import (
     AdaptiveRetrievalDecl,
     ContextProvider,
     ContextSelector,
+    ContextSourceCapability,
     SelectorField,
     SourceFailure,
     SourceLost,
@@ -462,7 +463,7 @@ async def _run_adaptive(
     association: SemanticAssociation,
     inputs: tuple[AssociationInput, ...],
     authority: _RequestAuthority,
-    leases: dict[object, ResourceLease],
+    leases: dict[ContextSourceCapability, ResourceLease],
     control: _ExecutionControl,
     limits: ExecutionLimits,
     request_resources: dict[PhysicalRequestId, ResourceId],
@@ -486,7 +487,7 @@ async def _run_adaptive_body(
     association: SemanticAssociation,
     inputs: tuple[AssociationInput, ...],
     authority: _RequestAuthority,
-    leases: dict[object, ResourceLease],
+    leases: dict[ContextSourceCapability, ResourceLease],
     control: _ExecutionControl,
     limits: ExecutionLimits,
     request_resources: dict[PhysicalRequestId, ResourceId],
@@ -494,9 +495,11 @@ async def _run_adaptive_body(
     capability = next(
         item
         for item in admitted.context.context_capabilities
-        if item.source == declaration.source and "adaptive_retrieval" in item.uses
+        if item.source == declaration.source
+        and item.artifact_type == declaration.materialization.item_type
+        and "adaptive_retrieval" in item.uses
     )
-    lease = leases.get(declaration.source)
+    lease = leases.get(capability)
     if lease is None or not isinstance(lease.handle, ContextProvider) or policy.request is None:
         reject(EffectCode.MISSING)
     provider = lease.handle

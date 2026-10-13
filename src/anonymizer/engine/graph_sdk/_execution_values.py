@@ -31,6 +31,7 @@ from anonymizer.engine.graph_sdk.context import (
     AdmittedContextPlan,
     BindingArtifactRef,
     ContextResource,
+    ContextSourceCapability,
 )
 from anonymizer.engine.graph_sdk.observations import NodeMeasurement
 from anonymizer.engine.graph_sdk.preparation import StateRevisionView
@@ -769,6 +770,29 @@ class ImplementationResourceRegistration(PrivateValue):
 
 
 @dataclass(frozen=True, slots=True, kw_only=True, repr=False)
+class AdaptiveResourceAcquisition(PrivateValue):
+    """One admitted adaptive provider's actual lease transfer outcome."""
+
+    invocation: InvocationId
+    capability: ContextSourceCapability
+    outcome: Literal["acquired", "not_transferred"]
+    resource: ResourceId | None
+    owner: ResourceOwner
+    safe_detachment: SafeDetachment
+
+    def __post_init__(self) -> None:
+        require_instance(self.invocation, InvocationId)
+        require_instance(self.capability, ContextSourceCapability)
+        require_literal(self.outcome, frozenset({"acquired", "not_transferred"}))
+        require_literal(self.owner, frozenset({"caller", "sdk"}))
+        require_literal(self.safe_detachment, frozenset({"forbidden", "independent_after_dispatch"}))
+        if self.resource is not None:
+            require_instance(self.resource, ResourceId)
+        if (self.outcome == "acquired") != (self.resource is not None):
+            reject(EffectCode.CONTRADICTORY)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True, repr=False)
 class ExecutionServices(PrivateValue):
     handles: tuple[ImplementationHandle, ...]
     context_resources: tuple[ContextResource, ...]
@@ -834,6 +858,7 @@ _RESULT_KEY = object()
 class ExecutionResult(PrivateValue):
     _execution: AdmittedExecutionPlan
     implementation_resources: tuple[ImplementationResourceRegistration, ...]
+    adaptive_acquisitions: tuple[AdaptiveResourceAcquisition, ...]
     _input_parents: tuple[tuple[DatumId, ActivationKey, str, ProvenanceKey], ...]
     _passthrough_parents: tuple[tuple[DatumId, ActivationKey, str, ProvenanceKey], ...]
     record: CanonicalRecord

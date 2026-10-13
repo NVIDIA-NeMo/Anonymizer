@@ -433,6 +433,7 @@ def child_fixture(
         _key=_RESULT_KEY,
         _execution=execution,
         implementation_resources=registrations,
+        adaptive_acquisitions=(),
         record=record,
         states=(state,),
         requests=request_receipt(state=requests),

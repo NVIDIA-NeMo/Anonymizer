@@ -314,7 +314,7 @@ def test_adaptive_retrieval_materializes_provider_result_once() -> None:
     asyncio.run(_assert_adaptive_retrieval())
 
 
-async def _adaptive_running(provider):
+def _adaptive_fixture(provider, *, capability_limit=1):
     workflow, node, artifact = _adaptive_workflow()
     data = _data(1)
     target = next(iter(data.targets))
@@ -327,7 +327,7 @@ async def _adaptive_running(provider):
             purpose="execution_only", required_protection_outcomes=frozenset(), hard_request_limit=1
         ),
         bound_inputs=(BoundInput(target=target, source=target, port="input", artifact_type=artifact),),
-        limits=_limits(capabilities=1),
+        limits=_limits(capabilities=capability_limit),
     )
     request_policy = PhysicalRequestPolicy(
         visibility="dispatch_and_settlement",
@@ -423,7 +423,12 @@ async def _adaptive_running(provider):
         decision_limits=DecisionLimits(max_pending=0, max_lifetime_ns=0),
         clock=_Clock(),
     )
-    running = await start_execution(admitted=admitted, capabilities=(capability,), services=services)
+    return admitted, services, target
+
+
+async def _adaptive_running(provider):
+    admitted, services, target = _adaptive_fixture(provider)
+    running = await start_execution(admitted=admitted, capabilities=admitted.capabilities, services=services)
     return running, target
 
 

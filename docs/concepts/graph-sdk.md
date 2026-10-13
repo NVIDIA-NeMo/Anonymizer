@@ -292,7 +292,12 @@ Qualification derives that complete handle-key domain from the admitted
 nonstateless implementations before joining resource owners and cleanup
 facts. Removing a cleanup fact and its association cannot hide a declared handle
 resource; removing its registration also fails the domain check. Shared leases
-still produce one cleanup fact. Context and initial-binding acquisition membership
-remain a separate retained-proof obligation; normal runtime cleanup includes them.
+still produce one cleanup fact. Adaptive acquisition retains an outcome for every
+admitted source capability, including unused providers and factories that fail
+before transferring a lease. Distinct capabilities for one source keep their own
+leases, and retrieval selects the capability matching its declared artifact type.
+Qualification joins acquired resources with handle resources before checking cleanup.
+Initial-binding acquisition membership remains a separate retained-proof obligation;
+normal runtime cleanup includes those resources.
 Broader recipes, shared targets, additional optional shapes, opaque execution and actual DD
 provider routes remain separate admission work.

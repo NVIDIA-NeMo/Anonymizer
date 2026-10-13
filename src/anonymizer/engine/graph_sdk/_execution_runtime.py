@@ -161,7 +161,9 @@ class _InvocationRuntime:
             for handle in services.handles
             if handle.resource is not None
         )
-        self.context_leases, self.failed_context_sources = _acquire_context_resources(self.services.context_resources)
+        self.context_leases, self.failed_context_sources, self.adaptive_acquisitions = _acquire_context_resources(
+            self.services.context_resources, invocation
+        )
         self.states: list[ActivationState] = []
         self.target_keys: dict[DatumId, dict[int, ActivationKey]] = {}
         self._initialize_activations()
@@ -508,7 +510,11 @@ class _InvocationRuntime:
                 if adaptive is None:
                     external_jobs.append(job)
                     return
-                if adaptive.source in self.failed_context_sources:
+                if any(
+                    capability.source == adaptive.source
+                    and capability.artifact_type == adaptive.materialization.item_type
+                    for capability in self.failed_context_sources
+                ):
                     coroutine = _immediate_execution_result(
                         _mapping(policy, "failure", None, "implementation_exception")
                     )
@@ -889,6 +895,7 @@ class _InvocationRuntime:
             _key=_RESULT_KEY,
             _execution=self.admitted,
             implementation_resources=self.implementation_resources,
+            adaptive_acquisitions=self.adaptive_acquisitions,
             _input_parents=tuple(self.facts.input_parents),
             _passthrough_parents=tuple(
                 (target, activation, port, parent)
