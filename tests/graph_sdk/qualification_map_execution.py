@@ -7,7 +7,6 @@ from __future__ import annotations
 from dataclasses import replace
 from typing import Any
 
-from anonymizer.engine.graph_sdk.capabilities import ImplementationSelection
 from anonymizer.engine.graph_sdk.context import admit_context_plan
 from anonymizer.engine.graph_sdk.data import DataGraph, DataLimits
 from anonymizer.engine.graph_sdk.executor import (
@@ -16,13 +15,10 @@ from anonymizer.engine.graph_sdk.executor import (
     AssessmentLimits,
     DecisionLimits,
     EvidenceProductionDecl,
-    ExecutionImplementation,
     ExecutionLimits,
     ExecutionResult,
     ExecutionServices,
-    ImplementationHandle,
     MapExpansionDecl,
-    OperationExecutionPolicy,
     admit_execution_plan,
     start_execution,
 )
@@ -61,15 +57,15 @@ from anonymizer.graph.workflow import (
     SubgraphNode,
     WorkflowId,
     WorkflowInputRef,
-    WorkflowLimits,
     WorkflowOutcomeRef,
     WorkflowOutputRef,
     admit_activation_workflow,
     admit_static_workflow,
 )
+from tests.graph_sdk.local_execution_fixtures import _local_handle, _local_policies, _no_choice_limits, _selections
 from tests.graph_sdk.qualification_map_callbacks import _ReferenceMapCallback
 from tests.graph_sdk.reference.corpora import load_cases
-from tests.graph_sdk.test_dynamic_executor import _capability, _outcome, _rows
+from tests.graph_sdk.test_dynamic_executor import _capability, _outcome
 from tests.graph_sdk.test_local_executor import _Clock
 from tests.graph_sdk.test_preparation import _limits
 
@@ -365,15 +361,7 @@ async def _execute_reference_map(
                 candidate_port="result",
             ),
         ),
-        limits=WorkflowLimits(
-            max_nodes=4,
-            max_bindings=9 + int(consumed_only),
-            max_sequence_edges=4,
-            max_choices=0,
-            max_branch_members=0,
-            max_subgraph_depth=1,
-            max_choice_states=1,
-        ),
+        limits=_no_choice_limits(nodes=4, bindings=9 + int(consumed_only), sequence_edges=4),
     )
     if blocked_member:
         prerequisite = InputBinding(
@@ -461,15 +449,7 @@ async def _execute_reference_map(
             ),
             choices=(),
             protection=(),
-            limits=WorkflowLimits(
-                max_nodes=3,
-                max_bindings=5,
-                max_sequence_edges=2,
-                max_choices=0,
-                max_branch_members=0,
-                max_subgraph_depth=1,
-                max_choice_states=1,
-            ),
+            limits=_no_choice_limits(nodes=3, bindings=5, sequence_edges=2),
         )
         static_options.update(
             nodes=(
@@ -497,15 +477,7 @@ async def _execute_reference_map(
                 ),
             ),
             sequence=(SequenceEdge(before=nodes["SG"], after=nodes["N"]),),
-            limits=WorkflowLimits(
-                max_nodes=5,
-                max_bindings=12,
-                max_sequence_edges=3,
-                max_choices=0,
-                max_branch_members=0,
-                max_subgraph_depth=2,
-                max_choice_states=1,
-            ),
+            limits=_no_choice_limits(nodes=5, bindings=12, sequence_edges=3, subgraph_depth=2),
         )
     static = admit_static_workflow(**static_options)
     if blocked_member:
@@ -586,6 +558,7 @@ async def _execute_reference_map(
         limits=DataLimits(max_datums=2, max_targets=1, max_text_bytes=2, max_declarations=0, max_group_members=1),
     )
     capabilities = tuple(_capability(operation, index) for index, operation in enumerate(operations.values()))
+    by_node = dict(zip((nodes[name] for name in operations), capabilities, strict=True))
     prepared = prepare(
         data=data,
         workflow=workflow,
@@ -602,12 +575,7 @@ async def _execute_reference_map(
             purpose="protection", required_protection_outcomes=frozenset({"ok"}), hard_request_limit=None
         ),
         state=StateRevisionView(revisions=frozenset({StateRevision(effect=read, revision=1)})),
-        selections=tuple(
-            ImplementationSelection(
-                node=node, implementation=capability.implementation, configuration=capability.configuration
-            )
-            for node, capability in zip((nodes[name] for name in operations), capabilities, strict=True)
-        ),
+        selections=_selections(by_node),
         capabilities=capabilities,
         limits=_limits(capabilities=len(operations), slots=9 if two_maps else 6 if nested or blocked_member else 5),
     )
@@ -616,25 +584,7 @@ async def _execute_reference_map(
             prepared=prepared, bound_context=None, adaptive_retrievals=(), context_capabilities=()
         ),
         capabilities=capabilities,
-        policies=tuple(
-            OperationExecutionPolicy(
-                node=node,
-                kind="local",
-                request=None,
-                safe_detachment="forbidden",
-                implementations=(
-                    ExecutionImplementation(
-                        implementation=capability.implementation,
-                        configuration=capability.configuration,
-                        capability=capability,
-                        request=None,
-                    ),
-                ),
-                result_outcomes=frozenset(outcome.name for outcome in capability.operation.outcomes),
-                runtime_outcomes=_rows(frozenset(outcome.name for outcome in capability.operation.outcomes)),
-            )
-            for node, capability in zip((nodes[name] for name in operations), capabilities, strict=True)
-        ),
+        policies=_local_policies(by_node),
         decisions=(),
         assessment_productions=tuple(
             EvidenceProductionDecl(
@@ -691,14 +641,7 @@ async def _execute_reference_map(
         capabilities=capabilities,
         services=ExecutionServices(
             handles=tuple(
-                ImplementationHandle(
-                    implementation=capability.implementation,
-                    operation=capability.operation,
-                    configuration=capability.configuration,
-                    local=callback,
-                    transport=None,
-                    resource=None,
-                )
+                _local_handle(capability, callback)
                 for capability, callback in zip(capabilities, callbacks, strict=True)
             ),
             context_resources=(),

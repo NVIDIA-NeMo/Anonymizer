@@ -12,7 +12,6 @@ import pytest
 
 from anonymizer.engine.graph_sdk._effect_values import EffectCode, EffectRejected
 from anonymizer.engine.graph_sdk.binding import start_initial_binding
-from anonymizer.engine.graph_sdk.capabilities import ImplementationSelection
 from anonymizer.engine.graph_sdk.context import (
     BindingLimits,
     ContextMaterialization,
@@ -28,13 +27,10 @@ from anonymizer.engine.graph_sdk.executor import (
     AssessmentLimits,
     DecisionLimits,
     EvidenceProductionDecl,
-    ExecutionImplementation,
     ExecutionLimits,
     ExecutionServices,
-    ImplementationHandle,
     MapExpansionDecl,
     MapItemKey,
-    OperationExecutionPolicy,
     OperationOutputKey,
     admit_execution_plan,
     start_execution,
@@ -69,14 +65,14 @@ from anonymizer.graph.workflow import (
     SequenceEdge,
     WorkflowId,
     WorkflowInputRef,
-    WorkflowLimits,
     WorkflowOutcomeRef,
     admit_activation_workflow,
     admit_static_workflow,
 )
 from tests.graph_sdk.context_source_fixtures import SOURCE, _ContextProvider
 from tests.graph_sdk.effects_map_fixtures import MAP_CASES, _LoopCallback, _map_fixture, _MapCallback, _MapFixture
-from tests.graph_sdk.test_dynamic_executor import _capability, _operation, _outcome, _rows
+from tests.graph_sdk.local_execution_fixtures import _local_handle, _local_policies, _no_choice_limits, _selections
+from tests.graph_sdk.test_dynamic_executor import _capability, _operation, _outcome
 from tests.graph_sdk.test_local_executor import _Clock
 from tests.graph_sdk.test_preparation import _data, _limits
 
@@ -113,14 +109,7 @@ def _admit_fixture(
             hard_request_limit=None,
         ),
         state=StateRevisionView(revisions=frozenset()),
-        selections=tuple(
-            ImplementationSelection(
-                node=node,
-                implementation=capability.implementation,
-                configuration=capability.configuration,
-            )
-            for node, capability in by_node.items()
-        ),
+        selections=_selections(by_node),
         capabilities=fixture.capabilities,
         limits=_limits(
             capabilities=len(fixture.capabilities),
@@ -133,25 +122,7 @@ def _admit_fixture(
         adaptive_retrievals=(),
         context_capabilities=(),
     )
-    policies = tuple(
-        OperationExecutionPolicy(
-            node=node,
-            kind="local",
-            request=None,
-            safe_detachment="forbidden",
-            implementations=(
-                ExecutionImplementation(
-                    implementation=capability.implementation,
-                    configuration=capability.configuration,
-                    capability=capability,
-                    request=None,
-                ),
-            ),
-            result_outcomes=frozenset(outcome.name for outcome in capability.operation.outcomes),
-            runtime_outcomes=_rows(frozenset(outcome.name for outcome in capability.operation.outcomes)),
-        )
-        for node, capability in by_node.items()
-    )
+    policies = _local_policies(by_node)
     return admit_execution_plan(
         context=context,
         capabilities=fixture.capabilities,
@@ -372,17 +343,7 @@ async def _execute_membership(
         )
         for node in by_node
     }
-    handles = tuple(
-        ImplementationHandle(
-            implementation=capability.implementation,
-            operation=capability.operation,
-            configuration=capability.configuration,
-            local=callbacks[node],
-            transport=None,
-            resource=None,
-        )
-        for node, capability in by_node.items()
-    )
+    handles = tuple(_local_handle(capability, callbacks[node]) for node, capability in by_node.items())
     running = await start_execution(
         admitted=admitted,
         capabilities=fixture.capabilities,
@@ -495,15 +456,7 @@ async def _execute_loop_resolution(mode: str):
         ),
         choices=(),
         protection=(),
-        limits=WorkflowLimits(
-            max_nodes=4,
-            max_bindings=4,
-            max_sequence_edges=3,
-            max_choices=0,
-            max_branch_members=0,
-            max_subgraph_depth=1,
-            max_choice_states=1,
-        ),
+        limits=_no_choice_limits(nodes=4, bindings=4, sequence_edges=3),
     )
     workflow = admit_activation_workflow(
         workflow=static,
@@ -578,14 +531,7 @@ async def _execute_loop_resolution(mode: str):
             purpose="execution_only", required_protection_outcomes=frozenset(), hard_request_limit=None
         ),
         state=StateRevisionView(revisions=frozenset()),
-        selections=tuple(
-            ImplementationSelection(
-                node=node,
-                implementation=by_node[node].implementation,
-                configuration=by_node[node].configuration,
-            )
-            for node in operations
-        ),
+        selections=_selections(by_node),
         capabilities=capabilities,
         limits=_limits(capabilities=4, slots=loop_bound + 3),
     )
@@ -599,28 +545,16 @@ async def _execute_loop_resolution(mode: str):
         context=context,
         capabilities=capabilities,
         policies=tuple(
-            OperationExecutionPolicy(
-                node=node,
-                kind="local",
-                request=None,
-                safe_detachment="forbidden",
-                implementations=(
-                    ExecutionImplementation(
-                        implementation=by_node[node].implementation,
-                        configuration=by_node[node].configuration,
-                        capability=by_node[node],
-                        request=None,
-                    ),
-                ),
-                result_outcomes=frozenset(outcome.name for outcome in operation.outcomes),
+            replace(
+                policy,
                 runtime_outcomes=tuple(
                     replace(row, category="failure")
                     if row.condition == "result" and row.reported_outcome == "failure"
                     else row
-                    for row in _rows(frozenset(outcome.name for outcome in operation.outcomes))
+                    for row in policy.runtime_outcomes
                 ),
             )
-            for node, operation in operations.items()
+            for policy in _local_policies(by_node)
         ),
         decisions=(),
         assessment_productions=(),
@@ -642,17 +576,7 @@ async def _execute_loop_resolution(mode: str):
         )
         for node in operations
     }
-    handles = tuple(
-        ImplementationHandle(
-            implementation=by_node[node].implementation,
-            operation=operation,
-            configuration=by_node[node].configuration,
-            local=callbacks[node],
-            transport=None,
-            resource=None,
-        )
-        for node, operation in operations.items()
-    )
+    handles = tuple(_local_handle(by_node[node], callbacks[node]) for node, operation in operations.items())
     result = await (
         await start_execution(
             admitted=admitted,

@@ -49,12 +49,12 @@ from anonymizer.graph.workflow import (
     SubgraphNode,
     WorkflowId,
     WorkflowInputRef,
-    WorkflowLimits,
     WorkflowOutcomeRef,
     WorkflowOutputRef,
     admit_activation_workflow,
     admit_static_workflow,
 )
+from tests.graph_sdk.local_execution_fixtures import _no_choice_limits
 from tests.graph_sdk.reference.corpora import load_cases
 from tests.graph_sdk.test_dynamic_executor import _capability, _outcome
 
@@ -223,15 +223,7 @@ def _map_fixture(
             sequence=(),
             choices=(),
             protection=(),
-            limits=WorkflowLimits(
-                max_nodes=1,
-                max_bindings=2,
-                max_sequence_edges=0,
-                max_choices=0,
-                max_branch_members=0,
-                max_subgraph_depth=1,
-                max_choice_states=1,
-            ),
+            limits=_no_choice_limits(nodes=1, bindings=2, sequence_edges=0),
         )
         member_node = SubgraphNode(id=member, operation=body.interface, body=body)
     join_operation = OperationSpec(
@@ -446,14 +438,11 @@ def _map_fixture(
         )
         if member_assessment
         else (),
-        limits=WorkflowLimits(
-            max_nodes=3 + int(default_source is not None) + int(ordinary is not None) + int(member_subgraph),
-            max_bindings=(5 if other_count else 4) + int(outward_scalar is not None) + int(member_assessment),
-            max_sequence_edges=2 + int(default_source is not None) + (2 if ordinary is not None else 0),
-            max_choices=0,
-            max_branch_members=0,
-            max_subgraph_depth=2 if member_subgraph else 1,
-            max_choice_states=1,
+        limits=_no_choice_limits(
+            nodes=3 + int(default_source is not None) + int(ordinary is not None) + int(member_subgraph),
+            bindings=(5 if other_count else 4) + int(outward_scalar is not None) + int(member_assessment),
+            sequence_edges=2 + int(default_source is not None) + (2 if ordinary is not None else 0),
+            subgraph_depth=2 if member_subgraph else 1,
         ),
     )
     workflow = admit_activation_workflow(
