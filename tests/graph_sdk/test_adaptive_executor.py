@@ -70,15 +70,11 @@ from anonymizer.graph.workflow import (
     DynamicLimits,
     DynamicScope,
     EvidencePromise,
-    InputBinding,
     InputPort,
     NodeId,
-    NodeInputRef,
-    NodeOutcomeRef,
     NodeOutputRef,
     OperationNode,
     OperationSpec,
-    OutcomeBinding,
     OutcomeSpec,
     OutputBinding,
     OutputDependency,
@@ -88,7 +84,6 @@ from anonymizer.graph.workflow import (
     WorkflowId,
     WorkflowInputRef,
     WorkflowLimits,
-    WorkflowOutcomeRef,
     WorkflowOutputRef,
     admit_activation_workflow,
     admit_static_workflow,
@@ -96,6 +91,7 @@ from anonymizer.graph.workflow import (
 from tests.graph_sdk.implementation_fixtures import _execution_implementation, _implementation_handle, _selection
 from tests.graph_sdk.test_local_executor import _Clock, _runtime_rows
 from tests.graph_sdk.test_preparation import _capability, _data, _limits, _prepare, _workflow
+from tests.graph_sdk.workflow_fixtures import _single_node_workflow
 
 SOURCE = ContextSourceRef(name="adaptive", revision=1)
 
@@ -744,31 +740,13 @@ async def _assert_nested_assessment() -> None:
         output_dependencies=(OutputDependency(output="assessment", inputs=frozenset({"input"}), identity_input=None),),
         outcomes=(outcome,),
     )
-    body = admit_static_workflow(
+    body = _single_node_workflow(
         workflow=body_owner,
         interface=operation,
-        nodes=(OperationNode(id=inner, operation=operation),),
-        input_bindings=(
-            InputBinding(
-                source=WorkflowInputRef(port="input"),
-                destination=NodeInputRef(node=inner, port="input"),
-            ),
-        ),
-        output_bindings=(
-            OutputBinding(
-                source=NodeOutputRef(node=inner, port="assessment"),
-                destination=WorkflowOutputRef(port="assessment"),
-            ),
-        ),
-        outcome_bindings=(
-            OutcomeBinding(
-                source=NodeOutcomeRef(node=inner, outcome="ok"),
-                destination=WorkflowOutcomeRef(outcome="ok"),
-            ),
-        ),
-        sequence=(),
-        choices=(),
-        protection=(),
+        node=OperationNode(id=inner, operation=operation),
+        inputs=(WorkflowInputRef(port="input"),),
+        outputs=("assessment",),
+        outcomes=("ok",),
         limits=WorkflowLimits(
             max_nodes=2,
             max_bindings=3,
@@ -790,31 +768,13 @@ async def _assert_nested_assessment() -> None:
             ),
         ),
     )
-    root = admit_static_workflow(
+    root = _single_node_workflow(
         workflow=root_owner,
         interface=root_interface,
-        nodes=(SubgraphNode(id=container, operation=operation, body=body),),
-        input_bindings=(
-            InputBinding(
-                source=WorkflowInputRef(port="input"),
-                destination=NodeInputRef(node=container, port="input"),
-            ),
-        ),
-        output_bindings=(
-            OutputBinding(
-                source=NodeOutputRef(node=container, port="assessment"),
-                destination=WorkflowOutputRef(port="assessment"),
-            ),
-        ),
-        outcome_bindings=(
-            OutcomeBinding(
-                source=NodeOutcomeRef(node=container, outcome="ok"),
-                destination=WorkflowOutcomeRef(outcome="ok"),
-            ),
-        ),
-        sequence=(),
-        choices=(),
-        protection=(),
+        node=SubgraphNode(id=container, operation=operation, body=body),
+        inputs=(WorkflowInputRef(port="input"),),
+        outputs=("assessment",),
+        outcomes=("ok",),
         limits=WorkflowLimits(
             max_nodes=2,
             max_bindings=3,

@@ -60,7 +60,6 @@ from anonymizer.graph.workflow import (
     OperationSpec,
     OutcomeBinding,
     OutcomeSpec,
-    OutputBinding,
     OutputDependency,
     OutputPort,
     ResourceCeiling,
@@ -70,7 +69,6 @@ from anonymizer.graph.workflow import (
     WorkflowInputRef,
     WorkflowLimits,
     WorkflowOutcomeRef,
-    WorkflowOutputRef,
     admit_activation_workflow,
     admit_static_workflow,
 )
@@ -78,6 +76,7 @@ from tests.graph_sdk.implementation_fixtures import _execution_implementation, _
 from tests.graph_sdk.test_evidence import _qualification_limits
 from tests.graph_sdk.test_local_executor import _Clock
 from tests.graph_sdk.test_preparation import _config, _data, _limits
+from tests.graph_sdk.workflow_fixtures import _single_node_workflow
 
 
 def _outcome(
@@ -389,27 +388,13 @@ async def _assert_nested_two_by_two(*, same_key_versions: bool = False) -> None:
             for outcome in expand_operation.outcomes
         ),
     )
-    expand_body = admit_static_workflow(
+    expand_body = _single_node_workflow(
         workflow=expand_body_owner,
         interface=expand_interface,
-        nodes=(OperationNode(id=expand_child, operation=expand_operation),),
-        input_bindings=(),
-        output_bindings=tuple(
-            OutputBinding(
-                source=NodeOutputRef(node=expand_child, port=port.name),
-                destination=WorkflowOutputRef(port=port.name),
-            )
-            for port in expand_operation.outputs
-        ),
-        outcome_bindings=(
-            OutcomeBinding(
-                source=NodeOutcomeRef(node=expand_child, outcome="expand"),
-                destination=WorkflowOutcomeRef(outcome="expand"),
-            ),
-        ),
-        sequence=(),
-        choices=(),
-        protection=(),
+        node=OperationNode(id=expand_child, operation=expand_operation),
+        inputs=(),
+        outputs=tuple((port.name for port in expand_operation.outputs)),
+        outcomes=("expand",),
         limits=WorkflowLimits(
             max_nodes=1,
             max_bindings=3,

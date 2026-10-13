@@ -43,7 +43,7 @@ from anonymizer.graph.workflow import (
     admit_activation_workflow,
     admit_static_workflow,
 )
-from tests.graph_sdk.workflow_fixtures import _shared_body_workflow
+from tests.graph_sdk.workflow_fixtures import _shared_body_workflow, _single_node_workflow
 
 
 def _outcome(name: str, category: OutcomeClass) -> OutcomeSpec:
@@ -80,22 +80,13 @@ def _single() -> tuple[AdmittedActivationWorkflow, NodeId]:
     outcomes = (_outcome("ok", "success"), _outcome("fail", "failure"))
     operation = OperationSpec(name="operation", inputs=(), outputs=(), output_dependencies=(), outcomes=outcomes)
     interface = OperationSpec(name="interface", inputs=(), outputs=(), output_dependencies=(), outcomes=outcomes)
-    static = admit_static_workflow(
+    static = _single_node_workflow(
         workflow=owner,
         interface=interface,
-        nodes=(OperationNode(id=node_id, operation=operation),),
-        input_bindings=(),
-        output_bindings=(),
-        outcome_bindings=tuple(
-            OutcomeBinding(
-                source=NodeOutcomeRef(node=node_id, outcome=outcome.name),
-                destination=WorkflowOutcomeRef(outcome=outcome.name),
-            )
-            for outcome in outcomes
-        ),
-        sequence=(),
-        choices=(),
-        protection=(),
+        node=OperationNode(id=node_id, operation=operation),
+        inputs=(),
+        outputs=(),
+        outcomes=tuple((outcome.name for outcome in outcomes)),
         limits=WorkflowLimits(
             max_nodes=1,
             max_bindings=2,
@@ -628,22 +619,13 @@ def test_subgraph_start_materializes_body_and_derives_parent_terminal() -> None:
         output_dependencies=(),
         outcomes=tuple(_interface_outcome(outcome, 1) for outcome in outcomes),
     )
-    body = admit_static_workflow(
+    body = _single_node_workflow(
         workflow=child_owner,
         interface=child_interface,
-        nodes=(OperationNode(id=child_node, operation=child_operation),),
-        input_bindings=(),
-        output_bindings=(),
-        outcome_bindings=tuple(
-            OutcomeBinding(
-                source=NodeOutcomeRef(node=child_node, outcome=outcome.name),
-                destination=WorkflowOutcomeRef(outcome=outcome.name),
-            )
-            for outcome in outcomes
-        ),
-        sequence=(),
-        choices=(),
-        protection=(),
+        node=OperationNode(id=child_node, operation=child_operation),
+        inputs=(),
+        outputs=(),
+        outcomes=tuple((outcome.name for outcome in outcomes)),
         limits=WorkflowLimits(
             max_nodes=1,
             max_bindings=2,
@@ -670,22 +652,13 @@ def test_subgraph_start_materializes_body_and_derives_parent_terminal() -> None:
         output_dependencies=(),
         outcomes=tuple(_interface_outcome(outcome, 2) for outcome in outcomes),
     )
-    root = admit_static_workflow(
+    root = _single_node_workflow(
         workflow=root_owner,
         interface=root_interface,
-        nodes=(SubgraphNode(id=parent_node, operation=parent_operation, body=body),),
-        input_bindings=(),
-        output_bindings=(),
-        outcome_bindings=tuple(
-            OutcomeBinding(
-                source=NodeOutcomeRef(node=parent_node, outcome=outcome.name),
-                destination=WorkflowOutcomeRef(outcome=outcome.name),
-            )
-            for outcome in outcomes
-        ),
-        sequence=(),
-        choices=(),
-        protection=(),
+        node=SubgraphNode(id=parent_node, operation=parent_operation, body=body),
+        inputs=(),
+        outputs=(),
+        outcomes=tuple((outcome.name for outcome in outcomes)),
         limits=WorkflowLimits(
             max_nodes=2,
             max_bindings=2,

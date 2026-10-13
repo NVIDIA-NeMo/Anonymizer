@@ -57,6 +57,7 @@ from anonymizer.graph.workflow import (
     substitute,
 )
 from tests.graph_sdk.reference.corpora import corpus_bytes
+from tests.graph_sdk.workflow_fixtures import _single_node_workflow
 
 Json: TypeAlias = str | int | bool | None | list["Json"] | dict[str, "Json"]
 Object: TypeAlias = dict[str, Json]
@@ -699,26 +700,13 @@ def test_context_input_is_a_checked_distinct_interface_endpoint() -> None:
     workflow = WorkflowId.new()
     node = NodeId.new(workflow=workflow)
 
-    admitted = admit_static_workflow(
+    admitted = _single_node_workflow(
         workflow=workflow,
         interface=operation,
-        nodes=(OperationNode(id=node, operation=operation),),
-        input_bindings=(
-            InputBinding(
-                source=ContextInputRef(port="context"),
-                destination=NodeInputRef(node=node, port="context"),
-            ),
-        ),
-        output_bindings=(),
-        outcome_bindings=(
-            OutcomeBinding(
-                source=NodeOutcomeRef(node=node, outcome="ok"),
-                destination=WorkflowOutcomeRef(outcome="ok"),
-            ),
-        ),
-        sequence=(),
-        choices=(),
-        protection=(),
+        node=OperationNode(id=node, operation=operation),
+        inputs=(ContextInputRef(port="context"),),
+        outputs=(),
+        outcomes=("ok",),
         limits=WorkflowLimits(
             max_nodes=1,
             max_bindings=2,
@@ -735,26 +723,13 @@ def test_context_input_is_a_checked_distinct_interface_endpoint() -> None:
     unmarked_workflow = WorkflowId.new()
     unmarked_node = NodeId.new(workflow=unmarked_workflow)
     with pytest.raises(ContractViolation) as rejected:
-        admit_static_workflow(
+        _single_node_workflow(
             workflow=unmarked_workflow,
             interface=unmarked,
-            nodes=(OperationNode(id=unmarked_node, operation=unmarked),),
-            input_bindings=(
-                InputBinding(
-                    source=ContextInputRef(port="context"),
-                    destination=NodeInputRef(node=unmarked_node, port="context"),
-                ),
-            ),
-            output_bindings=(),
-            outcome_bindings=(
-                OutcomeBinding(
-                    source=NodeOutcomeRef(node=unmarked_node, outcome="ok"),
-                    destination=WorkflowOutcomeRef(outcome="ok"),
-                ),
-            ),
-            sequence=(),
-            choices=(),
-            protection=(),
+            node=OperationNode(id=unmarked_node, operation=unmarked),
+            inputs=(ContextInputRef(port="context"),),
+            outputs=(),
+            outcomes=("ok",),
             limits=WorkflowLimits(
                 max_nodes=1,
                 max_bindings=2,

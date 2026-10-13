@@ -7,20 +7,25 @@ from __future__ import annotations
 from anonymizer.graph.workflow import (
     AdmittedActivationWorkflow,
     AdmittedWorkflow,
+    ContextInputRef,
     DynamicLimits,
     DynamicScope,
     InputBinding,
     NodeId,
     NodeInputRef,
     NodeOutcomeRef,
+    NodeOutputRef,
+    OperationNode,
     OperationSpec,
     OutcomeBinding,
+    OutputBinding,
     SequenceEdge,
     SubgraphNode,
     WorkflowId,
     WorkflowInputRef,
     WorkflowLimits,
     WorkflowOutcomeRef,
+    WorkflowOutputRef,
     admit_activation_workflow,
     admit_static_workflow,
 )
@@ -86,3 +91,38 @@ def _shared_body_workflow(
         ),
     )
     return workflow, first, second
+
+
+def _single_node_workflow(
+    *,
+    workflow: WorkflowId,
+    interface: OperationSpec,
+    node: OperationNode | SubgraphNode,
+    inputs: tuple[WorkflowInputRef | ContextInputRef, ...],
+    outputs: tuple[str, ...],
+    outcomes: tuple[str, ...],
+    limits: WorkflowLimits,
+) -> AdmittedWorkflow:
+    """Expose one node's named ports and outcomes without edges or protection."""
+    return admit_static_workflow(
+        workflow=workflow,
+        interface=interface,
+        nodes=(node,),
+        input_bindings=tuple(
+            InputBinding(source=source, destination=NodeInputRef(node=node.id, port=source.port)) for source in inputs
+        ),
+        output_bindings=tuple(
+            OutputBinding(source=NodeOutputRef(node=node.id, port=port), destination=WorkflowOutputRef(port=port))
+            for port in outputs
+        ),
+        outcome_bindings=tuple(
+            OutcomeBinding(
+                source=NodeOutcomeRef(node=node.id, outcome=outcome), destination=WorkflowOutcomeRef(outcome=outcome)
+            )
+            for outcome in outcomes
+        ),
+        sequence=(),
+        choices=(),
+        protection=(),
+        limits=limits,
+    )

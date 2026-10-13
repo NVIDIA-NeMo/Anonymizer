@@ -52,17 +52,11 @@ from anonymizer.graph.workflow import (
     ContextUse,
     DynamicLimits,
     DynamicScope,
-    InputBinding,
     InputPort,
     NodeId,
-    NodeInputRef,
-    NodeOutcomeRef,
-    NodeOutputRef,
     OperationNode,
     OperationSpec,
-    OutcomeBinding,
     OutcomeSpec,
-    OutputBinding,
     OutputDependency,
     OutputPort,
     ResourceCeiling,
@@ -70,10 +64,7 @@ from anonymizer.graph.workflow import (
     WorkflowId,
     WorkflowInputRef,
     WorkflowLimits,
-    WorkflowOutcomeRef,
-    WorkflowOutputRef,
     admit_activation_workflow,
-    admit_static_workflow,
 )
 from tests.graph_sdk.context_source_fixtures import (
     CONTEXT_CASES,
@@ -90,6 +81,7 @@ from tests.graph_sdk.evidence_fixtures import _qualification_limits
 from tests.graph_sdk.implementation_fixtures import _execution_implementation, _implementation_handle, _selection
 from tests.graph_sdk.test_local_executor import _Clock, _runtime_rows
 from tests.graph_sdk.test_preparation import _capability, _data, _limits
+from tests.graph_sdk.workflow_fixtures import _single_node_workflow
 
 
 async def _assert_special_fixture_execution(case_id: str) -> None:
@@ -356,35 +348,13 @@ async def _assert_collection_schema_rejects_caller_root() -> _ProviderFactory:
             ),
         ),
     )
-    static = admit_static_workflow(
+    static = _single_node_workflow(
         workflow=owner,
         interface=operation,
-        nodes=(OperationNode(id=node, operation=operation),),
-        input_bindings=(
-            InputBinding(
-                source=ContextInputRef(port="context"),
-                destination=NodeInputRef(node=node, port="context"),
-            ),
-            InputBinding(
-                source=WorkflowInputRef(port="caller"),
-                destination=NodeInputRef(node=node, port="caller"),
-            ),
-        ),
-        output_bindings=(
-            OutputBinding(
-                source=NodeOutputRef(node=node, port="output"),
-                destination=WorkflowOutputRef(port="output"),
-            ),
-        ),
-        outcome_bindings=(
-            OutcomeBinding(
-                source=NodeOutcomeRef(node=node, outcome="ok"),
-                destination=WorkflowOutcomeRef(outcome="ok"),
-            ),
-        ),
-        sequence=(),
-        choices=(),
-        protection=(),
+        node=OperationNode(id=node, operation=operation),
+        inputs=(ContextInputRef(port="context"), WorkflowInputRef(port="caller")),
+        outputs=("output",),
+        outcomes=("ok",),
         limits=WorkflowLimits(
             max_nodes=1,
             max_bindings=4,

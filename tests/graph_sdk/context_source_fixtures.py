@@ -75,6 +75,7 @@ from anonymizer.graph.workflow import (
     substitute,
 )
 from tests.graph_sdk.test_preparation import _data
+from tests.graph_sdk.workflow_fixtures import _single_node_workflow
 
 SOURCE = ContextSourceRef(name="context-source", revision=1)
 
@@ -599,31 +600,13 @@ def _single_workflow(artifact_type: ArtifactType):
     owner = WorkflowId.new()
     node = NodeId.new(workflow=owner)
     operation = _operation(artifact_type)
-    static = admit_static_workflow(
+    static = _single_node_workflow(
         workflow=owner,
         interface=operation,
-        nodes=(OperationNode(id=node, operation=operation),),
-        input_bindings=(
-            InputBinding(
-                source=ContextInputRef(port="context"),
-                destination=NodeInputRef(node=node, port="context"),
-            ),
-        ),
-        output_bindings=(
-            OutputBinding(
-                source=NodeOutputRef(node=node, port="output"),
-                destination=WorkflowOutputRef(port="output"),
-            ),
-        ),
-        outcome_bindings=(
-            OutcomeBinding(
-                source=NodeOutcomeRef(node=node, outcome="ok"),
-                destination=WorkflowOutcomeRef(outcome="ok"),
-            ),
-        ),
-        sequence=(),
-        choices=(),
-        protection=(),
+        node=OperationNode(id=node, operation=operation),
+        inputs=(ContextInputRef(port="context"),),
+        outputs=("output",),
+        outcomes=("ok",),
         limits=WorkflowLimits(
             max_nodes=1,
             max_bindings=3,
@@ -657,31 +640,13 @@ def _nested_workflow(artifact_type: ArtifactType, *, via_substitution: bool = Fa
     operation = _operation(artifact_type)
     body_owner = WorkflowId.new()
     inner = NodeId.new(workflow=body_owner)
-    body = admit_static_workflow(
+    body = _single_node_workflow(
         workflow=body_owner,
         interface=operation,
-        nodes=(OperationNode(id=inner, operation=operation),),
-        input_bindings=(
-            InputBinding(
-                source=ContextInputRef(port="context"),
-                destination=NodeInputRef(node=inner, port="context"),
-            ),
-        ),
-        output_bindings=(
-            OutputBinding(
-                source=NodeOutputRef(node=inner, port="output"),
-                destination=WorkflowOutputRef(port="output"),
-            ),
-        ),
-        outcome_bindings=(
-            OutcomeBinding(
-                source=NodeOutcomeRef(node=inner, outcome="ok"),
-                destination=WorkflowOutcomeRef(outcome="ok"),
-            ),
-        ),
-        sequence=(),
-        choices=(),
-        protection=(),
+        node=OperationNode(id=inner, operation=operation),
+        inputs=(ContextInputRef(port="context"),),
+        outputs=("output",),
+        outcomes=("ok",),
         limits=WorkflowLimits(
             max_nodes=1,
             max_bindings=3,
@@ -699,31 +664,13 @@ def _nested_workflow(artifact_type: ArtifactType, *, via_substitution: bool = Fa
         if via_substitution
         else SubgraphNode(id=wrapper, operation=operation, body=body)
     )
-    root = admit_static_workflow(
+    root = _single_node_workflow(
         workflow=owner,
         interface=operation,
-        nodes=(root_node,),
-        input_bindings=(
-            InputBinding(
-                source=ContextInputRef(port="context"),
-                destination=NodeInputRef(node=wrapper, port="context"),
-            ),
-        ),
-        output_bindings=(
-            OutputBinding(
-                source=NodeOutputRef(node=wrapper, port="output"),
-                destination=WorkflowOutputRef(port="output"),
-            ),
-        ),
-        outcome_bindings=(
-            OutcomeBinding(
-                source=NodeOutcomeRef(node=wrapper, outcome="ok"),
-                destination=WorkflowOutcomeRef(outcome="ok"),
-            ),
-        ),
-        sequence=(),
-        choices=(),
-        protection=(),
+        node=root_node,
+        inputs=(ContextInputRef(port="context"),),
+        outputs=("output",),
+        outcomes=("ok",),
         limits=WorkflowLimits(
             max_nodes=2,
             max_bindings=3,
