@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, fields, is_dataclass, replace
 from typing import Literal, get_args
 
 from anonymizer.engine.graph_sdk._effect_values import EffectCode, PrivateValue, reject, require_instance
@@ -72,6 +72,43 @@ WithholdingCode = Literal[
 _CODES = frozenset(get_args(WithholdingCode))
 _TERMINAL = frozenset({"success", "failure", "cancelled", "lost", "blocked", "inconsistent"})
 _QUALIFICATION_KEY = object()
+
+
+def _matches_admitted_key(admitted: object, retained: object) -> bool:
+    """Resolve a registration against admitted structure without hashing raw values.
+
+    Only the admitted declaration supplies schema and collection bounds. Config
+    descent is iterative; set matching recurses only through the fixed operation
+    schema. A foreign shape is rejected before visiting its additional contents.
+    """
+    pending = [(admitted, retained)]
+    while pending:
+        expected, actual = pending.pop()
+        if type(expected) is not type(actual):
+            return False
+        if isinstance(expected, tuple):
+            assert isinstance(actual, tuple)
+            if len(expected) != len(actual):
+                return False
+            pending.extend(zip(expected, actual, strict=True))
+        elif isinstance(expected, frozenset):
+            assert isinstance(actual, frozenset)
+            if len(expected) != len(actual):
+                return False
+            unmatched = list(actual)
+            for item in expected:
+                index = next((i for i, value in enumerate(unmatched) if _matches_admitted_key(item, value)), None)
+                if index is None:
+                    return False
+                unmatched.pop(index)
+        elif is_dataclass(expected) and not isinstance(expected, type):
+            for field in fields(expected):
+                if not hasattr(actual, field.name):
+                    return False
+                pending.append((getattr(expected, field.name), getattr(actual, field.name)))
+        elif expected != actual:
+            return False
+    return True
 
 
 @dataclass(frozen=True, slots=True, kw_only=True, repr=False)
@@ -186,7 +223,11 @@ def qualify(
     verified = verify_evidence(admitted=admitted, result=result, submissions=submissions)
     qualification.validate_assessment_inventory()
     qualification.request_accounting()
-    qualification.cleanup_accounting()
+    if not qualification.cleanup_accounting():
+        # Evidence hashes retain the whole result. An unresolved declaration
+        # must never reach those indexes, even when every target is withheld.
+        qualification.propagate()
+        return qualification.finish(())
     for target in qualification.order:
         qualification.assess(target, verified)
     qualification.propagate()
@@ -963,7 +1004,7 @@ class _Qualification:
                     )
         return False
 
-    def cleanup_accounting(self) -> None:
+    def cleanup_accounting(self) -> bool:
         registered = self._registered_handle_resources()
         if registered is None:
             for codes in self.withholding.values():
@@ -972,6 +1013,7 @@ class _Qualification:
         bound = self.admitted.execution.context.bound_context
         if bound is not None:
             self._cleanup_ledger(bound.receipt.cleanup, bound.receipt.cleanup_associations, binding=True)
+        return registered is not None
 
     def _registered_handle_resources(self) -> dict[ResourceId, ResourceOwner] | None:
         """Join captured handle declarations to the independently admitted domain."""
@@ -989,8 +1031,14 @@ class _Qualification:
             for policy, item in execution._service_implementations()
             if item.capability.resource_lifetime != "stateless"
         }
-        observed = {(row.implementation, row.operation, row.configuration): row for row in rows}
-        if len(observed) != len(rows) or observed.keys() != expected.keys():
+        observed = {}
+        for row in rows:
+            retained = (row.implementation, row.operation, row.configuration)
+            key = next((key for key in expected if _matches_admitted_key(key, retained)), None)
+            if key is None or key in observed:
+                return None
+            observed[key] = row
+        if observed.keys() != expected.keys():
             return None
         resources: dict[ResourceId, ResourceOwner] = {}
         detachments = {}
