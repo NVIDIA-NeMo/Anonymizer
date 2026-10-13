@@ -53,6 +53,7 @@ if TYPE_CHECKING:
 class _SourceOccurrence:
     state: ActivationState
     keys: dict[int, ActivationKey]
+    opaque_cells: tuple[object, ...] = ()
 
 
 class _InvocationFrame:
@@ -158,6 +159,8 @@ class _InvocationFrame:
             for value, job in zip(dataframe[COL_TEXT].tolist(), jobs, strict=True)
         ):
             reject(EffectCode.CONTRADICTORY)
+        for job, cells in zip(jobs, dataframe.itertuples(index=False, name=None), strict=True):
+            self.sources[job.target].opaque_cells = cells
         return WorkflowSourceFrame.capture(dataframe, associations=tuple(job.association for job in jobs))
 
     def _initialize_root_inputs(self) -> None:

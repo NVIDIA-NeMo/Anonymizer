@@ -3,8 +3,9 @@
 """Actual DD detection/Redact development profile, using the single graph executor.
 
 Fixed generation counts are explicit admission declarations, not public input
-limits. This profile remains execution-only until variable chunk closure, retry
-chains and Redact qualification are implemented; the public facade does not use it.
+limits. Source-bound Redact assessments are admitted, but shared request
+reconciliation, variable chunk closure and retry chains remain incomplete.
+The public facade does not use this profile.
 """
 
 from __future__ import annotations
@@ -22,6 +23,7 @@ from data_designer.engine.dataset_builders.utils.async_concurrency import ensure
 from anonymizer.config.models import DetectionModelSelection
 from anonymizer.engine.constants import COL_AUGMENTED_ENTITIES, COL_RAW_DETECTED, COL_TEXT, COL_VALIDATION_DECISIONS
 from anonymizer.engine.detection._graph_invocation import DetectionRedactInvocation
+from anonymizer.engine.detection.artifacts import ENTITY_SPANS_TYPE
 from anonymizer.engine.detection.detection_workflow import EntityDetectionWorkflow
 from anonymizer.engine.graph_sdk._execution_delegated import WorkerDelegatedSubmitter
 from anonymizer.engine.graph_sdk._foreign_transport import ForeignLoopTransport
@@ -39,6 +41,7 @@ from anonymizer.engine.graph_sdk.executor import (
     DecisionLimits,
     DelegatedReadiness,
     DelegatedRequestContract,
+    EvidenceProductionDecl,
     ExecutionImplementation,
     ExecutionLimits,
     ExecutionResult,
@@ -60,11 +63,19 @@ from anonymizer.engine.graph_sdk.preparation import (
 from anonymizer.engine.graph_sdk.requests import AssociationInput, AssociationResult, ChildRoute, PhysicalRequestPolicy
 from anonymizer.engine.graph_sdk.resources import ResourceLease
 from anonymizer.engine.ndd._graph_requests import NddPhysicalTransport
+from anonymizer.engine.replace._graph_redact import (
+    REDACT_EVIDENCE_TYPE,
+    REDACT_MATCH,
+    REDACT_MEANING,
+    REDACT_MISMATCH,
+    RedactAssessment,
+)
 from anonymizer.graph.activation import ActivationLimits
 from anonymizer.graph.workflow import (
     ArtifactType,
     DynamicLimits,
     DynamicScope,
+    EvidencePromise,
     InputBinding,
     InputPort,
     NodeId,
@@ -78,6 +89,7 @@ from anonymizer.graph.workflow import (
     OutputBinding,
     OutputDependency,
     OutputPort,
+    ProtectionRequirement,
     ResourceCeiling,
     SequenceEdge,
     WorkflowId,
@@ -210,9 +222,15 @@ async def execute_detection_redact(
         return OperationSpec(
             name=name,
             inputs=(InputPort(name="source", artifact_type=text_type),) if io else (),
-            outputs=(OutputPort(name="redacted", artifact_type=text_type),) if io else (),
-            output_dependencies=(
-                OutputDependency(output="redacted", inputs=frozenset({"source"}), identity_input=None),
+            outputs=(
+                OutputPort(name="redacted", artifact_type=text_type),
+                OutputPort(name="spans", artifact_type=ENTITY_SPANS_TYPE),
+            )
+            if io
+            else (),
+            output_dependencies=tuple(
+                OutputDependency(output=port, inputs=frozenset({"source"}), identity_input=None)
+                for port in ("redacted", "spans")
             )
             if io
             else (),
@@ -220,7 +238,7 @@ async def execute_detection_redact(
                 OutcomeSpec(
                     name=value,
                     category="success",
-                    produced_ports=frozenset({"redacted"}) if io else frozenset(),
+                    produced_ports=frozenset({"redacted", "spans"}) if io else frozenset(),
                     context=frozenset(),
                     evidence=frozenset(),
                     state_effects=frozenset(),
@@ -239,14 +257,59 @@ async def execute_detection_redact(
         *(operation(f"dd-generation-{index}", ("ok",), 1) for index in range(count)),
         operation("dd-frame-complete", ("ok",), 0),
     ]
+    specs[-1] = replace(
+        specs[-1],
+        name="redact-assessment",
+        inputs=(
+            InputPort(name="source", artifact_type=text_type),
+            InputPort(name="candidate", artifact_type=text_type),
+            InputPort(name="spans", artifact_type=ENTITY_SPANS_TYPE),
+        ),
+        outputs=(OutputPort(name="assessment", artifact_type=REDACT_EVIDENCE_TYPE),),
+        output_dependencies=(
+            OutputDependency(
+                output="assessment", inputs=frozenset({"source", "candidate", "spans"}), identity_input=None
+            ),
+        ),
+        outcomes=tuple(
+            replace(
+                outcome,
+                produced_ports=frozenset({"assessment"}),
+                evidence=frozenset(
+                    {
+                        EvidencePromise(
+                            name="redaction",
+                            meaning=REDACT_MEANING,
+                            subject_port="candidate",
+                            consumed_ports=frozenset({"source", "candidate", "spans"}),
+                            coverage=frozenset(),
+                        )
+                    }
+                ),
+            )
+            for outcome in specs[-1].outcomes
+        ),
+    )
     ids = [owner, readiness, readiness_request, probe, *leaves, complete]
     nodes = tuple(OperationNode(id=node, operation=spec) for node, spec in zip(ids, specs, strict=True))
     interface = replace(
         specs[0],
         name="dd-detection-redact-profile",
+        outputs=(specs[0].outputs[0],),
+        output_dependencies=(specs[0].output_dependencies[0],),
         outcomes=(
             replace(
                 specs[0].outcomes[0],
+                produced_ports=frozenset({"redacted"}),
+                evidence=frozenset(
+                    {
+                        replace(
+                            next(iter(specs[-1].outcomes[0].evidence)),
+                            subject_port="redacted",
+                            consumed_ports=frozenset({"source"}),
+                        )
+                    }
+                ),
                 ceiling=replace(
                     ceiling,
                     max_activations=len(nodes),
@@ -263,6 +326,16 @@ async def execute_detection_redact(
         nodes=nodes,
         input_bindings=(
             InputBinding(source=WorkflowInputRef(port="source"), destination=NodeInputRef(node=owner, port="source")),
+            InputBinding(
+                source=WorkflowInputRef(port="source"), destination=NodeInputRef(node=complete, port="source")
+            ),
+            InputBinding(
+                source=NodeOutputRef(node=owner, port="redacted"),
+                destination=NodeInputRef(node=complete, port="candidate"),
+            ),
+            InputBinding(
+                source=NodeOutputRef(node=owner, port="spans"), destination=NodeInputRef(node=complete, port="spans")
+            ),
         ),
         output_bindings=(
             OutputBinding(
@@ -280,10 +353,18 @@ async def execute_detection_redact(
             *(SequenceEdge(before=node, after=complete) for node in ids if node != complete),
         ),
         choices=(),
-        protection=(),
+        protection=(
+            ProtectionRequirement(
+                outcome="ok",
+                meaning=REDACT_MEANING,
+                subject_port="redacted",
+                consumed_ports=frozenset({"source"}),
+                coverage=frozenset(),
+            ),
+        ),
         limits=WorkflowLimits(
             max_nodes=len(nodes),
-            max_bindings=3,
+            max_bindings=6,
             max_sequence_edges=count + len(nodes),
             max_choices=0,
             max_branch_members=0,
@@ -335,7 +416,7 @@ async def execute_detection_redact(
             BoundInput(target=target, source=target, port="source", artifact_type=text_type) for target in targets
         ),
         configuration=PreparationConfiguration(
-            purpose="execution_only", required_protection_outcomes=frozenset(), hard_request_limit=None
+            purpose="protection", required_protection_outcomes=frozenset({"ok"}), hard_request_limit=None
         ),
         state=StateRevisionView(revisions=frozenset()),
         selections=tuple(
@@ -413,15 +494,24 @@ async def execute_detection_redact(
         capabilities=capabilities,
         policies=tuple(policies),
         decisions=(),
-        assessment_productions=(),
+        assessment_productions=(
+            EvidenceProductionDecl(
+                node=complete,
+                outcome="ok",
+                promise="redaction",
+                evidence_port="assessment",
+                absence_queries=frozenset(),
+                supported_findings=frozenset({REDACT_MATCH, REDACT_MISMATCH}),
+            ),
+        ),
         assessment_limits=AssessmentLimits(
-            max_productions=0,
-            max_findings_per_production=0,
-            max_finding_code_bytes=0,
+            max_productions=1,
+            max_findings_per_production=2,
+            max_finding_code_bytes=64,
             max_absence_queries=0,
-            max_assessment_facts=0,
-            max_port_facts=size * 2,
-            max_provenance_edges=size * 2,
+            max_assessment_facts=size,
+            max_port_facts=size * 8,
+            max_provenance_edges=size * 8,
         ),
     )
     loop = ensure_async_engine_loop()
@@ -434,6 +524,7 @@ async def execute_detection_redact(
         return physical, transport
 
     physical, transport = await asyncio.wrap_future(asyncio.run_coroutine_threadsafe(create_resource(), loop))
+    handed_to_runtime = False
     try:
         consumer = DetectionRedactInvocation(
             source,
@@ -459,7 +550,11 @@ async def execute_detection_redact(
                 implementation=cap.implementation,
                 operation=cap.operation,
                 configuration=cap.configuration,
-                local=_ProfileLocal("async_required" if node == probe else "ok") if node in locals_ else None,
+                local=RedactAssessment()
+                if node == complete
+                else _ProfileLocal("async_required")
+                if node == probe
+                else None,
                 transport=transport if node not in {owner, *locals_, readiness} else None,
                 delegated=worker if node == owner else None,
                 resource=lease
@@ -479,6 +574,7 @@ async def execute_detection_redact(
             clock=_Clock(),
         )
         running = await start_execution(admitted=admitted, capabilities=capabilities, services=services)
+        handed_to_runtime = True
         completion = asyncio.create_task(running.wait())
         try:
             return await asyncio.shield(completion)
@@ -491,5 +587,5 @@ async def execute_detection_redact(
                     continue
             raise
     finally:
-        if not physical.closed:
+        if not handed_to_runtime and not physical.closed:
             await asyncio.wrap_future(asyncio.run_coroutine_threadsafe(physical.close(), loop))

@@ -8,7 +8,7 @@ import asyncio
 from collections.abc import Callable, Coroutine
 from contextvars import ContextVar, copy_context
 from dataclasses import replace
-from typing import TYPE_CHECKING, ClassVar, Literal, TypeVar, cast
+from typing import TYPE_CHECKING, ClassVar, Literal, TypeVar
 
 from anonymizer.engine.graph_sdk._effect_values import EffectCode, EffectRejected, PrivateValue, reject, require_count
 from anonymizer.engine.graph_sdk._execution_dispatch import _mapping, _run_local
@@ -739,12 +739,23 @@ class _DelegatedOwner(PrivateValue):
             from anonymizer.engine.detection._frame_publication import FramePublication
 
             try:
-                valid_frame = type(frame) is FramePublication and frame.matches(result.results)
+                accepted_frame = (
+                    frame.accept(
+                        result.results,
+                        opaque=tuple(
+                            value
+                            for job in self.jobs.values()
+                            for value in runtime.frame.sources[job.target].opaque_cells
+                        ),
+                    )
+                    if type(frame) is FramePublication
+                    else None
+                )
             except (AttributeError, TypeError, ValueError):
-                valid_frame = False
-            if not valid_frame:
+                accepted_frame = None
+            if accepted_frame is None:
                 return self._failure("failure", "malformed_response")
-            runtime.frame.publications.append(cast(FramePublication, frame))
+            runtime.frame.publications.append(accepted_frame)
         return {
             item.association: (
                 _mapping(self.policy, "result", item.outcome, None),

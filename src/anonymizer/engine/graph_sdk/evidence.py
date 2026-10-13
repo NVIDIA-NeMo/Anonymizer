@@ -44,7 +44,7 @@ from anonymizer.engine.graph_sdk.records import (
 )
 from anonymizer.engine.graph_sdk.requests import TextArtifactValue, TextCollectionValue
 from anonymizer.graph._values import ActivationKey, ArtifactRef, ContractViolation, DatumId
-from anonymizer.graph._workflow_composition import _project_evidence_port, _selected_nodes
+from anonymizer.graph._workflow_composition import _project_consumed_ports, _project_evidence_port, _selected_nodes
 from anonymizer.graph.workflow import (
     AdmittedWorkflow,
     ContextInputRef,
@@ -869,6 +869,7 @@ class _PromiseProjection:
             )
             assignment = {node: outcome for node, outcome in assignment.items() if node in selected}
             edges = self._edges(body, assignment)
+            dependency_edges = self._edges(body, assignment, dependencies=True)
             interface_outcome = next(
                 item for item in body.interface.outcomes if item.name == mapping.destination.outcome
             )
@@ -908,16 +909,13 @@ class _PromiseProjection:
                             assignment=assignment,
                             allow_output_alias=True,
                         )
-                        consumed = frozenset(
-                            _project_evidence_port(
-                                port,
-                                node=node.id,
-                                input_port=True,
-                                edges=edges,
-                                declared=declared_items,
-                                assignment=assignment,
-                            )
-                            for port in promise.consumed_ports
+                        consumed = _project_consumed_ports(
+                            promise.consumed_ports,
+                            node=node.id,
+                            identity_edges=edges,
+                            dependency_edges=dependency_edges,
+                            declared=declared_items,
+                            assignment=assignment,
                         )
                     except ContractViolation:
                         continue
@@ -934,7 +932,9 @@ class _PromiseProjection:
                     )
         return list(projected)
 
-    def _edges(self, body: AdmittedWorkflow, assignment: dict[NodeId, OutcomeSpec]) -> set[tuple[Vertex, Vertex]]:
+    def _edges(
+        self, body: AdmittedWorkflow, assignment: dict[NodeId, OutcomeSpec], *, dependencies: bool = False
+    ) -> set[tuple[Vertex, Vertex]]:
         scope = next(item for item in self.workflow.scopes if item.workflow is body)
         replaced = {(item.member, item.item_input) for item in scope.maps if item.item_input is not None}
         edges: set[tuple[Vertex, Vertex]] = set()
@@ -967,6 +967,12 @@ class _PromiseProjection:
             if node.id not in assignment:
                 continue
             for dependency in node.operation.output_dependencies:
-                if dependency.identity_input is not None and dependency.output in assignment[node.id].produced_ports:
+                if dependency.output not in assignment[node.id].produced_ports:
+                    continue
+                if dependencies:
+                    edges.update(
+                        (("in", node.id, port), ("out", node.id, dependency.output)) for port in dependency.inputs
+                    )
+                elif dependency.identity_input is not None:
                     edges.add((("in", node.id, dependency.identity_input), ("out", node.id, dependency.output)))
         return edges

@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, cast
 
 import pandas as pd
 
+from anonymizer.engine.detection.artifacts import EntitySpansValue
 from anonymizer.engine.graph_sdk.requests import AssociationResult, SemanticAssociation, TextArtifactValue
 from anonymizer.engine.ndd.adapter import FailedRecord
 from anonymizer.graph._values import ArtifactRef
@@ -36,13 +37,46 @@ class PublishedFrame:
     def project(self, result: ExecutionResult) -> pd.DataFrame:
         if not any(self is frame for frame in result.frames):
             raise ValueError("frame belongs to a different execution")
+        if (
+            type(getattr(self, "_content", None)) is not pd.DataFrame
+            or not isinstance(getattr(self, "_columns", None), pd.Index)
+            or type(getattr(self, "_text", None)) is not tuple
+            or not self._text
+            or type(getattr(self, "failed_records", None)) is not tuple
+            or any(type(item) is not FailedRecord for item in self.failed_records)
+            or type(getattr(self, "_opaque", None)) is not tuple
+        ):
+            raise ValueError("malformed retained frame")
+        for binding in self._text:
+            if (
+                type(binding) is not tuple
+                or len(binding) != 2
+                or type(binding[0]) is not str
+                or not binding[0]
+                or type(binding[1]) is not tuple
+                or len(binding[1]) != len(self._content)
+                or any(type(reference) is not ArtifactRef for reference in binding[1])
+            ):
+                raise ValueError("malformed retained frame binding")
+        columns = [column for column, _ in self._text]
+        if (
+            len(set(columns)) != len(columns)
+            or any(list(self._columns).count(column) != 1 or column in self._content for column in columns)
+            or not self._content.columns.equals(self._columns.drop(columns))
+        ):
+            raise ValueError("malformed retained frame columns")
         values = dict(result.artifacts)
         projected = _copy_frame(self._content, self._opaque)
         for column, references in self._text:
             text = [values[reference] for reference in references]
-            if any(type(value) is not TextArtifactValue for value in text):
-                raise ValueError("frame text reference has a non-text artifact")
-            projected[column] = [cast(TextArtifactValue, value).text for value in text]
+            if any(type(value) not in (TextArtifactValue, EntitySpansValue) for value in text):
+                raise ValueError("frame reference has an unsupported artifact")
+            projected[column] = [
+                value.text
+                if isinstance(value, TextArtifactValue)
+                else {"entities": [entity.as_dict() for entity in cast(EntitySpansValue, value).entities]}
+                for value in text
+            ]
         return projected.reindex(columns=self._columns)
 
 
@@ -63,7 +97,7 @@ class FramePublication:
     _content: pd.DataFrame
     _columns: pd.Index
     associations: tuple[SemanticAssociation, ...]
-    _text: tuple[tuple[str, str, tuple[str, ...]], ...]
+    _text: tuple[tuple[str, str, tuple[str | EntitySpansValue, ...]], ...]
     failed_records: tuple[FailedRecord, ...]
     _opaque: tuple[object, ...]
 
@@ -76,6 +110,7 @@ class FramePublication:
         text_ports: tuple[tuple[str, str], ...],
         failed_records: tuple[FailedRecord, ...],
         opaque_source: pd.DataFrame,
+        span_ports: tuple[tuple[str, str, tuple[EntitySpansValue, ...]], ...] = (),
     ) -> FramePublication:
         if (
             len(dataframe) != len(associations)
@@ -84,12 +119,12 @@ class FramePublication:
             or len({column for column, _ in text_ports}) != len(text_ports)
         ):
             raise ValueError("frame publication has ambiguous source or text columns")
-        text = tuple((column, port, tuple(dataframe[column])) for column, port in text_ports)
-        if not text or any(type(value) is not str for _, _, values in text for value in values):
+        text = tuple((column, port, tuple(dataframe[column])) for column, port in text_ports) + span_ports
+        if not text or any(type(value) not in (str, EntitySpansValue) for _, _, values in text for value in values):
             raise ValueError("frame publication requires semantic text outputs")
         opaque = tuple(value for row in opaque_source.itertuples(index=False, name=None) for value in row)
         return cls(
-            _copy_frame(dataframe.drop(columns=[column for column, _ in text_ports]), opaque),
+            _copy_frame(dataframe.drop(columns=[column for column, _, _ in text]), opaque),
             dataframe.columns.copy(),
             associations,
             text,
@@ -97,22 +132,65 @@ class FramePublication:
             opaque,
         )
 
-    def matches(self, results: tuple[AssociationResult, ...]) -> bool:
+    def accept(self, results: tuple[AssociationResult, ...], *, opaque: tuple[object, ...]) -> FramePublication | None:
+        """Validate raw callback fields and transfer a detached snapshot to the owner."""
+        if (
+            type(getattr(self, "_content", None)) is not pd.DataFrame
+            or not isinstance(getattr(self, "_columns", None), pd.Index)
+            or type(getattr(self, "associations", None)) is not tuple
+            or not self.associations
+            or any(type(item) is not SemanticAssociation for item in self.associations)
+            or len(set(self.associations)) != len(self.associations)
+            or len(self._content) != len(self.associations)
+            or type(getattr(self, "_text", None)) is not tuple
+            or not self._text
+            or type(getattr(self, "failed_records", None)) is not tuple
+            or any(type(item) is not FailedRecord for item in self.failed_records)
+            or type(getattr(self, "_opaque", None)) is not tuple
+        ):
+            return None
+        for item in self._text:
+            if (
+                type(item) is not tuple
+                or len(item) != 3
+                or type(item[0]) is not str
+                or type(item[1]) is not str
+                or not item[0]
+                or not item[1]
+                or type(item[2]) is not tuple
+                or len(item[2]) != len(self.associations)
+                or any(type(value) not in (str, EntitySpansValue) for value in item[2])
+            ):
+                return None
+        names = [column for column, _, _ in self._text]
+        if (
+            len(set(names)) != len(names)
+            or any(list(self._columns).count(name) != 1 or name in self._content.columns for name in names)
+            or not self._content.columns.equals(self._columns.drop(names))
+        ):
+            return None
         by_source = {result.association: result for result in results}
         if len(by_source) != len(results) or set(by_source) != set(self.associations):
-            return False
+            return None
         for _, port, values in self._text:
             for association, text in zip(self.associations, values, strict=True):
                 outputs = [output for output in by_source[association].outputs if output.port == port]
-                if (
-                    len(outputs) != 1
-                    or type(outputs[0].value) is not TextArtifactValue
-                    or outputs[0].value.text != text
+                if len(outputs) != 1 or outputs[0].value != (
+                    TextArtifactValue(text=text) if type(text) is str else text
                 ):
-                    return False
-        return True
+                    return None
+        return FramePublication(
+            _copy_frame(self._content, opaque),
+            self._columns.copy(),
+            self.associations,
+            self._text,
+            self.failed_records,
+            opaque,
+        )
 
     def bind(self, ports: tuple[ExecutionPortFact, ...]) -> PublishedFrame | None:
+        if not self._text:
+            return None
         text = []
         for column, port, _ in self._text:
             references = []

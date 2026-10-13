@@ -19,9 +19,11 @@ from data_designer.config import ModelConfig
 
 from anonymizer.config.models import DetectionModelSelection, ReplaceModelSelection
 from anonymizer.config.replace_strategies import Redact
-from anonymizer.engine.constants import COL_REPLACED_TEXT
+from anonymizer.engine.constants import COL_FINAL_ENTITIES, COL_REPLACED_TEXT
 from anonymizer.engine.detection._frame_publication import FramePublication
+from anonymizer.engine.detection.artifacts import ENTITY_SPANS_TYPE, EntitySpansValue
 from anonymizer.engine.detection.detection_workflow import EntityDetectionWorkflow
+from anonymizer.engine.detection.postprocess import EntitySpan
 from anonymizer.engine.graph_sdk._execution_values import DelegatedRequests, LocalCompleted
 from anonymizer.engine.graph_sdk.requests import (
     AssociationInput,
@@ -32,7 +34,8 @@ from anonymizer.engine.graph_sdk.requests import (
 )
 from anonymizer.engine.ndd._graph_requests import NddPhysicalTransport, NddRequestBridge
 from anonymizer.engine.replace.replace_runner import ReplacementWorkflow
-from anonymizer.graph._values import DatumId
+from anonymizer.engine.schemas import EntitiesSchema
+from anonymizer.graph._values import ArtifactRef, DatumId
 from anonymizer.interface.errors import AnonymizerWorkflowError
 
 
@@ -56,7 +59,12 @@ class DetectionRedactInvocation:
         return await asyncio.to_thread(self._run, inputs, requests)
 
     def _run(self, inputs: tuple[AssociationInput, ...], requests: DelegatedRequests) -> LocalCompleted:
-        if any(type(item.association) is not SemanticAssociation or len(item.inputs) != 1 for item in inputs):
+        if any(
+            type(item.association) is not SemanticAssociation
+            or len(item.inputs) != 1
+            or item.inputs[0].artifact is None
+            for item in inputs
+        ):
             raise AnonymizerWorkflowError("DD graph detection requires one source-text input per association")
         frame = requests.bind_frame(self.source, targets=self.targets)
         bridge = NddRequestBridge(requests, self.slots, self.physical)
@@ -80,12 +88,35 @@ class DetectionRedactInvocation:
             selected_models=ReplaceModelSelection(replacement_generator=self.selected_models.entity_augmenter),
         )
         text = dict(zip(frame.associations, protected.dataframe[COL_REPLACED_TEXT], strict=True))
+        spans = {
+            item.association: EntitySpansValue(
+                source=cast(ArtifactRef, item.inputs[0].artifact),
+                entities=tuple(
+                    EntitySpan(
+                        entity.id,
+                        entity.value,
+                        entity.label,
+                        entity.start_position,
+                        entity.end_position,
+                        entity.score,
+                        entity.source,
+                    )
+                    for entity in EntitiesSchema.from_raw(
+                        detected.dataframe[COL_FINAL_ENTITIES].iloc[frame.associations.index(item.association)]
+                    ).entities
+                ),
+            )
+            for item in inputs
+        }
         results = tuple(
             AssociationResult(
                 association=item.association,
                 outcome=self.outcome,
                 consumed_context_ports=frozenset(),
                 outputs=(
+                    PortArtifact(
+                        port="spans", artifact_type=ENTITY_SPANS_TYPE, artifact=None, value=spans[item.association]
+                    ),
                     PortArtifact(
                         port=self.output_port,
                         artifact_type=item.inputs[0].artifact_type,
@@ -104,5 +135,8 @@ class DetectionRedactInvocation:
                 text_ports=((COL_REPLACED_TEXT, self.output_port),),
                 failed_records=tuple(detected.failed_records + protected.failed_records),
                 opaque_source=self.source,
+                span_ports=(
+                    (COL_FINAL_ENTITIES, "spans", tuple(spans[association] for association in frame.associations)),
+                ),
             ),
         )

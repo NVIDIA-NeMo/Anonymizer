@@ -895,6 +895,7 @@ _RESULT_KEY = object()
 class ExecutionResult(PrivateValue):
     _execution: AdmittedExecutionPlan
     implementation_resources: tuple[ImplementationResourceRegistration, ...]
+    _retained_resources: tuple[ResourceLease, ...]
     adaptive_acquisitions: tuple[AdaptiveResourceAcquisition, ...]
     _input_parents: tuple[tuple[DatumId, ActivationKey, str, ProvenanceKey], ...]
     _passthrough_parents: tuple[tuple[DatumId, ActivationKey, str, ProvenanceKey], ...]
@@ -918,6 +919,7 @@ class ExecutionResult(PrivateValue):
             raise TypeError("execution results are created by the executor")
         object.__setattr__(self, "invocation_state", None)
         object.__setattr__(self, "frames", ())
+        object.__setattr__(self, "_retained_resources", ())
         for name, value in values.items():
             object.__setattr__(self, name, value)
 

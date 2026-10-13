@@ -7,7 +7,7 @@ from __future__ import annotations
 import itertools
 from typing import TypeAlias
 
-from anonymizer.graph._values import ValidationCode
+from anonymizer.graph._values import ContractViolation, ValidationCode
 from anonymizer.graph._workflow_analysis import (
     _bounded_analysis,
     _difference,
@@ -252,6 +252,39 @@ def _validate_paths(
         _reject(ValidationCode.MISSING)
 
 
+def _project_consumed_ports(
+    ports: frozenset[EvidencePort],
+    *,
+    node: NodeId,
+    identity_edges: set[tuple[Vertex, Vertex]],
+    dependency_edges: set[tuple[Vertex, Vertex]],
+    declared: frozenset[MapItemPort],
+    assignment: dict[NodeId, OutcomeSpec],
+) -> frozenset[EvidencePort]:
+    """Summarize external dependencies while retaining exact local evidence inputs."""
+    projected: set[EvidencePort] = set()
+    for port in _visits(ports):
+        try:
+            projected.add(
+                _project_evidence_port(
+                    port,
+                    node=node,
+                    input_port=True,
+                    edges=identity_edges,
+                    declared=declared,
+                    assignment=assignment,
+                )
+            )
+        except ContractViolation as error:
+            if error.code is not ValidationCode.MISSING or not isinstance(port, str):
+                raise
+            roots = _walk_interface_inputs(("in", node, port), dependency_edges, backward=True)
+            if not roots:
+                raise
+            projected.update(_visits(roots))
+    return frozenset(projected)
+
+
 def _project_evidence_port(
     port: EvidencePort,
     *,
@@ -362,16 +395,13 @@ def _validate_composition_path(
             )
             contexts.add(ContextUse(port=endpoint, meaning=use.meaning, capture=use.capture))
         for promise in _visits(outcome.evidence):
-            consumed = frozenset(
-                _project_evidence_port(
-                    port,
-                    node=node,
-                    input_port=True,
-                    edges=identity_edges,
-                    declared=declared_items,
-                    assignment=assignment,
-                )
-                for port in _visits(promise.consumed_ports)
+            consumed = _project_consumed_ports(
+                promise.consumed_ports,
+                node=node,
+                identity_edges=identity_edges,
+                dependency_edges=dependency_edges,
+                declared=declared_items,
+                assignment=assignment,
             )
             subject = _project_evidence_port(
                 promise.subject_port,

@@ -22,7 +22,7 @@ from data_designer.interface import DataDesigner
 from anonymizer import Anonymizer, AnonymizerConfig, AnonymizerInput
 from anonymizer.config.models import DetectionModelSelection, ReplaceModelSelection
 from anonymizer.config.replace_strategies import Redact
-from anonymizer.engine.constants import COL_REPLACED_TEXT, COL_TEXT
+from anonymizer.engine.constants import COL_FINAL_ENTITIES, COL_REPLACED_TEXT, COL_TEXT
 from anonymizer.engine.detection.detection_workflow import EntityDetectionWorkflow
 from anonymizer.engine.ndd.adapter import RECORD_ID_COLUMN, NddAdapter
 from anonymizer.engine.replace.replace_runner import ReplacementWorkflow
@@ -290,7 +290,7 @@ def test_real_dd_whole_frame_uses_invocation_readiness_and_source_requests(
         monkeypatch.setattr(designer, "preview", lose_output)
 
     result = asyncio.run(run_graph_profile(scripted_detection, source, options, chunks))
-    assert result._execution.context.prepared.configuration.purpose == "execution_only"
+    assert result._execution.context.prepared.configuration.purpose == "protection"
     assert result.requests.dispatched_count == 5 + 2 * chunks
     assert calls == {"detector": 2, "validator": 2 * chunks, "augmenter": 2, "readiness": 1}
     assert len(result.frames) == (0 if unattributed_loss else 1)
@@ -300,6 +300,10 @@ def test_real_dd_whole_frame_uses_invocation_readiness_and_source_requests(
         pd.testing.assert_frame_equal(projected, expected)
         assert result.frames[0].failed_records == ()
         assert COL_REPLACED_TEXT not in result.frames[0]._content
+        assert COL_FINAL_ENTITIES not in result.frames[0]._content
+        checks = [port for port in result.ports if port.port == "assessment"]
+        assert len(checks) == 2
+        assert [dict(result.artifacts)[port.artifact].text for port in checks] == ["span_redaction_matches"] * 2
         artifacts = dict(result.artifacts)
         assert sorted(artifacts[output.candidate.artifact].text for output in result.final_outputs) == sorted(
             expected[COL_REPLACED_TEXT]
@@ -328,7 +332,7 @@ async def run_graph_profile(scripted_detection, source, options, chunks=1, artif
                 max_remote_outstanding=1,
                 max_runtime_artifacts=artifact_limit,
                 max_runtime_artifact_bytes=10000,
-                max_collection_items=0,
+                max_collection_items=16,
             ),
         )
     finally:

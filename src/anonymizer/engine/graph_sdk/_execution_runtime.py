@@ -874,6 +874,17 @@ class _InvocationRuntime:
             _key=_RESULT_KEY,
             _execution=self.admitted,
             implementation_resources=self.implementation_resources,
+            _retained_resources=tuple(
+                {
+                    lease.resource: lease
+                    for lease in (
+                        *(handle.resource for handle in self.services.handles if handle.resource is not None),
+                        *self.context_leases.values(),
+                    )
+                    if lease.owner == "sdk"
+                    and any(fact.resource == lease.resource and fact.disposition == "left_open" for fact in cleanup)
+                }.values()
+            ),
             adaptive_acquisitions=self.adaptive_acquisitions,
             _input_parents=tuple(self.facts.input_parents),
             _passthrough_parents=tuple(
