@@ -28,7 +28,6 @@ from anonymizer.graph._workflow_values import (
     DynamicLimits,
     DynamicScope,
     InputBinding,
-    MapItemPort,
     Node,
     NodeId,
     NodeInputRef,
@@ -44,6 +43,8 @@ from anonymizer.graph._workflow_values import (
     WorkflowInputRef,
     WorkflowLimits,
     _analysis_limit,
+    _map_item_ports,
+    _reachable_workflows,
     _reject,
     _tuple_of,
 )
@@ -58,16 +59,7 @@ def admit_activation_workflow(
         _reject(ValidationCode.INVALID_TYPE)
     _tuple_of(scopes, DynamicScope)
 
-    reachable: list[AdmittedWorkflow] = []
-    pending = [workflow]
-    seen: set[int] = set()
-    while pending:
-        current = _visited_pop(pending)
-        if id(current) in seen:
-            continue
-        seen.add(id(current))
-        reachable.append(current)
-        pending.extend(node.body for node in _visits(current.nodes) if isinstance(node, SubgraphNode))
+    reachable = list(_reachable_workflows([workflow]))
     by_workflow = {id(scope.workflow): scope for scope in _visits(scopes)}
     if not _equal(len(by_workflow), len(scopes)):
         _reject(ValidationCode.DUPLICATE)
@@ -315,18 +307,12 @@ def substitute_activation_workflow(
         DynamicScope(workflow=updated, maps=root_scope.maps, joins=root_scope.joins, loops=root_scope.loops)
     ]
     existing = {id(scope.workflow): scope for scope in _visits(workflow.scopes)}
-    pending = [node.body for node in _visits(updated.nodes) if isinstance(node, SubgraphNode)]
-    seen: set[int] = set()
-    while pending:
-        current = _visited_pop(pending)
-        if id(current) in seen:
-            continue
-        seen.add(id(current))
+    roots = [node.body for node in _visits(updated.nodes) if isinstance(node, SubgraphNode)]
+    for current in _reachable_workflows(roots):
         prior = existing.get(id(current))
         admitted_scopes.append(
             prior if prior is not None else DynamicScope(workflow=current, maps=(), joins=(), loops=())
         )
-        pending.extend(node.body for node in _visits(current.nodes) if isinstance(node, SubgraphNode))
     return admit_activation_workflow(
         workflow=updated,
         scopes=tuple(_visits(admitted_scopes)),
@@ -375,21 +361,11 @@ def admit_static_workflow(
         operation = node_operations.get(choice.selector)
         choice_states *= len(operation.outcomes) if operation is not None else 1
     raw_bindings = len(input_bindings) + len(output_bindings) + len(outcome_bindings)
-    raw_bindings += len(
-        {
-            port
-            for declaration in _visits(
-                (
-                    *_visits(
-                        (promise for outcome in _visits(interface.outcomes) for promise in _visits(outcome.evidence))
-                    ),
-                    *_visits(protection),
-                )
-            )
-            for port in _visits((declaration.subject_port, *_visits(declaration.consumed_ports)))
-            if isinstance(port, MapItemPort)
-        }
+    declarations = (
+        *_visits((promise for outcome in _visits(interface.outcomes) for promise in _visits(outcome.evidence))),
+        *_visits(protection),
     )
+    raw_bindings += len(set(_map_item_ports(_visits(declarations))))
     branch_members = sum(len(branch.members) for choice in _visits(choices) for branch in _visits(choice.branches))
     if (
         len(nodes) > limits.max_nodes
@@ -612,19 +588,10 @@ def _validate_references(
     interface_outcomes = {outcome.name for outcome in _visits(interface.outcomes)}
     incompatible_binding = False
     endpoints = _union(
-        {
-            port
-            for outcome in _visits(interface.outcomes)
-            for promise in _visits(outcome.evidence)
-            for port in _visits((promise.subject_port, *_visits(promise.consumed_ports)))
-            if isinstance(port, MapItemPort)
-        },
-        {
-            port
-            for requirement in _visits(protection)
-            for port in _visits((requirement.subject_port, *_visits(requirement.consumed_ports)))
-            if isinstance(port, MapItemPort)
-        },
+        set(
+            _map_item_ports(promise for outcome in _visits(interface.outcomes) for promise in _visits(outcome.evidence))
+        ),
+        set(_map_item_ports(_visits(protection))),
     )
     for endpoint in _visits(endpoints):
         if not nodes:

@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, replace
 from typing import Any, Literal, Never, SupportsIndex, TypeAlias
 
@@ -860,12 +861,7 @@ class AdmittedWorkflow(_PrivateValue):
             ),
             *_visits(self.protection_requirements),
         )
-        return frozenset(
-            port
-            for declaration in _visits(declarations)
-            for port in _visits((declaration.subject_port, *_visits(declaration.consumed_ports)))
-            if isinstance(port, MapItemPort)
-        )
+        return frozenset(_map_item_ports(_visits(declarations)))
 
     def __init__(
         self,
@@ -940,6 +936,26 @@ class AdmittedWorkflow(_PrivateValue):
             )
             hashes[key] = hash((_workflow_local_state(workflow), node_hashes))
         return hashes[id(self)]
+
+
+def _reachable_workflows(pending: list[AdmittedWorkflow]) -> Iterator[AdmittedWorkflow]:
+    """Consume a local root stack, visiting each body identity once in caller order."""
+    seen: set[int] = set()
+    while pending:
+        current = _visited_pop(pending)
+        if id(current) in seen:
+            continue
+        seen.add(id(current))
+        yield current
+        pending.extend(node.body for node in _visits(current.nodes) if isinstance(node, SubgraphNode))
+
+
+def _map_item_ports(declarations: Iterable[EvidencePromise | ProtectionRequirement]) -> Iterator[MapItemPort]:
+    """Extract dynamic endpoints; callers retain declaration traversal metering."""
+    for declaration in declarations:
+        for port in _visits((declaration.subject_port, *_visits(declaration.consumed_ports))):
+            if isinstance(port, MapItemPort):
+                yield port
 
 
 def _workflow_local_state(workflow: AdmittedWorkflow) -> tuple[object, ...]:

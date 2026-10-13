@@ -40,6 +40,8 @@ from anonymizer.graph._workflow_values import (
     WorkflowId,
     WorkflowInputRef,
     _analysis_limit,
+    _map_item_ports,
+    _reachable_workflows,
     _reject,
     _tuple_of,
 )
@@ -134,16 +136,7 @@ def validate_dynamic_input_summaries(
     destinations = [item.destination for item in _visits(replacements)]
     if not _equal(len(destinations), len(set(_visits(destinations)))):
         _reject(ValidationCode.DUPLICATE)
-    reachable: list[AdmittedWorkflow] = []
-    pending = [workflow]
-    seen: set[int] = set()
-    while pending:
-        current = _visited_pop(pending)
-        if id(current) in seen:
-            continue
-        seen.add(id(current))
-        reachable.append(current)
-        pending.extend(item.body for item in _visits(current.nodes) if isinstance(item, SubgraphNode))
+    reachable = list(_reachable_workflows([workflow]))
     owners = {item.workflow: item for item in _visits(reachable)}
     grouped: dict[WorkflowId, list[InputBinding]] = {}
     for replacement in _visits(replacements):
@@ -354,12 +347,7 @@ def _validate_composition_path(
     state_effects: set[StateEffect] = set()
     models: set[ModelRequirement] = set()
     ceiling = [0, 0, 0, 0]
-    declared_items = frozenset(
-        port
-        for promise in _visits(external_outcome.evidence)
-        for port in _visits((promise.subject_port, *_visits(promise.consumed_ports)))
-        if isinstance(port, MapItemPort)
-    )
+    declared_items = frozenset(_map_item_ports(_visits(external_outcome.evidence)))
     for node in _visits(reachable):
         operation = operations[node]
         outcome = assignment[node]
