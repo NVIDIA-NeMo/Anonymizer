@@ -397,19 +397,24 @@ def _prepare_frame_plan(
     bound_inputs: tuple[BoundInput, ...],
     *,
     invocation_owned: bool = False,
+    scopes: tuple[DynamicScope, ...] = (),
+    max_occurrences: int | None = None,
 ) -> PreparedPlan:
     """Shared fixed-operation preparation for existing whole-frame consumers."""
-    count = len(raw.nodes)
+    scopes = scopes or (DynamicScope(workflow=raw, maps=(), joins=(), loops=()),)
+    nodes = tuple(node for scope in scopes for node in scope.workflow.nodes)
+    count = len(nodes) if max_occurrences is None else max_occurrences
+    loops = tuple(loop for scope in scopes for loop in scope.loops)
     workflow = admit_activation_workflow(
         workflow=raw,
-        scopes=(DynamicScope(workflow=raw, maps=(), joins=(), loops=()),),
+        scopes=scopes,
         limits=DynamicLimits(
             max_maps=0,
-            max_joins=0,
-            max_loops=0,
+            max_joins=sum(len(scope.joins) for scope in scopes),
+            max_loops=len(loops),
             max_children_per_map=0,
-            max_iterations_per_loop=0,
-            max_dynamic_depth=1,
+            max_iterations_per_loop=max((loop.max_iterations for loop in loops), default=0),
+            max_dynamic_depth=len(scopes) + 1,
             max_activation_occurrences=count,
         ),
     )
@@ -417,7 +422,7 @@ def _prepare_frame_plan(
     return prepare(
         data=data,
         workflow=workflow,
-        activation_limits=ActivationLimits(max_events=3 * count, max_entries=count, max_parent_depth=1),
+        activation_limits=ActivationLimits(max_events=4 * count, max_entries=count, max_parent_depth=len(scopes) + 1),
         bound_inputs=bound_inputs,
         configuration=PreparationConfiguration(
             purpose="execution_only",
@@ -429,7 +434,7 @@ def _prepare_frame_plan(
         selections=tuple(
             ImplementationSelection(
                 node=next(
-                    node.id for node in raw.nodes if isinstance(node, OperationNode) and node.operation == cap.operation
+                    node.id for node in nodes if isinstance(node, OperationNode) and node.operation == cap.operation
                 ),
                 implementation=cap.implementation,
                 configuration=cap.configuration,
@@ -440,11 +445,11 @@ def _prepare_frame_plan(
         limits=PreparationLimits(
             max_bound_inputs=len(bound_inputs),
             max_state_revisions=0,
-            max_selections=count,
+            max_selections=len(capabilities),
             max_config_depth=max(size[0] for size in sizes),
             max_config_atoms=sum(size[1] for size in sizes) * 2,
             max_total_activation_slots=count * max(1, len(data.targets)),
-            max_capabilities=count,
+            max_capabilities=len(capabilities),
         ),
     )
 
@@ -550,8 +555,8 @@ def _frame_implementation(
                 request=None,
             ),
         ),
-        result_outcomes=frozenset({"ok"}),
-        runtime_outcomes=_runtime_rows(("ok",), not local),
+        result_outcomes=frozenset(outcome.name for outcome in operation.outcomes),
+        runtime_outcomes=_runtime_rows(tuple(outcome.name for outcome in operation.outcomes), not local),
         delegated=DelegatedRequestContract(
             mode="opaque", child_slots=(), routes=(), followups=frozenset(), usage_requirement="unknown_allowed"
         )

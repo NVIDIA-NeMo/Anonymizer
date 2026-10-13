@@ -8,7 +8,7 @@ import asyncio
 from collections.abc import Callable, Coroutine
 from contextvars import ContextVar, copy_context
 from dataclasses import replace
-from typing import TYPE_CHECKING, ClassVar, Literal, TypeVar
+from typing import TYPE_CHECKING, ClassVar, Literal, TypeVar, cast
 
 from anonymizer.engine.graph_sdk._effect_values import EffectCode, EffectRejected, PrivateValue, reject, require_count
 from anonymizer.engine.graph_sdk._execution_dispatch import _mapping, _run_local
@@ -25,6 +25,7 @@ from anonymizer.engine.graph_sdk._execution_values import (
     LocalCompleted,
     LocalFailure,
     LocalResult,
+    OperationOutputKey,
     RuntimeOutcome,
     SubmissionFailure,
 )
@@ -44,6 +45,7 @@ from anonymizer.engine.graph_sdk.requests import (
     FailureClass,
     MarkLost,
     PhysicalRequestId,
+    PortArtifact,
     RequestChain,
     RequestChainId,
     RequestChild,
@@ -310,6 +312,39 @@ class _DelegatedOwner(PrivateValue):
         key = source.keys.get(slot)
         entry = next((row for row in source.state.entries if row.activation == key), None)
         if entry is None:
+            reservation = self.runtime.prepared.reservation_recipe[slot] if key is not None else None
+            if reservation is not None and key is not None:
+                scope = next(
+                    scope
+                    for scope in source.state.workflow.scopes
+                    if any(node.id == reservation.template for node in scope.workflow.nodes)
+                )
+                for choice in scope.workflow.choices:
+                    branch = next(
+                        (branch for branch in choice.branches if reservation.template in branch.members), None
+                    )
+                    selector = next(
+                        (
+                            row
+                            for row in source.state.entries
+                            if row.template == choice.selector and row.activation.parent == key.parent
+                        ),
+                        None,
+                    )
+                    if (
+                        branch is not None
+                        and selector is not None
+                        and selector.outcome is not None
+                        and selector.outcome not in branch.outcomes
+                    ):
+                        return None
+                parent = key
+                while parent.parent is not None:
+                    ancestor = parent.parent
+                    expansion = next((item for item in source.state.expansions if item.parent == ancestor), None)
+                    if expansion is not None and expansion.status == "closed" and parent not in expansion.members:
+                        return None
+                    parent = parent.parent
             reject(EffectCode.FOREIGN_OWNER)
         if entry.activation == source_job.activation:
             if entry.status == "success":
@@ -927,10 +962,60 @@ class _DelegatedOwner(PrivateValue):
         if frame is not None:
             from anonymizer.engine.detection._frame_publication import FramePublication
 
+            frame_results = successful
+            if any(policy.submission_owner == self.policy.node for policy in runtime.policies.values()):
+                from anonymizer.engine.graph_sdk._execution_publication import _final_outputs
+
+                targets = {self.jobs[cast(SemanticAssociation, item.association)].target for item in successful}
+                finals = tuple(
+                    item
+                    for item in _final_outputs(
+                        runtime.prepared, runtime.frame.states, runtime.facts.produced, runtime.facts.provenance
+                    )
+                    if item.target in targets
+                )
+                if len(finals) != len(targets) or {item.target for item in finals} != targets:
+                    return self._failure("failure", "malformed_response")
+                semantic_results = []
+                for item in finals:
+                    producer = item.producer
+                    if not isinstance(producer, OperationOutputKey) or producer.activation not in runtime.attempts:
+                        return self._failure("failure", "malformed_response")
+                    entry = next(
+                        row
+                        for row in runtime.frame.sources[item.target].state.entries
+                        if row.activation == producer.activation
+                    )
+                    if runtime.policies[entry.template].submission_owner != self.policy.node:
+                        return self._failure("failure", "malformed_response")
+                    assert entry.outcome is not None
+                    semantic_results.append(
+                        AssociationResult(
+                            association=SemanticAssociation(task=runtime.attempts[producer.activation]),
+                            outcome=entry.outcome,
+                            consumed_context_ports=frozenset(),
+                            outputs=(
+                                PortArtifact(
+                                    port=producer.port,
+                                    artifact_type=next(
+                                        port.artifact_type
+                                        for port in runtime.policies[entry.template]
+                                        .implementations[0]
+                                        .capability.operation.outputs
+                                        if port.name == producer.port
+                                    ),
+                                    artifact=None,
+                                    value=runtime.facts.values[item.candidate.artifact],
+                                ),
+                            ),
+                        )
+                    )
+                frame_results = tuple(semantic_results)
+
             try:
                 accepted_frame = (
                     frame.accept(
-                        successful,
+                        frame_results,
                         opaque=tuple(
                             value
                             for job in self.jobs.values()

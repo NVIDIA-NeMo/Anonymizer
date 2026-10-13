@@ -179,6 +179,7 @@ def _apply_passthrough_defaults(
 class RewriteResult:
     dataframe: pd.DataFrame
     failed_records: list[FailedRecord]
+    source_positions: tuple[int, ...] | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -233,7 +234,11 @@ class RewriteWorkflow:
             if entity_rows.empty:
                 _apply_passthrough_defaults(passthrough_rows)
                 result_df = merge_and_reorder(passthrough_rows)
-                result = RewriteResult(dataframe=result_df, failed_records=all_failed)
+                result = RewriteResult(
+                    dataframe=result_df,
+                    failed_records=all_failed,
+                    source_positions=tuple(sorted(passthrough_rows[ROW_ORDER_COL])),
+                )
                 measurement.update(
                     output_row_count=len(result.dataframe),
                     failed_record_count=len(result.failed_records),
@@ -302,7 +307,11 @@ class RewriteWorkflow:
             # --- Merge and return ---
             _apply_passthrough_defaults(passthrough_rows)
             combined = merge_and_reorder(entity_rows, passthrough_rows)
-            result = RewriteResult(dataframe=combined, failed_records=all_failed)
+            result = RewriteResult(
+                dataframe=combined,
+                failed_records=all_failed,
+                source_positions=tuple(sorted([*entity_rows[ROW_ORDER_COL], *passthrough_rows[ROW_ORDER_COL]])),
+            )
             measurement.update(
                 output_row_count=len(result.dataframe),
                 failed_record_count=len(result.failed_records),
@@ -332,6 +341,8 @@ class RewriteWorkflow:
             selected_models=selected_models,
             evaluation=evaluation,
         )
+        if self._semantic_binding:
+            eval_columns = self._semantic_binding.columns(eval_columns)
         eval_seed_cols = derive_seed_columns(eval_columns, df)
 
         # Always run initial evaluate -- metrics must be produced even when max_repair_iterations=0
@@ -392,6 +403,13 @@ class RewriteWorkflow:
                 columns=repair_columns,
                 workflow_name=f"rewrite-repair-{iteration}",
                 preview_num_records=preview_num_records,
+                **(
+                    self._semantic_binding.stage(
+                        repair_seed, tuple(failing_rows[ROW_ORDER_COL]), iteration=iteration + 1
+                    )
+                    if self._semantic_binding
+                    else {}
+                ),
             )
             all_failed.extend(repair_result.failed_records)
 
@@ -410,6 +428,13 @@ class RewriteWorkflow:
                 columns=eval_columns,
                 workflow_name=f"rewrite-evaluate-{iteration + 1}",
                 preview_num_records=preview_num_records,
+                **(
+                    self._semantic_binding.stage(
+                        reeval_seed, tuple(failing_rows[ROW_ORDER_COL]), iteration=iteration + 1
+                    )
+                    if self._semantic_binding
+                    else {}
+                ),
             )
             failing_rows = _join_new_columns(
                 failing_rows,

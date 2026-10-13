@@ -14,7 +14,7 @@ import pytest
 from data_designer.engine.dataset_builders.utils.async_concurrency import ensure_async_engine_loop
 
 from anonymizer import Rewrite
-from anonymizer.engine.constants import COL_TEXT
+from anonymizer.engine.constants import COL_ENTITIES_BY_VALUE, COL_REWRITE_BASELINE_TEXT, COL_TEXT
 from anonymizer.engine.graph_sdk._artifact_shape import ArtifactShape
 from anonymizer.engine.graph_sdk._effect_values import EffectRejected
 from anonymizer.engine.graph_sdk._ingress import inspect_artifact
@@ -26,12 +26,17 @@ from anonymizer.engine.ndd.adapter import NddAdapter
 from anonymizer.engine.rewrite._semantic_profile import execute_initial_evaluation
 from anonymizer.engine.rewrite.artifacts import (
     EvaluationMetricsValue,
+    PrivacyAnswer,
+    PrivacyAnswersValue,
+    PrivacyQuestion,
+    QualityAnswer,
+    QualityAnswersValue,
     QualityComparison,
     QualityComparisonValue,
     QualityQuestion,
     RewriteQAValue,
 )
-from anonymizer.engine.rewrite.rewrite_workflow import RewriteWorkflow
+from anonymizer.engine.rewrite.rewrite_workflow import RewriteResult, RewriteWorkflow
 
 
 @pytest.mark.parametrize("importance", ["critical", "important"])
@@ -51,6 +56,29 @@ def test_closed_comparison_preserves_null_and_recounts_raw_membership():
     assert not inspect_artifact(value)
 
 
+@pytest.mark.parametrize("extra", [False, True])
+@pytest.mark.parametrize(
+    "value, field",
+    [
+        (RewriteQAValue(quality=(QualityQuestion(1, "fact", "critical", "Q", "A"),), privacy=()), "quality"),
+        (
+            RewriteQAValue(quality=(), privacy=(PrivacyQuestion(1, "Q", "high", "person", "A", "direct_identifier"),)),
+            "privacy",
+        ),
+        (QualityAnswersValue(answers=(QualityAnswer(1, "A"),)), "answers"),
+        (PrivacyAnswersValue(answers=(PrivacyAnswer(1, "no", 1.0, "none", ()),)), "answers"),
+        (QualityComparisonValue(comparisons=(QualityComparison(1, 1.0, None),)), "comparisons"),
+    ],
+)
+def test_retained_closed_row_arity_rejects_before_access(value, field, extra):
+    assert inspect_artifact(value)
+    value = replace(value)
+    row = getattr(value, field)[0]
+    malformed = tuple.__new__(type(row), tuple(row) + (None,) if extra else ())
+    object.__setattr__(value, field, (malformed,))
+    assert not inspect_artifact(value)
+
+
 @pytest.mark.parametrize("finish", ["normal", "outer_failure", "after_metrics", "partial", "rollback", "cancel"])
 def test_prefix_publication_keeps_whole_submission_alive(monkeypatch, finish):
     asyncio.run(_lifecycle(monkeypatch, finish))
@@ -67,7 +95,12 @@ async def _lifecycle(monkeypatch, finish):
 
         async def publish():
             for association in binding.source.associations:
-                row = {"_quality_qa": {"items": []}, "_privacy_qa": {"items": []}, binding.state.rewritten_text: "safe"}
+                row = {
+                    "_quality_qa": {"items": []},
+                    "_privacy_qa": {"items": []},
+                    binding.state.rewritten_text: "safe",
+                    COL_REWRITE_BASELINE_TEXT: "same",
+                }
                 await binding.after(binding.state.rewritten_text, association, row, prefix=True)
             runtime = binding.requests.owner.runtime
             captured["prefix_refs"] = tuple(runtime.facts.produced.values())
@@ -104,6 +137,7 @@ async def _lifecycle(monkeypatch, finish):
                         "_quality_qa": {"items": []},
                         "_privacy_qa": {"items": []},
                         binding.state.rewritten_text: "safe",
+                        COL_REWRITE_BASELINE_TEXT: "same",
                     }
                     for column, output in (
                         (binding.state.quality_reanswer, {"answers": []}),
@@ -128,12 +162,17 @@ async def _lifecycle(monkeypatch, finish):
             asyncio.run_coroutine_threadsafe(complete(), ensure_async_engine_loop()).result()
             if finish == "after_metrics":
                 raise RuntimeError("literal late callback failure")
+        positions = (1,) if finish == "partial" else (0, 1)
+        returned = source.iloc[list(positions)].copy()
+        returned[binding.state.rewritten_text] = "safe"
+        return RewriteResult(dataframe=returned, failed_records=[], source_positions=positions)
 
     monkeypatch.setattr(RewriteWorkflow, "run", runner)
+    monkeypatch.setattr("anonymizer.engine.rewrite.rewrite_workflow._has_entities", lambda value: True)
     pool = BlockingPool(max_workers=1)
     task = asyncio.create_task(
         execute_initial_evaluation(
-            pd.DataFrame({COL_TEXT: ["same", "same"]}),
+            pd.DataFrame({COL_TEXT: ["same", "same"], COL_ENTITIES_BY_VALUE: [{}, {}]}),
             adapter=cast(NddAdapter, object()),
             combined=False,
             arguments={"evaluation": Rewrite(max_repair_iterations=0).evaluation},
@@ -153,11 +192,11 @@ async def _lifecycle(monkeypatch, finish):
             result = await task
             assert not result.final_outputs and not result.frames
             assert len(result.artifacts) == 2 and result.publication_failures
-            assert len(result.record.terminals) == 10 and all(state.complete for state in result.states)
+            assert len(result.record.terminals) == 12 and all(state.complete for state in result.states)
             return
         assert await asyncio.to_thread(entered.wait, 5)
         assert captured["calls"] == 1 and captured["rows"] == 2
-        assert len(set(captured["prefix_refs"])) == 4
+        assert len(set(captured["prefix_refs"])) == 6
         assert not task.done()
         if finish == "cancel":
             task.cancel()
@@ -172,9 +211,10 @@ async def _lifecycle(monkeypatch, finish):
         else:
             result = await task
         assert len(result.final_outputs) == (2 if finish == "normal" else 1 if finish == "partial" else 0)
-        assert len(result.record.terminals) == 10
+        assert len(result.record.terminals) == (14 if finish == "normal" else 13 if finish == "partial" else 12)
         assert all(state.complete for state in result.states)
-        assert not result.requests.dispatches and not result.frames
+        assert not result.requests.dispatches
+        assert len(result.frames) == (1 if finish in {"normal", "partial"} else 0)
         metrics = [value for _, value in result.artifacts if type(value) is EvaluationMetricsValue]
         assert len(metrics) == (2 if finish in {"normal", "after_metrics"} else 1 if finish == "partial" else 0)
         if finish in {"outer_failure", "after_metrics"}:

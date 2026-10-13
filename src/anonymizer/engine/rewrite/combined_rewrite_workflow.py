@@ -507,7 +507,11 @@ class CombinedRewriteWorkflow(RewriteWorkflow):
             )
             if entity_rows.empty:
                 _apply_passthrough_defaults(passthrough_rows)
-                result = RewriteResult(dataframe=merge_and_reorder(passthrough_rows), failed_records=[])
+                result = RewriteResult(
+                    dataframe=merge_and_reorder(passthrough_rows),
+                    failed_records=[],
+                    source_positions=tuple(sorted(passthrough_rows[ROW_ORDER_COL])),
+                )
                 measurement.update(output_row_count=len(result.dataframe), failed_record_count=0)
                 return result
 
@@ -541,6 +545,7 @@ class CombinedRewriteWorkflow(RewriteWorkflow):
             result = RewriteResult(
                 dataframe=merge_and_reorder(entity_rows, passthrough_rows),
                 failed_records=run_result.failed_records,
+                source_positions=tuple(sorted([*entity_rows[ROW_ORDER_COL], *passthrough_rows[ROW_ORDER_COL]])),
             )
             measurement.update(
                 output_row_count=len(result.dataframe),

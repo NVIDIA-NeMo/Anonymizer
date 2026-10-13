@@ -438,11 +438,6 @@ def _validate_delegated_recipes(prepared: PreparedPlan, policies: tuple[Operatio
             or child.implementations[0].capability.resource_lifetime != "stateless"
         ):
             reject(EffectCode.UNSUPPORTED)
-        if any(
-            slot.template == child.node and (slot.parent_index is not None or slot.iteration is not None)
-            for slot in recipe
-        ):
-            reject(EffectCode.UNSUPPORTED)
         owner_slots = [slot for slot in recipe if slot.template == owner.node]
         if len(owner_slots) != 1 or owner_slots[0].parent_index is not None or owner_slots[0].iteration is not None:
             reject(EffectCode.UNSUPPORTED)

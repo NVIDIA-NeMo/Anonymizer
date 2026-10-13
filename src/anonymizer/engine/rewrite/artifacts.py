@@ -143,8 +143,10 @@ def rewrite_content(
         if max_items is not None and count > max_items:
             return None
         for row in rows:
-            if type(row) is not row_type or any(
-                type(v) not in (t if isinstance(t, tuple) else (t,)) for v, t in zip(row, fields, strict=True)
+            if (
+                type(row) is not row_type
+                or len(row) != len(fields)
+                or any(type(v) not in (t if isinstance(t, tuple) else (t,)) for v, t in zip(row, fields, strict=True))
             ):
                 return None
             if type(row) is QualityQuestion and (
