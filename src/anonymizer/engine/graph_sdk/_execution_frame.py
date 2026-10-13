@@ -126,8 +126,20 @@ class _InvocationFrame:
             keys=keys,
         )
 
-    def bind_source_frame(self, jobs: tuple[_ExecutionJob, ...], dataframe: pd.DataFrame) -> WorkflowSourceFrame:
+    def bind_source_frame(
+        self, jobs: tuple[_ExecutionJob, ...], dataframe: pd.DataFrame, *, targets: tuple[DatumId, ...] | None = None
+    ) -> WorkflowSourceFrame:
         """Authenticate the whole submitted frame against this invocation's source jobs."""
+        if targets is not None:
+            by_target = {job.target: job for job in jobs}
+            if (
+                type(targets) is not tuple
+                or any(type(target) is not DatumId for target in targets)
+                or len(targets) != len(jobs)
+                or set(targets) != set(by_target)
+            ):
+                reject(EffectCode.FOREIGN_OWNER)
+            jobs = tuple(by_target[target] for target in targets)
         datum_text = {item.id: item.text for item in self.prepared.data.datums}
         if len(jobs) != len(dataframe) or list(dataframe.columns).count(COL_TEXT) != 1:
             reject(EffectCode.MISSING)

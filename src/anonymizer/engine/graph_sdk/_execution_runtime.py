@@ -235,6 +235,21 @@ class _InvocationRuntime:
     def _schedule_ready(self) -> bool:
         scheduled = False
         external_jobs: list[_ExecutionJob] = []
+        if self.control.cancelled:
+            occurrences = [*self.frame.sources.values()]
+            if self.frame.invocation_source is not None:
+                occurrences.append(self.frame.invocation_source)
+            for source in occurrences:
+                for entry in tuple(source.state.entries):
+                    current = next(item for item in source.state.entries if item.activation == entry.activation)
+                    if current.status in {"ready", "unstarted"}:
+                        self.cancelled_unstarted.add(entry.activation)
+                        source.state = advance_activation(
+                            state=source.state,
+                            event=CloseUnstarted(activation=entry.activation, category="blocked"),
+                        )
+                        scheduled = True
+            return scheduled
         for target, source in self.frame.sources.items():
             state = source.state
             ready = sorted(
@@ -656,8 +671,7 @@ class _InvocationRuntime:
         if len(chains) != 1:
             return None
         history = [row for row in state.dispatches if row.child is not None and row.child.chain == chains[0].chain]
-        expected_count = 1 + (contract.readiness is not None)
-        if len(history) != 1 or len(state.dispatches) != expected_count:
+        if len(history) != 1:
             return None
         request = history[0]
         child = request.child
@@ -674,15 +688,13 @@ class _InvocationRuntime:
             or settlement[0].disposition != "completed"
             or settlement[0].remote_stopped is not True
             or (contract.usage_requirement == "exact" and not isinstance(settlement[0].usage, ExactUsage))
-            or len(state.terminals) != expected_count
-            or len(state.settlements) != expected_count
         ):
             return None
-        if contract.readiness is not None and any(
-            entries[self.frame.sources[job.target].keys[index]].status != "success"
-            for index in contract.readiness.slots
-        ):
-            return None
+        if contract.readiness is not None:
+            readiness = self.frame.invocation_source or self.frame.sources[job.target]
+            statuses = {item.activation: item.status for item in readiness.state.entries}
+            if any(statuses[readiness.keys[index]] != "success" for index in contract.readiness.slots):
+                return None
         return q, UnusedRetryCapacity(owner=job.association.task, after=self.attempts[g])
 
     def _stage_outputs(

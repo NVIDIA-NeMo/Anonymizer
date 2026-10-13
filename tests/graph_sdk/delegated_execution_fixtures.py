@@ -183,7 +183,7 @@ def with_parent_publication(execution: AdmittedExecutionPlan, *, readiness: bool
             )
             for policy in source_policies
         ),
-        limits=replace(prepared.limits, max_capabilities=len(capabilities)),
+        limits=replace(prepared.limits, max_capabilities=len(capabilities), max_config_atoms=200),
         configuration=prepared.configuration,
         bound_inputs=tuple(prepared.bound_inputs),
         state=prepared.state,
@@ -191,7 +191,14 @@ def with_parent_publication(execution: AdmittedExecutionPlan, *, readiness: bool
     assert owner.delegated is not None
     leaves = tuple(prepared.reservation_recipe[index].template for index in owner.delegated.child_slots)
     indices = {slot.template: slot.index for slot in updated.reservation_recipe}
-    contract = replace(owner.delegated, child_slots=tuple(indices[node] for node in leaves))
+    contract = replace(
+        owner.delegated,
+        child_slots=tuple(indices[node] for node in leaves),
+        generation_groups=tuple(
+            tuple(indices[prepared.reservation_recipe[slot].template] for slot in group)
+            for group in owner.delegated.generation_groups
+        ),
+    )
     if readiness:
         indices = {slot.template: slot.index for slot in updated.reservation_recipe}
         contract = replace(
@@ -233,12 +240,12 @@ def with_parent_publication(execution: AdmittedExecutionPlan, *, readiness: bool
     )
 
 
-def with_multiple_sources(execution: AdmittedExecutionPlan, count: int = 2) -> AdmittedExecutionPlan:
+def with_multiple_sources(execution: AdmittedExecutionPlan, count: int = 2, *, data=None) -> AdmittedExecutionPlan:
     """Reuse the admitted operation recipe for distinct source occurrences."""
     from tests.graph_sdk.test_preparation import _data
 
     prepared = execution.context.prepared
-    data = _data(count)
+    data = _data(count) if data is None else data
     original = next(iter(prepared.data.targets))
     updated = prepare(
         data=data,

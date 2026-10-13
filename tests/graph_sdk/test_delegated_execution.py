@@ -142,8 +142,11 @@ def _fixture(
     bad: str | None = None,
     parent_io: bool = False,
     usage: Literal["exact", "unknown_allowed"] = "unknown_allowed",
+    generations: int = 0,
 ):
-    execution, _ = child_fixture(simple=simple, stateless=True, unready=bad == "unready_slot", usage=usage)
+    execution, _ = child_fixture(
+        simple=simple, stateless=True, unready=bad == "unready_slot", usage=usage, generations=generations
+    )
     owner = next(policy for policy in execution.policies if policy.delegated is not None)
     assert owner.delegated is not None
     owner = replace(owner, delegated=replace(owner.delegated, followups=frozenset({"correction"})))

@@ -437,9 +437,8 @@ def _validate_delegated_recipes(prepared: PreparedPlan, policies: tuple[Operatio
             reject(EffectCode.UNSUPPORTED)
         if len(contract.child_slots) > len(recipe):
             reject(EffectCode.LIMIT_EXCEEDED)
-        if (
-            len(contract.child_slots) != request.max_attempts
-            or sum(route.parse_attempts for route in contract.routes) > request.max_attempts
+        if len(contract.child_slots) != request.max_attempts or any(
+            sum(route.parse_attempts for route in contract.routes) > len(group) for group in contract.generations
         ):
             reject(EffectCode.LIMIT_EXCEEDED)
         if contract.optional_tail and (
@@ -595,7 +594,7 @@ def _validate_delegated_services(admitted: AdmittedExecutionPlan, services: Exec
         if foreign and (
             contract.readiness is None
             or not (
-                len(contract.child_slots) == 1
+                all(len(group) == 1 for group in contract.generations)
                 or (len(contract.child_slots) == 2 and contract.optional_tail == contract.child_slots[1:])
             )
             or any(

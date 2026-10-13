@@ -40,6 +40,7 @@ async def fixture(
     confirmed=False,
     lifetime=None,
     detachment="forbidden",
+    client_factory=None,
 ):
     if base is None:
         execution, services, submit, generation, _, _ = _ready_fixture()
@@ -119,9 +120,14 @@ async def fixture(
             self.closed = True
 
     async def construct(transport):
-        return ForeignLoopTransport.create(
-            factory=lambda: Client(transport), owner=owner, gate_timeout_ns=1_000_000_000, exclusive=True
-        )
+        def create():
+            if client_factory is None:
+                return Client(transport)
+            client = client_factory(transport)
+            clients.append(client)
+            return client
+
+        return ForeignLoopTransport.create(factory=create, owner=owner, gate_timeout_ns=1_000_000_000, exclusive=True)
 
     handles, registered = [], {}
     for h in services.handles:

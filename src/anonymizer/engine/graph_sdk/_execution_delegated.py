@@ -52,7 +52,7 @@ from anonymizer.engine.graph_sdk.requests import (
     TransportFailure,
     TransportSuccess,
 )
-from anonymizer.graph._values import TaskAttemptId
+from anonymizer.graph._values import DatumId, TaskAttemptId
 from anonymizer.graph.activation import CloseUnstarted, ObserveTerminal, Start, advance_activation
 
 if TYPE_CHECKING:
@@ -129,10 +129,10 @@ class _WorkerBorrow(PrivateValue):
             self.owner.loop.call_soon_threadsafe(self.owner._cancel_worker, self)
             raise
 
-    def bind_frame(self, dataframe: pd.DataFrame) -> WorkflowSourceFrame:
+    def bind_frame(self, dataframe: pd.DataFrame, *, targets: tuple[DatumId, ...] | None = None) -> WorkflowSourceFrame:
         if _WORKER_BORROW.get() is not self or self.expired:
             reject(EffectCode.FOREIGN_OWNER)
-        return self.owner.runtime.frame.bind_source_frame(tuple(self.owner.jobs.values()), dataframe)
+        return self.owner.runtime.frame.bind_source_frame(tuple(self.owner.jobs.values()), dataframe, targets=targets)
 
     async def request(
         self,
@@ -187,25 +187,27 @@ class _DelegatedOwner(PrivateValue):
         policy = self.policy.request
         assert contract is not None and policy is not None
         self.contract = contract
-        self.chains = {}
+        self.chains: dict[tuple[SemanticAssociation, int], RequestChain] = {}
         for job in jobs:
-            chain = RequestChain(
-                chain=RequestChainId.new(scope=runtime.request_authority.state.scope),
-                associations=frozenset({job.association}),
-                policy=policy,
-                role="generation",
-                routes=contract.routes,
-                followups=contract.followups,
-            )
             runtime.request_authority.bind(
                 RequestPolicyBinding.create(association=job.association, policies=frozenset({policy}))
             )
-            runtime.request_authority.bind_chain(chain)
-            self.chains[job.association] = chain
+            for group in contract.generations:
+                chain = RequestChain(
+                    chain=RequestChainId.new(scope=runtime.request_authority.state.scope),
+                    associations=frozenset({job.association}),
+                    policy=policy,
+                    role="generation",
+                    routes=contract.routes,
+                    followups=contract.followups,
+                )
+                runtime.request_authority.bind_chain(chain)
+                for slot in group:
+                    self.chains[job.association, slot] = chain
 
-    def bind_frame(self, dataframe: pd.DataFrame) -> WorkflowSourceFrame:
+    def bind_frame(self, dataframe: pd.DataFrame, *, targets: tuple[DatumId, ...] | None = None) -> WorkflowSourceFrame:
         self._check_submission()
-        return self.runtime.frame.bind_source_frame(tuple(self.jobs.values()), dataframe)
+        return self.runtime.frame.bind_source_frame(tuple(self.jobs.values()), dataframe, targets=targets)
 
     def _source_job(self, association: SemanticAssociation | None = None) -> _ExecutionJob:
         if association is None:
@@ -265,7 +267,9 @@ class _DelegatedOwner(PrivateValue):
             self._check_submission()
             job = self._source_job(association)
             result = await self._borrow(
-                self._request(slot, source_kind, predecessor, evidence, self.chains[job.association], job.association)
+                self._request(
+                    slot, source_kind, predecessor, evidence, self.chains[job.association, slot], job.association
+                )
             )
             assert result is not None
             return result
@@ -298,7 +302,11 @@ class _DelegatedOwner(PrivateValue):
         self._check()
         if self.worker_borrow is not borrow or _WORKER_BORROW.get() is not borrow or borrow.expired:
             reject(EffectCode.FOREIGN_OWNER)
-        if len(self.jobs) == 1 and (self.worker_call is not None or self.active):
+        if (
+            len(self.jobs) == 1
+            and not self.contract.generation_groups
+            and (self.worker_call is not None or self.active)
+        ):
             reject(EffectCode.REQUEST_CAUSALITY)
         task = asyncio.current_task()
         assert task is not None

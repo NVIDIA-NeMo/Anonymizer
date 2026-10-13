@@ -99,8 +99,9 @@ def child_fixture(
     simple: bool = False,
     stateless: bool = False,
     unready: bool = False,
+    generations: int = 0,
 ):
-    count = 1 if simple else 4 if interleaved else 3 if failover else 2
+    count = generations or (1 if simple else 4 if interleaved else 3 if failover else 2)
     base, assessor, artifact_type = _adaptive_workflow(assessment=True, requests=0)
     raw = base.workflow
     assessment_op = next(iter(raw.nodes)).operation
@@ -217,9 +218,12 @@ def child_fixture(
     contract = DelegatedRequestContract(
         mode="qualified",
         child_slots=tuple(slot.index for slot in prepared.reservation_recipe if slot.template in leaves),
+        generation_groups=tuple((slot.index,) for slot in prepared.reservation_recipe if slot.template in leaves)
+        if generations
+        else (),
         routes=(ChildRoute(name="primary", parse_attempts=2), ChildRoute(name="fallback", parse_attempts=1))
         if failover
-        else (ChildRoute(name="primary", parse_attempts=1 if simple else 2),),
+        else (ChildRoute(name="primary", parse_attempts=1 if simple or generations else 2),),
         usage_requirement=usage,
     )
     policies = []
@@ -269,6 +273,8 @@ def child_fixture(
             max_provenance_edges=8,
         ),
     )
+    if generations:
+        return execution, None
     invocation = InvocationId.new(plan=prepared.plan)
     keys = {
         slot.template: ActivationKey(invocation=invocation, occurrence=slot.index, parent=None, iteration=None)

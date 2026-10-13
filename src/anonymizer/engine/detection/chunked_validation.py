@@ -57,6 +57,7 @@ from anonymizer.engine.detection.postprocess import (
     TagNotation,
     build_tagged_text,
 )
+from anonymizer.engine.ndd._source_frame import source_generation
 from anonymizer.engine.schemas import (
     EntitiesSchema,
     RawValidationDecisionsSchema,
@@ -568,7 +569,8 @@ async def _bounded_dispatch_chunk_async(
     kwargs: dict[str, Any],
 ) -> RawValidationDecisionsSchema:
     async with semaphore:
-        return await _dispatch_chunk_async(**kwargs)
+        with source_generation(kwargs["chunk_index"]):
+            return await _dispatch_chunk_async(**kwargs)
 
 
 def chunked_validate_row(

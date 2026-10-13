@@ -63,8 +63,10 @@ class _ReadinessTransport(_Transport):
         return result
 
 
-def _ready_fixture(outcome="async_required", failure=None, early=False, *, simple=True, usage="unknown_allowed"):
-    base, services, submit, transports = _fixture(simple=simple, usage=usage)
+def _ready_fixture(
+    outcome="async_required", failure=None, early=False, *, simple=True, usage="unknown_allowed", generations=0
+):
+    base, services, submit, transports = _fixture(simple=simple, usage=usage, generations=generations)
     execution = with_parent_publication(base, readiness=True)
     owner = next(item for item in execution.policies if item.delegated)
     assert owner.delegated is not None and owner.delegated.readiness is not None

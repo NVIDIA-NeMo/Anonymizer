@@ -8,7 +8,7 @@ import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 
 import pandas as pd
@@ -23,6 +23,7 @@ if TYPE_CHECKING:
 class SourceWork:
     association: SemanticAssociation
     column: str
+    generation: int = 0
 
 
 _SOURCE_WORK: ContextVar[SourceWork | None] = ContextVar("anonymizer_dd_source_work", default=None)
@@ -30,6 +31,17 @@ _SOURCE_WORK: ContextVar[SourceWork | None] = ContextVar("anonymizer_dd_source_w
 
 def current_source_work() -> SourceWork | None:
     return _SOURCE_WORK.get()
+
+
+@contextmanager
+def source_generation(index: int) -> Iterator[None]:
+    """Keep each validation chunk distinct from physical attempts of that chunk."""
+    work = _SOURCE_WORK.get()
+    token = _SOURCE_WORK.set(replace(work, generation=index) if work is not None else None)
+    try:
+        yield
+    finally:
+        _SOURCE_WORK.reset(token)
 
 
 _COL_SOURCE_PREFIX = "_anonymizer_source_"

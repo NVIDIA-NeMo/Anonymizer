@@ -265,6 +265,7 @@ class DelegatedRequestContract(PrivateValue):
     usage_requirement: Literal["exact", "unknown_allowed"] = "exact"
     readiness: DelegatedReadiness | None = None
     optional_tail: tuple[int, ...] = ()
+    generation_groups: tuple[tuple[int, ...], ...] = ()
 
     def __post_init__(self) -> None:
         if self.readiness is not None:
@@ -274,6 +275,17 @@ class DelegatedRequestContract(PrivateValue):
         require_literal(self.usage_requirement, frozenset({"exact", "unknown_allowed"}))
         require_instance(self.child_slots, tuple)
         require_instance(self.optional_tail, tuple)
+        require_instance(self.generation_groups, tuple)
+        for group in self.generation_groups:
+            require_instance(group, tuple)
+            if not group:
+                reject(EffectCode.MISSING)
+            for slot in group:
+                require_count(slot)
+        if self.generation_groups and (
+            tuple(slot for group in self.generation_groups for slot in group) != self.child_slots or self.optional_tail
+        ):
+            reject(EffectCode.UNSUPPORTED)
         if len(self.optional_tail) > 2:
             reject(EffectCode.LIMIT_EXCEEDED)
         for slot in self.optional_tail:
@@ -297,6 +309,10 @@ class DelegatedRequestContract(PrivateValue):
             "failover",
         }:
             reject(EffectCode.INVALID_VALUE)
+
+    @property
+    def generations(self) -> tuple[tuple[int, ...], ...]:
+        return self.generation_groups or (self.child_slots,)
 
     @property
     def owned_slots(self) -> tuple[int, ...]:
@@ -700,7 +716,9 @@ class DelegatedRequests(Protocol):
         association: SemanticAssociation | None = None,
     ) -> PhysicalRequestId: ...
 
-    def bind_frame(self, dataframe: pd.DataFrame) -> WorkflowSourceFrame: ...
+    def bind_frame(
+        self, dataframe: pd.DataFrame, *, targets: tuple[DatumId, ...] | None = None
+    ) -> WorkflowSourceFrame: ...
 
     async def readiness(self) -> PhysicalRequestId: ...
 

@@ -8,7 +8,7 @@ import logging
 from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 import pandas as pd
 from data_designer.config.column_configs import LLMStructuredColumnConfig, LLMTextColumnConfig
@@ -64,6 +64,11 @@ from anonymizer.engine.workflow_columns.detection.config import (
 )
 from anonymizer.measurement import stage_timer
 
+if TYPE_CHECKING:
+    from anonymizer.engine.ndd._graph_requests import NddRequestBridge
+    from anonymizer.engine.ndd._source_frame import WorkflowSourceFrame
+
+
 logger = logging.getLogger("anonymizer.detection")
 
 # Defaults for the two chunked-validation knobs. Sourced from the Detect config
@@ -103,6 +108,8 @@ class EntityDetectionWorkflow:
         excluded_entity_labels: list[str] | None = None,
         data_summary: str | None = None,
         preview_num_records: int | None = None,
+        source_frame: WorkflowSourceFrame | None = None,
+        request_bridge: NddRequestBridge | None = None,
     ) -> EntityDetectionResult:
         """Run the core detection pipeline: GLiNER NER, LLM validation, LLM augmentation, and finalization.
 
@@ -129,6 +136,8 @@ class EntityDetectionWorkflow:
             columns=columns,
             workflow_name="entity-detection",
             preview_num_records=preview_num_records,
+            **({"source_frame": source_frame} if source_frame is not None else {}),
+            **({"request_bridge": request_bridge} if request_bridge is not None else {}),
         )
         detected_df = detection_result.dataframe.copy()
         return EntityDetectionResult(dataframe=detected_df, failed_records=detection_result.failed_records)
@@ -395,6 +404,8 @@ class EntityDetectionWorkflow:
         tag_latent_entities: bool = True,
         compute_grouped_entities: bool | None = None,
         preview_num_records: int | None = None,
+        source_frame: WorkflowSourceFrame | None = None,
+        request_bridge: NddRequestBridge | None = None,
     ) -> EntityDetectionResult:
         """Run the full detection pipeline, optionally including latent entity detection.
 
@@ -410,6 +421,8 @@ class EntityDetectionWorkflow:
             if tag_latent_entities and privacy_goal is None:
                 raise ValueError("privacy_goal is required when tag_latent_entities=True (rewrite mode)")
 
+            if request_bridge is not None and (source_frame is None or tag_latent_entities):
+                raise ValueError("Graph request binding requires a source frame and detection-only workflow")
             compute_grouped = True if compute_grouped_entities is None else compute_grouped_entities
             detected_result = self.detect_and_validate_entities(
                 dataframe,
@@ -423,6 +436,8 @@ class EntityDetectionWorkflow:
                 excluded_entity_labels=excluded_entity_labels,
                 data_summary=data_summary,
                 preview_num_records=preview_num_records,
+                **({"source_frame": source_frame} if source_frame is not None else {}),
+                **({"request_bridge": request_bridge} if request_bridge is not None else {}),
             )
 
             if tag_latent_entities:
