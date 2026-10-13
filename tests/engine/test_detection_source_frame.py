@@ -246,6 +246,30 @@ def test_public_source_frame(
     assert calls == {**dict.fromkeys(("detector", "validator", "augmenter"), len(expected)), "readiness": 1}
 
 
+@pytest.mark.parametrize("rows,preview", [(6, None), (7, None), (20, None), (20, 7), (1025, None)])
+def test_public_batch_span_items_are_aggregated(scripted_detection, tmp_path, rows, preview):
+    path = tmp_path / "batch.csv"
+    pd.DataFrame({"text": ["Alice."] * rows, "extra": list(range(rows))}).to_csv(path, index=False)
+    anonymizer = public_anonymizer(scripted_detection, artifact_path=tmp_path / "public")
+    config = AnonymizerConfig(replace=Redact(), emit_telemetry=False)
+    data = AnonymizerInput(source=str(path))
+    result = (
+        anonymizer.run(config=config, data=data)
+        if preview is None
+        else anonymizer.preview(config=config, data=data, num_records=preview)
+    )
+    selected = rows if preview is None else preview
+    assert result.dataframe["text_replaced"].tolist() == ["[REDACTED_FIRST_NAME]."] * selected
+    assert result.trace_dataframe["extra"].tolist() == list(range(selected))
+    assert result.failed_records == []
+    assert len(result._execution.frames) == 1
+    assert len(result._execution.final_outputs) == selected
+    assert scripted_detection[3] == {
+        **dict.fromkeys(("detector", "validator", "augmenter"), selected),
+        "readiness": 1,
+    }
+
+
 def test_real_detection_dropped_row_preserves_peer_and_failure(
     scripted_detection: tuple[DataDesigner, list[ModelConfig], DetectionModelSelection, Counter[str]],
 ) -> None:

@@ -158,6 +158,7 @@ async def execute_injected_redact(
         callback = replace(callback, targets=tuple(targets))
     size = len(targets)
     characters = max((len(text) for text in source[COL_TEXT]), default=0)
+    total_characters = sum(len(text) for text in source[COL_TEXT])
     text_type = ArtifactType(name="anonymizer.text", revision=1)
     outputs = (
         (
@@ -340,9 +341,10 @@ async def execute_injected_redact(
         ingress_limits=IngressLimits(
             max_associations=max(1, size),
             max_outputs_per_association=2,
-            max_collection_items=max(1, characters),
+            # Ingress counts spans across the batch; publication checks each artifact.
+            max_collection_items=max(1, total_characters),
             max_assessments=1,
-            max_metadata_items=max(7, 7 * size + 3 * sum(len(text) for text in source[COL_TEXT])),
+            max_metadata_items=max(7, 7 * size + 3 * total_characters),
             max_text_bytes=None,
             max_metadata_bytes=None,
             max_depth=10,

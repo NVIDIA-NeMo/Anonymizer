@@ -110,7 +110,9 @@ controls; public execution does not fall back to it after an error.
 
 The ordinary profile reserves at most three semantic artifacts per selected
 source: initial text, final spans and redacted text. Span membership is bounded
-by source character count; actual returned counts are recorded. Physical calls,
+by each source character count. Ingress reserves their sum across the selected
+batch; publication checks each span artifact against the largest selected source.
+These are upper bounds; actual returned counts are recorded. Physical calls,
 usage and remote outstanding work are unknown to this path. An absent
 `ExecutionLimits.max_remote_outstanding` ceiling is expressed as `None`.
 Opaque execution rejects every explicit finite remote ceiling before callbacks,
