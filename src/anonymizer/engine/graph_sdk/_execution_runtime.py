@@ -373,6 +373,7 @@ class _InvocationRuntime:
                 return False
         remote_capacity_stalled = (
             policy.kind == "external"
+            and self.services.limits.max_remote_outstanding is not None
             and (not joins_pending_batch)
             and (
                 max(len(self.request_authority.state.remote_outstanding), remote_jobs)

@@ -1,12 +1,12 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Existing injected callbacks under one nonqualifying graph invocation."""
+"""Fixed Redact consumers under nonqualifying graph execution."""
 
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Mapping
-from dataclasses import dataclass
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass, replace
 from time import perf_counter
 from typing import Any
 
@@ -17,6 +17,8 @@ from anonymizer.config.models import DetectionModelSelection, ReplaceModelSelect
 from anonymizer.config.replace_strategies import Redact
 from anonymizer.engine.constants import COL_TEXT
 from anonymizer.engine.detection._frame_publication import InvocationFrame
+from anonymizer.engine.detection._graph_invocation import DetectionRedactInvocation
+from anonymizer.engine.detection.artifacts import ENTITY_SPANS_TYPE
 from anonymizer.engine.detection.detection_workflow import EntityDetectionWorkflow
 from anonymizer.engine.graph_sdk._artifact_shape import content_bytes
 from anonymizer.engine.graph_sdk._execution_delegated import WorkerDelegatedSubmitter
@@ -39,6 +41,7 @@ from anonymizer.engine.graph_sdk.executor import (
     ExecutionResult,
     ExecutionServices,
     ImplementationHandle,
+    IngressLimits,
     LocalCompleted,
     LocalFailure,
     OperationExecutionPolicy,
@@ -46,6 +49,7 @@ from anonymizer.engine.graph_sdk.executor import (
     start_execution,
 )
 from anonymizer.engine.graph_sdk.preparation import (
+    BoundInput,
     PreparationConfiguration,
     PreparationLimits,
     StateRevisionView,
@@ -56,18 +60,28 @@ from anonymizer.engine.graph_sdk.resources import ResourceLease
 from anonymizer.engine.replace.replace_runner import ReplacementWorkflow
 from anonymizer.graph.activation import ActivationLimits
 from anonymizer.graph.workflow import (
+    ArtifactType,
     DynamicLimits,
     DynamicScope,
+    InputBinding,
+    InputPort,
     NodeId,
+    NodeInputRef,
     NodeOutcomeRef,
+    NodeOutputRef,
     OperationNode,
     OperationSpec,
     OutcomeBinding,
     OutcomeSpec,
+    OutputBinding,
+    OutputDependency,
+    OutputPort,
     ResourceCeiling,
     WorkflowId,
+    WorkflowInputRef,
     WorkflowLimits,
     WorkflowOutcomeRef,
+    WorkflowOutputRef,
     admit_activation_workflow,
     admit_static_workflow,
 )
@@ -83,9 +97,17 @@ class _InjectedRedact:
     replacement_models: ReplaceModelSelection
     detection_options: Mapping[str, Any]
     replace_method: Redact
+    handoff: Callable[[Callable[[], LocalCompleted | LocalFailure]], LocalCompleted | LocalFailure] | None = None
 
     def run(self, inputs: tuple[AssociationInput, ...], requests: DelegatedRequests) -> LocalCompleted | LocalFailure:
+        return (
+            self._run(inputs, requests) if self.handoff is None else self.handoff(lambda: self._run(inputs, requests))
+        )
+
+    def _run(self, inputs: tuple[AssociationInput, ...], requests: DelegatedRequests) -> LocalCompleted | LocalFailure:
         del inputs
+        if requests.cancelled:
+            return LocalFailure(failure="implementation_exception")
         started = perf_counter()
         detected = self.detection.run(
             self.source,
@@ -118,14 +140,35 @@ class _InjectedRedact:
         )
 
 
-async def execute_injected_redact(callback: _InjectedRedact, pool: BlockingPool) -> ExecutionResult:
+async def execute_injected_redact(
+    callback: _InjectedRedact | DetectionRedactInvocation, pool: BlockingPool
+) -> ExecutionResult:
     from anonymizer.engine.detection._graph_profile import _await_profile_execution, _Clock, _runtime_rows
 
+    authenticated = isinstance(callback, DetectionRedactInvocation)
+    preview = callback.detection_options.get("preview_num_records")
+    source = callback.source if preview is None else callback.source.iloc[:preview]
     graph = DataGraph.new()
-    for text in callback.source[COL_TEXT]:
-        graph, _ = graph.add_text(text)
+    targets = []
+    for text in source[COL_TEXT]:
+        graph, target = graph.add_text(text)
+        if authenticated:
+            targets.append(target)
+    if authenticated:
+        callback = replace(callback, targets=tuple(targets))
+    size = len(targets)
+    characters = max((len(text) for text in source[COL_TEXT]), default=0)
+    text_type = ArtifactType(name="anonymizer.text", revision=1)
+    outputs = (
+        (
+            OutputPort(name="redacted", artifact_type=text_type),
+            OutputPort(name="spans", artifact_type=ENTITY_SPANS_TYPE),
+        )
+        if size
+        else ()
+    )
     data = graph.validate(
-        targets=(),
+        targets=tuple(targets),
         source_relations=(),
         contexts=(),
         dependencies=(),
@@ -133,9 +176,9 @@ async def execute_injected_redact(callback: _InjectedRedact, pool: BlockingPool)
         atomic=(),
         output_regions=(),
         limits=DataLimits(
-            max_datums=len(callback.source),
-            max_targets=0,
-            max_text_bytes=sum(content_bytes(text) for text in callback.source[COL_TEXT]),
+            max_datums=len(source),
+            max_targets=size,
+            max_text_bytes=sum(content_bytes(text) for text in source[COL_TEXT]),
             max_declarations=0,
             max_group_members=0,
         ),
@@ -143,15 +186,17 @@ async def execute_injected_redact(callback: _InjectedRedact, pool: BlockingPool)
     owner = WorkflowId.new()
     node = NodeId.new(workflow=owner)
     operation = OperationSpec(
-        name="injected-detection-redact",
-        inputs=(),
-        outputs=(),
-        output_dependencies=(),
+        name="dd-detection-redact" if authenticated else "injected-detection-redact",
+        inputs=(InputPort(name="source", artifact_type=text_type),) if size else (),
+        outputs=outputs,
+        output_dependencies=tuple(
+            OutputDependency(output=port.name, inputs=frozenset({"source"}), identity_input=None) for port in outputs
+        ),
         outcomes=(
             OutcomeSpec(
                 name="ok",
                 category="success",
-                produced_ports=frozenset(),
+                produced_ports=frozenset(port.name for port in outputs),
                 context=frozenset(),
                 evidence=frozenset(),
                 state_effects=frozenset(),
@@ -162,12 +207,30 @@ async def execute_injected_redact(callback: _InjectedRedact, pool: BlockingPool)
             ),
         ),
     )
+    interface = replace(
+        operation,
+        outputs=outputs[:1],
+        output_dependencies=operation.output_dependencies[:1],
+        outcomes=tuple(
+            replace(outcome, produced_ports=frozenset(port.name for port in outputs[:1]))
+            for outcome in operation.outcomes
+        ),
+    )
     raw = admit_static_workflow(
         workflow=owner,
-        interface=operation,
+        interface=interface,
         nodes=(OperationNode(id=node, operation=operation),),
-        input_bindings=(),
-        output_bindings=(),
+        input_bindings=(
+            InputBinding(source=WorkflowInputRef(port="source"), destination=NodeInputRef(node=node, port="source")),
+        )
+        if size
+        else (),
+        output_bindings=tuple(
+            OutputBinding(
+                source=NodeOutputRef(node=node, port=port.name), destination=WorkflowOutputRef(port=port.name)
+            )
+            for port in interface.outputs
+        ),
         outcome_bindings=(
             OutcomeBinding(
                 source=NodeOutcomeRef(node=node, outcome="ok"), destination=WorkflowOutcomeRef(outcome="ok")
@@ -178,7 +241,7 @@ async def execute_injected_redact(callback: _InjectedRedact, pool: BlockingPool)
         protection=(),
         limits=WorkflowLimits(
             max_nodes=1,
-            max_bindings=1,
+            max_bindings=4,
             max_sequence_edges=0,
             max_choices=0,
             max_branch_members=0,
@@ -200,11 +263,13 @@ async def execute_injected_redact(callback: _InjectedRedact, pool: BlockingPool)
         ),
     )
     capability = ImplementationCapability(
-        implementation=ImplementationRef(name="injected-detection-redact", revision=1),
+        implementation=ImplementationRef(name=operation.name, revision=1),
         operation=operation,
-        configuration=FrozenConfig(fields=()),
+        configuration=callback.redact_configuration
+        if isinstance(callback, DetectionRedactInvocation)
+        else FrozenConfig(fields=()),
         effect="external",
-        attribution="aggregate_only",
+        attribution="per_task" if authenticated else "aggregate_only",
         request_visibility="none",
         pre_dispatch_control="none",
         retry_owner="implementation",
@@ -219,12 +284,14 @@ async def execute_injected_redact(callback: _InjectedRedact, pool: BlockingPool)
         data=data,
         workflow=workflow,
         activation_limits=ActivationLimits(max_events=3, max_entries=1, max_parent_depth=1),
-        bound_inputs=(),
+        bound_inputs=tuple(
+            BoundInput(target=target, source=target, port="source", artifact_type=text_type) for target in targets
+        ),
         configuration=PreparationConfiguration(
             purpose="execution_only",
             required_protection_outcomes=frozenset(),
             hard_request_limit=None,
-            invocation_owned=True,
+            invocation_owned=not targets,
         ),
         state=StateRevisionView(revisions=frozenset()),
         selections=(
@@ -234,12 +301,12 @@ async def execute_injected_redact(callback: _InjectedRedact, pool: BlockingPool)
         ),
         capabilities=(capability,),
         limits=PreparationLimits(
-            max_bound_inputs=0,
+            max_bound_inputs=size,
             max_state_revisions=0,
             max_selections=1,
-            max_config_depth=1,
-            max_config_atoms=2,
-            max_total_activation_slots=1,
+            max_config_depth=3,
+            max_config_atoms=12,
+            max_total_activation_slots=max(1, size),
             max_capabilities=1,
         ),
     )
@@ -270,18 +337,28 @@ async def execute_injected_redact(callback: _InjectedRedact, pool: BlockingPool)
         ),
         decisions=(),
         assessment_productions=(),
+        ingress_limits=IngressLimits(
+            max_associations=max(1, size),
+            max_outputs_per_association=2,
+            max_collection_items=max(1, characters),
+            max_assessments=1,
+            max_metadata_items=max(7, 7 * size + 3 * sum(len(text) for text in source[COL_TEXT])),
+            max_text_bytes=None,
+            max_metadata_bytes=None,
+            max_depth=10,
+        ),
         assessment_limits=AssessmentLimits(
             max_productions=0,
             max_findings_per_production=0,
             max_finding_code_bytes=0,
             max_absence_queries=0,
             max_assessment_facts=0,
-            max_port_facts=0,
-            max_provenance_edges=0,
+            max_port_facts=3 * size,
+            max_provenance_edges=2 * size,
         ),
     )
     worker = WorkerDelegatedSubmitter(
-        callback=callback.run,
+        callback=callback._run if isinstance(callback, DetectionRedactInvocation) else callback.run,
         pool=pool,
         affinity=BlockingAffinity(cross_thread=True, concurrency_safe=False, close_on_event_loop=False),
         borrowed_loop=asyncio.get_running_loop(),
@@ -301,10 +378,10 @@ async def execute_injected_redact(callback: _InjectedRedact, pool: BlockingPool)
         context_resources=(),
         limits=ExecutionLimits(
             max_local_in_flight=1,
-            max_remote_outstanding=0,
-            max_runtime_artifacts=0,
+            max_remote_outstanding=None,
+            max_runtime_artifacts=3 * size,
             max_runtime_artifact_bytes=None,
-            max_collection_items=0,
+            max_collection_items=characters,
         ),
         decision_limits=DecisionLimits(max_pending=0, max_lifetime_ns=0),
         clock=_Clock(),

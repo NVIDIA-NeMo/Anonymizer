@@ -9,8 +9,9 @@ copies the frame structure and resolves transformed text from accepted artifacts
 
 from __future__ import annotations
 
+import math
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, cast
 
 import pandas as pd
@@ -162,7 +163,6 @@ class FramePublication:
             type(getattr(self, "_content", None)) is not pd.DataFrame
             or not isinstance(getattr(self, "_columns", None), pd.Index)
             or type(getattr(self, "associations", None)) is not tuple
-            or not self.associations
             or any(type(item) is not SemanticAssociation for item in self.associations)
             or len(set(self.associations)) != len(self.associations)
             or len(self._content) != len(self.associations)
@@ -251,6 +251,29 @@ class InvocationFrame:
     replacement_elapsed: float
     retained_owner: object | None = None
 
+    def _validate(self) -> None:
+        if (
+            not isinstance(getattr(self, "dataframe", None), pd.DataFrame)
+            or not isinstance(getattr(self, "detected_dataframe", None), pd.DataFrame)
+            or any(
+                type(getattr(self, name, None)) is not tuple
+                or any(type(item) is not FailedRecord for item in getattr(self, name))
+                for name in ("detection_failures", "replacement_failures")
+            )
+            or any(
+                type(getattr(self, name, None)) not in (int, float)
+                or not math.isfinite(getattr(self, name))
+                or getattr(self, name) < 0
+                for name in ("detection_elapsed", "replacement_elapsed")
+            )
+            or not hasattr(self, "retained_owner")
+        ):
+            raise ValueError("malformed opaque frame")
+
+    def accept(self) -> InvocationFrame:
+        self._validate()
+        return replace(self, dataframe=self.dataframe.copy(), detected_dataframe=self.detected_dataframe.copy())
+
     @property
     def row_counts(self) -> tuple[int, int]:
         return len(self.detected_dataframe), len(self.dataframe)
@@ -275,6 +298,7 @@ class InvocationFrame:
     def bind(self, ports: tuple[ExecutionPortFact, ...]) -> InvocationFrame:
         if ports:
             raise ValueError("opaque invocation cannot publish semantic ports")
+        self._validate()
         return self
 
     def project(self, result: ExecutionResult) -> pd.DataFrame:
@@ -282,4 +306,5 @@ class InvocationFrame:
             raise ValueError("frame belongs to a different execution")
         if result._execution.context.prepared.configuration.purpose != "execution_only":
             raise ValueError("opaque frame cannot establish protection")
+        self._validate()
         return self.dataframe.copy()

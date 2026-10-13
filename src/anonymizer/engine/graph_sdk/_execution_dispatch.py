@@ -282,7 +282,10 @@ async def _run_external_batch(
     implementation_index = 0
     purpose: Literal["initial", "repair", "retry", "correction", "failover"] = policy.initial_request_purpose
     while True:
-        if len(authority.state.remote_outstanding) >= limits.max_remote_outstanding:
+        if (
+            limits.max_remote_outstanding is not None
+            and len(authority.state.remote_outstanding) >= limits.max_remote_outstanding
+        ):
             return failed(_mapping(policy, "request_limit_exhausted", None, None))
         implementation = policy.implementations[implementation_index]
         handle = handles[
@@ -507,7 +510,10 @@ async def _run_adaptive_body(
     selector = ContextSelector(fields=tuple(fields))
     purpose: Literal["adaptive_retrieval", "retry", "correction"] = "adaptive_retrieval"
     while True:
-        if len(authority.state.remote_outstanding) >= limits.max_remote_outstanding:
+        if (
+            limits.max_remote_outstanding is not None
+            and len(authority.state.remote_outstanding) >= limits.max_remote_outstanding
+        ):
             return _mapping(policy, "request_limit_exhausted", None, None), (), ()
         request = PhysicalRequestId.new(scope=authority.state.scope)
         authority.apply(

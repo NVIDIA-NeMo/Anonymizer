@@ -2,9 +2,9 @@
 # SPDX-License-Identifier: Apache-2.0
 """Whole-frame detection/Redact consumer of an admitted graph invocation.
 
-This is the development consumer, not the public route selector. The caller must
-admit independent detector, validator-chunk and augmenter chains and register
-its exact DD physical resource. Unsupported DD followups reject at that boundary.
+Source frames always bind authenticated positions and typed span/text outputs.
+An optional physical bridge selects the separately qualified development path;
+ordinary public execution leaves DataDesigner's retry and scheduling intact.
 """
 
 from __future__ import annotations
@@ -57,7 +57,7 @@ class DetectionRedactInvocation:
     model_configs: list[ModelConfig]
     selected_models: DetectionModelSelection
     redact_configuration: FrozenConfig
-    physical: NddPhysicalTransport
+    physical: NddPhysicalTransport | None
     slots: Mapping[tuple[str, int], int | tuple[int, ...]]
     detection_options: Mapping[str, Any]
     output_port: str
@@ -76,7 +76,7 @@ class DetectionRedactInvocation:
         ):
             raise AnonymizerWorkflowError("DD graph detection requires one source-text input per association")
         frame = requests.bind_frame(self.source, targets=self.targets, source_limit=len(self.targets))
-        bridge = NddRequestBridge(requests, self.slots, self.physical)
+        bridge = None if self.physical is None else NddRequestBridge(requests, self.slots, self.physical)
         detected = self.detection.run(
             self.source,
             model_configs=self.model_configs,
@@ -121,28 +121,36 @@ class DetectionRedactInvocation:
                 outcome=self.outcome,
                 consumed_context_ports=frozenset(),
                 outputs=(
-                    PortArtifact(
-                        port="validation_chunks",
-                        artifact_type=ArtifactType(name="anonymizer.validation-chunks", revision=1),
-                        artifact=None,
-                        value=TextCollectionValue(
-                            items=tuple(
-                                TextCollectionItem(
-                                    key=index,
-                                    version=1,
-                                    value=TextArtifactValue(text="\n".join(candidate.id for candidate, _ in chunk)),
-                                )
-                                for index, chunk in enumerate(
-                                    validation_chunks(
-                                        detected.dataframe.iloc[rows[item.association]].to_dict(),
-                                        self.detection_options.get(
-                                            "validation_max_entities_per_call",
-                                            _DEFAULT_VALIDATION_MAX_ENTITIES_PER_CALL,
-                                        ),
-                                    )[2]
-                                )
-                            )
-                        ),
+                    *(
+                        (
+                            PortArtifact(
+                                port="validation_chunks",
+                                artifact_type=ArtifactType(name="anonymizer.validation-chunks", revision=1),
+                                artifact=None,
+                                value=TextCollectionValue(
+                                    items=tuple(
+                                        TextCollectionItem(
+                                            key=index,
+                                            version=1,
+                                            value=TextArtifactValue(
+                                                text="\n".join(candidate.id for candidate, _ in chunk)
+                                            ),
+                                        )
+                                        for index, chunk in enumerate(
+                                            validation_chunks(
+                                                detected.dataframe.iloc[rows[item.association]].to_dict(),
+                                                self.detection_options.get(
+                                                    "validation_max_entities_per_call",
+                                                    _DEFAULT_VALIDATION_MAX_ENTITIES_PER_CALL,
+                                                ),
+                                            )[2]
+                                        )
+                                    )
+                                ),
+                            ),
+                        )
+                        if self.physical is not None
+                        else ()
                     ),
                     PortArtifact(
                         port="spans", artifact_type=ENTITY_SPANS_TYPE, artifact=None, value=spans[item.association]

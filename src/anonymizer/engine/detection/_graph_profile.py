@@ -1,20 +1,20 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Actual DD detection/Redact development profile, using the single graph executor.
+"""DD detection/Redact consumers of the single graph executor.
 
-Validator capacity follows the existing nonoverlapping detector span bound.
-An explicit capacity remains available for bounded development controls. Canonical chunk membership closes unused capacity per source. Source-bound
-Redact assessments, shared receipts and DD conversation restarts are qualified.
-The public facade selects this profile for its supported production-owned Redact path.
+The public facade selects execution-only publication with unknown physical
+request visibility. The separate qualified development profile retains explicit
+child-request admission and its narrower backend conformance requirements.
 """
 
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from concurrent.futures import Future
 from contextvars import copy_context
 from dataclasses import dataclass, replace
+from queue import Empty, Queue
 from threading import Event, Thread
 from time import monotonic_ns
 from typing import Any, cast
@@ -59,6 +59,7 @@ from anonymizer.engine.graph_sdk.executor import (
     ImplementationHandle,
     IngressLimits,
     LocalCompleted,
+    LocalFailure,
     OperationExecutionPolicy,
     RunningExecution,
     RuntimeOutcome,
@@ -203,6 +204,7 @@ def run_detection_redact(
     replace_method: Redact | None = None,
     replacement: ReplacementWorkflow | None = None,
     replacement_models: ReplaceModelSelection | None = None,
+    opaque: bool = False,
 ) -> ReplacementResult:
     """Run the admitted profile synchronously with one owned callback worker.
 
@@ -211,12 +213,39 @@ def run_detection_redact(
     stays untouched; the host thread runs the same authoritative async executor,
     while actual DD clients remain on DD's existing foreign loop.
     """
-    if replacement is not None and limits is not None:
+    if (replacement is not None or opaque) and limits is not None:
         raise ValueError("Opaque injected execution cannot guarantee caller-supplied execution limits")
     selected_redact = replace_method.model_copy(deep=True) if replace_method is not None else Redact()
     selected_limits = replace(limits) if limits is not None else None
     started = Event()
     cancellation: list[tuple[asyncio.AbstractEventLoop, asyncio.Task[Any]]] = []
+    callbacks: Queue[tuple[Callable[[], LocalCompleted | LocalFailure], Future[LocalCompleted | LocalFailure]]] = Queue(
+        maxsize=1
+    )
+
+    def handoff(callback: Callable[[], LocalCompleted | LocalFailure]) -> LocalCompleted | LocalFailure:
+        returned: Future[LocalCompleted | LocalFailure] = Future()
+        callbacks.put((callback, returned))
+        return returned.result()
+
+    def serve_callback() -> None:
+        try:
+            callback, returned = callbacks.get(timeout=0.01)
+        except Empty:
+            return
+        if interrupted is not None:
+            returned.set_result(LocalFailure(failure="implementation_exception"))
+            return
+        try:
+            returned.set_result(callback())
+        except Exception as error:
+            returned.set_exception(error)
+        except BaseException:
+            if cancellation:
+                loop, task = cancellation[0]
+                loop.call_soon_threadsafe(task.cancel)
+            returned.set_result(LocalFailure(failure="implementation_exception"))
+            raise
 
     async def run() -> ReplacementResult:
         task = asyncio.current_task()
@@ -239,6 +268,27 @@ def run_detection_redact(
                         replacement_models,
                         detection_options,
                         replace_method,
+                        handoff,
+                    ),
+                    pool,
+                )
+                return project_detection_redact(result)
+            if opaque:
+                from anonymizer.engine.detection._opaque_redact import execute_injected_redact
+
+                result = await execute_injected_redact(
+                    DetectionRedactInvocation(
+                        source,
+                        (),
+                        detection,
+                        model_configs,
+                        selected_models,
+                        redact_configuration(selected_redact),
+                        None,
+                        {},
+                        detection_options,
+                        "redacted",
+                        "ok",
                     ),
                     pool,
                 )
@@ -270,10 +320,13 @@ def run_detection_redact(
     context = copy_context()
     thread = Thread(target=lambda: context.run(host), name="anonymizer-graph-host")
     thread.start()
-    interrupted: KeyboardInterrupt | None = None
+    interrupted: BaseException | None = None
     try:
+        if replacement is not None:
+            while not completion.done():
+                serve_callback()
         return completion.result()
-    except KeyboardInterrupt as error:
+    except BaseException as error:
         interrupted = error
         raise
     finally:
@@ -291,7 +344,8 @@ def run_detection_redact(
                             except RuntimeError:
                                 if not loop.is_closed():
                                     raise
-                thread.join()
+                serve_callback()
+                thread.join(timeout=0.01)
             except KeyboardInterrupt as error:
                 interrupted = error
         if interrupted is not None:
@@ -920,6 +974,11 @@ def project_detection_redact(result: ExecutionResult) -> ReplacementResult:
             entry.status != "success" for entry in result.invocation_state.entries
         ):
             raise AnonymizerWorkflowError("Injected Redact invocation did not complete")
+        return ReplacementResult(
+            dataframe=frame.project(result), failed_records=list(frame.failed_records), _execution=result
+        )
+    if result._execution.context.prepared.configuration.purpose == "execution_only" and len(result.frames) == 1:
+        frame = result.frames[0]
         return ReplacementResult(
             dataframe=frame.project(result), failed_records=list(frame.failed_records), _execution=result
         )

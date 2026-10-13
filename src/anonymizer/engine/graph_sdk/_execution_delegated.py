@@ -215,7 +215,7 @@ class _DelegatedOwner(PrivateValue):
         assert contract is not None
         self.contract = contract
         self.chains: dict[tuple[SemanticAssociation, int], RequestChain] = {}
-        for job in jobs:
+        for job in jobs if policy is not None else ():
             assert policy is not None
             runtime.request_authority.bind(
                 RequestPolicyBinding.create(association=job.association, policies=frozenset({policy}))
@@ -537,7 +537,11 @@ class _DelegatedOwner(PrivateValue):
         association: SemanticAssociation | None = None,
     ) -> PhysicalRequestId:
         runtime = self.runtime
-        if len(runtime.request_authority.state.remote_outstanding) >= runtime.services.limits.max_remote_outstanding:
+        if (
+            runtime.services.limits.max_remote_outstanding is not None
+            and len(runtime.request_authority.state.remote_outstanding)
+            >= runtime.services.limits.max_remote_outstanding
+        ):
             reject(EffectCode.LIMIT_EXCEEDED)
         leaf = self._job(slot, association)
         attempt = leaf.association.task
@@ -752,26 +756,28 @@ class _DelegatedOwner(PrivateValue):
             if self.child is not None:
                 await self._drain(self.child)
             incomplete = self.close()
+        if self.contract.mode == "opaque" and self.cancelled:
+            return self._failure("cancel_after_start")
         if type(result) is LocalFailure:
             return self._failure("failure", inspect_failure(result.failure))
-        if self.contract.mode == "opaque":
-            if self.cancelled:
-                return self._failure("cancel_after_start")
-            from anonymizer.engine.detection._frame_publication import InvocationFrame
+        from anonymizer.engine.detection._frame_publication import InvocationFrame
 
-            if (
-                self.invocation_job is None
-                or type(result) is not LocalCompleted
-                or result.results
-                or result.assessments
-                or result.failed_sources
-                or type(result.frame) is not InvocationFrame
-            ):
+        if (
+            self.contract.mode == "opaque"
+            and self.invocation_job is not None
+            and type(getattr(result, "frame", None)) is InvocationFrame
+        ):
+            if type(result) is not LocalCompleted or result.results or result.assessments or result.failed_sources:
                 return self._failure("failure", "malformed_response")
-            runtime.frame.publications.append(result.frame)
-            return {self.invocation_job.association: (_mapping(self.policy, "result", "ok", None), (), ())}
-        if self.invocation_job is not None:
-            # A source-free submission has no per-source result to publish.
+            else:
+                assert isinstance(result.frame, InvocationFrame)
+                try:
+                    accepted = result.frame.accept()
+                except (AttributeError, TypeError, ValueError):
+                    return self._failure("failure", "malformed_response")
+                runtime.frame.publications.append(accepted)
+                return {self.invocation_job.association: (_mapping(self.policy, "result", "ok", None), (), ())}
+        if self.invocation_job is not None and self.contract.mode != "opaque":
             return self._failure("failure", "malformed_response")
         if type(result) is not LocalCompleted:
             return self._failure("failure", "malformed_response")
@@ -848,6 +854,8 @@ class _DelegatedOwner(PrivateValue):
             if accepted_frame is None:
                 return self._failure("failure", "malformed_response")
             runtime.frame.publications.append(accepted_frame)
+        if self.invocation_job is not None:
+            return {self.invocation_job.association: (_mapping(self.policy, "result", "ok", None), (), ())}
         return {
             **{
                 source: (_mapping(self.policy, "failure", None, "implementation_exception"), (), ())

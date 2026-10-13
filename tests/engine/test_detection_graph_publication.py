@@ -1098,9 +1098,19 @@ def test_actual_lost_lease_survives_public_result_and_preview_projection(
     import json
     import pickle
 
+    import anonymizer.interface.anonymizer as facade_module
     from anonymizer import AnonymizerConfig, AnonymizerInput
     from anonymizer.config.replace_strategies import Redact
+    from anonymizer.engine.detection._graph_profile import run_detection_redact
     from anonymizer.engine.graph_sdk._foreign_transport import ForeignLoopTransport
+
+    # Lost-lease ownership belongs to the explicitly selected qualified profile.
+    # Ordinary DD publication now declares hidden physical work as unknown.
+    def qualified(*args: Any, **kwargs: Any):
+        kwargs["opaque"] = False
+        return run_detection_redact(*args, **kwargs)
+
+    monkeypatch.setattr(facade_module, "run_detection_redact", qualified)
 
     def response(request, answer):
         messages = json.dumps(json.loads(request.content)["messages"])

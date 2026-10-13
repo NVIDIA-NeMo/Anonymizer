@@ -431,7 +431,6 @@ def _validate_delegated_recipes(prepared: PreparedPlan, policies: tuple[Operatio
         if contract.mode == "opaque":
             if (
                 prepared.configuration.purpose != "execution_only"
-                or not prepared.configuration.invocation_owned
                 or prepared.configuration.hard_request_limit is not None
                 or len(recipe) != 1
                 or contract.usage_requirement != "unknown_allowed"
@@ -768,6 +767,10 @@ def _validate_services(admitted: AdmittedExecutionPlan, services: ExecutionServi
     admitted._validate_ingress_policy()
     require_instance(services.limits, ExecutionLimits)
     services.limits.__post_init__()
+    if (
+        services.limits.max_remote_outstanding is not None or services.limits.max_runtime_artifact_bytes is not None
+    ) and any(policy.delegated is not None and policy.delegated.mode == "opaque" for policy in admitted.policies):
+        reject(EffectCode.UNSUPPORTED)
     require_instance(services.decision_limits, DecisionLimits)
     if any(item.max_lifetime_ns > services.decision_limits.max_lifetime_ns for item in admitted.decisions):
         reject(EffectCode.LIMIT_EXCEEDED)

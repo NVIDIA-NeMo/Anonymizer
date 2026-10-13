@@ -820,17 +820,18 @@ class MonotonicClock(Protocol):
 
 @dataclass(frozen=True, slots=True, kw_only=True, repr=False)
 class ExecutionLimits(PrivateValue):
-    """Finite work/item counts, with an optional explicitly selected retained-byte cap."""
+    """Finite local work/items; optional physical-remote and retained-byte ceilings."""
 
     max_local_in_flight: int
-    max_remote_outstanding: int
+    max_remote_outstanding: int | None
     max_runtime_artifacts: int
     max_runtime_artifact_bytes: int | None
     max_collection_items: int
 
     def __post_init__(self) -> None:
         require_count(self.max_local_in_flight)
-        require_count(self.max_remote_outstanding)
+        if self.max_remote_outstanding is not None:
+            require_count(self.max_remote_outstanding)
         require_count(self.max_runtime_artifacts)
         if self.max_runtime_artifact_bytes is not None:
             require_count(self.max_runtime_artifact_bytes)

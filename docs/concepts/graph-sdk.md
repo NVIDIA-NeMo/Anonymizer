@@ -43,7 +43,7 @@ revision 1. Its `EntitySpansValue` contains an immutable tuple of the existing
 `EntitySpan` records and the exact source `ArtifactRef`. These are candidate
 detections, not accepted subject identity or protection evidence. The local
 witness produces spans, filters them, and renders a text candidate through the
-existing replacement algorithm; ordinary Anonymizer execution is unchanged.
+existing replacement algorithm. Ordinary Redact uses the same typed artifacts as described below.
 
 Publication checks exact offsets and substrings against a declared text input,
 including the source artifact version. An identity-preserving span alias keeps
@@ -83,19 +83,41 @@ ceiling does not claim bounded memory usage or a hard transport-response size.
 Context retrieval, observations and other explicitly bounded contracts retain
 their separate limits.
 
-The private detection/Redact profile derives count capacity from the selected
+The qualified development detection/Redact profile derives count capacity from the selected
 source and declared work when no execution limits are supplied. Five retained
 artifacts per source is an upper bound: one root, three producer outputs and one
 assessment output. Final span count is bounded by source character count;
 validation membership is bounded by the admitted chunk capacity. Actual counts
-can be lower. Caller-supplied execution limits remain authoritative. This private
-profile policy does not switch ordinary public execution to the graph.
+can be lower. Caller-supplied execution limits remain authoritative. The separate qualified development profile retains this five-artifact inventory.
 
 This counts-first policy records the 2026-10-13 operator clarification that
 ordinary runs should not impose incidental byte or per-string ceilings. It
 qualifies the RFC's earlier mandatory-retained-byte-bound wording; it does not
 claim the absent ceiling meets that earlier hard-byte interpretation. Other
 admission, accounting, qualification and public-compatibility requirements remain.
+
+## Ordinary Redact execution
+
+Ordinary production-owned Redact runs, previews and CLI commands select the
+execution-only graph path before detection. Detection still runs once on the
+whole frame through `NddAdapter.run_workflow()`, with the existing DataDesigner
+retry, chunk scheduling and provider configuration. Authenticated source positions,
+typed spans and canonical text artifacts support the existing `PublishedFrame`;
+there is no inference from text, indexes or row order. This path makes no
+Protected claim and does not use the incomplete qualified request bridge.
+The qualified development profile remains available for its explicit supported
+controls; public execution does not fall back to it after an error.
+
+The ordinary profile reserves at most three semantic artifacts per selected
+source: initial text, final spans and redacted text. Span membership is bounded
+by source character count; actual returned counts are recorded. Physical calls,
+usage and remote outstanding work are unknown to this path. An absent
+`ExecutionLimits.max_remote_outstanding` ceiling is expressed as `None`.
+Opaque execution rejects every explicit finite remote ceiling before callbacks,
+including zero, and rejects a selected hard request budget. A selected hard
+retained-byte ceiling is likewise rejected for opaque execution because arbitrary
+frame object cells cannot be completely measured. Finite ceilings on
+visible paths retain their existing enforcement.
 
 ## Injected Redact callbacks
 
@@ -112,14 +134,17 @@ requests; an empty inventory does not mean the callback performed no external
 work. Inspection reports unknown totals and rejects hard-request-budget support.
 A selected hard request budget is rejected before effects. The private profile
 also rejects supplied execution limits it cannot guarantee. Its one callback
-uses existing worker admission and draining; cancellation does not establish
+uses existing worker admission and draining. The synchronous facade hands injected
+callbacks back to their original caller thread and context, including when that
+thread already has an event loop; caller-owned thread-affine resources stay valid.
+Cancellation does not establish
 that hidden remote work stopped.
 
 The operation owns one compatibility result containing detection and replacement
 frames. Their row counts are observed after return, without assuming they match
 the input cardinality. Direct string-cell byte sizes are measured; sizes of
 arbitrary object cells remain unavailable. These opaque frames are separate from per-source semantic
-artifacts. The qualified DataDesigner route retains its existing source,
+artifacts. The separate qualified DataDesigner development route retains its existing source,
 physical-request and evidence checks.
 
 ## Saved results and current evidence

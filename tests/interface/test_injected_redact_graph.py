@@ -199,7 +199,7 @@ def test_cancellation_drains_detection_without_starting_replacement():
                 await task
             result = getattr(caught.value, "_anonymizer_execution")
             assert not result.frames and not result.requests.dispatches
-            assert all(terminal.category != "success" for terminal in result.record.terminals)
+            assert [terminal.category for terminal in result.record.terminals] == ["cancelled"]
             assert replacement.run.call_count == 0
         finally:
             release.set()
@@ -252,3 +252,136 @@ def test_empty_injected_frame_still_calls_both_callbacks(tmp_path):
     assert detector.run.call_count == replacement.run.call_count == 1
     assert result.dataframe.empty
     assert result._execution is not None
+
+
+def _execute_callback():
+    import asyncio
+
+    from anonymizer.engine.detection._opaque_redact import _InjectedRedact, execute_injected_redact
+    from anonymizer.engine.graph_sdk.blocking import BlockingPool
+
+    anonymizer, detector, replacement, _ = _make_anonymizer()
+    callback = _InjectedRedact(
+        pd.DataFrame({COL_TEXT: ["same"]}),
+        detector,
+        replacement,
+        anonymizer._model_configs,
+        anonymizer._selected_models.detection,
+        anonymizer._selected_models.replace,
+        {},
+        Redact(),
+    )
+
+    async def run():
+        pool = BlockingPool(max_workers=1)
+        try:
+            return await execute_injected_redact(callback, pool)
+        finally:
+            await pool.close()
+
+    return lambda: asyncio.run(run()), detector, replacement
+
+
+@pytest.mark.parametrize("field", ["max_remote_outstanding", "max_runtime_artifact_bytes"])
+@pytest.mark.parametrize("ceiling", [0, 1])
+def test_opaque_core_rejects_unsupported_selected_finite_ceiling(monkeypatch, field, ceiling):
+    from anonymizer.engine.detection import _opaque_redact
+    from anonymizer.engine.graph_sdk._effect_values import EffectRejected
+
+    original = _opaque_redact.start_execution
+
+    async def supplied(**kwargs):
+        services = kwargs["services"]
+        kwargs["services"] = replace(services, limits=replace(services.limits, **{field: ceiling}))
+        return await original(**kwargs)
+
+    monkeypatch.setattr(_opaque_redact, "start_execution", supplied)
+    run, detector, replacement = _execute_callback()
+    with pytest.raises(EffectRejected):
+        run()
+    assert detector.run.call_count == replacement.run.call_count == 0
+
+
+@pytest.mark.parametrize("fault", [None, "missing_dataframe", "wrong_dataframe", "wrong_failures"])
+def test_opaque_frame_is_validated_before_publication(monkeypatch, fault):
+    from anonymizer.engine.detection._graph_profile import project_detection_redact
+    from anonymizer.engine.detection._opaque_redact import _InjectedRedact
+
+    original = _InjectedRedact.run
+
+    def callback(self, inputs, requests):
+        result = original(self, inputs, requests)
+        from anonymizer.engine.detection._frame_publication import InvocationFrame
+        from anonymizer.engine.graph_sdk.executor import LocalCompleted
+
+        assert isinstance(result, LocalCompleted) and isinstance(result.frame, InvocationFrame)
+        frame = replace(result.frame)
+        if fault == "missing_dataframe":
+            object.__delattr__(frame, "dataframe")
+        elif fault == "wrong_dataframe":
+            object.__setattr__(frame, "dataframe", "not a frame")
+        elif fault == "wrong_failures":
+            object.__setattr__(frame, "detection_failures", ["not a FailedRecord"])
+        return replace(result, frame=frame)
+
+    monkeypatch.setattr(_InjectedRedact, "run", callback)
+    run, _, _ = _execute_callback()
+    result = run()
+    assert [terminal.category for terminal in result.record.terminals] == ["success" if fault is None else "failure"]
+    assert len(result.frames) == (fault is None)
+    if fault is None:
+        assert isinstance(project_detection_redact(result).dataframe, pd.DataFrame)
+
+
+def test_injected_callbacks_keep_caller_thread_context_and_running_loop(tmp_path):
+    import asyncio
+    import sqlite3
+    from contextvars import ContextVar
+    from threading import get_ident
+
+    owner = get_ident()
+    context: ContextVar[str | None] = ContextVar("caller_marker", default=None)
+    connection = sqlite3.connect(":memory:")
+    anonymizer, detector, replacement, _ = _make_anonymizer()
+    calls = []
+    for runner in (detector, replacement):
+        returned = runner.run.return_value
+
+        def callback(*args, _returned=returned, **kwargs):
+            assert get_ident() == owner
+            assert context.get() == "caller"
+            assert asyncio.get_running_loop() is loop
+            assert connection.execute("select 37").fetchone() == (37,)
+            calls.append(_returned)
+            context.set("caller")
+            return _returned
+
+        runner.run.side_effect = callback
+
+    async def run():
+        nonlocal loop
+        loop = asyncio.get_running_loop()
+        context.set("caller")
+        return anonymizer.run(config=AnonymizerConfig(replace=Redact()), data=_input(tmp_path, 1))
+
+    loop = None
+    try:
+        result = asyncio.run(run())
+        assert len(calls) == 2 and result._execution is not None
+    finally:
+        connection.close()
+
+
+@pytest.mark.parametrize("stage", ["detection", "replacement"])
+@pytest.mark.parametrize("error_type", [KeyboardInterrupt, SystemExit])
+def test_caller_interrupt_drains_graph_and_preserves_identity(tmp_path, stage, error_type):
+    anonymizer, detector, replacement, _ = _make_anonymizer()
+    interrupted = error_type()
+    (detector if stage == "detection" else replacement).run.side_effect = interrupted
+    with pytest.raises(error_type) as caught:
+        anonymizer.run(config=AnonymizerConfig(replace=Redact()), data=_input(tmp_path, 1))
+    assert caught.value is interrupted
+    execution = getattr(interrupted, "_anonymizer_execution")
+    assert not execution.frames
+    assert [terminal.category for terminal in execution.record.terminals] == ["cancelled"]
+    assert replacement.run.call_count == (stage == "replacement")

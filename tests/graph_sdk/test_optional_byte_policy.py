@@ -135,9 +135,7 @@ def test_substitution_cannot_turn_finite_byte_promise_into_no_ceiling(parent, ch
             substitute(workflow=target, target=next(iter(target.nodes)).id, replacement=replacement)
 
 
-@pytest.mark.parametrize(
-    "field", ["max_local_in_flight", "max_remote_outstanding", "max_runtime_artifacts", "max_collection_items"]
-)
+@pytest.mark.parametrize("field", ["max_local_in_flight", "max_runtime_artifacts", "max_collection_items"])
 def test_absent_count_limit_still_rejects_before_callbacks(field: str) -> None:
     async def run():
         execution, capabilities, services, _ = span_graph()
@@ -146,3 +144,14 @@ def test_absent_count_limit_still_rejects_before_callbacks(field: str) -> None:
             await start_execution(admitted=execution, capabilities=capabilities, services=services)
 
     asyncio.run(run())
+
+
+def test_absent_physical_ceiling_is_explicitly_supported() -> None:
+    async def run():
+        execution, capabilities, services, _ = span_graph()
+        services = replace(services, limits=replace(services.limits, max_remote_outstanding=None))
+        return await (await start_execution(admitted=execution, capabilities=capabilities, services=services)).wait()
+
+    result = asyncio.run(run())
+    assert result.final_outputs
+    assert not result.requests.dispatches

@@ -9,7 +9,6 @@ import re
 import time
 import uuid
 from collections import Counter
-from importlib.metadata import version
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, TypeGuard, cast
 
@@ -744,6 +743,7 @@ class Anonymizer:
                 selected_models=self._selected_models.detection,
                 detection_options=detection_options,
                 replace_method=cast(Redact, config.replace),
+                opaque=not injected_redact,
                 **(
                     {"replacement": self._replace_runner, "replacement_models": self._selected_models.replace}
                     if injected_redact
@@ -871,31 +871,8 @@ class Anonymizer:
         return result
 
     def _uses_graph_redact(self, config: AnonymizerConfig) -> bool:
-        """Select the migrated DD profile without changing injected execution contracts."""
-        if (
-            not self._owns_detection_and_replacement
-            or type(config.replace) is not Redact
-            or type(self._data_designer) is not DataDesigner
-            or version("data-designer") != "0.9.1"
-        ):
-            return False
-        selected = self._selected_models.detection
-        if (
-            selected.entity_validator != [selected.entity_augmenter]
-            or selected.entity_detector == selected.entity_augmenter
-        ):
-            return False
-        models = {model.alias: model for model in self._model_configs}
-        detector, generator = models[selected.entity_detector], models[selected.entity_augmenter]
-        providers = {provider.name: provider for provider in self._data_designer._model_providers}
-        return (
-            detector.skip_health_check
-            and not generator.skip_health_check
-            and all(
-                model.provider in providers and providers[model.provider].provider_type == "openai"
-                for model in (detector, generator)
-            )
-        )
+        """Select the ordinary DD route before effects, with disclosed physical opacity."""
+        return self._owns_detection_and_replacement and type(config.replace) is Redact
 
     def _validate_preflight_config(self, config: AnonymizerConfig) -> None:
         """Run semantic preflight checks shared by validate, run, and preview."""

@@ -239,7 +239,9 @@ def test_public_source_frame(
     assert len(detections) == 1
     assert len(detections[0][0]) == len(expected)
     assert detections[0][1]["source_frame"] is not None
-    assert detections[0][1]["request_bridge"] is not None
+    assert detections[0][1]["request_bridge"] is None
+    assert result._execution._execution.context.prepared.declared_request_upper_bound is None
+    assert not result._execution.requests.dispatches
     assert not any(str(name).startswith("_anonymizer_source_") for name in result.trace_dataframe.columns)
     assert calls == {**dict.fromkeys(("detector", "validator", "augmenter"), len(expected)), "readiness": 1}
 
@@ -440,7 +442,8 @@ def test_public_graph_preserves_empty_and_all_failed_errors(scripted_detection, 
             facade.run(config=config, data=data)
     execution = getattr(caught.value, "_anonymizer_execution")
     assert execution is not None and not execution.final_outputs and not execution.frames
-    assert execution.requests.dispatched_count == (2 if texts and not preview else 1)
+    assert execution.requests.dispatched_count == 0
+    assert execution._execution.context.prepared.declared_request_upper_bound is None
 
 
 def test_public_graph_preserves_failed_source_order_and_injected_result(scripted_detection, tmp_path):
@@ -471,3 +474,62 @@ def test_public_graph_preserves_failed_source_order_and_injected_result(scripted
     assert result.dataframe["text_replaced"].tolist() == ["<first_name> travels."]
     assert result.trace_dataframe["extra"].tolist() == [29]
     assert calls == {"detector": 3, "validator": 1, "augmenter": 1, "readiness": 1}
+
+
+@pytest.mark.parametrize("case", ["rate_limit", "second_chunk", "readiness_unknown"])
+def test_public_opaque_dd_preserves_backend_retry_and_usage_behavior(scripted_detection, monkeypatch, tmp_path, case):
+    from data_designer.engine.models.clients.model_request_executor import ModelRequestExecutor
+
+    from anonymizer import Detect
+    from anonymizer.engine.detection._frame_publication import PublishedFrame
+    from anonymizer.engine.detection._graph_profile import qualify_detection_redact
+    from tests.engine.test_detection_graph_publication import _modify_dd_responses
+
+    monkeypatch.setattr(ModelRequestExecutor, "_retry_delay_seconds", lambda self, attempt: 0)
+    remaining = [1 if case == "rate_limit" else 4 if case == "second_chunk" else 0]
+
+    def response(request, answer):
+        body = json.loads(request.content)
+        messages = json.dumps(body["messages"])
+        retry = (case == "rate_limit" and body["model"] == "detector") or (
+            case == "second_chunk" and "Validate entity tags" in messages and "first_name_6_9" in messages
+        )
+        if remaining[0] and retry:
+            remaining[0] -= 1
+            return httpx.Response(429 if case == "rate_limit" else 503, json={"error": {"message": "transient"}})
+        if case == "readiness_unknown":
+            payload = answer.json()
+            payload.pop("usage", None)
+            return httpx.Response(answer.status_code, json=payload)
+        return answer
+
+    _modify_dd_responses(scripted_detection, monkeypatch, response)
+    path = tmp_path / "source.csv"
+    pd.DataFrame({"text": ["Alice Bob travels." if case == "second_chunk" else "Alice travels."]}).to_csv(
+        path, index=False
+    )
+    result = public_anonymizer(scripted_detection).run(
+        config=AnonymizerConfig(
+            replace=Redact(), detect=Detect(validation_max_entities_per_call=1), emit_telemetry=False
+        ),
+        data=AnonymizerInput(source=str(path)),
+    )
+    expected = (
+        "[REDACTED_FIRST_NAME] [REDACTED_FIRST_NAME] travels."
+        if case == "second_chunk"
+        else "[REDACTED_FIRST_NAME] travels."
+    )
+    assert result.dataframe.text_replaced.tolist() == [expected]
+    calls = scripted_detection[3]
+    assert dict(calls) == {
+        "detector": 2 if case == "rate_limit" else 1,
+        "validator": 7 if case == "second_chunk" else 1,
+        "augmenter": 1,
+        "readiness": 1,
+    }
+    execution = result._execution
+    assert execution is not None and isinstance(execution.frames[0], PublishedFrame)
+    assert execution._execution.context.prepared.declared_request_upper_bound is None
+    assert execution._execution.capabilities[0].attribution == "per_task"
+    assert not execution.requests.dispatches
+    assert not qualify_detection_redact(execution).qualified
