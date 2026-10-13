@@ -9,6 +9,7 @@ from typing import Literal, get_args
 
 from anonymizer.engine.graph_sdk._effect_values import EffectCode, PrivateValue, reject, require_instance
 from anonymizer.engine.graph_sdk._execution_topology import _lexical_path
+from anonymizer.engine.graph_sdk._execution_values import ImplementationResourceRegistration
 from anonymizer.engine.graph_sdk._qualification_provenance import _ProvenanceValidator
 from anonymizer.engine.graph_sdk.evidence import (
     AdmittedQualification,
@@ -41,7 +42,7 @@ from anonymizer.engine.graph_sdk.requests import (
     RequestTerminalFact,
     SemanticAssociation,
 )
-from anonymizer.engine.graph_sdk.resources import CleanupAssociation, CleanupFact
+from anonymizer.engine.graph_sdk.resources import CleanupAssociation, CleanupFact, ResourceId, ResourceOwner
 from anonymizer.graph._values import ActivationKey, DatumId
 from anonymizer.graph.activation import ActivationEntry
 from anonymizer.graph.workflow import (
@@ -963,10 +964,50 @@ class _Qualification:
         return False
 
     def cleanup_accounting(self) -> None:
-        self._cleanup_ledger(self.result.cleanup, self.result.cleanup_associations)
+        registered = self._registered_handle_resources()
+        if registered is None:
+            for codes in self.withholding.values():
+                codes.add("inconsistent_attribution")
+        self._cleanup_ledger(self.result.cleanup, self.result.cleanup_associations, registered=registered)
         bound = self.admitted.execution.context.bound_context
         if bound is not None:
             self._cleanup_ledger(bound.receipt.cleanup, bound.receipt.cleanup_associations, binding=True)
+
+    def _registered_handle_resources(self) -> dict[ResourceId, ResourceOwner] | None:
+        """Join captured handle declarations to the independently admitted domain."""
+        execution = self.admitted.execution
+        rows = getattr(self.result, "implementation_resources", None)
+        if not isinstance(rows, tuple):
+            reject(EffectCode.INVALID_TYPE)
+        if len(rows) > self.prepared.limits.max_capabilities:
+            reject(EffectCode.LIMIT_EXCEEDED)
+        for row in rows:
+            require_instance(row, ImplementationResourceRegistration)
+            row.__post_init__()
+        expected = {
+            (item.implementation, item.capability.operation, item.configuration): (item.capability, policy)
+            for policy, item in execution._service_implementations()
+            if item.capability.resource_lifetime != "stateless"
+        }
+        observed = {(row.implementation, row.operation, row.configuration): row for row in rows}
+        if len(observed) != len(rows) or observed.keys() != expected.keys():
+            return None
+        resources: dict[ResourceId, ResourceOwner] = {}
+        detachments = {}
+        for key, row in observed.items():
+            capability, policy = expected[key]
+            if row.invocation != self.result.record.invocation:
+                return None
+            owner = "caller" if capability.resource_lifetime == "caller_owned" else "sdk"
+            if row.owner != owner or row.safe_detachment != policy.safe_detachment:
+                return None
+            if row.resource in resources and (
+                resources[row.resource] != owner or detachments[row.resource] != row.safe_detachment
+            ):
+                return None
+            resources[row.resource] = owner
+            detachments[row.resource] = row.safe_detachment
+        return resources
 
     def _cleanup_ledger(
         self,
@@ -974,13 +1015,48 @@ class _Qualification:
         cleanup_associations: tuple[CleanupAssociation, ...],
         *,
         binding: bool = False,
+        registered: dict[ResourceId, ResourceOwner] | None = None,
     ) -> None:
+        require_instance(cleanup, tuple)
+        require_instance(cleanup_associations, tuple)
+        # Handle and adaptive source inventories have separate admitted bounds.
+        # Binding acquisition completeness remains owned by its receipt boundary.
+        limit = self.prepared.limits.max_capabilities + len(self.admitted.execution.context.context_capabilities)
+        if binding:
+            bound = self.admitted.execution.context.bound_context
+            assert bound is not None
+            limit = max(limit, len(bound.receipt.sources))
+        if max(len(cleanup), len(cleanup_associations)) > limit:
+            if binding:
+                for codes in self.withholding.values():
+                    codes.add("inconsistent_attribution")
+                return
+            reject(EffectCode.LIMIT_EXCEEDED)
+        for fact in cleanup:
+            require_instance(fact, CleanupFact)
+            fact.__post_init__()
+        for association in cleanup_associations:
+            require_instance(association, CleanupAssociation)
+            require_instance(association.resource, ResourceId)
+            require_instance(association.targets, frozenset)
+            if len(association.targets) > len(self.prepared.data.targets):
+                reject(EffectCode.LIMIT_EXCEEDED)
         facts = {item.resource: item for item in cleanup}
         associations = {item.resource: item for item in cleanup_associations}
         if (
             len(facts) != len(cleanup)
             or len(associations) != len(cleanup_associations)
             or facts.keys() != associations.keys()
+            or registered is not None
+            and (
+                not registered.keys() <= facts.keys()
+                or any(facts[resource].owner != owner for resource, owner in registered.items() if resource in facts)
+                or not any(
+                    "adaptive_retrieval" in capability.uses
+                    for capability in self.admitted.execution.context.context_capabilities
+                )
+                and facts.keys() != registered.keys()
+            )
         ):
             for codes in self.withholding.values():
                 codes.add("inconsistent_attribution")

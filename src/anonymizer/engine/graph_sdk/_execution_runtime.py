@@ -62,6 +62,7 @@ from anonymizer.engine.graph_sdk._execution_values import (
     ExecutionPortFact,
     ExecutionResult,
     ExecutionServices,
+    ImplementationResourceRegistration,
     LocalAssessmentResult,
     OperationExecutionPolicy,
     ProvenanceKey,
@@ -145,6 +146,21 @@ class _InvocationRuntime:
         self.handles = {
             (item.implementation, item.operation, item.configuration): item for item in self.services.handles
         }
+        # Capture every validated resource-bearing handle before acquiring providers
+        # or executing operations. Stateless handles have no cleanup obligation.
+        self.implementation_resources = tuple(
+            ImplementationResourceRegistration(
+                invocation=invocation,
+                implementation=handle.implementation,
+                operation=handle.operation,
+                configuration=handle.configuration,
+                resource=handle.resource.resource,
+                owner=handle.resource.owner,
+                safe_detachment=handle.resource.safe_detachment,
+            )
+            for handle in services.handles
+            if handle.resource is not None
+        )
         self.context_leases, self.failed_context_sources = _acquire_context_resources(self.services.context_resources)
         self.states: list[ActivationState] = []
         self.target_keys: dict[DatumId, dict[int, ActivationKey]] = {}
@@ -872,6 +888,7 @@ class _InvocationRuntime:
         return ExecutionResult(
             _key=_RESULT_KEY,
             _execution=self.admitted,
+            implementation_resources=self.implementation_resources,
             _input_parents=tuple(self.facts.input_parents),
             _passthrough_parents=tuple(
                 (target, activation, port, parent)

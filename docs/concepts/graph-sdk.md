@@ -286,5 +286,13 @@ or three when Q corrects malformed G, publishes a typed candidate, and qualifies
 it through the existing local assessment path. All registered SDK-owned clients,
 including an unsent Q client, close once on their creation loop after actual users
 drain. Its cleanup association remains required even without a Q request.
+Execution captures an invocation-local registration for every resource-bearing
+service handle before acquiring context providers or running operations.
+Qualification derives that complete handle-key domain from the admitted
+nonstateless implementations before joining resource owners and cleanup
+facts. Removing a cleanup fact and its association cannot hide a declared handle
+resource; removing its registration also fails the domain check. Shared leases
+still produce one cleanup fact. Context and initial-binding acquisition membership
+remain a separate retained-proof obligation; normal runtime cleanup includes them.
 Broader recipes, shared targets, additional optional shapes, opaque execution and actual DD
 provider routes remain separate admission work.

@@ -7,7 +7,7 @@ from __future__ import annotations
 from dataclasses import fields, replace
 from typing import Literal
 
-from anonymizer.engine.graph_sdk._execution_values import _FACT_KEY, _RESULT_KEY
+from anonymizer.engine.graph_sdk._execution_values import _FACT_KEY, _RESULT_KEY, ImplementationResourceRegistration
 from anonymizer.engine.graph_sdk.capabilities import ImplementationRef, ImplementationSelection
 from anonymizer.engine.graph_sdk.context import admit_context_plan
 from anonymizer.engine.graph_sdk.executor import (
@@ -63,6 +63,7 @@ from anonymizer.engine.graph_sdk.requests import (
     initialize_requests,
     request_receipt,
 )
+from anonymizer.engine.graph_sdk.resources import CleanupFact, ResourceId, _cleanup_association
 from anonymizer.graph._values import ActivationKey, ArtifactRef, InvocationId, TaskAttemptId
 from anonymizer.graph.activation import (
     ActivationLimits,
@@ -413,13 +414,29 @@ def child_fixture(
     )
     # The fixture author supplies a canonical retained record. Sealed fact constructors
     # do not execute a delegated operation or bypass the production service gate.
+    # Declared SDK lease identities and closed facts are literal oracle inputs too.
+    registrations = tuple(
+        ImplementationResourceRegistration(
+            invocation=invocation,
+            implementation=item.implementation,
+            operation=item.capability.operation,
+            configuration=item.configuration,
+            resource=ResourceId.new(),
+            owner="sdk",
+            safe_detachment=policy.safe_detachment,
+        )
+        for policy in execution.policies
+        for item in policy.implementations
+        if item.capability.resource_lifetime != "stateless"
+    )
     result = ExecutionResult(
         _key=_RESULT_KEY,
         _execution=execution,
+        implementation_resources=registrations,
         record=record,
         states=(state,),
         requests=request_receipt(state=requests),
-        cleanup=(),
+        cleanup=tuple(CleanupFact(resource=row.resource, owner="sdk", disposition="closed") for row in registrations),
         pending_decisions=(),
         artifacts=((root, TextArtifactValue(text="source")), (output, TextArtifactValue(text="candidate"))),
         assessments=(
@@ -476,7 +493,10 @@ def child_fixture(
         ),
         _input_parents=((target, keys[assessor], "input", root_key),),
         _passthrough_parents=(),
-        cleanup_associations=(),
+        cleanup_associations=tuple(
+            _cleanup_association(resource=row.resource, targets=data.targets, purpose="accounting")
+            for row in registrations
+        ),
         publication_failures=(),
     )
     return execution, result

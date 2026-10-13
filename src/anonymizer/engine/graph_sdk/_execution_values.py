@@ -60,7 +60,9 @@ from anonymizer.engine.graph_sdk.requests import (
 from anonymizer.engine.graph_sdk.resources import (
     CleanupAssociation,
     CleanupFact,
+    ResourceId,
     ResourceLease,
+    ResourceOwner,
     SafeDetachment,
 )
 from anonymizer.graph._values import (
@@ -591,6 +593,17 @@ class AdmittedExecutionPlan(PrivateValue):
         )
         object.__setattr__(self, "materialization_schemas", MappingProxyType(self._compile_materialization_schemas()))
 
+    def _service_implementations(self) -> tuple[tuple[OperationExecutionPolicy, ExecutionImplementation], ...]:
+        """Declared handle domain, excluding semantic work borrowed by a delegate."""
+        borrowed = {
+            self.context.prepared.reservation_recipe[policy.delegated.readiness.owner_slot].template
+            for policy in self.policies
+            if policy.delegated is not None and policy.delegated.readiness is not None
+        }
+        return tuple(
+            (policy, item) for policy in self.policies if policy.node not in borrowed for item in policy.implementations
+        )
+
     def _compile_materialization_schemas(self) -> dict[ArtifactType, Literal["scalar", "collection"]]:
         schemas: dict[ArtifactType, Literal["scalar", "collection"]] = {}
         context = self.context.bound_context
@@ -734,6 +747,28 @@ class ImplementationHandle(PrivateValue):
 
 
 @dataclass(frozen=True, slots=True, kw_only=True, repr=False)
+class ImplementationResourceRegistration(PrivateValue):
+    """Invocation-local handle identity and its pre-dispatch resource declaration."""
+
+    invocation: InvocationId
+    implementation: ImplementationRef
+    operation: OperationSpec
+    configuration: FrozenConfig
+    resource: ResourceId
+    owner: ResourceOwner
+    safe_detachment: SafeDetachment
+
+    def __post_init__(self) -> None:
+        require_instance(self.invocation, InvocationId)
+        require_instance(self.implementation, ImplementationRef)
+        require_instance(self.operation, OperationSpec)
+        require_instance(self.configuration, FrozenConfig)
+        require_instance(self.resource, ResourceId)
+        require_literal(self.owner, frozenset({"caller", "sdk"}))
+        require_literal(self.safe_detachment, frozenset({"forbidden", "independent_after_dispatch"}))
+
+
+@dataclass(frozen=True, slots=True, kw_only=True, repr=False)
 class ExecutionServices(PrivateValue):
     handles: tuple[ImplementationHandle, ...]
     context_resources: tuple[ContextResource, ...]
@@ -798,6 +833,7 @@ _RESULT_KEY = object()
 @dataclass(frozen=True, slots=True, kw_only=True, repr=False, init=False)
 class ExecutionResult(PrivateValue):
     _execution: AdmittedExecutionPlan
+    implementation_resources: tuple[ImplementationResourceRegistration, ...]
     _input_parents: tuple[tuple[DatumId, ActivationKey, str, ProvenanceKey], ...]
     _passthrough_parents: tuple[tuple[DatumId, ActivationKey, str, ProvenanceKey], ...]
     record: CanonicalRecord

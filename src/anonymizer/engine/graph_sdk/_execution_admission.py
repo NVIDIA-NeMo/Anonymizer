@@ -720,12 +720,7 @@ def _validate_services(admitted: AdmittedExecutionPlan, services: ExecutionServi
     ):
         reject(EffectCode.INVALID_TYPE)
     _validate_delegated_services(admitted, services)
-    borrowed = {
-        admitted.context.prepared.reservation_recipe[policy.delegated.readiness.owner_slot].template
-        for policy in admitted.policies
-        if policy.delegated is not None and policy.delegated.readiness is not None
-    }
-    retained = [item for policy in admitted.policies if policy.node not in borrowed for item in policy.implementations]
+    retained = [item for _, item in admitted._service_implementations()]
     if len(services.handles) > admitted.context.prepared.limits.max_capabilities:
         reject(EffectCode.LIMIT_EXCEEDED)
     handle_keys = [(item.implementation, item.operation, item.configuration) for item in services.handles]
