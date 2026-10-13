@@ -12,7 +12,7 @@ import pytest
 from anonymizer.engine.graph_sdk._effect_values import EffectCode, EffectRejected
 from anonymizer.engine.graph_sdk.context import ContextResource, ContextSourceCapability, admit_context_plan
 from anonymizer.engine.graph_sdk.executor import admit_execution_plan, start_execution
-from anonymizer.engine.graph_sdk.qualification import qualify_retained
+from anonymizer.engine.graph_sdk.qualification import qualify, qualify_retained
 from anonymizer.engine.graph_sdk.requests import PhysicalRequestPolicy
 from anonymizer.engine.graph_sdk.resources import ResourceId, ResourceLease
 from anonymizer.graph._values import InvocationId
@@ -456,5 +456,37 @@ def test_cancelled_adaptive_execution_preserves_acquisition_and_uncertain_stop_m
         if not before_entry:
             assert result.requests.terminals[0].category == "lost"
             assert result.requests.remote_outstanding
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("retained", [False, True])
+@pytest.mark.parametrize(
+    "field", ["invocation", "capability", "outcome", "resource", "owner", "safe_detachment", "clone", "wrong_type"]
+)
+def test_acquisition_row_requires_all_fields_before_qualification(field, retained):
+    async def run():
+        execution, result, provider = await unused()
+        original = result.adaptive_acquisitions[0]
+        row = replace(original, capability=replace(original.capability))
+        if field == "wrong_type":
+            object.__setattr__(row, "capability", None)
+        elif field != "clone":
+            object.__delattr__(row, field)
+        changed = result_with(result, adaptive_acquisitions=(row,))
+        admitted, current, submissions = _inputs(execution, changed)
+
+        def check():
+            if retained:
+                return qualify_retained(admitted=admitted, result=changed, current=current)
+            return qualify(admitted=admitted, result=changed, current=current, submissions=submissions)
+
+        if field == "clone":
+            assert len(check().qualified) == 1
+        else:
+            with pytest.raises(EffectRejected) as error:
+                check()
+            assert error.value.code == EffectCode.INVALID_TYPE
+        assert (provider.factories, provider.calls, provider.closes) == (1, 0, 1)
 
     asyncio.run(run())

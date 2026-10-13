@@ -781,6 +781,9 @@ class AdaptiveResourceAcquisition(PrivateValue):
     safe_detachment: SafeDetachment
 
     def __post_init__(self) -> None:
+        for name in ("invocation", "capability", "outcome", "resource", "owner", "safe_detachment"):
+            if not hasattr(self, name):
+                reject(EffectCode.INVALID_TYPE)
         require_instance(self.invocation, InvocationId)
         require_instance(self.capability, ContextSourceCapability)
         require_literal(self.outcome, frozenset({"acquired", "not_transferred"}))
