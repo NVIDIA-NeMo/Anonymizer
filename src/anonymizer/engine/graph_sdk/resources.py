@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from typing import Literal, Protocol, TypeAlias, runtime_checkable
 
@@ -156,14 +157,19 @@ async def _close_resource(lease: ResourceLease) -> CleanupFact:
     handle = lease.handle
     # A Lost request is no longer locally in-flight in the request reducer,
     # but an ordinary worker may still be touching this shared handle.
+    from anonymizer.engine.graph_sdk._foreign_transport import ForeignLoopTransport
     from anonymizer.engine.graph_sdk.blocking import _BlockingAdapter
 
-    if isinstance(handle, _BlockingAdapter) and handle.local_users:
+    if isinstance(handle, (_BlockingAdapter, ForeignLoopTransport)) and handle.local_users:
         return CleanupFact(resource=lease.resource, owner=lease.owner, disposition="left_open")
     if not isinstance(handle, CloseableResource):
         return CleanupFact(resource=lease.resource, owner=lease.owner, disposition="close_unknown")
     try:
         await handle.close()
+    except asyncio.CancelledError:
+        if not isinstance(handle, ForeignLoopTransport):
+            raise
+        return CleanupFact(resource=lease.resource, owner=lease.owner, disposition="close_unknown")
     except Exception:
         return CleanupFact(resource=lease.resource, owner=lease.owner, disposition="close_failed")
     return CleanupFact(resource=lease.resource, owner=lease.owner, disposition="closed")

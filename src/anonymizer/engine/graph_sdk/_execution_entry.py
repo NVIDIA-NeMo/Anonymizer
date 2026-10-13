@@ -22,6 +22,7 @@ from anonymizer.engine.graph_sdk._execution_values import (
     ExecutionServices,
     NestedEventLoopError,
 )
+from anonymizer.engine.graph_sdk._foreign_transport import ForeignLoopTransport
 from anonymizer.engine.graph_sdk.blocking import _reject_worker_entry
 from anonymizer.engine.graph_sdk.capabilities import (
     ImplementationCapability,
@@ -126,6 +127,9 @@ async def start_execution(
             reject(EffectCode.CHANGED_FAILOVER_POLICY)
         _validate_services(admitted, services)
         _validate_absences(admitted, services)
+        ForeignLoopTransport.claim_many(
+            tuple(handle.transport for handle in services.handles if type(handle.transport) is ForeignLoopTransport)
+        )
         invocation = InvocationId.new(plan=prepared.plan)
         control = _ExecutionControl()
         task = asyncio.create_task(_run_execution(admitted, services, invocation, control, span))

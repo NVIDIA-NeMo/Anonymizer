@@ -576,6 +576,19 @@ def _validate_delegated_services(admitted: AdmittedExecutionPlan, services: Exec
             reject(EffectCode.UNSUPPORTED)
         if not contract.followups <= {"correction"}:
             reject(EffectCode.UNSUPPORTED)
+        foreign = [
+            handle.transport for handle in services.handles if isinstance(handle.transport, ForeignLoopTransport)
+        ]
+        if foreign and (
+            contract.readiness is None
+            or len(contract.child_slots) != 1
+            or any(
+                type(handle.transport) is not ForeignLoopTransport
+                for handle in services.handles
+                if handle.transport is not None
+            )
+        ):
+            reject(EffectCode.UNSUPPORTED)
         nodes = {policy.node, *(prepared.reservation_recipe[index].template for index in contract.owned_slots)}
         if any(item.kind == "external" and item.node not in nodes for item in admitted.policies):
             reject(EffectCode.UNSUPPORTED)
@@ -592,13 +605,11 @@ def _validate_delegated_services(admitted: AdmittedExecutionPlan, services: Exec
                 reject(EffectCode.UNSUPPORTED)
             implementation = owned.implementations[0]
             operation = implementation.capability.operation
-            if implementation.capability.resource_lifetime != "stateless" and not (
-                owned.node == policy.node and implementation.capability.resource_lifetime == "caller_owned"
-            ):
-                reject(EffectCode.UNSUPPORTED)
             if owned.node != policy.node and (operation.inputs or operation.outputs):
                 reject(EffectCode.UNSUPPORTED)
             if readiness is not None and owned.node == prepared.reservation_recipe[readiness.owner_slot].template:
+                if implementation.capability.resource_lifetime != "stateless":
+                    reject(EffectCode.UNSUPPORTED)
                 if (
                     sum(
                         item.implementation == implementation.implementation
@@ -630,6 +641,15 @@ def _validate_delegated_services(admitted: AdmittedExecutionPlan, services: Exec
                     or handle.resource.handle is not handle.delegated
                 ):
                     reject(EffectCode.UNSUPPORTED)
+            elif type(handle.transport) is ForeignLoopTransport:
+                parents = [
+                    item.delegated for item in services.handles if type(item.delegated) is WorkerDelegatedSubmitter
+                ]
+                if len(parents) != 1 or owned.node == policy.node or owned.kind != "external":
+                    reject(EffectCode.UNSUPPORTED)
+                if implementation.capability.resource_lifetime == "stateless" or owned.safe_detachment != "forbidden":
+                    reject(EffectCode.UNSUPPORTED)
+                handle.transport.validate(handle.resource, parents[0].borrowed_loop)
             elif handle.resource is not None or implementation.capability.resource_lifetime != "stateless":
                 reject(EffectCode.UNSUPPORTED)
             callback = (
@@ -662,8 +682,9 @@ def _validate_delegated_services(admitted: AdmittedExecutionPlan, services: Exec
 
 
 def _validate_services(admitted: AdmittedExecutionPlan, services: ExecutionServices) -> None:
-    # X2 has a driver witness only; X3 must admit resource/loop lifetime first.
-    if any(isinstance(handle.transport, ForeignLoopTransport) for handle in services.handles):
+    if any(isinstance(handle.transport, ForeignLoopTransport) for handle in services.handles) and not any(
+        policy.delegated is not None for policy in admitted.policies
+    ):
         reject(EffectCode.UNSUPPORTED)
     require_instance(services.limits, ExecutionLimits)
     require_instance(services.decision_limits, DecisionLimits)

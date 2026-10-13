@@ -185,9 +185,9 @@ open at service admission. These are live execution resources, not stateless
 handles: this invocation drains its retained worker and children without waiting
 for unrelated caller-pool work. Other captured values must satisfy the declared
 cross-thread/stateless profile. Arbitrary synchronous
-code cannot be stopped by cancelling an asyncio observer. Foreign-loop physical
-transports and owned-client close remain unsupported pending separate entry and
-resource-lifetime conformance. This does not enable a DataDesigner route.
+code cannot be stopped by cancelling an asyncio observer. The registered foreign
+client profile below adds loop-affine physical transport and cleanup. This does
+not enable a DataDesigner route.
 
 The shared asynchronous request driver now admits Dispatch inside the retained
 call task immediately before callable entry. The delegated path preflights Start,
@@ -199,8 +199,8 @@ Blocking transports retain their existing worker-entry boundary.
 Opaque structural admission remains unsupported because the capability schema
 cannot yet express unknown physical request bounds truthfully. Hard-budget
 preparation retains its implementation-owned-retry rejection. Optional unused
-slots, foreign-transport entry and resource draining, multi-target
-shared ownership, dynamic recipes and provider-error exhaustion require later
+slots, broader foreign-resource profiles, multi-target shared ownership,
+dynamic recipes and provider-error exhaustion require later
 bounded integration units. Ordinary injected-runner compatibility must gain its
 explicit opaque path before production cutover.
 
@@ -223,10 +223,10 @@ violates the required lifetime and cannot establish successful completion or
 confirmed remote stop. Neither cancellation nor request accounting closes or
 replaces caller resources.
 
-`ForeignLoopTransport` remains rejected by service admission before invocation
-identity is allocated. These are driver witnesses with registered activation
-facts, not full graph or DataDesigner qualification. X3 must prove resource leases,
-correct-loop cleanup and owner integration before that service gate can open.
+An unregistered `ForeignLoopTransport` remains rejected before invocation identity
+is allocated. Its driver witnesses cover entry and cancellation without granting
+service admission. The registered client profile below adds public graph execution
+and resource cleanup; it does not qualify a DataDesigner route.
 
 The shared request driver retains an active cancellation hook through observer
 cancellation. A completed hook that self-cancels or raises an ordinary exception
@@ -234,3 +234,39 @@ provides no stop confirmation: retained requests continue through Lost, drain an
 late settlement. The hook cannot cancel its caller by cancelling its own task.
 This uses the existing request authority and preserves the first terminal; it
 does not expand foreign service admission or ordinary call-lifetime profiles.
+
+
+The registered foreign-client profile uses one worker owner, one target, one shared
+readiness obligation, one local probe and one mandatory generation leaf. Every
+physical leaf uses a `ForeignLoopTransport` registered on the worker's declared
+borrowed loop. `ForeignLoopTransport.create(factory=..., owner=...,
+exclusive=True, gate_timeout_ns=...)` runs the client factory on its actual loop
+and issues the exact `ResourceLease` used by its implementation handle. The
+capability declares `caller_owned` or `executor_owned`, with detachment forbidden.
+The factory must create a fresh client confined to that loop; the caller grants
+this adapter exclusive use until the invocation drains. Registration does not
+establish safety for aliases or arbitrary concurrent raw-client users.
+
+After all pre-effect validation, execution atomically claims the unique adapters
+before allocating its invocation identity. A failed multi-adapter claim consumes
+none. Each adapter serves one admitted invocation; stale, mismatched, closed,
+wrong-loop and repeated handles reject before dispatch. The client identity and
+creation loop remain pinned through request entry and cleanup.
+
+The adapter retains the actual scheduled send and stop-hook Futures. A Lost or
+confirmed-stop request fact cannot erase these local resource users. The existing
+owner drains its child classification, callbacks and worker before cleanup; the
+resource boundary also checks the retained users directly. SDK-owned clients
+close once on their recorded creation loop. Close remains retained through
+observer cancellation; an exception records `close_failed`, and a self-cancelled
+close records `close_unknown`. Existing cleanup associations withhold the affected
+target from qualification. A permanently unavailable borrowed loop cannot prove
+successful drain or confirmed remote stop.
+
+Caller-owned clients, pools and loops stay open. Only this invocation's users
+drain; unrelated caller-pool work does not delay its result. The adapter is spent
+after that invocation, while the caller's client remains available for subsequent
+caller use. The local public fixture executes two actual foreign sends, publishes
+a typed candidate, and qualifies it through the existing local assessment path.
+Broader recipes, shared targets, optional slots, opaque execution and actual DD
+provider routes remain separate admission work.

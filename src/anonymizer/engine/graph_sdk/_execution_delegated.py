@@ -22,6 +22,7 @@ from anonymizer.engine.graph_sdk._execution_values import (
     LocalResult,
     RuntimeOutcome,
 )
+from anonymizer.engine.graph_sdk._foreign_transport import ForeignLoopTransport
 from anonymizer.engine.graph_sdk._ingress import inspect_associations, inspect_failure
 from anonymizer.engine.graph_sdk._request_driver import drive_request
 from anonymizer.engine.graph_sdk.blocking import BlockingAffinity, BlockingPool, _BlockingAdapter, _BlockingInvocation
@@ -431,13 +432,28 @@ class _DelegatedOwner(PrivateValue):
             runtime._start_observed_activation(leaf.activation, operation=True)
             return await transport.dispatch(envelope)
 
+        foreign = transport._invocation(envelope) if type(transport) is ForeignLoopTransport else None
+        if handle.resource is not None:
+            runtime.request_resources[request] = handle.resource.resource
+
+        def prepare() -> Callable[[], None]:
+            commit = self._prepare(leaf, attempt)
+
+            def start() -> None:
+                commit()
+                if foreign is not None:
+                    runtime._start_observed_activation(leaf.activation, operation=True)
+
+            return start
+
         completion = await drive_request(
             authority,
             request,
             self,
             invoke,
             transport.cancel,
-            prepare_dispatch=lambda: self._prepare(leaf, attempt),
+            prepare_dispatch=prepare,
+            foreign=foreign,
             drain_on_cancel=True,
         )
         if request not in authority.state.dispatched:
