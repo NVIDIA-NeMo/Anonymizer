@@ -4,7 +4,8 @@
 from __future__ import annotations
 
 import pandas as pd
-from data_designer.config.column_configs import LLMStructuredColumnConfig
+import pytest
+from pydantic import ValidationError
 
 from anonymizer.config.models import EvaluateModelSelection
 from anonymizer.engine.constants import (
@@ -19,6 +20,7 @@ from anonymizer.engine.evaluation.replace.attribute_fidelity_judge import (
     _judge_prompt,
     _replacements_for_judge,
 )
+from anonymizer.engine.workflow_columns.evaluation.judge.config import JudgeColumnConfig, JudgeKind
 
 _flatten_judgment = AttributeFidelityJudgeWorkflow._flatten_judgment
 
@@ -84,6 +86,105 @@ def test_replacements_for_judge_returns_empty_for_malformed() -> None:
 # ---------------------------------------------------------------------------
 # Tests: _flatten_judgment
 # ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("all_valid", "entities", "accepted"),
+    [
+        (True, None, True),
+        (True, [], True),
+        (
+            True,
+            [
+                {
+                    "original": "Sarah",
+                    "label": "first_name",
+                    "synthetic": "Maria",
+                    "attributes_checked": ["gender"],
+                    "passes": True,
+                    "reasoning": "Both names imply feminine gender.",
+                }
+            ],
+            True,
+        ),
+        (
+            True,
+            [
+                {
+                    "original": "40",
+                    "label": "age",
+                    "synthetic": "12",
+                    "attributes_checked": ["age_bucket"],
+                    "passes": False,
+                    "reasoning": "Adult bucket changed to child.",
+                }
+            ],
+            False,
+        ),
+        (False, None, False),
+        (False, [], False),
+        (
+            False,
+            [
+                {
+                    "original": "Sarah",
+                    "label": "first_name",
+                    "synthetic": "Maria",
+                    "attributes_checked": ["gender"],
+                    "passes": True,
+                    "reasoning": "Both names imply feminine gender.",
+                }
+            ],
+            False,
+        ),
+        (
+            False,
+            [
+                {
+                    "original": "40",
+                    "label": "age",
+                    "synthetic": "12",
+                    "attributes_checked": ["age_bucket"],
+                    "passes": False,
+                    "reasoning": "Adult bucket changed to child.",
+                }
+            ],
+            True,
+        ),
+    ],
+)
+def test_judgment_schema_normalizes_positive_null_and_enforces_verdict_consistency(
+    all_valid: bool,
+    entities: list[dict[str, object]] | None,
+    accepted: bool,
+) -> None:
+    payload = {"all_valid": all_valid, "entities": entities}
+    if not accepted:
+        with pytest.raises(ValidationError):
+            AttributeFidelityJudgmentSchema.model_validate(payload)
+        return
+
+    judgment = AttributeFidelityJudgmentSchema.model_validate(payload)
+    assert judgment.model_dump()["entities"] == (entities or [])
+
+
+def test_judgment_schema_does_not_normalize_null_nested_attributes_checked() -> None:
+    with pytest.raises(ValidationError):
+        AttributeFidelityJudgmentSchema.model_validate(
+            {
+                "all_valid": False,
+                "entities": [
+                    {
+                        "original": "40",
+                        "label": "age",
+                        "synthetic": "12",
+                        "attributes_checked": None,
+                        "passes": False,
+                        "reasoning": "Adult bucket changed to child.",
+                    }
+                ],
+            }
+        )
 
 
 def test_flatten_judgment_all_valid_keeps_invalid_empty() -> None:
@@ -234,10 +335,10 @@ def test_evaluate_invokes_adapter_with_correct_alias_and_schema(
 
     assert captured["workflow_name"] == "replace-attribute-fidelity-judge"
     col = captured["columns"][0]
-    assert isinstance(col, LLMStructuredColumnConfig)
+    assert isinstance(col, JudgeColumnConfig)
     assert col.name == COL_ATTRIBUTE_FIDELITY_JUDGE
     assert col.model_alias == stub_evaluate_model_selection.replace_attribute_fidelity_judge
-    assert col.output_format == AttributeFidelityJudgmentSchema.model_json_schema()
+    assert col.judge_kind == JudgeKind.ATTRIBUTE_FIDELITY.value
 
     assert bool(result.dataframe[COL_ATTRIBUTE_FIDELITY_VALID].iloc[0]) is False
     invalid = result.dataframe[COL_ATTRIBUTE_FIDELITY_INVALID_ENTITIES].iloc[0]
