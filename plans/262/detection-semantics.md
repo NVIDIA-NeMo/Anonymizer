@@ -92,6 +92,49 @@ The implementation should use different types, or equivalently strict state
 objects, for the following concepts. These remain internal to
 `anonymizer.engine`.
 
+### Source text and view
+
+`SourceTextRef` identifies the canonical text against which entity offsets are
+interpreted. It is a structured internal reference containing:
+
+- an opaque record ID supplied by the execution boundary; and
+- an opaque field ID identifying the text within that record.
+
+On the current DataFrame path these values are `RECORD_ID_COLUMN` and
+`COL_TEXT`. The domain type does not depend on pandas or expose either value to
+users. It does not hash source text: identical text in different records remains
+distinct, while different views of the same field retain the same
+`SourceTextRef`.
+
+The serialized shape is deliberately plain and stable:
+
+```json
+{
+  "record_id": "<opaque execution record ID>",
+  "field_id": "__nemo_anonymizer_text_input__"
+}
+```
+
+The current DataFrame adapter constructs that value as
+`SourceTextRef(record_id=str(row[RECORD_ID_COLUMN]), field_id=COL_TEXT)` after
+record IDs have been attached. This is an execution-scoped source reference,
+not a content-derived ID or a new public input field.
+
+`SourceView` identifies the contiguous portion of that canonical text supplied
+to a detector. It contains the `SourceTextRef` and canonical view start and end
+offsets. The current full-text path uses `[0, len(text))`. A backend operating on
+a view converts every local span before publishing its result:
+
+```text
+canonical_start = view_start + local_start
+canonical_end   = view_start + local_end
+```
+
+Only canonical offsets enter observations, admission, coalescing, derivation,
+or reconciliation. This lets overlapping views of one source describe the same
+occurrence while preventing equal label/bounds pairs from different fields or
+records from coalescing.
+
 ### Observation
 
 An observation is one detector source's claim about a source span before that
@@ -102,7 +145,9 @@ Required fields:
 - `observation_id`: immutable identifier allocated by the producing backend
   before its result is published;
 - `detection_result_id`: immutable identifier for that detector invocation;
-- exact source `value` taken from `text[start:end]`;
+- the canonical `SourceTextRef` inherited from the `DetectionResult`;
+- exact source `value` taken from canonical
+  `text[start_position:end_position]`;
 - original `label`, `start_position`, and `end_position`;
 - source kind and source instance identity;
 - source-native score when one exists;
@@ -148,7 +193,7 @@ input candidates. Admission therefore applies the following semantic policy:
 
 - ignore and trace aliases that are not present in the response's own
   dispatched request inventory, even if that alias or observation exists
-  elsewhere in the row;
+  elsewhere in the detection execution;
 - for duplicate aliases within one successful authoritative response, use the
   first usable decision in serialized response order and trace later entries;
 - treat `keep` and `drop` as usable, and treat `reclass` as usable only when it
@@ -171,7 +216,8 @@ incorrect original label.
 
 ### Admission result
 
-Applying validation produces one terminal admission result per observation:
+Applying validation produces one terminal admission result per observation in
+the current detection execution:
 
 - `accepted`: the route explicitly accepted the observation, possibly with a
   successfully resolved reclassified label;
@@ -187,6 +233,11 @@ an undecided observation cannot grant accepted provenance or authorize broader
 occurrence propagation. A decision is consumed while producing this result and
 is never consulted again downstream.
 
+Validation chunks, retries, and validator-pool calls collectively implement
+this one logical validation pass; they do not create additional admission runs.
+Admission state remains a separate object that references the immutable
+observation rather than being encoded into or mutating the observation.
+
 `fallback_protected` is internal lifecycle state, not an entity label or a new
 public result field. When such a candidate survives final reconciliation, the
 public entity retains its ordinary label and exact bounds. The fallback status
@@ -199,7 +250,7 @@ An admitted candidate is eligible for protection after its validation route,
 label scope, and configured source/route checks have completed. It contains:
 
 - immutable lineage back to its originating observation references;
-- the current label and exact source bounds;
+- the canonical source reference, current label, and exact canonical bounds;
 - accepted provenance references containing the detection result ID,
   observation ID, source kind, and source instance only for origins that
   survived an enabled route;
@@ -217,7 +268,7 @@ downstream code to parse source-name prefixes.
 An admitted candidate's semantic identity is:
 
 ```text
-(normalize_label(label), start_position, end_position)
+(source_text_ref, normalize_label(label), start_position, end_position)
 ```
 
 This identity is used for coalescing equivalent accepted claims. It is separate
@@ -228,7 +279,9 @@ decision correlation.
 
 The implementation must make the following properties true:
 
-1. **Source offsets are authoritative.** Every materialized span value equals
+1. **Source identity and offsets are authoritative.** Every observation names
+   one canonical `SourceTextRef`; every backend-local span is mapped through its
+   `SourceView`; and every materialized value equals canonical
    `text[start_position:end_position]`.
 2. **Observation identity is immutable.** Backends assign observation IDs
    within an immutable `DetectionResult` before publication. Reclassification
@@ -253,28 +306,29 @@ The implementation must make the following properties true:
 9. **Eligibility precedes suppression.** Excluded, disallowed, unsupported,
    disabled-source, or route-rejected candidates cannot remove an otherwise
    eligible candidate.
-10. **Exact coalescing is normalized and lossless.** Equivalent label/span
-   candidates coalesce while retaining eligible accepted origins and the most
-   protective propagation behavior permitted by configuration.
+10. **Exact coalescing is source-aware, normalized, and lossless.** Equivalent
+    source/label/span candidates coalesce while retaining eligible accepted
+    origins and the most protective propagation behavior permitted by
+    configuration.
 11. **Derivation cannot broaden authority.** Name splitting and occurrence
    propagation inherit permissions from an accepted parent; a span-restricted
    parent cannot create independently protected occurrences elsewhere.
 12. **Augmentation admission is prompt-independent.** Augmenter outputs never
     consume seed-validator decisions, whether the augmenter prompt uses seed
     context or plain source text.
-13. **Seed protection precedes augmentation.** An admitted seed or authorized
-    seed-derived candidate cannot be displaced by an augmentation-only
-    candidate; this ordering does not grant fallback protection accepted
-    provenance or propagation permission.
+13. **Coverage precedes source.** For different overlapping bounds, prefer the
+    longer protected span regardless of origin. Source priority may break ties
+    only after span geometry, so propagated or name-derived candidates cannot
+    use seed lineage to defeat broader protection.
 14. **Scores are compared only within their calibration domain.** A GLiNER
    confidence may rank otherwise equivalent GLiNER alternatives, but it is not
    compared with synthetic `1.0` values from augmentation or derived spans.
 15. **Reconciliation is deterministic.** Input ordering, validation chunking,
     or detector execution order cannot change the final result for the same set
     of observations and decisions.
-16. **Final spans are valid and non-overlapping.** Every output span is within
-    source bounds, contains the exact source value, and survives one final
-    overlap policy.
+16. **Final spans are valid and non-overlapping per source.** Every output span
+    is within its canonical source bounds, contains the exact canonical source
+    value, and survives one final overlap policy for that `SourceTextRef`.
 
 ## Proposed Lifecycle
 
@@ -319,14 +373,14 @@ source text
 ### Step 1: Produce observations through a narrow backend contract
 
 Introduce a private `_EntityDetectionBackend` contract whose successful result
-is one ordered `DetectionResult` for a detector invocation on a source record.
-The result contains its immutable detection result ID, source record reference,
-backend kind and instance, ordered observations, and an explicit successful
-status. A successful result with no observations is distinct from a terminal
-backend failure. The initial request contract contains source text and the
-effective label set; any later dependency on upstream detector context must be
-represented as an explicit typed input rather than inferred from execution
-order or silently ignored.
+is one ordered `DetectionResult` for a detector invocation on a `SourceView`.
+The result contains its immutable detection result ID, canonical
+`SourceTextRef`, view bounds, backend kind and instance, ordered observations,
+and an explicit successful status. A successful result with no observations is
+distinct from a terminal backend failure. The initial request contract contains
+the source view text and effective label set; any later dependency on upstream
+detector context must be represented as an explicit typed input rather than
+inferred from execution order or silently ignored.
 
 The backend owns detector-specific execution and translation into source-bound
 observations. The shared lifecycle owns validation admission, label and route
@@ -353,11 +407,11 @@ results and lifecycle semantics.
 
 ### Step 2: Parse without destructive conflict resolution
 
-Validate backend observations, preserve their immutable references, and derive
-exact values from source bounds. Exact source slicing follows PR #282. Do not
-discard overlapping alternatives while parsing: a longer candidate that is
-later rejected or excluded must not have already removed a valid shorter
-candidate.
+Validate backend observations, convert view-local offsets to canonical source
+offsets, preserve their immutable references, and derive exact values from the
+canonical source. Exact source slicing follows PR #282. Do not discard
+overlapping alternatives while parsing: a longer candidate that is later
+rejected or excluded must not have already removed a valid shorter candidate.
 
 Only redundant emissions with the same source instance, normalized label,
 bounds, validation route, and propagation policy may be collapsed before
@@ -533,9 +587,9 @@ cannot authorize splitting or other occurrences. Authority remains attached to
 the specific supporting origin across coalescing and derivation. If an exact
 fallback seed coalesces with an accepted augmentation origin, a permitted
 derivation is attributable only to the accepted augmentation origin; the
-fallback origin does not become an accepted seed ancestor or grant the derived
-candidate seed-supported precedence. Derivation itself performs no overlap
-suppression.
+fallback origin does not become an accepted ancestor or grant the derived
+candidate source priority. No derived candidate inherits reconciliation
+precedence from its parent; derivation itself performs no overlap suppression.
 
 ### Step 8: Reconcile once
 
@@ -543,52 +597,37 @@ Run one pure final reconciliation function after all candidates are admitted,
 coalesced, and derived. The comparator must be documented in one place and
 must provide a total, deterministic order.
 
-A seed-supported candidate is backed by a pre-augmentation detector or regex
-observation that was admitted as either accepted or fallback-protected, or is
-an authorized derivation of an accepted seed. This reconciliation classification
-does not turn fallback protection into accepted provenance or grant propagation
-permission; it only prevents a later augmentation result from displacing an
-already protected seed span. It is derived from lineage and admission state,
-not stored as a separate boolean.
-
 The initial policy is:
 
-1. prefer a seed-supported candidate over an augmentation-only candidate;
-2. within the same seed-support tier, prefer the longer source span;
-3. prefer the earlier start, then earlier end;
-4. for identical bounds with incompatible labels, prefer an explicitly
+1. prefer the longer canonical source span;
+2. prefer the earlier start, then earlier end;
+3. for identical bounds with incompatible labels, prefer an explicitly
    accepted candidate over a fallback-protected candidate;
-5. use the centrally defined internal source priority;
-6. within the same calibrated detector source and identical bounds, prefer the
+4. use the centrally defined internal source priority;
+5. within the same calibrated detector source and identical bounds, prefer the
    higher native confidence;
-7. use normalized label and immutable lineage as stable final tie-breakers.
+6. use normalized label and immutable lineage as stable final tie-breakers.
 
-Step 1 preserves the precedence intended by PR #267: an admitted seed such as
-validated `Seattle`/`city` beats an overlapping augmentation such as
-`near downtown Seattle`/`address`, even though the augmenter span is longer.
-Fallback-protected seeds receive the same reconciliation precedence so their
-exact protected span cannot be displaced, but they still contribute no
-accepted provenance or propagation permission. For conflicts within the same
-seed-support tier, span coverage applies; for identical bounds, explicit
-acceptance wins at step 4.
+Coverage is evaluated before provenance. A complete `john.smith@example.com`
+augmentation therefore beats an overlapping propagated `Smith`, while the
+propagated name still protects standalone occurrences that do not conflict with
+a broader candidate. The same rule applies when a detector directly emits a
+narrower span inside a broader accepted augmentation. Choosing the longer span
+does not expose the narrower text; it protects at least the same source region.
 
-This precedence is a settled internal policy, not a user-facing option. A
-fallback-protected seed wins over overlapping augmentation because allowing an
-augmentation-only candidate to replace it would break the exact-span privacy
-guarantee when the augmenter emits a narrower span. When the augmenter emits a
-broader overlap, the minimal-span contract used by PR #267 treats that output
-as over-broad rather than attempting to split residual text around the seed.
+For identical bounds, coverage is equal. Explicit acceptance, centralized
+source priority, same-source calibrated confidence, normalized label, and
+immutable lineage then provide deterministic tie-breakers. This preserves
+detector authority for an exact-bound detector/augmenter disagreement without
+allowing source lineage to defeat greater protected coverage.
 
 Source priority is an internal reconciliation policy, not a user-facing
 configuration knob. It must not depend on which route happens to be passed
-first by a caller. For the sources on `main`, the initial order is detector,
-augmenter, then derived observations. Seed support is derived from lineage and
-admission state before this source tie-break, so an authorized derivation
-inherits its accepted parent's precedence while an augmentation-derived
-candidate does not. Within the seed-supported tier, fallback protection is
-ranked by span coverage and step 4 rather than being treated as accepted
-provenance. PR #265 can extend the centralized source table for custom regex
-and built-in regex without adding another merge implementation.
+first by a caller. For the sources on `main`, the initial order for otherwise
+identical geometry is detector, augmenter, then derived observations. Derived
+candidates retain parent lineage and permission but do not inherit a parent's
+source priority. PR #265 can extend the centralized source table for custom
+regex and built-in regex without adding another merge implementation.
 
 ## Affected Subsystems
 
@@ -616,6 +655,7 @@ should be separated as follows.
 
 Update `src/anonymizer/engine/schemas/detection.py` to represent:
 
+- structured `SourceTextRef` and contiguous `SourceView` geometry;
 - immutable detection-result and observation IDs;
 - validation request inventories and their request-local aliases;
 - explicit successful-empty and terminal-failure backend results;
@@ -648,6 +688,7 @@ silently ignored.
 Refactor `src/anonymizer/engine/detection/postprocess.py` around pure helpers for:
 
 - source-bound observation construction;
+- view-local to canonical source-offset conversion;
 - request-inventory construction, decision indexing, and single-use application;
 - compact validation conflict groups for overlapping candidates;
 - augmentation-output materialization without overlap suppression or seed-
@@ -714,9 +755,12 @@ cases:
 |---|---|
 | Detector succeeds with no observations | Backend emits a successful `DetectionResult` with an empty observation list rather than a failure |
 | Detector fails terminally | Backend failure remains distinguishable from a successful result with no observations and follows failed-record behavior |
+| Equal label and bounds occur in different records or fields | Distinct `SourceTextRef` values keep the observations and semantic identities separate |
+| Overlapping views detect the same source occurrence | View-local offsets map to the same canonical bounds and exact semantic identity |
+| A backend emits bounds outside its declared view | Observation construction rejects the invalid geometry before admission |
 | GLiNER executes after another backend without a typed data binding | It consumes only source text and effective labels; execution order alone does not alter its observations |
 | An upstream `DetectionResult` is explicitly reused by a later backend | Collection preserves the original result and adds only the later backend's new claims; forwarded observations do not gain another supporting origin |
-| Detection results and request inventories are serialized and restored | Immutable references, alias bindings, geometry, policy, ordering, and success/failure state survive the round trip |
+| Detection results and request inventories are serialized and restored | Source references, view mappings, immutable references, alias bindings, canonical geometry, policy, ordering, and success/failure state survive the round trip |
 | Redundant exact emissions from one source and route | One observation reaches validation, retaining the highest score from that calibrated source |
 | Exact emissions from different sources or routes | They remain independent through admission so each decision and permission is preserved |
 | Detection results complete in different orders | Their preassigned observation references and collected output are unchanged |
@@ -731,14 +775,17 @@ cases:
 | Accepted seed candidates still overlap while the current seed-aware augmenter prompt remains | The augmenter sees one neutral group tag plus every seed in the structured inventory, without duplicated source text; PR #267 can later remove this prompt dependency without changing admission |
 | Augmented candidate constructs the same label/bounds as a seed | The seed decision is not replayed against the augmented candidate |
 | Augmenter returns duplicate suggestions for the same label/value | Materialized exact identities coalesce deterministically without an augmentation-specific overlap pass |
-| Longer augmentation candidate overlaps an admitted seed | The seed-supported candidate wins regardless of span length, preserving the precedence required by PR #267 |
-| Fallback-protected seed overlaps an augmentation candidate | The seed span keeps reconciliation precedence without gaining accepted provenance or propagation permission |
-| Candidate derived from an accepted seed overlaps augmentation | The derived candidate inherits seed support through lineage and uses the same final reconciler |
+| Broader augmentation candidate overlaps an admitted detector candidate | The broader candidate wins by protected coverage regardless of source |
+| Propagated name fragment overlaps a complete augmented email | The complete email wins; the propagated fragment does not inherit its parent's source precedence |
+| Detector and augmenter candidates have identical bounds and incompatible labels | Explicit admission and centralized source priority resolve the equal-geometry tie deterministically |
+| Fallback-protected detector candidate overlaps an augmentation candidate | Coverage wins for different bounds; for identical bounds, explicit acceptance wins without granting fallback authority |
+| Candidate derived from an accepted detector candidate overlaps augmentation | The derived candidate retains lineage and permission but receives no inherited source priority |
 | Unknown decision alias | No observation is mutated; diagnostic is recorded |
 | Chunk A returns an alias assigned to chunk B | Chunk A cannot mutate chunk B's observation; the wrong-request alias is traced |
 | Duplicate decision alias within one response | First usable entry in serialized response order wins deterministically |
 | Assigned candidate is absent from a successful structured response | Exact detector span remains fallback-protected; it grants no accepted provenance or propagation |
 | Validation chunk fails terminally | Its row follows existing failed-record behavior rather than converting assigned candidates to fallback protection |
+| Validation is chunked, retried, or distributed across a model pool | The calls collectively produce one terminal admission result per observation in the current detection execution |
 | Labels differ only by case or surrounding whitespace | Exact spans coalesce under normalized identity |
 | One exact origin is accepted and another is rejected | Only the accepted origin contributes provenance and permissions |
 | One exact accepted origin permits propagation and another does not | When both routes are configuration-eligible, the coalesced candidate permits propagation without losing either accepted origin |
@@ -830,23 +877,25 @@ A fixed internal priority is less flexible than user-configurable precedence,
 but it gives stable behavior and keeps public configuration small. The policy
 can evolve in one place as new detector sources are added.
 
-### Preserve seed spans across clean-slate augmentation
+### Prefer protected coverage before source
 
-PR #267 intentionally makes augmentation operate on plain text and relies on a
-minimal-span extraction contract. That increases duplicate and overlapping
-model discoveries. Giving admitted seed spans reconciliation precedence over
-augmentation-only candidates prevents an unvalidated relabeling from replacing
-an already protected seed, but it can discard a broader augmentation span that
-contains the seed. Preserve this policy centrally, test the minimal-span prompt
-contract in PR #267, and measure missed sensitive coverage after its rebase.
+PR #267 intentionally makes augmentation operate on plain text, which can
+increase duplicate and overlapping model discoveries. A blanket preference for
+detector candidates would let a narrow detector or propagated span suppress a
+broader accepted augmentation candidate. The final reconciler therefore ranks
+different bounds by protected coverage first and uses source priority only for
+otherwise identical geometry. When PR #267 is rebased, remove its any-overlap
+seed filter, route its candidates through this reconciler, and measure coverage
+changes caused by the clean-slate prompt.
 
 ## Rollout Plan
 
 1. **Completed:** land PR #282 and base this work on the resulting `main`.
-2. Add lifecycle types, the private backend contract, and characterization
-   tests for current behavior.
-3. Adapt GLiNER to publish an ordered `DetectionResult` with immutable references
-   while preserving the existing DataDesigner execution and export path.
+2. Add source-reference and view types, lifecycle types, the private backend
+   contract, and characterization tests for current behavior.
+3. Adapt GLiNER to publish an ordered `DetectionResult` with canonical source
+   geometry and immutable references while preserving the existing DataDesigner
+   execution and export path.
 4. Add validation request inventories and compact conflict-group input with
    explicit source geometry while preserving the existing response schema and
    model roles.
@@ -871,38 +920,40 @@ contract in PR #267, and measure missed sensitive coverage after its rebase.
 Maintainer review should verify that the implementation preserves these
 settled invariants:
 
-1. Backends allocate immutable observation references within a
+1. `SourceTextRef` identifies a canonical record field, `SourceView` maps
+   backend-local offsets into that source, and semantic identity includes the
+   source reference with normalized label and canonical bounds.
+2. Backends allocate immutable observation references within a
    `DetectionResult` before publication; validation uses separate short aliases
-   scoped to one dispatched request inventory, and semantic identity remains
-   normalized label plus bounds.
-2. The current validation response schema and model roles remain unchanged;
+   scoped to one dispatched request inventory.
+3. The current validation response schema and model roles remain unchanged;
    prompt input changes only to represent overlapping candidates compactly.
-3. A `reclass` decision without a proposed label retains exact-span fallback
+4. A `reclass` decision without a proposed label retains exact-span fallback
    protection under the original eligible label and cannot authorize occurrence
    propagation; a non-empty excluded or disallowed proposed label is rejected
    by eligibility rather than restored under the old label.
-4. Missing or unusable decisions in a successful response retain exact-span
+5. Missing or unusable decisions in a successful response retain exact-span
    fallback protection without authority; terminal request failure preserves
    existing failed-record behavior.
-5. A response can decide only its dispatched inventory; first usable result in
+6. A response can decide only its dispatched inventory; first usable result in
    serialized response order wins for duplicates within that response.
-6. Conflict-group inventories include absolute source geometry and expose only
+7. Conflict-group inventories include absolute source geometry and expose only
    candidates assigned to that request.
-7. Eligibility completes before any candidate can suppress another.
-8. Exact coalescing retains accepted provenance and combines propagation
+8. Eligibility completes before any candidate can suppress another.
+9. Exact coalescing retains accepted provenance and combines propagation
    permission only among configuration-eligible origins; disabled routes cannot
    regain authority during merging.
-9. Name splitting precedes eligible value propagation in one bounded derivation
+10. Name splitting precedes eligible value propagation in one bounded derivation
    pass; exact derived duplicates coalesce before reconciliation without
    transferring authority between supporting origins.
-10. Seed-supported candidates receive precedence over augmentation-only
-   candidates in the final reconciler, without converting fallback protection
-   into accepted provenance or propagation authority.
-11. Augmenter prompt construction is independent of output admission: this PR
+11. Different overlapping bounds are reconciled by protected coverage before
+   source. Source priority applies only after geometry, and derived candidates
+   do not inherit a parent's source priority.
+12. Augmenter prompt construction is independent of output admission: this PR
    preserves the current seed-aware prompt, and PR #267 may later switch it to
    plain text without adding another merge path.
-12. All admitted and derived candidates use one final reconciliation policy.
-13. Source priority remains an internal centralized policy rather than a public
+13. All admitted and derived candidates use one final reconciliation policy.
+14. Source priority remains an internal centralized policy rather than a public
    configuration option.
-14. The graph/SDK refactor consumes the private backend and lifecycle contracts
+15. The graph/SDK refactor consumes the private backend and lifecycle contracts
     without redefining their authority semantics.
