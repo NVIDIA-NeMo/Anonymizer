@@ -13,11 +13,13 @@ import hashlib
 import json
 from copy import copy
 from dataclasses import dataclass, field, replace
+from itertools import product
 from pathlib import Path
 from typing import cast
 
 import pytest
 
+from anonymizer.engine.graph_sdk._ingress import _IngressBudget
 from anonymizer.engine.graph_sdk.executor import (
     DecisionLimits,
     ExecutionLimits,
@@ -49,7 +51,20 @@ _CORPUS = Path(__file__).parent / "reference/publication_v3/cases.jsonl"
 _BYTES = _CORPUS.read_bytes()
 assert hashlib.sha256(_BYTES).hexdigest() == "10647ee490c7c530a3c2c9e879d2f274a0159aad49d790a291b5ef9ec29407e4"
 _ALL = tuple(cast(TextCase, json.loads(line)) for line in _BYTES.splitlines())
-CASES = tuple(case for case in _ALL if "assessment_bad" not in case["input"][2])
+_APPLICABLE = tuple(case for case in _ALL if "assessment_bad" not in case["input"][2])
+# Correlation rejection precedes payload inspection and publication capacity.
+# Keep every exact case; malformed groups retain valid and hostile construction
+# inputs. Correlation mutation can remove those payloads from the response.
+CASES = tuple(
+    case
+    for case in _APPLICABLE
+    if case["input"][1] == "exact"
+    or (tuple(case["input"][2]), tuple(case["input"][3]), case["input"][6])
+    in {
+        (("valid", "valid"), (2, 2, 2, 2, 2, 2), True),
+        (("output_bad", "valid"), (0, 0, 0, 0, 0, 0), False),
+    }
+)
 
 
 @dataclass
@@ -116,8 +131,29 @@ class _Transport:
 
 
 @pytest.mark.parametrize("case", CASES, ids=lambda case: case["id"])
-def test_frozen_text_publication(case: TextCase) -> None:
+def test_frozen_text_publication(case: TextCase, monkeypatch: pytest.MonkeyPatch) -> None:
+    budget_entries = payload_entries = 0
+    original_init = _IngressBudget.__init__
+    original_row = _IngressBudget.row
+
+    def count_budget(budget: _IngressBudget, limits: IngressLimits) -> None:
+        nonlocal budget_entries
+        budget_entries += 1
+        original_init(budget, limits)
+
+    def count_payload(budget: _IngressBudget, row: AssociationResult, depth: int) -> bool:
+        nonlocal payload_entries
+        payload_entries += 1
+        return original_row(budget, row, depth)
+
+    monkeypatch.setattr(_IngressBudget, "__init__", count_budget)
+    monkeypatch.setattr(_IngressBudget, "row", count_payload)
     asyncio.run(_compare(case))
+    if case["input"][1] == "exact":
+        # Live positive controls prevent a detached observer passing vacuously.
+        assert budget_entries > 0 and payload_entries > 0
+    else:
+        assert budget_entries == 0 and payload_entries == 0
 
 
 async def _compare(case: TextCase) -> None:
@@ -217,5 +253,27 @@ async def _compare(case: TextCase) -> None:
 
 
 def test_reference_coverage_boundary_is_explicit() -> None:
-    assert len(_ALL) == 1512 and len(CASES) == 672
-    assert all("assessment_bad" in case["input"][2] for case in _ALL if case not in CASES)
+    assert len(_ALL) == 1512 and len(_APPLICABLE) == 672 and len(CASES) == 144
+    assert all("assessment_bad" in case["input"][2] for case in _ALL if case not in _APPLICABLE)
+    exact = tuple(case["id"] for case in CASES if case["input"][1] == "exact")
+    assert len(exact) == 96
+    assert exact == tuple(case["id"] for case in _APPLICABLE if case["input"][1] == "exact")
+    malformed = [case["input"] for case in CASES if case["input"][1] != "exact"]
+    assert len(malformed) == 48
+    groups = set(
+        product(
+            ("shared", "per_task"),
+            ("missing", "duplicate", "extra", "foreign", "unlocalizable", "outer"),
+            ("unknown", "exact:1"),
+        )
+    )
+    assert {(mode, fault, usage) for mode, fault, _, _, usage, _, _ in malformed} == groups
+    for mode, fault, usage in groups:
+        assert {
+            (tuple(shapes), tuple(capacities), aggregate)
+            for actual_mode, actual_fault, shapes, capacities, actual_usage, _, aggregate in malformed
+            if (actual_mode, actual_fault, actual_usage) == (mode, fault, usage)
+        } == {
+            (("valid", "valid"), (2, 2, 2, 2, 2, 2), True),
+            (("output_bad", "valid"), (0, 0, 0, 0, 0, 0), False),
+        }
