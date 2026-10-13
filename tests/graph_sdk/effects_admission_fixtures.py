@@ -26,7 +26,6 @@ from anonymizer.engine.graph_sdk.executor import (
     ExecutionImplementation,
     ExecutionLimits,
     ExecutionServices,
-    ImplementationHandle,
     LocalDecisionWait,
     OperationExecutionPolicy,
     RootInputKey,
@@ -45,6 +44,7 @@ from anonymizer.graph.workflow import (
     NodeId,
     WorkflowId,
 )
+from tests.graph_sdk.implementation_fixtures import _execution_implementation, _implementation_handle
 from tests.graph_sdk.reference.corpora import load_cases
 from tests.graph_sdk.test_preparation import _capability, _data, _limits, _prepare, _workflow
 
@@ -435,14 +435,7 @@ def _admit_case(case: dict[str, Any]) -> None:
                     request = replace(physical, max_attempts=3)
                     capability = replace(capability, max_physical_requests_per_activation=3)
                     capabilities[-1 if index else 0] = capability
-                implementations.append(
-                    ExecutionImplementation(
-                        implementation=capability.implementation,
-                        configuration=capability.configuration,
-                        capability=capability,
-                        request=request,
-                    )
-                )
+                implementations.append(_execution_implementation(capability, request=request))
             result_values = frozenset(
                 cast(list[str], raw.get("result_outcomes", admitted_declaration.get("declared_outcomes", [])))
             )
@@ -572,12 +565,7 @@ async def _assert_decision_submission(case_id: str, expected: str, *, pending_li
         adaptive_retrievals=(),
         context_capabilities=(),
     )
-    implementation = ExecutionImplementation(
-        implementation=capability.implementation,
-        configuration=capability.configuration,
-        capability=capability,
-        request=None,
-    )
+    implementation = _execution_implementation(capability, request=None)
     policy = OperationExecutionPolicy(
         node=node,
         kind="decision",
@@ -632,16 +620,7 @@ async def _assert_decision_submission(case_id: str, expected: str, *, pending_li
         admitted=admitted,
         capabilities=(capability,),
         services=ExecutionServices(
-            handles=(
-                ImplementationHandle(
-                    implementation=capability.implementation,
-                    operation=capability.operation,
-                    configuration=capability.configuration,
-                    local=callback,
-                    transport=None,
-                    resource=None,
-                ),
-            ),
+            handles=(_implementation_handle(capability, local=callback, transport=None, resource=None),),
             context_resources=(),
             limits=ExecutionLimits(
                 max_local_in_flight=2,

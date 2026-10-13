@@ -8,7 +8,7 @@ import asyncio
 from dataclasses import replace
 
 from anonymizer.engine.graph_sdk import executor as ex
-from anonymizer.engine.graph_sdk.capabilities import ImplementationRef, ImplementationSelection
+from anonymizer.engine.graph_sdk.capabilities import ImplementationRef
 from anonymizer.engine.graph_sdk.context import admit_context_plan
 from anonymizer.engine.graph_sdk.preparation import BoundInput, PreparationConfiguration, StateRevisionView, prepare
 from anonymizer.engine.graph_sdk.requests import PhysicalRequestPolicy
@@ -16,6 +16,7 @@ from anonymizer.engine.graph_sdk.resources import ResourceLease
 from anonymizer.graph import workflow as wf
 from anonymizer.graph.activation import ActivationLimits
 from tests.graph_sdk.effects_admission_fixtures import _valid_runtime_rows
+from tests.graph_sdk.implementation_fixtures import _selection
 from tests.graph_sdk.test_external_executor import _LostTransport
 from tests.graph_sdk.test_local_executor import _Clock, _Decision, _Immediate
 from tests.graph_sdk.test_preparation import _capability, _data, _limits, _workflow
@@ -101,12 +102,7 @@ async def _execute() -> None:
             purpose="execution_only", required_protection_outcomes=frozenset(), hard_request_limit=1
         ),
         state=StateRevisionView(revisions=frozenset()),
-        selections=tuple(
-            ImplementationSelection(
-                node=node, implementation=capability.implementation, configuration=capability.configuration
-            )
-            for node, capability in zip(nodes, capabilities, strict=True)
-        ),
+        selections=tuple(_selection(node, capability) for node, capability in zip(nodes, capabilities, strict=True)),
         capabilities=capabilities,
         limits=_limits(capabilities=3),
     )

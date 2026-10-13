@@ -26,10 +26,8 @@ from anonymizer.engine.graph_sdk.executor import (
     AssessmentLimits,
     BoundInputKey,
     DecisionLimits,
-    ExecutionImplementation,
     ExecutionLimits,
     ExecutionServices,
-    ImplementationHandle,
     InitialCollectionKey,
     OperationExecutionPolicy,
     admit_execution_plan,
@@ -69,6 +67,7 @@ from tests.graph_sdk.effects_provider_fixtures import (
     _ProviderWithoutClose,
 )
 from tests.graph_sdk.effects_request_fixtures import _normalize, _policy
+from tests.graph_sdk.implementation_fixtures import _execution_implementation, _implementation_handle
 from tests.graph_sdk.test_adaptive_executor import _Clock
 from tests.graph_sdk.test_binding import _context_workflow
 from tests.graph_sdk.test_preparation import _capability, _data, _limits, _prepare
@@ -554,14 +553,7 @@ async def _assert_initial_execution_projection(
         kind="local",
         request=None,
         safe_detachment="forbidden",
-        implementations=(
-            ExecutionImplementation(
-                implementation=capability.implementation,
-                configuration=capability.configuration,
-                capability=capability,
-                request=None,
-            ),
-        ),
+        implementations=(_execution_implementation(capability, request=None),),
         result_outcomes=frozenset({"ok"}),
         runtime_outcomes=_valid_runtime_rows("local", frozenset({"ok"})),
     )
@@ -612,16 +604,7 @@ async def _assert_initial_execution_projection(
             admitted=admitted,
             capabilities=(capability,),
             services=ExecutionServices(
-                handles=(
-                    ImplementationHandle(
-                        implementation=capability.implementation,
-                        operation=capability.operation,
-                        configuration=capability.configuration,
-                        local=consumer,
-                        transport=None,
-                        resource=None,
-                    ),
-                ),
+                handles=(_implementation_handle(capability, local=consumer, transport=None, resource=None),),
                 context_resources=(),
                 limits=ExecutionLimits(
                     max_local_in_flight=1,

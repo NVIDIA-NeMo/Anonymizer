@@ -9,7 +9,7 @@ from dataclasses import dataclass, field, replace
 
 import pytest
 
-from anonymizer.engine.graph_sdk.capabilities import ImplementationRef, ImplementationSelection
+from anonymizer.engine.graph_sdk.capabilities import ImplementationRef
 from anonymizer.engine.graph_sdk.context import admit_context_plan
 from anonymizer.engine.graph_sdk.data import DataGraph, DataLimits
 from anonymizer.engine.graph_sdk.executor import (
@@ -17,10 +17,8 @@ from anonymizer.engine.graph_sdk.executor import (
     DecisionLimits,
     DecisionOutcome,
     DecisionResponse,
-    ExecutionImplementation,
     ExecutionLimits,
     ExecutionServices,
-    ImplementationHandle,
     LocalCompleted,
     LocalDecisionWait,
     OperationExecutionPolicy,
@@ -46,6 +44,7 @@ from anonymizer.graph.workflow import (
     admit_activation_workflow,
     admit_static_workflow,
 )
+from tests.graph_sdk.implementation_fixtures import _execution_implementation, _implementation_handle, _selection
 from tests.graph_sdk.reference.corpora import load_cases
 from tests.graph_sdk.test_effects_production_conformance import (
     _assessment_limits,
@@ -178,12 +177,7 @@ async def _assert_scheduling(case_id: str, local_capacity: int) -> None:
             purpose="execution_only", required_protection_outcomes=frozenset(), hard_request_limit=None
         ),
         state=StateRevisionView(revisions=frozenset()),
-        selections=tuple(
-            ImplementationSelection(
-                node=node, implementation=capability.implementation, configuration=capability.configuration
-            )
-            for node, capability in zip(nodes, capabilities, strict=True)
-        ),
+        selections=tuple(_selection(node, capability) for node, capability in zip(nodes, capabilities, strict=True)),
         capabilities=capabilities,
         limits=_limits(capabilities=3, slots=3),
     )
@@ -195,14 +189,7 @@ async def _assert_scheduling(case_id: str, local_capacity: int) -> None:
             kind="decision" if callback.decision else "local",
             request=None,
             safe_detachment="forbidden",
-            implementations=(
-                ExecutionImplementation(
-                    implementation=capability.implementation,
-                    configuration=capability.configuration,
-                    capability=capability,
-                    request=None,
-                ),
-            ),
+            implementations=(_execution_implementation(capability, request=None),),
             result_outcomes=frozenset() if callback.decision else frozenset({"ok"}),
             runtime_outcomes=_valid_runtime_rows(
                 "decision" if callback.decision else "local", frozenset() if callback.decision else frozenset({"ok"})
@@ -235,14 +222,7 @@ async def _assert_scheduling(case_id: str, local_capacity: int) -> None:
         capabilities=capabilities,
         services=ExecutionServices(
             handles=tuple(
-                ImplementationHandle(
-                    implementation=capability.implementation,
-                    operation=capability.operation,
-                    configuration=capability.configuration,
-                    local=callback,
-                    transport=None,
-                    resource=None,
-                )
+                _implementation_handle(capability, local=callback, transport=None, resource=None)
                 for capability, callback in zip(capabilities, callbacks, strict=True)
             ),
             context_resources=(),

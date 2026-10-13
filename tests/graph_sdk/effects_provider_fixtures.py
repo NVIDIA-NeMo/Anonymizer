@@ -19,7 +19,6 @@ from anonymizer.engine.graph_sdk.context import (
 )
 from anonymizer.engine.graph_sdk.executor import (
     DecisionLimits,
-    ExecutionImplementation,
     ExecutionLimits,
     ExecutionServices,
     ImplementationHandle,
@@ -47,6 +46,7 @@ from anonymizer.engine.graph_sdk.requests import (
 )
 from tests.graph_sdk.effects_admission_fixtures import _assessment_limits, _valid_runtime_rows, _ZeroClock
 from tests.graph_sdk.effects_request_fixtures import _usage
+from tests.graph_sdk.implementation_fixtures import _execution_implementation
 from tests.graph_sdk.test_preparation import _data, _prepare
 
 
@@ -183,12 +183,7 @@ async def _assert_local_bridge_case(case: dict[str, Any]) -> None:
         context_capabilities=(),
     )
     selected = next(iter(prepared.implementations))
-    implementation = ExecutionImplementation(
-        implementation=selected.capability.implementation,
-        configuration=selected.capability.configuration,
-        capability=selected.capability,
-        request=None,
-    )
+    implementation = _execution_implementation(selected.capability, request=None)
     policy = OperationExecutionPolicy(
         node=selected.node,
         kind="local",

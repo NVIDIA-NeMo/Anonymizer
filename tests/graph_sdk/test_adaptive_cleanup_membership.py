@@ -18,6 +18,7 @@ from anonymizer.engine.graph_sdk.resources import ResourceId, ResourceLease
 from anonymizer.graph._values import InvocationId
 from anonymizer.graph.workflow import ArtifactType
 from tests.graph_sdk.child_qualification_fixtures import result_with
+from tests.graph_sdk.implementation_fixtures import _selection
 from tests.graph_sdk.qualification_fixtures import _inputs
 from tests.graph_sdk.test_adaptive_executor import SOURCE, _adaptive_fixture, _Provider
 from tests.graph_sdk.test_delegated_execution import _execute
@@ -241,7 +242,7 @@ def test_raw_acquisition_container_is_bounded_before_members(kind):
 
 @pytest.mark.parametrize("reverse", [False, True])
 def test_two_declared_artifact_types_share_source_without_sharing_provider(reverse):
-    from anonymizer.engine.graph_sdk.capabilities import ImplementationRef, ImplementationSelection
+    from anonymizer.engine.graph_sdk.capabilities import ImplementationRef
     from anonymizer.engine.graph_sdk.preparation import prepare
     from anonymizer.graph.workflow import (
         DynamicScope,
@@ -312,10 +313,7 @@ def test_two_declared_artifact_types_share_source_without_sharing_provider(rever
             activation_limits=replace(previous.activation_limits, max_events=6, max_entries=2),
             bound_inputs=tuple(previous.bound_inputs),
             state=previous.state,
-            selections=tuple(
-                ImplementationSelection(node=node, implementation=cap.implementation, configuration=cap.configuration)
-                for node, cap in ((node_a.id, cap_a), (node_b, cap_b))
-            ),
+            selections=tuple(_selection(node, cap) for node, cap in ((node_a.id, cap_a), (node_b, cap_b))),
             capabilities=capabilities,
             configuration=replace(previous.configuration, hard_request_limit=2),
             limits=previous.limits,

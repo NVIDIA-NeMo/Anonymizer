@@ -12,7 +12,6 @@ from anonymizer.engine.detection.postprocess import EntitySpan, filter_excluded_
 from anonymizer.engine.graph_sdk.capabilities import (
     ImplementationCapability,
     ImplementationRef,
-    ImplementationSelection,
 )
 from anonymizer.engine.graph_sdk.context import admit_context_plan
 from anonymizer.engine.graph_sdk.data import DataGraph, DataLimits
@@ -20,7 +19,6 @@ from anonymizer.engine.graph_sdk.executor import (
     AdmittedExecutionPlan,
     AssessmentLimits,
     DecisionLimits,
-    ExecutionImplementation,
     ExecutionLimits,
     ExecutionResult,
     ExecutionServices,
@@ -58,6 +56,7 @@ from anonymizer.graph.workflow import (
     admit_static_workflow,
 )
 from tests.graph_sdk.effects_admission_fixtures import _valid_runtime_rows, _ZeroClock
+from tests.graph_sdk.implementation_fixtures import _execution_implementation, _selection
 from tests.graph_sdk.test_preparation import _capability, _limits, _workflow
 
 SOURCE = "Alice met Bob."
@@ -229,10 +228,7 @@ def span_graph(
         workflow=workflow,
         capabilities=capabilities,
         activation_limits=ActivationLimits(max_events=40, max_entries=10, max_parent_depth=1),
-        selections=tuple(
-            ImplementationSelection(node=n, implementation=c.implementation, configuration=c.configuration)
-            for n, c in zip(nodes, capabilities, strict=True)
-        ),
+        selections=tuple(_selection(n, c) for n, c in zip(nodes, capabilities, strict=True)),
         limits=_limits(capabilities=3),
         configuration=PreparationConfiguration(
             purpose="execution_only", required_protection_outcomes=frozenset(), hard_request_limit=None
@@ -246,11 +242,7 @@ def span_graph(
             kind="local",
             request=None,
             safe_detachment="forbidden",
-            implementations=(
-                ExecutionImplementation(
-                    implementation=c.implementation, configuration=c.configuration, capability=c, request=None
-                ),
-            ),
+            implementations=(_execution_implementation(c, request=None),),
             result_outcomes=frozenset({"ok"}),
             runtime_outcomes=_valid_runtime_rows("local", frozenset({"ok"})),
         )

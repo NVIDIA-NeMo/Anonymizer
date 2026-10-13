@@ -13,10 +13,8 @@ import pytest
 from anonymizer.engine.graph_sdk.context import admit_context_plan
 from anonymizer.engine.graph_sdk.executor import (
     DecisionLimits,
-    ExecutionImplementation,
     ExecutionLimits,
     ExecutionServices,
-    ImplementationHandle,
     OperationExecutionPolicy,
     admit_execution_plan,
     start_execution,
@@ -44,6 +42,7 @@ from anonymizer.graph.workflow import (
     admit_activation_workflow,
     admit_static_workflow,
 )
+from tests.graph_sdk.implementation_fixtures import _execution_implementation, _implementation_handle
 from tests.graph_sdk.reference.corpora import load_cases
 from tests.graph_sdk.test_effects_production_conformance import (
     _assert_decision_submission,
@@ -167,12 +166,7 @@ async def _assert_terminal(case: dict[str, Any]) -> None:
         replay="idempotent",
         max_attempts=1,
     )
-    implementation = ExecutionImplementation(
-        implementation=capability.implementation,
-        configuration=capability.configuration,
-        capability=capability,
-        request=request_policy,
-    )
+    implementation = _execution_implementation(capability, request=request_policy)
     admitted = admit_execution_plan(
         context=context,
         capabilities=(capability,),
@@ -196,16 +190,7 @@ async def _assert_terminal(case: dict[str, Any]) -> None:
         admitted=admitted,
         capabilities=(capability,),
         services=ExecutionServices(
-            handles=(
-                ImplementationHandle(
-                    implementation=capability.implementation,
-                    operation=capability.operation,
-                    configuration=capability.configuration,
-                    local=None,
-                    transport=transport,
-                    resource=None,
-                ),
-            ),
+            handles=(_implementation_handle(capability, local=None, transport=transport, resource=None),),
             context_resources=(),
             limits=ExecutionLimits(
                 max_local_in_flight=0,

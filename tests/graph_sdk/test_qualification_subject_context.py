@@ -11,7 +11,7 @@ import pytest
 
 from anonymizer.engine.graph_sdk._effect_values import EffectCode, EffectRejected
 from anonymizer.engine.graph_sdk.binding import start_initial_binding
-from anonymizer.engine.graph_sdk.capabilities import ImplementationRef, ImplementationSelection
+from anonymizer.engine.graph_sdk.capabilities import ImplementationRef
 from anonymizer.engine.graph_sdk.context import (
     BindingLimits,
     ContextMaterialization,
@@ -32,7 +32,6 @@ from anonymizer.engine.graph_sdk.executor import (
     DecisionOutcome,
     DecisionResponse,
     EvidenceProductionDecl,
-    ExecutionImplementation,
     ExecutionLimits,
     ExecutionResult,
     ExecutionServices,
@@ -83,6 +82,7 @@ from anonymizer.graph.workflow import (
     admit_activation_workflow,
     admit_static_workflow,
 )
+from tests.graph_sdk.implementation_fixtures import _execution_implementation, _selection
 from tests.graph_sdk.test_decision_scheduling import _Callback
 from tests.graph_sdk.test_effects_production_conformance import _valid_runtime_rows, _ZeroClock
 from tests.graph_sdk.test_evidence import _qualification_limits
@@ -498,10 +498,7 @@ async def _execute_separate_subject_context(
     prepared = prepare(
         workflow=workflow,
         capabilities=capabilities,
-        selections=tuple(
-            ImplementationSelection(node=item.id, implementation=cap.implementation, configuration=cap.configuration)
-            for item, cap in zip(nodes, capabilities, strict=True)
-        ),
+        selections=tuple(_selection(item.id, cap) for item, cap in zip(nodes, capabilities, strict=True)),
         limits=_limits(capabilities=len(capabilities)),
         activation_limits=ActivationLimits(max_events=3 * len(nodes), max_entries=len(nodes), max_parent_depth=1),
         data=data,
@@ -541,14 +538,7 @@ async def _execute_separate_subject_context(
                 kind="local",
                 request=None,
                 safe_detachment="forbidden",
-                implementations=(
-                    ExecutionImplementation(
-                        implementation=capability.implementation,
-                        configuration=capability.configuration,
-                        capability=capability,
-                        request=None,
-                    ),
-                ),
+                implementations=(_execution_implementation(capability, request=None),),
                 result_outcomes=frozenset({"ok"}),
                 runtime_outcomes=_valid_runtime_rows("local", frozenset({"ok"})),
             ),
@@ -560,14 +550,7 @@ async def _execute_separate_subject_context(
                     kind="decision" if decision_context else "local",
                     request=None,
                     safe_detachment="forbidden",
-                    implementations=(
-                        ExecutionImplementation(
-                            implementation=capabilities[0].implementation,
-                            configuration=capabilities[0].configuration,
-                            capability=capabilities[0],
-                            request=None,
-                        ),
-                    ),
+                    implementations=(_execution_implementation(capabilities[0], request=None),),
                     result_outcomes=frozenset() if decision_context else frozenset({"ok"}),
                     runtime_outcomes=_valid_runtime_rows("decision", frozenset())
                     if decision_context

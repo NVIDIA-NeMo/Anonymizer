@@ -8,7 +8,7 @@ import asyncio
 from dataclasses import dataclass, fields, replace
 
 from anonymizer.engine.graph_sdk.binding import start_initial_binding
-from anonymizer.engine.graph_sdk.capabilities import ImplementationRef, ImplementationSelection
+from anonymizer.engine.graph_sdk.capabilities import ImplementationRef
 from anonymizer.engine.graph_sdk.context import (
     AdaptiveRetrievalDecl,
     BindingLimits,
@@ -33,7 +33,6 @@ from anonymizer.engine.graph_sdk.executor import (
     DecisionOutcome,
     DecisionResponse,
     EvidenceProductionDecl,
-    ExecutionImplementation,
     ExecutionLimits,
     ExecutionResult,
     ExecutionServices,
@@ -87,6 +86,7 @@ from anonymizer.graph.workflow import (
     admit_static_workflow,
 )
 from tests.graph_sdk.effects_admission_fixtures import _valid_runtime_rows, _ZeroClock
+from tests.graph_sdk.implementation_fixtures import _execution_implementation, _selection
 from tests.graph_sdk.test_adaptive_executor import _adaptive_workflow, _AssessingLocal
 from tests.graph_sdk.test_decision_scheduling import _Callback
 from tests.graph_sdk.test_preparation import _capability, _data, _limits
@@ -535,12 +535,7 @@ async def _execute_assessment(
         workflow=workflow,
         capabilities=all_capabilities,
         activation_limits=ActivationLimits(max_events=3 * count, max_entries=count, max_parent_depth=depth + 1),
-        selections=tuple(
-            ImplementationSelection(
-                node=item.id, implementation=capability.implementation, configuration=capability.configuration
-            )
-            for item, capability in zip(nodes, capabilities, strict=True)
-        ),
+        selections=tuple(_selection(item.id, capability) for item, capability in zip(nodes, capabilities, strict=True)),
         limits=_limits(capabilities=len(all_capabilities)),
         configuration=PreparationConfiguration(
             purpose="execution_only" if execution_only else "protection",
@@ -597,22 +592,10 @@ async def _execute_assessment(
                 request=request_policy if item.id == decision_node else None,
                 safe_detachment="forbidden",
                 implementations=(
-                    ExecutionImplementation(
-                        implementation=capability.implementation,
-                        configuration=capability.configuration,
-                        capability=capability,
-                        request=request_policy if item.id == decision_node else None,
-                    ),
+                    _execution_implementation(capability, request=request_policy if item.id == decision_node else None),
                 )
                 + (
-                    (
-                        ExecutionImplementation(
-                            implementation=fallback.implementation,
-                            configuration=fallback.configuration,
-                            capability=fallback,
-                            request=request_policy,
-                        ),
-                    )
+                    (_execution_implementation(fallback, request=request_policy),)
                     if external_failover and item.id == decision_node
                     else ()
                 ),

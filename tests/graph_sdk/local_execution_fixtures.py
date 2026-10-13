@@ -8,22 +8,17 @@ from collections.abc import Mapping
 
 from anonymizer.engine.graph_sdk.capabilities import ImplementationCapability, ImplementationSelection
 from anonymizer.engine.graph_sdk.executor import (
-    ExecutionImplementation,
     ImplementationHandle,
     LocalCallable,
     OperationExecutionPolicy,
 )
 from anonymizer.graph.workflow import NodeId, WorkflowLimits
+from tests.graph_sdk.implementation_fixtures import _execution_implementation, _implementation_handle, _selection
 from tests.graph_sdk.test_dynamic_executor import _rows
 
 
 def _selections(by_node: Mapping[NodeId, ImplementationCapability]) -> tuple[ImplementationSelection, ...]:
-    return tuple(
-        ImplementationSelection(
-            node=node, implementation=capability.implementation, configuration=capability.configuration
-        )
-        for node, capability in by_node.items()
-    )
+    return tuple(_selection(node, capability) for node, capability in by_node.items())
 
 
 def _local_policies(by_node: Mapping[NodeId, ImplementationCapability]) -> tuple[OperationExecutionPolicy, ...]:
@@ -33,14 +28,7 @@ def _local_policies(by_node: Mapping[NodeId, ImplementationCapability]) -> tuple
             kind="local",
             request=None,
             safe_detachment="forbidden",
-            implementations=(
-                ExecutionImplementation(
-                    implementation=capability.implementation,
-                    configuration=capability.configuration,
-                    capability=capability,
-                    request=None,
-                ),
-            ),
+            implementations=(_execution_implementation(capability, request=None),),
             result_outcomes=frozenset(outcome.name for outcome in capability.operation.outcomes),
             runtime_outcomes=_rows(frozenset(outcome.name for outcome in capability.operation.outcomes)),
         )
@@ -49,14 +37,7 @@ def _local_policies(by_node: Mapping[NodeId, ImplementationCapability]) -> tuple
 
 
 def _local_handle(capability: ImplementationCapability, callback: LocalCallable) -> ImplementationHandle:
-    return ImplementationHandle(
-        implementation=capability.implementation,
-        operation=capability.operation,
-        configuration=capability.configuration,
-        local=callback,
-        transport=None,
-        resource=None,
-    )
+    return _implementation_handle(capability, local=callback, transport=None, resource=None)
 
 
 def _no_choice_limits(*, nodes: int, bindings: int, sequence_edges: int, subgraph_depth: int = 1) -> WorkflowLimits:

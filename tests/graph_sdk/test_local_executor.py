@@ -7,7 +7,6 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass, field, replace
 
-from anonymizer.engine.graph_sdk.capabilities import ImplementationSelection
 from anonymizer.engine.graph_sdk.context import admit_context_plan
 from anonymizer.engine.graph_sdk.executor import (
     AssessmentLimits,
@@ -15,7 +14,6 @@ from anonymizer.engine.graph_sdk.executor import (
     DecisionLimits,
     DecisionOutcome,
     DecisionResponse,
-    ExecutionImplementation,
     ExecutionLimits,
     ExecutionServices,
     ImplementationHandle,
@@ -46,6 +44,7 @@ from anonymizer.graph.workflow import (
     admit_activation_workflow,
     admit_static_workflow,
 )
+from tests.graph_sdk.implementation_fixtures import _execution_implementation, _implementation_handle, _selection
 from tests.graph_sdk.test_preparation import _capability, _data, _limits, _prepare, _workflow
 from tests.graph_sdk.workflow_fixtures import _shared_body_workflow
 
@@ -167,12 +166,7 @@ async def _assert_local_execution() -> None:
         context_capabilities=(),
     )
     selected = next(iter(prepared.implementations))
-    implementation = ExecutionImplementation(
-        implementation=selected.capability.implementation,
-        configuration=selected.capability.configuration,
-        capability=selected.capability,
-        request=None,
-    )
+    implementation = _execution_implementation(selected.capability, request=None)
     policy = OperationExecutionPolicy(
         node=selected.node,
         kind="local",
@@ -289,12 +283,7 @@ async def _assert_decision_execution(*, cancel_before_wait: bool = False) -> Non
         adaptive_retrievals=(),
         context_capabilities=(),
     )
-    implementation = ExecutionImplementation(
-        implementation=capability.implementation,
-        configuration=capability.configuration,
-        capability=capability,
-        request=None,
-    )
+    implementation = _execution_implementation(capability, request=None)
     rows = tuple(
         RuntimeOutcome(
             condition=condition,
@@ -346,16 +335,7 @@ async def _assert_decision_execution(*, cancel_before_wait: bool = False) -> Non
     )
     callback = _Decision(block_before_wait=cancel_before_wait)
     services = ExecutionServices(
-        handles=(
-            ImplementationHandle(
-                implementation=capability.implementation,
-                operation=capability.operation,
-                configuration=capability.configuration,
-                local=callback,
-                transport=None,
-                resource=None,
-            ),
-        ),
+        handles=(_implementation_handle(capability, local=callback, transport=None, resource=None),),
         context_resources=(),
         limits=ExecutionLimits(
             max_local_in_flight=1,
@@ -420,23 +400,12 @@ async def _assert_shared_nested_body() -> None:
             purpose="execution_only", required_protection_outcomes=frozenset(), hard_request_limit=None
         ),
         state=StateRevisionView(revisions=frozenset()),
-        selections=(
-            ImplementationSelection(
-                node=child,
-                implementation=capability.implementation,
-                configuration=capability.configuration,
-            ),
-        ),
+        selections=(_selection(child, capability),),
         capabilities=(capability,),
         limits=_limits(slots=4),
     )
     context = admit_context_plan(prepared=prepared, bound_context=None, adaptive_retrievals=(), context_capabilities=())
-    implementation = ExecutionImplementation(
-        implementation=capability.implementation,
-        configuration=capability.configuration,
-        capability=capability,
-        request=None,
-    )
+    implementation = _execution_implementation(capability, request=None)
     admitted = admit_execution_plan(
         context=context,
         capabilities=(capability,),
@@ -469,16 +438,7 @@ async def _assert_shared_nested_body() -> None:
             admitted=admitted,
             capabilities=(capability,),
             services=ExecutionServices(
-                handles=(
-                    ImplementationHandle(
-                        implementation=capability.implementation,
-                        operation=capability.operation,
-                        configuration=capability.configuration,
-                        local=callback,
-                        transport=None,
-                        resource=None,
-                    ),
-                ),
+                handles=(_implementation_handle(capability, local=callback, transport=None, resource=None),),
                 context_resources=(),
                 limits=ExecutionLimits(
                     max_local_in_flight=2,

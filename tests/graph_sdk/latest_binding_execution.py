@@ -8,7 +8,6 @@ from dataclasses import dataclass, field, replace
 from typing import Any
 
 from anonymizer.engine.graph_sdk.binding import start_initial_binding
-from anonymizer.engine.graph_sdk.capabilities import ImplementationSelection
 from anonymizer.engine.graph_sdk.context import (
     BindingLimits,
     BindingResult,
@@ -25,11 +24,9 @@ from anonymizer.engine.graph_sdk.data import DataGraph, DataLimits
 from anonymizer.engine.graph_sdk.executor import (
     AssessmentLimits,
     DecisionLimits,
-    ExecutionImplementation,
     ExecutionLimits,
     ExecutionResult,
     ExecutionServices,
-    ImplementationHandle,
     LocalCompleted,
     OperationExecutionPolicy,
     admit_execution_plan,
@@ -68,6 +65,7 @@ from anonymizer.graph.workflow import (
 )
 from tests.graph_sdk.effects_provider_fixtures import _CaseProvider
 from tests.graph_sdk.effects_request_fixtures import _policy
+from tests.graph_sdk.implementation_fixtures import _execution_implementation, _implementation_handle, _selection
 from tests.graph_sdk.test_dynamic_executor import _capability, _outcome, _rows
 from tests.graph_sdk.test_local_executor import _Clock
 from tests.graph_sdk.test_preparation import _limits
@@ -330,10 +328,7 @@ async def _execute_case(
             purpose="execution_only", required_protection_outcomes=frozenset(), hard_request_limit=None
         ),
         state=StateRevisionView(revisions=frozenset()),
-        selections=tuple(
-            ImplementationSelection(node=node, implementation=cap.implementation, configuration=cap.configuration)
-            for node, cap in zip(nodes.values(), capabilities, strict=True)
-        ),
+        selections=tuple(_selection(node, cap) for node, cap in zip(nodes.values(), capabilities, strict=True)),
         capabilities=capabilities,
         limits=_limits(capabilities=2, slots=2),
     )
@@ -348,11 +343,7 @@ async def _execute_case(
                 kind="local",
                 request=None,
                 safe_detachment="forbidden",
-                implementations=(
-                    ExecutionImplementation(
-                        implementation=cap.implementation, configuration=cap.configuration, capability=cap, request=None
-                    ),
-                ),
+                implementations=(_execution_implementation(cap, request=None),),
                 result_outcomes=frozenset({"ok"}),
                 runtime_outcomes=_rows(frozenset({"ok"})),
             )
@@ -400,14 +391,7 @@ async def _execute_case(
             capabilities=capabilities,
             services=ExecutionServices(
                 handles=tuple(
-                    ImplementationHandle(
-                        implementation=cap.implementation,
-                        operation=cap.operation,
-                        configuration=cap.configuration,
-                        local=callback,
-                        transport=None,
-                        resource=None,
-                    )
+                    _implementation_handle(cap, local=callback, transport=None, resource=None)
                     for cap, callback in zip(capabilities, callbacks, strict=True)
                 ),
                 context_resources=(),

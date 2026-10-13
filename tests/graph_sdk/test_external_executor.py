@@ -15,7 +15,6 @@ from anonymizer.engine.graph_sdk.executor import (
     AdmittedExecutionPlan,
     AssessmentLimits,
     DecisionLimits,
-    ExecutionImplementation,
     ExecutionLimits,
     ExecutionServices,
     ImplementationHandle,
@@ -55,6 +54,7 @@ from anonymizer.graph.workflow import (
     admit_activation_workflow,
     admit_static_workflow,
 )
+from tests.graph_sdk.implementation_fixtures import _execution_implementation
 from tests.graph_sdk.test_adaptive_executor import _adaptive_rows
 from tests.graph_sdk.test_local_executor import _Clock
 from tests.graph_sdk.test_preparation import _capability, _data, _limits, _prepare, _workflow
@@ -191,12 +191,7 @@ async def _assert_remote_capacity() -> None:
         replay="idempotent",
         max_attempts=1,
     )
-    implementation = ExecutionImplementation(
-        implementation=capability.implementation,
-        configuration=capability.configuration,
-        capability=capability,
-        request=request_policy,
-    )
+    implementation = _execution_implementation(capability, request=request_policy)
     policy = OperationExecutionPolicy(
         node=node,
         kind="external",
@@ -329,12 +324,7 @@ def _capacity_plan(
         replay="idempotent",
         max_attempts=2 if mode == "retry" else 1,
     )
-    implementation = ExecutionImplementation(
-        implementation=capability.implementation,
-        configuration=capability.configuration,
-        capability=capability,
-        request=request_policy,
-    )
+    implementation = _execution_implementation(capability, request=request_policy)
     admitted = admit_execution_plan(
         ingress_limits=ingress_limits,
         context=context,

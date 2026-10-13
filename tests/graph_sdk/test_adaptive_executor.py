@@ -12,7 +12,6 @@ import pytest
 
 from anonymizer.engine.graph_sdk._effect_values import EffectRejected
 from anonymizer.engine.graph_sdk.blocking import BlockingContextProvider
-from anonymizer.engine.graph_sdk.capabilities import ImplementationSelection
 from anonymizer.engine.graph_sdk.context import (
     AdaptiveRetrievalDecl,
     ContextMaterialization,
@@ -31,7 +30,6 @@ from anonymizer.engine.graph_sdk.executor import (
     AssessmentLimits,
     DecisionLimits,
     EvidenceProductionDecl,
-    ExecutionImplementation,
     ExecutionLimits,
     ExecutionServices,
     ImplementationHandle,
@@ -95,6 +93,7 @@ from anonymizer.graph.workflow import (
     admit_activation_workflow,
     admit_static_workflow,
 )
+from tests.graph_sdk.implementation_fixtures import _execution_implementation, _implementation_handle, _selection
 from tests.graph_sdk.test_local_executor import _Clock, _runtime_rows
 from tests.graph_sdk.test_preparation import _capability, _data, _limits, _prepare, _workflow
 
@@ -362,12 +361,7 @@ def _adaptive_fixture(provider, *, capability_limit=1):
         adaptive_retrievals=(declaration,),
         context_capabilities=(source_capability,),
     )
-    implementation = ExecutionImplementation(
-        implementation=capability.implementation,
-        configuration=capability.configuration,
-        capability=capability,
-        request=request_policy,
-    )
+    implementation = _execution_implementation(capability, request=request_policy)
     policy = OperationExecutionPolicy(
         node=node,
         kind="external",
@@ -480,12 +474,7 @@ async def _external_running(transport):
         replay="idempotent",
         max_attempts=2,
     )
-    implementation = ExecutionImplementation(
-        implementation=capability.implementation,
-        configuration=capability.configuration,
-        capability=capability,
-        request=request_policy,
-    )
+    implementation = _execution_implementation(capability, request=request_policy)
     policy = OperationExecutionPolicy(
         node=node,
         kind="external",
@@ -622,12 +611,7 @@ async def _assert_local_assessment(*, distinct_subject: bool, alias_evidence: bo
         adaptive_retrievals=(),
         context_capabilities=(),
     )
-    implementation = ExecutionImplementation(
-        implementation=capability.implementation,
-        configuration=capability.configuration,
-        capability=capability,
-        request=None,
-    )
+    implementation = _execution_implementation(capability, request=None)
     policy = OperationExecutionPolicy(
         node=node,
         kind="local",
@@ -690,16 +674,7 @@ async def _assert_local_assessment(*, distinct_subject: bool, alias_evidence: bo
         alias_evidence=alias_evidence,
     )
     services = ExecutionServices(
-        handles=(
-            ImplementationHandle(
-                implementation=capability.implementation,
-                operation=capability.operation,
-                configuration=capability.configuration,
-                local=callback,
-                transport=None,
-                resource=None,
-            ),
-        ),
+        handles=(_implementation_handle(capability, local=callback, transport=None, resource=None),),
         context_resources=(),
         limits=ExecutionLimits(
             max_local_in_flight=1,
@@ -881,13 +856,7 @@ async def _assert_nested_assessment() -> None:
             hard_request_limit=None,
         ),
         state=StateRevisionView(revisions=frozenset()),
-        selections=(
-            ImplementationSelection(
-                node=inner,
-                implementation=capability.implementation,
-                configuration=capability.configuration,
-            ),
-        ),
+        selections=(_selection(inner, capability),),
         capabilities=(capability,),
         limits=_limits(capabilities=1, slots=2),
     )
@@ -897,12 +866,7 @@ async def _assert_nested_assessment() -> None:
         adaptive_retrievals=(),
         context_capabilities=(),
     )
-    implementation = ExecutionImplementation(
-        implementation=capability.implementation,
-        configuration=capability.configuration,
-        capability=capability,
-        request=None,
-    )
+    implementation = _execution_implementation(capability, request=None)
     policy = OperationExecutionPolicy(
         node=inner,
         kind="local",

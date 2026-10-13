@@ -8,7 +8,7 @@ import asyncio
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 
-from anonymizer.engine.graph_sdk.capabilities import ImplementationRef, ImplementationSelection
+from anonymizer.engine.graph_sdk.capabilities import ImplementationRef
 from anonymizer.engine.graph_sdk.context import admit_context_plan
 from anonymizer.engine.graph_sdk.data import AtomicGroup, DataGraph, DataLimits, DatumDependency, ValidatedDataGraph
 from anonymizer.engine.graph_sdk.evidence import (
@@ -26,7 +26,6 @@ from anonymizer.engine.graph_sdk.executor import (
     DecisionOutcome,
     DecisionResponse,
     EvidenceProductionDecl,
-    ExecutionImplementation,
     ExecutionLimits,
     ExecutionResult,
     ExecutionServices,
@@ -86,6 +85,7 @@ from anonymizer.graph.workflow import (
     admit_static_workflow,
 )
 from tests.graph_sdk.evidence_fixtures import _qualification_limits
+from tests.graph_sdk.implementation_fixtures import _execution_implementation, _selection
 from tests.graph_sdk.test_decision_scheduling import _Callback
 from tests.graph_sdk.test_effects_production_conformance import _valid_runtime_rows, _ZeroClock
 from tests.graph_sdk.test_preparation import _capability, _limits
@@ -400,10 +400,7 @@ async def execute_graph(
             purpose="protection", required_protection_outcomes=frozenset(targets), hard_request_limit=None
         ),
         state=StateRevisionView(revisions=frozenset({StateRevision(effect=read, revision=read_revision)})),
-        selections=tuple(
-            ImplementationSelection(node=node.id, implementation=cap.implementation, configuration=cap.configuration)
-            for node, cap in zip(nodes, caps, strict=True)
-        ),
+        selections=tuple(_selection(node.id, cap) for node, cap in zip(nodes, caps, strict=True)),
         capabilities=caps,
         limits=replace(
             _limits(capabilities=len(caps), slots=len(nodes) * len(targets)),
@@ -421,11 +418,7 @@ async def execute_graph(
                 kind="local" if node.id == assessor else "decision",
                 request=None,
                 safe_detachment="forbidden",
-                implementations=(
-                    ExecutionImplementation(
-                        implementation=cap.implementation, configuration=cap.configuration, capability=cap, request=None
-                    ),
-                ),
+                implementations=(_execution_implementation(cap, request=None),),
                 result_outcomes=frozenset(targets) if node.id == assessor else frozenset(),
                 runtime_outcomes=_valid_runtime_rows("local", frozenset(targets))
                 if node.id == assessor

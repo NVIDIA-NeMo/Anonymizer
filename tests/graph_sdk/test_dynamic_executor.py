@@ -12,14 +12,12 @@ import pytest
 from anonymizer.engine.graph_sdk.capabilities import (
     ImplementationCapability,
     ImplementationRef,
-    ImplementationSelection,
 )
 from anonymizer.engine.graph_sdk.context import admit_context_plan
 from anonymizer.engine.graph_sdk.evidence import admit_qualification, evidence_revision_view
 from anonymizer.engine.graph_sdk.executor import (
     AssessmentLimits,
     DecisionLimits,
-    ExecutionImplementation,
     ExecutionLimits,
     ExecutionServices,
     ImplementationHandle,
@@ -76,6 +74,7 @@ from anonymizer.graph.workflow import (
     admit_activation_workflow,
     admit_static_workflow,
 )
+from tests.graph_sdk.implementation_fixtures import _execution_implementation, _selection
 from tests.graph_sdk.test_evidence import _qualification_limits
 from tests.graph_sdk.test_local_executor import _Clock
 from tests.graph_sdk.test_preparation import _config, _data, _limits
@@ -503,14 +502,7 @@ async def _assert_nested_two_by_two(*, same_key_versions: bool = False) -> None:
     }
     capabilities = tuple(_capability(operation, index) for index, operation in enumerate(operations.values()))
     by_operation = dict(zip(operations, capabilities, strict=True))
-    selections = tuple(
-        ImplementationSelection(
-            node=node,
-            implementation=by_operation[node].implementation,
-            configuration=by_operation[node].configuration,
-        )
-        for node in operations
-    )
+    selections = tuple(_selection(node, by_operation[node]) for node in operations)
     prepared = prepare(
         data=_data(1),
         workflow=workflow,
@@ -526,13 +518,7 @@ async def _assert_nested_two_by_two(*, same_key_versions: bool = False) -> None:
     )
     context = admit_context_plan(prepared=prepared, bound_context=None, adaptive_retrievals=(), context_capabilities=())
     implementations = {
-        node: ExecutionImplementation(
-            implementation=capability.implementation,
-            configuration=capability.configuration,
-            capability=capability,
-            request=None,
-        )
-        for node, capability in by_operation.items()
+        node: _execution_implementation(capability, request=None) for node, capability in by_operation.items()
     }
     policies = tuple(
         OperationExecutionPolicy(

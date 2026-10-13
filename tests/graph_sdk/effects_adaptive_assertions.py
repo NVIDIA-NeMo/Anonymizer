@@ -19,7 +19,6 @@ from anonymizer.engine.graph_sdk.context import (
 from anonymizer.engine.graph_sdk.executor import (
     AssessmentLimits,
     DecisionLimits,
-    ExecutionImplementation,
     ExecutionLimits,
     ExecutionServices,
     ImplementationHandle,
@@ -49,6 +48,7 @@ from anonymizer.graph.workflow import (
 from tests.graph_sdk.effects_admission_fixtures import _selector_data, _valid_runtime_rows
 from tests.graph_sdk.effects_provider_fixtures import _CaseProvider, _LateAdaptiveProvider
 from tests.graph_sdk.effects_request_fixtures import _normalize, _policy
+from tests.graph_sdk.implementation_fixtures import _execution_implementation
 from tests.graph_sdk.test_adaptive_executor import _adaptive_workflow, _Clock, _UnusedTransport
 from tests.graph_sdk.test_preparation import _capability, _limits, _prepare
 
@@ -137,12 +137,7 @@ async def _assert_adaptive_materialization_case(case: dict[str, Any], *, late_mo
         adaptive_retrievals=(retrieval,),
         context_capabilities=(source_capability,),
     )
-    implementation = ExecutionImplementation(
-        implementation=capability.implementation,
-        configuration=capability.configuration,
-        capability=capability,
-        request=request_policy,
-    )
+    implementation = _execution_implementation(capability, request=request_policy)
     runtime_mappings = cast(list[dict[str, Any]], raw["runtime_mappings"])
     policy = OperationExecutionPolicy(
         node=node,

@@ -15,7 +15,6 @@ from anonymizer.engine.graph_sdk.binding import start_initial_binding
 from anonymizer.engine.graph_sdk.capabilities import (
     ImplementationCapability,
     ImplementationRef,
-    ImplementationSelection,
 )
 from anonymizer.engine.graph_sdk.context import (
     AdaptiveRetrievalDecl,
@@ -36,11 +35,9 @@ from anonymizer.engine.graph_sdk.data import ValidatedDataGraph
 from anonymizer.engine.graph_sdk.executor import (
     BoundInputKey,
     DecisionLimits,
-    ExecutionImplementation,
     ExecutionLimits,
     ExecutionResult,
     ExecutionServices,
-    ImplementationHandle,
     IngressLimits,
     InitialCollectionKey,
     LocalCompleted,
@@ -96,6 +93,7 @@ from anonymizer.graph.workflow import (
     admit_activation_workflow,
     admit_static_workflow,
 )
+from tests.graph_sdk.implementation_fixtures import _execution_implementation, _implementation_handle, _selection
 from tests.graph_sdk.reference.corpora import load_cases
 from tests.graph_sdk.test_effects_production_conformance import (
     _assessment_limits,
@@ -423,10 +421,7 @@ def _prepare_schema_fixture(fixture: _SchemaFixture) -> PreparedPlan:
             purpose="execution_only", required_protection_outcomes=frozenset(), hard_request_limit=None
         ),
         state=StateRevisionView(revisions=frozenset()),
-        selections=tuple(
-            ImplementationSelection(node=node, implementation=cap.implementation, configuration=cap.configuration)
-            for node, cap in zip(nodes, capabilities, strict=True)
-        ),
+        selections=tuple(_selection(node, cap) for node, cap in zip(nodes, capabilities, strict=True)),
         capabilities=capabilities,
         limits=_limits(capabilities=2, slots=2),
     )
@@ -479,11 +474,7 @@ async def _execute_distinct_sites(
                 kind="local",
                 request=None,
                 safe_detachment="forbidden",
-                implementations=(
-                    ExecutionImplementation(
-                        implementation=cap.implementation, configuration=cap.configuration, capability=cap, request=None
-                    ),
-                ),
+                implementations=(_execution_implementation(cap, request=None),),
                 result_outcomes=frozenset({"ok"}),
                 runtime_outcomes=_valid_runtime_rows("local", frozenset({"ok"})),
             )
@@ -502,14 +493,7 @@ async def _execute_distinct_sites(
             capabilities=capabilities,
             services=ExecutionServices(
                 handles=tuple(
-                    ImplementationHandle(
-                        implementation=cap.implementation,
-                        operation=cap.operation,
-                        configuration=cap.configuration,
-                        local=consumer,
-                        transport=None,
-                        resource=None,
-                    )
+                    _implementation_handle(cap, local=consumer, transport=None, resource=None)
                     for cap, consumer in zip(capabilities, consumers, strict=True)
                 ),
                 context_resources=(),

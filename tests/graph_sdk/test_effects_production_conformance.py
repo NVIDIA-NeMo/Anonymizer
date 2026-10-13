@@ -23,7 +23,6 @@ from anonymizer.engine.graph_sdk.context import (
     admit_context_plan,
 )
 from anonymizer.engine.graph_sdk.executor import (
-    ExecutionImplementation,
     ExecutionLimits,
     OperationExecutionPolicy,
     admit_execution_plan,
@@ -100,6 +99,7 @@ from tests.graph_sdk.effects_request_fixtures import _apply as _apply
 from tests.graph_sdk.effects_request_fixtures import _Closable, _usage
 from tests.graph_sdk.effects_request_fixtures import _normalize as _normalize
 from tests.graph_sdk.effects_request_fixtures import _policy as _policy
+from tests.graph_sdk.implementation_fixtures import _execution_implementation
 from tests.graph_sdk.reference.corpora import load_cases
 from tests.graph_sdk.test_preparation import _capability, _data, _limits, _prepare, _workflow
 
@@ -326,15 +326,7 @@ def test_admission_capability_identity_survives_a_raised_limit(duplicate: bool, 
         kind="external",
         request=request,
         safe_detachment="forbidden",
-        implementations=tuple(
-            ExecutionImplementation(
-                implementation=item.implementation,
-                configuration=item.configuration,
-                capability=item,
-                request=request,
-            )
-            for item in (primary, alternate)
-        ),
+        implementations=tuple(_execution_implementation(item, request=request) for item in (primary, alternate)),
         result_outcomes=frozenset({"ok"}),
         runtime_outcomes=_valid_runtime_rows("external", frozenset({"ok"})),
     )

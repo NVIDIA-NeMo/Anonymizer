@@ -11,7 +11,7 @@ from typing import Literal, cast
 import pytest
 
 from anonymizer.engine.graph_sdk._effect_values import EffectCode, EffectRejected
-from anonymizer.engine.graph_sdk.capabilities import ImplementationRef, ImplementationSelection
+from anonymizer.engine.graph_sdk.capabilities import ImplementationRef
 from anonymizer.engine.graph_sdk.context import admit_context_plan
 from anonymizer.engine.graph_sdk.data import DataGraph, DataLimits
 from anonymizer.engine.graph_sdk.executor import (
@@ -19,7 +19,6 @@ from anonymizer.engine.graph_sdk.executor import (
     AssessmentLimits,
     DecisionLimits,
     EvidenceProductionDecl,
-    ExecutionImplementation,
     ExecutionLimits,
     ExecutionServices,
     ImplementationHandle,
@@ -65,6 +64,7 @@ from anonymizer.graph.workflow import (
     admit_static_workflow,
 )
 from tests.graph_sdk.effects_admission_fixtures import _valid_runtime_rows, _ZeroClock
+from tests.graph_sdk.implementation_fixtures import _execution_implementation, _selection
 from tests.graph_sdk.qualification_fixtures import _inputs
 from tests.graph_sdk.test_adaptive_executor import _adaptive_workflow, _AssessingLocal
 from tests.graph_sdk.test_preparation import _capability, _limits
@@ -305,10 +305,7 @@ async def _execute_repair(
         workflow=workflow,
         capabilities=capabilities,
         activation_limits=ActivationLimits(max_events=9, max_entries=3, max_parent_depth=1),
-        selections=tuple(
-            ImplementationSelection(node=node.id, implementation=cap.implementation, configuration=cap.configuration)
-            for node, cap in zip(nodes, capabilities, strict=True)
-        ),
+        selections=tuple(_selection(node.id, cap) for node, cap in zip(nodes, capabilities, strict=True)),
         limits=_limits(capabilities=3),
         configuration=PreparationConfiguration(
             purpose="protection", required_protection_outcomes=frozenset({"ok"}), hard_request_limit=2
@@ -331,14 +328,7 @@ async def _execute_repair(
             request=request if index == 0 else None,
             initial_request_purpose=purpose if index == 0 else "initial",
             safe_detachment="forbidden",
-            implementations=(
-                ExecutionImplementation(
-                    implementation=cap.implementation,
-                    configuration=cap.configuration,
-                    capability=cap,
-                    request=request if index == 0 else None,
-                ),
-            ),
+            implementations=(_execution_implementation(cap, request=request if index == 0 else None),),
             result_outcomes=frozenset({"ok"}),
             runtime_outcomes=_valid_runtime_rows("external" if index == 0 else "local", frozenset({"ok"})),
         )

@@ -13,11 +13,11 @@ from threading import Event
 import pytest
 
 from anonymizer.engine.graph_sdk._foreign_transport import ForeignLoopTransport
-from anonymizer.engine.graph_sdk.capabilities import ImplementationSelection
 from anonymizer.engine.graph_sdk.context import admit_context_plan
 from anonymizer.engine.graph_sdk.executor import admit_execution_plan, start_execution
 from anonymizer.engine.graph_sdk.preparation import prepare
 from anonymizer.engine.graph_sdk.requests import ExactUsage, StopConfirmed, StopUnknown, TextArtifactValue
+from tests.graph_sdk.implementation_fixtures import _selection
 from tests.graph_sdk.test_blocking import until
 from tests.graph_sdk.test_delegated_execution import _execute
 from tests.graph_sdk.test_delegated_readiness import _qualify, _ready_fixture
@@ -149,12 +149,7 @@ async def fixture(
         bound_inputs=tuple(previous.bound_inputs),
         configuration=previous.configuration,
         state=previous.state,
-        selections=tuple(
-            ImplementationSelection(
-                node=i.node, implementation=i.capability.implementation, configuration=i.capability.configuration
-            )
-            for i in previous.implementations
-        ),
+        selections=tuple(_selection(i.node, i.capability) for i in previous.implementations),
         capabilities=capabilities,
         limits=previous.limits,
     )

@@ -14,7 +14,6 @@ from anonymizer.engine.graph_sdk.context import admit_context_plan
 from anonymizer.engine.graph_sdk.executor import (
     AssessmentLimits,
     DecisionLimits,
-    ExecutionImplementation,
     ExecutionLimits,
     ExecutionServices,
     ImplementationHandle,
@@ -33,6 +32,7 @@ from anonymizer.graph.workflow import (
     admit_activation_workflow,
     admit_static_workflow,
 )
+from tests.graph_sdk.implementation_fixtures import _execution_implementation
 from tests.graph_sdk.test_local_executor import _Clock, _runtime_rows
 from tests.graph_sdk.test_preparation import _capability, _data, _prepare, _workflow
 
@@ -112,12 +112,7 @@ async def _execute(mode: str, expected: str) -> None:
     capability = _capability(workflow)
     prepared = _prepare(data=_data(1), workflow=workflow, capability=capability)
     context = admit_context_plan(prepared=prepared, bound_context=None, adaptive_retrievals=(), context_capabilities=())
-    implementation = ExecutionImplementation(
-        implementation=capability.implementation,
-        configuration=capability.configuration,
-        capability=capability,
-        request=None,
-    )
+    implementation = _execution_implementation(capability, request=None)
     rows = tuple(
         replace(
             row, outcome={"implementation_exception": "callback_failed", "malformed_response": "malformed"}[row.failure]

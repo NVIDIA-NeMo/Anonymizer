@@ -17,12 +17,12 @@ import pytest
 from anonymizer.engine.graph_sdk import _execution_delegated
 from anonymizer.engine.graph_sdk._effect_values import EffectRejected
 from anonymizer.engine.graph_sdk.blocking import BlockingAffinity, BlockingPool
-from anonymizer.engine.graph_sdk.capabilities import ImplementationSelection
 from anonymizer.engine.graph_sdk.context import admit_context_plan
 from anonymizer.engine.graph_sdk.executor import LocalFailure, admit_execution_plan, start_execution
 from anonymizer.engine.graph_sdk.preparation import prepare
 from anonymizer.engine.graph_sdk.requests import ExactUsage, StopConfirmed, StopUnknown, TextArtifactValue
 from anonymizer.engine.graph_sdk.resources import ResourceLease
+from tests.graph_sdk.implementation_fixtures import _selection
 from tests.graph_sdk.test_blocking import until
 from tests.graph_sdk.test_delegated_execution import _execute, _fixture, _Transport
 from tests.graph_sdk.test_delegated_readiness import _qualify, _ready_fixture
@@ -137,14 +137,7 @@ def _worker_services(execution, services, loop, pool, callback):
         bound_inputs=tuple(previous.bound_inputs),
         configuration=previous.configuration,
         state=previous.state,
-        selections=tuple(
-            ImplementationSelection(
-                node=item.node,
-                implementation=item.capability.implementation,
-                configuration=item.capability.configuration,
-            )
-            for item in previous.implementations
-        ),
+        selections=tuple(_selection(item.node, item.capability) for item in previous.implementations),
         capabilities=capabilities,
         limits=previous.limits,
     )

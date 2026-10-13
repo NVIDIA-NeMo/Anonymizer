@@ -8,7 +8,7 @@ from dataclasses import fields, replace
 from typing import Literal
 
 from anonymizer.engine.graph_sdk._execution_values import _FACT_KEY, _RESULT_KEY, ImplementationResourceRegistration
-from anonymizer.engine.graph_sdk.capabilities import ImplementationRef, ImplementationSelection
+from anonymizer.engine.graph_sdk.capabilities import ImplementationRef
 from anonymizer.engine.graph_sdk.context import admit_context_plan
 from anonymizer.engine.graph_sdk.executor import (
     ArtifactProvenanceFact,
@@ -18,7 +18,6 @@ from anonymizer.engine.graph_sdk.executor import (
     DelegatedRequestContract,
     EvidenceProductionDecl,
     ExecutionAssessmentFact,
-    ExecutionImplementation,
     ExecutionPortFact,
     ExecutionResult,
     FinalOutputFact,
@@ -84,6 +83,7 @@ from anonymizer.graph.workflow import (
     admit_static_workflow,
 )
 from tests.graph_sdk.effects_admission_fixtures import _valid_runtime_rows
+from tests.graph_sdk.implementation_fixtures import _execution_implementation, _selection
 from tests.graph_sdk.test_adaptive_executor import _adaptive_workflow
 from tests.graph_sdk.test_preparation import _capability, _data, _limits
 
@@ -199,10 +199,7 @@ def child_fixture(
         workflow=workflow,
         capabilities=capabilities,
         activation_limits=ActivationLimits(max_events=3 * len(nodes), max_entries=len(nodes), max_parent_depth=1),
-        selections=tuple(
-            ImplementationSelection(node=node.id, implementation=cap.implementation, configuration=cap.configuration)
-            for node, cap in zip(nodes, capabilities, strict=True)
-        ),
+        selections=tuple(_selection(node.id, cap) for node, cap in zip(nodes, capabilities, strict=True)),
         limits=_limits(capabilities=len(capabilities)),
         configuration=PreparationConfiguration(
             purpose="protection", required_protection_outcomes=frozenset({"ok"}), hard_request_limit=None
@@ -236,14 +233,7 @@ def child_fixture(
                 kind="delegated" if index == 1 else "external" if index > 1 else "local",
                 request=physical,
                 safe_detachment="forbidden",
-                implementations=(
-                    ExecutionImplementation(
-                        implementation=cap.implementation,
-                        configuration=cap.configuration,
-                        capability=cap,
-                        request=physical,
-                    ),
-                ),
+                implementations=(_execution_implementation(cap, request=physical),),
                 result_outcomes=frozenset(outcome.name for outcome in node.operation.outcomes),
                 runtime_outcomes=_valid_runtime_rows(
                     "external" if index else "local", frozenset(outcome.name for outcome in node.operation.outcomes)

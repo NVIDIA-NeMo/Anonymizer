@@ -20,7 +20,6 @@ from anonymizer.engine.graph_sdk.capabilities import (
     FrozenConfig,
     ImplementationCapability,
     ImplementationRef,
-    ImplementationSelection,
     PreparationCode,
     PreparationRejected,
 )
@@ -60,6 +59,7 @@ from anonymizer.graph.workflow import (
     admit_activation_workflow,
     admit_static_workflow,
 )
+from tests.graph_sdk.implementation_fixtures import _selection
 from tests.graph_sdk.workflow_fixtures import _shared_body_workflow
 
 
@@ -237,13 +237,7 @@ def _prepare(
             hard_request_limit=None,
         ),
         state=state or StateRevisionView(revisions=frozenset()),
-        selections=(
-            ImplementationSelection(
-                node=node,
-                implementation=actual_capability.implementation,
-                configuration=actual_capability.configuration,
-            ),
-        ),
+        selections=(_selection(node, actual_capability),),
         capabilities=(actual_capability,),
         limits=limits or _limits(),
     )
@@ -356,13 +350,7 @@ def test_shared_subgraph_body_is_selected_once_and_reserved_per_parent() -> None
             purpose="execution_only", required_protection_outcomes=frozenset(), hard_request_limit=None
         ),
         state=StateRevisionView(revisions=frozenset()),
-        selections=(
-            ImplementationSelection(
-                node=child,
-                implementation=capability.implementation,
-                configuration=capability.configuration,
-            ),
-        ),
+        selections=(_selection(child, capability),),
         capabilities=(capability,),
         limits=_limits(slots=4),
     )
@@ -508,13 +496,7 @@ def test_catalog_limit_precedes_invalid_member_in_prepare_and_recheck() -> None:
         hard_request_limit=None,
     )
     state = StateRevisionView(revisions=frozenset())
-    selections = (
-        ImplementationSelection(
-            node=node,
-            implementation=capability.implementation,
-            configuration=capability.configuration,
-        ),
-    )
+    selections = (_selection(node, capability),)
     with pytest.raises(PreparationRejected) as raised:
         invalid_capabilities = cast(tuple[ImplementationCapability, ...], (capability, object()))
         prepare(

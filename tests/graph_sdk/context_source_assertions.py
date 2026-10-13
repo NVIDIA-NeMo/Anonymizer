@@ -12,7 +12,6 @@ import pytest
 
 from anonymizer.engine.graph_sdk._effect_values import EffectRejected
 from anonymizer.engine.graph_sdk.binding import start_initial_binding
-from anonymizer.engine.graph_sdk.capabilities import ImplementationSelection
 from anonymizer.engine.graph_sdk.context import (
     BindingLimits,
     ContextMaterialization,
@@ -28,10 +27,8 @@ from anonymizer.engine.graph_sdk.executor import (
     AssessmentLimits,
     BoundInputKey,
     DecisionLimits,
-    ExecutionImplementation,
     ExecutionLimits,
     ExecutionServices,
-    ImplementationHandle,
     InitialCollectionKey,
     OperationExecutionPolicy,
     OperationOutputKey,
@@ -90,6 +87,7 @@ from tests.graph_sdk.context_source_fixtures import (
     _static_fixture,
 )
 from tests.graph_sdk.evidence_fixtures import _qualification_limits
+from tests.graph_sdk.implementation_fixtures import _execution_implementation, _implementation_handle, _selection
 from tests.graph_sdk.test_local_executor import _Clock, _runtime_rows
 from tests.graph_sdk.test_preparation import _capability, _data, _limits
 
@@ -209,13 +207,7 @@ async def _assert_special_fixture_execution(case_id: str) -> None:
             hard_request_limit=None,
         ),
         state=StateRevisionView(revisions=frozenset()),
-        selections=(
-            ImplementationSelection(
-                node=node,
-                implementation=capability.implementation,
-                configuration=capability.configuration,
-            ),
-        ),
+        selections=(_selection(node, capability),),
         capabilities=(capability,),
         limits=_limits(slots=1),
     )
@@ -225,12 +217,7 @@ async def _assert_special_fixture_execution(case_id: str) -> None:
         adaptive_retrievals=(),
         context_capabilities=(),
     )
-    implementation = ExecutionImplementation(
-        implementation=capability.implementation,
-        configuration=capability.configuration,
-        capability=capability,
-        request=None,
-    )
+    implementation = _execution_implementation(capability, request=None)
     returned_outcome = cast(str, raw.get("returned_outcome", "ok"))
     output_port = "output" if returned_outcome in {"ok", "main"} else "extra_output"
     input_port = "context" if returned_outcome in {"ok", "main"} else "extra"
@@ -290,16 +277,7 @@ async def _assert_special_fixture_execution(case_id: str) -> None:
             admitted=admitted,
             capabilities=(capability,),
             services=ExecutionServices(
-                handles=(
-                    ImplementationHandle(
-                        implementation=capability.implementation,
-                        operation=capability.operation,
-                        configuration=capability.configuration,
-                        local=callback,
-                        transport=None,
-                        resource=None,
-                    ),
-                ),
+                handles=(_implementation_handle(capability, local=callback, transport=None, resource=None),),
                 context_resources=(),
                 limits=ExecutionLimits(
                     max_local_in_flight=1,
@@ -626,13 +604,7 @@ async def _assert_context_execution(
             hard_request_limit=None,
         ),
         state=StateRevisionView(revisions=frozenset()),
-        selections=(
-            ImplementationSelection(
-                node=implementation_node,
-                implementation=capability.implementation,
-                configuration=capability.configuration,
-            ),
-        ),
+        selections=(_selection(implementation_node, capability),),
         capabilities=(capability,),
         limits=_limits(slots=2),
     )
@@ -642,12 +614,7 @@ async def _assert_context_execution(
         adaptive_retrievals=(),
         context_capabilities=(),
     )
-    implementation = ExecutionImplementation(
-        implementation=capability.implementation,
-        configuration=capability.configuration,
-        capability=capability,
-        request=None,
-    )
+    implementation = _execution_implementation(capability, request=None)
     admitted = admit_execution_plan(
         context=context,
         capabilities=(capability,),
@@ -680,16 +647,7 @@ async def _assert_context_execution(
             admitted=admitted,
             capabilities=(capability,),
             services=ExecutionServices(
-                handles=(
-                    ImplementationHandle(
-                        implementation=capability.implementation,
-                        operation=capability.operation,
-                        configuration=capability.configuration,
-                        local=callback,
-                        transport=None,
-                        resource=None,
-                    ),
-                ),
+                handles=(_implementation_handle(capability, local=callback, transport=None, resource=None),),
                 context_resources=(),
                 limits=ExecutionLimits(
                     max_local_in_flight=1,
