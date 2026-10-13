@@ -3,7 +3,7 @@
 
 # Replace
 
-Replace mode replaces each [detected entity](detection.md) with an alternative token. Anonymizer provides four strategies. 
+Replace mode replaces each [detected entity](detection.md) with an alternative token. Anonymizer provides four strategies.
 
 ---
 
@@ -69,8 +69,10 @@ AnonymizerConfig(replace=Redact(format_template="[{label}]"))
 
 | Field | Default | Description |
 |-------|---------|-------------|
-| `format_template` | `[REDACTED_{label}]` | Template with optional `{label}` placeholder. |
+| `format_template` | `[REDACTED_{label}]` | Nonempty replacement template with optional `{label}` placeholder. |
 | `normalize_label` | `True` | Uppercase and clean the label before substitution. |
+
+Empty templates and statically empty renders, such as `{label:.0}`, raise a configuration error. If a label-dependent template renders an empty string during replacement, Redact raises `ValueError` instead of silently keeping the entity. Whitespace replacements remain valid.
 
 ---
 

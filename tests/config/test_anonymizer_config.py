@@ -89,6 +89,33 @@ def test_redact_allows_constant_template() -> None:
     assert strategy.replace(text="Alice", label="first_name") == "****"
 
 
+@pytest.mark.parametrize("template", ["", "{label:.0}", "{label:.0s}{label:.0}"])
+def test_redact_rejects_empty_static_render(template: str) -> None:
+    with pytest.raises(ValueError, match="must produce a nonempty replacement"):
+        Redact(format_template=template)
+
+
+@pytest.mark.parametrize("template", ["{}", "{label:d}", "{label!z}"])
+def test_redact_rejects_malformed_static_format_before_render(template: str) -> None:
+    with pytest.raises(ValueError, match="Invalid redaction template"):
+        Redact(format_template=template)
+
+
+@pytest.mark.parametrize("template,expected", [(" ", " "), ("\t", "\t"), ("{label:1.0}", " "), ("{{}}", "{}")])
+def test_redact_preserves_nonempty_constant_and_padded_render(template: str, expected: str) -> None:
+    assert Redact(format_template=template).replace(text="Alice", label="first_name") == expected
+
+
+def test_redact_checks_label_dependent_render_without_restricting_valid_labels() -> None:
+    strategy = Redact(format_template="{label:.{label}}")
+    assert strategy.replace(text="Alice", label="1") == "1"
+    with pytest.raises(ValueError, match="must produce a nonempty replacement"):
+        strategy.replace(text="Alice", label="0")
+    assert Redact(format_template="{label:{label}}", normalize_label=False).replace(text="Alice", label="3") == "3  "
+    with pytest.raises(ValueError, match="must produce a nonempty replacement"):
+        Redact(format_template="{label}", normalize_label=False).replace(text="Alice", label="")
+
+
 def test_entity_labels_defaults_to_none() -> None:
     config = AnonymizerConfig(replace=Redact())
     assert config.detect.entity_labels is None

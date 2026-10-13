@@ -5,18 +5,22 @@
 from __future__ import annotations
 
 import asyncio
+import json
 
+import httpx
 import pandas as pd
 import pytest
+import yaml
 
+from anonymizer import Anonymizer, AnonymizerConfig, AnonymizerInput
 from anonymizer.config.replace_strategies import Redact
 from anonymizer.engine.constants import COL_REPLACED_TEXT, COL_TEXT
 from anonymizer.engine.detection import _graph_invocation, _graph_profile
 from anonymizer.engine.graph_sdk.executor import ExecutionLimits
 from anonymizer.engine.replace._graph_redact import redact_strategy
 from anonymizer.engine.replace.strategies import apply_local_replace_strategy
-from anonymizer.interface.errors import AnonymizerWorkflowError
 from tests.engine import test_detection_source_frame as detection_tests
+from tests.engine.test_detection_graph_publication import _modify_dd_responses
 from tests.engine.test_detection_source_frame import run_graph_profile
 
 scripted_detection = detection_tests.scripted_detection
@@ -38,6 +42,7 @@ def _options():
         ("<{label}>", True, "<FIRST_NAME>"),
         ("<{label}>", False, "<first_name>"),
         ("{{removed}}", True, "{removed}"),
+        (" ", True, " "),
     ],
 )
 def test_existing_redact_configuration_matches_legacy_and_literal_output(
@@ -64,20 +69,11 @@ def test_existing_redact_configuration_matches_legacy_and_literal_output(
 
 
 @pytest.mark.parametrize("template", ["", "{label:.0}"])
-def test_empty_render_preserves_legacy_candidate_but_cannot_claim_protection(scripted_detection, template):
-    strategy = Redact(format_template=template)
-    designer, models, selected, _ = scripted_detection
-    detected = detection_tests.EntityDetectionWorkflow(detection_tests.NddAdapter(designer)).run(
-        _source(), model_configs=models, selected_models=selected, **_options()
-    )
-    legacy = apply_local_replace_strategy(detected.dataframe, strategy=strategy)
-    assert legacy[COL_REPLACED_TEXT].tolist() == ["Alice travels.", "Alice stays."]
-    result = asyncio.run(run_graph_profile(scripted_detection, _source(), _options(), replace_method=strategy))
-    pd.testing.assert_frame_equal(result.frames[0].project(result), legacy)
-    assert [fact.finding.status for fact in result.assessments] == ["unsatisfied", "unsatisfied"]
-    assert not _graph_profile.qualify_detection_redact(result).qualified
-    with pytest.raises(AnonymizerWorkflowError):
-        _graph_profile.project_detection_redact(result)
+def test_empty_render_configuration_rejects_before_detection(scripted_detection, template):
+    with pytest.raises(ValueError, match="must produce a nonempty replacement"):
+        strategy = Redact(format_template=template)
+        asyncio.run(run_graph_profile(scripted_detection, _source(), _options(), replace_method=strategy))
+    assert scripted_detection[3] == {}
 
 
 @pytest.mark.parametrize(
@@ -146,4 +142,54 @@ def test_sync_configuration_snapshot_precedes_host_thread(scripted_detection, mo
     )
     assert strategy.format_template == "WRONG"
     assert projected.dataframe[COL_REPLACED_TEXT].tolist() == ["<first_name> travels.", "<first_name> stays."]
+    assert calls == {"detector": 2, "validator": 2, "augmenter": 2, "readiness": 1}
+
+
+@pytest.mark.parametrize("route", ["run", "preview", "graph"])
+def test_label_dependent_empty_render_propagates_without_successful_output(
+    scripted_detection, monkeypatch, tmp_path, route
+):
+    def numeric_label(request, answer):
+        body = answer.json()
+        message = body["choices"][0]["message"]
+        if json.loads(request.content)["model"] == "detector":
+            content = json.loads(message["content"])
+            for entity in content["entities"]:
+                entity["label"] = "0"
+            message["content"] = json.dumps(content)
+        elif "decisions" in message["content"]:
+            message["content"] = '```json\n{"decisions":[{"id":"0_0_5","decision":"keep"}]}\n```'
+        return httpx.Response(200, json=body)
+
+    _modify_dd_responses(scripted_detection, monkeypatch, numeric_label)
+    designer, models, selected, calls = scripted_detection
+    strategy = Redact(format_template="{label:.{label}}")
+    if route == "graph":
+        result = asyncio.run(run_graph_profile(scripted_detection, _source(), _options(), replace_method=strategy))
+        assert not result.frames and not result.final_outputs
+        assert all(state.complete for state in result.states)
+        assert not result._retained_resources and not result.requests.remote_outstanding
+        with pytest.raises(ValueError, match="must produce a nonempty replacement") as caught:
+            _graph_profile.project_detection_redact(result)
+        assert caught.value is result.submission_failures[0].cause
+        assert caught.value._anonymizer_execution is result
+    else:
+        path = tmp_path / "source.csv"
+        _source().rename(columns={COL_TEXT: "text"}).to_csv(path, index=False)
+        config_yaml = yaml.safe_dump(
+            {
+                "model_configs": [model.model_dump(mode="json", exclude_none=True) for model in models],
+                "selected_models": {"detection": selected.model_dump()},
+            }
+        )
+        anonymizer = Anonymizer(data_designer=designer, model_configs=config_yaml)
+        options = {
+            "config": AnonymizerConfig(replace=strategy, emit_telemetry=False),
+            "data": AnonymizerInput(source=str(path)),
+        }
+        with pytest.raises(ValueError, match="must produce a nonempty replacement"):
+            if route == "preview":
+                anonymizer.preview(**options, num_records=2)
+            else:
+                anonymizer.run(**options)
     assert calls == {"detector": 2, "validator": 2, "augmenter": 2, "readiness": 1}

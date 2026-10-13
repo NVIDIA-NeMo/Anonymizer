@@ -130,6 +130,7 @@ def build_config() -> tuple[AnonymizerInput, AnonymizerConfig]:
     # ---- Pick ONE of the two strategies below ----
 
     # Replace mode (Substitute | Redact | Annotate | Hash):
+    # Redact templates must render a nonempty replacement; empty renders raise an error.
     # config = AnonymizerConfig(detect=detect, replace=Substitute(
     #     instructions="TODO: short hint about the domain (e.g. names should remain plausible "
     #                  "for the original cultural context)",
