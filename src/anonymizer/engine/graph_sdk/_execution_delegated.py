@@ -746,8 +746,33 @@ class _DelegatedOwner(PrivateValue):
         successful = tuple(
             item for item in result.results if _mapping(self.policy, "result", item.outcome, None).category == "success"
         )
-        if any(item.association in incomplete for item in successful):
-            return self._failure("failure", "implementation_exception")
+        for item in successful:
+            assert isinstance(item.association, SemanticAssociation)
+            selection = self.contract.selection
+            if selection is None:
+                if item.association in incomplete:
+                    return self._failure("failure", "implementation_exception")
+                continue
+            outputs = [output for output in item.outputs if output.port == selection.port]
+            try:
+                if len(outputs) != 1:
+                    return self._failure("failure", "malformed_response")
+                omitted = selection.omitted(outputs[0].value)
+            except EffectRejected:
+                return self._failure("failure", "malformed_response")
+            job = self.jobs[item.association]
+            source = runtime.frame.sources[job.target]
+            missing = {slot for slot in self.contract.child_slots if source.keys[slot] not in runtime.attempts}
+            if missing != set(omitted):
+                return self._failure("failure", "implementation_exception")
+            readiness = self.contract.readiness
+            if readiness is not None:
+                ready_source = runtime.frame.invocation_source or source
+                required = {ready_source.keys[slot] for slot in readiness.slots}
+                if any(
+                    entry.status != "success" for entry in ready_source.state.entries if entry.activation in required
+                ):
+                    return self._failure("failure", "implementation_exception")
         frame = getattr(result, "frame", False)
         if frame is not None:
             from anonymizer.engine.detection._frame_publication import FramePublication

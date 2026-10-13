@@ -2,9 +2,9 @@
 # SPDX-License-Identifier: Apache-2.0
 """Actual DD detection/Redact development profile, using the single graph executor.
 
-Fixed generation counts are explicit admission declarations, not public input
-limits. Source-bound Redact assessments and shared request receipts are qualified.
-Variable chunk closure and retry chains remain incomplete.
+Validator capacity is an explicit admission declaration, not a public input
+limit. Canonical chunk membership closes unused capacity per source. Source-bound
+Redact assessments and shared receipts are qualified; retry chains remain incomplete.
 The public facade does not use this profile.
 """
 
@@ -40,6 +40,7 @@ from anonymizer.engine.graph_sdk.evidence import QualificationLimits, admit_qual
 from anonymizer.engine.graph_sdk.executor import (
     AssessmentLimits,
     DecisionLimits,
+    DelegatedGenerationSelection,
     DelegatedReadiness,
     DelegatedRequestContract,
     EvidenceProductionDecl,
@@ -191,7 +192,7 @@ async def execute_detection_redact(
 ) -> ExecutionResult:
     """Admit and execute the named real-DD profile without a second workflow runner."""
     if type(validation_chunks) is not int or validation_chunks < 1 or source.empty:
-        raise ValueError("development profile requires nonempty sources and declared validator calls")
+        raise ValueError("development profile requires nonempty sources and declared validator capacity")
     generations = (
         (COL_RAW_DETECTED, 0),
         *((COL_VALIDATION_DECISIONS, i) for i in range(validation_chunks)),
@@ -233,12 +234,16 @@ async def execute_detection_redact(
             outputs=(
                 OutputPort(name="redacted", artifact_type=text_type),
                 OutputPort(name="spans", artifact_type=ENTITY_SPANS_TYPE),
+                OutputPort(
+                    name="validation_chunks",
+                    artifact_type=ArtifactType(name="anonymizer.validation-chunks", revision=1),
+                ),
             )
             if io
             else (),
             output_dependencies=tuple(
                 OutputDependency(output=port, inputs=frozenset({"source"}), identity_input=None)
-                for port in ("redacted", "spans")
+                for port in ("redacted", "spans", "validation_chunks")
             )
             if io
             else (),
@@ -246,7 +251,7 @@ async def execute_detection_redact(
                 OutcomeSpec(
                     name=value,
                     category="success",
-                    produced_ports=frozenset({"redacted", "spans"}) if io else frozenset(),
+                    produced_ports=frozenset({"redacted", "spans", "validation_chunks"}) if io else frozenset(),
                     context=frozenset(),
                     evidence=frozenset(),
                     state_effects=frozenset(),
@@ -461,6 +466,9 @@ async def execute_detection_redact(
                 mode="qualified",
                 child_slots=tuple(slots[leaf] for leaf in leaves),
                 generation_groups=tuple((slots[leaf],) for leaf in leaves),
+                selection=DelegatedGenerationSelection(
+                    port="validation_chunks", slots=tuple(slots[leaf] for leaf in leaves[1:-1])
+                ),
                 routes=(ChildRoute(name="primary", parse_attempts=1),),
                 followups=frozenset(),
                 readiness=DelegatedReadiness(

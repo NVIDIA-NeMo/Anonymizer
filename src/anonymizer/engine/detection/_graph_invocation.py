@@ -22,7 +22,11 @@ from anonymizer.config.replace_strategies import Redact
 from anonymizer.engine.constants import COL_FINAL_ENTITIES, COL_REPLACED_TEXT
 from anonymizer.engine.detection._frame_publication import FramePublication
 from anonymizer.engine.detection.artifacts import ENTITY_SPANS_TYPE, EntitySpansValue
-from anonymizer.engine.detection.detection_workflow import EntityDetectionWorkflow
+from anonymizer.engine.detection.chunked_validation import validation_chunks
+from anonymizer.engine.detection.detection_workflow import (
+    _DEFAULT_VALIDATION_MAX_ENTITIES_PER_CALL,
+    EntityDetectionWorkflow,
+)
 from anonymizer.engine.detection.postprocess import EntitySpan
 from anonymizer.engine.graph_sdk._execution_values import DelegatedRequests, LocalCompleted
 from anonymizer.engine.graph_sdk.requests import (
@@ -31,11 +35,14 @@ from anonymizer.engine.graph_sdk.requests import (
     PortArtifact,
     SemanticAssociation,
     TextArtifactValue,
+    TextCollectionItem,
+    TextCollectionValue,
 )
 from anonymizer.engine.ndd._graph_requests import NddPhysicalTransport, NddRequestBridge
 from anonymizer.engine.replace.replace_runner import ReplacementWorkflow
 from anonymizer.engine.schemas import EntitiesSchema
 from anonymizer.graph._values import ArtifactRef, DatumId
+from anonymizer.graph.workflow import ArtifactType
 from anonymizer.interface.errors import AnonymizerWorkflowError
 
 
@@ -115,6 +122,29 @@ class DetectionRedactInvocation:
                 outcome=self.outcome,
                 consumed_context_ports=frozenset(),
                 outputs=(
+                    PortArtifact(
+                        port="validation_chunks",
+                        artifact_type=ArtifactType(name="anonymizer.validation-chunks", revision=1),
+                        artifact=None,
+                        value=TextCollectionValue(
+                            items=tuple(
+                                TextCollectionItem(
+                                    key=index,
+                                    version=1,
+                                    value=TextArtifactValue(text="\n".join(candidate.id for candidate, _ in chunk)),
+                                )
+                                for index, chunk in enumerate(
+                                    validation_chunks(
+                                        detected.dataframe.iloc[rows[item.association]].to_dict(),
+                                        self.detection_options.get(
+                                            "validation_max_entities_per_call",
+                                            _DEFAULT_VALIDATION_MAX_ENTITIES_PER_CALL,
+                                        ),
+                                    )[2]
+                                )
+                            )
+                        ),
+                    ),
                     PortArtifact(
                         port="spans", artifact_type=ENTITY_SPANS_TYPE, artifact=None, value=spans[item.association]
                     ),

@@ -56,6 +56,7 @@ from anonymizer.engine.graph_sdk.requests import (
     RuntimeCondition,
     SemanticAssociation,
     StopResult,
+    TextCollectionValue,
     TransportResult,
 )
 from anonymizer.engine.graph_sdk.resources import (
@@ -256,6 +257,31 @@ class DelegatedReadiness(PrivateValue):
 
 
 @dataclass(frozen=True, slots=True, kw_only=True, repr=False)
+class DelegatedGenerationSelection(PrivateValue):
+    """A source-owned collection selects a prefix of singleton generation slots."""
+
+    port: str
+    slots: tuple[int, ...]
+
+    def __post_init__(self) -> None:
+        require_text(getattr(self, "port", None))
+        require_instance(getattr(self, "slots", None), tuple)
+        for slot in self.slots:
+            require_count(slot)
+        if not self.slots or len(set(self.slots)) != len(self.slots):
+            reject(EffectCode.INVALID_VALUE)
+
+    def omitted(self, value: object) -> tuple[int, ...]:
+        from anonymizer.engine.graph_sdk._ingress import inspect_artifact
+
+        if type(value) is not TextCollectionValue or not inspect_artifact(value) or len(value.items) > len(self.slots):
+            reject(EffectCode.CONTRADICTORY)
+        if tuple((item.key, item.version) for item in value.items) != tuple((i, 1) for i in range(len(value.items))):
+            reject(EffectCode.CONTRADICTORY)
+        return self.slots[len(value.items) :]
+
+
+@dataclass(frozen=True, slots=True, kw_only=True, repr=False)
 class DelegatedRequestContract(PrivateValue):
     """Fixed recipe declaration for bounded delegated requests."""
 
@@ -267,6 +293,7 @@ class DelegatedRequestContract(PrivateValue):
     readiness: DelegatedReadiness | None = None
     optional_tail: tuple[int, ...] = ()
     generation_groups: tuple[tuple[int, ...], ...] = ()
+    selection: DelegatedGenerationSelection | None = None
 
     def __post_init__(self) -> None:
         if self.readiness is not None:
@@ -277,6 +304,13 @@ class DelegatedRequestContract(PrivateValue):
         require_instance(self.child_slots, tuple)
         require_instance(getattr(self, "optional_tail", None), tuple)
         require_instance(getattr(self, "generation_groups", None), tuple)
+        if not hasattr(self, "selection"):
+            reject(EffectCode.INVALID_TYPE)
+        if self.selection is not None:
+            require_instance(self.selection, DelegatedGenerationSelection)
+            self.selection.__post_init__()
+            if self.optional_tail or any((slot,) not in self.generation_groups for slot in self.selection.slots):
+                reject(EffectCode.UNSUPPORTED)
         for group in self.generation_groups:
             require_instance(group, tuple)
             if not group:
@@ -653,6 +687,16 @@ class AdmittedExecutionPlan(PrivateValue):
                 item.artifact_type for item in operation.outputs if item.name == expansion.membership_port
             )
             schemas[expansion.item_type] = "scalar"
+            schemas[artifact_type] = "collection"
+        for policy in self.policies:
+            if policy.delegated is None or policy.delegated.selection is None:
+                continue
+            selection = policy.delegated.selection
+            artifact_type = next(
+                port.artifact_type for port in self.nodes[policy.node].operation.outputs if port.name == selection.port
+            )
+            if schemas.get(artifact_type, "collection") != "collection":
+                reject(EffectCode.CONTRADICTORY)
             schemas[artifact_type] = "collection"
         return schemas
 

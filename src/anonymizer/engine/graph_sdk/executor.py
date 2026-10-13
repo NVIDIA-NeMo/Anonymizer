@@ -23,6 +23,7 @@ from anonymizer.engine.graph_sdk._execution_values import DecisionOutcome as Dec
 from anonymizer.engine.graph_sdk._execution_values import DecisionResponse as DecisionResponse
 from anonymizer.engine.graph_sdk._execution_values import DecisionWait as DecisionWait
 from anonymizer.engine.graph_sdk._execution_values import DecisionWaitId as DecisionWaitId
+from anonymizer.engine.graph_sdk._execution_values import DelegatedGenerationSelection as DelegatedGenerationSelection
 from anonymizer.engine.graph_sdk._execution_values import DelegatedReadiness as DelegatedReadiness
 from anonymizer.engine.graph_sdk._execution_values import DelegatedRequestContract as DelegatedRequestContract
 from anonymizer.engine.graph_sdk._execution_values import EvidenceProductionDecl as EvidenceProductionDecl

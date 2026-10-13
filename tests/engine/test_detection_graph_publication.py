@@ -87,7 +87,7 @@ def test_generated_frame_projection_is_isolated_and_partial_publication_is_withh
         result.frames[0].project(limited)
 
 
-@pytest.mark.parametrize("missing", ["generation_groups", "optional_tail"])
+@pytest.mark.parametrize("missing", ["generation_groups", "optional_tail", "selection"])
 def test_missing_delegated_fields_reject_at_raw_admission(missing):
     from tests.graph_sdk.test_delegated_readiness import _ready_fixture
 
@@ -114,7 +114,7 @@ def test_missing_delegated_fields_reject_at_raw_admission(missing):
 
 
 @pytest.mark.parametrize("zero,sends", [(True, 5), (False, 8)])
-def test_unclosed_zero_or_variable_chunk_profile_withholds_content(scripted_detection, zero, sends):
+def test_zero_or_variable_chunk_profile_qualifies_exact_selected_work(scripted_detection, zero, sends):
     source = pd.DataFrame(
         {COL_TEXT: ["No entities here.", "No entities there."] if zero else ["Alice travels.", "Alice Bob stays."]}
     )
@@ -127,7 +127,16 @@ def test_unclosed_zero_or_variable_chunk_profile_withholds_content(scripted_dete
         )
     )
     assert result.requests.dispatched_count == sends
-    assert not result.final_outputs and not result.frames
+    from anonymizer.engine.constants import COL_REPLACED_TEXT
+    from anonymizer.engine.detection._graph_profile import qualify_detection_redact
+
+    assert len(result.final_outputs) == len(qualify_detection_redact(result).qualified) == 2
+    assert result.frames[0].project(result)[COL_REPLACED_TEXT].tolist() == (
+        source[COL_TEXT].tolist()
+        if zero
+        else ["[REDACTED_FIRST_NAME] travels.", "[REDACTED_FIRST_NAME] [REDACTED_FIRST_NAME] stays."]
+    )
+    assert sum(row.reasons == {"omitted_optional"} for row in result.record.terminals) == (2 if zero else 1)
     assert all(state.complete for state in result.states)
     assert result.invocation_state.complete
 
@@ -383,4 +392,174 @@ def test_delegated_source_partition_rejects_uncorrelated_completion(scripted_det
     monkeypatch.setattr(DetectionRedactInvocation, "_run", corrupted)
     result = asyncio.run(run_graph_profile(scripted_detection, _source(), _options()))
     assert not result.final_outputs and not result.frames
+    assert all(state.complete for state in result.states)
+
+
+@pytest.mark.parametrize("fault", ["fewer", "more", "wrong_keys"])
+def test_generation_selection_must_match_actual_physical_work(scripted_detection, monkeypatch, fault):
+    from anonymizer.engine.detection._graph_invocation import DetectionRedactInvocation
+    from anonymizer.engine.graph_sdk.requests import TextCollectionValue
+
+    original = DetectionRedactInvocation._run
+
+    def corrupted(self, inputs, requests):
+        result = original(self, inputs, requests)
+        row = result.results[0]
+        plan = next(output for output in row.outputs if output.port == "validation_chunks")
+        assert isinstance(plan.value, TextCollectionValue)
+        items = plan.value.items
+        if fault == "fewer":
+            changed = ()
+        elif fault == "more":
+            changed = (*items, replace(items[0], key=1))
+        else:
+            changed = (replace(items[0], key=1),)
+        output = replace(plan, value=TextCollectionValue(items=changed))
+        row = replace(row, outputs=tuple(output if value is plan else value for value in row.outputs))
+        return replace(result, results=(row, *result.results[1:]))
+
+    monkeypatch.setattr(DetectionRedactInvocation, "_run", corrupted)
+    result = asyncio.run(run_graph_profile(scripted_detection, _source(), _options()))
+    assert result.requests.dispatched_count == 7
+    assert not result.final_outputs and not result.frames
+
+
+def _modify_dd_responses(scripted_detection, monkeypatch, modify):
+    designer = scripted_detection[0]
+    original = designer._create_resource_provider
+
+    def resources(*args, **kwargs):
+        provider = original(*args, **kwargs)
+        factory = provider.model_registry._model_facade_factory
+
+        def facade(*args, **kwargs):
+            result = factory(*args, **kwargs)
+            prior = result._client._inner._transport
+
+            async def response(request):
+                return modify(request, await prior.handle_async_request(request))
+
+            result._client._inner._transport = httpx.MockTransport(response)
+            return result
+
+        provider.model_registry._model_facade_factory = facade
+        return provider
+
+    monkeypatch.setattr(designer, "_create_resource_provider", resources)
+
+
+@pytest.mark.parametrize("failed", [False, True])
+def test_completed_response_without_usage_is_settled_but_never_fabricated(scripted_detection, monkeypatch, failed):
+    import json
+
+    from anonymizer.engine.detection._graph_profile import qualify_detection_redact
+    from anonymizer.engine.graph_sdk.requests import UnknownUsage
+
+    def response(request, answer):
+        body = json.loads(request.content)
+        if body["model"] == "detector" and "Alice stays." in json.dumps(body["messages"]):
+            payload = answer.json()
+            payload.pop("usage", None)
+            if failed:
+                payload = {"error": {"message": "missing-usage failure", "type": "invalid_request_error"}}
+            return httpx.Response(400 if failed else answer.status_code, json=payload)
+        return answer
+
+    _modify_dd_responses(scripted_detection, monkeypatch, response)
+    result = asyncio.run(run_graph_profile(scripted_detection, _source(), _options()))
+    assert result.requests.dispatched_count == (5 if failed else 7)
+    assert not result.requests.remote_outstanding and not result.requests.local_in_flight
+    assert sum(isinstance(row.usage, UnknownUsage) for row in result.requests.settlements) == 1
+    assert all(row.remote_stopped for row in result.requests.settlements)
+    assert len(result.final_outputs) == (1 if failed else 2)
+    assert len(qualify_detection_redact(result).qualified) == 1
+    assert not result._retained_resources
+
+
+@pytest.mark.parametrize("fault", ["membership", "source_port", "omission_reason"])
+def test_retained_chunk_closure_rejects_changed_membership_or_authority(scripted_detection, fault):
+    from anonymizer.engine.detection._graph_profile import qualify_detection_redact
+    from anonymizer.engine.graph_sdk.requests import TextCollectionValue
+    from anonymizer.graph._values import ContractViolation
+
+    source = pd.DataFrame({COL_TEXT: ["Alice travels.", "Alice Bob stays."]})
+    result = asyncio.run(
+        run_graph_profile(scripted_detection, source, {**_options(), "validation_max_entities_per_call": 1}, chunks=2)
+    )
+    assert len(qualify_detection_redact(result).qualified) == 2
+    plans = [port for port in result.ports if port.port == "validation_chunks"]
+    plans.sort(key=lambda port: len(dict(result.artifacts)[port.artifact].items))
+    first, second = plans
+    updates = {}
+    if fault == "membership":
+        updates["artifacts"] = tuple(
+            (reference, TextCollectionValue(items=()) if reference == first.artifact else value)
+            for reference, value in result.artifacts
+        )
+    elif fault == "source_port":
+        raw = object.__new__(type(first))
+        for field in fields(first):
+            object.__setattr__(
+                raw, field.name, second.artifact if field.name == "artifact" else getattr(first, field.name)
+            )
+        updates["ports"] = tuple(raw if port is first else port for port in result.ports)
+    else:
+        updates["record"] = replace(
+            result.record,
+            terminals=tuple(
+                replace(row, reasons=frozenset({"prerequisite"})) if row.reasons == {"omitted_optional"} else row
+                for row in result.record.terminals
+            ),
+        )
+    retained = object.__new__(type(result))
+    for field in fields(result):
+        object.__setattr__(retained, field.name, updates.get(field.name, getattr(result, field.name)))
+    with pytest.raises((EffectRejected, ContractViolation)):
+        qualify_detection_redact(retained)
+
+
+@pytest.mark.parametrize("field", ["port", "slots"])
+def test_raw_generation_selection_missing_field_rejects(field):
+    from anonymizer.engine.graph_sdk.executor import DelegatedGenerationSelection
+
+    value = DelegatedGenerationSelection(port="chunks", slots=(1,))
+    raw = object.__new__(type(value))
+    for item in fields(value):
+        if item.name != field:
+            object.__setattr__(raw, item.name, getattr(value, item.name))
+    with pytest.raises(EffectRejected):
+        raw.__post_init__()
+
+
+def test_default_augmenter_restart_remains_explicitly_unqualified(scripted_detection, monkeypatch):
+    import json
+
+    from anonymizer.engine.detection.detection_workflow import EntityDetectionWorkflow
+    from anonymizer.engine.ndd.adapter import NddAdapter
+
+    designer, models, selected, calls = scripted_detection
+    attempted = []
+
+    def response(request, answer):
+        body = json.loads(request.content)
+        if "Find untagged sensitive entities" in json.dumps(body["messages"]):
+            attempted.append(request.content)
+            if len(attempted) == 1:
+                payload = answer.json()
+                payload["choices"][0]["message"]["content"] = "not structured output"
+                return httpx.Response(200, json=payload)
+        return answer
+
+    _modify_dd_responses(scripted_detection, monkeypatch, response)
+    legacy = EntityDetectionWorkflow(NddAdapter(designer)).run(
+        _source(), model_configs=models, selected_models=selected, **_options()
+    )
+    assert len(legacy.dataframe) == 2 and not legacy.failed_records
+    assert len(attempted) == 3
+    attempted.clear()
+    calls.clear()
+    result = asyncio.run(run_graph_profile(scripted_detection, _source(), _options()))
+    assert not result.final_outputs and not result.frames
+    assert len(attempted) <= 2
+    assert result.requests.dispatched_count == sum(calls.values())
     assert all(state.complete for state in result.states)

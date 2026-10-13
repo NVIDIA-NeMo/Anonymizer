@@ -31,6 +31,7 @@ from anonymizer.engine.graph_sdk.requests import (
     StopUnknown,
     TransportFailure,
     TransportSuccess,
+    UnknownUsage,
 )
 from anonymizer.engine.ndd._source_frame import current_source_work
 from anonymizer.interface.errors import AnonymizerWorkflowError
@@ -89,20 +90,30 @@ class NddPhysicalTransport:
         response = await exchange.transport.handle_async_request(exchange.request)
         await response.aread()
         exchange.response = response
-        usage = response.json().get("usage", {})
-        incoming, outgoing = usage.get("prompt_tokens"), usage.get("completion_tokens")
-        if type(incoming) is not int or type(outgoing) is not int or min(incoming, outgoing) < 0:
-            raise AnonymizerWorkflowError("DD response has no exact physical usage")
+        try:
+            payload = response.json()
+        except ValueError:
+            payload = None
+        usage = payload.get("usage", {}) if isinstance(payload, dict) else {}
+        incoming = usage.get("prompt_tokens") if isinstance(usage, dict) else None
+        outgoing = usage.get("completion_tokens") if isinstance(usage, dict) else None
+        observed_usage = (
+            ExactUsage(input_units=incoming, output_units=outgoing)
+            if type(incoming) is int and type(outgoing) is int and min(incoming, outgoing) >= 0
+            else UnknownUsage()
+        )
         settlement = ExternalSettlement(
             request=request.request,
             disposition="completed",
             remote_stopped=True,
-            usage=ExactUsage(input_units=incoming, output_units=outgoing),
+            usage=observed_usage,
         )
         if response.is_error:
             return TransportFailure(
                 failure="retryable" if response.status_code >= 500 else "permanent", settlement=settlement
             )
+        if not isinstance(payload, dict):
+            return TransportFailure(failure="malformed_response", settlement=settlement)
         return TransportSuccess(
             results=(
                 AssociationResult(

@@ -583,6 +583,13 @@ class _InvocationRuntime:
                 unused = self._unused_tail(job)
                 if unused is not None:
                     self.blocked_reasons[unused[0]] = unused[1]
+                selection = job.policy.delegated.selection
+                if selection is not None:
+                    value = next(
+                        output.value for item in results for output in item.outputs if output.port == selection.port
+                    )
+                    for slot in selection.omitted(value):
+                        self.blocked_reasons[self.frame.sources[job.target].keys[slot]] = "omitted_optional"
             span = self._operation_spans[job.activation]
             span.outcome = mapping.category
             if mapping.failure is not None:

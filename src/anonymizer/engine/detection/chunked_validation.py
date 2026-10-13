@@ -447,27 +447,15 @@ async def _dispatch_chunk_async(
     raise last_exc
 
 
-def _build_dispatch_kwargs_per_chunk(
-    row: dict[str, Any],
-    params: ChunkedValidationParams,
-    models: dict[str, Any],
-) -> tuple[ValidationCandidatesSchema, list[dict[str, Any]]]:
-    missing_aliases = [alias for alias in params.pool if alias not in models]
-    if missing_aliases:
-        raise KeyError(
-            f"Validator pool aliases {missing_aliases} not present in models dict. "
-            f"Ensure make_chunked_validation_generator was invoked with the same pool "
-            f"passed in ChunkedValidationParams.pool."
-        )
-
-    text = str(row.get(COL_TEXT, ""))
+def validation_chunks(
+    row: dict[str, Any], max_entities_per_call: int
+) -> tuple[ValidationCandidatesSchema, list[EntitySpan], list[list[tuple[Any, EntitySpan]]]]:
+    """One pure chunk selection shared by DD dispatch and canonical publication."""
     candidates = ValidationCandidatesSchema.from_raw(row.get(COL_SEED_VALIDATION_CANDIDATES, {}))
     seed_entities_schema = EntitiesSchema.from_raw(row.get(COL_SEED_ENTITIES, {}))
-    notation_raw = row.get(COL_TAG_NOTATION) or TagNotation.sentinel.value
-    notation = TagNotation(str(notation_raw))
 
     if not candidates.candidates:
-        return candidates, []
+        return candidates, [], []
 
     all_spans = [
         EntitySpan(
@@ -483,18 +471,40 @@ def _build_dispatch_kwargs_per_chunk(
     ]
 
     ordered = order_candidates_by_position(candidates, all_spans)
-    chunks = chunk_candidates(ordered, params.max_entities_per_call)
+    chunks = chunk_candidates(ordered, max_entities_per_call)
+
+    return candidates, all_spans, chunks
+
+
+def _build_dispatch_kwargs_per_chunk(
+    row: dict[str, Any],
+    params: ChunkedValidationParams,
+    models: dict[str, Any],
+) -> tuple[ValidationCandidatesSchema, list[dict[str, Any]]]:
+    missing_aliases = [alias for alias in params.pool if alias not in models]
+    if missing_aliases:
+        raise KeyError(
+            f"Validator pool aliases {missing_aliases} not present in models dict. "
+            f"Ensure make_chunked_validation_generator was invoked with the same pool "
+            f"passed in ChunkedValidationParams.pool."
+        )
+
+    text = str(row.get(COL_TEXT, ""))
+    notation = TagNotation(str(row.get(COL_TAG_NOTATION) or TagNotation.sentinel.value))
+    candidates, all_spans, chunks = validation_chunks(row, params.max_entities_per_call)
+    if not chunks:
+        return candidates, []
 
     if len(chunks) == 1:
         logger.debug(
             "chunked validation: %d candidate(s) in 1 chunk (full-text excerpt), pool=%s",
-            len(ordered),
+            len(candidates.candidates),
             params.pool,
         )
     else:
         logger.debug(
             "chunked validation: %d candidate(s) in %d chunks (max=%d per chunk, window=%d chars), pool=%s",
-            len(ordered),
+            len(candidates.candidates),
             len(chunks),
             params.max_entities_per_call,
             params.excerpt_window_chars,

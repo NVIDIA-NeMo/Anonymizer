@@ -441,6 +441,16 @@ def _validate_delegated_recipes(prepared: PreparedPlan, policies: tuple[Operatio
             sum(route.parse_attempts for route in contract.routes) > len(group) for group in contract.generations
         ):
             reject(EffectCode.LIMIT_EXCEEDED)
+        if contract.selection is not None and any(
+            contract.selection.port not in {port.name for port in implementation.capability.operation.outputs}
+            or any(
+                contract.selection.port not in outcome.produced_ports
+                for outcome in implementation.capability.operation.outcomes
+                if outcome.category == "success"
+            )
+            for implementation in policy.implementations
+        ):
+            reject(EffectCode.MISSING)
         if contract.optional_tail and (
             len(contract.child_slots) != 2
             or contract.optional_tail != contract.child_slots[1:]

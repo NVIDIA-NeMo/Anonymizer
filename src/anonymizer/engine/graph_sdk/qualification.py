@@ -582,7 +582,10 @@ class _Qualification:
             history = [
                 item for item in receipt.dispatches if item.child is not None and item.child.chain == chain.chain
             ]
-            if not history and contract.readiness is not None and self.entries[owner].status != "success":
+            if not history and (
+                (contract.readiness is not None and self.entries[owner].status != "success")
+                or contract.selection is not None
+            ):
                 continue
             if not history or len(history) > chain.policy.max_attempts:
                 reject(EffectCode.LIMIT_EXCEEDED)
@@ -646,7 +649,7 @@ class _Qualification:
                     if summary.category == "success" and (
                         summary.association != association
                         or summary.outcome != self.entries[leaf.activation].outcome
-                        or summary.outcome != self.entries[owner].outcome
+                        or (self.entries[owner].status == "success" and summary.outcome != self.entries[owner].outcome)
                         or summary.outcome not in owner_policy.result_outcomes
                         or not any(
                             outcome.name == summary.outcome and outcome.category == "success"
@@ -726,6 +729,7 @@ class _Qualification:
             if len(own_chains) != (len(policy.delegated.generations) if entered else 0):
                 reject(EffectCode.MISSING)
         omitted = self._unused_children(expected - used, physical_owners)
+        omitted |= self._unselected_generations(expected - used, physical_owners)
         unused = expected - used - omitted
         if any(
             physical_owners[key] not in readiness_dependents | readiness_owners.keys()
@@ -752,6 +756,39 @@ class _Qualification:
                     ) and dispatch.request not in processed:
                         reject(EffectCode.MISSING)
         return recovered | omitted
+
+    def _unselected_generations(
+        self, unused: set[ActivationKey], owners: dict[ActivationKey, ActivationKey]
+    ) -> set[ActivationKey]:
+        accepted: set[ActivationKey] = set()
+        policies = {policy.node: policy for policy in self.admitted.execution.policies}
+        terminals = {row.activation: row for row in self.result.record.terminals}
+        values = dict(self.result.artifacts)
+        for owner in set(owners.values()):
+            contract = policies[self.entries[owner].template].delegated
+            if contract is None or contract.selection is None or self.entries[owner].status != "success":
+                continue
+            selection = contract.selection
+            ports = [port for port in self.result.ports if port.activation == owner and port.port == selection.port]
+            if len(ports) != 1 or ports[0].artifact not in values:
+                reject(EffectCode.MISSING)
+            omitted = selection.omitted(values[ports[0].artifact])
+            offset = self.offset(owner)
+            for slot in omitted:
+                matches = [key for key, parent in owners.items() if parent == owner and key.occurrence == offset + slot]
+                if len(matches) != 1 or matches[0] not in unused:
+                    reject(EffectCode.CONTRADICTORY)
+                key = matches[0]
+                terminal = terminals.get(key)
+                if (
+                    terminal is None
+                    or terminal.attempt is not None
+                    or terminal.category != "blocked"
+                    or terminal.reasons != {"omitted_optional"}
+                ):
+                    reject(EffectCode.CONTRADICTORY)
+                accepted.add(key)
+        return accepted
 
     def _unused_children(
         self, unused: set[ActivationKey], owners: dict[ActivationKey, ActivationKey]
