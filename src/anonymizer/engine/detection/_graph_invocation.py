@@ -18,7 +18,6 @@ import pandas as pd
 from data_designer.config import ModelConfig
 
 from anonymizer.config.models import DetectionModelSelection
-from anonymizer.config.replace_strategies import Redact
 from anonymizer.engine.constants import COL_FINAL_ENTITIES, COL_REPLACED_TEXT
 from anonymizer.engine.detection._frame_publication import FramePublication
 from anonymizer.engine.detection.artifacts import ENTITY_SPANS_TYPE, EntitySpansValue
@@ -29,6 +28,7 @@ from anonymizer.engine.detection.detection_workflow import (
 )
 from anonymizer.engine.detection.postprocess import EntitySpan
 from anonymizer.engine.graph_sdk._execution_values import DelegatedRequests, LocalCompleted
+from anonymizer.engine.graph_sdk.capabilities import FrozenConfig
 from anonymizer.engine.graph_sdk.requests import (
     AssociationInput,
     AssociationResult,
@@ -39,6 +39,7 @@ from anonymizer.engine.graph_sdk.requests import (
     TextCollectionValue,
 )
 from anonymizer.engine.ndd._graph_requests import NddPhysicalTransport, NddRequestBridge
+from anonymizer.engine.replace._graph_redact import redact_strategy
 from anonymizer.engine.replace.strategies import apply_local_replace_strategy
 from anonymizer.engine.schemas import EntitiesSchema
 from anonymizer.graph._values import ArtifactRef, DatumId
@@ -55,6 +56,7 @@ class DetectionRedactInvocation:
     detection: EntityDetectionWorkflow
     model_configs: list[ModelConfig]
     selected_models: DetectionModelSelection
+    redact_configuration: FrozenConfig
     physical: NddPhysicalTransport
     slots: Mapping[tuple[str, int], int | tuple[int, ...]]
     detection_options: Mapping[str, Any]
@@ -88,7 +90,9 @@ class DetectionRedactInvocation:
             raise AnonymizerWorkflowError("DD graph detection has unclosed source results")
         successful = tuple(frame.associations[position] for position in positions)
         rows = {association: index for index, association in enumerate(successful)}
-        protected = apply_local_replace_strategy(detected.dataframe, strategy=Redact())
+        protected = apply_local_replace_strategy(
+            detected.dataframe, strategy=redact_strategy(self.redact_configuration)
+        )
         text = dict(zip(successful, protected[COL_REPLACED_TEXT], strict=True))
         spans = {
             item.association: EntitySpansValue(

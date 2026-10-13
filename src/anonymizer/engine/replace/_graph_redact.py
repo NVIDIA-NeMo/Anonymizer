@@ -4,8 +4,17 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from anonymizer.config.replace_strategies import Redact
 from anonymizer.engine.detection.artifacts import EntitySpansValue
+from anonymizer.engine.graph_sdk.capabilities import (
+    ConfigBoolean,
+    ConfigField,
+    ConfigSequence,
+    ConfigText,
+    FrozenConfig,
+)
 from anonymizer.engine.graph_sdk.executor import AssessmentFinding, LocalAssessmentResult, LocalCompleted
 from anonymizer.engine.graph_sdk.requests import (
     AssociationInput,
@@ -23,7 +32,43 @@ REDACT_MATCH = AssessmentFinding(status="satisfied", code="span_redaction_matche
 REDACT_MISMATCH = AssessmentFinding(status="unsatisfied", code="span_redaction_mismatch")
 
 
+def redact_configuration(strategy: Redact) -> FrozenConfig:
+    """Snapshot existing Redact fields; an empty sequence preserves an empty template."""
+    return FrozenConfig(
+        fields=(
+            ConfigField(
+                name="format_template",
+                value=ConfigSequence(
+                    items=(ConfigText(value=strategy.format_template),) if strategy.format_template else ()
+                ),
+            ),
+            ConfigField(name="normalize_label", value=ConfigBoolean(value=strategy.normalize_label)),
+        )
+    )
+
+
+def redact_strategy(configuration: FrozenConfig) -> Redact:
+    """Reconstruct the strategy from its admitted, immutable configuration."""
+    fields = {field.name: field.value for field in configuration.fields}
+    template, normalize = fields.get("format_template"), fields.get("normalize_label")
+    if (
+        set(fields) != {"format_template", "normalize_label"}
+        or type(template) is not ConfigSequence
+        or len(template.items) > 1
+        or any(type(item) is not ConfigText for item in template.items)
+        or type(normalize) is not ConfigBoolean
+    ):
+        raise ValueError("Invalid admitted Redact configuration")
+    return Redact(
+        format_template="".join(item.value for item in template.items if isinstance(item, ConfigText)),
+        normalize_label=normalize.value,
+    )
+
+
+@dataclass(frozen=True, slots=True)
 class RedactAssessment:
+    configuration: FrozenConfig
+
     async def run(self, request: tuple[AssociationInput, ...]) -> LocalCompleted:
         (item,) = request
         ports = {port.port: port for port in item.inputs}
@@ -36,11 +81,12 @@ class RedactAssessment:
             or type(candidate) is not TextArtifactValue
         ):
             raise ValueError("Redact assessment requires source, spans and candidate artifacts")
+        strategy = redact_strategy(self.configuration)
         expected, application = apply_entity_spans(
             source.value.text,
             spans.entities,
             [
-                ReplacementEntry(entity.value, entity.label, Redact().replace(text=entity.value, label=entity.label))
+                ReplacementEntry(entity.value, entity.label, strategy.replace(text=entity.value, label=entity.label))
                 for entity in spans.entities
             ],
             allow_value_fallback=False,

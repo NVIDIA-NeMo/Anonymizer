@@ -24,6 +24,7 @@ from data_designer.config import ModelConfig
 from data_designer.engine.dataset_builders.utils.async_concurrency import ensure_async_engine_loop
 
 from anonymizer.config.models import DetectionModelSelection
+from anonymizer.config.replace_strategies import Redact
 from anonymizer.engine.constants import COL_AUGMENTED_ENTITIES, COL_RAW_DETECTED, COL_TEXT, COL_VALIDATION_DECISIONS
 from anonymizer.engine.detection._graph_invocation import DetectionRedactInvocation
 from anonymizer.engine.detection.artifacts import ENTITY_SPANS_TYPE
@@ -78,6 +79,7 @@ from anonymizer.engine.replace._graph_redact import (
     REDACT_MEANING,
     REDACT_MISMATCH,
     RedactAssessment,
+    redact_configuration,
 )
 from anonymizer.engine.replace.replace_runner import ReplacementResult
 from anonymizer.graph.activation import ActivationLimits
@@ -195,6 +197,7 @@ def run_detection_redact(
     selected_models: DetectionModelSelection,
     detection_options: Mapping[str, Any],
     limits: ExecutionLimits,
+    replace_method: Redact | None = None,
 ) -> ReplacementResult:
     """Run the admitted profile synchronously with one owned callback worker.
 
@@ -202,6 +205,7 @@ def run_detection_redact(
     stays untouched; the host thread runs the same authoritative async executor,
     while actual DD clients remain on DD's existing foreign loop.
     """
+    selected_redact = replace_method.model_copy(deep=True) if replace_method is not None else Redact()
     started = Event()
     cancellation: list[tuple[asyncio.AbstractEventLoop, asyncio.Task[Any]]] = []
 
@@ -218,6 +222,7 @@ def run_detection_redact(
                 model_configs=model_configs,
                 selected_models=selected_models,
                 detection_options=detection_options,
+                replace_method=selected_redact,
                 pool=pool,
                 limits=limits,
             )
@@ -282,10 +287,12 @@ async def execute_detection_redact(
     selected_models: DetectionModelSelection,
     detection_options: Mapping[str, Any],
     validation_chunks: int | None = None,
+    replace_method: Redact | None = None,
     pool: BlockingPool,
     limits: ExecutionLimits,
 ) -> ExecutionResult:
     """Admit and execute the named real-DD profile without a second workflow runner."""
+    redaction = redact_configuration(replace_method if replace_method is not None else Redact())
     preview = detection_options.get("preview_num_records")
     if preview is not None and (type(preview) is not int or preview < 0):
         raise ValueError("preview_num_records must be a nonnegative integer")
@@ -545,7 +552,7 @@ async def execute_detection_redact(
         ImplementationCapability(
             implementation=ImplementationRef(name=spec.name, revision=1),
             operation=spec,
-            configuration=FrozenConfig(fields=()),
+            configuration=redaction if node in {owner, complete} else FrozenConfig(fields=()),
             effect="local" if node in locals_ else "external",
             attribution="per_task",
             request_visibility="none" if node in locals_ else "dispatch_and_settlement",
@@ -587,8 +594,9 @@ async def execute_detection_redact(
             max_bound_inputs=size,
             max_state_revisions=0,
             max_selections=len(nodes),
-            max_config_depth=1,
-            max_config_atoms=2 * len(nodes),
+            max_config_depth=3,
+            # Producer and assessor each add five atoms, counted in selection and capability.
+            max_config_atoms=2 * len(nodes) + 20,
             max_total_activation_slots=max(size, 1) * len(nodes),
             max_capabilities=len(nodes),
         ),
@@ -726,6 +734,7 @@ async def execute_detection_redact(
             detection,
             model_configs,
             selected_models,
+            redaction,
             physical,
             dict(zip(generations, groups, strict=True)),
             detection_options,
@@ -744,7 +753,7 @@ async def execute_detection_redact(
                 implementation=cap.implementation,
                 operation=cap.operation,
                 configuration=cap.configuration,
-                local=(RedactAssessment() if targets else _ProfileLocal("ok"))
+                local=(RedactAssessment(configuration=cap.configuration) if targets else _ProfileLocal("ok"))
                 if node == complete
                 else _ProfileLocal("async_required")
                 if node == probe
