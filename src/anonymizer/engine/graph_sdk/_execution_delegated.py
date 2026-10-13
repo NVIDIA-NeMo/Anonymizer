@@ -10,7 +10,7 @@ from contextvars import ContextVar, copy_context
 from dataclasses import replace
 from typing import TYPE_CHECKING, ClassVar, Literal, TypeVar
 
-from anonymizer.engine.graph_sdk._effect_values import EffectCode, PrivateValue, reject, require_count
+from anonymizer.engine.graph_sdk._effect_values import EffectCode, EffectRejected, PrivateValue, reject, require_count
 from anonymizer.engine.graph_sdk._execution_dispatch import _mapping, _run_local
 from anonymizer.engine.graph_sdk._execution_state import _ExecutionJob
 from anonymizer.engine.graph_sdk._execution_values import (
@@ -158,6 +158,7 @@ class _DelegatedOwner(PrivateValue):
         self.closed = False
         self.child: asyncio.Task[PhysicalRequestId | None] | None = None
         self.cancel_requested = False
+        self.request_rejected = False
         self.submission: asyncio.Task[LocalResult] | None = None
         self.worker_borrow: _WorkerBorrow | None = None
         self.worker_call: asyncio.Task[object] | None = None
@@ -202,18 +203,28 @@ class _DelegatedOwner(PrivateValue):
         predecessor: PhysicalRequestId | None = None,
         evidence: ChildEvidence | None = None,
     ) -> PhysicalRequestId:
-        if slot not in self.contract.child_slots:
-            reject(EffectCode.FOREIGN_OWNER)
-        readiness = self.contract.readiness
-        if readiness is not None and (
-            not self._satisfied(readiness.owner_slot, frozenset({readiness.ready_outcome}))
-            or not self._satisfied(readiness.probe_slot, readiness.probe_outcomes)
-        ):
-            reject(EffectCode.REQUEST_CAUSALITY)
-        self._check_submission()
-        result = await self._borrow(self._request(slot, source_kind, predecessor, evidence, self.chain))
-        assert result is not None
-        return result
+        try:
+            if slot not in self.contract.child_slots:
+                reject(EffectCode.FOREIGN_OWNER)
+            if self.contract.optional_tail:
+                initial, correction = self.contract.child_slots
+                if (slot == initial and source_kind != "initial") or (
+                    slot == correction and source_kind != "correction"
+                ):
+                    reject(EffectCode.REQUEST_CAUSALITY)
+            readiness = self.contract.readiness
+            if readiness is not None and (
+                not self._satisfied(readiness.owner_slot, frozenset({readiness.ready_outcome}))
+                or not self._satisfied(readiness.probe_slot, readiness.probe_outcomes)
+            ):
+                reject(EffectCode.REQUEST_CAUSALITY)
+            self._check_submission()
+            result = await self._borrow(self._request(slot, source_kind, predecessor, evidence, self.chain))
+            assert result is not None
+            return result
+        except EffectRejected:
+            self.request_rejected = True
+            raise
 
     def _check_submission(self) -> None:
         self._check()
@@ -533,12 +544,13 @@ class _DelegatedOwner(PrivateValue):
     def close(self) -> bool:
         self.closed = True
         complete = True
+        unused = None if self.cancelled or self.request_rejected else self.runtime._unused_tail(self.job)
         for slot in self.contract.owned_slots:
             key = self.runtime.target_keys[self.job.target][slot]
             state = self.runtime.states[self.job.state_index]
             entry = next(item for item in state.entries if item.activation == key)
             if entry.status in {"ready", "unstarted"}:
-                complete = False
+                complete &= unused is not None and unused[0] == key
                 self.runtime.states[self.job.state_index] = advance_activation(
                     state=state,
                     event=CloseUnstarted(activation=key, category="blocked"),

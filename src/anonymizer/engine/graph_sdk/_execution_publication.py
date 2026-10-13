@@ -43,6 +43,7 @@ from anonymizer.engine.graph_sdk.records import (
     ExpectedMembership,
     TargetStatus,
     TerminalFact,
+    UnusedRetryCapacity,
 )
 from anonymizer.engine.graph_sdk.requests import (
     AssociationInput,
@@ -446,7 +447,7 @@ def _canonical_record(
     attempts: dict[ActivationKey, TaskAttemptId],
     artifacts: frozenset[ArtifactRef],
     cancelled_unstarted: frozenset[ActivationKey],
-    blocked_reasons: Mapping[ActivationKey, str],
+    blocked_reasons: Mapping[ActivationKey, str | UnusedRetryCapacity],
 ) -> CanonicalRecord:
     del target_keys
     prepared = admitted.context.prepared
@@ -487,17 +488,20 @@ def _canonical_record(
             if entry.status not in {"success", "failure", "cancelled", "lost", "blocked", "inconsistent"}:
                 continue
             structural = isinstance(admitted.nodes[entry.template], SubgraphNode)
+            cause = blocked_reasons.get(entry.activation)
+            unused = (
+                cause
+                if isinstance(cause, UnusedRetryCapacity) and entry.activation not in cancelled_unstarted
+                else None
+            )
+            reason = (
+                "unused_retry_capacity" if unused is not None else cause if isinstance(cause, str) else "prerequisite"
+            )
             reasons = {
                 "failure": frozenset({"execution_failed"}),
                 "cancelled": frozenset({"cancel_requested"}),
                 "lost": frozenset({"transport_lost"}),
-                "blocked": frozenset(
-                    {
-                        "cancel_requested"
-                        if entry.activation in cancelled_unstarted
-                        else blocked_reasons.get(entry.activation, "prerequisite")
-                    }
-                ),
+                "blocked": frozenset({"cancel_requested" if entry.activation in cancelled_unstarted else reason}),
                 "inconsistent": frozenset({"contradictory"}),
             }.get(entry.status, frozenset())
             terminals.append(
@@ -507,6 +511,7 @@ def _canonical_record(
                     category=entry.status,
                     reasons=reasons,
                     structural=structural,
+                    unused_retry=unused,
                 )
             )
     statuses = tuple(

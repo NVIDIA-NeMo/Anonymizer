@@ -31,6 +31,7 @@ ReasonCode: TypeAlias = Literal[
     "contradictory",
     "prerequisite",
     "omitted_optional",
+    "unused_retry_capacity",
     "artifact_limit_exhausted",
 ]
 Completion: TypeAlias = Literal["pending", "closed"]
@@ -49,6 +50,7 @@ _REASON_CODES = frozenset(
         "contradictory",
         "prerequisite",
         "omitted_optional",
+        "unused_retry_capacity",
         "artifact_limit_exhausted",
     }
 )
@@ -153,15 +155,48 @@ class ExpectedMembership(_PrivateRepr):
 
 
 @dataclass(frozen=True, slots=True, kw_only=True, repr=False)
+class UnusedRetryCapacity(_PrivateRepr):
+    """Actual published owner and successful leaf making a declared tail unnecessary."""
+
+    owner: TaskAttemptId
+    after: TaskAttemptId
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.owner, TaskAttemptId) or not isinstance(self.after, TaskAttemptId):
+            raise ContractViolation(ValidationCode.INVALID_TYPE)
+        if self.owner.activation.invocation != self.after.activation.invocation:
+            raise ContractViolation(ValidationCode.FOREIGN_OWNER)
+        if self.owner.activation == self.after.activation:
+            raise ContractViolation(ValidationCode.CONTRADICTORY)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True, repr=False)
 class TerminalFact(_PrivateRepr):
     activation: ActivationKey
     attempt: TaskAttemptId | None
     category: TerminalCategory
     reasons: frozenset[ReasonCode]
     structural: bool = False
+    unused_retry: UnusedRetryCapacity | None = None
 
     def __post_init__(self) -> None:
         self._validate_fields()
+        if self.unused_retry is not None:
+            if not isinstance(self.unused_retry, UnusedRetryCapacity):
+                raise ContractViolation(ValidationCode.INVALID_TYPE)
+            self.unused_retry.__post_init__()
+            if self.unused_retry.owner.activation.invocation != self.activation.invocation:
+                raise ContractViolation(ValidationCode.FOREIGN_OWNER)
+            if (
+                self.category != "blocked"
+                or self.attempt is not None
+                or self.structural
+                or self.reasons != {"unused_retry_capacity"}
+                or self.activation in {self.unused_retry.owner.activation, self.unused_retry.after.activation}
+            ):
+                raise ContractViolation(ValidationCode.CONTRADICTORY)
+        elif "unused_retry_capacity" in self.reasons:
+            raise ContractViolation(ValidationCode.CONTRADICTORY)
         if self.attempt is not None and self.attempt.activation != self.activation:
             raise ContractViolation(ValidationCode.FOREIGN_OWNER)
         if (self.category == "success" and self.reasons) or (self.category != "success" and not self.reasons):
@@ -286,6 +321,13 @@ class CanonicalRecord(_PrivateRepr):
             raise ContractViolation(ValidationCode.MISSING)
         if any(terminal.activation not in members for terminal in self.terminals):
             raise ContractViolation(ValidationCode.MISSING)
+        attempts = {terminal.attempt for terminal in self.terminals if terminal.attempt is not None}
+        for terminal in self.terminals:
+            if (
+                terminal.unused_retry is not None
+                and not {terminal.unused_retry.owner, terminal.unused_retry.after} <= attempts
+            ):
+                raise ContractViolation(ValidationCode.MISSING)
         for evidence in self.evidence:
             if evidence.artifact not in self.artifacts:
                 raise ContractViolation(ValidationCode.MISSING)

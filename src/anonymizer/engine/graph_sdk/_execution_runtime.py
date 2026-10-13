@@ -77,8 +77,10 @@ from anonymizer.engine.graph_sdk.observations import (
     _Span,
     _valid_measurement,
 )
+from anonymizer.engine.graph_sdk.records import UnusedRetryCapacity
 from anonymizer.engine.graph_sdk.requests import (
     AssociationResult,
+    ExactUsage,
     InvocationRequestScope,
     PhysicalRequestId,
     ScopeCancel,
@@ -172,7 +174,7 @@ class _InvocationRuntime:
         )
         self.attempts: dict[ActivationKey, TaskAttemptId] = {}
         self.cancelled_unstarted: set[ActivationKey] = set()
-        self.blocked_reasons: dict[ActivationKey, str] = {}
+        self.blocked_reasons: dict[ActivationKey, str | UnusedRetryCapacity] = {}
         self.publication_failures: list[PublicationFailureFact] = []
         self.jobs: dict[_ExecutionTask, _ExecutionJob] = {}
         self.physical_jobs: dict[asyncio.Task[object], asyncio.Task[object]] = {}
@@ -569,6 +571,15 @@ class _InvocationRuntime:
             accepted = mapping.condition == "result"
             mapping, results, checkpoint, staged_result = self._stage_outputs(job, mapping, results, assessments)
             mapping = self._advance_completed(job, mapping, results, checkpoint, staged_result)
+            if (
+                job.policy.delegated is not None
+                and mapping.condition == "result"
+                and mapping.category == "success"
+                and any(key[0] == job.target and key[1] == job.activation for key in self.facts.produced)
+            ):
+                unused = self._unused_tail(job)
+                if unused is not None:
+                    self.blocked_reasons[unused[0]] = unused[1]
             span = self._operation_spans[job.activation]
             span.outcome = mapping.category
             if mapping.failure is not None:
@@ -630,6 +641,61 @@ class _InvocationRuntime:
                     )
                 )
         return peers
+
+    def _unused_tail(self, job: _ExecutionJob) -> tuple[ActivationKey, UnusedRetryCapacity] | None:
+        """Check provisional capacity against this invocation's live facts, without stamping."""
+        contract = job.policy.delegated
+        state = self.request_authority.state
+        if not contract or not contract.optional_tail or self.control.cancelled or state.cancelled:
+            return None
+        if (
+            state.reserved
+            or state.denials
+            or state.defects
+            or state.cancel_requested
+            or state.local_in_flight
+            or state.remote_outstanding
+        ):
+            return None
+        g, q = (self.target_keys[job.target][index] for index in contract.child_slots)
+        entries = {item.activation: item for item in self.states[job.state_index].entries}
+        if (
+            q in self.attempts
+            or entries[q].status not in {"ready", "unstarted", "blocked"}
+            or entries[g].status != "success"
+        ):
+            return None
+        chains = [item for item in state.chains if item.associations == {job.association}]
+        if len(chains) != 1:
+            return None
+        history = [row for row in state.dispatches if row.child is not None and row.child.chain == chains[0].chain]
+        expected_count = 1 + (contract.readiness is not None)
+        if len(history) != 1 or len(state.dispatches) != expected_count:
+            return None
+        request = history[0]
+        child = request.child
+        if child is None or child.leaf != self.attempts.get(g) or child.source_kind != "initial":
+            return None
+        terminal = [row for row in state.terminals if row.request == request.request]
+        settlement = [row for row in state.settlements if row.request == request.request]
+        if (
+            len(terminal) != 1
+            or terminal[0].category != "success"
+            or len(terminal[0].results) != 1
+            or terminal[0].results[0].category != "success"
+            or len(settlement) != 1
+            or settlement[0].disposition != "completed"
+            or settlement[0].remote_stopped is not True
+            or (contract.usage_requirement == "exact" and not isinstance(settlement[0].usage, ExactUsage))
+            or len(state.terminals) != expected_count
+            or len(state.settlements) != expected_count
+        ):
+            return None
+        if contract.readiness is not None and any(
+            entries[self.target_keys[job.target][index]].status != "success" for index in contract.readiness.slots
+        ):
+            return None
+        return q, UnusedRetryCapacity(owner=job.association.task, after=self.attempts[g])
 
     def _stage_outputs(
         self,

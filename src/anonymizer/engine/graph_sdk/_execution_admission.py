@@ -438,6 +438,15 @@ def _validate_delegated_recipes(prepared: PreparedPlan, policies: tuple[Operatio
             or sum(route.parse_attempts for route in contract.routes) > request.max_attempts
         ):
             reject(EffectCode.LIMIT_EXCEEDED)
+        if contract.optional_tail and (
+            len(contract.child_slots) != 2
+            or contract.optional_tail != contract.child_slots[1:]
+            or len(contract.routes) != 1
+            or contract.routes[0].parse_attempts != 2
+            or contract.followups != {"correction"}
+            or not all(item.capability.operation.outputs for item in policy.implementations)
+        ):
+            reject(EffectCode.UNSUPPORTED)
         owners = [slot for slot in recipe if slot.template == policy.node]
         if len(owners) != 1 or owners[0].iteration is not None:
             reject(EffectCode.UNSUPPORTED)

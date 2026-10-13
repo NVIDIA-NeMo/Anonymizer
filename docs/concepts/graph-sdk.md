@@ -134,8 +134,21 @@ Service admission currently permits one delegated owner and one target, one
 parser route, correction-only follow-ups, stateless asynchronous transports, and
 empty input/output ports on the physical leaves. The parent uses normal typed
 input resolution and output publication; a local assessor can qualify its
-produced candidate. The fixed physical
-slots are mandatory: returning before all slots execute fails the submission.
+produced candidate. Fixed physical slots are mandatory by default: returning
+before all slots execute fails the submission.
+
+Same-loop and X1 worker submissions may declare `optional_tail=(Q,)` for exactly
+two generation slots `(G, Q)`, one route with two parse attempts and correction-only
+follow-ups. G must be initial; Q may execute only as its authenticated correction.
+Successful G can leave Q blocked without a Start, attempt or physical request.
+Only after D's normal output staging and structural publication commit successfully
+does Q's canonical terminal gain `unused_retry_capacity` and a typed
+`UnusedRetryCapacity(owner=D_attempt, after=G_attempt)` cause. Cancellation,
+rejected borrowing, denial, malformed return, failed publication or used Q cannot
+acquire this disposition. A later independent assessment failure still withholds
+protection. Qualification checks the declared Q occurrence, actual D/G attempts,
+published D output, complete request history and settlement; it never fabricates
+Q evidence. Ordinary omitted-context semantics remain unchanged.
 Other external operations, adaptive retrieval and concurrent borrowed requests
 remain gated in this subset. The ordinary borrowed owner rejects other loops/tasks
 and expires when submission finishes. These are executable graph-owner fixtures;
@@ -198,8 +211,8 @@ Blocking transports retain their existing worker-entry boundary.
 
 Opaque structural admission remains unsupported because the capability schema
 cannot yet express unknown physical request bounds truthfully. Hard-budget
-preparation retains its implementation-owned-retry rejection. Optional unused
-slots, broader foreign-resource profiles, multi-target shared ownership,
+preparation retains its implementation-owned-retry rejection. Broader optional
+tails, foreign optional-slot profiles, multi-target shared ownership,
 dynamic recipes and provider-error exhaustion require later
 bounded integration units. Ordinary injected-runner compatibility must gain its
 explicit opaque path before production cutover.

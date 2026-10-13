@@ -254,6 +254,7 @@ class DelegatedRequestContract(PrivateValue):
     followups: frozenset[ChildSourceKind] = frozenset({"correction", "failover"})
     usage_requirement: Literal["exact", "unknown_allowed"] = "exact"
     readiness: DelegatedReadiness | None = None
+    optional_tail: tuple[int, ...] = ()
 
     def __post_init__(self) -> None:
         if self.readiness is not None:
@@ -262,6 +263,13 @@ class DelegatedRequestContract(PrivateValue):
         require_literal(self.mode, frozenset({"qualified", "opaque"}))
         require_literal(self.usage_requirement, frozenset({"exact", "unknown_allowed"}))
         require_instance(self.child_slots, tuple)
+        require_instance(self.optional_tail, tuple)
+        if len(self.optional_tail) > 2:
+            reject(EffectCode.LIMIT_EXCEEDED)
+        for slot in self.optional_tail:
+            require_count(slot)
+        if len(set(self.optional_tail)) != len(self.optional_tail):
+            reject(EffectCode.DUPLICATE)
         for slot in self.child_slots:
             require_count(slot)
         if len(set(self.child_slots)) != len(self.child_slots):

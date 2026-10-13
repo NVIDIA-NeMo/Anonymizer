@@ -1141,6 +1141,8 @@ def diagnose(*, source: InspectionSource) -> DiagnosisSummary:
         }
         for terminal in source.execution.record.terminals:
             for code in terminal.reasons:
+                if code == "unused_retry_capacity":
+                    continue  # Successful bounded capacity is not a failure diagnosis.
                 reason = reason_map[code]
                 reasons[reason] = reasons.get(reason, 0) + 1
     for receipt in (

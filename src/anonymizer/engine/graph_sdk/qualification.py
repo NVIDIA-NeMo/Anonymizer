@@ -527,6 +527,15 @@ class _Qualification:
                     or leaf.activation.occurrence - offset not in slots
                 ):
                     reject(EffectCode.FOREIGN_OWNER)
+                if (
+                    contract.optional_tail
+                    and chain.role == "generation"
+                    and (
+                        leaf.activation.occurrence - offset != contract.child_slots[0 if prior is None else 1]
+                        or child.source_kind != ("initial" if prior is None else "correction")
+                    )
+                ):
+                    reject(EffectCode.CONTRADICTORY)
                 slot = self.prepared.reservation_recipe[leaf.activation.occurrence - offset]
                 if slot.parent_index is not None:
                     if owner.parent is None or owner.parent.occurrence != offset + slot.parent_index:
@@ -614,7 +623,8 @@ class _Qualification:
                     if fact.category == "failure":
                         self.recovered_children.add(dispatch.request)
                         recovered.add(child.leaf.activation)
-        unused = expected - used
+        omitted = self._unused_children(expected - used, physical_owners)
+        unused = expected - used - omitted
         if any(
             physical_owners[key] not in {relation[0] for relation in readiness_owners.values()}
             or self.entries[key].status != "blocked"
@@ -639,7 +649,84 @@ class _Qualification:
                         policies[node].delegated is not None or association.task.activation in readiness_owners
                     ) and dispatch.request not in processed:
                         reject(EffectCode.MISSING)
-        return recovered
+        return recovered | omitted
+
+    def _unused_children(
+        self, unused: set[ActivationKey], owners: dict[ActivationKey, ActivationKey]
+    ) -> set[ActivationKey]:
+        """Authenticate unused capacity from admitted recipes and retained facts only."""
+        receipt = self.result.requests
+        terminals = {row.activation: row for row in self.result.record.terminals}
+        accepted: set[ActivationKey] = set()
+        policies = {row.node: row for row in self.admitted.execution.policies}
+        for key, terminal in terminals.items():
+            cause = terminal.unused_retry
+            if cause is None:
+                continue
+            owner, generation = cause.owner.activation, cause.after.activation
+            if key not in unused or owners.get(key) != owner or self.owners.get(generation) != self.owners[key]:
+                reject(EffectCode.FOREIGN_OWNER)
+            contract = policies[self.entries[owner].template].delegated
+            assert contract is not None
+            offset = next(
+                row.occurrence_offset for row in self.prepared.target_occurrences if row.target == self.owners[key]
+            )
+            if (
+                contract.optional_tail != (key.occurrence - offset,)
+                or contract.child_slots[0] != generation.occurrence - offset
+                or key.parent != owner.parent
+                or generation.parent != owner.parent
+                or terminal.attempt is not None
+                or self.entries[key].outcome is not None
+                or self.entries[key].status != "blocked"
+                or not any(
+                    isinstance(row.key, OperationOutputKey) and row.key.activation == owner
+                    for row in self.result.provenance
+                )
+                or any(
+                    terminals.get(attempt.activation) is None
+                    or terminals[attempt.activation].attempt != attempt
+                    or terminals[attempt.activation].category != "success"
+                    for attempt in (cause.owner, cause.after)
+                )
+            ):
+                reject(EffectCode.CONTRADICTORY)
+            association = SemanticAssociation(task=cause.owner)
+            chains = [row for row in receipt.chains if row.associations == {association}]
+            if len(chains) != 1:
+                reject(EffectCode.CONTRADICTORY)
+            history = [
+                row for row in receipt.dispatches if row.child is not None and row.child.chain == chains[0].chain
+            ]
+            if len(history) != 1 or history[0].child is None or history[0].child.leaf != cause.after:
+                reject(EffectCode.CONTRADICTORY)
+            request = history[0].request
+            settlements = [row for row in receipt.settlements if row.request == request]
+            physical = [row for row in receipt.terminals if row.request == request]
+            if (
+                receipt.denials
+                or receipt.defects
+                or receipt.cancel_requested
+                or receipt.local_in_flight
+                or receipt.remote_outstanding
+                or len(settlements) != 1
+                or settlements[0].disposition != "completed"
+                or settlements[0].remote_stopped is not True
+                or (contract.usage_requirement == "exact" and not isinstance(settlements[0].usage, ExactUsage))
+                or len(physical) != 1
+                or physical[0].category != "success"
+                or receipt.dispatched_count != len(receipt.dispatches)
+                or len(receipt.dispatches) != 1 + (contract.readiness is not None)
+                or len(receipt.terminals) != len(receipt.dispatches)
+                or len(receipt.settlements) != len(receipt.dispatches)
+                or any(
+                    isinstance(row.association, SemanticAssociation) and row.association.task.activation == key
+                    for row in receipt.bindings
+                )
+            ):
+                reject(EffectCode.CONTRADICTORY)
+            accepted.add(key)
+        return accepted
 
     def _child_edge(
         self,

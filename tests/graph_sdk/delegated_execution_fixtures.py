@@ -125,10 +125,10 @@ def with_parent_publication(execution: AdmittedExecutionPlan, *, readiness: bool
                     outcome,
                     ceiling=replace(
                         outcome.ceiling,
-                        max_activations=6,
-                        max_model_requests=4,
-                        max_input_bytes=600,
-                        max_output_bytes=600,
+                        max_activations=len(nodes),
+                        max_model_requests=outcome.ceiling.max_model_requests + 2,
+                        max_input_bytes=100 * len(nodes),
+                        max_output_bytes=100 * len(nodes),
                     ),
                 )
                 for outcome in interface.outcomes
@@ -189,10 +189,9 @@ def with_parent_publication(execution: AdmittedExecutionPlan, *, readiness: bool
         state=prepared.state,
     )
     assert owner.delegated is not None
-    leaves = {prepared.reservation_recipe[index].template for index in owner.delegated.child_slots}
-    contract = replace(
-        owner.delegated, child_slots=tuple(slot.index for slot in updated.reservation_recipe if slot.template in leaves)
-    )
+    leaves = tuple(prepared.reservation_recipe[index].template for index in owner.delegated.child_slots)
+    indices = {slot.template: slot.index for slot in updated.reservation_recipe}
+    contract = replace(owner.delegated, child_slots=tuple(indices[node] for node in leaves))
     if readiness:
         indices = {slot.template: slot.index for slot in updated.reservation_recipe}
         contract = replace(

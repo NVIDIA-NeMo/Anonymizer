@@ -136,8 +136,14 @@ class _Submit:
         )
 
 
-def _fixture(*, simple: bool = False, bad: str | None = None, parent_io: bool = False):
-    execution, _ = child_fixture(simple=simple, stateless=True, unready=bad == "unready_slot")
+def _fixture(
+    *,
+    simple: bool = False,
+    bad: str | None = None,
+    parent_io: bool = False,
+    usage: Literal["exact", "unknown_allowed"] = "unknown_allowed",
+):
+    execution, _ = child_fixture(simple=simple, stateless=True, unready=bad == "unready_slot", usage=usage)
     owner = next(policy for policy in execution.policies if policy.delegated is not None)
     assert owner.delegated is not None
     owner = replace(owner, delegated=replace(owner.delegated, followups=frozenset({"correction"})))
