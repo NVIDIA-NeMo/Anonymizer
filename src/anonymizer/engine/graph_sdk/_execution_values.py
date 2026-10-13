@@ -766,7 +766,7 @@ class DelegatedRequests(Protocol):
     ) -> PhysicalRequestId: ...
 
     def bind_frame(
-        self, dataframe: pd.DataFrame, *, targets: tuple[DatumId, ...] | None = None
+        self, dataframe: pd.DataFrame, *, targets: tuple[DatumId, ...] | None = None, source_limit: int | None = None
     ) -> WorkflowSourceFrame: ...
 
     async def readiness(self) -> PhysicalRequestId: ...
@@ -839,6 +839,7 @@ class ImplementationResourceRegistration(PrivateValue):
     resource: ResourceId
     owner: ResourceOwner
     safe_detachment: SafeDetachment
+    _lease: ResourceLease | None = field(default=None, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         require_instance(self.invocation, InvocationId)

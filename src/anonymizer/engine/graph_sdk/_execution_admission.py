@@ -418,7 +418,10 @@ def _validate_delegated_recipes(prepared: PreparedPlan, policies: tuple[Operatio
         request = policy.request
         if contract.mode != "qualified":
             reject(EffectCode.UNSUPPORTED)
-        if request is None or not contract.child_slots or not contract.routes:
+        source_free = (
+            prepared.configuration.invocation_owned and not contract.child_slots and contract.readiness is not None
+        )
+        if request is None or (not contract.child_slots and not source_free) or not contract.routes:
             reject(EffectCode.MISSING)
         if (
             request.visibility != "dispatch_and_settlement"
@@ -439,11 +442,10 @@ def _validate_delegated_recipes(prepared: PreparedPlan, policies: tuple[Operatio
             reject(EffectCode.LIMIT_EXCEEDED)
         # A shared route bounds parser attempts; each group's physical inventory
         # can impose a tighter bound (for example, a validator without restarts).
-        capacity = max(map(len, contract.generations))
-        if (
-            len(contract.child_slots) != request.max_attempts
-            or sum(route.parse_attempts for route in contract.routes) > capacity
-        ):
+        capacity = 1 if source_free else max(map(len, contract.generations))
+        if (1 if source_free else len(contract.child_slots)) != request.max_attempts or sum(
+            route.parse_attempts for route in contract.routes
+        ) > capacity:
             reject(EffectCode.LIMIT_EXCEEDED)
         if contract.selection is not None and any(
             contract.selection.port not in {port.name for port in implementation.capability.operation.outputs}
@@ -608,7 +610,8 @@ def _validate_delegated_services(admitted: AdmittedExecutionPlan, services: Exec
         if foreign and (
             contract.readiness is None
             or not (
-                (contract.generation_groups and contract.followups <= {"correction", "conversation_restart"})
+                (prepared.configuration.invocation_owned and not contract.child_slots)
+                or (contract.generation_groups and contract.followups <= {"correction", "conversation_restart"})
                 or all(len(group) == 1 for group in contract.generations)
                 or (len(contract.child_slots) == 2 and contract.optional_tail == contract.child_slots[1:])
             )

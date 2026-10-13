@@ -73,7 +73,7 @@ class DetectionRedactInvocation:
             for item in inputs
         ):
             raise AnonymizerWorkflowError("DD graph detection requires one source-text input per association")
-        frame = requests.bind_frame(self.source, targets=self.targets)
+        frame = requests.bind_frame(self.source, targets=self.targets, source_limit=len(self.targets))
         bridge = NddRequestBridge(requests, self.slots, self.physical)
         detected = self.detection.run(
             self.source,

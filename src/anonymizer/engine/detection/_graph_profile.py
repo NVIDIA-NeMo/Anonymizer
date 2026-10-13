@@ -196,8 +196,10 @@ async def execute_detection_redact(
     limits: ExecutionLimits,
 ) -> ExecutionResult:
     """Admit and execute the named real-DD profile without a second workflow runner."""
-    if source.empty:
-        raise ValueError("development profile requires nonempty sources")
+    preview = detection_options.get("preview_num_records")
+    if preview is not None and (type(preview) is not int or preview < 0):
+        raise ValueError("preview_num_records must be a nonnegative integer")
+    selected_source = source if preview is None else source.iloc[:preview]
     if validation_chunks is None:
         chunk_size = detection_options.get(
             "validation_max_entities_per_call", _DEFAULT_VALIDATION_MAX_ENTITIES_PER_CALL
@@ -207,7 +209,7 @@ async def execute_detection_redact(
         # parse_raw_entities admits only nonempty, in-range, nonoverlapping spans.
         # Thus detector-only validation has at most one candidate per character.
         # This reserves capacity from existing input, without limiting public input.
-        characters = max(len(text) for text in source[COL_TEXT])
+        characters = max((len(text) for text in selected_source[COL_TEXT]), default=0)
         validation_chunks = max(1, (characters + chunk_size - 1) // chunk_size)
     if type(validation_chunks) is not int or validation_chunks < 1:
         raise ValueError("validator capacity must be a positive integer")
@@ -219,9 +221,11 @@ async def execute_detection_redact(
     run_config = detection._adapter._data_designer.run_config
     parser_capacity = (run_config.max_conversation_correction_steps + 1) * (run_config.max_conversation_restarts + 1)
     group_sizes = (parser_capacity,) + (1,) * validation_chunks + (parser_capacity,)
+    if len(selected_source) == 0:
+        generations, group_sizes = (), ()
     graph = DataGraph.new()
     targets = []
-    for text in source[COL_TEXT]:
+    for text in selected_source[COL_TEXT]:
         graph, target = graph.add_text(text)
         targets.append(target)
     count = sum(group_sizes)
@@ -325,40 +329,63 @@ async def execute_detection_redact(
         ),
     )
     ids = [owner, readiness, readiness_request, probe, *leaves, complete]
+    if not targets:
+        specs = [operation("dd-empty-detection", ("ok",), 1), *specs[1:4], operation("dd-empty-complete", ("ok",), 0)]
+        ids = [owner, readiness, readiness_request, probe, complete]
     nodes = tuple(OperationNode(id=node, operation=spec) for node, spec in zip(ids, specs, strict=True))
-    interface = replace(
-        specs[0],
-        name="dd-detection-redact-profile",
-        outputs=(specs[0].outputs[0],),
-        output_dependencies=(specs[0].output_dependencies[0],),
-        outcomes=(
-            replace(
-                specs[0].outcomes[0],
-                produced_ports=frozenset({"redacted"}),
-                evidence=frozenset(
-                    {
-                        replace(
-                            next(iter(specs[-1].outcomes[0].evidence)),
-                            subject_port="redacted",
-                            consumed_ports=frozenset({"source"}),
-                        )
-                    }
-                ),
-                ceiling=replace(
-                    ceiling,
-                    max_activations=len(nodes),
-                    max_model_requests=2 * count + 2,
-                    max_input_bytes=byte_limit * len(nodes),
-                    max_output_bytes=byte_limit * len(nodes),
+    if not targets:
+        interface = replace(
+            specs[0],
+            name="dd-empty-detection-profile",
+            outcomes=(
+                replace(
+                    specs[0].outcomes[0],
+                    ceiling=replace(
+                        ceiling,
+                        max_activations=len(nodes),
+                        max_model_requests=3,
+                        max_input_bytes=byte_limit * len(nodes),
+                        max_output_bytes=byte_limit * len(nodes),
+                    ),
                 ),
             ),
-        ),
-    )
+        )
+    else:
+        interface = replace(
+            specs[0],
+            name="dd-detection-redact-profile",
+            outputs=(specs[0].outputs[0],),
+            output_dependencies=(specs[0].output_dependencies[0],),
+            outcomes=(
+                replace(
+                    specs[0].outcomes[0],
+                    produced_ports=frozenset({"redacted"}),
+                    evidence=frozenset(
+                        {
+                            replace(
+                                next(iter(specs[-1].outcomes[0].evidence)),
+                                subject_port="redacted",
+                                consumed_ports=frozenset({"source"}),
+                            )
+                        }
+                    ),
+                    ceiling=replace(
+                        ceiling,
+                        max_activations=len(nodes),
+                        max_model_requests=2 * count + 2,
+                        max_input_bytes=byte_limit * len(nodes),
+                        max_output_bytes=byte_limit * len(nodes),
+                    ),
+                ),
+            ),
+        )
     raw = admit_static_workflow(
         workflow=workflow_id,
         interface=interface,
         nodes=nodes,
-        input_bindings=(
+        input_bindings=()
+        if not targets
+        else (
             InputBinding(source=WorkflowInputRef(port="source"), destination=NodeInputRef(node=owner, port="source")),
             InputBinding(
                 source=WorkflowInputRef(port="source"), destination=NodeInputRef(node=complete, port="source")
@@ -371,14 +398,17 @@ async def execute_detection_redact(
                 source=NodeOutputRef(node=owner, port="spans"), destination=NodeInputRef(node=complete, port="spans")
             ),
         ),
-        output_bindings=(
+        output_bindings=()
+        if not targets
+        else (
             OutputBinding(
                 source=NodeOutputRef(node=owner, port="redacted"), destination=WorkflowOutputRef(port="redacted")
             ),
         ),
         outcome_bindings=(
             OutcomeBinding(
-                source=NodeOutcomeRef(node=complete, outcome="ok"), destination=WorkflowOutcomeRef(outcome="ok")
+                source=NodeOutcomeRef(node=complete, outcome="ok"),
+                destination=WorkflowOutcomeRef(outcome="ok"),
             ),
         ),
         sequence=(
@@ -387,7 +417,9 @@ async def execute_detection_redact(
             *(SequenceEdge(before=node, after=complete) for node in ids if node != complete),
         ),
         choices=(),
-        protection=(
+        protection=()
+        if not targets
+        else (
             ProtectionRequirement(
                 outcome="ok",
                 meaning=REDACT_MEANING,
@@ -438,7 +470,7 @@ async def execute_detection_redact(
             else "stateless"
             if node in {*locals_, readiness}
             else "executor_owned",
-            max_physical_requests_per_activation=count if node == owner else 0 if node in locals_ else 1,
+            max_physical_requests_per_activation=max(1, count) if node == owner else 0 if node in locals_ else 1,
         )
         for node, spec in zip(ids, specs, strict=True)
     )
@@ -450,7 +482,10 @@ async def execute_detection_redact(
             BoundInput(target=target, source=target, port="source", artifact_type=text_type) for target in targets
         ),
         configuration=PreparationConfiguration(
-            purpose="protection", required_protection_outcomes=frozenset({"ok"}), hard_request_limit=None
+            purpose="protection" if targets else "execution_only",
+            required_protection_outcomes=frozenset({"ok"}) if targets else frozenset(),
+            hard_request_limit=None,
+            invocation_owned=not targets,
         ),
         state=StateRevisionView(revisions=frozenset()),
         selections=tuple(
@@ -464,7 +499,7 @@ async def execute_detection_redact(
             max_selections=len(nodes),
             max_config_depth=1,
             max_config_atoms=2 * len(nodes),
-            max_total_activation_slots=size * len(nodes),
+            max_total_activation_slots=max(size, 1) * len(nodes),
             max_capabilities=len(nodes),
         ),
     )
@@ -484,7 +519,7 @@ async def execute_detection_redact(
                 pre_dispatch_control="executor",
                 retry_owner="implementation" if node == owner else "executor",
                 replay="idempotent",
-                max_attempts=count if node == owner else 1,
+                max_attempts=max(1, count) if node == owner else 1,
             )
         )
         delegated = (
@@ -494,8 +529,10 @@ async def execute_detection_redact(
                 generation_groups=tuple(groups),
                 selection=DelegatedGenerationSelection(
                     port="validation_chunks", slots=tuple(group[0] for group in groups[1:-1])
-                ),
-                routes=(ChildRoute(name="primary", parse_attempts=parser_capacity),),
+                )
+                if targets
+                else None,
+                routes=(ChildRoute(name="primary", parse_attempts=parser_capacity if targets else 1),),
                 followups=frozenset({"correction", "conversation_restart"}),
                 readiness=DelegatedReadiness(
                     owner_slot=slots[readiness],
@@ -536,7 +573,9 @@ async def execute_detection_redact(
         capabilities=capabilities,
         policies=tuple(policies),
         decisions=(),
-        assessment_productions=(
+        assessment_productions=()
+        if not targets
+        else (
             EvidenceProductionDecl(
                 node=complete,
                 outcome="ok",
@@ -592,7 +631,7 @@ async def execute_detection_redact(
                 implementation=cap.implementation,
                 operation=cap.operation,
                 configuration=cap.configuration,
-                local=RedactAssessment()
+                local=(RedactAssessment() if targets else _ProfileLocal("ok"))
                 if node == complete
                 else _ProfileLocal("async_required")
                 if node == probe

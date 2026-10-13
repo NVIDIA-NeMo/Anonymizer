@@ -49,6 +49,7 @@ from anonymizer.engine.graph_sdk._execution_state import (
     _ExecutionTask,
     _FactCheckpoint,
     _group_external_jobs,
+    _InvocationJob,
 )
 from anonymizer.engine.graph_sdk._execution_topology import (
     _inherited_artifact_role,
@@ -149,6 +150,7 @@ class _InvocationRuntime:
                 resource=handle.resource.resource,
                 owner=handle.resource.owner,
                 safe_detachment=handle.resource.safe_detachment,
+                _lease=handle.resource,
             )
             for handle in services.handles
             if handle.resource is not None
@@ -189,7 +191,7 @@ class _InvocationRuntime:
         self.blocked_reasons: dict[ActivationKey, str | UnusedRetryCapacity] = {}
         self.publication_failures: list[PublicationFailureFact] = []
         self.submission_failures: list[SubmissionFailure] = []
-        self.submissions: dict[_ExecutionTask, tuple[_ExecutionJob, ...]] = {}
+        self.submissions: dict[_ExecutionTask, tuple[_ExecutionJob | _InvocationJob, ...]] = {}
 
     async def run(self) -> ExecutionResult:
         try:
@@ -252,6 +254,8 @@ class _InvocationRuntime:
                         )
                         scheduled = True
             return scheduled
+        if not self.frame.sources and self.frame.invocation_source is not None:
+            return self._schedule_source_free_submission()
         for target, source in self.frame.sources.items():
             state = source.state
             ready = sorted(
@@ -261,6 +265,37 @@ class _InvocationRuntime:
                 scheduled = self._schedule_entry(target, entry, external_jobs) or scheduled
         self._dispatch_external(external_jobs)
         return scheduled
+
+    def _schedule_source_free_submission(self) -> bool:
+        source = self.frame.invocation_source
+        assert source is not None
+        for entry in source.state.entries:
+            policy = self.policies[entry.template]
+            if entry.status != "ready" or policy.kind != "delegated":
+                continue
+            if self.services.limits.max_local_in_flight == 0:
+                reject(EffectCode.LIMIT_EXCEEDED)
+            implementation = policy.implementations[0]
+            attempt = TaskAttemptId.new(activation=entry.activation)
+            job = _InvocationJob(
+                activation=entry.activation,
+                node=entry.template,
+                policy=policy,
+                implementation=implementation,
+                inputs=(),
+                input_parents={},
+                association=SemanticAssociation(task=attempt),
+            )
+            source.state = advance_activation(state=source.state, event=Start(activation=entry.activation))
+            self.attempts[entry.activation] = attempt
+            self._start_observed_activation(entry.activation, operation=True)
+            handle = self.handles[
+                implementation.implementation, implementation.capability.operation, implementation.configuration
+            ]
+            task = asyncio.create_task(_DelegatedOwner(self, (), invocation_job=job).run(handle))
+            self.submissions[task] = (job,)
+            return True
+        return False
 
     def _schedule_entry(self, target: DatumId, entry: ActivationEntry, external_jobs: list[_ExecutionJob]) -> bool:
         shared = self.frame.invocation_source
@@ -573,6 +608,20 @@ class _InvocationRuntime:
             returned = {job.association: returned}
         for job in jobs:
             mapping, results, assessments = returned[job.association]
+            if isinstance(job, _InvocationJob):
+                source = self.frame.invocation_source
+                assert source is not None
+                source.state = advance_activation(
+                    state=source.state,
+                    event=ObserveTerminal(
+                        activation=job.activation, outcome=mapping.outcome, category=mapping.category
+                    ),
+                )
+                span = self._operation_spans[job.activation]
+                span.outcome = mapping.category
+                span.finish()
+                self._close_observed_activations()
+                continue
             accepted = mapping.condition == "result"
             mapping, results, checkpoint, staged_result = self._stage_outputs(job, mapping, results, assessments)
             mapping = self._advance_completed(job, mapping, results, checkpoint, staged_result)

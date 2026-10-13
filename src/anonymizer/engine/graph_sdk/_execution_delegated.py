@@ -135,10 +135,14 @@ class _WorkerBorrow(PrivateValue):
             reject(EffectCode.FOREIGN_OWNER)
         self.owner._require_transport(transport)
 
-    def bind_frame(self, dataframe: pd.DataFrame, *, targets: tuple[DatumId, ...] | None = None) -> WorkflowSourceFrame:
+    def bind_frame(
+        self, dataframe: pd.DataFrame, *, targets: tuple[DatumId, ...] | None = None, source_limit: int | None = None
+    ) -> WorkflowSourceFrame:
         if _WORKER_BORROW.get() is not self or self.expired:
             reject(EffectCode.FOREIGN_OWNER)
-        return self.owner.runtime.frame.bind_source_frame(tuple(self.owner.jobs.values()), dataframe, targets=targets)
+        return self.owner.runtime.frame.bind_source_frame(
+            tuple(self.owner.jobs.values()), dataframe, targets=targets, source_limit=source_limit
+        )
 
     async def request(
         self,
@@ -180,10 +184,17 @@ class _WorkerBorrow(PrivateValue):
 class _DelegatedOwner(PrivateValue):
     """Borrow one invocation owner; never own a separate ledger or scheduler."""
 
-    def __init__(self, runtime: _InvocationRuntime, jobs: tuple[_ExecutionJob, ...]) -> None:
+    def __init__(
+        self,
+        runtime: _InvocationRuntime,
+        jobs: tuple[_ExecutionJob, ...],
+        *,
+        invocation_job: _InvocationJob | None = None,
+    ) -> None:
         self.runtime = runtime
         self.jobs = {job.association: job for job in jobs}
-        self.policy = jobs[0].policy
+        self.invocation_job = invocation_job
+        self.policy = invocation_job.policy if invocation_job is not None else jobs[0].policy
         self.inputs = tuple(value for job in jobs for value in job.inputs)
         self.loop = asyncio.get_running_loop()
         self.closed = False
@@ -236,9 +247,13 @@ class _DelegatedOwner(PrivateValue):
             if type(handle.transport) is not ForeignLoopTransport or not handle.transport.owns(transport):
                 reject(EffectCode.FOREIGN_OWNER)
 
-    def bind_frame(self, dataframe: pd.DataFrame, *, targets: tuple[DatumId, ...] | None = None) -> WorkflowSourceFrame:
+    def bind_frame(
+        self, dataframe: pd.DataFrame, *, targets: tuple[DatumId, ...] | None = None, source_limit: int | None = None
+    ) -> WorkflowSourceFrame:
         self._check_submission()
-        return self.runtime.frame.bind_source_frame(tuple(self.jobs.values()), dataframe, targets=targets)
+        return self.runtime.frame.bind_source_frame(
+            tuple(self.jobs.values()), dataframe, targets=targets, source_limit=source_limit
+        )
 
     def _source_job(self, association: SemanticAssociation | None = None) -> _ExecutionJob:
         if association is None:
@@ -697,7 +712,8 @@ class _DelegatedOwner(PrivateValue):
         return frozenset(incomplete)
 
     def _failure(self, condition: str, failure: FailureClass | None = None) -> _SubmissionResults:
-        return {association: (_mapping(self.policy, condition, None, failure), (), ()) for association in self.jobs}
+        associations = self.jobs if self.invocation_job is None else (self.invocation_job.association,)
+        return {association: (_mapping(self.policy, condition, None, failure), (), ()) for association in associations}
 
     async def run(self, handle: ImplementationHandle) -> _SubmissionResults:
         assert handle.delegated is not None
@@ -733,6 +749,9 @@ class _DelegatedOwner(PrivateValue):
             incomplete = self.close()
         if type(result) is LocalFailure:
             return self._failure("failure", inspect_failure(result.failure))
+        if self.invocation_job is not None:
+            # A source-free submission has no per-source result to publish.
+            return self._failure("failure", "malformed_response")
         if type(result) is not LocalCompleted:
             return self._failure("failure", "malformed_response")
         failed_sources = getattr(result, "failed_sources", None)

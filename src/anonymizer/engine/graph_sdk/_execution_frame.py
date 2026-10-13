@@ -103,7 +103,7 @@ class _InvocationFrame:
         for target_map in self.prepared.target_occurrences:
             self.sources[target_map.target] = self._initialize(self.target_workflow, target_map.occurrence_offset)
         if self.invocation_workflow is not None:
-            self.invocation_source = self._initialize(self.invocation_workflow, self.prepared.total_activation_slots)
+            self.invocation_source = self._initialize(self.invocation_workflow, self.prepared.invocation_offset)
 
     def _initialize(self, workflow: AdmittedActivationWorkflow, offset: int) -> _SourceOccurrence:
         templates = {node.id for scope in workflow.scopes for node in scope.workflow.nodes}
@@ -131,7 +131,12 @@ class _InvocationFrame:
         )
 
     def bind_source_frame(
-        self, jobs: tuple[_ExecutionJob, ...], dataframe: pd.DataFrame, *, targets: tuple[DatumId, ...] | None = None
+        self,
+        jobs: tuple[_ExecutionJob, ...],
+        dataframe: pd.DataFrame,
+        *,
+        targets: tuple[DatumId, ...] | None = None,
+        source_limit: int | None = None,
     ) -> WorkflowSourceFrame:
         """Authenticate the whole submitted frame against this invocation's source jobs."""
         if targets is not None:
@@ -145,8 +150,15 @@ class _InvocationFrame:
                 reject(EffectCode.FOREIGN_OWNER)
             jobs = tuple(by_target[target] for target in targets)
         datum_text = {item.id: item.text for item in self.prepared.data.datums}
-        if len(jobs) != len(dataframe) or list(dataframe.columns).count(COL_TEXT) != 1:
+        selected = len(dataframe) if source_limit is None else source_limit
+        if (
+            type(selected) is not int
+            or not 0 <= selected <= len(dataframe)
+            or len(jobs) != selected
+            or list(dataframe.columns).count(COL_TEXT) != 1
+        ):
             reject(EffectCode.MISSING)
+        submitted = dataframe.iloc[:selected]
         if len({job.target for job in jobs}) != len(jobs) or any(
             job.target not in self.sources
             or job.activation not in self.sources[job.target].keys.values()
@@ -156,14 +168,16 @@ class _InvocationFrame:
             reject(EffectCode.FOREIGN_OWNER)
         if any(
             not isinstance(value, str) or value != datum_text[job.target]
-            for value, job in zip(dataframe[COL_TEXT].tolist(), jobs, strict=True)
+            for value, job in zip(submitted[COL_TEXT].tolist(), jobs, strict=True)
         ):
             reject(EffectCode.CONTRADICTORY)
-        for job, cells in zip(jobs, dataframe.itertuples(index=False, name=None), strict=True):
+        for job, cells in zip(jobs, submitted.itertuples(index=False, name=None), strict=True):
             source = self.sources[job.target]
             if not source.opaque_cells:
                 source.opaque_cells = cells
-        return WorkflowSourceFrame.capture(dataframe, associations=tuple(job.association for job in jobs))
+        return WorkflowSourceFrame.capture(
+            dataframe, associations=tuple(job.association for job in jobs), invocation_bound=True, source_limit=selected
+        )
 
     def _initialize_root_inputs(self) -> None:
         datum_text = {item.id: item.text for item in self.prepared.data.datums}
@@ -203,6 +217,23 @@ def _invocation_workflows(
         if policy.delegated is not None and policy.delegated.readiness is not None
         for index in policy.delegated.readiness.slots
     }
+    if prepared.configuration.invocation_owned:
+        owners = [policy for policy in policies if policy.delegated is not None]
+        raw = prepared.workflow.workflow
+        if (
+            len(owners) != 1
+            or owners[0].delegated is None
+            or owners[0].delegated.child_slots
+            or raw.interface.inputs
+            or raw.interface.outputs
+            or any(not isinstance(node, OperationNode) for node in raw.nodes)
+            or any(node.operation.inputs or node.operation.outputs for node in raw.nodes)
+            or any(policy.kind != "local" for policy in policies if policy.node not in shared | {owners[0].node})
+            or len(prepared.workflow.scopes) != 1
+            or any(scope.maps or scope.loops or scope.joins for scope in prepared.workflow.scopes)
+        ):
+            reject(EffectCode.UNSUPPORTED)
+        return prepared.workflow, prepared.workflow
     if len(prepared.target_occurrences) <= 1 or not shared:
         return prepared.workflow, None
     raw = prepared.workflow.workflow

@@ -53,17 +53,34 @@ class WorkflowSourceFrame:
     key_column: str
     keys: tuple[str, ...]
     associations: tuple[SemanticAssociation, ...] = ()
+    invocation_bound: bool = False
 
     @classmethod
     def capture(
-        cls, dataframe: pd.DataFrame, *, associations: tuple[SemanticAssociation, ...] = ()
+        cls,
+        dataframe: pd.DataFrame,
+        *,
+        associations: tuple[SemanticAssociation, ...] = (),
+        invocation_bound: bool = False,
+        source_limit: int | None = None,
     ) -> WorkflowSourceFrame:
-        if associations and (len(associations) != len(dataframe) or len(set(associations)) != len(associations)):
+        selected = len(dataframe) if source_limit is None else source_limit
+        if type(selected) is not int or not 0 <= selected <= len(dataframe):
+            raise AnonymizerWorkflowError("Workflow source limit does not match the frame")
+        if (associations or invocation_bound) and (
+            len(associations) != selected or len(set(associations)) != len(associations)
+        ):
             raise AnonymizerWorkflowError("Workflow source associations do not match the frame")
         key_column = f"{_COL_SOURCE_PREFIX}{uuid.uuid4().hex}"
         while key_column in dataframe.columns:
             key_column = f"{_COL_SOURCE_PREFIX}{uuid.uuid4().hex}"
-        return cls(dataframe.copy(), key_column, tuple(uuid.uuid4().hex for _ in range(len(dataframe))), associations)
+        return cls(
+            dataframe.copy(),
+            key_column,
+            tuple(uuid.uuid4().hex for _ in range(len(dataframe))),
+            associations,
+            invocation_bound,
+        )
 
     def seed(self) -> pd.DataFrame:
         seed = self.dataframe.copy()
@@ -90,14 +107,16 @@ class WorkflowSourceFrame:
     def bind_generators(self, designer: Any, columns: frozenset[str]) -> Iterator[set[int]]:
         """Bind real DD row generators to issued associations, without exposing transport keys."""
         failed: set[int] = set()
-        if not self.associations:
+        if not self.associations and not self.invocation_bound:
             yield failed
             return
         storage_bindings = ExitStack()
         original_builder = designer._create_dataset_builder
         sources = {
             key: (index, association)
-            for index, (key, association) in enumerate(zip(self.keys, self.associations, strict=True))
+            for index, (key, association) in enumerate(
+                zip(self.keys[: len(self.associations)], self.associations, strict=True)
+            )
         }
 
         def builder(*args: Any, **kwargs: Any) -> Any:

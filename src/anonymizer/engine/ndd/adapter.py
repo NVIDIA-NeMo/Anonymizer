@@ -343,7 +343,11 @@ class NddAdapter:
         Returns:
             `WorkflowRunResult` with the output DataFrame and any `FailedRecord` entries.
         """
-        if request_bridge is not None and (source_frame is None or not source_frame.associations):
+        if request_bridge is not None and (
+            source_frame is None
+            or not source_frame.associations
+            and not (source_frame.invocation_bound and (len(df) == 0 or preview_num_records == 0))
+        ):
             raise AnonymizerWorkflowError("DD request binding requires invocation-owned source associations")
         workflow_input_df = self._attach_record_ids(df=df)
         if source_frame is None:

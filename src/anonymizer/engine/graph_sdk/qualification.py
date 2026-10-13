@@ -286,7 +286,7 @@ class _Qualification:
 
     def offset(self, activation: ActivationKey) -> int:
         if activation in self.shared:
-            return self.prepared.total_activation_slots
+            return self.prepared.invocation_offset
         return next(
             item.occurrence_offset
             for item in self.prepared.target_occurrences
@@ -309,7 +309,7 @@ class _Qualification:
         ]
         if invocation is not None:
             assert execution.invocation_workflow is not None
-            states.append((None, invocation, execution.invocation_workflow, self.prepared.total_activation_slots))
+            states.append((None, invocation, execution.invocation_workflow, self.prepared.invocation_offset))
         for target, state, workflow, offset in states:
             if state.invocation != record.invocation or state.workflow is not workflow:
                 reject(EffectCode.FOREIGN_OWNER)
@@ -497,7 +497,7 @@ class _Qualification:
             offset = self.offset(owner.activation)
             descriptor = contract.readiness
             if descriptor is not None:
-                readiness_offset = self.prepared.total_activation_slots if self.shared else offset
+                readiness_offset = self.prepared.invocation_offset if self.shared else offset
                 semantic = next(
                     entry.activation
                     for entry in self.entries.values()
@@ -557,7 +557,7 @@ class _Qualification:
                 slots, routes, followups = (descriptor.request_slot,), (descriptor.route,), frozenset()
             elif contract is not None and contract.readiness is not None:
                 descriptor = contract.readiness
-                offset = self.prepared.total_activation_slots if self.shared else self.offset(owner)
+                offset = self.prepared.invocation_offset if self.shared else self.offset(owner)
                 for index, outcomes in (
                     (descriptor.owner_slot, frozenset({descriptor.ready_outcome})),
                     (descriptor.probe_slot, descriptor.probe_outcomes),
@@ -1169,6 +1169,15 @@ class _Qualification:
         for row in rows:
             require_instance(row, ImplementationResourceRegistration)
             row.__post_init__()
+            lease = getattr(row, "_lease", None)
+            if lease is not None and (
+                not isinstance(lease, ResourceLease)
+                or getattr(lease, "resource", None) != row.resource
+                or getattr(lease, "owner", None) != row.owner
+                or getattr(lease, "safe_detachment", None) != row.safe_detachment
+                or getattr(lease, "handle", None) is None
+            ):
+                return None
         expected = {
             (item.implementation, item.capability.operation, item.configuration): (item.capability, policy)
             for policy, item in execution._service_implementations()
@@ -1292,6 +1301,8 @@ class _Qualification:
             for implementation in policy.implementations:
                 if any(
                     row.resource == resource
+                    and isinstance(issued := getattr(row, "_lease", None), ResourceLease)
+                    and issued.handle is matching[0].handle
                     and row.owner == "sdk"
                     and row.safe_detachment == "forbidden"
                     and _matches_admitted_key(

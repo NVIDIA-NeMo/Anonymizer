@@ -754,9 +754,21 @@ def test_unknown_remote_source_retains_resource_and_qualifies_independent_peer(s
         assert not qualify_detection_redact(missing_lease).qualified
         from anonymizer.engine.graph_sdk.resources import ResourceLease
 
+        lease = result._retained_resources[0]
+
+        def copied_lease(handle):
+            raw = object.__new__(type(lease))
+            for field in fields(lease):
+                object.__setattr__(raw, field.name, handle if field.name == "handle" else getattr(lease, field.name))
+            return raw
+
+        object.__setattr__(missing_lease, "_retained_resources", (copied_lease(lease.handle),))
+        assert len(qualify_detection_redact(missing_lease).qualified) == 1
         for retained in (
             result._retained_resources * 2,
             (ResourceLease.create(owner="sdk", safe_detachment="forbidden", handle=physicals[0]),),
+            (copied_lease(object()),),
+            (copied_lease(ResourceLease.create(owner="sdk", safe_detachment="forbidden", handle=object())),),
         ):
             object.__setattr__(missing_lease, "_retained_resources", retained)
             assert not qualify_detection_redact(missing_lease).qualified
@@ -832,3 +844,119 @@ def test_private_storage_batch_identity_is_ordered_and_closed(tmp_path, fault):
         for path in tmp_path.rglob("*.parquet"):
             assert source.key_column not in pd.read_parquet(path).columns
     assert storage.write_parquet_file == original_write
+
+
+@pytest.mark.parametrize("preview", [True, False])
+def test_empty_source_invocation_preserves_actual_dd_failure(scripted_detection, preview):
+    from anonymizer.engine.detection._graph_profile import project_detection_redact, qualify_detection_redact
+    from anonymizer.interface.errors import AnonymizerWorkflowError
+
+    source = pd.DataFrame({COL_TEXT: pd.Series([], dtype=str), "extra": pd.Series([], dtype=object)})
+    result = asyncio.run(
+        run_graph_profile(
+            scripted_detection, source, {**_options(), "preview_num_records": 0 if preview else None}, chunks=None
+        )
+    )
+    assert result.requests.dispatched_count == 1
+    assert scripted_detection[3] == {"readiness": 1}
+    assert len(result.requests.settlements) == 1 and not result.requests.remote_outstanding
+    assert result.states == () and result.invocation_state.complete
+    assert not result.artifacts and not result.final_outputs and not result.frames
+    assert len(result.record.terminals) == 5
+    assert result.record.memberships[0].closed
+    assert len(result.record.memberships[0].members) == 5
+    prepared = result._execution.context.prepared
+    assert prepared.configuration.invocation_owned and prepared.total_activation_slots == 5
+    assert prepared.declared_request_upper_bound == 3
+    assert not qualify_detection_redact(result).qualified
+    with pytest.raises(
+        AnonymizerWorkflowError, match="Dataset is empty" if preview else "Failed to load generated dataset"
+    ) as error:
+        project_detection_redact(result)
+    assert error.value is result.submission_failures[0].cause
+    assert type(error.value.__cause__).__name__ == "DataDesignerGenerationError"
+
+
+@pytest.mark.parametrize("requested", [0, 1])
+def test_preview_admits_only_requested_sources_but_calls_detection_with_whole_frame(
+    scripted_detection, monkeypatch, requested
+):
+    from anonymizer.engine.detection._graph_profile import project_detection_redact
+    from anonymizer.engine.detection.detection_workflow import EntityDetectionWorkflow
+    from anonymizer.interface.errors import AnonymizerWorkflowError
+
+    seen = []
+    original = EntityDetectionWorkflow.run
+
+    def run(self, dataframe, **kwargs):
+        seen.append((len(dataframe), kwargs["preview_num_records"]))
+        return original(self, dataframe, **kwargs)
+
+    monkeypatch.setattr(EntityDetectionWorkflow, "run", run)
+    result = asyncio.run(
+        run_graph_profile(scripted_detection, _source(), {**_options(), "preview_num_records": requested}, chunks=None)
+    )
+    assert seen == [(2, requested)]
+    assert len(result.states) == requested
+    assert len(result._execution.context.prepared.data.targets) == requested
+    assert result.requests.dispatched_count == (4 if requested else 1)
+    if requested:
+        projected = project_detection_redact(result)
+        assert projected.dataframe[COL_TEXT].tolist() == ["Alice travels."]
+        assert not projected.failed_records
+        assert all(state.complete for state in result.states)
+    else:
+        assert result.invocation_state.complete
+        with pytest.raises(AnonymizerWorkflowError, match="Dataset is empty"):
+            project_detection_redact(result)
+
+
+def test_empty_invocation_preentry_cancel_closes_without_dd_calls(scripted_detection, monkeypatch):
+    import anonymizer.engine.detection._graph_profile as profile
+
+    original = profile.start_execution
+
+    async def start(**kwargs):
+        running = await original(**kwargs)
+        running.request_cancel()
+        return running
+
+    monkeypatch.setattr(profile, "start_execution", start)
+    source = pd.DataFrame({COL_TEXT: pd.Series([], dtype=str)})
+    result = asyncio.run(
+        run_graph_profile(scripted_detection, source, {**_options(), "preview_num_records": 0}, chunks=None)
+    )
+    assert not scripted_detection[3] and result.requests.dispatched_count == 0
+    assert result.invocation_state.complete and result.states == ()
+    assert len(result.record.terminals) == 5
+    assert all(terminal.category == "blocked" for terminal in result.record.terminals)
+    assert result.record.memberships[0].closed
+    assert not result.final_outputs and not result.frames
+
+
+@pytest.mark.parametrize("fault", ["activation_capacity", "foreign_target_scope"])
+def test_invocation_owned_preparation_rejects_before_dd_effects(scripted_detection, monkeypatch, fault):
+    import anonymizer.engine.detection._graph_profile as profile
+    from anonymizer.engine.graph_sdk.capabilities import PreparationRejected
+
+    if fault == "activation_capacity":
+        original_limits = profile.PreparationLimits
+
+        def limited(**kwargs: Any):
+            kwargs["max_total_activation_slots"] = 4
+            return original_limits(**kwargs)
+
+        monkeypatch.setattr(profile, "PreparationLimits", limited)
+        source = pd.DataFrame({COL_TEXT: pd.Series([], dtype=str)})
+    else:
+        original_configuration = profile.PreparationConfiguration
+
+        def wrong_scope(**kwargs: Any):
+            kwargs["invocation_owned"] = True
+            return original_configuration(**kwargs)
+
+        monkeypatch.setattr(profile, "PreparationConfiguration", wrong_scope)
+        source = _source()
+    with pytest.raises(PreparationRejected):
+        asyncio.run(run_graph_profile(scripted_detection, source, _options(), chunks=None))
+    assert not scripted_detection[3]

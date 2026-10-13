@@ -93,8 +93,11 @@ class PreparationConfiguration(_PrivateValue):
     purpose: PreparationPurpose
     required_protection_outcomes: frozenset[str]
     hard_request_limit: int | None
+    invocation_owned: bool = False
 
     def __post_init__(self) -> None:
+        if type(self.invocation_owned) is not bool:
+            _reject(PreparationCode.INVALID_TYPE)
         if not isinstance(self.purpose, str) or not isinstance(self.required_protection_outcomes, frozenset):
             _reject(PreparationCode.INVALID_TYPE)
         if any(not isinstance(outcome, str) for outcome in self.required_protection_outcomes):
@@ -232,6 +235,10 @@ class PreparedPlan(_PrivateValue):
             if name not in {"self", "_key"}:
                 object.__setattr__(self, name, value)
 
+    @property
+    def invocation_offset(self) -> int:
+        return 0 if self.configuration.invocation_owned else self.total_activation_slots
+
     def __eq__(self, other: object) -> bool:
         return isinstance(other, PreparedPlan) and self.plan == other.plan
 
@@ -271,7 +278,14 @@ def prepare(
         )
         for ordinal, target in enumerate(data.targets)
     )
-    total_slots = len(recipe) * len(data.targets)
+    if type(getattr(configuration, "invocation_owned", None)) is not bool:
+        _reject(PreparationCode.INVALID_TYPE)
+    if configuration.invocation_owned and (
+        data.targets or bound_inputs or workflow.workflow.interface.inputs or workflow.workflow.interface.outputs
+    ):
+        _reject(PreparationCode.CONTRADICTORY)
+    occurrence_count = 1 if configuration.invocation_owned else len(data.targets)
+    total_slots = len(recipe) * occurrence_count
     configuration_sizes = [config_size(selection.configuration) for selection in selections]
     configuration_sizes.extend(config_size(capability.configuration) for capability in capabilities)
     maximum_depth = max((depth for depth, _ in configuration_sizes), default=0)
@@ -369,7 +383,7 @@ def prepare(
         target_occurrences=target_occurrences,
         activation_slots_per_target=len(recipe),
         total_activation_slots=total_slots,
-        declared_request_upper_bound=request_per_target * len(data.targets),
+        declared_request_upper_bound=request_per_target * occurrence_count,
         eligibility=eligibility,
         limits=limits,
     )
