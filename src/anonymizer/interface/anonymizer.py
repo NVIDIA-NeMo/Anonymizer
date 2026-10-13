@@ -9,8 +9,9 @@ import re
 import time
 import uuid
 from collections import Counter
+from importlib.metadata import version
 from pathlib import Path
-from typing import TYPE_CHECKING, Protocol, TypeGuard, cast
+from typing import TYPE_CHECKING, Any, Protocol, TypeGuard, cast
 
 from data_designer.config.models import ModelProvider
 from data_designer.config.run_config import RunConfig
@@ -22,7 +23,7 @@ from anonymizer.config.anonymizer_config import (
     EvaluateConfig,
     Rewrite,
 )
-from anonymizer.config.replace_strategies import ReplaceMethod, Substitute
+from anonymizer.config.replace_strategies import Redact, ReplaceMethod, Substitute
 from anonymizer.config.rewrite import PrivacyGoal
 from anonymizer.engine.constants import (
     COL_ANY_HIGH_LEAKED,
@@ -50,6 +51,7 @@ from anonymizer.engine.constants import (
     COL_WEIGHTED_LEAKAGE_RATE,
     DEFAULT_ENTITY_LABELS,
 )
+from anonymizer.engine.detection._graph_profile import run_detection_redact
 from anonymizer.engine.detection.detection_workflow import EntityDetectionWorkflow
 from anonymizer.engine.evaluation.detection_judge import DetectionJudgeWorkflow
 from anonymizer.engine.evaluation.entity_coverage_judge import EntityCoverageWorkflow
@@ -218,6 +220,7 @@ class Anonymizer:
             reapply_log_levels()
         if data_designer_run_config is not None:
             self._data_designer.set_run_config(data_designer_run_config)
+        self._owns_detection_and_replacement = detection_workflow is None and replace_runner is None
         self._adapter = NddAdapter(data_designer=self._data_designer)
         self._detection_workflow = detection_workflow or EntityDetectionWorkflow(adapter=self._adapter)
         self._replace_runner = replace_runner or ReplacementWorkflow(
@@ -716,11 +719,7 @@ class Anonymizer:
                 or f"(default: {len(DEFAULT_ENTITY_LABELS)} labels; see anonymizer.DEFAULT_ENTITY_LABELS for list)",
             )
 
-        t0 = time.perf_counter()
-        detection_result = self._detection_workflow.run(
-            input_df,
-            model_configs=self._model_configs,
-            selected_models=self._selected_models.detection,
+        detection_options: dict[str, Any] = dict(
             gliner_detection_threshold=config.detect.gliner_threshold,
             validation_max_entities_per_call=config.detect.validation_max_entities_per_call,
             validation_excerpt_window_chars=config.detect.validation_excerpt_window_chars,
@@ -732,28 +731,57 @@ class Anonymizer:
             compute_grouped_entities=config.replace is not None or config.rewrite is not None,
             preview_num_records=preview_num_records,
         )
+        t0 = time.perf_counter()
+        graph_result = None
+        if self._uses_graph_redact(config):
+            logger.info("🔄 Running Redact replacement with graph-owned detection")
+            graph_result = run_detection_redact(
+                input_df,
+                detection=self._detection_workflow,
+                model_configs=self._model_configs,
+                selected_models=self._selected_models.detection,
+                detection_options=detection_options,
+                replace_method=cast(Redact, config.replace),
+            )
+            detected_df, detection_failures = graph_result.dataframe, graph_result.failed_records
+        else:
+            detection_result = self._detection_workflow.run(
+                input_df,
+                model_configs=self._model_configs,
+                selected_models=self._selected_models.detection,
+                **detection_options,
+            )
+            detected_df, detection_failures = detection_result.dataframe, detection_result.failed_records
         detection_elapsed = time.perf_counter() - t0
-        entity_count = _count_entities(detection_result.dataframe)
-        detection_failed = len(detection_result.failed_records)
+        entity_count = _count_entities(detected_df)
+        detection_failed = len(detection_failures)
         logger.info(
             LOG_INDENT + "📋 Detection complete — %d entities found across %d records (%d failed) [%.1fs]",
             entity_count,
-            len(detection_result.dataframe),
+            len(detected_df),
             detection_failed,
             detection_elapsed,
         )
-        if COL_DETECTED_ENTITIES in detection_result.dataframe.columns:
-            label_counts = _count_labels(detection_result.dataframe[COL_DETECTED_ENTITIES])
+        if COL_DETECTED_ENTITIES in detected_df.columns:
+            label_counts = _count_labels(detected_df[COL_DETECTED_ENTITIES])
             if label_counts:
                 summary = ", ".join(f"{label}={count}" for label, count in label_counts.most_common())
                 logger.info(LOG_INDENT + "labels: %s", summary)
         execution = None
-        if config.replace is not None:
+        if graph_result is not None:
+            final_df = graph_result.dataframe
+            execution = graph_result._execution
+            post_detection_failures = []
+            logger.info(
+                LOG_INDENT + "📋 Replacement complete (0 additional failures) [%.1fs including detection]",
+                detection_elapsed,
+            )
+        elif config.replace is not None:
             strategy_name = type(config.replace).__name__
             logger.info("🔄 Running %s replacement", strategy_name)
             t0 = time.perf_counter()
             replace_result = self._replace_runner.run(
-                detection_result.dataframe,
+                detected_df,
                 replace_method=config.replace,
                 model_configs=self._model_configs,
                 selected_models=self._selected_models.replace,
@@ -778,7 +806,7 @@ class Anonymizer:
                 self._combined_rewrite_runner if config.rewrite.use_combined_graph else self._rewrite_runner
             )
             rewrite_result = rewrite_runner.run(
-                detection_result.dataframe,
+                detected_df,
                 model_configs=self._model_configs,
                 selected_models=self._selected_models.rewrite,
                 replace_model_selection=self._selected_models.replace,
@@ -797,10 +825,10 @@ class Anonymizer:
                 rewrite_elapsed,
             )
         else:
-            final_df = detection_result.dataframe
+            final_df = detected_df
             post_detection_failures = []
 
-        all_failures = [*detection_result.failed_records, *post_detection_failures]
+        all_failures = [*detection_failures, *post_detection_failures]
         if all_failures:
             logger.warning("%d record(s) failed during pipeline processing.", len(all_failures))
             for f in all_failures:
@@ -828,6 +856,33 @@ class Anonymizer:
         )
         result._execution = execution
         return result
+
+    def _uses_graph_redact(self, config: AnonymizerConfig) -> bool:
+        """Select the migrated DD profile without changing injected execution contracts."""
+        if (
+            not self._owns_detection_and_replacement
+            or type(config.replace) is not Redact
+            or type(self._data_designer) is not DataDesigner
+            or version("data-designer") != "0.9.1"
+        ):
+            return False
+        selected = self._selected_models.detection
+        if (
+            selected.entity_validator != [selected.entity_augmenter]
+            or selected.entity_detector == selected.entity_augmenter
+        ):
+            return False
+        models = {model.alias: model for model in self._model_configs}
+        detector, generator = models[selected.entity_detector], models[selected.entity_augmenter]
+        providers = {provider.name: provider for provider in self._data_designer._model_providers}
+        return (
+            detector.skip_health_check
+            and not generator.skip_health_check
+            and all(
+                model.provider in providers and providers[model.provider].provider_type == "openai"
+                for model in (detector, generator)
+            )
+        )
 
     def _validate_preflight_config(self, config: AnonymizerConfig) -> None:
         """Run semantic preflight checks shared by validate, run, and preview."""

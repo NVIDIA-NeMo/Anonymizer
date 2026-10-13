@@ -183,24 +183,45 @@ def test_real_detection_source_correspondence_and_redact(
     assert calls == {"detector": 2, "validator": 2, "augmenter": 2, "readiness": 1}
 
 
+def public_anonymizer(scripted_detection, **kwargs):
+    designer, models, selected, _ = scripted_detection
+    return Anonymizer(
+        data_designer=designer,
+        model_configs=yaml.safe_dump(
+            {
+                "model_configs": [model.model_dump(mode="json", exclude_none=True) for model in models],
+                "selected_models": {"detection": selected.model_dump()},
+            }
+        ),
+        **kwargs,
+    )
+
+
 @pytest.mark.parametrize("preview", [False, True])
 def test_public_source_frame(
     scripted_detection: tuple[DataDesigner, list[ModelConfig], DetectionModelSelection, Counter[str]],
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
     preview: bool,
 ) -> None:
     designer, models, selected, calls = scripted_detection
+    detections = []
+    detect = EntityDetectionWorkflow.run
+
+    def detected(self, frame, **kwargs):
+        detections.append((frame, kwargs))
+        return detect(self, frame, **kwargs)
+
+    def displaced(*args, **kwargs):
+        raise AssertionError("production Redact must not call the legacy replacement dispatcher")
+
+    monkeypatch.setattr(EntityDetectionWorkflow, "run", detected)
+    monkeypatch.setattr(ReplacementWorkflow, "run", displaced)
     path = tmp_path / "source.csv"
     pd.DataFrame({"text": ["Alice travels.", "Alice stays.", "Alice leaves."], "extra": [17, 29, 43]}).to_csv(
         path, index=False
     )
-    config_yaml = yaml.safe_dump(
-        {
-            "model_configs": [model.model_dump(mode="json", exclude_none=True) for model in models],
-            "selected_models": {"detection": selected.model_dump()},
-        }
-    )
-    anonymizer = Anonymizer(data_designer=designer, model_configs=config_yaml, artifact_path=tmp_path / "public")
+    anonymizer = public_anonymizer(scripted_detection, artifact_path=tmp_path / "public")
     config = AnonymizerConfig(replace=Redact(), emit_telemetry=False)
     data = AnonymizerInput(source=str(path))
     result = (
@@ -214,6 +235,11 @@ def test_public_source_frame(
     assert result.dataframe["text_replaced"].tolist() == expected
     assert result.trace_dataframe["extra"].tolist() == [17, 29, 43][: len(expected)]
     assert result.failed_records == []
+    assert result._execution is not None
+    assert len(detections) == 1
+    assert len(detections[0][0]) == len(expected)
+    assert detections[0][1]["source_frame"] is not None
+    assert detections[0][1]["request_bridge"] is not None
     assert not any(str(name).startswith("_anonymizer_source_") for name in result.trace_dataframe.columns)
     assert calls == {**dict.fromkeys(("detector", "validator", "augmenter"), len(expected)), "readiness": 1}
 
@@ -341,3 +367,105 @@ async def run_graph_profile(
         )
     finally:
         await pool.close()
+
+
+@pytest.mark.parametrize("command", ["run", "preview"])
+def test_cli_selected_redact_uses_actual_graph(scripted_detection, monkeypatch, tmp_path, capsys, command):
+    import anonymizer.interface.anonymizer as facade
+    import anonymizer.interface.cli.main as cli
+
+    executions = []
+    run = facade.run_detection_redact
+
+    def capture(*args, **kwargs):
+        result = run(*args, **kwargs)
+        executions.append(result._execution)
+        return result
+
+    monkeypatch.setattr(facade, "run_detection_redact", capture)
+    monkeypatch.setattr(cli, "Anonymizer", lambda **kwargs: public_anonymizer(scripted_detection))
+    monkeypatch.setattr(cli, "_configure_logging", lambda opts: None)
+    path = tmp_path / "cli.csv"
+    pd.DataFrame({"text": ["Alice travels.", "Alice stays."]}).to_csv(path, index=False)
+    arguments = [
+        command,
+        "--source",
+        str(path),
+        "--replace",
+        "redact",
+        "--format-template",
+        "<{label}>",
+        "--no-normalize-label",
+    ]
+    if command == "preview":
+        arguments += ["--num-records", "1"]
+    with pytest.raises(SystemExit) as stopped:
+        cli.app(arguments)
+    assert stopped.value.code == 0
+    assert len(executions) == 1 and executions[0] is not None
+    if command == "run":
+        assert pd.read_csv(tmp_path / "cli_anonymized.csv")["text_replaced"].tolist() == [
+            "<first_name> travels.",
+            "<first_name> stays.",
+        ]
+    else:
+        assert "<first_name> travels." in capsys.readouterr().out
+    assert scripted_detection[3] == {
+        "detector": 2 if command == "run" else 1,
+        "validator": 2 if command == "run" else 1,
+        "augmenter": 2 if command == "run" else 1,
+        "readiness": 1,
+    }
+
+
+@pytest.mark.parametrize(
+    "texts,preview,error",
+    [
+        ([], False, "Failed to load generated dataset"),
+        (["Alice travels."], True, "Dataset is empty"),
+        (["Alice fails."], False, "scripted row failure"),
+    ],
+)
+def test_public_graph_preserves_empty_and_all_failed_errors(scripted_detection, tmp_path, texts, preview, error):
+    from anonymizer.interface.errors import AnonymizerWorkflowError
+
+    path = tmp_path / "empty.csv"
+    pd.DataFrame({"text": pd.Series(texts, dtype=str)}).to_csv(path, index=False)
+    facade = public_anonymizer(scripted_detection)
+    config, data = AnonymizerConfig(replace=Redact(), emit_telemetry=False), AnonymizerInput(source=str(path))
+    with pytest.raises(AnonymizerWorkflowError, match=error) as caught:
+        if preview:
+            facade.preview(config=config, data=data, num_records=0)
+        else:
+            facade.run(config=config, data=data)
+    execution = getattr(caught.value, "_anonymizer_execution")
+    assert execution is not None and not execution.final_outputs and not execution.frames
+    assert execution.requests.dispatched_count == (2 if texts and not preview else 1)
+
+
+def test_public_graph_preserves_failed_source_order_and_injected_result(scripted_detection, tmp_path):
+    designer, _, _, calls = scripted_detection
+    path = tmp_path / "failures.csv"
+    pd.DataFrame(
+        {
+            "text": ["Alice fails.", "Alice travels.", "Alice fails."],
+            RECORD_ID_COLUMN: ["first", "kept", "last"],
+            "extra": [17, 29, 43],
+        }
+    ).to_csv(path, index=False)
+    config = AnonymizerConfig(replace=Redact(format_template="<{label}>", normalize_label=False), emit_telemetry=False)
+    data = AnonymizerInput(source=str(path))
+    legacy = public_anonymizer(
+        scripted_detection, detection_workflow=EntityDetectionWorkflow(NddAdapter(designer))
+    ).run(config=config, data=data)
+    assert legacy._execution is None
+    calls.clear()
+    result = public_anonymizer(scripted_detection).run(config=config, data=data)
+    assert result._execution is not None
+    pd.testing.assert_frame_equal(result.dataframe, legacy.dataframe)
+    pd.testing.assert_frame_equal(result.trace_dataframe, legacy.trace_dataframe)
+    assert result.failed_records == legacy.failed_records
+    assert [failure.record_id for failure in result.failed_records] == ["first", "last"]
+    assert result.dataframe["text_replaced"].tolist() == ["<first_name> travels."]
+    assert result.trace_dataframe["extra"].tolist() == [29]
+    assert calls == {"detector": 3, "validator": 1, "augmenter": 1, "readiness": 1}

@@ -193,3 +193,34 @@ def test_label_dependent_empty_render_propagates_without_successful_output(
             else:
                 anonymizer.run(**options)
     assert calls == {"detector": 2, "validator": 2, "augmenter": 2, "readiness": 1}
+
+
+@pytest.mark.parametrize("byte_limit", [0, 10])
+def test_sync_explicit_limits_snapshot_precedes_host_thread(scripted_detection, monkeypatch, byte_limit):
+    from anonymizer.graph._values import ContractViolation
+
+    limits = ExecutionLimits(
+        max_local_in_flight=1,
+        max_remote_outstanding=8,
+        max_runtime_artifacts=10,
+        max_runtime_artifact_bytes=byte_limit,
+        max_collection_items=32,
+    )
+    start = _graph_profile.Thread.start
+
+    def started(self):
+        object.__setattr__(limits, "max_runtime_artifact_bytes", None)
+        start(self)
+
+    monkeypatch.setattr(_graph_profile.Thread, "start", started)
+    designer, models, selected, calls = scripted_detection
+    with pytest.raises(ContractViolation):
+        _graph_profile.run_detection_redact(
+            _source(),
+            detection=detection_tests.EntityDetectionWorkflow(detection_tests.NddAdapter(designer)),
+            model_configs=models,
+            selected_models=selected,
+            detection_options=_options(),
+            limits=limits,
+        )
+    assert not calls

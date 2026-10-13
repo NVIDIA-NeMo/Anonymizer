@@ -1091,41 +1091,33 @@ def test_synchronous_profile_interrupt_drains_actual_callback(scripted_detection
                 asyncio.run_coroutine_threadsafe(physical.close(), physical.loop).result(timeout=10)
 
 
-def test_actual_lost_lease_survives_public_result_and_preview_projection(scripted_detection, monkeypatch, tmp_path):
+@pytest.mark.parametrize("preview", [False, True])
+def test_actual_lost_lease_survives_public_result_and_preview_projection(
+    scripted_detection, monkeypatch, tmp_path, preview
+):
     import json
     import pickle
 
     from anonymizer import AnonymizerConfig, AnonymizerInput
     from anonymizer.config.replace_strategies import Redact
-    from anonymizer.engine.detection._graph_profile import run_detection_redact
     from anonymizer.engine.graph_sdk._foreign_transport import ForeignLoopTransport
-    from anonymizer.engine.graph_sdk.executor import ExecutionLimits
-    from tests.interface.test_anonymizer_interface import _make_anonymizer
 
     def response(request, answer):
-        body = json.loads(request.content)
-        messages = json.dumps(body["messages"])
+        messages = json.dumps(json.loads(request.content)["messages"])
         if "Find untagged sensitive entities" in messages and "travels." in messages:
             raise httpx.ReadError("scripted uncertain source", request=request)
         return answer
 
     _modify_dd_responses(scripted_detection, monkeypatch, response)
-    designer, models, selected, _ = scripted_detection
-    projected = run_detection_redact(
-        _source(),
-        detection=detection_tests.EntityDetectionWorkflow(detection_tests.NddAdapter(designer)),
-        model_configs=models,
-        selected_models=selected,
-        detection_options=_options(),
-        limits=ExecutionLimits(
-            max_local_in_flight=1,
-            max_remote_outstanding=2,
-            max_runtime_artifacts=16,
-            max_runtime_artifact_bytes=10000,
-            max_collection_items=32,
-        ),
+    path = tmp_path / "public-input.csv"
+    _source().rename(columns={COL_TEXT: "text"}).to_csv(path, index=False)
+    facade = detection_tests.public_anonymizer(scripted_detection)
+    data = AnonymizerInput(source=str(path))
+    config = AnonymizerConfig(replace=Redact(), emit_telemetry=False)
+    public = (
+        facade.preview(config=config, data=data, num_records=2) if preview else facade.run(config=config, data=data)
     )
-    execution = projected._execution
+    execution = public._execution
     assert execution is not None and execution.requests.dispatched_count == 7
     assert len(execution.requests.remote_outstanding) == 1
     (lease,) = execution._retained_resources
@@ -1134,19 +1126,14 @@ def test_actual_lost_lease_survives_public_result_and_preview_projection(scripte
     assert isinstance(physical, NddPhysicalTransport)
     try:
         assert not physical.closed and all(not client._inner._closed for client in physical.clients)
-        path = tmp_path / "public-input.csv"
-        _source().rename(columns={COL_TEXT: "text"}).to_csv(path, index=False)
-        facade, _, _, _ = _make_anonymizer(replace_return=projected)
-        data, config = AnonymizerInput(source=str(path)), AnonymizerConfig(replace=Redact())
-        for public in (facade.run(config=config, data=data), facade.preview(config=config, data=data, num_records=2)):
-            assert public._execution is execution
-            assert public._execution._retained_resources[0] is lease
-            restored = pickle.loads(pickle.dumps(public))
-            assert restored._execution is None
-            pd.testing.assert_frame_equal(restored.dataframe, public.dataframe)
-            pd.testing.assert_frame_equal(restored.trace_dataframe, public.trace_dataframe)
-            assert restored.failed_records == public.failed_records
-            assert not physical.closed
+        assert public.dataframe["text_replaced"].tolist() == ["[REDACTED_FIRST_NAME] stays."]
+        assert len(public.failed_records) == 1
+        restored = pickle.loads(pickle.dumps(public))
+        assert restored._execution is None
+        pd.testing.assert_frame_equal(restored.dataframe, public.dataframe)
+        pd.testing.assert_frame_equal(restored.trace_dataframe, public.trace_dataframe)
+        assert restored.failed_records == public.failed_records
+        assert not physical.closed
     finally:
         asyncio.run_coroutine_threadsafe(physical.close(), physical.loop).result(timeout=10)
 

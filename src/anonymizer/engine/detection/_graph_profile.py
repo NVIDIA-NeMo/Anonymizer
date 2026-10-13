@@ -5,7 +5,7 @@
 Validator capacity follows the existing nonoverlapping detector span bound.
 An explicit capacity remains available for bounded development controls. Canonical chunk membership closes unused capacity per source. Source-bound
 Redact assessments, shared receipts and DD conversation restarts are qualified.
-The public facade does not use this profile.
+The public facade selects this profile for its supported production-owned Redact path.
 """
 
 from __future__ import annotations
@@ -209,6 +209,7 @@ def run_detection_redact(
     while actual DD clients remain on DD's existing foreign loop.
     """
     selected_redact = replace_method.model_copy(deep=True) if replace_method is not None else Redact()
+    selected_limits = replace(limits) if limits is not None else None
     started = Event()
     cancellation: list[tuple[asyncio.AbstractEventLoop, asyncio.Task[Any]]] = []
 
@@ -227,7 +228,7 @@ def run_detection_redact(
                 detection_options=detection_options,
                 replace_method=selected_redact,
                 pool=pool,
-                limits=limits,
+                limits=selected_limits,
             )
             return project_detection_redact(result)
         finally:
