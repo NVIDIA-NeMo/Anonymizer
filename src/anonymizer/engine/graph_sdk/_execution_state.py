@@ -137,8 +137,7 @@ class _ExecutionFacts:
 
 
 @dataclass(frozen=True, slots=True)
-class _ExecutionJob:
-    target: DatumId
+class _OperationJob:
     activation: ActivationKey
     node: NodeId
     policy: OperationExecutionPolicy
@@ -148,10 +147,22 @@ class _ExecutionJob:
     association: SemanticAssociation
 
 
+@dataclass(frozen=True, slots=True)
+class _ExecutionJob(_OperationJob):
+    target: DatumId
+
+
+@dataclass(frozen=True, slots=True)
+class _InvocationJob(_OperationJob):
+    """An operation activation owned by the invocation, with no target attribution."""
+
+
 def _group_external_jobs(jobs: list[_ExecutionJob]) -> list[list[_ExecutionJob]]:
     groups: list[list[_ExecutionJob]] = []
     for job in jobs:
-        shared = all(item.capability.attribution == "keyed_shared_request" for item in job.policy.implementations)
+        shared = job.policy.kind == "delegated" or all(
+            item.capability.attribution == "keyed_shared_request" for item in job.policy.implementations
+        )
         group = next(
             (group for group in groups if shared and group[0].node == job.node and group[0].policy == job.policy),
             None,

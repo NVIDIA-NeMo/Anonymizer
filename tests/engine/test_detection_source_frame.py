@@ -22,7 +22,7 @@ from data_designer.interface import DataDesigner
 from anonymizer import Anonymizer, AnonymizerConfig, AnonymizerInput
 from anonymizer.config.models import DetectionModelSelection, ReplaceModelSelection
 from anonymizer.config.replace_strategies import Redact
-from anonymizer.engine.constants import COL_REPLACED_TEXT, COL_TEXT
+from anonymizer.engine.constants import COL_REPLACED_TEXT, COL_TEXT, _jinja
 from anonymizer.engine.detection.detection_workflow import EntityDetectionWorkflow
 from anonymizer.engine.ndd.adapter import RECORD_ID_COLUMN, NddAdapter
 from anonymizer.engine.replace.replace_runner import ReplacementWorkflow
@@ -229,3 +229,186 @@ def test_real_detection_dropped_row_preserves_peer_and_failure(
         ("drop", "entity-detection", "Record missing from workflow output")
     ]
     assert calls == {"detector": 2, "validator": 1, "augmenter": 1, "readiness": 1}
+
+
+@pytest.mark.parametrize("unattributed_loss", [False, True])
+def test_real_dd_whole_frame_uses_invocation_readiness_and_source_requests(
+    scripted_detection, monkeypatch, unattributed_loss
+):
+    """One native DD column consumes the new owner; full detection remains unqualified."""
+    from contextvars import ContextVar
+    from dataclasses import replace
+
+    from data_designer.config import LLMTextColumnConfig
+
+    from anonymizer.engine.graph_sdk.blocking import BlockingPool
+    from anonymizer.engine.graph_sdk.executor import LocalCompleted, LocalFailure
+    from anonymizer.engine.graph_sdk.requests import (
+        AssociationResult,
+        ExactUsage,
+        ExternalSettlement,
+        PortArtifact,
+        StopUnknown,
+        TextArtifactValue,
+        TransportSuccess,
+    )
+    from anonymizer.engine.ndd._source_frame import current_source_work
+    from tests.graph_sdk.delegated_execution_fixtures import with_multiple_sources
+    from tests.graph_sdk.test_delegated_execution import _execute
+    from tests.graph_sdk.test_delegated_readiness import _ready_fixture
+    from tests.graph_sdk.test_foreign_resources import fixture as foreign_fixture
+
+    designer, models, _, calls = scripted_detection
+    owner_context = ContextVar("dd_owner")
+    exchange = ContextVar("dd_exchange")
+    seen = []
+    original_resources = designer._create_resource_provider
+    base, services, original, _, _, _ = _ready_fixture()
+    execution = with_multiple_sources(base)
+
+    class Forward:
+        async def dispatch(self, envelope):
+            transport, request, returned = exchange.get()
+            returned.append(await transport.handle_async_request(request))
+            seen.append((current_source_work(), envelope.associations[0].association))
+            return TransportSuccess(
+                results=(
+                    AssociationResult(
+                        association=envelope.associations[0].association,
+                        outcome="ready" if current_source_work() is None else "ok",
+                        outputs=(),
+                        consumed_context_ports=frozenset(),
+                    ),
+                ),
+                settlement=ExternalSettlement(
+                    request=envelope.request,
+                    disposition="completed",
+                    remote_stopped=True,
+                    usage=ExactUsage(input_units=1, output_units=1),
+                ),
+            )
+
+        async def cancel(self, request):
+            return StopUnknown()
+
+    class Gate(httpx.AsyncBaseTransport):
+        def __init__(self, inner, requests):
+            self.inner, self.requests = inner, requests
+
+        async def handle_async_request(self, request):
+            returned = []
+            token = exchange.set((self.inner, request, returned))
+            try:
+                work = current_source_work()
+                if work is None:
+                    await self.requests.readiness()
+                    await self.requests.probe()
+                else:
+                    await self.requests.request(original.slots[0], association=work.association)
+                assert len(returned) == 1
+                return returned[0]
+            finally:
+                exchange.reset(token)
+
+    def resources(*args, **kwargs):
+        provider = original_resources(*args, **kwargs)
+        factory = provider.model_registry._model_facade_factory
+
+        def facade(*args, **kwargs):
+            result = factory(*args, **kwargs)
+            result._client._inner._transport = Gate(result._client._inner._transport, owner_context.get())
+            return result
+
+        provider.model_registry._model_facade_factory = facade
+        return provider
+
+    monkeypatch.setattr(designer, "_create_resource_provider", resources)
+    if unattributed_loss:
+        preview = designer.preview
+
+        def lose_output(*args, **kwargs):
+            returned = preview(*args, **kwargs)
+            returned.dataset = returned.dataset.iloc[:1]
+            return returned
+
+        monkeypatch.setattr(designer, "preview", lose_output)
+
+    class Submit:
+        execution = "same_loop"
+
+        async def submit(self, inputs, requests):
+            source = pd.DataFrame({COL_TEXT: [item.inputs[0].value.text for item in inputs], "extra": [17, 29]})
+            frame = requests.bind_frame(source)
+            token = owner_context.set(requests)
+            try:
+                result = await asyncio.to_thread(
+                    NddAdapter(designer).run_workflow,
+                    source,
+                    source_frame=frame,
+                    model_configs=[models[0].model_copy(update={"skip_health_check": False})],
+                    columns=[LLMTextColumnConfig(name="detected", model_alias="detector", prompt=_jinja(COL_TEXT))],
+                    workflow_name="invocation-source-witness",
+                    preview_num_records=2,
+                )
+            except Exception as error:
+                from anonymizer.interface.errors import AnonymizerWorkflowError
+
+                assert unattributed_loss and isinstance(error, AnonymizerWorkflowError)
+                assert "unattributed source loss" in str(error)
+                return LocalFailure(failure="permanent")
+            finally:
+                owner_context.reset(token)
+            assert not unattributed_loss
+            assert result.source_positions == (0, 1) and result.dataframe["extra"].tolist() == [17, 29]
+            assert not result.failed_records
+            return LocalCompleted(
+                results=tuple(
+                    AssociationResult(
+                        association=item.association,
+                        outcome="ok",
+                        consumed_context_ports=frozenset(),
+                        outputs=(
+                            PortArtifact(
+                                port="context",
+                                artifact_type=item.inputs[0].artifact_type,
+                                artifact=None,
+                                value=TextArtifactValue(text=result.dataframe["detected"].iloc[position]),
+                            ),
+                        ),
+                    )
+                    for position, item in enumerate(inputs)
+                )
+            )
+
+    services = replace(
+        services,
+        handles=tuple(
+            replace(handle, delegated=Submit())
+            if handle.delegated
+            else replace(handle, transport=Forward())
+            if handle.transport
+            else handle
+            for handle in services.handles
+        ),
+        limits=replace(services.limits, max_runtime_artifacts=16, max_runtime_artifact_bytes=10000),
+    )
+
+    async def run():
+        pool = BlockingPool(max_workers=1)
+        try:
+            admitted, supplied, _, clients, worker, _ = await foreign_fixture(
+                ensure_async_engine_loop(), pool, base=(execution, services, original)
+            )
+            result = await _execute(admitted, supplied)
+            assert worker.local_users == pool.occupied == 0
+            assert all(client.closes == 1 for client in clients)
+            return result
+        finally:
+            await pool.close()
+
+    result = asyncio.run(run())
+    assert result.requests.dispatched_count == 3 and calls == {"detector": 3}
+    assert len(result.final_outputs) == (0 if unattributed_loss else 2) and result.invocation_state.complete
+    assert sum(work is None for work, _ in seen) == 1
+    assert len({work.association for work, _ in seen if work is not None}) == 2
+    assert all(work is None or work.association == association for work, association in seen)

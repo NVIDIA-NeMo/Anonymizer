@@ -275,6 +275,10 @@ class _Qualification:
 
     def reconcile(self) -> None:
         record = self.result.record
+        if getattr(self.result, "invocation_state", None) is not None or (
+            len(self.order) > 1 and any(policy.delegated is not None for policy in self.admitted.execution.policies)
+        ):
+            reject(EffectCode.UNSUPPORTED)
         if len(self.result.states) != len(self.order):
             reject(EffectCode.MISSING)
         for target, state in zip(self.order, self.result.states, strict=True):

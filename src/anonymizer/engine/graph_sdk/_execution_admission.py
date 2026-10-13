@@ -18,6 +18,7 @@ from anonymizer.engine.graph_sdk._effect_values import (
     require_literal,
 )
 from anonymizer.engine.graph_sdk._execution_delegated import WorkerDelegatedSubmitter
+from anonymizer.engine.graph_sdk._execution_frame import _invocation_workflows
 from anonymizer.engine.graph_sdk._execution_topology import _node_operation, _workflow_owners
 from anonymizer.engine.graph_sdk._execution_values import (
     _PLAN_KEY,
@@ -165,9 +166,12 @@ def admit_execution_plan(
     _validate_delegated_recipes(prepared, policies)
     _validate_assessments(prepared, policies, assessment_productions, assessment_limits)
     _validate_execution_fact_capacity(prepared, assessment_productions, assessment_limits)
+    target_workflow, invocation_workflow = _invocation_workflows(prepared, policies)
     return AdmittedExecutionPlan(
         _key=_PLAN_KEY,
         context=context,
+        target_workflow=target_workflow,
+        invocation_workflow=invocation_workflow,
         capabilities=capabilities,
         policies=frozenset(policies),
         decisions=frozenset(decisions),
@@ -581,7 +585,7 @@ def _validate_delegated_services(admitted: AdmittedExecutionPlan, services: Exec
         contract = policy.delegated
         if contract is None:
             continue
-        if len(prepared.target_occurrences) != 1 or len(contract.routes) != 1:
+        if len(contract.routes) != 1:
             reject(EffectCode.UNSUPPORTED)
         if not contract.followups <= {"correction"}:
             reject(EffectCode.UNSUPPORTED)

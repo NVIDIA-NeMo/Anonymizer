@@ -7,7 +7,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import Literal, Protocol, TypeAlias, runtime_checkable
+from typing import TYPE_CHECKING, Literal, Protocol, TypeAlias, runtime_checkable
 
 from anonymizer.engine.graph_sdk._effect_values import (
     EffectCode,
@@ -76,6 +76,7 @@ from anonymizer.graph.activation import (
     ActivationState,
 )
 from anonymizer.graph.workflow import (
+    AdmittedActivationWorkflow,
     ArtifactType,
     ContextInputRef,
     Node,
@@ -88,6 +89,12 @@ from anonymizer.graph.workflow import (
     WorkflowId,
     WorkflowInputRef,
 )
+
+if TYPE_CHECKING:
+    import pandas as pd
+
+    from anonymizer.engine.ndd._source_frame import WorkflowSourceFrame
+
 
 ExecutionKind: TypeAlias = Literal["local", "external", "decision", "delegated"]
 
@@ -566,6 +573,8 @@ _PLAN_KEY = object()
 
 @dataclass(frozen=True, slots=True, kw_only=True, repr=False, init=False)
 class AdmittedExecutionPlan(PrivateValue):
+    target_workflow: AdmittedActivationWorkflow
+    invocation_workflow: AdmittedActivationWorkflow | None
     context: AdmittedContextPlan
     capabilities: tuple[ImplementationCapability, ...]
     policies: frozenset[OperationExecutionPolicy]
@@ -688,7 +697,10 @@ class DelegatedRequests(Protocol):
         source_kind: ChildSourceKind = "initial",
         predecessor: PhysicalRequestId | None = None,
         evidence: ChildEvidence | None = None,
+        association: SemanticAssociation | None = None,
     ) -> PhysicalRequestId: ...
+
+    def bind_frame(self, dataframe: pd.DataFrame) -> WorkflowSourceFrame: ...
 
     async def readiness(self) -> PhysicalRequestId: ...
 
@@ -866,6 +878,7 @@ class ExecutionResult(PrivateValue):
     _passthrough_parents: tuple[tuple[DatumId, ActivationKey, str, ProvenanceKey], ...]
     record: CanonicalRecord
     states: tuple[ActivationState, ...]
+    invocation_state: ActivationState | None
     requests: RequestReceipt
     cleanup: tuple[CleanupFact, ...]
     pending_decisions: tuple[DecisionWait, ...]
@@ -880,6 +893,7 @@ class ExecutionResult(PrivateValue):
     def __init__(self, *, _key: object, **values: object) -> None:
         if _key is not _RESULT_KEY:
             raise TypeError("execution results are created by the executor")
+        object.__setattr__(self, "invocation_state", None)
         for name, value in values.items():
             object.__setattr__(self, name, value)
 

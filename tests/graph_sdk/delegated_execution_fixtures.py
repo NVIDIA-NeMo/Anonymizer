@@ -231,3 +231,53 @@ def with_parent_publication(execution: AdmittedExecutionPlan, *, readiness: bool
         ),
         assessment_limits=execution.assessment_limits,
     )
+
+
+def with_multiple_sources(execution: AdmittedExecutionPlan, count: int = 2) -> AdmittedExecutionPlan:
+    """Reuse the admitted operation recipe for distinct source occurrences."""
+    from tests.graph_sdk.test_preparation import _data
+
+    prepared = execution.context.prepared
+    data = _data(count)
+    original = next(iter(prepared.data.targets))
+    updated = prepare(
+        data=data,
+        workflow=prepared.workflow,
+        capabilities=execution.capabilities,
+        activation_limits=prepared.activation_limits,
+        selections=tuple(
+            ImplementationSelection(
+                node=item.node,
+                implementation=item.capability.implementation,
+                configuration=item.capability.configuration,
+            )
+            for item in prepared.implementations
+        ),
+        limits=replace(
+            prepared.limits,
+            max_bound_inputs=count * len(prepared.bound_inputs),
+            max_total_activation_slots=count * prepared.total_activation_slots,
+        ),
+        configuration=replace(prepared.configuration, hard_request_limit=None),
+        bound_inputs=tuple(
+            replace(item, target=target, source=target if item.source == original else item.source)
+            for target in data.targets
+            for item in prepared.bound_inputs
+        ),
+        state=prepared.state,
+    )
+    return admit_execution_plan(
+        context=admit_context_plan(
+            prepared=updated, bound_context=None, adaptive_retrievals=(), context_capabilities=()
+        ),
+        capabilities=execution.capabilities,
+        policies=tuple(execution.policies),
+        decisions=(),
+        assessment_productions=execution.assessment_productions,
+        assessment_limits=replace(
+            execution.assessment_limits,
+            max_assessment_facts=count * execution.assessment_limits.max_assessment_facts,
+            max_port_facts=count * execution.assessment_limits.max_port_facts,
+            max_provenance_edges=count * execution.assessment_limits.max_provenance_edges,
+        ),
+    )

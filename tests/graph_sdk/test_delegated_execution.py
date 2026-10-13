@@ -380,7 +380,7 @@ def test_authoritative_dispatch_rechecks_after_start_preflight(monkeypatch, reas
                     request=first.request,
                     results=(
                         AssociationResult(
-                            association=owner.job.association,
+                            association=owner._source_job().association,
                             outcome="ok",
                             outputs=(),
                             consumed_context_ports=frozenset(),

@@ -451,9 +451,13 @@ def _canonical_record(
     artifacts: frozenset[ArtifactRef],
     cancelled_unstarted: frozenset[ActivationKey],
     blocked_reasons: Mapping[ActivationKey, str | UnusedRetryCapacity],
+    *,
+    invocation_state: ActivationState | None = None,
 ) -> CanonicalRecord:
     del target_keys
     prepared = admitted.context.prepared
+    target_states = states
+    states = states + (() if invocation_state is None else (invocation_state,))
     all_entries = [entry for state in states for entry in state.entries]
     root_members = frozenset(entry.activation for entry in all_entries if entry.activation.parent is None)
     memberships: list[ExpectedMembership] = [
@@ -525,7 +529,7 @@ def _canonical_record(
             artifact_available=bool(artifacts),
             protection_available=False,
         )
-        for target, state in zip((item.target for item in prepared.target_occurrences), states, strict=True)
+        for target, state in zip((item.target for item in prepared.target_occurrences), target_states, strict=True)
     )
     return CanonicalRecord(
         plan=prepared.plan,

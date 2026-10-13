@@ -156,7 +156,13 @@ class _InvocationRuntime:
             self.services.context_resources, invocation
         )
         self.facts = _ExecutionFacts()
-        self.frame = _InvocationFrame(self.prepared, invocation, self.facts)
+        self.frame = _InvocationFrame(
+            self.prepared,
+            invocation,
+            self.facts,
+            target_workflow=admitted.target_workflow,
+            invocation_workflow=admitted.invocation_workflow,
+        )
         scope = InvocationRequestScope(invocation=self.invocation)
         self.request_authority = _RequestAuthority(
             state=initialize_requests(
@@ -202,7 +208,7 @@ class _InvocationRuntime:
             self._operation_spans[activation] = _Span("operation", session=span.session, parent=span.ordinal)
 
     def _close_observed_activations(self) -> None:
-        for state in self.frame.states:
+        for state in self.frame.all_states:
             for entry in state.entries:
                 span = self._activation_spans.get(entry.activation)
                 if (
@@ -217,7 +223,7 @@ class _InvocationRuntime:
         while True:
             scheduled = self._schedule_ready()
             self._close_observed_activations()
-            if all((state.complete for state in self.frame.states)) and (not self.submissions):
+            if all((state.complete for state in self.frame.all_states)) and (not self.submissions):
                 break
             if not self.submissions:
                 if not scheduled:
@@ -240,6 +246,21 @@ class _InvocationRuntime:
         return scheduled
 
     def _schedule_entry(self, target: DatumId, entry: ActivationEntry, external_jobs: list[_ExecutionJob]) -> bool:
+        shared = self.frame.invocation_source
+        if shared is not None:
+            predecessors = {
+                edge.before for edge in self.prepared.workflow.workflow.sequence if edge.after == entry.template
+            }
+            for predecessor in shared.state.entries:
+                if predecessor.template not in predecessors or predecessor.status == "success":
+                    continue
+                if predecessor.status in {"ready", "unstarted", "running"}:
+                    return False
+                self.frame.sources[target].state = advance_activation(
+                    state=self.frame.sources[target].state,
+                    event=CloseUnstarted(activation=entry.activation, category="blocked"),
+                )
+                return True
         if entry.template in self.delegated_slots:
             owner = next(
                 item
@@ -272,23 +293,31 @@ class _InvocationRuntime:
             )
             return True
         waiting_activations = {wait.activation for wait in self.control.pending.values()}
+        pending_groups = _group_external_jobs(external_jobs)
         local_jobs = sum(
-            (
-                item.policy.kind != "external" and item.activation not in waiting_activations
-                for jobs in self.submissions.values()
-                for item in jobs
-            )
+            any(item.policy.kind != "external" and item.activation not in waiting_activations for item in jobs)
+            for jobs in self.submissions.values()
+        ) + sum(group[0].policy.kind == "delegated" for group in pending_groups)
+        remote_jobs = sum(jobs[0].policy.kind == "external" for jobs in self.submissions.values()) + sum(
+            group[0].policy.kind == "external" for group in pending_groups
         )
-        remote_jobs = sum(jobs[0].policy.kind == "external" for jobs in self.submissions.values()) + len(
-            _group_external_jobs(external_jobs)
+        joins_pending_batch = any(item.node == entry.template and item.policy == policy for item in external_jobs) and (
+            policy.kind == "delegated"
+            or all(item.capability.attribution == "keyed_shared_request" for item in policy.implementations)
         )
-        joins_pending_batch = any(
-            (item.node == entry.template and item.policy == policy for item in external_jobs)
-        ) and all((item.capability.attribution == "keyed_shared_request" for item in policy.implementations))
         if policy.kind != "external":
             if self.services.limits.max_local_in_flight == 0:
                 reject(EffectCode.LIMIT_EXCEEDED)
-            if local_jobs >= self.services.limits.max_local_in_flight:
+            if not joins_pending_batch and local_jobs >= self.services.limits.max_local_in_flight:
+                return False
+        if policy.kind == "delegated" and len(self.frame.sources) > 1:
+            pending = {job.target for job in external_jobs if job.node == entry.template}
+            peers = [
+                next((item for item in source.state.entries if item.template == entry.template), None)
+                for other, source in self.frame.sources.items()
+                if other not in pending
+            ]
+            if any(peer is None or peer.status != "ready" for peer in peers):
                 return False
         remote_capacity_stalled = (
             policy.kind == "external"
@@ -465,7 +494,8 @@ class _InvocationRuntime:
                         self.request_resources,
                     )
         elif policy.kind == "delegated":
-            coroutine = _DelegatedOwner(self, job).run(handle)
+            external_jobs.append(job)
+            return
         elif policy.kind == "decision":
             coroutine = _run_decision(
                 self.admitted, policy, handle, job.association, job.inputs, job.activation, self.services, self.control
@@ -480,6 +510,14 @@ class _InvocationRuntime:
     def _dispatch_external(self, external_jobs: list[_ExecutionJob]) -> None:
         groups = _group_external_jobs(external_jobs)
         for group in groups:
+            if group[0].policy.kind == "delegated":
+                implementation = group[0].implementation
+                handle = self.handles[
+                    implementation.implementation, implementation.capability.operation, implementation.configuration
+                ]
+                task = asyncio.create_task(_DelegatedOwner(self, tuple(group)).run(handle))
+                self.submissions[task] = tuple(group)
+                continue
             physical = asyncio.create_task(
                 _run_external_batch(
                     self.admitted,
@@ -817,6 +855,7 @@ class _InvocationRuntime:
             frozenset(self.facts.values),
             frozenset(self.cancelled_unstarted),
             self.blocked_reasons,
+            invocation_state=None if self.frame.invocation_source is None else self.frame.invocation_source.state,
         )
         final_outputs = _final_outputs(self.prepared, self.frame.states, self.facts.produced, self.facts.provenance)
         return ExecutionResult(
@@ -831,6 +870,7 @@ class _InvocationRuntime:
             ),
             record=record,
             states=self.frame.states,
+            invocation_state=None if self.frame.invocation_source is None else self.frame.invocation_source.state,
             requests=request_receipt(self.request_authority.state),
             cleanup=cleanup,
             pending_decisions=(),

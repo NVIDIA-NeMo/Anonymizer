@@ -12,7 +12,12 @@ from typing import TYPE_CHECKING, ClassVar, Literal, TypeVar
 
 from anonymizer.engine.graph_sdk._effect_values import EffectCode, EffectRejected, PrivateValue, reject, require_count
 from anonymizer.engine.graph_sdk._execution_dispatch import _mapping, _run_local
-from anonymizer.engine.graph_sdk._execution_state import _ExecutionJob
+from anonymizer.engine.graph_sdk._execution_state import (
+    _ExecutionJob,
+    _InvocationJob,
+    _OperationJob,
+    _SubmissionResults,
+)
 from anonymizer.engine.graph_sdk._execution_values import (
     DelegatedRequests,
     ImplementationHandle,
@@ -35,6 +40,7 @@ from anonymizer.engine.graph_sdk.requests import (
     ChildEvidence,
     ChildSourceKind,
     DispatchEnvelope,
+    FailureClass,
     MarkLost,
     PhysicalRequestId,
     RequestChain,
@@ -47,10 +53,13 @@ from anonymizer.engine.graph_sdk.requests import (
     TransportSuccess,
 )
 from anonymizer.graph._values import TaskAttemptId
-from anonymizer.graph.activation import CloseUnstarted, Start, advance_activation
+from anonymizer.graph.activation import CloseUnstarted, ObserveTerminal, Start, advance_activation
 
 if TYPE_CHECKING:
+    import pandas as pd
+
     from anonymizer.engine.graph_sdk._execution_runtime import _InvocationRuntime
+    from anonymizer.engine.ndd._source_frame import WorkflowSourceFrame
 
 
 _T = TypeVar("_T")
@@ -120,6 +129,11 @@ class _WorkerBorrow(PrivateValue):
             self.owner.loop.call_soon_threadsafe(self.owner._cancel_worker, self)
             raise
 
+    def bind_frame(self, dataframe: pd.DataFrame) -> WorkflowSourceFrame:
+        if _WORKER_BORROW.get() is not self or self.expired:
+            reject(EffectCode.FOREIGN_OWNER)
+        return self.owner.runtime.frame.bind_source_frame(tuple(self.owner.jobs.values()), dataframe)
+
     async def request(
         self,
         slot: int,
@@ -127,9 +141,12 @@ class _WorkerBorrow(PrivateValue):
         source_kind: ChildSourceKind = "initial",
         predecessor: PhysicalRequestId | None = None,
         evidence: ChildEvidence | None = None,
+        association: SemanticAssociation | None = None,
     ) -> PhysicalRequestId:
         return await self._call(
-            lambda: self.owner.request(slot, source_kind=source_kind, predecessor=predecessor, evidence=evidence)
+            lambda: self.owner.request(
+                slot, source_kind=source_kind, predecessor=predecessor, evidence=evidence, association=association
+            )
         )
 
     async def readiness(self) -> PhysicalRequestId:
@@ -151,9 +168,11 @@ class _WorkerBorrow(PrivateValue):
 class _DelegatedOwner(PrivateValue):
     """Borrow one invocation owner; never own a separate ledger or scheduler."""
 
-    def __init__(self, runtime: _InvocationRuntime, job: _ExecutionJob) -> None:
+    def __init__(self, runtime: _InvocationRuntime, jobs: tuple[_ExecutionJob, ...]) -> None:
         self.runtime = runtime
-        self.job = job
+        self.jobs = {job.association: job for job in jobs}
+        self.policy = jobs[0].policy
+        self.inputs = tuple(value for job in jobs for value in job.inputs)
         self.loop = asyncio.get_running_loop()
         self.closed = False
         self.child: asyncio.Task[PhysicalRequestId | None] | None = None
@@ -162,25 +181,40 @@ class _DelegatedOwner(PrivateValue):
         self.submission: asyncio.Task[LocalResult] | None = None
         self.worker_borrow: _WorkerBorrow | None = None
         self.worker_call: asyncio.Task[object] | None = None
-        contract = job.policy.delegated
-        policy = job.policy.request
+        self.worker_calls: set[asyncio.Task[object]] = set()
+        self.worker_gate = asyncio.Lock()
+        contract = self.policy.delegated
+        policy = self.policy.request
         assert contract is not None and policy is not None
         self.contract = contract
-        self.chain = RequestChain(
-            chain=RequestChainId.new(scope=runtime.request_authority.state.scope),
-            associations=frozenset({job.association}),
-            policy=policy,
-            role="generation",
-            routes=contract.routes,
-            followups=contract.followups,
-        )
-        runtime.request_authority.bind(
-            RequestPolicyBinding.create(
-                association=job.association,
-                policies=frozenset({policy}),
+        self.chains = {}
+        for job in jobs:
+            chain = RequestChain(
+                chain=RequestChainId.new(scope=runtime.request_authority.state.scope),
+                associations=frozenset({job.association}),
+                policy=policy,
+                role="generation",
+                routes=contract.routes,
+                followups=contract.followups,
             )
-        )
-        runtime.request_authority.bind_chain(self.chain)
+            runtime.request_authority.bind(
+                RequestPolicyBinding.create(association=job.association, policies=frozenset({policy}))
+            )
+            runtime.request_authority.bind_chain(chain)
+            self.chains[job.association] = chain
+
+    def bind_frame(self, dataframe: pd.DataFrame) -> WorkflowSourceFrame:
+        self._check_submission()
+        return self.runtime.frame.bind_source_frame(tuple(self.jobs.values()), dataframe)
+
+    def _source_job(self, association: SemanticAssociation | None = None) -> _ExecutionJob:
+        if association is None:
+            if len(self.jobs) != 1:
+                reject(EffectCode.MISSING)
+            return next(iter(self.jobs.values()))
+        if association not in self.jobs:
+            reject(EffectCode.FOREIGN_OWNER)
+        return self.jobs[association]
 
     def _check(self) -> None:
         if self.closed or asyncio.get_running_loop() is not self.loop:
@@ -191,7 +225,16 @@ class _DelegatedOwner(PrivateValue):
         task = asyncio.current_task()
         if task is not self.submission and (self.worker_call is None or task is not self.worker_call):
             reject(EffectCode.UNSUPPORTED)
-        evidence = ChildEvidence(chain=self.chain.chain, request=request, kind="parser_rejected")
+        reservation = next(
+            (item for item in self.runtime.request_authority.state.dispatches if item.request == request), None
+        )
+        if (
+            reservation is None
+            or reservation.child is None
+            or reservation.child.chain not in {chain.chain for chain in self.chains.values()}
+        ):
+            reject(EffectCode.FOREIGN_OWNER)
+        evidence = ChildEvidence(chain=reservation.child.chain, request=request, kind="parser_rejected")
         self.runtime.request_authority.apply(AcceptChildEvidence(evidence=evidence))
         return evidence
 
@@ -202,6 +245,7 @@ class _DelegatedOwner(PrivateValue):
         source_kind: ChildSourceKind = "initial",
         predecessor: PhysicalRequestId | None = None,
         evidence: ChildEvidence | None = None,
+        association: SemanticAssociation | None = None,
     ) -> PhysicalRequestId:
         try:
             if slot not in self.contract.child_slots:
@@ -219,7 +263,10 @@ class _DelegatedOwner(PrivateValue):
             ):
                 reject(EffectCode.REQUEST_CAUSALITY)
             self._check_submission()
-            result = await self._borrow(self._request(slot, source_kind, predecessor, evidence, self.chain))
+            job = self._source_job(association)
+            result = await self._borrow(
+                self._request(slot, source_kind, predecessor, evidence, self.chains[job.association], job.association)
+            )
             assert result is not None
             return result
         except EffectRejected:
@@ -251,20 +298,30 @@ class _DelegatedOwner(PrivateValue):
         self._check()
         if self.worker_borrow is not borrow or _WORKER_BORROW.get() is not borrow or borrow.expired:
             reject(EffectCode.FOREIGN_OWNER)
-        if self.worker_call is not None or self.active or self.cancelled:
+        if len(self.jobs) == 1 and (self.worker_call is not None or self.active):
             reject(EffectCode.REQUEST_CAUSALITY)
-        self.worker_call = asyncio.current_task()
+        task = asyncio.current_task()
+        assert task is not None
+        self.worker_calls.add(task)
         try:
-            return await operation()
+            async with self.worker_gate:
+                self._check()
+                if borrow.expired or self.active or self.cancelled:
+                    reject(EffectCode.REQUEST_CAUSALITY)
+                self.worker_call = task
+                try:
+                    return await operation()
+                finally:
+                    self.worker_call = None
         finally:
-            self.worker_call = None
+            self.worker_calls.discard(task)
 
     async def _submit_worker(self, adapter: WorkerDelegatedSubmitter) -> LocalResult:
         borrow = _WorkerBorrow(self, adapter)
         self.worker_borrow = borrow
         context = copy_context()
         context.run(_WORKER_BORROW.set, borrow)
-        invocation = _BlockingInvocation(adapter, lambda: context.run(adapter._callback, self.job.inputs, borrow))
+        invocation = _BlockingInvocation(adapter, lambda: context.run(adapter._callback, self.inputs, borrow))
         try:
             value = await invocation.run(lambda: not self.cancelled, self)
             return (
@@ -276,10 +333,11 @@ class _DelegatedOwner(PrivateValue):
             borrow.expired = True
 
     def _satisfied(self, slot: int, outcomes: frozenset[str]) -> bool:
-        key = self.runtime.frame.sources[self.job.target].keys[slot]
+        source = self.runtime.frame.invocation_source or self.runtime.frame.sources[self._source_job().target]
+        key = source.keys[slot]
         return any(
             entry.activation == key and entry.status == "success" and entry.outcome in outcomes
-            for entry in self.runtime.frame.sources[self.job.target].state.entries
+            for entry in source.state.entries
         )
 
     async def readiness(self) -> PhysicalRequestId:
@@ -313,10 +371,9 @@ class _DelegatedOwner(PrivateValue):
         results: tuple[AssociationResult, ...] = ()
         try:
             request = await self._request(descriptor.request_slot, "initial", None, None, chain)
-            key = self.runtime.frame.sources[self.job.target].keys[descriptor.request_slot]
-            entry = next(
-                item for item in self.runtime.frame.sources[self.job.target].state.entries if item.activation == key
-            )
+            source = self.runtime.frame.invocation_source or self.runtime.frame.sources[self._source_job().target]
+            key = source.keys[descriptor.request_slot]
+            entry = next(item for item in source.state.entries if item.activation == key)
             if entry.status == "success":
                 assert entry.outcome is not None
                 mapping = _mapping(semantic.policy, "result", entry.outcome, None)
@@ -365,13 +422,19 @@ class _DelegatedOwner(PrivateValue):
     def cancelled(self) -> bool:
         return self.cancel_requested or self.runtime.control.cancelled
 
-    def _job(self, slot: int) -> _ExecutionJob:
+    def _job(self, slot: int, association: SemanticAssociation | None = None) -> _OperationJob:
         require_count(slot)
         if slot not in self.contract.owned_slots:
             reject(EffectCode.FOREIGN_OWNER)
         runtime = self.runtime
-        key = runtime.frame.sources[self.job.target].keys[slot]
-        entry = next(item for item in runtime.frame.sources[self.job.target].state.entries if item.activation == key)
+        shared = runtime.frame.invocation_source
+        source = (
+            shared
+            if shared is not None and slot in shared.keys
+            else runtime.frame.sources[self._source_job(association).target]
+        )
+        key = source.keys[slot]
+        entry = next(item for item in source.state.entries if item.activation == key)
         if key in runtime.attempts:
             reject(EffectCode.DUPLICATE)
         if entry.status != "ready":
@@ -381,8 +444,18 @@ class _DelegatedOwner(PrivateValue):
         attempt = TaskAttemptId.new(activation=key)
         policy = runtime.policies[entry.template]
         implementation = policy.implementations[0]
+        if source is shared:
+            return _InvocationJob(
+                activation=key,
+                node=entry.template,
+                policy=policy,
+                implementation=implementation,
+                inputs=(AssociationInput(association=SemanticAssociation(task=attempt), inputs=()),),
+                input_parents={},
+                association=SemanticAssociation(task=attempt),
+            )
         return _ExecutionJob(
-            target=self.job.target,
+            target=self._source_job(association).target,
             activation=key,
             node=entry.template,
             policy=policy,
@@ -399,11 +472,12 @@ class _DelegatedOwner(PrivateValue):
         predecessor: PhysicalRequestId | None,
         evidence: ChildEvidence | None,
         chain: RequestChain,
+        association: SemanticAssociation | None = None,
     ) -> PhysicalRequestId:
         runtime = self.runtime
         if len(runtime.request_authority.state.remote_outstanding) >= runtime.services.limits.max_remote_outstanding:
             reject(EffectCode.LIMIT_EXCEEDED)
-        leaf = self._job(slot)
+        leaf = self._job(slot, association)
         attempt = leaf.association.task
         policy = leaf.policy
         implementation = leaf.implementation
@@ -505,14 +579,22 @@ class _DelegatedOwner(PrivateValue):
 
     def _finish(
         self,
-        job: _ExecutionJob,
+        job: _OperationJob,
         mapping: RuntimeOutcome,
         results: tuple[AssociationResult, ...],
         assessments: tuple[LocalAssessmentResult, ...] = (),
     ) -> None:
         runtime = self.runtime
-        mapping, results, checkpoint, staged = runtime._stage_outputs(job, mapping, results, assessments)
-        runtime._advance_completed(job, mapping, results, checkpoint, staged)
+        if isinstance(job, _InvocationJob):
+            source = runtime.frame.occurrence(None)
+            source.state = advance_activation(
+                state=source.state,
+                event=ObserveTerminal(activation=job.activation, outcome=mapping.outcome, category=mapping.category),
+            )
+        else:
+            assert isinstance(job, _ExecutionJob)
+            mapping, results, checkpoint, staged = runtime._stage_outputs(job, mapping, results, assessments)
+            runtime._advance_completed(job, mapping, results, checkpoint, staged)
         runtime.control.scheduler_changed.set()
         span = runtime._operation_spans[job.activation]
         span.outcome = mapping.category
@@ -530,16 +612,15 @@ class _DelegatedOwner(PrivateValue):
         if not task.cancelled():
             task.exception()  # Retrieve failures even when the submitting observer left.
 
-    def _prepare(self, leaf: _ExecutionJob, attempt: TaskAttemptId) -> Callable[[], None]:
+    def _prepare(self, leaf: _OperationJob, attempt: TaskAttemptId) -> Callable[[], None]:
         self._check()
         runtime = self.runtime
         # Compute all rejecting activation work before the driver's authoritative Dispatch.
-        state = advance_activation(
-            state=runtime.frame.sources[leaf.target].state, event=Start(activation=leaf.activation)
-        )
+        source = runtime.frame.occurrence(leaf.target if isinstance(leaf, _ExecutionJob) else None)
+        state = advance_activation(state=source.state, event=Start(activation=leaf.activation))
 
         def commit() -> None:
-            runtime.frame.sources[leaf.target].state = state
+            source.state = state
             runtime.attempts[leaf.activation] = attempt
 
         return commit
@@ -547,28 +628,41 @@ class _DelegatedOwner(PrivateValue):
     def close(self) -> bool:
         self.closed = True
         complete = True
-        unused = None if self.cancelled or self.request_rejected else self.runtime._unused_tail(self.job)
-        for slot in self.contract.owned_slots:
-            key = self.runtime.frame.sources[self.job.target].keys[slot]
-            state = self.runtime.frame.sources[self.job.target].state
-            entry = next(item for item in state.entries if item.activation == key)
-            if entry.status in {"ready", "unstarted"}:
-                complete &= unused is not None and unused[0] == key
-                self.runtime.frame.sources[self.job.target].state = advance_activation(
-                    state=state,
-                    event=CloseUnstarted(activation=key, category="blocked"),
-                )
+        for job in self.jobs.values():
+            unused = None if self.cancelled or self.request_rejected else self.runtime._unused_tail(job)
+            for slot in (
+                self.contract.child_slots
+                if self.runtime.frame.invocation_source is not None
+                else self.contract.owned_slots
+            ):
+                key = self.runtime.frame.sources[job.target].keys[slot]
+                state = self.runtime.frame.sources[job.target].state
+                entry = next(item for item in state.entries if item.activation == key)
+                if entry.status in {"ready", "unstarted"}:
+                    complete &= unused is not None and unused[0] == key
+                    self.runtime.frame.sources[job.target].state = advance_activation(
+                        state=state, event=CloseUnstarted(activation=key, category="blocked")
+                    )
+        source = self.runtime.frame.invocation_source
+        if source is not None:
+            for entry in tuple(source.state.entries):
+                if entry.status in {"ready", "unstarted"}:
+                    complete = False
+                    source.state = advance_activation(
+                        state=source.state, event=CloseUnstarted(activation=entry.activation, category="blocked")
+                    )
         return complete
 
-    async def run(
-        self, handle: ImplementationHandle
-    ) -> tuple[RuntimeOutcome, tuple[AssociationResult, ...], tuple[LocalAssessmentResult, ...]]:
+    def _failure(self, condition: str, failure: FailureClass | None = None) -> _SubmissionResults:
+        return {association: (_mapping(self.policy, condition, None, failure), (), ()) for association in self.jobs}
+
+    async def run(self, handle: ImplementationHandle) -> _SubmissionResults:
         assert handle.delegated is not None
         runtime = self.runtime
         task = asyncio.create_task(
             self._submit_worker(handle.delegated)
             if type(handle.delegated) is WorkerDelegatedSubmitter
-            else handle.delegated.submit(self.job.inputs, self)
+            else handle.delegated.submit(self.inputs, self)
         )
         self.submission = task
         try:
@@ -581,27 +675,39 @@ class _DelegatedOwner(PrivateValue):
             self.cancel_requested = True
             if not task.done():
                 task.cancel()
-            return _mapping(self.job.policy, "cancel_after_start", None, None), (), ()
+            return self._failure("cancel_after_start")
         except Exception:
-            return _mapping(self.job.policy, "failure", None, "implementation_exception"), (), ()
+            return self._failure("failure", "implementation_exception")
         finally:
             if self.child is not None:
                 await self._drain(self.child)
             await self._drain(task)
-            if self.worker_call is not None:
-                await self._drain(self.worker_call)
+            for worker_call in tuple(self.worker_calls):
+                await self._drain(worker_call)
             if self.child is not None:
                 await self._drain(self.child)
             complete = self.close()
         if not complete:
-            return _mapping(self.job.policy, "failure", None, "implementation_exception"), (), ()
+            return self._failure("failure", "implementation_exception")
         if type(result) is LocalFailure:
-            return _mapping(self.job.policy, "failure", None, inspect_failure(result.failure)), (), ()
+            return self._failure("failure", inspect_failure(result.failure))
         if type(result) is not LocalCompleted:
-            return _mapping(self.job.policy, "failure", None, "malformed_response"), (), ()
+            return self._failure("failure", "malformed_response")
         invalid = inspect_associations(
-            result.results, self.chain.associations, runtime.admitted.ingress_limits, assessments=result.assessments
+            result.results, frozenset(self.jobs), runtime.admitted.ingress_limits, assessments=result.assessments
         )
-        if invalid is None or invalid or result.results[0].outcome not in self.job.policy.result_outcomes:
-            return _mapping(self.job.policy, "failure", None, "malformed_response"), (), ()
-        return _mapping(self.job.policy, "result", result.results[0].outcome, None), result.results, result.assessments
+        if (
+            invalid is None
+            or invalid
+            or any(item.outcome not in self.policy.result_outcomes for item in result.results)
+        ):
+            return self._failure("failure", "malformed_response")
+        return {
+            item.association: (
+                _mapping(self.policy, "result", item.outcome, None),
+                (item,),
+                tuple(value for value in result.assessments if value.association == item.association),
+            )
+            for item in result.results
+            if isinstance(item.association, SemanticAssociation)
+        }

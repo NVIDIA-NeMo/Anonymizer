@@ -13,7 +13,7 @@ import uuid
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from contextvars import ContextVar
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import wraps
 from pathlib import Path
 from threading import Lock, RLock
@@ -317,6 +317,7 @@ class NddAdapter:
         columns: list[ColumnConfigT],
         workflow_name: str,
         preview_num_records: int | None = None,
+        source_frame: WorkflowSourceFrame | None = None,
     ) -> WorkflowRunResult:
         """Run one workflow and return output with missing-record tracking.
 
@@ -340,7 +341,12 @@ class NddAdapter:
             `WorkflowRunResult` with the output DataFrame and any `FailedRecord` entries.
         """
         workflow_input_df = self._attach_record_ids(df=df)
-        source_frame = WorkflowSourceFrame.capture(workflow_input_df)
+        if source_frame is None:
+            source_frame = WorkflowSourceFrame.capture(workflow_input_df)
+        elif not source_frame.dataframe.equals(df):
+            raise AnonymizerWorkflowError("Workflow source frame does not match submitted data")
+        else:
+            source_frame = replace(source_frame, dataframe=workflow_input_df)
         logger.debug("NDD workflow '%s' starting with %d records", workflow_name, len(workflow_input_df))
         col_names = [c.name for c in columns]
         logger.debug("NDD workflow '%s': %d columns %s", workflow_name, len(col_names), col_names)
@@ -379,7 +385,12 @@ class NddAdapter:
 
             task_traces: list[_TaskTrace] = []
             try:
-                with self._run_lock, usage_probe, _temporary_dd_task_trace(self._data_designer, collector=collector):
+                with (
+                    self._run_lock,
+                    usage_probe,
+                    _temporary_dd_task_trace(self._data_designer, collector=collector),
+                    source_frame.bind_generators(self._data_designer, frozenset(col_names)) as source_failures,
+                ):
                     if preview_num_records is None:
                         run_results = self._data_designer.create(
                             config_builder,
@@ -399,6 +410,8 @@ class NddAdapter:
                         else:
                             output_df = preview_results.dataset
                     output_df, source_positions = source_frame.project(output_df, requested=record_count)
+                    if source_frame.associations and set(range(record_count)) - set(source_positions) - source_failures:
+                        raise AnonymizerWorkflowError("Workflow output has unattributed source loss")
             except Exception as exc:
                 logger.warning(
                     "Workflow failed for %d input record(s) on model(s) %s: %s",
