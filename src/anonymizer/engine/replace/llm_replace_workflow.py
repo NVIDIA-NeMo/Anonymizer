@@ -26,7 +26,7 @@ from anonymizer.engine.constants import (
 from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter
 from anonymizer.engine.ndd.model_loader import resolve_model_alias
 from anonymizer.engine.prompt_utils import substitute_placeholders
-from anonymizer.engine.row_partitioning import merge_and_reorder, split_rows
+from anonymizer.engine.row_partitioning import ROW_ORDER_COL, merge_and_reorder, resolve_source_positions, split_rows
 from anonymizer.engine.schemas import EntitiesByValueSchema, EntityReplacementMapSchema
 
 logger = logging.getLogger("anonymizer.replace.llm_workflow")
@@ -43,6 +43,7 @@ _INTERNAL_COLUMNS = (COL_ENTITY_EXAMPLES, COL_ENTITIES_FOR_REPLACE, COL_ENTITIES
 class LlmReplaceResult:
     dataframe: pd.DataFrame
     failed_records: list[FailedRecord]
+    source_positions: tuple[int, ...] | None = None
 
 
 class LlmReplaceWorkflow:
@@ -81,6 +82,7 @@ class LlmReplaceWorkflow:
             return LlmReplaceResult(
                 dataframe=passthrough_only.drop(columns=list(_INTERNAL_COLUMNS), errors="ignore"),
                 failed_records=[],
+                source_positions=tuple(range(len(dataframe))),
             )
 
         # Only rows with actual entities are sent to the LLM.
@@ -104,7 +106,10 @@ class LlmReplaceWorkflow:
             workflow_name="replace-map-generation",
             preview_num_records=effective_preview_num_records,
         )
+        positions = resolve_source_positions(entity_rows, run_result.dataframe, run_result.source_positions)
         output_df = run_result.dataframe.copy()
+        output_df[ROW_ORDER_COL] = entity_rows.iloc[list(positions)][ROW_ORDER_COL].to_numpy()
+        surviving = tuple(sorted([*output_df[ROW_ORDER_COL].tolist(), *passthrough_rows[ROW_ORDER_COL].tolist()]))
         # Drop any LLM-returned replacements that were not requested for this row.
         output_df[COL_REPLACEMENT_MAP] = output_df.apply(
             lambda row: _filter_replacement_map_to_input_entities(
@@ -120,6 +125,7 @@ class LlmReplaceWorkflow:
         return LlmReplaceResult(
             dataframe=combined.drop(columns=list(_INTERNAL_COLUMNS), errors="ignore"),
             failed_records=run_result.failed_records,
+            source_positions=surviving,
         )
 
 

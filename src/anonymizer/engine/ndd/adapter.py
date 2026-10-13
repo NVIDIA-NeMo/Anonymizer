@@ -62,7 +62,7 @@ class WorkflowRunResult:
 
     dataframe: pd.DataFrame
     failed_records: list[FailedRecord]
-    source_positions: tuple[int, ...] = ()
+    source_positions: tuple[int, ...] | None = None
 
 
 @dataclass(frozen=True)
@@ -470,15 +470,16 @@ class NddAdapter:
             usage_probe.flush_private_trace_records()
 
         logger.debug("NDD workflow '%s' returned %d records", workflow_name, len(output_df))
-        failed_records = self._detect_missing_records(
-            workflow_name=workflow_name,
-            input_df=(
-                workflow_input_df.iloc[:preview_num_records].copy()
-                if preview_num_records is not None
-                else workflow_input_df
-            ),
-            output_df=output_df,
-        )
+        surviving_positions = set(source_positions)
+        missing = workflow_input_df.iloc[[index for index in range(record_count) if index not in surviving_positions]]
+        failed_records = [
+            FailedRecord(
+                record_id=record_id,
+                step=workflow_name,
+                reason="Record missing from workflow output",
+            )
+            for record_id in sorted(missing[RECORD_ID_COLUMN].astype(str).tolist())
+        ]
         _success_model_usage = usage_probe.model_usage()
         with self._run_lock:
             self._add_input_tokens(_success_model_usage)
@@ -583,70 +584,6 @@ class NddAdapter:
         row_data = {**row.to_dict(), "__row_idx__": row.name}
         serialized = json.dumps(row_data, default=str, sort_keys=True, separators=(",", ":"))
         return uuid.uuid5(uuid.NAMESPACE_URL, serialized).hex
-
-    def _detect_missing_records(
-        self,
-        *,
-        workflow_name: str,
-        input_df: pd.DataFrame,
-        output_df: pd.DataFrame,
-    ) -> list[FailedRecord]:
-        if RECORD_ID_COLUMN not in input_df.columns:
-            logger.warning(
-                "Missing-record detection skipped: input DataFrame lacks the record-tracking "
-                "column, so the adapter cannot verify whether any of %d input record(s) were "
-                "dropped.",
-                len(input_df),
-            )
-            logger.debug(
-                "Workflow '%s' detection skipped: input missing '%s'; input_columns=%s",
-                workflow_name,
-                RECORD_ID_COLUMN,
-                list(input_df.columns),
-            )
-            return []
-        if RECORD_ID_COLUMN not in output_df.columns:
-            input_cols = set(input_df.columns)
-            output_cols = set(output_df.columns)
-            other_dropped = sorted((input_cols - output_cols) - {RECORD_ID_COLUMN})
-            added = sorted(output_cols - input_cols)
-            logger.warning(
-                "Missing-record detection disabled: workflow output does not contain "
-                "the record-tracking column, so all %d input record(s) are being marked as "
-                "failed. This typically means seed-column pass-through is disabled or a "
-                "user-supplied column config overwrote it. Other input columns that were "
-                "also dropped: %s. Columns added by the workflow: %s.",
-                len(input_df),
-                other_dropped,
-                added,
-            )
-            logger.debug(
-                "Workflow '%s' detection disabled: output missing '%s'; input_columns=%s output_columns=%s",
-                workflow_name,
-                RECORD_ID_COLUMN,
-                list(input_df.columns),
-                list(output_df.columns),
-            )
-            return [
-                FailedRecord(
-                    record_id=record_id,
-                    step=workflow_name,
-                    reason=f"Output is missing required tracking column '{RECORD_ID_COLUMN}'",
-                )
-                for record_id in input_df[RECORD_ID_COLUMN].astype(str).tolist()
-            ]
-
-        input_ids = set(input_df[RECORD_ID_COLUMN].astype(str).tolist())
-        output_ids = set(output_df[RECORD_ID_COLUMN].astype(str).tolist())
-        missing_ids = sorted(input_ids - output_ids)
-        return [
-            FailedRecord(
-                record_id=record_id,
-                step=workflow_name,
-                reason="Record missing from workflow output",
-            )
-            for record_id in missing_ids
-        ]
 
 
 def _extract_workflow_model_aliases(columns: list[ColumnConfigT]) -> list[str]:

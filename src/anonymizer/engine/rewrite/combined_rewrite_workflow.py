@@ -524,7 +524,9 @@ class CombinedRewriteWorkflow(RewriteWorkflow):
                 preview_num_records=preview_num_records,
             )
             restore_empty_skipped_span_label_counts(run_result.dataframe)
-            entity_rows = _join_new_columns(entity_rows, run_result.dataframe)
+            entity_rows = _join_new_columns(
+                entity_rows, run_result.dataframe, source_positions=run_result.source_positions
+            )
             entity_rows = entity_rows.drop(columns=graph.internal_columns, errors="ignore")
             _apply_passthrough_defaults(passthrough_rows)
             result = RewriteResult(

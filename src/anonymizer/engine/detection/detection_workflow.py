@@ -51,6 +51,7 @@ from anonymizer.engine.detection.postprocess import (
 from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter
 from anonymizer.engine.ndd.model_loader import resolve_model_alias, resolve_model_aliases
 from anonymizer.engine.prompt_utils import substitute_placeholders
+from anonymizer.engine.row_partitioning import resolve_source_positions
 from anonymizer.engine.schemas import (
     AugmentedEntitiesSchema,
     EntitiesByValueSchema,
@@ -62,6 +63,7 @@ from anonymizer.engine.workflow_columns.detection.config import (
     DetectionTransformConfig,
     DetectionTransformOperation,
 )
+from anonymizer.interface.errors import AnonymizerWorkflowError
 from anonymizer.measurement import stage_timer
 
 if TYPE_CHECKING:
@@ -140,11 +142,13 @@ class EntityDetectionWorkflow:
             **({"source_frame": source_frame} if source_frame is not None else {}),
             **({"request_bridge": request_bridge} if request_bridge is not None else {}),
         )
+        if source_frame is not None and detection_result.source_positions is None:
+            raise AnonymizerWorkflowError("Bound detection result is missing source correspondence")
         detected_df = detection_result.dataframe.copy()
         return EntityDetectionResult(
             dataframe=detected_df,
             failed_records=detection_result.failed_records,
-            source_positions=detection_result.source_positions if source_frame is not None else (),
+            source_positions=resolve_source_positions(dataframe, detected_df, detection_result.source_positions),
         )
 
     def _build_detection_spec(
@@ -390,7 +394,11 @@ class EntityDetectionWorkflow:
             latent_df[COL_LATENT_ENTITIES] = latent_df[COL_LATENT_ENTITIES].apply(
                 lambda raw: _filter_excluded_latent_entities(raw, excluded_entity_labels)
             )
-        return EntityDetectionResult(dataframe=latent_df, failed_records=latent_result.failed_records)
+        return EntityDetectionResult(
+            dataframe=latent_df,
+            failed_records=latent_result.failed_records,
+            source_positions=resolve_source_positions(dataframe, latent_df, latent_result.source_positions),
+        )
 
     def run(
         self,
@@ -459,9 +467,13 @@ class EntityDetectionWorkflow:
                 )
                 final_df = latent_result.dataframe.copy()
                 final_failures = [*detected_result.failed_records, *latent_result.failed_records]
+                final_positions = tuple(
+                    detected_result.source_positions[index] for index in latent_result.source_positions
+                )
             else:
                 final_df = detected_result.dataframe.copy()
                 final_failures = detected_result.failed_records
+                final_positions = detected_result.source_positions
 
             # When entity_labels is explicitly provided (even if it matches DEFAULT_ENTITY_LABELS),
             # the augmenter is strict and out-of-scope labels are filtered.
@@ -482,7 +494,7 @@ class EntityDetectionWorkflow:
             result = EntityDetectionResult(
                 dataframe=final_df,
                 failed_records=final_failures,
-                source_positions=detected_result.source_positions if source_frame is not None else (),
+                source_positions=final_positions,
             )
             measurement.update(
                 output_row_count=len(result.dataframe),

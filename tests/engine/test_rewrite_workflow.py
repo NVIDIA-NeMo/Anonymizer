@@ -164,7 +164,9 @@ def _standard_side_effect(
 
 def _mock_replace(mock_cls: Mock, replace_df: pd.DataFrame) -> None:
     """Configure a patched LlmReplaceWorkflow class to return replace_df."""
-    mock_cls.return_value.generate_map_only.return_value = Mock(dataframe=replace_df, failed_records=[])
+    mock_cls.return_value.generate_map_only.return_value = Mock(
+        dataframe=replace_df, failed_records=[], source_positions=None
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -305,6 +307,7 @@ def test_failed_records_accumulated_across_steps(
     with patch(_REPLACE_PATCH) as mock_replace_cls:
         mock_replace_cls.return_value.generate_map_only.return_value = Mock(
             dataframe=stub_replace_df,
+            source_positions=None,
             failed_records=[FailedRecord(record_id="d", step="replace-map-generation", reason="timeout")],
         )
         wf = RewriteWorkflow(adapter=adapter)

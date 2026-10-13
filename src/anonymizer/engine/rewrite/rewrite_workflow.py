@@ -46,7 +46,7 @@ from anonymizer.engine.rewrite.rewrite_generation import (
 )
 from anonymizer.engine.rewrite.sensitivity_disposition import SensitivityDispositionWorkflow
 from anonymizer.engine.rewrite.workflow_utils import derive_seed_columns, select_seed_cols
-from anonymizer.engine.row_partitioning import merge_and_reorder, split_rows
+from anonymizer.engine.row_partitioning import merge_and_reorder, resolve_source_positions, split_rows
 from anonymizer.engine.schemas import EntitiesByValueSchema
 from anonymizer.measurement import stage_timer
 
@@ -123,41 +123,16 @@ def _join_new_columns(
     target: pd.DataFrame,
     source: pd.DataFrame,
     *,
+    source_positions: tuple[int, ...] | None = None,
     overwrite: bool = False,
     seed_cols: list[str] | None = None,
 ) -> pd.DataFrame:
-    """Copy columns from source into target using positional alignment.
-
-    When the adapter drops rows (tracked via ``failed_records``), source
-    will be shorter than target. We align on ``RECORD_ID_COLUMN`` to
-    drop the failed rows from target, then join the new columns from
-    source onto the surviving rows.
-
-    Set ``overwrite=True`` to update existing columns that the workflow
-    produced (e.g. re-evaluate after repair). Seed columns passed through
-    the adapter are excluded from overwrite to prevent re-serialization artifacts.
-    """
-    if len(source) != len(target):
-        dropped = len(target) - len(source)
-        logger.warning(
-            "Row count mismatch: target=%d, source=%d; dropping %d failed row(s).",
-            len(target),
-            len(source),
-            dropped,
-        )
-        surviving_ids = set(source[RECORD_ID_COLUMN].astype(str))
-        target = (
-            target[target[RECORD_ID_COLUMN].astype(str).isin(surviving_ids)]
-            .sort_values(RECORD_ID_COLUMN)
-            .reset_index(drop=True)
-        )
-        source = source.sort_values(RECORD_ID_COLUMN).reset_index(drop=True)
-
-    skip = set(seed_cols) if seed_cols else set()
+    """Copy stage outputs onto their surviving source rows, excluding seed columns."""
+    positions = resolve_source_positions(target, source, source_positions)
+    target = target.iloc[list(positions)].copy().reset_index(drop=True)
+    skip = set(seed_cols or ())
     for col in source.columns:
-        if col in skip:
-            continue
-        if col not in target.columns or overwrite:
+        if col not in skip and (col not in target.columns or overwrite):
             target[col] = source[col].values
     return target
 
@@ -298,7 +273,9 @@ class RewriteWorkflow:
                 model_configs=model_configs,
                 selected_models=replace_model_selection,
             )
-            entity_rows = _join_new_columns(entity_rows, replace_result.dataframe)
+            entity_rows = _join_new_columns(
+                entity_rows, replace_result.dataframe, source_positions=replace_result.source_positions
+            )
             all_failed.extend(replace_result.failed_records)
 
             # --- Step 2: domain, disposition, QA, rewrite (single adapter call) ---
@@ -327,7 +304,9 @@ class RewriteWorkflow:
                 preview_num_records=preview_num_records,
             )
             restore_empty_skipped_span_label_counts(pipeline_result.dataframe)
-            entity_rows = _join_new_columns(entity_rows, pipeline_result.dataframe)
+            entity_rows = _join_new_columns(
+                entity_rows, pipeline_result.dataframe, source_positions=pipeline_result.source_positions
+            )
             all_failed.extend(pipeline_result.failed_records)
 
             # --- Step 5: evaluate-repair loop ---
@@ -385,7 +364,13 @@ class RewriteWorkflow:
             workflow_name="rewrite-evaluate-0",
             preview_num_records=preview_num_records,
         )
-        df = _join_new_columns(df, eval_result.dataframe, overwrite=True, seed_cols=eval_seed_cols)
+        df = _join_new_columns(
+            df,
+            eval_result.dataframe,
+            source_positions=eval_result.source_positions,
+            overwrite=True,
+            seed_cols=eval_seed_cols,
+        )
         _normalize_evaluation_payloads(df)
         all_failed.extend(eval_result.failed_records)
 
@@ -431,7 +416,7 @@ class RewriteWorkflow:
             all_failed.extend(repair_result.failed_records)
 
             repaired = repair_result.dataframe
-            failing_rows = _join_new_columns(failing_rows, repaired)
+            failing_rows = _join_new_columns(failing_rows, repaired, source_positions=repair_result.source_positions)
             if COL_REWRITTEN_TEXT_NEXT in failing_rows.columns:
                 failing_rows[COL_REWRITTEN_TEXT] = failing_rows[COL_REWRITTEN_TEXT_NEXT]
             failing_rows[COL_REPAIR_ITERATIONS] = failing_rows[COL_REPAIR_ITERATIONS].apply(lambda x: int(x) + 1)
@@ -447,7 +432,11 @@ class RewriteWorkflow:
                 preview_num_records=preview_num_records,
             )
             failing_rows = _join_new_columns(
-                failing_rows, eval_result.dataframe, overwrite=True, seed_cols=reeval_seed_cols
+                failing_rows,
+                eval_result.dataframe,
+                source_positions=eval_result.source_positions,
+                overwrite=True,
+                seed_cols=reeval_seed_cols,
             )
             _normalize_evaluation_payloads(failing_rows)
             all_failed.extend(eval_result.failed_records)
