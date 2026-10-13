@@ -4,9 +4,12 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 
-from anonymizer.config.replace_strategies import Redact
+from pydantic import TypeAdapter
+
+from anonymizer.config.replace_strategies import LocalReplaceMethod, Redact
 from anonymizer.engine.detection.artifacts import EntitySpansValue
 from anonymizer.engine.graph_sdk.capabilities import (
     ConfigBoolean,
@@ -63,6 +66,26 @@ def redact_strategy(configuration: FrozenConfig) -> Redact:
         format_template="".join(item.value for item in template.items if isinstance(item, ConfigText)),
         normalize_label=normalize.value,
     )
+
+
+def local_configuration(strategy: LocalReplaceMethod) -> FrozenConfig:
+    """Freeze local options with the public discriminator; retain Redact's established shape."""
+    if isinstance(strategy, Redact):
+        return redact_configuration(strategy)
+    return FrozenConfig(
+        fields=(ConfigField(name=type(strategy).__name__.lower(), value=ConfigText(value=strategy.model_dump_json())),)
+    )
+
+
+def local_strategy(configuration: FrozenConfig) -> LocalReplaceMethod:
+    """Reconstruct the existing public model from the single admitted configuration."""
+    if len(configuration.fields) == 1:
+        (field,) = configuration.fields
+        if field.name in {"hash", "annotate"} and type(field.value) is ConfigText:
+            return TypeAdapter(LocalReplaceMethod).validate_python(
+                {**json.loads(field.value.value), "kind": field.name}
+            )
+    return redact_strategy(configuration)
 
 
 @dataclass(frozen=True, slots=True)

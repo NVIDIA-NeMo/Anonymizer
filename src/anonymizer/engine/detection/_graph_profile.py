@@ -24,7 +24,7 @@ from data_designer.config import ModelConfig
 from data_designer.engine.dataset_builders.utils.async_concurrency import ensure_async_engine_loop
 
 from anonymizer.config.models import DetectionModelSelection, ReplaceModelSelection
-from anonymizer.config.replace_strategies import Redact
+from anonymizer.config.replace_strategies import Annotate, Hash, Redact, ReplaceMethod
 from anonymizer.engine.constants import COL_AUGMENTED_ENTITIES, COL_RAW_DETECTED, COL_TEXT, COL_VALIDATION_DECISIONS
 from anonymizer.engine.detection._graph_invocation import DetectionRedactInvocation
 from anonymizer.engine.detection.artifacts import ENTITY_SPANS_TYPE
@@ -83,6 +83,7 @@ from anonymizer.engine.replace._graph_redact import (
     REDACT_MEANING,
     REDACT_MISMATCH,
     RedactAssessment,
+    local_configuration,
     redact_configuration,
 )
 from anonymizer.engine.replace.replace_runner import ReplacementResult, ReplacementWorkflow
@@ -201,7 +202,7 @@ def run_detection_redact(
     selected_models: DetectionModelSelection,
     detection_options: Mapping[str, Any],
     limits: ExecutionLimits | None = None,
-    replace_method: Redact | None = None,
+    replace_method: ReplaceMethod | None = None,
     replacement: ReplacementWorkflow | None = None,
     replacement_models: ReplaceModelSelection | None = None,
     opaque: bool = False,
@@ -215,7 +216,16 @@ def run_detection_redact(
     """
     if (replacement is not None or opaque) and limits is not None:
         raise ValueError("Opaque injected execution cannot guarantee caller-supplied execution limits")
-    selected_redact = replace_method.model_copy(deep=True) if replace_method is not None else Redact()
+    selected_method = replace_method.model_copy(deep=True) if replace_method is not None else Redact()
+    if replacement is None and not isinstance(selected_method, (Redact, Hash, Annotate)):
+        raise ValueError("Substitute requires a replacement workflow")
+    if replacement is None and not opaque and not isinstance(selected_method, Redact):
+        raise ValueError("The qualified detection profile requires Redact")
+    local_config = (
+        local_configuration(selected_method)
+        if replacement is None and isinstance(selected_method, (Redact, Hash, Annotate))
+        else None
+    )
     selected_limits = replace(limits) if limits is not None else None
     started = Event()
     cancellation: list[tuple[asyncio.AbstractEventLoop, asyncio.Task[Any]]] = []
@@ -276,6 +286,7 @@ def run_detection_redact(
             if opaque:
                 from anonymizer.engine.detection._opaque_redact import execute_injected_redact
 
+                assert local_config is not None
                 result = await execute_injected_redact(
                     DetectionRedactInvocation(
                         source,
@@ -283,7 +294,7 @@ def run_detection_redact(
                         detection,
                         model_configs,
                         selected_models,
-                        redact_configuration(selected_redact),
+                        local_config,
                         None,
                         {},
                         detection_options,
@@ -299,7 +310,7 @@ def run_detection_redact(
                 model_configs=model_configs,
                 selected_models=selected_models,
                 detection_options=detection_options,
-                replace_method=selected_redact,
+                replace_method=cast(Redact, selected_method),
                 pool=pool,
                 limits=selected_limits,
             )

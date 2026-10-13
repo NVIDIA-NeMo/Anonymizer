@@ -107,7 +107,7 @@ class WorkflowSourceFrame:
     def bind_generators(self, designer: Any, columns: frozenset[str]) -> Iterator[set[int]]:
         """Bind real DD row generators to issued associations, without exposing transport keys."""
         failed: set[int] = set()
-        if not self.associations and not self.invocation_bound:
+        if not self.associations and not self.invocation_bound and not hasattr(designer, "_create_dataset_builder"):
             yield failed
             return
         storage_bindings = ExitStack()
@@ -140,6 +140,8 @@ class WorkflowSourceFrame:
 
             def initialize() -> Any:
                 generators, graph = original_initialize()
+                if not self.associations and not self.invocation_bound:
+                    return generators, graph
                 for generator in generators:
                     name = getattr(generator.config, "name", None)
                     if name not in columns:

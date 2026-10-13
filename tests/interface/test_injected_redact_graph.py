@@ -11,7 +11,7 @@ import pandas as pd
 import pytest
 
 from anonymizer.config.anonymizer_config import AnonymizerConfig, AnonymizerInput
-from anonymizer.config.replace_strategies import Redact
+from anonymizer.config.replace_strategies import Annotate, Hash, Redact, Substitute
 from anonymizer.engine.constants import COL_FINAL_ENTITIES, COL_REPLACED_TEXT, COL_TEXT
 from anonymizer.engine.detection.detection_workflow import EntityDetectionResult
 from anonymizer.engine.graph_sdk.capabilities import ImplementationSelection, PreparationRejected
@@ -30,8 +30,11 @@ def _input(tmp_path, rows=2):
     return AnonymizerInput(source=str(path))
 
 
-@pytest.mark.parametrize("preview", [False, True])
-def test_injected_redact_keeps_frame_calls_and_reports_unknown_work(tmp_path, preview):
+@pytest.mark.parametrize(
+    "strategy,preview",
+    [(Redact(), False), (Redact(), True), (Hash(), False), (Annotate(), True), (Substitute(), False)],
+)
+def test_injected_redact_keeps_frame_calls_and_reports_unknown_work(tmp_path, strategy, preview):
     detected = pd.DataFrame(
         {COL_TEXT: ["same", "same"], COL_FINAL_ENTITIES: [{"entities": []}] * 2}, index=pd.Index([7, 7])
     )
@@ -44,7 +47,7 @@ def test_injected_redact_keeps_frame_calls_and_reports_unknown_work(tmp_path, pr
         detection_return=EntityDetectionResult(detected, []),
         replace_return=ReplacementResult(replaced, []),
     )
-    config = AnonymizerConfig(replace=Redact())
+    config = AnonymizerConfig(replace=strategy)
     result = (
         anonymizer.preview(config=config, data=_input(tmp_path), num_records=2)
         if preview

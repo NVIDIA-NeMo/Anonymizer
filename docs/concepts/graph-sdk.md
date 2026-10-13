@@ -96,9 +96,9 @@ qualifies the RFC's earlier mandatory-retained-byte-bound wording; it does not
 claim the absent ceiling meets that earlier hard-byte interpretation. Other
 admission, accounting, qualification and public-compatibility requirements remain.
 
-## Ordinary Redact execution
+## Ordinary local replacement execution
 
-Ordinary production-owned Redact runs, previews and CLI commands select the
+Ordinary production-owned Redact, Hash and Annotate runs, previews and CLI commands select the
 execution-only graph path before detection. Detection still runs once on the
 whole frame through `NddAdapter.run_workflow()`, with the existing DataDesigner
 retry, chunk scheduling and provider configuration. Authenticated source positions,
@@ -109,7 +109,7 @@ The qualified development profile remains available for its explicit supported
 controls; public execution does not fall back to it after an error.
 
 The ordinary profile reserves at most three semantic artifacts per selected
-source: initial text, final spans and redacted text. Span membership is bounded
+source: initial text, final spans and transformed text. Span membership is bounded
 by each source character count. Ingress reserves their sum across the selected
 batch; publication checks each span artifact against the largest selected source.
 These are upper bounds; actual returned counts are recorded. Physical calls,
@@ -121,14 +121,18 @@ retained-byte ceiling is likewise rejected for opaque execution because arbitrar
 frame object cells cannot be completely measured. Finite ceilings on
 visible paths retain their existing enforcement.
 
-## Injected Redact callbacks
+## Substitute and injected replacement callbacks
 
-Injected detection or replacement runners for Redact execute once on the whole
+Substitute and injected detection or replacement runners execute once on the whole
 frame through the same graph executor. The compatibility result retains their
 DataFrames, failed records and original errors. It does not infer source
 associations from returned row positions, indexes or text, and it makes no
 Protected claim. Saved public results retain their ordinary content and exclude
-live execution resources.
+live execution resources. Substitute keeps its row-local map generation, instructions,
+collision handling and no-entity bypass. Its map workflow may drop rows; the
+compatibility frame does not infer their source associations. Hash retains its
+existing text-based UTF-8 digest and Annotate retains its original-text rendering.
+Empty-render behavior for Hash and Annotate is unchanged.
 
 This path declares external work with unknown physical request visibility, usage
 and upper bound. Its recorded dispatch inventory contains only observed SDK

@@ -22,7 +22,7 @@ from anonymizer.config.anonymizer_config import (
     EvaluateConfig,
     Rewrite,
 )
-from anonymizer.config.replace_strategies import Redact, ReplaceMethod, Substitute
+from anonymizer.config.replace_strategies import Annotate, Hash, Redact, ReplaceMethod, Substitute
 from anonymizer.config.rewrite import PrivacyGoal
 from anonymizer.engine.constants import (
     COL_ANY_HIGH_LEAKED,
@@ -733,25 +733,25 @@ class Anonymizer:
         )
         t0 = time.perf_counter()
         graph_result = None
-        injected_redact = not self._owns_detection_and_replacement and type(config.replace) is Redact
-        if self._uses_graph_redact(config) or injected_redact:
-            logger.info("🔄 Running Redact replacement with graph-owned detection")
+        opaque_replacement = config.replace is not None and not self._uses_graph_redact(config)
+        if config.replace is not None:
+            logger.info("🔄 Running %s replacement with graph-owned detection", type(config.replace).__name__)
             graph_result = run_detection_redact(
                 input_df,
                 detection=self._detection_workflow,
                 model_configs=self._model_configs,
                 selected_models=self._selected_models.detection,
                 detection_options=detection_options,
-                replace_method=cast(Redact, config.replace),
-                opaque=not injected_redact,
+                replace_method=config.replace,
+                opaque=not opaque_replacement,
                 **(
                     {"replacement": self._replace_runner, "replacement_models": self._selected_models.replace}
-                    if injected_redact
+                    if opaque_replacement
                     else {}
                 ),
             )
             detected_df, detection_failures = graph_result.dataframe, graph_result.failed_records
-            if injected_redact:
+            if opaque_replacement:
                 assert graph_result._execution is not None
                 frame = graph_result._execution.frames[0]
                 assert isinstance(frame, InvocationFrame)
@@ -764,7 +764,7 @@ class Anonymizer:
                 **detection_options,
             )
             detected_df, detection_failures = detection_result.dataframe, detection_result.failed_records
-        detection_elapsed = frame.detection_elapsed if injected_redact else time.perf_counter() - t0
+        detection_elapsed = frame.detection_elapsed if opaque_replacement else time.perf_counter() - t0
         entity_count = _count_entities(detected_df)
         detection_failed = len(detection_failures)
         logger.info(
@@ -783,31 +783,11 @@ class Anonymizer:
         if graph_result is not None:
             final_df = graph_result.dataframe
             execution = graph_result._execution
-            post_detection_failures = list(frame.replacement_failures) if injected_redact else []
+            post_detection_failures = list(frame.replacement_failures) if opaque_replacement else []
             logger.info(
                 LOG_INDENT + "📋 Replacement complete (%d failed) [%.1fs]",
                 len(post_detection_failures),
-                frame.replacement_elapsed if injected_redact else detection_elapsed,
-            )
-        elif config.replace is not None:
-            strategy_name = type(config.replace).__name__
-            logger.info("🔄 Running %s replacement", strategy_name)
-            t0 = time.perf_counter()
-            replace_result = self._replace_runner.run(
-                detected_df,
-                replace_method=config.replace,
-                model_configs=self._model_configs,
-                selected_models=self._selected_models.replace,
-                preview_num_records=preview_num_records,
-            )
-            replace_elapsed = time.perf_counter() - t0
-            final_df = replace_result.dataframe
-            execution = getattr(replace_result, "_execution", None)
-            post_detection_failures = replace_result.failed_records
-            logger.info(
-                LOG_INDENT + "📋 Replacement complete (%d failed) [%.1fs]",
-                len(post_detection_failures),
-                replace_elapsed,
+                frame.replacement_elapsed if opaque_replacement else detection_elapsed,
             )
         elif config.rewrite is not None:
             logger.info("✏️ Running rewrite pipeline")
@@ -872,7 +852,7 @@ class Anonymizer:
 
     def _uses_graph_redact(self, config: AnonymizerConfig) -> bool:
         """Select the ordinary DD route before effects, with disclosed physical opacity."""
-        return self._owns_detection_and_replacement and type(config.replace) is Redact
+        return self._owns_detection_and_replacement and isinstance(config.replace, (Redact, Hash, Annotate))
 
     def _validate_preflight_config(self, config: AnonymizerConfig) -> None:
         """Run semantic preflight checks shared by validate, run, and preview."""

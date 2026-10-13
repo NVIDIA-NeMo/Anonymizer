@@ -395,8 +395,18 @@ async def run_graph_profile(
         await pool.close()
 
 
-@pytest.mark.parametrize("command", ["run", "preview"])
-def test_cli_selected_redact_uses_actual_graph(scripted_detection, monkeypatch, tmp_path, capsys, command):
+@pytest.mark.parametrize(
+    "command,method,template,token",
+    [
+        ("run", "redact", "<{label}>", "<first_name>"),
+        ("preview", "redact", "<{label}>", "<first_name>"),
+        ("run", "hash", "<{label}_{digest}>", "<FIRST_NAME_3bc51062973c>"),
+        ("preview", "annotate", "<{text}:{label}>", "<Alice:first_name>"),
+    ],
+)
+def test_cli_local_replace_uses_actual_graph(
+    scripted_detection, monkeypatch, tmp_path, capsys, command, method, template, token
+):
     import anonymizer.interface.anonymizer as facade
     import anonymizer.interface.cli.main as cli
 
@@ -418,9 +428,9 @@ def test_cli_selected_redact_uses_actual_graph(scripted_detection, monkeypatch, 
         "--source",
         str(path),
         "--replace",
-        "redact",
+        method,
         "--format-template",
-        "<{label}>",
+        template,
         "--no-normalize-label",
     ]
     if command == "preview":
@@ -431,11 +441,11 @@ def test_cli_selected_redact_uses_actual_graph(scripted_detection, monkeypatch, 
     assert len(executions) == 1 and executions[0] is not None
     if command == "run":
         assert pd.read_csv(tmp_path / "cli_anonymized.csv")["text_replaced"].tolist() == [
-            "<first_name> travels.",
-            "<first_name> stays.",
+            f"{token} travels.",
+            f"{token} stays.",
         ]
     else:
-        assert "<first_name> travels." in capsys.readouterr().out
+        assert f"{token} travels." in capsys.readouterr().out
     assert scripted_detection[3] == {
         "detector": 2 if command == "run" else 1,
         "validator": 2 if command == "run" else 1,

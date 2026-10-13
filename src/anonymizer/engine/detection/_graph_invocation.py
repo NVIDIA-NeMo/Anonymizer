@@ -39,7 +39,7 @@ from anonymizer.engine.graph_sdk.requests import (
     TextCollectionValue,
 )
 from anonymizer.engine.ndd._graph_requests import NddPhysicalTransport, NddRequestBridge
-from anonymizer.engine.replace._graph_redact import redact_strategy
+from anonymizer.engine.replace._graph_redact import local_strategy
 from anonymizer.engine.replace.strategies import apply_local_replace_strategy
 from anonymizer.engine.schemas import EntitiesSchema
 from anonymizer.graph._values import ArtifactRef, DatumId
@@ -91,7 +91,8 @@ class DetectionRedactInvocation:
         successful = tuple(frame.associations[position] for position in positions)
         rows = {association: index for index, association in enumerate(successful)}
         protected = apply_local_replace_strategy(
-            detected.dataframe, strategy=redact_strategy(self.redact_configuration)
+            detected.dataframe,
+            strategy=local_strategy(self.redact_configuration),
         )
         text = dict(zip(successful, protected[COL_REPLACED_TEXT], strict=True))
         spans = {

@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Fixed Redact consumers under nonqualifying graph execution."""
+"""Replacement consumers under nonqualifying graph execution."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ import pandas as pd
 from data_designer.config import ModelConfig
 
 from anonymizer.config.models import DetectionModelSelection, ReplaceModelSelection
-from anonymizer.config.replace_strategies import Redact
+from anonymizer.config.replace_strategies import ReplaceMethod
 from anonymizer.engine.constants import COL_TEXT
 from anonymizer.engine.detection._frame_publication import InvocationFrame
 from anonymizer.engine.detection._graph_invocation import DetectionRedactInvocation
@@ -96,7 +96,7 @@ class _InjectedRedact:
     selected_models: DetectionModelSelection
     replacement_models: ReplaceModelSelection
     detection_options: Mapping[str, Any]
-    replace_method: Redact
+    replace_method: ReplaceMethod
     handoff: Callable[[Callable[[], LocalCompleted | LocalFailure]], LocalCompleted | LocalFailure] | None = None
 
     def run(self, inputs: tuple[AssociationInput, ...], requests: DelegatedRequests) -> LocalCompleted | LocalFailure:
@@ -187,7 +187,7 @@ async def execute_injected_redact(
     owner = WorkflowId.new()
     node = NodeId.new(workflow=owner)
     operation = OperationSpec(
-        name="dd-detection-redact" if authenticated else "injected-detection-redact",
+        name="dd-detection-replace" if authenticated else "opaque-detection-replace",
         inputs=(InputPort(name="source", artifact_type=text_type),) if size else (),
         outputs=outputs,
         output_dependencies=tuple(
