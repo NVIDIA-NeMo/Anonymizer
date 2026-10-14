@@ -235,6 +235,8 @@ class Anonymizer:
             attribute_fidelity_judge=AttributeFidelityJudgeWorkflow(adapter=self._adapter),
             adapter=self._adapter,
         )
+        self._owns_rewrite = detection_workflow is None and rewrite_runner is None
+        self._owns_combined_rewrite = detection_workflow is None and combined_rewrite_runner is None
         self._rewrite_runner = rewrite_runner or RewriteWorkflow(adapter=self._adapter)
         self._combined_rewrite_runner = combined_rewrite_runner or CombinedRewriteWorkflow(adapter=self._adapter)
 
@@ -764,29 +766,34 @@ class Anonymizer:
             rewrite_runner = (
                 self._combined_rewrite_runner if config.rewrite.use_combined_graph else self._rewrite_runner
             )
+            rewrite_arguments = dict(
+                model_configs=self._model_configs,
+                selected_models=self._selected_models.rewrite,
+                replace_model_selection=self._selected_models.replace,
+                privacy_goal=privacy_goal,
+                evaluation=config.rewrite.evaluation,
+                data_summary=data.data_summary,
+                preview_num_records=preview_num_records,
+                strict_entity_protection=config.rewrite.strict_entity_protection,
+            )
             graph_result = run_detection_rewrite(
                 input_df,
                 detection=self._detection_workflow,
                 model_configs=self._model_configs,
                 selected_models=self._selected_models.detection,
                 detection_options=detection_options,
-                rewrite=partial(
-                    rewrite_runner.run,
-                    model_configs=self._model_configs,
-                    selected_models=self._selected_models.rewrite,
-                    replace_model_selection=self._selected_models.replace,
-                    privacy_goal=privacy_goal,
-                    evaluation=config.rewrite.evaluation,
-                    data_summary=data.data_summary,
-                    preview_num_records=preview_num_records,
-                    strict_entity_protection=config.rewrite.strict_entity_protection,
-                ),
+                rewrite=partial(rewrite_runner.run, **rewrite_arguments),
+                semantic_arguments=rewrite_arguments
+                if (self._owns_combined_rewrite if config.rewrite.use_combined_graph else self._owns_rewrite)
+                else None,
+                combined=config.rewrite.use_combined_graph,
             )
         detected_df, detection_failures = graph_result.dataframe, graph_result.failed_records
         if opaque_frame:
             assert graph_result._execution is not None
             frame = graph_result._execution.frames[0]
-            assert isinstance(frame, InvocationFrame)
+            frame = frame if isinstance(frame, InvocationFrame) else frame.stages
+            assert frame is not None
             detected_df, detection_failures = frame.detected_dataframe, list(frame.detection_failures)
         detection_elapsed = frame.detection_elapsed if opaque_frame else time.perf_counter() - t0
         entity_count = _count_entities(detected_df)

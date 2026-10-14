@@ -300,3 +300,18 @@ def test_large_finite_depth_never_uses_python_recursion_for_foreign_values() -> 
     expected = frozenset(row.association for row in rows)
     assert inspect_associations(changed, expected, IngressLimits(max_depth=10_000)) == frozenset({rows[0].association})
     assert inspect_associations(changed, expected, IngressLimits()) == expected
+
+
+def test_unconfigured_nested_items_still_recount_and_preserve_explicit_caps():
+    from anonymizer.engine.graph_sdk._artifact_shape import ArtifactShape
+    from anonymizer.engine.graph_sdk._ingress import inspect_artifact
+    from anonymizer.engine.rewrite.artifacts import QualityAnswer, QualityAnswersValue
+
+    value = QualityAnswersValue(answers=tuple(QualityAnswer(index, "answer") for index in range(12)))
+    unlimited = IngressLimits(max_collection_items=None, max_metadata_items=None)
+    assert inspect_artifact(value, unlimited)
+    assert not inspect_artifact(value, replace(unlimited, max_collection_items=11))
+    assert inspect_artifact(value, replace(unlimited, max_collection_items=12))
+    assert not inspect_artifact(value, replace(unlimited, max_metadata_items=11))
+    object.__setattr__(value, "shape", ArtifactShape(content_bytes=value.shape.content_bytes, items=11))
+    assert not inspect_artifact(value, unlimited)

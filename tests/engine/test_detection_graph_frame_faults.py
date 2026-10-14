@@ -11,7 +11,7 @@ import pandas as pd
 import pytest
 
 from anonymizer.engine.constants import COL_REPLACED_TEXT, COL_TEXT
-from anonymizer.engine.detection._frame_publication import FramePublication
+from anonymizer.engine.detection._frame_publication import FramePublication, FrameStages
 from anonymizer.engine.graph_sdk.executor import LocalCompleted
 from anonymizer.engine.graph_sdk.requests import AssociationResult, PortArtifact, TextArtifactValue
 from tests.graph_sdk.test_delegated_execution import _execute
@@ -57,8 +57,13 @@ async def run_case(fault="valid", limited=False):
                 text_ports=((COL_REPLACED_TEXT, "context"),),
                 failed_records=(),
                 opaque_source=content if fault == "rebind" else source,
+                stages=FrameStages(content, (), (), 0.0, 0.0),
             )
-            if fault == "empty_text":
+            if fault == "stage_missing":
+                object.__delattr__(frame.stages, "detected_dataframe")
+            elif fault == "stage_nan":
+                object.__setattr__(frame.stages, "detection_elapsed", float("nan"))
+            elif fault == "empty_text":
                 frame = FramePublication(content, content.columns, (row.association,), (), (), ())
             elif fault == "nan_text":
                 frame = replace(frame, _text=((COL_REPLACED_TEXT, "context", (float("nan"),)),))
@@ -94,6 +99,9 @@ def test_valid_frame_requires_successful_semantic_publication(limited):
         assert COL_REPLACED_TEXT not in r.frames[0]._content
         projected["trace"].iloc[0]["accepted"].clear()
         s["content"]["trace"].iloc[0]["accepted"].clear()
+        s["callback_frame"].stages.detected_dataframe["trace"].iloc[0]["accepted"].clear()
+        assert r.frames[0].stages.detected_dataframe["trace"].iloc[0]["accepted"] == [1, 2]
+        assert r.frames[0].stages.detected_dataframe["opaque"].iloc[0] is s["original"]
         assert r.frames[0].project(r)["trace"].iloc[0]["accepted"] == [1, 2]
 
 
@@ -105,7 +113,16 @@ def test_empty_text_frame_is_rejected_even_with_valid_semantic_callback(limited)
 
 @pytest.mark.parametrize(
     "fault",
-    ["content_type", "nan_text", "missing:_content", "missing:_columns", "missing:failed_records", "missing:_opaque"],
+    [
+        "content_type",
+        "nan_text",
+        "missing:_content",
+        "missing:_columns",
+        "missing:failed_records",
+        "missing:_opaque",
+        "stage_missing",
+        "stage_nan",
+    ],
 )
 def test_raw_frame_shape_rejects_before_finalization(fault):
     _, r, _ = asyncio.run(run_case(fault))

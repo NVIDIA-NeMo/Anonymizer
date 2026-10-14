@@ -506,7 +506,11 @@ def _materialize_bound_context(
     for identity, raw_items in groups.items():
         declaration = declarations[identity]
         items = sorted(raw_items, key=lambda item: (item.reference.key, item.reference.version))
-        if declaration.materialization.kind == "collection" and len(items) > limits.max_collection_items:
+        if (
+            limits.max_collection_items is not None
+            and declaration.materialization.kind == "collection"
+            and len(items) > limits.max_collection_items
+        ):
             reject(EffectCode.LIMIT_EXCEEDED)
         item_refs: list[ArtifactRef] = []
         parents: set[ProvenanceKey] = set()

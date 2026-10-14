@@ -101,7 +101,9 @@ def _accept_outputs(
     new_outputs = [item for item in outputs if dependencies[item.port].identity_input is None]
     if len(facts.values) + len(new_outputs) > limits.max_runtime_artifacts:
         return "limit", ()
-    if any(item.value.shape.items > limits.max_collection_items for item in outputs):
+    if limits.max_collection_items is not None and any(
+        item.value.shape.items > limits.max_collection_items for item in outputs
+    ):
         return "limit", ()
     if limits.max_runtime_artifact_bytes is not None and (
         sum(_artifact_bytes(item) for item in facts.values.values())

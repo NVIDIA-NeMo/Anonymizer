@@ -647,7 +647,9 @@ class AdmittedExecutionPlan(PrivateValue):
     assessment_productions: tuple[EvidenceProductionDecl, ...]
     assessment_limits: AssessmentLimits
     ingress_limits: IngressLimits
-    _ingress_policy: tuple[int, int, int, int, int, int | None, int | None, int] = field(init=False, compare=False)
+    _ingress_policy: tuple[int, int, int | None, int, int | None, int | None, int | None, int] = field(
+        init=False, compare=False
+    )
     nodes: Mapping[NodeId, Node] = field(compare=False)
     input_sources: Mapping[NodeInputRef, WorkflowInputRef | ContextInputRef | NodeOutputRef] = field(compare=False)
     materialization_schemas: Mapping[ArtifactType, Literal["scalar", "collection"]] = field(compare=False)
@@ -839,13 +841,13 @@ class MonotonicClock(Protocol):
 
 @dataclass(frozen=True, slots=True, kw_only=True, repr=False)
 class ExecutionLimits(PrivateValue):
-    """Finite local work/items; optional physical-remote and retained-byte ceilings."""
+    """Finite local work/artifacts; optional nested-item, remote and byte ceilings."""
 
     max_local_in_flight: int
     max_remote_outstanding: int | None
     max_runtime_artifacts: int
     max_runtime_artifact_bytes: int | None
-    max_collection_items: int
+    max_collection_items: int | None
 
     def __post_init__(self) -> None:
         require_count(self.max_local_in_flight)
@@ -854,7 +856,8 @@ class ExecutionLimits(PrivateValue):
         require_count(self.max_runtime_artifacts)
         if self.max_runtime_artifact_bytes is not None:
             require_count(self.max_runtime_artifact_bytes)
-        require_count(self.max_collection_items)
+        if self.max_collection_items is not None:
+            require_count(self.max_collection_items)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True, repr=False)

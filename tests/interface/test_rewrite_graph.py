@@ -13,15 +13,19 @@ from threading import get_ident
 import pandas as pd
 import pytest
 
-from anonymizer import AnonymizerConfig, Rewrite
+from anonymizer import AnonymizerConfig, AnonymizerInput, Rewrite
 from anonymizer.engine.constants import COL_REWRITTEN_TEXT, COL_TEXT
 from anonymizer.engine.detection._frame_publication import InvocationFrame
 from anonymizer.engine.detection.detection_workflow import EntityDetectionResult
 from anonymizer.engine.graph_sdk.executor import ExecutionResult
 from anonymizer.engine.ndd.adapter import FailedRecord
 from anonymizer.engine.rewrite.rewrite_workflow import RewriteResult
+from tests.engine import test_detection_source_frame as detection_fixtures
+from tests.engine.test_detection_source_frame import public_anonymizer
 from tests.interface.test_anonymizer_interface import _make_anonymizer
 from tests.interface.test_injected_redact_graph import _input
+
+scripted_detection = detection_fixtures.scripted_detection
 
 
 @pytest.mark.parametrize("combined,preview", [(False, False), (False, True), (True, False), (True, True)])
@@ -110,3 +114,35 @@ def test_rewrite_callback_exception_identity_retains_execution(tmp_path, stage):
     assert not execution.frames and not execution.requests.dispatches
     assert detector.run.call_count == 1
     assert runner.run.call_count == (stage == "rewrite")
+
+
+@pytest.mark.parametrize("combined", [False, True])
+@pytest.mark.parametrize(
+    "texts,preview,error",
+    [
+        ([], False, "Failed to load generated dataset"),
+        (["Alice travels."], True, "Dataset is empty"),
+        (["Alice fails."], False, "scripted row failure"),
+    ],
+)
+def test_builtin_rewrite_zero_source_and_all_failed_execution(
+    scripted_detection, tmp_path, combined, texts, preview, error
+):
+    from anonymizer.config.models import ReplaceModelSelection, RewriteModelSelection
+    from anonymizer.interface.errors import AnonymizerWorkflowError
+
+    facade = public_anonymizer(scripted_detection)
+    facade._selected_models.replace = ReplaceModelSelection(replacement_generator="singleton")
+    facade._selected_models.rewrite = RewriteModelSelection(
+        **{key: "singleton" for key in RewriteModelSelection.model_fields}
+    )
+    path = tmp_path / "rewrite.csv"
+    pd.DataFrame({"text": pd.Series(texts, dtype=str)}).to_csv(path, index=False)
+    config = AnonymizerConfig(rewrite=Rewrite(use_combined_graph=combined), emit_telemetry=False)
+    with pytest.raises(AnonymizerWorkflowError, match=error) as caught:
+        options = dict(config=config, data=AnonymizerInput(source=str(path)))
+        facade.preview(**options, num_records=0) if preview else facade.run(**options)
+    execution = getattr(caught.value, "_anonymizer_execution")
+    assert not execution.frames and not execution.final_outputs
+    assert not execution.requests.dispatches
+    assert len(execution.record.targets) == (0 if preview or not texts else 1)

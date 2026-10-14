@@ -148,7 +148,12 @@ class _IngressBudget:
                 )
                 continue
             if type(current) in REWRITE_TYPES:
-                content = rewrite_content(current, self.limits.max_collection_items - self.collection_items)
+                content = rewrite_content(
+                    current,
+                    None
+                    if self.limits.max_collection_items is None
+                    else self.limits.max_collection_items - self.collection_items,
+                )
                 if content is None or scalar_only:
                     valid = False
                     continue
@@ -223,7 +228,10 @@ class _IngressBudget:
         if type(row.consumed_context_ports) is not frozenset:
             valid = False
         else:
-            if len(row.consumed_context_ports) > self.limits.max_metadata_items - self.metadata_items:
+            if (
+                self.limits.max_metadata_items is not None
+                and len(row.consumed_context_ports) > self.limits.max_metadata_items - self.metadata_items
+            ):
                 raise _ExhaustedIngress
             for port in row.consumed_context_ports:
                 valid = self.text(port, depth + 2) and valid

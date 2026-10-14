@@ -799,13 +799,16 @@ def _validate_services(admitted: AdmittedExecutionPlan, services: ExecutionServi
     if any(item.max_lifetime_ns > services.decision_limits.max_lifetime_ns for item in admitted.decisions):
         reject(EffectCode.LIMIT_EXCEEDED)
     if any(
-        item.materialization.kind == "collection" and item.bounds.max_items > services.limits.max_collection_items
+        services.limits.max_collection_items is not None
+        and item.materialization.kind == "collection"
+        and item.bounds.max_items > services.limits.max_collection_items
         for item in admitted.context.adaptive_retrievals
     ):
         reject(EffectCode.LIMIT_EXCEEDED)
     bound_context = admitted.context.bound_context
     if bound_context is not None and any(
-        item.declaration.materialization.kind == "collection"
+        services.limits.max_collection_items is not None
+        and item.declaration.materialization.kind == "collection"
         and item.declaration.bounds.max_items > services.limits.max_collection_items
         for item in bound_context.receipt.sources
     ):
@@ -892,7 +895,11 @@ def _validate_initial_materialization_capacity(admitted: AdmittedExecutionPlan, 
             groups.setdefault(artifact.reference.declaration, []).append(artifact)
         for identity, items in groups.items():
             declaration = declarations[identity]
-            if declaration.materialization.kind == "collection" and len(items) > limits.max_collection_items:
+            if (
+                limits.max_collection_items is not None
+                and declaration.materialization.kind == "collection"
+                and len(items) > limits.max_collection_items
+            ):
                 reject(EffectCode.LIMIT_EXCEEDED)
             item_bytes = sum(len(item.text.encode()) for item in items)
             artifact_count += len(items)

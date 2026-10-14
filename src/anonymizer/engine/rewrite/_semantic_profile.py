@@ -1,23 +1,24 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Private source-bound prototype of the shared Rewrite evaluation and repair tail.
-
-The public workflow remains on its accepted controller until bounded repair,
-failed-source closure and final evidence selection replace that controller.
-"""
+"""One source-bound invocation for detection and the shared Rewrite repair tail."""
 
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
+from copy import deepcopy
 from dataclasses import replace
+from time import perf_counter
 from typing import Any
 
 import pandas as pd
+from pydantic import TypeAdapter
 
 from anonymizer.config.rewrite import EvaluationCriteria
 from anonymizer.engine.constants import COL_REWRITTEN_TEXT, COL_REWRITTEN_TEXT_INITIAL, COL_TEXT
-from anonymizer.engine.detection._frame_publication import FramePublication
+from anonymizer.engine.detection._frame_publication import FramePublication, FrameStages
 from anonymizer.engine.detection._opaque_redact import _execute_frame_plan, _frame_implementation, _prepare_frame_plan
+from anonymizer.engine.detection.detection_workflow import EntityDetectionWorkflow
 from anonymizer.engine.graph_sdk._effect_values import EffectCode, reject
 from anonymizer.engine.graph_sdk._execution_values import DelegatedRequests
 from anonymizer.engine.graph_sdk.blocking import BlockingPool
@@ -31,6 +32,7 @@ from anonymizer.engine.graph_sdk.evidence import (
     AssessmentSubmission,
     QualificationLimits,
     admit_qualification,
+    evidence_revision_view,
     verify_evidence,
 )
 from anonymizer.engine.graph_sdk.executor import (
@@ -40,12 +42,16 @@ from anonymizer.engine.graph_sdk.executor import (
     ExecutionResult,
     IngressLimits,
     LocalCompleted,
+    LocalFailure,
 )
 from anonymizer.engine.graph_sdk.preparation import (
     BoundInput,
 )
+from anonymizer.engine.graph_sdk.qualification import qualify_retained
 from anonymizer.engine.graph_sdk.requests import AssociationInput, AssociationResult
+from anonymizer.engine.ndd._source_frame import WorkflowSourceFrame
 from anonymizer.engine.ndd.adapter import NddAdapter
+from anonymizer.engine.replace.replace_runner import ReplacementResult
 from anonymizer.engine.rewrite._semantic_evaluation import (
     EVALUATION_FAIL,
     EVALUATION_MEANING,
@@ -99,6 +105,71 @@ from anonymizer.graph.workflow import (
 )
 
 
+def _configuration(arguments: dict[str, Any], detection_arguments: dict[str, Any] | None) -> FrozenConfig:
+    fields = [ConfigField(name="evaluation", value=ConfigText(value=arguments["evaluation"].model_dump_json()))]
+    if detection_arguments is not None:
+        fields.append(
+            ConfigField(
+                name="environment",
+                value=ConfigText(
+                    value=TypeAdapter(dict[str, Any])
+                    .dump_json({"rewrite": arguments, "detection": detection_arguments})
+                    .decode()
+                ),
+            )
+        )
+    return FrozenConfig(fields=tuple(sorted(fields, key=lambda field: field.name)))
+
+
+def run_semantic_rewrite(
+    source: pd.DataFrame,
+    *,
+    detection: EntityDetectionWorkflow,
+    adapter: NddAdapter,
+    combined: bool,
+    arguments: dict[str, Any],
+    detection_arguments: dict[str, Any],
+) -> ReplacementResult:
+    """Run detection and the shared Rewrite tail under one admitted invocation."""
+    from anonymizer.engine.detection._graph_profile import _run_sync_profile, project_detection_redact
+
+    arguments, detection_arguments = deepcopy((arguments, detection_arguments))
+    configuration = _configuration(arguments, detection_arguments)
+    selected = (
+        len(source)
+        if arguments.get("preview_num_records") is None
+        else min(len(source), arguments["preview_num_records"])
+    )
+    allowance = arguments["evaluation"].max_repair_iterations
+    limits = ExecutionLimits(
+        max_local_in_flight=1,
+        max_remote_outstanding=None,
+        max_runtime_artifacts=max(1, selected * (12 + 6 * allowance)),
+        max_runtime_artifact_bytes=None,
+        max_collection_items=None,
+    )
+
+    async def operation(
+        pool: BlockingPool,
+        handoff: Callable[[Callable[[], LocalCompleted | LocalFailure]], LocalCompleted | LocalFailure],
+    ) -> ReplacementResult:
+        del handoff
+        result = await execute_initial_evaluation(
+            source,
+            adapter=adapter,
+            combined=combined,
+            arguments=arguments,
+            configuration=configuration,
+            pool=pool,
+            limits=limits,
+            detection=detection,
+            detection_arguments=detection_arguments,
+        )
+        return project_detection_redact(result)
+
+    return _run_sync_profile(operation, caller_callbacks=False)
+
+
 async def execute_initial_evaluation(
     source: pd.DataFrame,
     *,
@@ -108,6 +179,8 @@ async def execute_initial_evaluation(
     configuration: FrozenConfig,
     pool: BlockingPool,
     limits: ExecutionLimits,
+    detection: EntityDetectionWorkflow | None = None,
+    detection_arguments: dict[str, Any] | None = None,
 ) -> ExecutionResult:
     """Execute actual DD prefix/Evaluate under one admitted source-bound owner.
 
@@ -116,19 +189,19 @@ async def execute_initial_evaluation(
     Full environment binding and public ingress remain incomplete; this is not
     a public strategy selector.
     """
-    if source.empty or arguments.get("preview_num_records") is not None:
+    if source.empty:
         reject(EffectCode.UNSUPPORTED)
-    arguments = dict(arguments)
+    preview = arguments.get("preview_num_records")
+    selected_source = source if preview is None else source.iloc[:preview]
+    arguments, detection_arguments = deepcopy((arguments, detection_arguments))
     criteria = EvaluationCriteria.model_validate_json(arguments["evaluation"].model_dump_json())
-    expected_configuration = FrozenConfig(
-        fields=(ConfigField(name="evaluation", value=ConfigText(value=criteria.model_dump_json())),)
-    )
+    expected_configuration = _configuration(arguments, detection_arguments)
     if configuration != expected_configuration:
         reject(EffectCode.CONTRADICTORY)
     arguments["evaluation"] = criteria
     graph = DataGraph.new()
     targets = []
-    for text in source[COL_TEXT]:
+    for text in selected_source[COL_TEXT]:
         graph, target = graph.add_text(text)
         targets.append(target)
     size = len(targets)
@@ -144,7 +217,7 @@ async def execute_initial_evaluation(
         limits=DataLimits(
             max_datums=size,
             max_targets=size,
-            max_text_bytes=sum(len(t.encode("utf-8")) for t in source[COL_TEXT]),
+            max_text_bytes=sum(len(t.encode("utf-8")) for t in selected_source[COL_TEXT]),
             max_declarations=0,
             max_group_members=0,
         ),
@@ -159,34 +232,39 @@ async def execute_initial_evaluation(
         scopes=scopes,
         max_occurrences=8 + 6 * allowance,
     )
-    slots = {
-        name: next(slot.index for slot in prepared.reservation_recipe if slot.template == node)
-        for name, node in ids.items()
-        if name != "member"
-    }
-
-    def occurrence(slot):
-        while slot.iteration is None and slot.parent_index is not None:
-            slot = prepared.reservation_recipe[slot.parent_index]
-        return slot.iteration
-
-    iteration_slots = {
-        iteration: {
-            name: next(
-                slot.index
-                for slot in prepared.reservation_recipe
-                if slot.template == node and occurrence(slot) == iteration
-            )
-            for name, node in body_ids.items()
-        }
-        for iteration in range(allowance)
-    }
+    names = {node: name for name, node in ids.items() if name != "member"}
+    body_names = {node: name for name, node in body_ids.items()}
+    slots: dict[str, int] = {}
+    iteration_slots: dict[int, dict[str, int]] = {}
+    for slot in prepared.reservation_recipe:
+        if slot.template in names:
+            slots[names[slot.template]] = slot.index
+        elif slot.template in body_names:
+            ancestor = slot
+            while ancestor.iteration is None and ancestor.parent_index is not None:
+                ancestor = prepared.reservation_recipe[ancestor.parent_index]
+            assert ancestor.iteration is not None
+            iteration_slots.setdefault(ancestor.iteration, {})[body_names[slot.template]] = slot.index
     loop = asyncio.get_running_loop()
 
     def callback(inputs: tuple[AssociationInput, ...], requests: DelegatedRequests) -> LocalCompleted:
+        started = perf_counter()
+        original_frame = requests.bind_frame(source, targets=tuple(targets), source_limit=len(selected_source))
+        detected = (
+            detection.run(source, source_frame=original_frame, **(detection_arguments or {}))
+            if detection is not None
+            else None
+        )
+        detected_frame = detected.dataframe if detected is not None else selected_source
+        positions = (
+            resolve_source_positions(source, detected_frame, detected.source_positions)
+            if detected is not None
+            else tuple(range(len(selected_source)))
+        )
+        active = tuple(original_frame.associations[index] for index in positions)
         binding = RewriteEvaluationBinding(
             requests,
-            requests.bind_frame(source, targets=tuple(targets)),
+            WorkflowSourceFrame.capture(detected_frame, associations=active, invocation_bound=True),
             slots,
             loop,
             _evaluation_state(0 if combined else None, COL_REWRITTEN_TEXT_INITIAL if combined else COL_REWRITTEN_TEXT),
@@ -194,12 +272,14 @@ async def execute_initial_evaluation(
             combined=combined,
             criteria=arguments["evaluation"],
         )
-        asyncio.run_coroutine_threadsafe(binding.passthrough(source), loop).result()
+        detection_elapsed = perf_counter() - started
+        started = perf_counter()
+        asyncio.run_coroutine_threadsafe(binding.passthrough(detected_frame), loop).result()
         runner = (CombinedRewriteWorkflow if combined else RewriteWorkflow)(adapter, semantic_binding=binding)
-        result = runner.run(source, **arguments)
+        result = runner.run(detected_frame, **arguments)
         if result.source_positions is None:
             reject(EffectCode.MISSING)
-        positions = resolve_source_positions(source, result.dataframe, result.source_positions)
+        positions = resolve_source_positions(detected_frame, result.dataframe, result.source_positions)
         successful = tuple(binding.source.associations[index] for index in positions)
         selected, projected = asyncio.run_coroutine_threadsafe(
             binding.finish(result.dataframe, successful), loop
@@ -208,8 +288,17 @@ async def execute_initial_evaluation(
             projected,
             associations=tuple(selected[association] for association in successful),
             text_ports=((COL_REWRITTEN_TEXT, "candidate"),),
-            failed_records=tuple(result.failed_records),
+            failed_records=tuple((detected.failed_records if detected is not None else []) + result.failed_records),
             opaque_source=source,
+            stages=FrameStages(
+                detected_frame,
+                tuple(detected.failed_records) if detected is not None else (),
+                tuple(result.failed_records),
+                detection_elapsed,
+                perf_counter() - started,
+            )
+            if detected is not None
+            else None,
         )
         return LocalCompleted(
             results=tuple(
@@ -217,7 +306,9 @@ async def execute_initial_evaluation(
                     association=item.association, outcome="ok", outputs=(), consumed_context_ports=frozenset()
                 )
                 for item in inputs
+                if item.association in successful
             ),
+            failed_sources=frozenset(set(original_frame.associations) - set(successful)),
             frame=publication,
         )
 
@@ -232,9 +323,11 @@ async def execute_initial_evaluation(
         ingress_limits=IngressLimits(
             max_associations=size,
             max_outputs_per_association=8,
-            max_collection_items=limits.max_collection_items * size,
+            max_collection_items=None if limits.max_collection_items is None else limits.max_collection_items * size,
             max_assessments=1,
-            max_metadata_items=size * (20 + 10 * limits.max_collection_items),
+            max_metadata_items=None
+            if limits.max_collection_items is None
+            else size * (20 + 10 * limits.max_collection_items),
             max_text_bytes=limits.max_runtime_artifact_bytes,
             max_metadata_bytes=limits.max_runtime_artifact_bytes,
             max_depth=8,
@@ -279,6 +372,15 @@ async def execute_initial_evaluation(
             max_provenance_edges=(8 + 6 * allowance) * 64 * size,
         ),
     )
+    current = evidence_revision_view(
+        admitted=qualification,
+        result=result,
+        artifacts=tuple(reference for reference, _ in result.artifacts),
+        absences=(),
+        configurations=tuple(dict((fact.node, fact.environment.configuration) for fact in result.assessments).items()),
+        state=prepared.state,
+    )
+    qualify_retained(admitted=qualification, result=result, current=current)
     verify_evidence(
         admitted=qualification,
         result=result,
@@ -462,7 +564,6 @@ def _tail(configuration: FrozenConfig, allowance: int):
                 max_branch_members=4,
                 max_subgraph_depth=2,
                 max_choice_states=3,
-                max_analysis_work=max(1_000_000, len(nodes) ** 2 * (len(bindings) + len(outputs)) ** 3),
             ),
         )
 

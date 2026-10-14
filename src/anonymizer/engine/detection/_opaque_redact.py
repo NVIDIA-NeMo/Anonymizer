@@ -180,9 +180,32 @@ def run_detection_rewrite(
     selected_models: DetectionModelSelection,
     detection_options: Mapping[str, Any],
     rewrite: Callable[[pd.DataFrame], RewriteResult],
+    semantic_arguments: dict[str, Any] | None = None,
+    combined: bool = False,
 ) -> ReplacementResult:
     """Run the selected existing Rewrite schedule as one opaque invocation."""
     from anonymizer.engine.detection._graph_profile import _run_sync_profile, project_detection_redact
+
+    selected = (
+        len(source)
+        if detection_options.get("preview_num_records") is None
+        else min(len(source), detection_options["preview_num_records"])
+    )
+    if semantic_arguments is not None and selected:
+        from anonymizer.engine.rewrite._semantic_profile import run_semantic_rewrite
+
+        return run_semantic_rewrite(
+            source,
+            detection=detection,
+            adapter=detection._adapter,
+            combined=combined,
+            arguments=semantic_arguments,
+            detection_arguments={
+                "model_configs": model_configs,
+                "selected_models": selected_models,
+                **detection_options,
+            },
+        )
 
     async def operation(
         pool: BlockingPool,

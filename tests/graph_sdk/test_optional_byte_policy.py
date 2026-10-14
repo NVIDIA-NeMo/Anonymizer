@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Counts remain hard while explicit size policies survive independent crossings."""
+"""Structural counts remain hard while selected payload policies survive independent crossings."""
 
 from __future__ import annotations
 
@@ -135,7 +135,7 @@ def test_substitution_cannot_turn_finite_byte_promise_into_no_ceiling(parent, ch
             substitute(workflow=target, target=next(iter(target.nodes)).id, replacement=replacement)
 
 
-@pytest.mark.parametrize("field", ["max_local_in_flight", "max_runtime_artifacts", "max_collection_items"])
+@pytest.mark.parametrize("field", ["max_local_in_flight", "max_runtime_artifacts"])
 def test_absent_count_limit_still_rejects_before_callbacks(field: str) -> None:
     async def run():
         execution, capabilities, services, _ = span_graph()
@@ -155,3 +155,13 @@ def test_absent_physical_ceiling_is_explicitly_supported() -> None:
     result = asyncio.run(run())
     assert result.final_outputs
     assert not result.requests.dispatches
+
+
+@pytest.mark.parametrize("cap,success", [(None, True), (2, True), (1, False), (0, False)])
+def test_nested_payload_retention_preserves_explicit_zero(cap: int | None, success: bool) -> None:
+    async def run():
+        execution, capabilities, services, _ = span_graph()
+        services = replace(services, limits=replace(services.limits, max_collection_items=cap))
+        return await (await start_execution(admitted=execution, capabilities=capabilities, services=services)).wait()
+
+    assert bool(asyncio.run(run()).final_outputs) is success

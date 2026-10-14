@@ -26,6 +26,32 @@ if TYPE_CHECKING:
 
 
 @dataclass(frozen=True, slots=True, repr=False)
+class FrameStages:
+    """Detection metadata retained alongside one canonical transformed frame."""
+
+    detected_dataframe: pd.DataFrame
+    detection_failures: tuple[FailedRecord, ...]
+    replacement_failures: tuple[FailedRecord, ...]
+    detection_elapsed: float
+    replacement_elapsed: float
+
+    def snapshot(self, opaque: tuple[object, ...]) -> FrameStages:
+        if (
+            type(self.detected_dataframe) is not pd.DataFrame
+            or any(
+                type(rows) is not tuple or any(type(row) is not FailedRecord for row in rows)
+                for rows in (self.detection_failures, self.replacement_failures)
+            )
+            or any(
+                type(value) not in (int, float) or not math.isfinite(value) or value < 0
+                for value in (self.detection_elapsed, self.replacement_elapsed)
+            )
+        ):
+            raise ValueError("malformed frame stage metadata")
+        return replace(self, detected_dataframe=_copy_frame(self.detected_dataframe, opaque))
+
+
+@dataclass(frozen=True, slots=True, repr=False)
 class PublishedFrame:
     """Accepted frame content; transformed columns contain only canonical references."""
 
@@ -37,6 +63,7 @@ class PublishedFrame:
 
     _sources: tuple[SemanticAssociation, ...]
     _ports: tuple[str, ...]
+    stages: FrameStages | None = None
 
     def project(self, result: ExecutionResult) -> pd.DataFrame:
         if not any(self is frame for frame in result.frames):
@@ -49,6 +76,7 @@ class PublishedFrame:
             or type(getattr(self, "failed_records", None)) is not tuple
             or any(type(item) is not FailedRecord for item in self.failed_records)
             or type(getattr(self, "_opaque", None)) is not tuple
+            or type(getattr(self, "stages", None)) not in (type(None), FrameStages)
         ):
             raise ValueError("malformed retained frame")
         if (
@@ -125,6 +153,7 @@ class FramePublication:
     _text: tuple[tuple[str, str, tuple[str | EntitySpansValue, ...]], ...]
     failed_records: tuple[FailedRecord, ...]
     _opaque: tuple[object, ...]
+    stages: FrameStages | None = None
 
     @classmethod
     def capture(
@@ -136,6 +165,7 @@ class FramePublication:
         failed_records: tuple[FailedRecord, ...],
         opaque_source: pd.DataFrame,
         span_ports: tuple[tuple[str, str, tuple[EntitySpansValue, ...]], ...] = (),
+        stages: FrameStages | None = None,
     ) -> FramePublication:
         if (
             len(dataframe) != len(associations)
@@ -155,6 +185,7 @@ class FramePublication:
             text,
             failed_records,
             opaque,
+            stages.snapshot(opaque) if stages is not None else None,
         )
 
     def accept(self, results: tuple[AssociationResult, ...], *, opaque: tuple[object, ...]) -> FramePublication | None:
@@ -171,6 +202,7 @@ class FramePublication:
             or type(getattr(self, "failed_records", None)) is not tuple
             or any(type(item) is not FailedRecord for item in self.failed_records)
             or type(getattr(self, "_opaque", None)) is not tuple
+            or type(getattr(self, "stages", None)) not in (type(None), FrameStages)
         ):
             return None
         for item in self._text:
@@ -210,6 +242,7 @@ class FramePublication:
             self._text,
             self.failed_records,
             opaque,
+            self.stages.snapshot(opaque) if self.stages is not None else None,
         )
 
     def bind(self, ports: tuple[ExecutionPortFact, ...]) -> PublishedFrame | None:
@@ -236,6 +269,7 @@ class FramePublication:
             self._opaque,
             self.associations,
             tuple(port for _, port, _ in self._text),
+            self.stages,
         )
 
 
