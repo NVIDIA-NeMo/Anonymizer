@@ -32,8 +32,10 @@ from anonymizer.engine.detection.custom_columns import (
     parse_detected_entities,
     prepare_validation_inputs,
 )
+from anonymizer.engine.graph_sdk._execution_delegated import source_worker_borrow
 from anonymizer.engine.graph_sdk._execution_values import DelegatedRequests
 from anonymizer.engine.graph_sdk.blocking import BlockingPool
+from anonymizer.engine.ndd._source_frame import current_source_work
 from anonymizer.engine.replace.replace_runner import ReplacementResult
 from anonymizer.engine.workflow_columns.detection.config import (
     ChunkedValidationConfig,
@@ -150,6 +152,10 @@ class ChunkedValidationGenerator(ColumnGeneratorWithModelRegistry[ChunkedValidat
     def generate(self, data: dict[str, Any]) -> dict[str, Any]:  # ty: ignore[invalid-method-override]
         raw_models = {alias: self.get_model(alias) for alias in self.config.pool}
         models = {alias: _AsyncBridgedModelFacade(model) for alias, model in raw_models.items()}
+        work = current_source_work()
+        if work is not None:
+            source_worker_borrow().authorize_source_sync(work.association)
+            return chunked_validate_row(data, self._params(raw_models), models)
 
         def validate(requests: DelegatedRequests) -> ReplacementResult:
             del requests
@@ -166,6 +172,10 @@ class ChunkedValidationGenerator(ColumnGeneratorWithModelRegistry[ChunkedValidat
 
     async def agenerate(self, data: dict[str, Any]) -> dict[str, Any]:  # ty: ignore[invalid-method-override]
         models = {alias: self.get_model(alias) for alias in self.config.pool}
+        work = current_source_work()
+        if work is not None:
+            await source_worker_borrow().authorize_source(work.association)
+            return await chunked_validate_row_async(data, self._params(models), models)
         loop = asyncio.get_running_loop()
         context = copy_context()
         params = self._params(models)

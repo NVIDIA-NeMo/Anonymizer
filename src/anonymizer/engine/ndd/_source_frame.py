@@ -31,7 +31,10 @@ _SOURCE_WORK: ContextVar[SourceWork | None] = ContextVar("anonymizer_dd_source_w
 
 
 def current_source_work() -> SourceWork | None:
-    return _SOURCE_WORK.get()
+    work = _SOURCE_WORK.get()
+    if work is not None and (type(work) is not SourceWork or not hasattr(work, "association")):
+        raise AnonymizerWorkflowError("Malformed owned workflow source context")
+    return work
 
 
 @contextmanager

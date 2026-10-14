@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""The installed validator plugin retains one opaque row invocation and borrowed calls."""
+"""The validator borrows an owned source or opens one standalone invocation."""
 
 from __future__ import annotations
 
@@ -47,7 +47,17 @@ def _row():
 @pytest.mark.parametrize("asynchronous", [False, True])
 def test_plugin_projects_canonical_row_and_preserves_identity(monkeypatch, asynchronous):
     from anonymizer.engine.detection import _graph_profile
+    from anonymizer.graph._values import InvocationId
 
+    invocations = []
+    new = InvocationId.new
+
+    def created(*args, **kwargs):
+        value = new(*args, **kwargs)
+        invocations.append(value)
+        return value
+
+    monkeypatch.setattr(InvocationId, "new", created)
     observed = []
     original = _graph_profile._await_profile_execution
 
@@ -67,7 +77,7 @@ def test_plugin_projects_canonical_row_and_preserves_identity(monkeypatch, async
     result = asyncio.run(generator.agenerate(row)) if asynchronous else generator.generate(row)
     assert result is row and result["opaque"] is opaque
     assert [value["id"] for value in result[COL_VALIDATION_DECISIONS]["decisions"]] == ["a", "b"]
-    assert len(model.calls) == 2 and len(observed) == 1
+    assert len(model.calls) == 2 and len(observed) == len(invocations) == 1
     execution = observed[0]
     assert not execution.requests.dispatches and not execution.final_outputs
     assert execution.frames[0].project(execution).at[0, COL_VALIDATION_DECISIONS] is row
@@ -224,5 +234,172 @@ def test_async_plugin_self_cancellation_remains_cancellation(self_cancel):
         execution = getattr(caught.value, "_anonymizer_execution")
         assert not execution.frames and not execution.requests.dispatches
         assert {entry.status for entry in execution.invocation_state.entries} == {"cancelled"}
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+@pytest.mark.parametrize(
+    "fault", [None, "foreign", "expired", "closed", "missing_owner", "malformed", "malformed_association"]
+)
+def test_owned_plugin_borrows_source_without_another_invocation(monkeypatch, asynchronous, fault):
+    from contextvars import copy_context
+
+    from anonymizer.engine.graph_sdk._effect_values import EffectRejected
+    from anonymizer.engine.graph_sdk._execution_delegated import _WORKER_BORROW
+    from anonymizer.engine.graph_sdk.executor import LocalFailure
+    from anonymizer.engine.graph_sdk.requests import SemanticAssociation
+    from anonymizer.engine.ndd._source_frame import _SOURCE_WORK, SourceWork
+    from anonymizer.graph._values import InvocationId, TaskAttemptId
+    from anonymizer.interface.errors import AnonymizerWorkflowError
+    from tests.graph_sdk.test_delegated_execution import _execute, _fixture
+    from tests.graph_sdk.test_delegated_worker import _loop_and_pool, _worker_services
+
+    created = []
+    new = InvocationId.new
+
+    def invocation(*args, **kwargs):
+        value = new(*args, **kwargs)
+        created.append(value)
+        return value
+
+    monkeypatch.setattr(InvocationId, "new", invocation)
+
+    async def run():
+        async with _loop_and_pool() as (loop, pool):
+            execution, services, *_ = _fixture()
+            model = FakeFacade("v0", response={"decisions": []})
+            generator = _generator(model)
+            captured = {}
+
+            def callback(inputs, borrowed):
+                association = inputs[0].association
+                if fault == "foreign":
+                    association = SemanticAssociation(task=TaskAttemptId.new(activation=association.task.activation))
+                if fault == "malformed_association":
+                    association = object.__new__(SemanticAssociation)
+                    object.__setattr__(association, "task", [])
+                work = SourceWork(association, COL_VALIDATION_DECISIONS) if fault != "malformed" else object()
+                token = _SOURCE_WORK.set(work)  # ty: ignore[invalid-argument-type]
+                owner_token = _WORKER_BORROW.set(None) if fault == "missing_owner" else None
+                borrowed.expired = fault == "expired"
+                borrowed.owner.closed = fault == "closed"
+                captured["context"] = copy_context()
+                try:
+
+                    def generate():
+                        if asynchronous:
+                            return asyncio.run_coroutine_threadsafe(generator.agenerate(_row()), loop).result()
+                        return generator.generate(_row())
+
+                    if fault:
+                        with pytest.raises((EffectRejected, AnonymizerWorkflowError)):
+                            generate()
+                        assert not model.calls
+                    else:
+                        assert COL_VALIDATION_DECISIONS in generate()
+                        assert len(model.calls) == 2
+                finally:
+                    borrowed.expired = False
+                    borrowed.owner.closed = False
+                    if owner_token is not None:
+                        _WORKER_BORROW.reset(owner_token)
+                    _SOURCE_WORK.reset(token)
+                return LocalFailure(failure="permanent")
+
+            execution, services, _ = _worker_services(execution, services, loop, pool, callback)
+            before_execution = len(created)
+            await _execute(execution, services)
+            assert len(created) == before_execution + 1
+            assert pool.occupied == 0 and not loop.is_closed()
+            if fault is None:
+                with pytest.raises(EffectRejected):
+                    await asyncio.wrap_future(
+                        captured["context"].run(asyncio.run_coroutine_threadsafe, generator.agenerate(_row()), loop)
+                    )
+                assert len(model.calls) == 2 and len(created) == before_execution + 1
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("phase", ["authorization", "chunks"])
+def test_owned_async_plugin_repeated_cancel_keeps_submission_until_chunks_end(monkeypatch, phase):
+    from threading import Event
+
+    from anonymizer.engine.graph_sdk.executor import LocalFailure
+    from anonymizer.engine.ndd._source_frame import _SOURCE_WORK, SourceWork
+    from tests.graph_sdk.test_delegated_execution import _execute, _fixture
+    from tests.graph_sdk.test_delegated_worker import _loop_and_pool, _worker_services
+
+    async def run():
+        async with _loop_and_pool() as (loop, pool):
+            entered, release = Event(), Event()
+            captured = {}
+            finished = []
+
+            class Model(FakeFacade):
+                async def agenerate(self, **kwargs):
+                    entered.set()
+                    while not release.is_set():
+                        try:
+                            await asyncio.sleep(0.01)
+                        except asyncio.CancelledError:
+                            continue
+                    finished.append(kwargs["prompt"])
+                    return self._call(
+                        prompt=kwargs["prompt"], parser=kwargs["parser"], system_prompt=None, purpose=None, kwargs={}
+                    )
+
+            if phase == "authorization":
+                from anonymizer.engine.graph_sdk._execution_delegated import _DelegatedOwner
+
+                authorize = _DelegatedOwner._authorize_source
+
+                async def held(owner, association):
+                    entered.set()
+                    while not release.is_set():
+                        await asyncio.sleep(0.01)
+                    return await authorize(owner, association)
+
+                monkeypatch.setattr(_DelegatedOwner, "_authorize_source", held)
+            generator = _generator(Model("v0", response={"decisions": []}))
+            execution, services, *_ = _fixture()
+
+            async def generate():
+                captured["task"] = asyncio.current_task()
+                try:
+                    return await generator.agenerate(_row())
+                except asyncio.CancelledError as error:
+                    captured["cancellation"] = error.args
+                    raise
+
+            def callback(inputs, borrowed):
+                captured["borrow"] = borrowed
+                token = _SOURCE_WORK.set(SourceWork(inputs[0].association, COL_VALIDATION_DECISIONS))
+                try:
+                    asyncio.run_coroutine_threadsafe(generate(), loop).result()
+                    return LocalFailure(failure="permanent")
+                finally:
+                    _SOURCE_WORK.reset(token)
+
+            execution, services, _ = _worker_services(execution, services, loop, pool, callback)
+            running = asyncio.create_task(_execute(execution, services))
+            try:
+                assert await asyncio.to_thread(entered.wait, 5)
+                for reason in ("first", "second"):
+                    loop.call_soon_threadsafe(captured["task"].cancel, reason)
+                    await asyncio.sleep(0.03)
+                assert not running.done()
+                assert pool.occupied == 1
+                assert not captured["borrow"].expired
+                assert not finished
+            finally:
+                release.set()
+            result = await asyncio.wait_for(running, 5)
+            assert len(finished) == (2 if phase == "chunks" else 0)
+            if phase == "authorization":
+                assert captured["cancellation"] == ("first",)
+            assert captured["borrow"].expired and pool.occupied == 0
+            assert not result.requests.dispatches and not loop.is_closed()
 
     asyncio.run(run())

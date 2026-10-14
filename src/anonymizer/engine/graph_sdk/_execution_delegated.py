@@ -69,6 +69,14 @@ _T = TypeVar("_T")
 _WORKER_BORROW: ContextVar[_WorkerBorrow | None] = ContextVar("graph_worker_borrow", default=None)
 
 
+def source_worker_borrow() -> _WorkerBorrow:
+    """Recover the issued worker; source membership is checked on its owner loop."""
+    borrow = _WORKER_BORROW.get()
+    if type(borrow) is not _WorkerBorrow or borrow.expired:
+        reject(EffectCode.FOREIGN_OWNER)
+    return borrow
+
+
 class WorkerDelegatedSubmitter(_BlockingAdapter):
     """One caller-owned pool and borrowed loop; all physical calls stay on the host loop.
 
@@ -135,6 +143,42 @@ class _WorkerBorrow(PrivateValue):
                 return future.result()
             self.owner.loop.call_soon_threadsafe(self.owner._cancel_worker, self)
             raise
+
+    async def authorize_source(self, association: SemanticAssociation) -> None:
+        if _WORKER_BORROW.get() is not self or self.expired:
+            reject(EffectCode.FOREIGN_OWNER)
+        future = asyncio.run_coroutine_threadsafe(
+            self.owner._worker_call(self, lambda: self.owner._authorize_source(association)), self.owner.loop
+        )
+        completion = asyncio.wrap_future(future)
+        cancellation: asyncio.CancelledError | None = None
+        while not completion.done():
+            try:
+                await asyncio.shield(completion)
+            except asyncio.CancelledError as error:
+                if cancellation is None:
+                    cancellation = error
+            except Exception:
+                break
+        if cancellation is not None:
+            if not completion.cancelled():
+                completion.exception()
+            raise cancellation
+        completion.result()
+
+    def authorize_source_sync(self, association: SemanticAssociation) -> None:
+        if _WORKER_BORROW.get() is not self or self.expired:
+            reject(EffectCode.FOREIGN_OWNER)
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            pass
+        else:
+            if loop is self.owner.loop:
+                reject(EffectCode.UNSUPPORTED)
+        asyncio.run_coroutine_threadsafe(
+            self.owner._worker_call(self, lambda: self.owner._authorize_source(association)), self.owner.loop
+        ).result()
 
     def require_transport(self, transport: object) -> None:
         if _WORKER_BORROW.get() is not self or self.expired:
@@ -271,6 +315,15 @@ class _DelegatedOwner(PrivateValue):
         return self.runtime.frame.bind_source_frame(
             tuple(self.jobs.values()), dataframe, targets=targets, source_limit=source_limit
         )
+
+    async def _authorize_source(self, association: SemanticAssociation) -> None:
+        self._check_submission()
+        if type(association) is not SemanticAssociation:
+            reject(EffectCode.FOREIGN_OWNER)
+        try:
+            self._source_job(association)
+        except (AttributeError, TypeError):
+            reject(EffectCode.FOREIGN_OWNER)
 
     def _source_job(self, association: SemanticAssociation | None = None) -> _ExecutionJob:
         if association is None:
