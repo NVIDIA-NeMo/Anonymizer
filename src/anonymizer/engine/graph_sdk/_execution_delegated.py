@@ -53,7 +53,7 @@ from anonymizer.engine.graph_sdk.requests import (
     TransportFailure,
     TransportSuccess,
 )
-from anonymizer.graph._values import DatumId, InvocationId
+from anonymizer.graph._values import ActivationKey, DatumId, InvocationId, TaskAttemptId
 from anonymizer.graph.activation import CloseUnstarted, advance_activation
 
 if TYPE_CHECKING:
@@ -436,7 +436,14 @@ class _DelegatedOwner(PrivateValue):
         self._check_submission()
         if type(association) is not SemanticAssociation:
             reject(EffectCode.FOREIGN_OWNER)
-        bound = self.runtime.operations.get(association.task.activation)
+        try:
+            if not isinstance(association.task, TaskAttemptId) or not isinstance(
+                association.task.activation, ActivationKey
+            ):
+                reject(EffectCode.FOREIGN_OWNER)
+            bound = self.runtime.operations.get(association.task.activation)
+        except (AttributeError, TypeError):
+            reject(EffectCode.FOREIGN_OWNER)
         if bound is None or bound.association != association or not isinstance(bound.scope, DatumId):
             reject(EffectCode.FOREIGN_OWNER)
         job = cast(_OperationJob[DatumId], bound)

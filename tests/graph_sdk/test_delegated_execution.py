@@ -32,11 +32,13 @@ from anonymizer.engine.graph_sdk.requests import (
     ExactUsage,
     ExternalSettlement,
     PortArtifact,
+    SemanticAssociation,
     StopConfirmed,
     TextArtifactValue,
     TransportFailure,
     TransportSuccess,
 )
+from anonymizer.graph._values import TaskAttemptId
 from tests.graph_sdk.child_qualification_fixtures import child_fixture
 from tests.graph_sdk.effects_admission_fixtures import _ZeroClock
 from tests.graph_sdk.qualification_fixtures import _inputs
@@ -247,6 +249,37 @@ def test_borrowed_owner_cannot_escape_its_loop_or_lifetime() -> None:
     assert submit.borrowed is not None
     with pytest.raises(EffectRejected):
         asyncio.run(submit.borrowed.request(submit.slots[0]))
+
+
+@pytest.mark.parametrize("mutation", ["task_object", "task_none", "activation_object", "activation_list"])
+def test_borrowed_completion_rejects_malformed_nested_identity(mutation: str) -> None:
+    execution, services, original, transports = _fixture(simple=True, parent_io=True)
+
+    class Submit:
+        execution: ClassVar[Literal["same_loop"]] = "same_loop"
+
+        async def submit(self, inputs: tuple[AssociationInput, ...], requests: DelegatedRequests) -> LocalCompleted:
+            association = inputs[0].association
+            assert isinstance(association, SemanticAssociation)
+            bad = SemanticAssociation(task=TaskAttemptId.new(activation=association.task.activation))
+            if mutation.startswith("task_"):
+                object.__setattr__(bad, "task", None if mutation == "task_none" else object())
+            else:
+                object.__setattr__(bad.task, "activation", [] if mutation == "activation_list" else object())
+            with pytest.raises(EffectRejected) as caught:
+                await requests.complete_operation(bad, LocalCompleted(results=()))
+            assert caught.value.code == EffectCode.FOREIGN_OWNER
+            return await original.submit(inputs, requests)
+
+    services = replace(
+        services,
+        handles=tuple(
+            replace(handle, delegated=Submit()) if handle.delegated else handle for handle in services.handles
+        ),
+    )
+    result = asyncio.run(_execute(execution, services))
+    assert len(result.final_outputs) == 1
+    assert result.requests.dispatched_count == transports[0].calls == 1
 
 
 @pytest.mark.parametrize("boundary", ["before_driver", "before_task_entry", "reject_dispatch", "after_dispatch"])
