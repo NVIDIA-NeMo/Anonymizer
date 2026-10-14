@@ -16,20 +16,30 @@ from typing import TYPE_CHECKING, Any, NotRequired, TypedDict, TypeVar, cast
 import pandas as pd
 from data_designer.config.column_types import ColumnConfigT
 
+from anonymizer.config.rewrite import EvaluationCriteria
 from anonymizer.engine.constants import (
+    COL_ANY_HIGH_LEAKED,
     COL_ENTITIES_BY_VALUE,
+    COL_LEAKAGE_MASS,
     COL_LEAKED_PRIVACY_ITEMS,
+    COL_NEEDS_HUMAN_REVIEW,
+    COL_NEEDS_REPAIR,
     COL_PRIVACY_QA,
+    COL_PRIVACY_QA_REANSWER,
     COL_QUALITY_QA,
+    COL_QUALITY_QA_COMPARE,
+    COL_QUALITY_QA_REANSWER,
+    COL_REPAIR_ITERATIONS,
     COL_REWRITE_BASELINE_TEXT,
     COL_REWRITTEN_TEXT,
     COL_REWRITTEN_TEXT_INITIAL,
     COL_REWRITTEN_TEXT_NEXT,
     COL_TEXT,
+    COL_UTILITY_SCORE,
+    COL_WEIGHTED_LEAKAGE_RATE,
 )
-from anonymizer.engine.graph_sdk._effect_values import EffectRejected
 from anonymizer.engine.graph_sdk._execution_values import DelegatedRequests
-from anonymizer.engine.graph_sdk.executor import LocalCompleted
+from anonymizer.engine.graph_sdk.executor import AssessmentFinding, LocalAssessmentResult, LocalCompleted
 from anonymizer.engine.graph_sdk.requests import (
     ArtifactValue,
     AssociationInput,
@@ -68,6 +78,10 @@ if TYPE_CHECKING:
 
 
 _T = TypeVar("_T")
+EVALUATION_PROMISE = "rewrite-evaluation"
+EVALUATION_MEANING = "Current candidate meets captured repair criteria for its bound QA responses"
+EVALUATION_PASS = AssessmentFinding(status="satisfied", code="repair_criteria_met")
+EVALUATION_FAIL = AssessmentFinding(status="unsatisfied", code="repair_required")
 
 
 @dataclass
@@ -77,6 +91,7 @@ class RewriteEvaluationBinding:
     slots: dict[str, int]
     loop: asyncio.AbstractEventLoop
     state: EvaluationState
+    criteria: EvaluationCriteria
     iteration_slots: dict[int, dict[str, int]] = field(default_factory=dict)
     combined: bool = False
     iteration: int = 0
@@ -151,36 +166,135 @@ class RewriteEvaluationBinding:
                         {
                             port.port.removeprefix("in_"): port.value
                             for port in bound.inputs
-                            if port.port.removeprefix("in_") in {"source", "baseline", "qa", "candidate", "privacy"}
+                            if port.port.removeprefix("in_") != "metrics"
                         }
                     )
-                await self.publish(bound, values, "stop" if name == "metrics" else "skipped")
+                await self.publish(bound, values, "skipped")
 
-    async def finish(self) -> dict[SemanticAssociation, SemanticAssociation]:
-        selected = {}
-        for association in self.source.associations:
-            for name in ("join", "initial", "final"):
-                try:
-                    bound = await self.requests.enter_operation(self.slots[name], association)
-                except EffectRejected:
-                    break
-                if bound is None:
-                    continue
-                values = {} if name == "join" else {"candidate": bound.inputs[0].value}
-                control = (
-                    "again"
-                    if name == "join"
-                    and cast(EvaluationMetricsValue, bound.inputs[0].value).needs_repair
-                    and self.iteration_slots
-                    else "stop"
-                    if name == "join"
-                    else "ok"
-                )
-                await self.publish(bound, values, control)
+    async def final_result(self, association: SemanticAssociation) -> AssociationResult:
+        for name in ("join", "initial", "final"):
+            completed = await self.requests.operation_result(self.slots[name], association)
+            if completed is not None:
                 if name != "join":
-                    assert isinstance(bound.association, SemanticAssociation)
-                    selected[association] = bound.association
-        return selected
+                    return completed
+                continue
+            bound = await self.requests.enter_operation(self.slots[name], association)
+            if bound is None:
+                continue
+            values = {port.port.removeprefix("in_"): port.value for port in bound.inputs} if name != "join" else {}
+            control = (
+                "again"
+                if name == "join"
+                and cast(EvaluationMetricsValue, bound.inputs[0].value).needs_repair
+                and self.iteration_slots
+                else "stop"
+                if name == "join"
+                else "ok"
+            )
+            assessments: tuple[LocalAssessmentResult, ...] = ()
+            if name != "join":
+                initial = await self.requests.operation_result(self.slots["metrics"], association)
+                assert initial is not None and isinstance(bound.association, SemanticAssociation)
+                if initial.outcome == "skipped":
+                    control = "skipped"
+                else:
+                    actual = cast(EvaluationMetricsValue, values["metrics"])
+                    expected = self._metric(bound, actual.iteration)
+                    assessments = (
+                        LocalAssessmentResult(
+                            association=bound.association,
+                            promise=EVALUATION_PROMISE,
+                            evidence_port="metrics",
+                            finding=EVALUATION_PASS
+                            if expected == actual and not expected.needs_repair
+                            else EVALUATION_FAIL,
+                        ),
+                    )
+            await self.publish(bound, values, control, assessments=assessments)
+            if name != "join":
+                completed = await self.requests.operation_result(self.slots[name], association)
+                assert completed is not None
+                return completed
+        raise AnonymizerWorkflowError("Rewrite has no selected final candidate")
+
+    def final_row(self, row: dict[str, Any], result: AssociationResult) -> dict[str, Any]:
+        values = {port.port: port.value for port in result.outputs}
+        metrics = cast(EvaluationMetricsValue, values["metrics"])
+        row = row.copy()
+        row.update(
+            {
+                COL_REWRITTEN_TEXT: cast(TextArtifactValue, values["candidate"]).text,
+                COL_UTILITY_SCORE: metrics.utility,
+                COL_LEAKAGE_MASS: metrics.leakage,
+                COL_WEIGHTED_LEAKAGE_RATE: metrics.weighted_leakage,
+                COL_ANY_HIGH_LEAKED: metrics.high_leak,
+                COL_NEEDS_REPAIR: metrics.needs_repair,
+                COL_REPAIR_ITERATIONS: metrics.iteration,
+                COL_QUALITY_QA_REANSWER: {
+                    "answers": [v._asdict() for v in cast(QualityAnswersValue, values["answers"]).answers]
+                },
+                COL_PRIVACY_QA_REANSWER: {
+                    "answers": [v._asdict() for v in cast(PrivacyAnswersValue, values["privacy"]).answers]
+                },
+                COL_QUALITY_QA_COMPARE: {
+                    "per_item": [v._asdict() for v in cast(QualityComparisonValue, values["comparison"]).comparisons]
+                },
+                COL_NEEDS_HUMAN_REVIEW: metrics.high_leak
+                or (self.criteria.flag_utility_below is not None and metrics.utility < self.criteria.flag_utility_below)
+                or (
+                    self.criteria.flag_leakage_above is not None and metrics.leakage > self.criteria.flag_leakage_above
+                ),
+            }
+        )
+        return row
+
+    async def finish(
+        self, frame: pd.DataFrame, associations: tuple[SemanticAssociation, ...]
+    ) -> tuple[dict[SemanticAssociation, SemanticAssociation], pd.DataFrame]:
+        selected, rows = {}, []
+        for association, row in zip(associations, frame.to_dict("records"), strict=True):
+            result = await self.final_result(association)
+            assert isinstance(result.association, SemanticAssociation)
+            selected[association] = result.association
+            rows.append(self.final_row(row, result))
+        return selected, pd.DataFrame(rows, index=frame.index)
+
+    def repair_rows(self, frame: pd.DataFrame, iteration: int) -> tuple[pd.DataFrame, pd.DataFrame]:
+        """Partition surviving rows by the admitted ready repair occurrence."""
+        from anonymizer.engine.row_partitioning import ROW_ORDER_COL
+
+        async def select() -> list[int]:
+            selected = []
+            for index, position in enumerate(frame[ROW_ORDER_COL]):
+                bound = await self.requests.enter_operation(
+                    self.iteration_slots[iteration]["repair"], self.source.associations[position]
+                )
+                if bound is not None:
+                    selected.append(index)
+            return selected
+
+        positions = asyncio.run_coroutine_threadsafe(select(), self.loop).result()
+        return frame.iloc[positions].copy(), frame.iloc[[i for i in range(len(frame)) if i not in positions]].copy()
+
+    def candidate_rows(self, frame: pd.DataFrame, iteration: int) -> pd.DataFrame:
+        """Project the issued next evaluator's candidate, not a previous DD output cell."""
+        from anonymizer.engine.row_partitioning import ROW_ORDER_COL
+
+        async def candidates() -> list[str]:
+            values = []
+            for position in frame[ROW_ORDER_COL]:
+                bound = await self.requests.enter_operation(
+                    self.iteration_slots[iteration]["quality"], self.source.associations[position]
+                )
+                assert bound is not None
+                candidate = next(port.value for port in bound.inputs if port.port == "candidate")
+                assert isinstance(candidate, TextArtifactValue)
+                values.append(candidate.text)
+            return values
+
+        result = frame.copy()
+        result[COL_REWRITTEN_TEXT] = asyncio.run_coroutine_threadsafe(candidates(), self.loop).result()
+        return result
 
     def columns(self, columns: list[ColumnConfigT]) -> list[ColumnConfigT]:
         from anonymizer.engine.rewrite.combined_rewrite_workflow import _remap_custom_column
@@ -214,6 +328,8 @@ class RewriteEvaluationBinding:
         }
 
     async def before(self, column: str, association: SemanticAssociation, row: dict[str, Any]) -> dict[str, Any]:
+        if self.combined and column == COL_REWRITTEN_TEXT:
+            return self.final_row(row, await self._call(self.final_result(association)))
         selected = self.selected(column)
         if selected is not self:
             return await selected.before(column, association, row)
@@ -235,6 +351,16 @@ class RewriteEvaluationBinding:
                     await self.after(self.state.rewritten_text, association, row, prefix=True)
         bound = await self._call(self.requests.enter_operation(self.slots[name], association))
         if bound is None:
+            if name == "repair" and self.combined:
+                from anonymizer.engine.rewrite.combined_rewrite_workflow import _evaluation_state, _repair_state
+
+                previous = _evaluation_state(
+                    self.iteration - 1,
+                    COL_REWRITTEN_TEXT_INITIAL
+                    if self.iteration == 1
+                    else _repair_state(self.iteration - 2).rewritten_text,
+                )
+                return {**row, previous.needs_repair: False}
             return row
         result = row.copy()
         input_state = self.state
@@ -334,15 +460,7 @@ class RewriteEvaluationBinding:
             }
             name = "comparison"
         elif column == self.state.needs_repair:
-            values = {
-                "metrics": EvaluationMetricsValue(
-                    utility=float(row[self.state.utility_score]),
-                    leakage=float(row[self.state.leakage_mass]),
-                    weighted_leakage=float(row[self.state.weighted_leakage_rate]),
-                    high_leak=bool(row[self.state.any_high_leaked]),
-                    needs_repair=bool(row[column]),
-                )
-            }
+            values = {}
             name = "metrics"
         else:
             return
@@ -351,22 +469,77 @@ class RewriteEvaluationBinding:
             return
         outcome = "ok"
         if name == "metrics":
+            metric = self._metric(bound, self.iteration)
+            values["metrics"] = metric
+            row.update(
+                {
+                    self.state.utility_score: metric.utility,
+                    self.state.leakage_mass: metric.leakage,
+                    self.state.weighted_leakage_rate: metric.weighted_leakage,
+                    self.state.any_high_leaked: metric.high_leak,
+                    self.state.needs_repair: metric.needs_repair,
+                }
+            )
             values.update(
                 {
                     port.port.removeprefix("in_"): port.value
                     for port in bound.inputs
-                    if port.port.removeprefix("in_") in {"source", "baseline", "qa", "candidate", "privacy"}
+                    if port.port.removeprefix("in_") != "metrics"
                 }
             )
-            needs_repair = cast(EvaluationMetricsValue, values["metrics"]).needs_repair
+            needs_repair = metric.needs_repair
             outcome = (
                 "stop" if not needs_repair else "again" if self.iteration < len(self.iteration_slots) else "exhausted"
             )
         await self.publish(bound, values, outcome)
 
-    async def publish(self, bound: AssociationInput, values: dict[str, ArtifactValue], outcome: str = "ok") -> None:
+    def _metric(self, bound: AssociationInput, iteration: int) -> EvaluationMetricsValue:
+        from anonymizer.engine.rewrite.evaluate import (
+            compute_any_high_leaked,
+            compute_leakage_mass,
+            compute_utility_score,
+            compute_weighted_leakage_rate,
+            determine_repair_needs,
+        )
+
+        inputs = {port.port.removeprefix("in_"): port.value for port in bound.inputs}
+        qa = cast(RewriteQAValue, inputs["qa"])
+        privacy_qa = parse_privacy_qa({"items": [item._asdict() for item in qa.privacy]})
+        privacy_answers = parse_privacy_answers(
+            {"answers": [item._asdict() for item in cast(PrivacyAnswersValue, inputs["privacy"]).answers]}
+        )
+        comparisons = cast(QualityComparisonValue, inputs["comparison"]).comparisons
+        importance = {item.id: item.importance for item in qa.quality}
+        leakage = compute_leakage_mass(privacy_answers, privacy_qa, self.criteria.sensitivity_weights)
+        high = compute_any_high_leaked(privacy_answers, privacy_qa)
+        metric = EvaluationMetricsValue(
+            utility=compute_utility_score(
+                [item.score for item in comparisons], [importance.get(item.id, "important") for item in comparisons]
+            ),
+            leakage=leakage,
+            weighted_leakage=compute_weighted_leakage_rate(leakage, privacy_qa, self.criteria.sensitivity_weights),
+            high_leak=high,
+            needs_repair=determine_repair_needs(
+                any_high_leaked=high,
+                leakage_mass=leakage,
+                repair_any_high_leak=self.criteria.repair_any_high_leak,
+                effective_threshold=self.criteria.repair_threshold,
+            ),
+            iteration=iteration,
+        )
+        return metric
+
+    async def publish(
+        self,
+        bound: AssociationInput,
+        values: dict[str, ArtifactValue],
+        outcome: str = "ok",
+        *,
+        assessments: tuple[LocalAssessmentResult, ...] = (),
+    ) -> None:
         assert isinstance(bound.association, SemanticAssociation)
         completed = LocalCompleted(
+            assessments=assessments,
             results=(
                 AssociationResult(
                     association=bound.association,
@@ -384,7 +557,7 @@ class RewriteEvaluationBinding:
                         for port, value in values.items()
                     ),
                 ),
-            )
+            ),
         )
         result = await self._call(self.requests.complete_operation(bound.association, completed))
         if result.condition != "result" or result.category != "success":

@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import replace
+from dataclasses import fields, replace
 from threading import Event
 from typing import cast
 
@@ -19,8 +19,17 @@ from anonymizer.engine.graph_sdk._artifact_shape import ArtifactShape
 from anonymizer.engine.graph_sdk._effect_values import EffectRejected
 from anonymizer.engine.graph_sdk._ingress import inspect_artifact
 from anonymizer.engine.graph_sdk.blocking import BlockingPool
-from anonymizer.engine.graph_sdk.capabilities import FrozenConfig
+from anonymizer.engine.graph_sdk.capabilities import ConfigField, ConfigText, FrozenConfig
+from anonymizer.engine.graph_sdk.evidence import (
+    AssessmentSubmission,
+    QualificationLimits,
+    admit_qualification,
+    evidence_revision_view,
+    evidence_validity,
+    verify_evidence,
+)
 from anonymizer.engine.graph_sdk.executor import ExecutionLimits, LocalCompleted
+from anonymizer.engine.graph_sdk.preparation import StateRevisionView
 from anonymizer.engine.graph_sdk.requests import AssociationResult
 from anonymizer.engine.ndd.adapter import NddAdapter
 from anonymizer.engine.rewrite._semantic_profile import execute_initial_evaluation
@@ -176,7 +185,14 @@ async def _lifecycle(monkeypatch, finish):
             adapter=cast(NddAdapter, object()),
             combined=False,
             arguments={"evaluation": Rewrite(max_repair_iterations=0).evaluation},
-            configuration=FrozenConfig(fields=()),
+            configuration=FrozenConfig(
+                fields=(
+                    ConfigField(
+                        name="evaluation",
+                        value=ConfigText(value=Rewrite(max_repair_iterations=0).evaluation.model_dump_json()),
+                    ),
+                )
+            ),
             pool=pool,
             limits=ExecutionLimits(
                 max_local_in_flight=1,
@@ -216,9 +232,72 @@ async def _lifecycle(monkeypatch, finish):
         assert not result.requests.dispatches
         assert len(result.frames) == (1 if finish in {"normal", "partial"} else 0)
         metrics = [value for _, value in result.artifacts if type(value) is EvaluationMetricsValue]
-        assert len(metrics) == (2 if finish in {"normal", "after_metrics"} else 1 if finish == "partial" else 0)
+        assert len(metrics) == (4 if finish == "normal" else 2 if finish in {"after_metrics", "partial"} else 0)
+        assert len(result.assessments) == (2 if finish == "normal" else 1 if finish == "partial" else 0)
+        if result.assessments:
+            _assert_final_evidence(result)
         if finish in {"outer_failure", "after_metrics"}:
             assert any(str(failure.cause) == "literal late callback failure" for failure in result.submission_failures)
     finally:
         release.set()
         await pool.close()
+
+
+def _assert_final_evidence(result):
+    limits = QualificationLimits(**{field.name: 1000 for field in fields(QualificationLimits)})
+    execution = result._execution
+    admitted = admit_qualification(execution=execution, productions=execution.assessment_productions, limits=limits)
+    submissions = tuple(AssessmentSubmission(fact=fact) for fact in result.assessments)
+    verified = verify_evidence(admitted=admitted, result=result, submissions=submissions)
+    assert {item.subject for item in verified} == {item.candidate for item in result.final_outputs}
+    for item, fact in zip(verified, result.assessments, strict=True):
+        assert len(item.consumed_by_port) == 8
+
+        def view(configuration: FrozenConfig):
+            return evidence_revision_view(
+                admitted=admitted,
+                result=result,
+                artifacts=tuple(reference for reference, _ in result.artifacts),
+                absences=(),
+                configurations=((fact.node, configuration),),
+                state=StateRevisionView(revisions=frozenset()),
+            )
+
+        assert evidence_validity(evidence=item, current=view(fact.environment.configuration)) == "current"
+        assert evidence_validity(evidence=item, current=view(FrozenConfig(fields=()))) == "stale"
+    inspection = admit_qualification(execution=execution, productions=(), limits=limits)
+    assert inspection.productions == ()
+    extra = replace(execution.assessment_productions[0], promise="undeclared")
+    nonlocal_production = replace(
+        execution.assessment_productions[0],
+        node=next(policy.node for policy in execution.policies if policy.kind == "delegated"),
+    )
+    for productions in (
+        execution.assessment_productions[:1],
+        execution.assessment_productions * 2,
+        (*execution.assessment_productions, extra),
+        (nonlocal_production,),
+    ):
+        with pytest.raises(EffectRejected):
+            admit_qualification(execution=execution, productions=productions, limits=limits)
+
+    def clone(value):
+        copied = object.__new__(type(value))
+        for field in fields(value):
+            object.__setattr__(copied, field.name, getattr(value, field.name))
+        return copied
+
+    foreign = evidence_revision_view(
+        admitted=admitted,
+        result=clone(result),
+        artifacts=tuple(reference for reference, _ in result.artifacts),
+        absences=(),
+        configurations=tuple(dict((fact.node, fact.environment.configuration) for fact in result.assessments).items()),
+        state=StateRevisionView(revisions=frozenset()),
+    )
+    with pytest.raises(EffectRejected):
+        evidence_validity(evidence=verified[0], current=foreign)
+    with pytest.raises(EffectRejected):
+        verify_evidence(
+            admitted=admitted, result=result, submissions=(AssessmentSubmission(fact=clone(result.assessments[0])),)
+        )

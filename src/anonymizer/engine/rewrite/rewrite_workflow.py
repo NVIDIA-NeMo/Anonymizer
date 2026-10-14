@@ -7,6 +7,7 @@ import logging
 from dataclasses import dataclass
 
 import pandas as pd
+from data_designer.config.column_types import ColumnConfigT
 from data_designer.config.models import ModelConfig
 
 from anonymizer.config.models import EvaluateModelSelection, ReplaceModelSelection, RewriteModelSelection
@@ -333,125 +334,61 @@ class RewriteWorkflow:
         preview_num_records: int | None,
     ) -> tuple[pd.DataFrame, list[FailedRecord]]:
         all_failed: list[FailedRecord] = []
-
+        binding = self._semantic_binding
         if COL_REPAIR_ITERATIONS not in df.columns:
             df[COL_REPAIR_ITERATIONS] = 0
-
-        eval_columns = self._evaluate_wf.columns(
-            selected_models=selected_models,
-            evaluation=evaluation,
-        )
-        if self._semantic_binding:
-            eval_columns = self._semantic_binding.columns(eval_columns)
-        eval_seed_cols = derive_seed_columns(eval_columns, df)
-
-        # Always run initial evaluate -- metrics must be produced even when max_repair_iterations=0
-        eval_seed = select_seed_cols(df, eval_seed_cols)
-        eval_result = self._adapter.run_workflow(
-            eval_seed,
-            model_configs=model_configs,
-            columns=eval_columns,
-            workflow_name="rewrite-evaluate-0",
-            preview_num_records=preview_num_records,
-            **(self._semantic_binding.stage(eval_seed, tuple(df[ROW_ORDER_COL])) if self._semantic_binding else {}),
-        )
-        df = _join_new_columns(
-            df,
-            eval_result.dataframe,
-            source_positions=eval_result.source_positions,
-            overwrite=True,
-            seed_cols=eval_seed_cols,
-        )
-        _normalize_evaluation_payloads(df)
-        all_failed.extend(eval_result.failed_records)
-
-        replacement_unavailable = (
-            ~df[COL_REWRITE_REPLACEMENT_READY].apply(bool)
-            if COL_REWRITE_REPLACEMENT_READY in df.columns
-            else pd.Series(False, index=df.index)
-        )
-        df.loc[replacement_unavailable, COL_REWRITTEN_TEXT] = None
-
+        eval_columns = self._evaluate_wf.columns(selected_models=selected_models, evaluation=evaluation)
+        if binding:
+            eval_columns = binding.columns(eval_columns)
         repair_columns = self._repair_wf.columns(
-            selected_models=selected_models,
-            privacy_goal=privacy_goal,
-            effective_threshold=evaluation.repair_threshold,
+            selected_models=selected_models, privacy_goal=privacy_goal, effective_threshold=evaluation.repair_threshold
         )
 
-        for iteration in range(evaluation.max_repair_iterations):
-            needs_repair_mask = df[COL_NEEDS_REPAIR].apply(bool) & ~replacement_unavailable
-            if not needs_repair_mask.any():
-                logger.info("Evaluate-repair loop: all rows pass at iteration %d", iteration)
-                break
-
-            failing_rows = df[needs_repair_mask].copy()
-            passing_rows = df[~needs_repair_mask].copy()
-
-            logger.info(
-                "Evaluate-repair loop iteration %d: %d/%d rows need repair",
-                iteration,
-                len(failing_rows),
-                len(df),
-            )
-
-            # Repair failing rows only
-            repair_seed_cols = derive_seed_columns(repair_columns, failing_rows)
-            repair_seed = select_seed_cols(failing_rows, repair_seed_cols)
-            repair_result = self._adapter.run_workflow(
-                repair_seed,
+        def execute(rows: pd.DataFrame, columns: list[ColumnConfigT], name: str, iteration: int) -> pd.DataFrame:
+            seed_cols = derive_seed_columns(columns, rows)
+            seed = select_seed_cols(rows, seed_cols)
+            result = self._adapter.run_workflow(
+                seed,
                 model_configs=model_configs,
-                columns=repair_columns,
-                workflow_name=f"rewrite-repair-{iteration}",
+                columns=columns,
+                workflow_name=name,
                 preview_num_records=preview_num_records,
-                **(
-                    self._semantic_binding.stage(
-                        repair_seed, tuple(failing_rows[ROW_ORDER_COL]), iteration=iteration + 1
-                    )
-                    if self._semantic_binding
-                    else {}
-                ),
+                **(binding.stage(seed, tuple(rows[ROW_ORDER_COL]), iteration=iteration) if binding else {}),
             )
-            all_failed.extend(repair_result.failed_records)
+            all_failed.extend(result.failed_records)
+            return _join_new_columns(
+                rows, result.dataframe, source_positions=result.source_positions, overwrite=True, seed_cols=seed_cols
+            )
 
-            repaired = repair_result.dataframe
-            failing_rows = _join_new_columns(failing_rows, repaired, source_positions=repair_result.source_positions)
-            if COL_REWRITTEN_TEXT_NEXT in failing_rows.columns:
+        def unavailable(rows: pd.DataFrame) -> pd.Series:
+            return (
+                ~rows[COL_REWRITE_REPLACEMENT_READY].apply(bool)
+                if COL_REWRITE_REPLACEMENT_READY in rows.columns
+                else pd.Series(False, index=rows.index)
+            )
+
+        # Initial evaluation remains mandatory, including a zero repair allowance.
+        df = execute(df, eval_columns, "rewrite-evaluate-0", 0)
+        _normalize_evaluation_payloads(df)
+        iterations = binding.iteration_slots if binding else range(evaluation.max_repair_iterations)
+        for iteration in iterations:
+            if binding:
+                failing_rows, passing_rows = binding.repair_rows(df, iteration)
+            else:
+                selected = df[COL_NEEDS_REPAIR].apply(bool) & ~unavailable(df)
+                failing_rows, passing_rows = df[selected].copy(), df[~selected].copy()
+            if failing_rows.empty:
+                break
+            failing_rows = execute(failing_rows, repair_columns, f"rewrite-repair-{iteration}", iteration + 1)
+            if binding:
+                failing_rows = binding.candidate_rows(failing_rows, iteration)
+            elif COL_REWRITTEN_TEXT_NEXT in failing_rows.columns:
                 failing_rows[COL_REWRITTEN_TEXT] = failing_rows[COL_REWRITTEN_TEXT_NEXT]
             failing_rows[COL_REPAIR_ITERATIONS] = failing_rows[COL_REPAIR_ITERATIONS].apply(lambda x: int(x) + 1)
-
-            # Re-evaluate only repaired rows (passing rows' metrics are unchanged)
-            reeval_seed_cols = derive_seed_columns(eval_columns, failing_rows)
-            reeval_seed = select_seed_cols(failing_rows, reeval_seed_cols)
-            eval_result = self._adapter.run_workflow(
-                reeval_seed,
-                model_configs=model_configs,
-                columns=eval_columns,
-                workflow_name=f"rewrite-evaluate-{iteration + 1}",
-                preview_num_records=preview_num_records,
-                **(
-                    self._semantic_binding.stage(
-                        reeval_seed, tuple(failing_rows[ROW_ORDER_COL]), iteration=iteration + 1
-                    )
-                    if self._semantic_binding
-                    else {}
-                ),
-            )
-            failing_rows = _join_new_columns(
-                failing_rows,
-                eval_result.dataframe,
-                source_positions=eval_result.source_positions,
-                overwrite=True,
-                seed_cols=reeval_seed_cols,
-            )
+            failing_rows = execute(failing_rows, eval_columns, f"rewrite-evaluate-{iteration + 1}", iteration + 1)
             _normalize_evaluation_payloads(failing_rows)
-            all_failed.extend(eval_result.failed_records)
-
             df = pd.concat([passing_rows, failing_rows], ignore_index=True)
-            replacement_unavailable = (
-                ~df[COL_REWRITE_REPLACEMENT_READY].apply(bool)
-                if COL_REWRITE_REPLACEMENT_READY in df.columns
-                else pd.Series(False, index=df.index)
-            )
+        replacement_unavailable = unavailable(df)
 
         # Compute needs_human_review from objective metrics after the loop exhausts.
         df.loc[replacement_unavailable, COL_REWRITTEN_TEXT] = None

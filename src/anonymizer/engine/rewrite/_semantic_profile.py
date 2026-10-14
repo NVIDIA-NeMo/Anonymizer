@@ -14,6 +14,7 @@ from typing import Any
 
 import pandas as pd
 
+from anonymizer.config.rewrite import EvaluationCriteria
 from anonymizer.engine.constants import COL_REWRITTEN_TEXT, COL_REWRITTEN_TEXT_INITIAL, COL_TEXT
 from anonymizer.engine.detection._frame_publication import FramePublication
 from anonymizer.engine.detection._opaque_redact import _execute_frame_plan, _frame_implementation, _prepare_frame_plan
@@ -21,11 +22,20 @@ from anonymizer.engine.graph_sdk._effect_values import EffectCode, reject
 from anonymizer.engine.graph_sdk._execution_values import DelegatedRequests
 from anonymizer.engine.graph_sdk.blocking import BlockingPool
 from anonymizer.engine.graph_sdk.capabilities import (
+    ConfigField,
+    ConfigText,
     FrozenConfig,
 )
 from anonymizer.engine.graph_sdk.data import DataGraph, DataLimits
+from anonymizer.engine.graph_sdk.evidence import (
+    AssessmentSubmission,
+    QualificationLimits,
+    admit_qualification,
+    verify_evidence,
+)
 from anonymizer.engine.graph_sdk.executor import (
     AssessmentLimits,
+    EvidenceProductionDecl,
     ExecutionLimits,
     ExecutionResult,
     IngressLimits,
@@ -36,7 +46,13 @@ from anonymizer.engine.graph_sdk.preparation import (
 )
 from anonymizer.engine.graph_sdk.requests import AssociationInput, AssociationResult
 from anonymizer.engine.ndd.adapter import NddAdapter
-from anonymizer.engine.rewrite._semantic_evaluation import RewriteEvaluationBinding
+from anonymizer.engine.rewrite._semantic_evaluation import (
+    EVALUATION_FAIL,
+    EVALUATION_MEANING,
+    EVALUATION_PASS,
+    EVALUATION_PROMISE,
+    RewriteEvaluationBinding,
+)
 from anonymizer.engine.rewrite.artifacts import (
     REWRITE_TYPES,
     EvaluationMetricsValue,
@@ -53,6 +69,7 @@ from anonymizer.graph.workflow import (
     ChoiceBranch,
     ChoiceDecl,
     DynamicScope,
+    EvidencePromise,
     InputBinding,
     InputPort,
     KeyedJoinDecl,
@@ -95,11 +112,20 @@ async def execute_initial_evaluation(
     """Execute actual DD prefix/Evaluate under one admitted source-bound owner.
 
     This incomplete private prototype requires caller-supplied limits/configuration.
-    It publishes explicit loop exits but does not yet produce assessment evidence
-    or replace the two schedule controllers. It is not a public strategy selector.
+    It publishes explicit loop exits and verifies final repair-criteria evidence.
+    Full environment binding and public ingress remain incomplete; this is not
+    a public strategy selector.
     """
     if source.empty or arguments.get("preview_num_records") is not None:
         reject(EffectCode.UNSUPPORTED)
+    arguments = dict(arguments)
+    criteria = EvaluationCriteria.model_validate_json(arguments["evaluation"].model_dump_json())
+    expected_configuration = FrozenConfig(
+        fields=(ConfigField(name="evaluation", value=ConfigText(value=criteria.model_dump_json())),)
+    )
+    if configuration != expected_configuration:
+        reject(EffectCode.CONTRADICTORY)
+    arguments["evaluation"] = criteria
     graph = DataGraph.new()
     targets = []
     for text in source[COL_TEXT]:
@@ -166,19 +192,20 @@ async def execute_initial_evaluation(
             _evaluation_state(0 if combined else None, COL_REWRITTEN_TEXT_INITIAL if combined else COL_REWRITTEN_TEXT),
             iteration_slots=iteration_slots,
             combined=combined,
+            criteria=arguments["evaluation"],
         )
         asyncio.run_coroutine_threadsafe(binding.passthrough(source), loop).result()
         runner = (CombinedRewriteWorkflow if combined else RewriteWorkflow)(adapter, semantic_binding=binding)
         result = runner.run(source, **arguments)
-        selected = asyncio.run_coroutine_threadsafe(binding.finish(), loop).result()
         if result.source_positions is None:
             reject(EffectCode.MISSING)
         positions = resolve_source_positions(source, result.dataframe, result.source_positions)
         successful = tuple(binding.source.associations[index] for index in positions)
-        if set(successful) != set(selected):
-            reject(EffectCode.CONTRADICTORY)
+        selected, projected = asyncio.run_coroutine_threadsafe(
+            binding.finish(result.dataframe, successful), loop
+        ).result()
         publication = FramePublication.capture(
-            result.dataframe,
+            projected,
             associations=tuple(selected[association] for association in successful),
             text_ports=((COL_REWRITTEN_TEXT, "candidate"),),
             failed_records=tuple(result.failed_records),
@@ -194,7 +221,7 @@ async def execute_initial_evaluation(
             frame=publication,
         )
 
-    return await _execute_frame_plan(
+    result = await _execute_frame_plan(
         prepared=prepared,
         capabilities=tuple(capabilities),
         policies=tuple(policies),
@@ -204,7 +231,7 @@ async def execute_initial_evaluation(
         limits=limits,
         ingress_limits=IngressLimits(
             max_associations=size,
-            max_outputs_per_association=6,
+            max_outputs_per_association=8,
             max_collection_items=limits.max_collection_items * size,
             max_assessments=1,
             max_metadata_items=size * (20 + 10 * limits.max_collection_items),
@@ -212,16 +239,52 @@ async def execute_initial_evaluation(
             max_metadata_bytes=limits.max_runtime_artifact_bytes,
             max_depth=8,
         ),
+        assessment_productions=tuple(
+            EvidenceProductionDecl(
+                node=node,
+                outcome=outcome,
+                promise=EVALUATION_PROMISE,
+                evidence_port="metrics",
+                absence_queries=frozenset(),
+                supported_findings=frozenset({EVALUATION_PASS, EVALUATION_FAIL}),
+            )
+            for node in (ids["initial"], ids["final"])
+            for outcome in ("ok",)
+        ),
         assessment_limits=AssessmentLimits(
-            max_productions=0,
-            max_findings_per_production=0,
-            max_finding_code_bytes=0,
+            max_productions=2,
+            max_findings_per_production=2,
+            max_finding_code_bytes=32,
             max_absence_queries=0,
-            max_assessment_facts=0,
-            max_port_facts=(8 + 6 * allowance) * 14 * size,
-            max_provenance_edges=(8 + 6 * allowance) * 42 * size,
+            max_assessment_facts=2 * size,
+            max_port_facts=(8 + 6 * allowance) * 20 * size,
+            max_provenance_edges=(8 + 6 * allowance) * 64 * size,
         ),
     )
+
+    qualification = admit_qualification(
+        execution=result._execution,
+        productions=result._execution.assessment_productions,
+        limits=QualificationLimits(
+            max_productions=2,
+            max_submissions=size,
+            max_port_facts=(8 + 6 * allowance) * 20 * size,
+            max_consumed_per_assessment=8,
+            max_coverage_atoms=0,
+            max_verified_evidence=size,
+            max_required_decisions=0,
+            max_fixed_point_steps=max(1, size),
+            max_revision_entries=(8 + 6 * allowance) * 20 * size,
+            max_absence_revisions=0,
+            max_provenance_edges=(8 + 6 * allowance) * 64 * size,
+        ),
+    )
+    verify_evidence(
+        admitted=qualification,
+        result=result,
+        submissions=tuple(AssessmentSubmission(fact=fact) for fact in result.assessments),
+    )
+    return result
 
 
 def _tail(configuration: FrozenConfig, allowance: int):
@@ -237,7 +300,16 @@ def _tail(configuration: FrozenConfig, allowance: int):
             EvaluationMetricsValue,
         )
     )
-    carried = {"source": text, "baseline": text, "qa": qa, "candidate": text, "privacy": privacy, "metrics": metrics}
+    carried = {
+        "source": text,
+        "baseline": text,
+        "qa": qa,
+        "candidate": text,
+        "privacy": privacy,
+        "answers": answers,
+        "comparison": comparison,
+        "metrics": metrics,
+    }
     root, body = WorkflowId.new(), WorkflowId.new()
     ids = {
         name: NodeId.new(workflow=root)
@@ -289,6 +361,26 @@ def _tail(configuration: FrozenConfig, allowance: int):
 
     def node(owner_ids, name, inputs, outputs, **kwargs):
         op = operation("rewrite-" + ("iteration-" if owner_ids is body_ids else "") + name, inputs, outputs, **kwargs)
+        if name == "metrics" and owner_ids is ids:
+            op = replace(op, outcomes=(*op.outcomes, replace(op.outcomes[1], name="skipped")))
+        if name in {"initial", "final"}:
+            promise = EvidencePromise(
+                name=EVALUATION_PROMISE,
+                meaning=EVALUATION_MEANING,
+                subject_port="in_candidate",
+                consumed_ports=frozenset(port.name for port in op.inputs),
+                coverage=frozenset(),
+            )
+            op = replace(
+                op,
+                output_dependencies=tuple(
+                    replace(dep, inputs=promise.consumed_ports, identity_input=None) if dep.output == "metrics" else dep
+                    for dep in op.output_dependencies
+                ),
+                outcomes=tuple(replace(outcome, evidence=frozenset({promise})) for outcome in op.outcomes),
+            )
+            if name == "initial":
+                op = replace(op, outcomes=(*op.outcomes, replace(op.outcomes[0], name="skipped", evidence=frozenset())))
         cap, policy = _frame_implementation(
             owner_ids[name],
             op,
@@ -370,6 +462,7 @@ def _tail(configuration: FrozenConfig, allowance: int):
                 max_branch_members=4,
                 max_subgraph_depth=2,
                 max_choice_states=3,
+                max_analysis_work=max(1_000_000, len(nodes) ** 2 * (len(bindings) + len(outputs)) ** 3),
             ),
         )
 
@@ -394,8 +487,8 @@ def _tail(configuration: FrozenConfig, allowance: int):
     root_nodes.extend(
         [
             node(ids, "join", {"metrics": metrics}, {}, control=True, local=True),
-            node(ids, "initial", {"candidate": text}, {"candidate": text}, identity=("candidate",), local=True),
-            node(ids, "final", {"candidate": text}, {"candidate": text}, identity=("candidate",), local=True),
+            node(ids, "initial", carried, carried, identity=tuple(carried), local=True),
+            node(ids, "final", carried, carried, identity=tuple(carried), local=True),
         ]
     )
     root_bindings.extend(
@@ -407,10 +500,11 @@ def _tail(configuration: FrozenConfig, allowance: int):
     )
     root_bindings.extend(
         InputBinding(
-            source=NodeOutputRef(node=ids[src], port="candidate"),
-            destination=NodeInputRef(node=ids[dst], port="in_candidate"),
+            source=NodeOutputRef(node=ids[src], port=port),
+            destination=NodeInputRef(node=ids[dst], port="in_" + port),
         )
         for src, dst in (("metrics", "initial"), ("member", "final"))
+        for port in carried
     )
     root_bindings.append(
         InputBinding(
@@ -430,8 +524,29 @@ def _tail(configuration: FrozenConfig, allowance: int):
     interface = replace(
         interface,
         outcomes=tuple(
-            replace(interface.outcomes[0], name=n, produced_ports=frozenset({p}))
-            for n, p in (("initial", "initial_candidate"), ("final", "repaired_candidate"))
+            replace(
+                interface.outcomes[0],
+                name=n,
+                produced_ports=frozenset({p}),
+                evidence=frozenset()
+                if n == "skipped"
+                else frozenset(
+                    {
+                        EvidencePromise(
+                            name=EVALUATION_PROMISE,
+                            meaning=EVALUATION_MEANING,
+                            subject_port=p,
+                            consumed_ports=frozenset({"source"}),
+                            coverage=frozenset(),
+                        )
+                    }
+                ),
+            )
+            for n, p in (
+                ("initial", "initial_candidate"),
+                ("final", "repaired_candidate"),
+                ("skipped", "initial_candidate"),
+            )
         ),
     )
     raw = admit(
@@ -448,8 +563,16 @@ def _tail(configuration: FrozenConfig, allowance: int):
             for n in ("initial", "final")
         ],
         [
-            OutcomeBinding(source=NodeOutcomeRef(node=ids[n], outcome="ok"), destination=WorkflowOutcomeRef(outcome=n))
-            for n in ("initial", "final")
+            *[
+                OutcomeBinding(
+                    source=NodeOutcomeRef(node=ids[n], outcome="ok"), destination=WorkflowOutcomeRef(outcome=n)
+                )
+                for n in ("initial", "final")
+            ],
+            OutcomeBinding(
+                source=NodeOutcomeRef(node=ids["initial"], outcome="skipped"),
+                destination=WorkflowOutcomeRef(outcome="skipped"),
+            ),
         ],
         (
             ChoiceDecl(
@@ -466,7 +589,7 @@ def _tail(configuration: FrozenConfig, allowance: int):
         member=ids["member"],
         join=ids["join"],
         enter_outcomes=frozenset({"again"}),
-        bypass_outcomes=frozenset({"stop", "exhausted"}),
+        bypass_outcomes=frozenset({"stop", "exhausted", "skipped"}),
         continue_outcomes=frozenset({"again"}),
         exit_outcomes=frozenset({"stop", "exhausted"}),
         initial=tuple(

@@ -211,7 +211,7 @@ def admit_qualification(
     if any(item.node not in operations for item in productions):
         reject(EffectCode.MISSING)
     resolved = tuple(_resolve_production(item, operations[item.node], limits) for item in productions)
-    projections = _PromiseProjection(execution).all()
+    projections = () if prepared.configuration.purpose == "execution_only" else _PromiseProjection(execution).all()
     requirements = tuple(
         item
         for item in prepared.workflow.workflow.protection_requirements
@@ -222,6 +222,8 @@ def admit_qualification(
         for item in projections
         if any(item.matches(requirement) for requirement in requirements)
     }
+    if prepared.configuration.purpose == "execution_only" and productions:
+        required = {(item.node, item.outcome, item.promise) for item in execution.assessment_productions}
     observed = set(keys)
     if required - observed:
         reject(EffectCode.MISSING)

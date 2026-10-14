@@ -318,6 +318,8 @@ def _repair_columns(
 def _finalization_column(
     states: list[EvaluationState],
     evaluation: EvaluationCriteria,
+    *,
+    semantic: bool = False,
 ) -> CustomColumnConfig:
     required_columns = list(
         dict.fromkeys(
@@ -354,6 +356,8 @@ def _finalization_column(
         side_effect_columns=side_effect_columns,
     )
     def finalize(row: dict[str, Any], generator_params: _FinalizationParams) -> dict[str, Any]:
+        if semantic:
+            return row
         state = next(
             (candidate for candidate in reversed(states) if row.get(candidate.needs_repair) is not None),
             states[0],
@@ -441,31 +445,33 @@ class CombinedRewriteWorkflow(RewriteWorkflow):
             )
         )
 
-        for iteration in range(evaluation.max_repair_iterations):
-            repair_state = _repair_state(iteration)
-            repair_states.append(repair_state)
+        iterations = (
+            self._semantic_binding.iteration_slots
+            if self._semantic_binding
+            else range(evaluation.max_repair_iterations)
+        )
+        for iteration in iterations:
+            repair = _repair_state(iteration)
+            current = _evaluation_state(iteration + 1, repair.rewritten_text)
             columns.extend(
-                _repair_columns(
-                    self._adapter,
-                    selected_models=selected_models,
-                    privacy_goal=privacy_goal,
-                    evaluation=evaluation,
-                    previous=evaluation_states[-1],
-                    state=repair_state,
-                )
+                [
+                    *_repair_columns(
+                        self._adapter,
+                        selected_models=selected_models,
+                        privacy_goal=privacy_goal,
+                        evaluation=evaluation,
+                        previous=evaluation_states[-1],
+                        state=repair,
+                    ),
+                    *_evaluation_columns(
+                        self._adapter, selected_models=selected_models, evaluation=evaluation, state=current
+                    ),
+                ]
             )
-            evaluation_state = _evaluation_state(iteration + 1, repair_state.rewritten_text)
-            evaluation_states.append(evaluation_state)
-            columns.extend(
-                _evaluation_columns(
-                    self._adapter,
-                    selected_models=selected_models,
-                    evaluation=evaluation,
-                    state=evaluation_state,
-                )
-            )
+            repair_states.append(repair)
+            evaluation_states.append(current)
 
-        columns.append(_finalization_column(evaluation_states, evaluation))
+        columns.append(_finalization_column(evaluation_states, evaluation, semantic=self._semantic_binding is not None))
         internal_columns = [
             COL_ENTITY_EXAMPLES,
             COL_ENTITIES_FOR_REPLACE,

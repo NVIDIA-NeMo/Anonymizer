@@ -36,6 +36,7 @@ from anonymizer.engine.graph_sdk.executor import (
     AssessmentLimits,
     DecisionLimits,
     DelegatedRequestContract,
+    EvidenceProductionDecl,
     ExecutionImplementation,
     ExecutionLimits,
     ExecutionResult,
@@ -465,6 +466,7 @@ async def _execute_frame_plan(
     limits: ExecutionLimits,
     ingress_limits: IngressLimits,
     assessment_limits: AssessmentLimits,
+    assessment_productions: tuple[EvidenceProductionDecl, ...] = (),
 ) -> ExecutionResult:
     """Run a single grouped submission with its admitted observed operations."""
     from anonymizer.engine.detection._graph_profile import _await_profile_execution, _Clock
@@ -476,7 +478,7 @@ async def _execute_frame_plan(
         capabilities=capabilities,
         policies=policies,
         decisions=(),
-        assessment_productions=(),
+        assessment_productions=assessment_productions,
         ingress_limits=ingress_limits,
         assessment_limits=assessment_limits,
     )

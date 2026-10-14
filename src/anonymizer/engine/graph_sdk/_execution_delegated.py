@@ -168,6 +168,9 @@ class _WorkerBorrow(PrivateValue):
     async def enter_operation(self, slot: int, association: SemanticAssociation) -> AssociationInput | None:
         return await self._call(lambda: self.owner.enter_operation(slot, association))
 
+    async def operation_result(self, slot: int, association: SemanticAssociation) -> AssociationResult | None:
+        return await self._call(lambda: self.owner.operation_result(slot, association))
+
     async def complete_operation(self, association: SemanticAssociation, result: LocalResult) -> RuntimeOutcome:
         return await self._call(lambda: self.owner.complete_operation(association, result))
 
@@ -364,6 +367,47 @@ class _DelegatedOwner(PrivateValue):
         self.runtime._start_observed_activation(job.activation, operation=True)
         self.operations[job.association] = job
         return job.inputs[0]
+
+    async def operation_result(self, slot: int, association: SemanticAssociation) -> AssociationResult | None:
+        """Read an owned completed occurrence from canonical artifacts, without issuing another attempt."""
+        self._check_submission()
+        require_count(slot)
+        source_job = self._source_job(association)
+        source = self.runtime.frame.sources[source_job.target]
+        key = source.keys.get(slot)
+        if key is None:
+            reject(EffectCode.FOREIGN_OWNER)
+        node = self.runtime.prepared.reservation_recipe[slot].template
+        policy = self.runtime.policies.get(node)
+        if policy is None or policy.submission_owner != self.policy.node:
+            reject(EffectCode.FOREIGN_OWNER)
+        entry = next((item for item in source.state.entries if item.activation == key), None)
+        if entry is None or entry.status in {"ready", "running", "unstarted"}:
+            return None
+        if entry.status != "success" or entry.outcome is None or key not in self.runtime.attempts:
+            reject(EffectCode.REQUEST_CAUSALITY)
+        operation = policy.implementations[0].capability.operation
+        outcome = next(row for row in operation.outcomes if row.name == entry.outcome)
+        outputs = []
+        for port in operation.outputs:
+            reference = self.runtime.facts.produced.get((source_job.target, key, port.name))
+            if port.name in outcome.produced_ports and reference is None:
+                reject(EffectCode.MISSING)
+            if reference is not None:
+                outputs.append(
+                    PortArtifact(
+                        port=port.name,
+                        artifact_type=port.artifact_type,
+                        artifact=reference,
+                        value=self.runtime.facts.values[reference],
+                    )
+                )
+        return AssociationResult(
+            association=SemanticAssociation(task=self.runtime.attempts[key]),
+            outcome=entry.outcome,
+            outputs=tuple(outputs),
+            consumed_context_ports=frozenset(),
+        )
 
     async def complete_operation(self, association: SemanticAssociation, result: LocalResult) -> RuntimeOutcome:
         self._check_submission()

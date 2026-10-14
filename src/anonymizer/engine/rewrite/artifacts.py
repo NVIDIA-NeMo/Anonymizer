@@ -90,6 +90,7 @@ class EvaluationMetricsValue(_RewriteValue):
     weighted_leakage: float
     high_leak: bool
     needs_repair: bool
+    iteration: int = 0
 
 
 RewriteArtifactValue: TypeAlias = (
@@ -129,9 +130,12 @@ def rewrite_content(
             type(v) is not bool for v in atoms[3:]
         ):
             return None
+        iteration = getattr(value, "iteration", None)
+        if type(iteration) is not int or iteration < 0:
+            return None
         if max_items is not None and max_items < 1:
             return None
-        return cast(tuple[float | bool, ...], atoms), 1
+        return (*cast(tuple[float | bool, ...], atoms), iteration), 1
     else:
         return None
     atoms: list[str | int | float | bool | None] = []
