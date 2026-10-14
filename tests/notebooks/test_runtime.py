@@ -82,22 +82,43 @@ def test_create_anonymizer_uses_runtime_endpoint() -> None:
     anonymizer = Mock()
 
     with (
-        patch("anonymizer.notebooks._runtime.validate_notebook_model_inputs"),
+        patch("anonymizer.notebooks._runtime._validate_gliner_model_inputs"),
         patch("anonymizer.notebooks._runtime._ensure_runtime", return_value=runtime),
         patch(
-            "anonymizer.notebooks._runtime.build_notebook_model_configuration",
+            "anonymizer.notebooks._runtime._build_gliner_model_configuration",
             return_value=configuration,
         ) as build_configuration,
-        patch("anonymizer.notebooks._runtime.Anonymizer", return_value=anonymizer),
+        patch("anonymizer.notebooks._runtime._new_anonymizer", return_value=anonymizer),
     ):
-        result = _runtime.create_anonymizer(gliner_device="cpu")
+        result = _runtime._create_native_anonymizer(
+            request=_runtime.NativeGliner(device="cpu"),
+            model_configs=None,
+            model_providers=None,
+            artifact_path=None,
+            data_designer_run_config=None,
+        )
 
     assert result is anonymizer
     build_configuration.assert_called_once_with(
         model_configs=None,
         model_providers=None,
-        endpoint=runtime.endpoint,
+        endpoint=_runtime.GlinerEndpoint(
+            url=runtime.endpoint,
+            model=_runtime.MODEL_ID,
+            api_key_env=_runtime.LOCAL_TOKEN_ENV,
+        ),
     )
+
+
+def test_create_anonymizer_is_compatibility_wrapper_for_public_native_request() -> None:
+    expected = Mock()
+    with patch("anonymizer.interface.factory.create_anonymizer", return_value=expected) as public_factory:
+        result = _runtime.create_anonymizer(gliner_device="cpu")
+
+    assert result is expected
+    public_factory.assert_called_once()
+    request = public_factory.call_args.kwargs["gliner"]
+    assert request.device == "cpu"
 
 
 def test_stop_local_runtime_is_idempotent() -> None:

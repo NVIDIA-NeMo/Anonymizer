@@ -1,0 +1,27 @@
+schema_version = "inference-service.local-spec/v2"
+
+[task]
+kind = "entity-detection"
+dynamic_labels = true
+offsets = true
+scores = true
+
+[model]
+model_id = "nvidia/gliner-pii"
+revision = "bd23e8ef4425fd04e34c5204ab49ffaa706eae79"
+
+[vllm]
+python_executable = ".venv/bin/python"
+gpu_memory_utilization = 0.85
+max_model_len = 512
+
+[vllm.factory]
+plugin = "deberta_gliner"
+prepared_model_root = "/tmp/anonymizer-vllm-factory"
+
+[local]
+host = "127.0.0.1"
+port = 8001
+
+startup_timeout_seconds = 300
+shutdown_timeout_seconds = 30
