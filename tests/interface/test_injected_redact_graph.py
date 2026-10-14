@@ -64,6 +64,7 @@ def test_injected_redact_keeps_frame_calls_and_reports_unknown_work(tmp_path, st
         "validation_excerpt_window_chars",
         "entity_labels",
         "excluded_entity_labels",
+        "entity_label_examples",
         "privacy_goal",
         "data_summary",
         "tag_latent_entities",

@@ -7,7 +7,7 @@ requires-python = ">=3.11"
 license = "Apache-2.0"
 
 dependencies = [
-    "data-designer>=0.9,<0.10",
+    "data-designer>=0.9.4,<0.10",
     "pydantic>=2.9,<3",
     "pydantic-settings>=2.12,<3",
     "cyclopts>=3",
@@ -34,6 +34,7 @@ anonymizer = "anonymizer.interface.cli.main:main"
 [project.entry-points."data_designer.plugins"]
 anonymizer-detection-transform = "anonymizer.engine.workflow_columns.detection.plugins:detection_transform_plugin"
 anonymizer-chunked-validation = "anonymizer.engine.workflow_columns.detection.plugins:chunked_validation_plugin"
+anonymizer-evaluation-judge = "anonymizer.engine.workflow_columns.evaluation.judge.plugins:judge_column_plugin"
 
 [dependency-groups]
 dev = [
@@ -41,6 +42,7 @@ dev = [
     "pre-commit>=4.0.0,<5",
     "pytest>=9.0.3,<10",
     "pytest-cov>=7.0,<8",
+    "pyyaml>=6,<7",
     "ruff>=0.12.3,<1",
     "ty==0.0.69",
     "uvicorn>=0.30,<1",

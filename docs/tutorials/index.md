@@ -85,4 +85,4 @@ Use rewrite mode with privacy goals, evaluation criteria, and review-flag triage
 
 ### 5. [Rewriting Legal Documents](../notebooks/05_rewriting_legal_documents/)
 
-Apply rewrite mode to legal-domain text with custom entity labels and stricter protection goals.
+Apply rewrite mode to legal-domain text with non-default entity labels and stricter protection goals.

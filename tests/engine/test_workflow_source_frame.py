@@ -4,8 +4,12 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+from typing import Any
+
 import pandas as pd
 import pytest
+from data_designer.engine.storage.artifact_storage import ArtifactStorage
 
 from anonymizer.engine.ndd._source_frame import WorkflowSourceFrame
 from anonymizer.interface.errors import AnonymizerWorkflowError
@@ -60,3 +64,21 @@ def test_nonzero_rows_without_columns_reject_missing_correspondence() -> None:
     assert len(returned) == 1 and returned.empty
     with pytest.raises(AnonymizerWorkflowError, match="source correspondence"):
         frame.project(returned)
+
+
+def test_storage_metadata_omits_private_source_and_restores_writer(tmp_path: Path) -> None:
+    frame = WorkflowSourceFrame.capture(pd.DataFrame({"text": ["synthetic"]}))
+    storage = ArtifactStorage(artifact_path=tmp_path, dataset_name="source-metadata")
+    original = storage.write_metadata
+    public = {"column_name": "text", "num_records": 1}
+    private = {"column_name": frame.key_column, "num_records": 1}
+    metadata: dict[str, Any] = {"column_statistics": [public, private], "actual_num_records": 1}
+    with pytest.raises(RuntimeError, match="after write"), frame._bind_storage(storage):
+        storage.write_metadata(metadata)
+        assert storage.read_metadata() == {"column_statistics": [public], "actual_num_records": 1}
+        assert metadata["column_statistics"] == [public, private]
+        storage.update_metadata({"num_completed_batches": 1})
+        assert storage.read_metadata()["num_completed_batches"] == 1
+        assert storage.read_metadata()["column_statistics"] == [public]
+        raise RuntimeError("after write")
+    assert storage.write_metadata == original

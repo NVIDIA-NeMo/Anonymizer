@@ -124,7 +124,7 @@ class DetectionTransformGenerator(ColumnGeneratorCellByCell[DetectionTransformCo
 
         operation = DetectionTransformOperation(self.config.operation)
         transform = _TRANSFORMS[operation]
-        exclusions = (
+        options: dict[str, Any] = (
             {"excluded_entity_labels": tuple(self.config.excluded_entity_labels)}
             if operation
             in {
@@ -134,11 +134,13 @@ class DetectionTransformGenerator(ColumnGeneratorCellByCell[DetectionTransformCo
             }
             else {}
         )
+        if operation == DetectionTransformOperation.APPLY_VALIDATION_AND_FINALIZE:
+            options["allowed_entity_labels"] = self.config.allowed_entity_labels
         work = current_source_work(self)
         if work is not None:
             source_worker_borrow().authorize_source_sync(work.association)
-            return transform(data, **exclusions)
-        return run_transform(lambda: transform(data, **exclusions), name=operation.value, column=self.config.name)
+            return transform(data, **options)
+        return run_transform(lambda: transform(data, **options), name=operation.value, column=self.config.name)
 
     async def agenerate(self, data: dict[str, Any]) -> dict[str, Any]:  # ty: ignore[invalid-method-override]
         # Preserve DD's worker-thread/copy contract while retaining the canonical

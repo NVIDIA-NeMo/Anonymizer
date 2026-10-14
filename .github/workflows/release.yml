@@ -45,7 +45,7 @@ jobs:
       version: ${{ steps.build.outputs.version }}
     steps:
       - name: Checkout at release ref
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           ref: ${{ inputs.release-ref }}
           fetch-depth: 0
@@ -57,7 +57,7 @@ jobs:
           enable-cache: true
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v7
         with:
           python-version-file: ".python-version"
 
@@ -106,7 +106,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout at release ref
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           ref: ${{ inputs.release-ref }}
           fetch-depth: 0
@@ -142,7 +142,7 @@ jobs:
       contents: write
     steps:
       - name: Checkout at release ref
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           ref: ${{ inputs.release-ref }}
           fetch-depth: 0

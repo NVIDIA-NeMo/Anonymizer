@@ -190,8 +190,8 @@ class NddRequestBridge:
     @contextmanager
     def bind(self, designer: Any) -> Iterator[None]:
         self.requests.require_transport(self.physical)
-        if version("data-designer") != "0.9.1":
-            raise AnonymizerWorkflowError("DD graph request binding requires DataDesigner 0.9.1")
+        if version("data-designer") != "0.9.4":
+            raise AnonymizerWorkflowError("DD graph request binding requires DataDesigner 0.9.4")
         original = designer._create_resource_provider
         bridge = self
 

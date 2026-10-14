@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 from threading import Event
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
@@ -310,3 +311,26 @@ def test_native_registered_config_hydration_keeps_wire_shape(operation):
     assert payload["column_type"] == "anonymizer-detection-transform"
     assert payload["operation"] == operation.value
     assert "generator_function" not in payload and "generator_params" not in payload
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+def test_registered_finalize_preserves_explicit_label_scope(asynchronous: bool) -> None:
+    generator = DetectionTransformGenerator(
+        DetectionTransformConfig(
+            name="result",
+            operation=DetectionTransformOperation.APPLY_VALIDATION_AND_FINALIZE,
+            allowed_entity_labels=["country"],
+        ),
+        resource_provider=SimpleNamespace(),  # ty: ignore[invalid-argument-type]
+    )
+    row: dict[str, Any] = {
+        COL_TEXT: "San Diego",
+        COL_MERGED_ENTITIES: {
+            "entities": [
+                {"id": "city_0_9", "value": "San Diego", "label": "city", "start_position": 0, "end_position": 9}
+            ]
+        },
+    }
+    result = asyncio.run(generator.agenerate(row)) if asynchronous else generator.generate(row)
+    assert result[COL_DETECTED_ENTITIES] == {"entities": []}
+    assert result[COL_TAGGED_TEXT] == "San Diego"

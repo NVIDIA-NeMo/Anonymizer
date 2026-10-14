@@ -205,6 +205,7 @@ class WorkflowSourceFrame:
 
         write = storage.write_parquet_file
         load = storage.load_dataset
+        write_metadata = storage.write_metadata
         batches: dict[str, tuple[str, ...]] = {}
 
         def write_file(
@@ -240,10 +241,23 @@ class WorkflowSourceFrame:
             dataframe[self.key_column] = keys
             return dataframe
 
+        def public_metadata(metadata: dict[str, Any]) -> Any:
+            # DD 0.9.4 persists seed-column statistics alongside the public dataset.
+            if "column_statistics" in metadata:
+                metadata = {
+                    **metadata,
+                    "column_statistics": [
+                        row for row in metadata["column_statistics"] if row["column_name"] != self.key_column
+                    ],
+                }
+            return write_metadata(metadata)
+
         object.__setattr__(storage, "write_parquet_file", write_file)
+        object.__setattr__(storage, "write_metadata", public_metadata)
         object.__setattr__(storage, "load_dataset", load_dataset)
         try:
             yield
         finally:
             object.__setattr__(storage, "write_parquet_file", write)
+            object.__setattr__(storage, "write_metadata", write_metadata)
             object.__setattr__(storage, "load_dataset", load)
