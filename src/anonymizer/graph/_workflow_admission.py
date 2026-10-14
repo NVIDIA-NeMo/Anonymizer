@@ -47,6 +47,7 @@ from anonymizer.graph._workflow_values import (
     _reachable_workflows,
     _reject,
     _tuple_of,
+    _validate_scalars,
 )
 
 
@@ -347,6 +348,8 @@ def admit_static_workflow(
         protection,
         limits,
     )
+    for binding in _visits(input_bindings):
+        _validate_scalars(strings=(binding.destination.port,))
     if any(choice.selector in branch.members for choice in _visits(choices) for branch in _visits(choice.branches)):
         _reject(ValidationCode.INVALID_VALUE)
     expanded_count = sum(

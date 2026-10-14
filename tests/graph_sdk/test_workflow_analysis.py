@@ -429,3 +429,53 @@ def test_endpoint_walk_literal_direction_cycles_and_exact_work(
             assert meter.work == limit
         finally:
             _ANALYSIS.reset(token)
+
+
+@pytest.mark.parametrize(
+    ("port", "code"),
+    (
+        ([], ValidationCode.INVALID_TYPE),
+        ({}, ValidationCode.INVALID_TYPE),
+        (False, ValidationCode.INVALID_TYPE),
+        ("", ValidationCode.INVALID_VALUE),
+        ("missing", ValidationCode.MISSING),
+    ),
+)
+def test_input_destination_port_reentry_has_typed_rejection(port: object, code: ValidationCode) -> None:
+    workflow = _Adapter().admit(_chain(1))
+    destination = next(iter(workflow.input_bindings)).destination
+    if code is not ValidationCode.MISSING:
+        with pytest.raises(ContractViolation) as constructor:
+            values.NodeInputRef(node=destination.node, port=cast(str, port))
+        assert constructor.value.code is code
+    original = destination.port
+    object.__setattr__(destination, "port", port)
+    try:
+        with pytest.raises(ContractViolation) as rejected:
+            _readmit(workflow)
+        assert rejected.value.code is code
+    finally:
+        object.__setattr__(destination, "port", original)
+    assert _readmit(workflow).interface == workflow.interface
+
+
+@pytest.mark.parametrize("port", ([], {}))
+def test_input_destination_reentry_preserves_analysis_budget_precedence(
+    port: object, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workflow = _Adapter().admit(_chain(1))
+    destination = next(iter(workflow.input_bindings)).destination
+    original = destination.port
+    observed = _meters(monkeypatch)
+    object.__setattr__(destination, "port", port)
+    try:
+        with pytest.raises(ContractViolation) as exhausted:
+            _readmit(workflow, limit=1)
+        assert exhausted.value.code is ValidationCode.ANALYSIS_LIMIT_EXCEEDED
+        assert observed[-1].work == 1
+        assert _ANALYSIS.get() is None
+        with pytest.raises(ContractViolation) as malformed:
+            _readmit(workflow)
+        assert malformed.value.code is ValidationCode.INVALID_TYPE
+    finally:
+        object.__setattr__(destination, "port", original)
