@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, ClassVar, Literal, TypeVar, cast
 
 from anonymizer.engine.graph_sdk._effect_values import EffectCode, EffectRejected, PrivateValue, reject, require_count
 from anonymizer.engine.graph_sdk._execution_dispatch import _mapping, _run_local
+from anonymizer.engine.graph_sdk._execution_publication import _accept_invocation_frame
 from anonymizer.engine.graph_sdk._execution_state import (
     _ExecutionJob,
     _InvocationJob,
@@ -672,9 +673,11 @@ class _DelegatedOwner(PrivateValue):
             implementation.implementation, implementation.capability.operation, implementation.configuration
         ]
         try:
-            mapping, results, assessments = await _run_local(
+            returned = await _run_local(
                 job.policy, handle, job.association, job.inputs, self, self.runtime.admitted._response_limits()
             )
+            assert isinstance(returned, tuple)
+            mapping, results, assessments = returned
         except asyncio.CancelledError:
             mapping, results, assessments = _mapping(job.policy, "cancel_after_start", None, None), (), ()
         self._finish(job, mapping, results, assessments)
@@ -974,16 +977,11 @@ class _DelegatedOwner(PrivateValue):
             and self.invocation_job is not None
             and type(getattr(result, "frame", None)) is InvocationFrame
         ):
-            if type(result) is not LocalCompleted or result.results or result.assessments or result.failed_sources:
+            accepted = _accept_invocation_frame(result)
+            if accepted is None:
                 return self._failure("failure", "malformed_response")
-            else:
-                assert isinstance(result.frame, InvocationFrame)
-                try:
-                    accepted = result.frame.accept()
-                except (AttributeError, TypeError, ValueError):
-                    return self._failure("failure", "malformed_response")
-                runtime.frame.publications.append(accepted)
-                return {self.invocation_job.association: (_mapping(self.policy, "result", "ok", None), (), ())}
+            runtime.frame.publications.append(accepted)
+            return {self.invocation_job.association: (_mapping(self.policy, "result", "ok", None), (), ())}
         if self.invocation_job is not None and self.contract.mode != "opaque":
             return self._failure("failure", "malformed_response")
         if type(result) is not LocalCompleted:

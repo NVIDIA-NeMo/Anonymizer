@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, MutableMapping, MutableSequence
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from anonymizer.engine.detection.artifacts import ENTITY_SPANS_TYPE, EntitySpansValue
 from anonymizer.engine.graph_sdk._effect_values import (
@@ -29,6 +29,7 @@ from anonymizer.engine.graph_sdk._execution_values import (
     ExecutionServices,
     FinalOutputFact,
     LocalAssessmentResult,
+    LocalCompleted,
     MapItemKey,
     OperationOutputKey,
     ProvenanceKey,
@@ -70,6 +71,9 @@ from anonymizer.graph.workflow import (
     SubgraphNode,
     WorkflowInputRef,
 )
+
+if TYPE_CHECKING:
+    from anonymizer.engine.detection._frame_publication import InvocationFrame
 
 
 def _accept_outputs(
@@ -547,3 +551,27 @@ def _canonical_record(
         evidence=(),
         statuses=statuses,
     )
+
+
+def _accept_invocation_frame(result: object) -> InvocationFrame | None:
+    """Validate a source-free compatibility frame before canonical publication."""
+    from anonymizer.engine.detection._frame_publication import InvocationFrame
+
+    if (
+        type(result) is not LocalCompleted
+        or type(getattr(result, "results", None)) is not tuple
+        or getattr(result, "results", None) != ()
+        or type(getattr(result, "assessments", None)) is not tuple
+        or getattr(result, "assessments", None) != ()
+        or type(getattr(result, "failed_sources", None)) is not frozenset
+        or getattr(result, "failed_sources", None) != frozenset()
+        or type(getattr(result, "frame", None)) is not InvocationFrame
+    ):
+        return None
+    assert isinstance(result, LocalCompleted)
+    frame = result.frame
+    assert isinstance(frame, InvocationFrame)
+    try:
+        return frame.accept()
+    except (AttributeError, TypeError, ValueError):
+        return None

@@ -220,15 +220,26 @@ def _invocation_workflows(
     if prepared.configuration.invocation_owned:
         owners = [policy for policy in policies if policy.delegated is not None]
         raw = prepared.workflow.workflow
+        local = len(policies) == 1 and policies[0].kind == "local" and policies[0].submission_owner is None
         if (
-            len(owners) != 1
-            or owners[0].delegated is None
-            or owners[0].delegated.child_slots
+            (not local and (len(owners) != 1 or owners[0].delegated is None or owners[0].delegated.child_slots))
+            or (
+                local
+                and (
+                    prepared.configuration.purpose != "execution_only"
+                    or len(raw.nodes) != 1
+                    or policies[0].result_outcomes != frozenset({"ok"})
+                )
+            )
             or raw.interface.inputs
             or raw.interface.outputs
             or any(not isinstance(node, OperationNode) for node in raw.nodes)
             or any(node.operation.inputs or node.operation.outputs for node in raw.nodes)
-            or any(policy.kind != "local" for policy in policies if policy.node not in shared | {owners[0].node})
+            or any(
+                policy.kind != "local"
+                for policy in policies
+                if policy.node not in shared | {owner.node for owner in owners}
+            )
             or len(prepared.workflow.scopes) != 1
             or any(scope.maps or scope.loops or scope.joins for scope in prepared.workflow.scopes)
         ):

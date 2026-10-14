@@ -27,6 +27,7 @@ from anonymizer.engine.graph_sdk._execution_values import (
     LocalFailure,
     OperationExecutionPolicy,
     RuntimeOutcome,
+    SubmissionFailure,
 )
 from anonymizer.engine.graph_sdk._ingress import (
     _trusted_association,
@@ -100,7 +101,13 @@ async def _run_local(
     inputs: tuple[AssociationInput, ...],
     control: _Cancellation,
     ingress: IngressLimits,
-) -> tuple[RuntimeOutcome, tuple[AssociationResult, ...], tuple[LocalAssessmentResult, ...]]:
+    *,
+    invocation: bool = False,
+) -> (
+    tuple[RuntimeOutcome, tuple[AssociationResult, ...], tuple[LocalAssessmentResult, ...]]
+    | LocalCompleted
+    | SubmissionFailure
+):
     if handle.local is None:
         reject(EffectCode.MISSING)
     try:
@@ -113,8 +120,16 @@ async def _run_local(
                 return _mapping(policy, "cancel_after_start", None, None), (), ()
             await asyncio.sleep(0)
         result = operation.result()
-    except Exception:
+    except asyncio.CancelledError:
+        if not invocation:
+            raise
+        return _mapping(policy, "cancel_after_start", None, None), (), ()
+    except Exception as error:
+        if invocation:
+            return SubmissionFailure(associations=frozenset({association}), cause=error)
         return _mapping(policy, "failure", None, "implementation_exception"), (), ()
+    if invocation and type(result) is LocalCompleted:
+        return result
     if type(result) is LocalFailure:
         return _mapping(policy, "failure", None, inspect_failure(result.failure)), (), ()
     if type(result) is LocalDecisionWait:

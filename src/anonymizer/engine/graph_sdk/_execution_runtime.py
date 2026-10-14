@@ -35,6 +35,7 @@ from anonymizer.engine.graph_sdk._execution_materialization import (
     _valid_dynamic_membership_result,
 )
 from anonymizer.engine.graph_sdk._execution_publication import (
+    _accept_invocation_frame,
     _accept_outputs,
     _canonical_record,
     _capture_assessments,
@@ -65,6 +66,7 @@ from anonymizer.engine.graph_sdk._execution_values import (
     ExecutionServices,
     ImplementationResourceRegistration,
     LocalAssessmentResult,
+    LocalCompleted,
     OperationExecutionPolicy,
     ProvenanceKey,
     PublicationFailureFact,
@@ -277,7 +279,11 @@ class _InvocationRuntime:
         assert source is not None
         for entry in source.state.entries:
             policy = self.policies[entry.template]
-            if entry.status != "ready" or policy.kind != "delegated":
+            if (
+                entry.status != "ready"
+                or policy.kind not in {"delegated", "local"}
+                or entry.template in self.delegated_slots
+            ):
                 continue
             if self.services.limits.max_local_in_flight == 0:
                 reject(EffectCode.LIMIT_EXCEEDED)
@@ -298,7 +304,14 @@ class _InvocationRuntime:
             handle = self.handles[
                 implementation.implementation, implementation.capability.operation, implementation.configuration
             ]
-            task = asyncio.create_task(_DelegatedOwner(self, (), invocation_job=job).run(handle))
+            coroutine = (
+                _DelegatedOwner(self, (), invocation_job=job).run(handle)
+                if policy.kind == "delegated"
+                else _run_local(
+                    policy, handle, job.association, (), self.control, self.admitted._response_limits(), invocation=True
+                )
+            )
+            task = asyncio.create_task(coroutine)
             self.submissions[task] = (job,)
             return True
         return False
@@ -618,6 +631,24 @@ class _InvocationRuntime:
     def _complete_submission(self, task: _ExecutionTask) -> None:
         jobs = self.submissions.pop(task)
         returned = task.result()
+        if isinstance(returned, (LocalCompleted, SubmissionFailure)):
+            (job,) = jobs
+            assert isinstance(job, _InvocationJob)
+            frame = None
+            if isinstance(returned, SubmissionFailure):
+                self.submission_failures.append(returned)
+                mapping = _mapping(job.policy, "failure", None, "implementation_exception")
+            else:
+                frame = _accept_invocation_frame(returned)
+                mapping = (
+                    _mapping(job.policy, "result", "ok", None)
+                    if frame is not None
+                    else _mapping(job.policy, "failure", None, "malformed_response")
+                )
+            self._complete_job(job, mapping, (), ())
+            if frame is not None and mapping.category == "success":
+                self.frame.publications.append(frame)
+            return
         if not isinstance(returned, dict):
             (job,) = jobs
             returned = {job.association: returned}

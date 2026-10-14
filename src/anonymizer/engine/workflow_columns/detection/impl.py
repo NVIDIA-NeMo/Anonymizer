@@ -43,7 +43,7 @@ from anonymizer.engine.workflow_columns.detection.config import (
     DetectionTransformOperation,
 )
 
-_TRANSFORMS: dict[DetectionTransformOperation, Callable[[dict[str, Any]], dict[str, Any]]] = {
+_TRANSFORMS: dict[DetectionTransformOperation, Callable[..., dict[str, Any]]] = {
     DetectionTransformOperation.PARSE_DETECTED_ENTITIES: parse_detected_entities,
     DetectionTransformOperation.PREPARE_VALIDATION_INPUTS: prepare_validation_inputs,
     DetectionTransformOperation.ENRICH_VALIDATION_DECISIONS: enrich_validation_decisions,
@@ -113,24 +113,55 @@ class _AsyncBridgedModelFacade:
 
 
 class DetectionTransformGenerator(ColumnGeneratorCellByCell[DetectionTransformConfig]):
+    """Run pure callbacks under their source owner or one standalone local invocation.
+
+    Exported configuration and row payloads retain the native DD contract. A
+    standalone callback reports zero model requests and no qualified source output.
+    """
+
     def generate(self, data: dict[str, Any]) -> dict[str, Any]:
+        from anonymizer.engine.workflow_columns.detection._local_transform import run_transform
+
         operation = DetectionTransformOperation(self.config.operation)
-        if operation == DetectionTransformOperation.APPLY_VALIDATION_TO_SEED_ENTITIES:
-            return apply_validation_to_seed_entities(
-                data,
-                excluded_entity_labels=self.config.excluded_entity_labels,
-            )
-        if operation == DetectionTransformOperation.MERGE_AND_BUILD_CANDIDATES:
-            return merge_and_build_candidates(
-                data,
-                excluded_entity_labels=self.config.excluded_entity_labels,
-            )
-        if operation == DetectionTransformOperation.APPLY_VALIDATION_AND_FINALIZE:
-            return apply_validation_and_finalize(
-                data,
-                excluded_entity_labels=self.config.excluded_entity_labels,
-            )
-        return _TRANSFORMS[operation](data)
+        transform = _TRANSFORMS[operation]
+        exclusions = (
+            {"excluded_entity_labels": tuple(self.config.excluded_entity_labels)}
+            if operation
+            in {
+                DetectionTransformOperation.APPLY_VALIDATION_TO_SEED_ENTITIES,
+                DetectionTransformOperation.MERGE_AND_BUILD_CANDIDATES,
+                DetectionTransformOperation.APPLY_VALIDATION_AND_FINALIZE,
+            }
+            else {}
+        )
+        work = current_source_work(self)
+        if work is not None:
+            source_worker_borrow().authorize_source_sync(work.association)
+            return transform(data, **exclusions)
+        return run_transform(lambda: transform(data, **exclusions), name=operation.value, column=self.config.name)
+
+    async def agenerate(self, data: dict[str, Any]) -> dict[str, Any]:  # ty: ignore[invalid-method-override]
+        # Preserve DD's worker-thread/copy contract while retaining the canonical
+        # invocation until that worker actually returns after observer cancellation.
+        task = asyncio.create_task(asyncio.to_thread(self.generate, data.copy()))
+        cancellation = None
+        while not task.done():
+            try:
+                await asyncio.shield(task)
+            except asyncio.CancelledError as error:
+                if cancellation is None and task.done() and task.cancelled():
+                    return task.result()
+                cancellation = cancellation or error
+            except Exception:
+                if cancellation is None:
+                    raise
+        if cancellation is not None:
+            try:
+                task.result()
+            except BaseException:
+                pass
+            raise cancellation
+        return task.result()
 
 
 class ChunkedValidationGenerator(ColumnGeneratorWithModelRegistry[ChunkedValidationConfig]):

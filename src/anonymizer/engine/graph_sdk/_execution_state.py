@@ -20,9 +20,11 @@ from anonymizer.engine.graph_sdk._execution_values import (
     ExecutionPortFact,
     ImplementationHandle,
     LocalAssessmentResult,
+    LocalCompleted,
     OperationExecutionPolicy,
     ProvenanceKey,
     RuntimeOutcome,
+    SubmissionFailure,
 )
 from anonymizer.engine.graph_sdk.requests import (
     ArtifactValue,
@@ -176,4 +178,6 @@ def _group_external_jobs(jobs: list[_ExecutionJob]) -> list[list[_ExecutionJob]]
 
 _OperationResult: TypeAlias = tuple[RuntimeOutcome, tuple[AssociationResult, ...], tuple[LocalAssessmentResult, ...]]
 _SubmissionResults: TypeAlias = dict[SemanticAssociation, _OperationResult]
-_ExecutionTask: TypeAlias = asyncio.Task[_OperationResult] | asyncio.Task[_SubmissionResults]
+_ExecutionTask: TypeAlias = (
+    asyncio.Task[_OperationResult | LocalCompleted | SubmissionFailure] | asyncio.Task[_SubmissionResults]
+)
