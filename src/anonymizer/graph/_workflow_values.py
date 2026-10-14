@@ -837,23 +837,23 @@ class Graph(_PrivateValue):
     @property
     def operations(self) -> tuple[Operation, ...]:
         """Executable nodes; control nodes remain in the same graph body."""
-        return tuple(node for node in self.nodes if isinstance(node, (OperationNode, SubgraphNode)))
+        return tuple(node for node in _visits(self.nodes) if isinstance(node, (OperationNode, SubgraphNode)))
 
     @property
     def choices(self) -> frozenset[ChoiceDecl]:
-        return frozenset(node for node in self.nodes if isinstance(node, ChoiceDecl))
+        return frozenset(node for node in _visits(self.nodes) if isinstance(node, ChoiceDecl))
 
     @property
     def maps(self) -> tuple[MapDecl, ...]:
-        return tuple(node for node in self.nodes if isinstance(node, MapDecl))
+        return tuple(node for node in _visits(self.nodes) if isinstance(node, MapDecl))
 
     @property
     def loops(self) -> tuple[LoopDecl, ...]:
-        return tuple(node for node in self.nodes if isinstance(node, LoopDecl))
+        return tuple(node for node in _visits(self.nodes) if isinstance(node, LoopDecl))
 
     @property
     def joins(self) -> tuple[KeyedJoinDecl, ...]:
-        return tuple(node for node in self.nodes if isinstance(node, KeyedJoinDecl))
+        return tuple(node for node in _visits(self.nodes) if isinstance(node, KeyedJoinDecl))
 
     def bodies(self) -> tuple[Graph, ...]:
         """Return the graph topology, visiting each shared body once."""
@@ -867,7 +867,7 @@ class Graph(_PrivateValue):
             seen.add(id(current))
             bodies.append(current)
             pending.extend(node.body for node in _visits(current.operations) if isinstance(node, SubgraphNode))
-        return tuple(bodies)
+        return tuple(_visits(bodies))
 
     @property
     def map_item_ports(self) -> frozenset[MapItemPort]:
@@ -904,19 +904,21 @@ class Graph(_PrivateValue):
             if name not in {"self", "_key"}:
                 object.__setattr__(self, name, value)
 
-        children = tuple(node.body for node in self.operations if isinstance(node, SubgraphNode))
-        factors = {item.member: item.max_children for item in self.maps}
-        factors.update({item.member: item.max_iterations for item in self.loops})
+        children = tuple(node.body for node in _visits(self.operations) if isinstance(node, SubgraphNode))
+        factors = {item.member: item.max_children for item in _visits(self.maps)}
+        factors.update((item.member, item.max_iterations) for item in _visits(self.loops))
         object.__setattr__(
             self,
             "activation_upper_bound",
             sum(
                 factors.get(node.id, 1)
                 * (1 + (node.body.activation_upper_bound if isinstance(node, SubgraphNode) else 0))
-                for node in self.operations
+                for node in _visits(self.operations)
             ),
         )
-        object.__setattr__(self, "dynamic_depth", 1 + max((child.dynamic_depth for child in children), default=0))
+        object.__setattr__(
+            self, "dynamic_depth", 1 + max((child.dynamic_depth for child in _visits(children)), default=0)
+        )
 
     def __eq__(self, other: object) -> bool:
         if self is other:
@@ -986,9 +988,9 @@ def _workflow_local_state(workflow: Graph) -> tuple[object, ...]:
         workflow.outcome_bindings,
         workflow.sequence,
         workflow.choices,
-        frozenset(workflow.maps),
-        frozenset(workflow.loops),
-        frozenset(workflow.joins),
+        frozenset(_visits(workflow.maps)),
+        frozenset(_visits(workflow.loops)),
+        frozenset(_visits(workflow.joins)),
         workflow.dynamic_limits,
         workflow.activation_upper_bound,
         workflow.dynamic_depth,
