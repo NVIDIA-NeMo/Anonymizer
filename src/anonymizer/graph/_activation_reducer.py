@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from typing import Literal, TypeAlias
 
 from anonymizer.graph._activation_topology import _context, _depth, _join_for, _loop_for, _map_for, _node, _scope_for
 from anonymizer.graph._activation_values import (
@@ -32,6 +33,7 @@ from anonymizer.graph._values import ActivationKey, InvocationId, ValidationCode
 from anonymizer.graph.workflow import (
     AdmittedActivationWorkflow,
     AdmittedWorkflow,
+    DynamicScope,
     LoopDecl,
     NodeId,
     NodeOutputRef,
@@ -172,6 +174,55 @@ def _produces(workflow: AdmittedActivationWorkflow, entry: ActivationEntry, port
     return any(outcome.name == entry.outcome and port in outcome.produced_ports for outcome in node.operation.outcomes)
 
 
+_Availability: TypeAlias = Literal["unstarted", "ready", "blocked"]
+
+
+def _resolve_availability(
+    workflow: AdmittedActivationWorkflow,
+    template: NodeId,
+    context: ActivationKey | None,
+    scope: DynamicScope,
+    entries: dict[ActivationKey, ActivationEntry],
+    expansions: dict[ActivationKey, ExpansionEntry],
+    reservations: dict[ActivationKey, ActivationSeed],
+    output: NodeOutputRef | None = None,
+) -> _Availability:
+    """Resolve an ordinary obligation through its exact dynamic occurrence."""
+    seed = _reservation_for(reservations, template, context)
+    entry = entries.get(seed.activation) if seed is not None else None
+    impossible = False
+    map_decl = next((item for item in scope.maps if item.member == template and item.max_children <= 1), None)
+    if entry is None and map_decl is not None:
+        parent = _reservation_for(reservations, map_decl.expander, context)
+        expansion = expansions.get(parent.activation) if parent is not None else None
+        if expansion is not None and expansion.status != "pending":
+            if expansion.status == "closed" and len(expansion.members) == 1:
+                entry = entries.get(next(iter(expansion.members)))
+            else:
+                impossible = True
+    loop = next((item for item in scope.loops if item.member == template), None)
+    if entry is None and loop is not None:
+        parent = _reservation_for(reservations, loop.starter, context)
+        starter = entries.get(parent.activation) if parent is not None else None
+        iterations = [
+            item
+            for item in entries.values()
+            if parent is not None and item.template == template and item.activation.parent == parent.activation
+        ]
+        exited = [item for item in iterations if item.status == "success" and item.outcome in loop.exit_outcomes]
+        if len(exited) == 1:
+            entry = exited[0]
+        elif (
+            starter is not None and starter.status in _TERMINAL and all(item.status in _TERMINAL for item in iterations)
+        ):
+            impossible = True
+    if entry is None or entry.status not in _TERMINAL:
+        return "blocked" if impossible else "unstarted"
+    if output is not None and not _produces(workflow, entry, output.port):
+        impossible = True
+    return "blocked" if impossible else "ready"
+
+
 def _initial_values_available(
     workflow: AdmittedActivationWorkflow,
     entry: ActivationEntry,
@@ -201,9 +252,8 @@ def _normalize(
     expansions: dict[ActivationKey, ExpansionEntry],
     reservations: dict[ActivationKey, ActivationSeed],
 ) -> None:
-    changed = True
-    while changed:
-        changed = False
+    while True:
+        previous_entries, previous_expansions = entries.copy(), expansions.copy()
         # Named choice outcomes materialize exactly one matching branch.
         for entry in list(entries.values()):
             if entry.status not in _TERMINAL or entry.outcome is None:
@@ -219,7 +269,6 @@ def _normalize(
                             seed = _reservation_for(reservations, template, context)
                             if seed is not None and seed.activation not in entries:
                                 _materialize(seed, entries)
-                                changed = True
 
         # Aggregate state follows observed control outcomes.
         for entry in list(entries.values()):
@@ -234,7 +283,6 @@ def _normalize(
                 replacement = ExpansionEntry(parent=entry.activation, members=members, status="failed")
                 if prior != replacement:
                     expansions[entry.activation] = replacement
-                    changed = True
             if loop is not None and entry.activation not in expansions:
                 if entry.outcome is None:
                     status: ExpansionStatus = "failed"
@@ -249,7 +297,6 @@ def _normalize(
                     else:
                         _materialize(seed, entries)
                         status = "pending"
-                    changed = True
                 else:
                     status = "failed"
                 expansions[entry.activation] = ExpansionEntry(
@@ -261,7 +308,6 @@ def _normalize(
                     ),
                     status=status,
                 )
-                changed = True
 
         for entry in list(entries.values()):
             if entry.status not in _TERMINAL or entry.activation.iteration is None:
@@ -288,17 +334,14 @@ def _normalize(
                 ):
                     status = "failed"
                 else:
-                    was_absent = next_seed.activation not in entries
                     _materialize(next_seed, entries)
                     members |= {next_seed.activation}
                     status = "pending"
-                    changed |= was_absent
             else:
                 status = "failed"
             replacement = ExpansionEntry(parent=parent, members=frozenset(members), status=status)
             if replacement != prior:
                 expansions[parent] = replacement
-                changed = True
 
         # Dynamic join closure is conjunction over exact membership.
         for source, expansion in list(expansions.items()):
@@ -343,9 +386,10 @@ def _normalize(
             replacement = replace(join_entry, status=target)
             if replacement != join_entry:
                 entries[join_seed.activation] = replacement
-                changed = True
 
-        # Ordinary readiness and impossible-input closure.
+        # Sequence and input obligations share occurrence resolution, but only
+        # inputs require a produced port. An impossible obligation dominates a
+        # pending one; a terminal predecessor's category does not block sequence.
         for key, entry in list(entries.items()):
             if entry.status != "unstarted":
                 continue
@@ -354,67 +398,16 @@ def _normalize(
                 continue
             loop_member = next((item for item in scope.loops if item.member == entry.template), None)
             map_member = next((item for item in scope.maps if item.member == entry.template), None)
-            if loop_member is not None:
-                ready = True
-                blocked = False
-            else:
+            requirements: list[_Availability] = []
+            if loop_member is None:
                 context = _context(reservations[key], scope)
-                predecessors = [edge.before for edge in scope.workflow.sequence if edge.after == entry.template]
-                if map_member is not None:
-                    predecessors = [template for template in predecessors if template != map_member.expander]
-                prior_entries: list[ActivationEntry] = []
-                missing_prior = False
-                impossible_prior = False
-                for template in predecessors:
-                    seed = _reservation_for(reservations, template, context)
-                    prior = entries.get(seed.activation) if seed is not None else None
-                    predecessor_map = next(
-                        (
-                            declaration
-                            for declaration in scope.maps
-                            if declaration.member == template and declaration.max_children <= 1
-                        ),
-                        None,
-                    )
-                    if prior is None and predecessor_map is not None:
-                        expander_seed = _reservation_for(reservations, predecessor_map.expander, context)
-                        expansion = expansions.get(expander_seed.activation) if expander_seed is not None else None
-                        if expansion is not None and expansion.status != "pending":
-                            if expansion.status == "closed" and len(expansion.members) == 1:
-                                prior = entries.get(next(iter(expansion.members)))
-                            else:
-                                impossible_prior = True
-                    predecessor_loop = next(
-                        (declaration for declaration in scope.loops if declaration.member == template),
-                        None,
-                    )
-                    if prior is None and predecessor_loop is not None:
-                        starter_seed = _reservation_for(reservations, predecessor_loop.starter, context)
-                        starter_entry = entries.get(starter_seed.activation) if starter_seed is not None else None
-                        loop_entries = [
-                            item
-                            for item in entries.values()
-                            if starter_seed is not None
-                            and item.template == template
-                            and item.activation.parent == starter_seed.activation
-                        ]
-                        exited = [
-                            item
-                            for item in loop_entries
-                            if item.status == "success" and item.outcome in predecessor_loop.exit_outcomes
-                        ]
-                        if len(exited) == 1:
-                            prior = exited[0]
-                        elif (
-                            starter_entry is not None
-                            and starter_entry.status in _TERMINAL
-                            and all(item.status in _TERMINAL for item in loop_entries)
-                        ):
-                            impossible_prior = True
-                    if prior is None or prior.status not in _TERMINAL:
-                        missing_prior = True
-                    else:
-                        prior_entries.append(prior)
+                for edge in scope.workflow.sequence:
+                    if edge.after == entry.template and (map_member is None or edge.before != map_member.expander):
+                        requirements.append(
+                            _resolve_availability(
+                                workflow, edge.before, context, scope, entries, expansions, reservations
+                            )
+                        )
                 mapped_item_port = (
                     map_member.item_input
                     if map_member is not None
@@ -423,73 +416,27 @@ def _normalize(
                     )
                     else None
                 )
-                bindings = [
-                    binding
-                    for binding in scope.workflow.input_bindings
-                    if binding.destination.node == entry.template
-                    and not (mapped_item_port is not None and binding.destination.port == mapped_item_port)
-                ]
-                impossible = False
-                inputs_ready = True
-                for binding in bindings:
-                    source = binding.source
-                    if not isinstance(source, NodeOutputRef):
+                for binding in scope.workflow.input_bindings:
+                    if binding.destination.node != entry.template or (
+                        mapped_item_port is not None and binding.destination.port == mapped_item_port
+                    ):
                         continue
-                    source_seed = _reservation_for(reservations, source.node, context)
-                    source_entry = entries.get(source_seed.activation) if source_seed is not None else None
-                    source_map = next(
-                        (
-                            declaration
-                            for declaration in scope.maps
-                            if declaration.member == source.node and declaration.max_children <= 1
-                        ),
-                        None,
-                    )
-                    if source_entry is None and source_map is not None:
-                        expander_seed = _reservation_for(reservations, source_map.expander, context)
-                        expansion = expansions.get(expander_seed.activation) if expander_seed is not None else None
-                        if expansion is not None and expansion.status != "pending":
-                            if expansion.status == "closed" and len(expansion.members) == 1:
-                                source_entry = entries.get(next(iter(expansion.members)))
-                            else:
-                                impossible = True
-                    source_loop = next(
-                        (declaration for declaration in scope.loops if declaration.member == source.node),
-                        None,
-                    )
-                    if source_entry is None and source_loop is not None:
-                        starter_seed = _reservation_for(reservations, source_loop.starter, context)
-                        starter_entry = entries.get(starter_seed.activation) if starter_seed is not None else None
-                        loop_entries = [
-                            item
-                            for item in entries.values()
-                            if starter_seed is not None
-                            and item.template == source.node
-                            and item.activation.parent == starter_seed.activation
-                        ]
-                        exited = [
-                            item
-                            for item in loop_entries
-                            if item.status == "success" and item.outcome in source_loop.exit_outcomes
-                        ]
-                        if len(exited) == 1:
-                            source_entry = exited[0]
-                        elif (
-                            starter_entry is not None
-                            and starter_entry.status in _TERMINAL
-                            and all(item.status in _TERMINAL for item in loop_entries)
-                        ):
-                            impossible = True
-                    if source_entry is None or source_entry.status not in _TERMINAL:
-                        inputs_ready = False
-                    elif not _produces(workflow, source_entry, source.port):
-                        impossible = True
-                blocked = impossible_prior or impossible
-                ready = not missing_prior and inputs_ready and not blocked
-            target = "blocked" if blocked else "ready" if ready else "unstarted"
+                    if isinstance(binding.source, NodeOutputRef):
+                        requirements.append(
+                            _resolve_availability(
+                                workflow,
+                                binding.source.node,
+                                context,
+                                scope,
+                                entries,
+                                expansions,
+                                reservations,
+                                binding.source,
+                            )
+                        )
+            target = "blocked" if "blocked" in requirements else "unstarted" if "unstarted" in requirements else "ready"
             if target != entry.status:
                 entries[key] = replace(entry, status=target)
-                changed = True
 
         # Running subgraph containers derive their terminal from body sinks.
         for key, entry in list(entries.items()):
@@ -521,7 +468,9 @@ def _normalize(
                 )
                 outcome = binding.destination.outcome if binding is not None else outcome
             entries[key] = replace(entry, status=sink.status, outcome=outcome)
-            changed = True
+
+        if entries == previous_entries and expansions == previous_expansions:
+            return
 
 
 def _completion_reserve(

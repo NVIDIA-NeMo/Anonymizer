@@ -3,6 +3,8 @@
 
 # Graph SDK production cutover
 
+This page preserves historical M0 stage, route and request-seam evidence. [Draft PR #302](https://github.com/NVIDIA-NeMo/Anonymizer/pull/302) records the latest checkpoint and remaining work. The full goal remains unchanged and unmet: one graph execution authority for every production workflow, at most 10K repository non-test Python growth followed by pursuit of 5K, and test/helper/reference Python within 1–2×.
+
 M0 characterizes a small part of the existing production contract before migration. The graph components and their conformance tests do not yet establish that every production route uses one graph authority. This inventory records evidence and remaining work; it is not a complete RFC audit or publication approval.
 
 The reference revision is `9f824d95b1cc74e71eb4a152a033afabbfd84ac0`. Normative authority remains the SDK RFC main text and Appendices A–E, snapshot SHA256 `55da6300f42404673fbd94999fc0763390532917403e37b74ac674000bdffc8f`. The requirement summaries below are navigation aids, not replacements for the normative clauses. Before activating a successor unit, bind its exact predecessor revision, relevant normative sections, concrete objective and test selectors. Appendix E's open decisions remain open.
@@ -81,6 +83,6 @@ Bounded navigation used astnav `refs NddAdapter.run_workflow`, lspgate inspectio
 
 ## Size accounting
 
-Count tracked Python added minus deleted against `30b6d82af74953949ce654c57cd42ed3e4e71041`, including examples and tooling. Test/helper/reference Python and non-Python fixtures are separate. At M0's input revision, the measured net growth is **21,443 non-test Python lines** and **42,715 test/helper/reference Python lines** (38,517 tests/helpers plus 4,198 reference Python). Non-Python fixture/provenance growth is 42,370 text lines plus five archives. M0 changes no production Python and adds only its bounded test module; the campaign receipt records its exact measured delta and resulting totals.
+Count tracked Python added minus deleted against `30b6d82af74953949ce654c57cd42ed3e4e71041`, including examples and tooling. Test/helper/reference Python and non-Python fixtures are separate. At M0's input revision, the measured net growth was **21,443 non-test Python lines** and **42,715 test/helper/reference Python lines** (38,517 tests/helpers plus 4,198 reference Python). Non-Python fixture/provenance growth is 42,370 text lines plus five archives. M0 changes no production Python and adds only its bounded test module; the campaign receipt records its exact measured delta and resulting totals.
 
-No retirement occurs in M0. The 10K non-test target remains a stretch; 5K remains unsupported. The proposed 9,801–15,726 future range is an unproven planning estimate, not a measured result. M7 must validate the same built wheel on Python 3.11–3.13 outside the source tree, all production routes, plugin discovery and applicable lifecycle/privacy contracts before claiming cutover evidence.
+M0 retired no production controller. The required target is at most 10K repository non-test Python growth, followed by pursuit of 5K, with test/helper/reference Python within 1–2×. These targets remain unmet, and their feasibility is unproved; the historical M0 totals above do not establish a current size forecast. M7 must validate the same built wheel on Python 3.11–3.13 outside the source tree, all production routes, plugin discovery and applicable lifecycle/privacy contracts before claiming cutover evidence.
