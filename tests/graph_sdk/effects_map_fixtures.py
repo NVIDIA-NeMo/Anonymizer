@@ -233,194 +233,37 @@ def _map_fixture(
         output_dependencies=(),
         outcomes=(_outcome("ok"),),
     )
-    ordinary_operation = OperationSpec(
-        name="ordinary",
-        inputs=(InputPort(name="value", artifact_type=text_type),),
-        outputs=(),
-        output_dependencies=(),
-        outcomes=(_outcome("ok"),),
-    )
-    default_operation = OperationSpec(
-        name="default-source",
-        inputs=(),
-        outputs=(OutputPort(name="default", artifact_type=text_type),),
-        output_dependencies=(OutputDependency(output="default", inputs=frozenset(), identity_input=None),),
-        outcomes=(_outcome("available", produced=frozenset({"default"})),),
-    )
-    interface = OperationSpec(
-        name="map-root",
-        inputs=(
-            InputPort(name="default", artifact_type=text_type),
-            *((InputPort(name="member_context", artifact_type=text_type),) if context_item_override else ()),
-            *((InputPort(name="schema", artifact_type=context_type),) if other_count else ()),
-        ),
-        outputs=(
-            OutputPort(name="members", artifact_type=collection_type),
-            *((OutputPort(name="value", artifact_type=text_type),) if outward_scalar == "workflow_output" else ()),
-        ),
-        output_dependencies=(
-            OutputDependency(output="members", inputs=frozenset({"default"}), identity_input=None),
-            *(
-                (
-                    OutputDependency(
-                        output="value",
-                        inputs=frozenset({"default"}) if outward_value_depends_on_default else frozenset(),
-                        identity_input="default" if outward_identity else None,
-                    ),
-                )
-                if outward_scalar == "workflow_output"
-                else ()
-            ),
-        ),
-        outcomes=(
+    nodes: list[OperationNode | SubgraphNode] = [
+        OperationNode(id=expander, operation=expander_operation),
+        member_node,
+        OperationNode(id=join, operation=join_operation),
+    ]
+    inputs = [InputPort(name="default", artifact_type=text_type)]
+    outputs = [OutputPort(name="members", artifact_type=collection_type)]
+    dependencies = [expander_operation.output_dependencies[0]]
+    evidence = set(expander_operation.outcomes[0].evidence)
+    context = set(expander_operation.outcomes[0].context)
+    input_bindings = []
+    output_bindings = [
+        OutputBinding(
+            source=NodeOutputRef(node=expander, port="members"),
+            destination=WorkflowOutputRef(port="members"),
+        )
+    ]
+    sequence = [SequenceEdge(before=expander, after=member), SequenceEdge(before=member, after=join)]
+    protection = []
+    if member_assessment:
+        input_bindings.append(
+            InputBinding(source=WorkflowInputRef(port="default"), destination=NodeInputRef(node=member, port="subject"))
+        )
+        evidence.add(
             replace(
-                _outcome(
-                    "ok",
-                    produced=frozenset({"members", *(("value",) if outward_scalar == "workflow_output" else ())}),
-                    max_activations=max_children + (8 if default_source is not None or outward_scalar else 4),
-                    max_output_bytes=512 if default_source is not None or outward_scalar or member_assessment else 128,
-                ),
-                evidence=frozenset(
-                    {
-                        EvidencePromise(
-                            name="assessment0",
-                            meaning="map membership accepted",
-                            subject_port="members",
-                            consumed_ports=frozenset({"default"}),
-                            coverage=frozenset(),
-                        ),
-                        *(
-                            (
-                                EvidencePromise(
-                                    name="member_checked",
-                                    meaning="member accepted",
-                                    subject_port="default",
-                                    consumed_ports=frozenset({"default"}),
-                                    coverage=frozenset(),
-                                ),
-                            )
-                            if member_assessment
-                            else ()
-                        ),
-                    }
-                ),
-                context=(
-                    frozenset(
-                        {
-                            *(
-                                (ContextUse(port="schema", meaning="retrieved", capture="whole_artifact"),)
-                                if other_count
-                                else ()
-                            ),
-                            *(
-                                (ContextUse(port="member_context", meaning="retrieved", capture="whole_artifact"),)
-                                if context_item_override
-                                else ()
-                            ),
-                        }
-                    )
-                ),
-            ),
-        ),
-    )
-    static = admit_static_workflow(
-        workflow=owner,
-        interface=interface,
-        nodes=(
-            OperationNode(id=expander, operation=expander_operation),
-            member_node,
-            OperationNode(id=join, operation=join_operation),
-            *((OperationNode(id=default_source, operation=default_operation),) if default_source is not None else ()),
-            *((OperationNode(id=ordinary, operation=ordinary_operation),) if ordinary is not None else ()),
-        ),
-        input_bindings=(
-            *(
-                (
-                    InputBinding(
-                        source=WorkflowInputRef(port="default"), destination=NodeInputRef(node=member, port="subject")
-                    ),
-                )
-                if member_assessment
-                else ()
-            ),
-            *(
-                ()
-                if control_only
-                else (
-                    InputBinding(
-                        source=(
-                            ContextInputRef(port="member_context")
-                            if context_item_override
-                            else NodeOutputRef(node=default_source, port="default")
-                            if default_source is not None
-                            else WorkflowInputRef(port="default")
-                        ),
-                        destination=NodeInputRef(node=member, port="item"),
-                    ),
-                )
-            ),
-            *(
-                (
-                    InputBinding(
-                        source=NodeOutputRef(node=member, port="value"),
-                        destination=NodeInputRef(
-                            node=join if outward_scalar == "join" else cast(NodeId, ordinary),
-                            port="value",
-                        ),
-                    ),
-                )
-                if outward_scalar in {"join", "ordinary"}
-                else ()
-            ),
-            InputBinding(
-                source=WorkflowInputRef(port="default"),
-                destination=NodeInputRef(node=expander, port="default"),
-            ),
-            *(
-                (
-                    InputBinding(
-                        source=ContextInputRef(port="schema"),
-                        destination=NodeInputRef(node=expander, port="schema"),
-                    ),
-                )
-                if other_count
-                else ()
-            ),
-        ),
-        output_bindings=(
-            OutputBinding(
-                source=NodeOutputRef(node=expander, port="members"),
-                destination=WorkflowOutputRef(port="members"),
-            ),
-            *(
-                (
-                    OutputBinding(
-                        source=NodeOutputRef(node=member, port="value"),
-                        destination=WorkflowOutputRef(port="value"),
-                    ),
-                )
-                if outward_scalar == "workflow_output"
-                else ()
-            ),
-        ),
-        outcome_bindings=(
-            OutcomeBinding(
-                source=NodeOutcomeRef(node=join, outcome="ok"),
-                destination=WorkflowOutcomeRef(outcome="ok"),
-            ),
-        ),
-        sequence=(
-            SequenceEdge(before=expander, after=member),
-            SequenceEdge(before=member, after=join),
-            *((SequenceEdge(before=default_source, after=join),) if default_source is not None else ()),
-            *(
-                (SequenceEdge(before=member, after=ordinary), SequenceEdge(before=ordinary, after=join))
-                if ordinary is not None
-                else ()
-            ),
-        ),
-        choices=(),
-        protection=(
+                next(iter(member_operation.outcomes[0].evidence)),
+                subject_port="default",
+                consumed_ports=frozenset({"default"}),
+            )
+        )
+        protection = [
             ProtectionRequirement(
                 outcome="ok",
                 meaning="map membership accepted",
@@ -435,9 +278,118 @@ def _map_fixture(
                 consumed_ports=frozenset({"default"}),
                 coverage=frozenset(),
             ),
+        ]
+    if context_item_override:
+        inputs.append(InputPort(name="member_context", artifact_type=text_type))
+        context.add(ContextUse(port="member_context", meaning="retrieved", capture="whole_artifact"))
+    if not control_only:
+        input_bindings.append(
+            InputBinding(
+                source=(
+                    ContextInputRef(port="member_context")
+                    if context_item_override
+                    else NodeOutputRef(node=default_source, port="default")
+                    if default_source is not None
+                    else WorkflowInputRef(port="default")
+                ),
+                destination=NodeInputRef(node=member, port="item"),
+            )
         )
-        if member_assessment
-        else (),
+    if default_source is not None:
+        nodes.append(
+            OperationNode(
+                id=default_source,
+                operation=OperationSpec(
+                    name="default-source",
+                    inputs=(),
+                    outputs=(OutputPort(name="default", artifact_type=text_type),),
+                    output_dependencies=(OutputDependency(output="default", inputs=frozenset(), identity_input=None),),
+                    outcomes=(_outcome("available", produced=frozenset({"default"})),),
+                ),
+            )
+        )
+        sequence.append(SequenceEdge(before=default_source, after=join))
+    if ordinary is not None:
+        nodes.append(
+            OperationNode(
+                id=ordinary,
+                operation=replace(
+                    join_operation, name="ordinary", inputs=(InputPort(name="value", artifact_type=text_type),)
+                ),
+            )
+        )
+        sequence.extend((SequenceEdge(before=member, after=ordinary), SequenceEdge(before=ordinary, after=join)))
+    if outward_scalar in {"join", "ordinary"}:
+        input_bindings.append(
+            InputBinding(
+                source=NodeOutputRef(node=member, port="value"),
+                destination=NodeInputRef(
+                    node=join if outward_scalar == "join" else cast(NodeId, ordinary), port="value"
+                ),
+            )
+        )
+    if outward_scalar == "workflow_output":
+        outputs.append(OutputPort(name="value", artifact_type=text_type))
+        dependencies.append(
+            OutputDependency(
+                output="value",
+                inputs=frozenset({"default"}) if outward_value_depends_on_default else frozenset(),
+                identity_input="default" if outward_identity else None,
+            )
+        )
+        output_bindings.append(
+            OutputBinding(
+                source=NodeOutputRef(node=member, port="value"),
+                destination=WorkflowOutputRef(port="value"),
+            )
+        )
+    input_bindings.append(
+        InputBinding(
+            source=WorkflowInputRef(port="default"),
+            destination=NodeInputRef(node=expander, port="default"),
+        )
+    )
+    if other_count:
+        inputs.append(InputPort(name="schema", artifact_type=context_type))
+        input_bindings.append(
+            InputBinding(
+                source=ContextInputRef(port="schema"),
+                destination=NodeInputRef(node=expander, port="schema"),
+            )
+        )
+    interface = OperationSpec(
+        name="map-root",
+        inputs=tuple(inputs),
+        outputs=tuple(outputs),
+        output_dependencies=tuple(dependencies),
+        outcomes=(
+            replace(
+                _outcome(
+                    "ok",
+                    produced=frozenset(port.name for port in outputs),
+                    max_activations=max_children + (8 if default_source is not None or outward_scalar else 4),
+                    max_output_bytes=512 if default_source is not None or outward_scalar or member_assessment else 128,
+                ),
+                evidence=frozenset(evidence),
+                context=frozenset(context),
+            ),
+        ),
+    )
+    static = admit_static_workflow(
+        workflow=owner,
+        interface=interface,
+        nodes=tuple(nodes),
+        input_bindings=tuple(input_bindings),
+        output_bindings=tuple(output_bindings),
+        outcome_bindings=(
+            OutcomeBinding(
+                source=NodeOutcomeRef(node=join, outcome="ok"),
+                destination=WorkflowOutcomeRef(outcome="ok"),
+            ),
+        ),
+        sequence=tuple(sequence),
+        choices=(),
+        protection=tuple(protection),
         limits=_no_choice_limits(
             nodes=3 + int(default_source is not None) + int(ordinary is not None) + int(member_subgraph),
             bindings=(5 if other_count else 4) + int(outward_scalar is not None) + int(member_assessment),
@@ -488,21 +440,9 @@ def _map_fixture(
             + int(ordinary is not None),
         ),
     )
-    operations = (
-        expander_operation,
-        member_operation,
-        join_operation,
-        *((default_operation,) if default_source is not None else ()),
-        *((ordinary_operation,) if ordinary is not None else ()),
-    )
-    implementation_nodes = (
-        expander,
-        member_implementation,
-        join,
-        *((default_source,) if default_source is not None else ()),
-        *((ordinary,) if ordinary is not None else ()),
-    )
-    capabilities = tuple(_capability(operation, index) for index, operation in enumerate(operations))
+    implementations = tuple(next(iter(node.body.nodes)) if isinstance(node, SubgraphNode) else node for node in nodes)
+    implementation_nodes = tuple(node.id for node in implementations)
+    capabilities = tuple(_capability(node.operation, index) for index, node in enumerate(implementations))
     return _MapFixture(
         workflow,
         expander,

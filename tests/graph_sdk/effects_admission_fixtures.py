@@ -11,12 +11,13 @@ from typing import Any, cast
 import pytest
 
 from anonymizer.engine.graph_sdk._effect_values import EffectRejected
-from anonymizer.engine.graph_sdk.capabilities import ImplementationRef
+from anonymizer.engine.graph_sdk.capabilities import ImplementationCapability, ImplementationRef
 from anonymizer.engine.graph_sdk.context import (
     admit_context_plan,
 )
 from anonymizer.engine.graph_sdk.data import DataGraph, DataLimits
 from anonymizer.engine.graph_sdk.executor import (
+    AdmittedExecutionPlan,
     AssessmentLimits,
     DecisionDeclaration,
     DecisionLimits,
@@ -33,7 +34,7 @@ from anonymizer.engine.graph_sdk.executor import (
     admit_execution_plan,
     start_execution,
 )
-from anonymizer.engine.graph_sdk.preparation import BoundInput
+from anonymizer.engine.graph_sdk.preparation import BoundInput, PreparedPlan
 from anonymizer.engine.graph_sdk.requests import (
     AssociationInput,
     PhysicalRequestPolicy,
@@ -279,6 +280,28 @@ def _assessment_limits() -> AssessmentLimits:
     )
 
 
+def _admit_unbound_execution(
+    *,
+    prepared: PreparedPlan,
+    capabilities: tuple[ImplementationCapability, ...],
+    policies: tuple[OperationExecutionPolicy, ...],
+    decisions: tuple[DecisionDeclaration, ...],
+) -> AdmittedExecutionPlan:
+    return admit_execution_plan(
+        context=admit_context_plan(
+            prepared=prepared,
+            bound_context=None,
+            adaptive_retrievals=(),
+            context_capabilities=(),
+        ),
+        capabilities=capabilities,
+        policies=policies,
+        decisions=decisions,
+        assessment_productions=(),
+        assessment_limits=_assessment_limits(),
+    )
+
+
 def _runtime_row(value: dict[str, Any]) -> RuntimeOutcome:
     return RuntimeOutcome(
         condition=value["condition"],
@@ -375,12 +398,6 @@ def _admit_case(case: dict[str, Any]) -> None:
         capability=primary,
         bound_inputs=bound_inputs,
         limits=_limits(capabilities=capability_maximum),
-    )
-    context = admit_context_plan(
-        prepared=prepared,
-        bound_context=None,
-        adaptive_retrievals=(),
-        context_capabilities=(),
     )
     physical = PhysicalRequestPolicy(
         visibility="dispatch_and_settlement",
@@ -483,13 +500,11 @@ def _admit_case(case: dict[str, Any]) -> None:
                 max_lifetime_ns=1,
             ),
         )
-    admitted = admit_execution_plan(
-        context=context,
+    admitted = _admit_unbound_execution(
+        prepared=prepared,
         capabilities=tuple(capabilities),
         policies=cast(Any, policies),
         decisions=decisions,
-        assessment_productions=(),
-        assessment_limits=_assessment_limits(),
     )
     if case["boundary"] == "pre_execution":
         changed = replace(capabilities[-1], max_physical_requests_per_activation=3)
@@ -559,12 +574,6 @@ async def _assert_decision_submission(case_id: str, expected: str, *, pending_li
             for target in data.targets
         ),
     )
-    context = admit_context_plan(
-        prepared=prepared,
-        bound_context=None,
-        adaptive_retrievals=(),
-        context_capabilities=(),
-    )
     implementation = _execution_implementation(capability, request=None)
     policy = OperationExecutionPolicy(
         node=node,
@@ -573,26 +582,10 @@ async def _assert_decision_submission(case_id: str, expected: str, *, pending_li
         safe_detachment="forbidden",
         implementations=(implementation,),
         result_outcomes=frozenset(),
-        runtime_outcomes=tuple(
-            RuntimeOutcome(
-                condition=condition,
-                reported_outcome=None,
-                failure=failure,
-                outcome=None,
-                category=category,
-            )
-            for condition, failure, category in (
-                ("failure", "permanent", "failure"),
-                ("failure", "implementation_exception", "failure"),
-                ("cancel_before_start", None, "blocked"),
-                ("cancel_after_start", None, "cancelled"),
-                ("artifact_limit_exhausted", None, "blocked"),
-                ("deadline_exhausted", None, "failure"),
-            )
-        ),
+        runtime_outcomes=_valid_runtime_rows("decision", frozenset()),
     )
-    admitted = admit_execution_plan(
-        context=context,
+    admitted = _admit_unbound_execution(
+        prepared=prepared,
         capabilities=(capability,),
         policies=(policy,),
         decisions=(
@@ -606,8 +599,6 @@ async def _assert_decision_submission(case_id: str, expected: str, *, pending_li
                 max_lifetime_ns=10,
             ),
         ),
-        assessment_productions=(),
-        assessment_limits=_assessment_limits(),
     )
     callback = _DecisionProvider(
         mode={

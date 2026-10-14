@@ -15,17 +15,14 @@ from anonymizer.engine.graph_sdk.context import (
     SourceFailure,
     SourceItem,
     SourceResponse,
-    admit_context_plan,
 )
 from anonymizer.engine.graph_sdk.executor import (
     DecisionLimits,
     ExecutionLimits,
     ExecutionServices,
-    ImplementationHandle,
     LocalCompleted,
     LocalFailure,
     OperationExecutionPolicy,
-    admit_execution_plan,
     start_execution,
 )
 from anonymizer.engine.graph_sdk.requests import (
@@ -44,9 +41,9 @@ from anonymizer.engine.graph_sdk.requests import (
     TextArtifactValue,
     UnknownUsage,
 )
-from tests.graph_sdk.effects_admission_fixtures import _assessment_limits, _valid_runtime_rows, _ZeroClock
+from tests.graph_sdk.effects_admission_fixtures import _admit_unbound_execution, _valid_runtime_rows, _ZeroClock
 from tests.graph_sdk.effects_request_fixtures import _usage
-from tests.graph_sdk.implementation_fixtures import _execution_implementation
+from tests.graph_sdk.implementation_fixtures import _execution_implementation, _implementation_handle
 from tests.graph_sdk.test_preparation import _data, _prepare
 
 
@@ -176,12 +173,6 @@ class _BridgeLocalCallback:
 
 async def _assert_local_bridge_case(case: dict[str, Any]) -> None:
     prepared = _prepare(data=_data(1))
-    context = admit_context_plan(
-        prepared=prepared,
-        bound_context=None,
-        adaptive_retrievals=(),
-        context_capabilities=(),
-    )
     selected = next(iter(prepared.implementations))
     implementation = _execution_implementation(selected.capability, request=None)
     policy = OperationExecutionPolicy(
@@ -193,13 +184,11 @@ async def _assert_local_bridge_case(case: dict[str, Any]) -> None:
         result_outcomes=frozenset({"ok"}),
         runtime_outcomes=_valid_runtime_rows("local", frozenset({"ok"})),
     )
-    admitted = admit_execution_plan(
-        context=context,
+    admitted = _admit_unbound_execution(
+        prepared=prepared,
         capabilities=(selected.capability,),
         policies=(policy,),
         decisions=(),
-        assessment_productions=(),
-        assessment_limits=_assessment_limits(),
     )
     condition = (
         next(
@@ -218,16 +207,7 @@ async def _assert_local_bridge_case(case: dict[str, Any]) -> None:
         admitted=admitted,
         capabilities=(selected.capability,),
         services=ExecutionServices(
-            handles=(
-                ImplementationHandle(
-                    implementation=implementation.implementation,
-                    operation=implementation.capability.operation,
-                    configuration=implementation.configuration,
-                    local=callback,
-                    transport=None,
-                    resource=None,
-                ),
-            ),
+            handles=(_implementation_handle(selected.capability, local=callback, transport=None, resource=None),),
             context_resources=(),
             limits=ExecutionLimits(
                 max_local_in_flight=1,
