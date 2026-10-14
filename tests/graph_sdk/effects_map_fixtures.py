@@ -240,9 +240,9 @@ def _map_fixture(
     ]
     inputs = [InputPort(name="default", artifact_type=text_type)]
     outputs = [OutputPort(name="members", artifact_type=collection_type)]
-    dependencies = [expander_operation.output_dependencies[0]]
-    evidence = set(expander_operation.outcomes[0].evidence)
-    context = set(expander_operation.outcomes[0].context)
+    dependencies = [replace(expander_operation.output_dependencies[0])]
+    evidence = {replace(promise) for promise in expander_operation.outcomes[0].evidence}
+    context = {replace(use) for use in expander_operation.outcomes[0].context}
     input_bindings = []
     output_bindings = [
         OutputBinding(
@@ -314,7 +314,10 @@ def _map_fixture(
             OperationNode(
                 id=ordinary,
                 operation=replace(
-                    join_operation, name="ordinary", inputs=(InputPort(name="value", artifact_type=text_type),)
+                    join_operation,
+                    name="ordinary",
+                    inputs=(InputPort(name="value", artifact_type=text_type),),
+                    outcomes=(_outcome("ok"),),
                 ),
             )
         )
