@@ -6,10 +6,11 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
+from contextvars import copy_context
 from copy import deepcopy
 from dataclasses import replace
 from time import perf_counter
-from typing import Any
+from typing import Any, cast
 
 import pandas as pd
 from pydantic import TypeAdapter
@@ -18,7 +19,11 @@ from anonymizer.config.rewrite import EvaluationCriteria
 from anonymizer.engine.constants import COL_REWRITTEN_TEXT, COL_REWRITTEN_TEXT_INITIAL, COL_TEXT
 from anonymizer.engine.detection._frame_publication import FramePublication, FrameStages
 from anonymizer.engine.detection._opaque_redact import _execute_frame_plan, _frame_implementation, _prepare_frame_plan
-from anonymizer.engine.detection.detection_workflow import EntityDetectionWorkflow
+from anonymizer.engine.detection.detection_workflow import (
+    _DETECTION_RUN,
+    EntityDetectionResult,
+    EntityDetectionWorkflow,
+)
 from anonymizer.engine.graph_sdk._effect_values import EffectCode, reject
 from anonymizer.engine.graph_sdk._execution_values import DelegatedRequests
 from anonymizer.engine.graph_sdk.blocking import BlockingPool
@@ -65,10 +70,12 @@ from anonymizer.engine.rewrite.artifacts import (
     PrivacyAnswersValue,
     QualityAnswersValue,
     QualityComparisonValue,
+    RewriteCandidateValue,
+    RewriteControlValue,
     RewriteQAValue,
 )
 from anonymizer.engine.rewrite.combined_rewrite_workflow import CombinedRewriteWorkflow, _evaluation_state
-from anonymizer.engine.rewrite.rewrite_workflow import RewriteWorkflow
+from anonymizer.engine.rewrite.rewrite_workflow import RewriteResult, RewriteWorkflow
 from anonymizer.engine.row_partitioning import resolve_source_positions
 from anonymizer.graph.workflow import (
     ArtifactType,
@@ -121,6 +128,131 @@ def _configuration(arguments: dict[str, Any], detection_arguments: dict[str, Any
     return FrozenConfig(fields=tuple(sorted(fields, key=lambda field: field.name)))
 
 
+def run_builtin_rewrite(runner: RewriteWorkflow, source: pd.DataFrame, arguments: dict[str, Any]) -> RewriteResult:
+    """Execute the caller's actual builtin runner through the shared graph control."""
+    from anonymizer.engine.detection._graph_profile import _run_sync_profile, project_detection_redact
+
+    captured: list[RewriteResult] = []
+    count = max(1, len(source))
+    allowance = arguments["evaluation"].max_repair_iterations
+
+    opaque = getattr(runner._adapter.run_workflow, "__func__", None) is not NddAdapter.run_workflow
+
+    async def operation(
+        pool: BlockingPool,
+        handoff: Callable[[Callable[[], LocalCompleted | LocalFailure]], LocalCompleted | LocalFailure],
+    ) -> ReplacementResult:
+        result = await execute_initial_evaluation(
+            source,
+            adapter=runner._adapter,
+            combined=isinstance(runner, CombinedRewriteWorkflow),
+            arguments=arguments,
+            configuration=_configuration(arguments, None),
+            pool=pool,
+            limits=ExecutionLimits(
+                max_local_in_flight=1,
+                max_remote_outstanding=None,
+                max_runtime_artifacts=count * (12 + 6 * allowance),
+                max_runtime_artifact_bytes=None,
+                max_collection_items=None,
+            ),
+            runner=runner,
+            opaque=opaque,
+            handoff=handoff if opaque else None,
+            on_result=captured.append,
+        )
+        projected = project_detection_redact(result)
+        return projected
+
+    projected = _run_sync_profile(operation, caller_callbacks=opaque)
+    result = RewriteResult(projected.dataframe, projected.failed_records, captured[0].source_positions)
+    object.__setattr__(result, "_execution", projected._execution)
+    return result
+
+
+class _ObservedCombinedRunner(RewriteWorkflow):
+    """Adapt already generated column outcomes; it issues no physical work."""
+
+    def run(self, dataframe: pd.DataFrame, **arguments: Any) -> RewriteResult:
+        binding = self._semantic_binding
+        if binding is None:
+            reject(EffectCode.FOREIGN_OWNER)
+        binding.claim_lowering(self, dataframe, arguments)
+
+        def require_observation(selected: RewriteEvaluationBinding, row: dict[str, Any]) -> None:
+            columns = tuple(value for value in selected.state.__dict__.values() if isinstance(value, str))
+            if any(column not in row for column in columns):
+                reject(EffectCode.MISSING)
+            if type(row[selected.state.needs_repair]) is not bool:
+                reject(EffectCode.INVALID_TYPE)
+
+        for row in dataframe.to_dict("records"):
+            require_observation(binding, row)
+
+        async def observe() -> None:
+            for association, row in zip(binding.source.associations, dataframe.to_dict("records"), strict=True):
+                await binding.after(binding.state.rewritten_text, association, row, prefix=True)
+                await binding.after(binding.state.needs_repair, association, row)
+                for iteration, slots in binding.iteration_slots.items():
+                    ready = await binding.requests.ready_operations(association)
+                    if slots["repair"] not in ready:
+                        continue
+                    selected = binding.for_iteration(iteration + 1)
+                    require_observation(selected, row)
+                    await selected.after(selected.repair_columns[1], association, row)
+                    await selected.after(selected.state.needs_repair, association, row)
+
+        asyncio.run_coroutine_threadsafe(observe(), binding.loop).result()
+        return RewriteResult(dataframe, [], tuple(range(len(dataframe))))
+
+
+def project_combined_observations(row: dict[str, Any], criteria: EvaluationCriteria) -> dict[str, Any]:
+    """Project generated column observations through the shared admitted control.
+
+    Standalone column execution has no invocation hooks. Its observed decisions
+    carry no QA assessment; absent stages cannot produce a terminal observation.
+    If original text is unavailable, the empty datum only anchors this observed
+    row's control scope; it does not authenticate an original text or protection.
+    """
+    from anonymizer.engine.detection._graph_profile import _run_sync_profile, project_detection_redact
+
+    source = pd.DataFrame([{**row, COL_TEXT: row.get(COL_TEXT, "")}])
+    runner = _ObservedCombinedRunner(cast(NddAdapter, None))
+    arguments = {"evaluation": criteria}
+
+    async def operation(
+        pool: BlockingPool,
+        handoff: Callable[[Callable[[], LocalCompleted | LocalFailure]], LocalCompleted | LocalFailure],
+    ) -> ReplacementResult:
+        del handoff
+        result = await execute_initial_evaluation(
+            source,
+            adapter=runner._adapter,
+            combined=True,
+            arguments=arguments,
+            configuration=_configuration(arguments, None),
+            pool=pool,
+            limits=ExecutionLimits(
+                max_local_in_flight=1,
+                max_remote_outstanding=None,
+                max_runtime_artifacts=12 + 6 * criteria.max_repair_iterations,
+                max_runtime_artifact_bytes=None,
+                max_collection_items=None,
+            ),
+            runner=runner,
+            opaque=True,
+            observed_columns=True,
+        )
+        return project_detection_redact(result)
+
+    projected = _run_sync_profile(operation, caller_callbacks=False)
+    values = projected.dataframe.iloc[0].to_dict()
+    projected_row = {**row, **values}
+    if COL_TEXT not in row:
+        projected_row.pop(COL_TEXT, None)
+    return projected_row
+
+
 def run_semantic_rewrite(
     source: pd.DataFrame,
     *,
@@ -129,11 +261,12 @@ def run_semantic_rewrite(
     combined: bool,
     arguments: dict[str, Any],
     detection_arguments: dict[str, Any],
+    runner: RewriteWorkflow | None = None,
 ) -> ReplacementResult:
     """Run detection and the shared Rewrite tail under one admitted invocation."""
     from anonymizer.engine.detection._graph_profile import _run_sync_profile, project_detection_redact
 
-    arguments, detection_arguments = deepcopy((arguments, detection_arguments))
+    arguments = deepcopy(arguments)
     configuration = _configuration(arguments, detection_arguments)
     selected = (
         len(source)
@@ -149,11 +282,13 @@ def run_semantic_rewrite(
         max_collection_items=None,
     )
 
+    opaque = getattr(adapter.run_workflow, "__func__", None) is not NddAdapter.run_workflow
+    opaque_detection = getattr(detection.run, "__func__", None) is not _DETECTION_RUN
+
     async def operation(
         pool: BlockingPool,
         handoff: Callable[[Callable[[], LocalCompleted | LocalFailure]], LocalCompleted | LocalFailure],
     ) -> ReplacementResult:
-        del handoff
         result = await execute_initial_evaluation(
             source,
             adapter=adapter,
@@ -164,10 +299,14 @@ def run_semantic_rewrite(
             limits=limits,
             detection=detection,
             detection_arguments=detection_arguments,
+            runner=runner,
+            opaque=opaque,
+            handoff=handoff if opaque else None,
+            detection_handoff=handoff if opaque_detection else None,
         )
         return project_detection_redact(result)
 
-    return _run_sync_profile(operation, caller_callbacks=False)
+    return _run_sync_profile(operation, caller_callbacks=opaque or opaque_detection)
 
 
 async def execute_initial_evaluation(
@@ -181,19 +320,26 @@ async def execute_initial_evaluation(
     limits: ExecutionLimits,
     detection: EntityDetectionWorkflow | None = None,
     detection_arguments: dict[str, Any] | None = None,
+    runner: RewriteWorkflow | None = None,
+    opaque: bool = False,
+    on_result: Callable[[RewriteResult], None] | None = None,
+    observed_columns: bool = False,
+    handoff: Callable[[Callable[[], LocalCompleted | LocalFailure]], LocalCompleted | LocalFailure] | None = None,
+    detection_handoff: Callable[[Callable[[], Any]], Any] | None = None,
 ) -> ExecutionResult:
-    """Execute actual DD prefix/Evaluate under one admitted source-bound owner.
+    """Execute Rewrite lowerings under one admitted source-bound owner.
 
-    This incomplete private prototype requires caller-supplied limits/configuration.
-    It publishes explicit loop exits and verifies final repair-criteria evidence.
-    Full environment binding and public ingress remain incomplete; this is not
-    a public strategy selector.
+    Native generators publish typed stage outcomes. Opaque adapters publish
+    observed decisions without QA assessments or inferred physical requests.
+    Final projection uses the admitted terminal occurrence in both cases.
     """
-    if source.empty:
+    if source.empty or limits.max_runtime_artifact_bytes is not None or limits.max_remote_outstanding is not None:
+        # The DD and arbitrary-object boundaries do not expose enforceable
+        # internal request cardinality or hidden cell sizes.
         reject(EffectCode.UNSUPPORTED)
     preview = arguments.get("preview_num_records")
     selected_source = source if preview is None else source.iloc[:preview]
-    arguments, detection_arguments = deepcopy((arguments, detection_arguments))
+    arguments = deepcopy(arguments)
     criteria = EvaluationCriteria.model_validate_json(arguments["evaluation"].model_dump_json())
     expected_configuration = _configuration(arguments, detection_arguments)
     if configuration != expected_configuration:
@@ -205,7 +351,7 @@ async def execute_initial_evaluation(
         graph, target = graph.add_text(text)
         targets.append(target)
     size = len(targets)
-    allowance = arguments["evaluation"].max_repair_iterations
+    allowance = 0 if opaque and combined and not observed_columns else arguments["evaluation"].max_repair_iterations
     data = graph.validate(
         targets=tuple(targets),
         source_relations=(),
@@ -222,7 +368,7 @@ async def execute_initial_evaluation(
             max_group_members=0,
         ),
     )
-    raw, capabilities, policies, ids, body_ids = _tail(configuration, allowance)
+    raw, capabilities, policies, ids, body_ids = _tail(configuration, allowance, opaque=opaque)
     text = ArtifactType(name="anonymizer.text", revision=1)
     prepared = _prepare_frame_plan(
         data,
@@ -245,14 +391,27 @@ async def execute_initial_evaluation(
             iteration_slots.setdefault(ancestor.iteration, {})[body_names[slot.template]] = slot.index
     loop = asyncio.get_running_loop()
 
-    def callback(inputs: tuple[AssociationInput, ...], requests: DelegatedRequests) -> LocalCompleted:
+    def callback(inputs: tuple[AssociationInput, ...], requests: DelegatedRequests) -> LocalCompleted | LocalFailure:
         started = perf_counter()
         original_frame = requests.bind_frame(source, targets=tuple(targets), source_limit=len(selected_source))
-        detected = (
-            detection.run(source, source_frame=original_frame, **(detection_arguments or {}))
-            if detection is not None
-            else None
-        )
+
+        def detect() -> EntityDetectionResult | None:
+            if detection is None:
+                return None
+            native = getattr(detection.run, "__func__", None) is _DETECTION_RUN
+            return detection.run(
+                source, **({"source_frame": original_frame} if native else {}), **(detection_arguments or {})
+            )
+
+        if detection_handoff is None or handoff is not None:
+            detected = detect()
+        else:
+            context = copy_context()
+            detected = detection_handoff(lambda: context.run(detect))
+        if requests.cancelled:
+            return LocalFailure(failure="implementation_exception")
+        if _configuration(arguments, detection_arguments) != configuration:
+            reject(EffectCode.CONTRADICTORY)
         detected_frame = detected.dataframe if detected is not None else selected_source
         positions = (
             resolve_source_positions(source, detected_frame, detected.source_positions)
@@ -260,6 +419,7 @@ async def execute_initial_evaluation(
             else tuple(range(len(selected_source)))
         )
         active = tuple(original_frame.associations[index] for index in positions)
+        selected_runner = runner or (CombinedRewriteWorkflow if combined else RewriteWorkflow)(adapter)
         binding = RewriteEvaluationBinding(
             requests,
             WorkflowSourceFrame.capture(detected_frame, associations=active, invocation_bound=True),
@@ -268,13 +428,23 @@ async def execute_initial_evaluation(
             _evaluation_state(0 if combined else None, COL_REWRITTEN_TEXT_INITIAL if combined else COL_REWRITTEN_TEXT),
             iteration_slots=iteration_slots,
             combined=combined,
+            opaque=opaque,
+            observed_columns=observed_columns,
             criteria=arguments["evaluation"],
+            receiver=selected_runner,
+            adapter=adapter,
+            entry_frame=detected_frame,
+            entry_arguments=deepcopy(arguments),
         )
         detection_elapsed = perf_counter() - started
         started = perf_counter()
-        asyncio.run_coroutine_threadsafe(binding.passthrough(detected_frame), loop).result()
-        runner = (CombinedRewriteWorkflow if combined else RewriteWorkflow)(adapter, semantic_binding=binding)
-        result = runner.run(detected_frame, **arguments)
+        if not observed_columns:
+            asyncio.run_coroutine_threadsafe(binding.passthrough(detected_frame), loop).result()
+        binding.authorize_entry()
+        with selected_runner._bind_semantic(binding):
+            result = selected_runner.run(detected_frame, **arguments)
+        if on_result is not None:
+            on_result(result)
         if result.source_positions is None:
             reject(EffectCode.MISSING)
         positions = resolve_source_positions(detected_frame, result.dataframe, result.source_positions)
@@ -285,7 +455,8 @@ async def execute_initial_evaluation(
         publication = FramePublication.capture(
             projected,
             associations=tuple(selected[association] for association in successful),
-            text_ports=((COL_REWRITTEN_TEXT, "candidate"),),
+            text_ports=(),
+            observation_ports=((COL_REWRITTEN_TEXT, "candidate"),),
             failed_records=tuple((detected.failed_records if detected is not None else []) + result.failed_records),
             opaque_source=source,
             stages=FrameStages(
@@ -310,11 +481,17 @@ async def execute_initial_evaluation(
             frame=publication,
         )
 
+    def dispatch(inputs: tuple[AssociationInput, ...], requests: DelegatedRequests) -> LocalCompleted | LocalFailure:
+        if handoff is None:
+            return callback(inputs, requests)
+        context = copy_context()
+        return handoff(lambda: context.run(callback, inputs, requests))
+
     result = await _execute_frame_plan(
         prepared=prepared,
         capabilities=tuple(capabilities),
         policies=tuple(policies),
-        callback=callback,
+        callback=dispatch,
         pool=pool,
         borrowed_loop=loop,
         limits=limits,
@@ -339,7 +516,7 @@ async def execute_initial_evaluation(
                 absence_queries=frozenset(),
                 supported_findings=frozenset({EVALUATION_PASS, EVALUATION_FAIL}),
             )
-            for node in (ids["initial"], ids["final"])
+            for node in (() if opaque else (ids["initial"], ids["final"]))
             for outcome in ("ok",)
         ),
         assessment_limits=AssessmentLimits(
@@ -353,6 +530,8 @@ async def execute_initial_evaluation(
         ),
     )
 
+    if opaque:
+        return result
     qualification = admit_qualification(
         execution=result._execution,
         productions=result._execution.assessment_productions,
@@ -387,7 +566,7 @@ async def execute_initial_evaluation(
     return result
 
 
-def _tail(configuration: FrozenConfig, allowance: int):
+def _tail(configuration: FrozenConfig, allowance: int, *, opaque: bool = False):
     """Declare one initial evaluator and one carried repair/evaluation body."""
     text = ArtifactType(name="anonymizer.text", revision=1)
     qa, answers, privacy, comparison, metrics = (
@@ -400,16 +579,23 @@ def _tail(configuration: FrozenConfig, allowance: int):
             EvaluationMetricsValue,
         )
     )
+    if opaque:
+        metrics = REWRITE_TYPES[RewriteControlValue]
+    candidate = REWRITE_TYPES[RewriteCandidateValue]
     carried = {
         "source": text,
-        "baseline": text,
+        "baseline": candidate,
         "qa": qa,
-        "candidate": text,
+        "candidate": candidate,
         "privacy": privacy,
         "answers": answers,
         "comparison": comparison,
         "metrics": metrics,
     }
+    if opaque:
+        carried = {
+            key: value for key, value in carried.items() if key not in {"qa", "privacy", "answers", "comparison"}
+        }
     root, body = WorkflowId.new(), WorkflowId.new()
     ids = {
         name: NodeId.new(workflow=root)
@@ -463,7 +649,7 @@ def _tail(configuration: FrozenConfig, allowance: int):
         op = operation("rewrite-" + ("iteration-" if owner_ids is body_ids else "") + name, inputs, outputs, **kwargs)
         if name == "metrics" and owner_ids is ids:
             op = replace(op, outcomes=(*op.outcomes, replace(op.outcomes[1], name="skipped")))
-        if name in {"initial", "final"}:
+        if name in {"initial", "final"} and not opaque:
             promise = EvidencePromise(
                 name=EVALUATION_PROMISE,
                 meaning=EVALUATION_MEANING,
@@ -481,6 +667,8 @@ def _tail(configuration: FrozenConfig, allowance: int):
             )
             if name == "initial":
                 op = replace(op, outcomes=(*op.outcomes, replace(op.outcomes[0], name="skipped", evidence=frozenset())))
+        if name == "initial" and opaque:
+            op = replace(op, outcomes=(*op.outcomes, replace(op.outcomes[0], name="skipped")))
         cap, policy = _frame_implementation(
             owner_ids[name],
             op,
@@ -495,13 +683,19 @@ def _tail(configuration: FrozenConfig, allowance: int):
     def evaluation(owner_ids, first, first_inputs, first_outputs):
         nodes = [
             node(owner_ids, first, first_inputs, first_outputs),
-            node(owner_ids, "quality", {"candidate": text, "qa": qa}, {"answers": answers}),
-            node(owner_ids, "privacy", {"candidate": text, "qa": qa}, {"privacy": privacy}),
-            node(owner_ids, "comparison", {"qa": qa, "answers": answers}, {"comparison": comparison}),
+            *(
+                []
+                if opaque
+                else [
+                    node(owner_ids, "quality", {"candidate": candidate, "qa": qa}, {"answers": answers}),
+                    node(owner_ids, "privacy", {"candidate": candidate, "qa": qa}, {"privacy": privacy}),
+                    node(owner_ids, "comparison", {"qa": qa, "answers": answers}, {"comparison": comparison}),
+                ]
+            ),
             node(
                 owner_ids,
                 "metrics",
-                {**{k: v for k, v in carried.items() if k != "metrics"}, "comparison": comparison},
+                {k: v for k, v in carried.items() if k != "metrics"},
                 carried,
                 identity=tuple(k for k in carried if k != "metrics"),
                 control=True,
@@ -536,9 +730,12 @@ def _tail(configuration: FrozenConfig, allowance: int):
 
     # Initial metrics have no prior metrics input; each repair body consumes all carried values.
     root_nodes, root_bindings, root_edges = evaluation(
-        ids, "prefix", {"source": text}, {"candidate": text, "baseline": text, "qa": qa}
+        ids,
+        "prefix",
+        {"source": text},
+        {"candidate": candidate, "baseline": candidate, **({} if opaque else {"qa": qa})},
     )
-    body_nodes, body_bindings, body_edges = evaluation(body_ids, "repair", carried, {"candidate": text})
+    body_nodes, body_bindings, body_edges = evaluation(body_ids, "repair", carried, {"candidate": candidate})
     body_interface = operation(
         "rewrite-repair-evaluate", carried, carried, identity=("source", "baseline", "qa"), control=True, ceiling=5
     )
@@ -625,7 +822,7 @@ def _tail(configuration: FrozenConfig, allowance: int):
     interface = operation(
         "rewrite-tail",
         {"source": text},
-        {"initial_candidate": text, "repaired_candidate": text},
+        {"initial_candidate": candidate, "repaired_candidate": candidate},
         ceiling=max(14, 8 + 6 * allowance),
     )
     interface = replace(
@@ -636,7 +833,7 @@ def _tail(configuration: FrozenConfig, allowance: int):
                 name=n,
                 produced_ports=frozenset({p}),
                 evidence=frozenset()
-                if n == "skipped"
+                if n == "skipped" or opaque
                 else frozenset(
                     {
                         EvidencePromise(

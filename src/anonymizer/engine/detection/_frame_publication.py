@@ -11,14 +11,16 @@ from __future__ import annotations
 
 import math
 from copy import deepcopy
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, cast
 
+import numpy as np
 import pandas as pd
 
 from anonymizer.engine.detection.artifacts import EntitySpansValue
 from anonymizer.engine.graph_sdk.requests import AssociationResult, SemanticAssociation, TextArtifactValue
 from anonymizer.engine.ndd.adapter import FailedRecord
+from anonymizer.engine.rewrite.artifacts import RewriteCandidateValue
 from anonymizer.graph._values import ArtifactRef
 
 if TYPE_CHECKING:
@@ -64,6 +66,13 @@ class PublishedFrame:
     _sources: tuple[SemanticAssociation, ...]
     _ports: tuple[str, ...]
     stages: FrameStages | None = None
+    _observation_dtypes: tuple[tuple[str, np.dtype | pd.api.extensions.ExtensionDtype], ...] = ()
+    _accepted_observation_dtypes: tuple[tuple[str, np.dtype | pd.api.extensions.ExtensionDtype], ...] = field(
+        init=False, repr=False, compare=False
+    )
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "_accepted_observation_dtypes", deepcopy(self._observation_dtypes))
 
     def project(self, result: ExecutionResult) -> pd.DataFrame:
         if not any(self is frame for frame in result.frames):
@@ -107,6 +116,8 @@ class PublishedFrame:
             or not self._content.columns.equals(self._columns.drop(columns))
         ):
             raise ValueError("malformed retained frame columns")
+        if self._observation_dtypes != self._accepted_observation_dtypes:
+            raise ValueError("frame presentation metadata differs from its accepted output")
         values = dict(result.artifacts)
         projected = _copy_frame(self._content, self._opaque)
         for (column, references), port in zip(self._text, self._ports, strict=True):
@@ -122,14 +133,24 @@ class PublishedFrame:
                 ):
                     raise ValueError("frame reference differs from its accepted source output port")
             text = [values[reference] for reference in references]
-            if any(type(value) not in (TextArtifactValue, EntitySpansValue) for value in text):
+            if any(type(value) not in (TextArtifactValue, EntitySpansValue, RewriteCandidateValue) for value in text):
                 raise ValueError("frame reference has an unsupported artifact")
-            projected[column] = [
-                value.text
+            observed = [
+                value.project()
+                if isinstance(value, RewriteCandidateValue)
+                else value.text
                 if isinstance(value, TextArtifactValue)
                 else {"entities": [entity.as_dict() for entity in cast(EntitySpansValue, value).entities]}
                 for value in text
             ]
+            dtype = dict(self._accepted_observation_dtypes).get(column)
+            presented = pd.Series(observed, index=projected.index, dtype=dtype)
+            if any(
+                type(value) is RewriteCandidateValue and RewriteCandidateValue.capture(cell) != value
+                for value, cell in zip(text, presented, strict=True)
+            ):
+                raise ValueError("frame presentation differs from its accepted candidate")
+            projected[column] = presented
         return projected.reindex(columns=self._columns)
 
 
@@ -150,10 +171,11 @@ class FramePublication:
     _content: pd.DataFrame
     _columns: pd.Index
     associations: tuple[SemanticAssociation, ...]
-    _text: tuple[tuple[str, str, tuple[str | EntitySpansValue, ...]], ...]
+    _text: tuple[tuple[str, str, tuple[str | EntitySpansValue | RewriteCandidateValue, ...]], ...]
     failed_records: tuple[FailedRecord, ...]
     _opaque: tuple[object, ...]
     stages: FrameStages | None = None
+    _observation_dtypes: tuple[tuple[str, np.dtype | pd.api.extensions.ExtensionDtype], ...] = ()
 
     @classmethod
     def capture(
@@ -165,6 +187,7 @@ class FramePublication:
         failed_records: tuple[FailedRecord, ...],
         opaque_source: pd.DataFrame,
         span_ports: tuple[tuple[str, str, tuple[EntitySpansValue, ...]], ...] = (),
+        observation_ports: tuple[tuple[str, str], ...] = (),
         stages: FrameStages | None = None,
     ) -> FramePublication:
         if (
@@ -174,8 +197,19 @@ class FramePublication:
             or len({column for column, _ in text_ports}) != len(text_ports)
         ):
             raise ValueError("frame publication has ambiguous source or text columns")
-        text = tuple((column, port, tuple(dataframe[column])) for column, port in text_ports) + span_ports
-        if not text or any(type(value) not in (str, EntitySpansValue) for _, _, values in text for value in values):
+        text = (
+            tuple((column, port, tuple(dataframe[column])) for column, port in text_ports)
+            + span_ports
+            + tuple(
+                (column, port, tuple(RewriteCandidateValue.capture(value) for value in dataframe[column]))
+                for column, port in observation_ports
+            )
+        )
+        if not text or any(
+            type(value) not in (str, EntitySpansValue, RewriteCandidateValue)
+            for _, _, values in text
+            for value in values
+        ):
             raise ValueError("frame publication requires semantic text outputs")
         opaque = tuple(value for row in opaque_source.itertuples(index=False, name=None) for value in row)
         return cls(
@@ -186,6 +220,7 @@ class FramePublication:
             failed_records,
             opaque,
             stages.snapshot(opaque) if stages is not None else None,
+            tuple((column, dataframe[column].dtype) for column, _ in observation_ports),
         )
 
     def accept(self, results: tuple[AssociationResult, ...], *, opaque: tuple[object, ...]) -> FramePublication | None:
@@ -215,7 +250,7 @@ class FramePublication:
                 or not item[1]
                 or type(item[2]) is not tuple
                 or len(item[2]) != len(self.associations)
-                or any(type(value) not in (str, EntitySpansValue) for value in item[2])
+                or any(type(value) not in (str, EntitySpansValue, RewriteCandidateValue) for value in item[2])
             ):
                 return None
         names = [column for column, _, _ in self._text]
@@ -243,6 +278,7 @@ class FramePublication:
             self.failed_records,
             opaque,
             self.stages.snapshot(opaque) if self.stages is not None else None,
+            self._observation_dtypes,
         )
 
     def bind(self, ports: tuple[ExecutionPortFact, ...]) -> PublishedFrame | None:
@@ -270,6 +306,7 @@ class FramePublication:
             self.associations,
             tuple(port for _, port, _ in self._text),
             self.stages,
+            self._observation_dtypes,
         )
 
 

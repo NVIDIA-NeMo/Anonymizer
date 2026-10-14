@@ -1046,3 +1046,7 @@ def _format_privacy_goal(privacy_goal: PrivacyGoal | None) -> str:
     if privacy_goal is None:
         return "Not provided"
     return privacy_goal.to_prompt_string()
+
+
+# Pin library entry identity so arbitrary caller overrides keep their callback contract.
+_DETECTION_RUN = EntityDetectionWorkflow.run

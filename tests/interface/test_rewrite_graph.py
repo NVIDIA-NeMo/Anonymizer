@@ -146,3 +146,88 @@ def test_builtin_rewrite_zero_source_and_all_failed_execution(
     assert not execution.frames and not execution.final_outputs
     assert not execution.requests.dispatches
     assert len(execution.record.targets) == (0 if preview or not texts else 1)
+
+
+@pytest.mark.parametrize("combined", [False, True])
+def test_exact_supplied_callback_adapter_preserves_caller_thread_and_single_invocation(
+    tmp_path, monkeypatch, scripted_detection, combined
+):
+    from unittest.mock import Mock
+
+    from anonymizer.engine.constants import (
+        COL_ANY_HIGH_LEAKED,
+        COL_LEAKAGE_MASS,
+        COL_NEEDS_HUMAN_REVIEW,
+        COL_NEEDS_REPAIR,
+        COL_REPAIR_ITERATIONS,
+        COL_UTILITY_SCORE,
+    )
+    from anonymizer.engine.ndd.adapter import WorkflowRunResult
+    from anonymizer.engine.rewrite.combined_rewrite_workflow import CombinedRewriteWorkflow
+    from anonymizer.engine.rewrite.rewrite_workflow import RewriteWorkflow
+    from anonymizer.graph._values import InvocationId
+
+    caller = get_ident()
+    invocation_ids = []
+    new = InvocationId.new
+
+    def allocate(*args, **kwargs):
+        value = new(*args, **kwargs)
+        invocation_ids.append(value)
+        return value
+
+    adapter = Mock()
+
+    def response(frame, **kwargs):
+        assert get_ident() == caller
+        result = frame.copy()
+        result[COL_REWRITTEN_TEXT] = "observed safe"
+        result[COL_UTILITY_SCORE] = 0.9
+        result[COL_LEAKAGE_MASS] = 0.0
+        result[COL_ANY_HIGH_LEAKED] = False
+        result[COL_NEEDS_REPAIR] = False
+        result[COL_REPAIR_ITERATIONS] = 0
+        result[COL_NEEDS_HUMAN_REVIEW] = False
+        return WorkflowRunResult(result, [], tuple(range(len(result))))
+
+    adapter.run_workflow.side_effect = response
+    runner = (CombinedRewriteWorkflow if combined else RewriteWorkflow)(adapter)
+    facade = public_anonymizer(
+        scripted_detection, **{"combined_rewrite_runner" if combined else "rewrite_runner": runner}
+    )
+    from anonymizer.config.models import ReplaceModelSelection, RewriteModelSelection
+
+    facade._selected_models.replace = ReplaceModelSelection(replacement_generator="singleton")
+    facade._selected_models.rewrite = RewriteModelSelection(
+        **{key: "singleton" for key in RewriteModelSelection.model_fields}
+    )
+    from anonymizer.engine.constants import COL_ENTITIES_BY_VALUE
+    from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceWorkflow
+
+    def detect(frame, **kwargs):
+        assert get_ident() == caller
+        detected = frame.copy()
+        detected[COL_ENTITIES_BY_VALUE] = [{"entities_by_value": [{"value": "Alice", "labels": ["first_name"]}]}] * len(
+            frame
+        )
+        return EntityDetectionResult(detected, [], tuple(range(len(frame))))
+
+    monkeypatch.setattr(facade._detection_workflow, "run", detect)
+    monkeypatch.setattr(
+        LlmReplaceWorkflow,
+        "generate_map_only",
+        lambda self, frame, **kwargs: WorkflowRunResult(frame.copy(), [], tuple(range(len(frame)))),
+    )
+    monkeypatch.setattr(InvocationId, "new", allocate)
+    path = tmp_path / "supplied.csv"
+    pd.DataFrame({"text": ["Alice visits."]}).to_csv(path, index=False)
+    result = facade.run(
+        config=AnonymizerConfig(
+            rewrite=Rewrite(use_combined_graph=combined, max_repair_iterations=0), emit_telemetry=False
+        ),
+        data=AnonymizerInput(source=str(path)),
+    )
+    assert result.dataframe.text_rewritten.tolist() == ["observed safe"]
+    assert len(invocation_ids) == 1
+    assert not result._execution.assessments
+    assert runner._semantic_binding is None

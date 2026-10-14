@@ -16,7 +16,7 @@ from data_designer.engine.dataset_builders.utils.async_concurrency import ensure
 from anonymizer import Rewrite
 from anonymizer.engine.constants import COL_ENTITIES_BY_VALUE, COL_REWRITE_BASELINE_TEXT, COL_TEXT
 from anonymizer.engine.graph_sdk._artifact_shape import ArtifactShape
-from anonymizer.engine.graph_sdk._effect_values import EffectRejected
+from anonymizer.engine.graph_sdk._effect_values import EffectCode, EffectRejected
 from anonymizer.engine.graph_sdk._execution_values import OperationOutputKey
 from anonymizer.engine.graph_sdk._ingress import inspect_artifact
 from anonymizer.engine.graph_sdk.blocking import BlockingPool
@@ -331,3 +331,108 @@ def test_final_evidence_consumer_reconciles_canonical_provenance(monkeypatch, fa
     monkeypatch.setattr(_semantic_profile, "qualify_retained", corrupt)
     with pytest.raises(EffectRejected):
         asyncio.run(_lifecycle(monkeypatch, "normal"))
+
+
+@pytest.mark.parametrize("combined", [False, True])
+@pytest.mark.parametrize("damage", ["container", "arity", "instance", "binding"])
+def test_malformed_rewrite_binding_rejects_before_lowerer(monkeypatch, combined, damage):
+    from unittest.mock import Mock
+
+    from anonymizer.engine.rewrite._semantic_evaluation import RewriteEvaluationBinding
+    from anonymizer.engine.rewrite.combined_rewrite_workflow import CombinedRewriteWorkflow
+    from anonymizer.engine.rewrite.rewrite_workflow import _REWRITE_BINDING
+
+    kind = CombinedRewriteWorkflow if combined else RewriteWorkflow
+    runner = kind(NddAdapter(Mock()))
+    lowerer = Mock(side_effect=AssertionError("lowerer must not run"))
+    monkeypatch.setattr(runner, "_run_lowering", lowerer)
+    damaged = {
+        "container": [],
+        "arity": (runner,),
+        "instance": (object(), object()),
+        "binding": (runner, object()),
+    }[damage]
+    token = _REWRITE_BINDING.set(cast(tuple[object, RewriteEvaluationBinding], damaged))
+    try:
+        with pytest.raises(EffectRejected) as rejected:
+            runner.run(
+                pd.DataFrame({COL_TEXT: ["source"]}),
+                model_configs=[],
+                selected_models=Mock(),
+                replace_model_selection=Mock(),
+                privacy_goal=Mock(),
+                evaluation=Rewrite().evaluation,
+            )
+        assert rejected.value.code is EffectCode.FOREIGN_OWNER
+        lowerer.assert_not_called()
+    finally:
+        _REWRITE_BINDING.reset(token)
+
+
+def test_lowering_claim_is_atomic_shared_by_views_and_separate_for_fresh_invocations(monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+    from unittest.mock import Mock
+
+    from anonymizer.engine.rewrite._semantic_evaluation import RewriteEvaluationBinding
+
+    monkeypatch.setattr(RewriteEvaluationBinding, "authorize_entry", lambda self: None)
+    first = RewriteEvaluationBinding(Mock(), Mock(), {}, Mock(), Mock(), Rewrite().evaluation, iteration_slots={0: {}})
+    second = RewriteEvaluationBinding(Mock(), Mock(), {}, Mock(), Mock(), Rewrite().evaluation)
+    barrier = Barrier(4)
+
+    def claim(binding):
+        barrier.wait(timeout=5)
+        try:
+            binding.claim_lowering()
+        except EffectRejected as error:
+            assert error.code is EffectCode.FOREIGN_OWNER
+            return False
+        return True
+
+    with ThreadPoolExecutor(max_workers=4) as workers:
+        results = list(workers.map(claim, (first, first.for_iteration(1), second, replace(second))))
+    assert sum(results[:2]) == sum(results[2:]) == 1
+    # Completion or callback failure never replenishes either invocation's entry.
+    for binding in (first, second):
+        with pytest.raises(EffectRejected, match="foreign_owner"):
+            binding.claim_lowering()
+
+
+@pytest.mark.parametrize("opaque", [False, True])
+@pytest.mark.parametrize("ceiling", ["max_runtime_artifact_bytes", "max_remote_outstanding"])
+def test_unknown_dd_bound_rejects_before_callback(monkeypatch, opaque, ceiling):
+    from unittest.mock import Mock
+
+    runner = Mock(side_effect=AssertionError("callback must not enter"))
+    monkeypatch.setattr(RewriteWorkflow, "run", runner)
+    criteria = Rewrite(max_repair_iterations=0).evaluation
+    limits = ExecutionLimits(
+        max_local_in_flight=1,
+        max_remote_outstanding=None,
+        max_runtime_artifacts=20,
+        max_runtime_artifact_bytes=None,
+        max_collection_items=10,
+    )
+
+    async def run():
+        pool = BlockingPool(max_workers=1)
+        try:
+            await execute_initial_evaluation(
+                pd.DataFrame({COL_TEXT: ["same"], COL_ENTITIES_BY_VALUE: [{}]}),
+                adapter=cast(NddAdapter, object()),
+                combined=False,
+                arguments={"evaluation": criteria},
+                configuration=FrozenConfig(
+                    fields=(ConfigField(name="evaluation", value=ConfigText(value=criteria.model_dump_json())),)
+                ),
+                pool=pool,
+                limits=replace(limits, **{ceiling: 100}),
+                opaque=opaque,
+            )
+        finally:
+            await pool.close()
+
+    with pytest.raises(EffectRejected, match="unsupported"):
+        asyncio.run(run())
+    runner.assert_not_called()

@@ -23,6 +23,14 @@ The reference revision is `9f824d95b1cc74e71eb4a152a033afabbfd84ac0`. Normative 
 
 M2 and M3 can proceed independently after their M1 prerequisites. The campaign currently serializes their execution. Minimization checkpoints surround migration; moving code or retaining forwarding wrappers is not retirement.
 
+## Rewrite semantic controller checkpoint
+
+Built-in Rewrite now uses one admitted controller for iterative batches and combined DataDesigner columns. Default facade calls, direct calls and supplied instances that inherit the library entry bind the actual runner, adapter, arguments and source before a single lowering entry. Injected detection callbacks share that Rewrite owner while preserving their caller thread and original argument objects. Arbitrary runner overrides remain opaque. The previous iterative repair loop, duplicate combined `run()` controller and last-populated-row finalizer have been removed. Physical batching and conditional column unrolling remain lowerings.
+
+Native generators publish their observed typed stages. Caller callbacks with opaque internals publish source-bound observations without invented QA assessments, repair history or physical request counts. Retained candidate values and presentation dtypes cannot change the accepted observation. Source snapshots detach structured semantic payloads, including supported model and NumPy cells, while retaining opaque caller metadata references. Standalone combined columns submit their available stage observations to the same admitted transitions and terminal projection; missing or null active decisions fail explicitly. If original text is absent from a standalone finalizer row, its empty datum anchors only that observation scope and establishes no original-text or protection claim. Arbitrary injected runners retain their explicitly opaque compatibility contract.
+
+This candidate does not establish full RFC cutover. Detection and its plugins, Substitute, informational and saved-result evaluation, and native declaration/export admission still need their controller migrations. Grouped related-text Rewrite, full compatibility and lifecycle qualification, public authoring, identical-wheel validation and independent review remain separate gates. The current order completes semantic cutover and controller retirement before minimization; the M0 stage history above remains evidence.
+
 ## Requirement map
 
 Paths under `engine/graph_sdk` below refer to `src/anonymizer/engine/graph_sdk`; test names refer to `tests/graph_sdk`. Existing evidence identifies a bounded implementation/test surface, not full requirement acceptance. All rows retain a production-integration obligation.

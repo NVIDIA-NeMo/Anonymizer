@@ -256,20 +256,30 @@ def test_actual_dd_map_and_latent_positions(
 
 
 def test_actual_dd_repair_subset_drop(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stub_rewrite_model_selection
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stub_rewrite_model_selection, stub_replace_model_selection
 ) -> None:
     adapter = NddAdapter(DataDesigner(artifact_path=tmp_path, auto_configure_logging=False))
     run = adapter.run_workflow
 
     def scripted(frame, *, columns, model_configs, workflow_name, **kwargs):
-        output = COL_REWRITTEN_TEXT_NEXT if workflow_name.startswith("rewrite-repair-") else COL_UTILITY_SCORE
+        output = (
+            COL_REWRITTEN_TEXT
+            if workflow_name == "rewrite-pipeline"
+            else COL_REWRITTEN_TEXT_NEXT
+            if workflow_name.startswith("rewrite-repair-")
+            else COL_UTILITY_SCORE
+        )
         side_effects = (
-            [] if output == COL_REWRITTEN_TEXT_NEXT else [COL_LEAKAGE_MASS, COL_ANY_HIGH_LEAKED, COL_NEEDS_REPAIR]
+            []
+            if output in {COL_REWRITTEN_TEXT_NEXT, COL_REWRITTEN_TEXT}
+            else [COL_LEAKAGE_MASS, COL_ANY_HIGH_LEAKED, COL_NEEDS_REPAIR]
         )
 
         @custom_column_generator(required_columns=list(frame.columns), side_effect_columns=side_effects)
         def response(row):
-            if output == COL_REWRITTEN_TEXT_NEXT:
+            if output == COL_REWRITTEN_TEXT:
+                row[output] = row[COL_TEXT]
+            elif output == COL_REWRITTEN_TEXT_NEXT:
                 if row[COL_REWRITTEN_TEXT] == "drop":
                     raise ValueError("intentional repair subset drop")
                 row[output] = "repaired"
@@ -299,16 +309,24 @@ def test_actual_dd_repair_subset_drop(
             COL_TEXT: ["pass", "drop", "repair"],
             COL_REWRITTEN_TEXT: ["pass", "drop", "repair"],
             "marker": [17, 29, 43],
+            COL_ENTITIES_BY_VALUE: [{"entities_by_value": [{"value": "name", "labels": ["person"]}]}] * 3,
         }
     )
-    result, failures = RewriteWorkflow(adapter)._run_evaluate_repair_loop(
+    monkeypatch.setattr(
+        LlmReplaceWorkflow,
+        "generate_map_only",
+        lambda self, rows, **kwargs: WorkflowRunResult(rows.copy(), [], tuple(range(len(rows)))),
+    )
+    rewritten = RewriteWorkflow(adapter).run(
         source,
         model_configs=[],
         selected_models=stub_rewrite_model_selection,
+        replace_model_selection=stub_replace_model_selection,
         privacy_goal=PrivacyGoal(protect="Protect all names", preserve="Preserve original meaning"),
         evaluation=EvaluationCriteria(max_repair_iterations=1),
         preview_num_records=None,
     )
+    result, failures = rewritten.dataframe, rewritten.failed_records
     assert result["marker"].tolist() == [17, 43]
     assert result[COL_REWRITTEN_TEXT].tolist() == ["pass", "repaired"]
     assert result[COL_REPAIR_ITERATIONS].tolist() == [0, 1]

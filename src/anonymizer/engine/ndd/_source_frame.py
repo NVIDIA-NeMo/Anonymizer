@@ -8,11 +8,25 @@ import uuid
 from collections.abc import Iterator
 from contextlib import ExitStack, contextmanager
 from contextvars import ContextVar
+from copy import deepcopy
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 
 import pandas as pd
 
+from anonymizer.engine.constants import (
+    COL_DETECTED_ENTITIES,
+    COL_ENTITIES_BY_VALUE,
+    COL_FINAL_ENTITIES,
+    COL_LATENT_ENTITIES,
+    COL_PRIVACY_QA,
+    COL_PRIVACY_QA_REANSWER,
+    COL_QUALITY_QA,
+    COL_QUALITY_QA_COMPARE,
+    COL_QUALITY_QA_REANSWER,
+    COL_REPLACEMENT_MAP,
+)
+from anonymizer.engine.rewrite.parsers import normalize_payload
 from anonymizer.interface.errors import AnonymizerWorkflowError
 
 if TYPE_CHECKING:
@@ -53,6 +67,20 @@ def source_generation(index: int) -> Iterator[None]:
 
 
 _COL_SOURCE_PREFIX = "_anonymizer_source_"
+_SEMANTIC_PAYLOAD_COLUMNS = frozenset(
+    {
+        COL_DETECTED_ENTITIES,
+        COL_ENTITIES_BY_VALUE,
+        COL_FINAL_ENTITIES,
+        COL_LATENT_ENTITIES,
+        COL_PRIVACY_QA,
+        COL_PRIVACY_QA_REANSWER,
+        COL_QUALITY_QA,
+        COL_QUALITY_QA_COMPARE,
+        COL_QUALITY_QA_REANSWER,
+        COL_REPLACEMENT_MAP,
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -82,16 +110,57 @@ class WorkflowSourceFrame:
         key_column = f"{_COL_SOURCE_PREFIX}{uuid.uuid4().hex}"
         while key_column in dataframe.columns:
             key_column = f"{_COL_SOURCE_PREFIX}{uuid.uuid4().hex}"
+        snapshot = dataframe.copy()
+        for ordinal, dtype in enumerate(dataframe.dtypes):
+            if dtype == object and dataframe.columns[ordinal] in _SEMANTIC_PAYLOAD_COLUMNS:
+                for row in range(len(dataframe)):
+                    snapshot.iat[row, ordinal] = deepcopy(dataframe.iat[row, ordinal])
         return cls(
-            dataframe.copy(),
+            snapshot,
             key_column,
             tuple(uuid.uuid4().hex for _ in range(len(dataframe))),
             associations,
             invocation_bound,
         )
 
+    def matches(self, dataframe: pd.DataFrame | None) -> bool:
+        """Authenticate structured source values independently of container identity.
+
+        Parquet cells can contain NumPy arrays nested inside schema wrappers;
+        pandas equality alone compares their container aliases inconsistently.
+        Normalize those semantic cells while preserving raw string values,
+        exact frame axes/dtypes, and opaque caller metadata semantics.
+        """
+        if (
+            not isinstance(dataframe, pd.DataFrame)
+            or not self.dataframe.columns.equals(dataframe.columns)
+            or not self.dataframe.index.equals(dataframe.index)
+            or not self.dataframe.dtypes.equals(dataframe.dtypes)
+        ):
+            return False
+        captured, supplied = self.dataframe.copy(), dataframe.copy()
+        for ordinal, dtype in enumerate(dataframe.dtypes):
+            if dtype == object and dataframe.columns[ordinal] in _SEMANTIC_PAYLOAD_COLUMNS:
+                for frame in (captured, supplied):
+                    frame.isetitem(
+                        ordinal,
+                        pd.Series(
+                            [
+                                value if type(value) is str else normalize_payload(value)
+                                for value in frame.iloc[:, ordinal]
+                            ],
+                            index=frame.index,
+                            dtype=object,
+                        ),
+                    )
+        return captured.equals(supplied)
+
     def seed(self) -> pd.DataFrame:
         seed = self.dataframe.copy()
+        for ordinal, dtype in enumerate(self.dataframe.dtypes):
+            if dtype == object and seed.columns[ordinal] in _SEMANTIC_PAYLOAD_COLUMNS:
+                for row in range(len(seed)):
+                    seed.iat[row, ordinal] = deepcopy(self.dataframe.iat[row, ordinal])
         seed[self.key_column] = self.keys
         return seed
 

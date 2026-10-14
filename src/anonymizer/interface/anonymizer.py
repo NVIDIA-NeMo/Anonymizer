@@ -53,7 +53,7 @@ from anonymizer.engine.constants import (
 )
 from anonymizer.engine.detection._frame_publication import InvocationFrame
 from anonymizer.engine.detection._graph_profile import run_detection_redact
-from anonymizer.engine.detection._opaque_redact import run_detection_rewrite, run_evaluation
+from anonymizer.engine.detection._opaque_redact import builtin_rewrite_runner, run_detection_rewrite, run_evaluation
 from anonymizer.engine.detection.detection_workflow import EntityDetectionWorkflow
 from anonymizer.engine.detection.entity_label_examples import resolve_entity_label_config
 from anonymizer.engine.evaluation.detection_judge import DetectionJudgeWorkflow
@@ -236,6 +236,7 @@ class Anonymizer:
             attribute_fidelity_judge=AttributeFidelityJudgeWorkflow(adapter=self._adapter),
             adapter=self._adapter,
         )
+        self._owns_detection = detection_workflow is None
         self._owns_rewrite = detection_workflow is None and rewrite_runner is None
         self._owns_combined_rewrite = detection_workflow is None and combined_rewrite_runner is None
         self._rewrite_runner = rewrite_runner or RewriteWorkflow(adapter=self._adapter)
@@ -809,8 +810,15 @@ class Anonymizer:
                 detection_options=detection_options,
                 rewrite=partial(rewrite_runner.run, **rewrite_arguments),
                 semantic_arguments=rewrite_arguments
-                if (self._owns_combined_rewrite if config.rewrite.use_combined_graph else self._owns_rewrite)
+                if builtin_rewrite_runner(
+                    rewrite_runner,
+                    combined=config.rewrite.use_combined_graph,
+                    supplied=not (
+                        self._owns_combined_rewrite if config.rewrite.use_combined_graph else self._owns_rewrite
+                    ),
+                )
                 else None,
+                semantic_runner=rewrite_runner,
                 combined=config.rewrite.use_combined_graph,
             )
         detected_df, detection_failures = graph_result.dataframe, graph_result.failed_records

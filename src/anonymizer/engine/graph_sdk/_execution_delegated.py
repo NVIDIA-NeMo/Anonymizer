@@ -213,6 +213,9 @@ class _WorkerBorrow(PrivateValue):
     async def operation_result(self, slot: int, association: SemanticAssociation) -> AssociationResult | None:
         return await self._call(lambda: self.owner.operation_result(slot, association))
 
+    async def ready_operations(self, association: SemanticAssociation) -> tuple[int, ...]:
+        return await self._call(lambda: self.owner.ready_operations(association))
+
     async def complete_operation(self, association: SemanticAssociation, result: LocalResult) -> RuntimeOutcome:
         return await self._call(lambda: self.owner.complete_operation(association, result))
 
@@ -431,6 +434,19 @@ class _DelegatedOwner(PrivateValue):
         if policy is None or policy.submission_owner != self.policy.node:
             reject(EffectCode.FOREIGN_OWNER)
         return self.runtime._operation_result(source_job.scope, key)
+
+    async def ready_operations(self, association: SemanticAssociation) -> tuple[int, ...]:
+        """Expose only ready child occurrences belonging to this live submission."""
+        self._check_submission()
+        source = self.runtime.frame.sources[self._source_job(association).scope]
+        ready = {
+            entry.activation
+            for entry in source.state.entries
+            if entry.status == "ready"
+            and (policy := self.runtime.policies.get(entry.template)) is not None
+            and policy.submission_owner == self.policy.node
+        }
+        return tuple(slot for slot, key in source.keys.items() if key in ready)
 
     async def complete_operation(self, association: SemanticAssociation, result: LocalResult) -> RuntimeOutcome:
         self._check_submission()
@@ -959,6 +975,7 @@ class _DelegatedOwner(PrivateValue):
             or not failed_sources <= self.jobs.keys()
         ):
             return self._failure("failure", "malformed_response")
+        declared_drops = failed_sources
         invalid = inspect_associations(
             result.results,
             frozenset(self.jobs) - failed_sources,
@@ -1073,11 +1090,31 @@ class _DelegatedOwner(PrivateValue):
             runtime.frame.publications.append(accepted_frame)
         if self.invocation_job is not None:
             return {self.invocation_job.association: (_mapping(self.policy, "result", "ok", None), (), ())}
+        failed_results = {}
+        for association in failed_sources:
+            job = self.jobs[association]
+            entry = next(
+                row for row in runtime.frame.sources[job.scope].state.entries if row.activation == job.activation
+            )
+            if association in declared_drops and entry.status == "success":
+                # A later row drop does not undo an already accepted prefix.
+                # Descendants were closed above; no final output may survive it.
+                from anonymizer.engine.graph_sdk._execution_publication import _final_outputs
+
+                if any(
+                    item.target == job.scope
+                    for item in _final_outputs(runtime.prepared, runtime.frame.states, runtime.facts)
+                ):
+                    return self._failure("failure", "malformed_response")
+                failed_results[association] = (_mapping(self.policy, "result", entry.outcome, None), (), ())
+            else:
+                failed_results[association] = (
+                    _mapping(self.policy, "failure", None, "implementation_exception"),
+                    (),
+                    (),
+                )
         return {
-            **{
-                source: (_mapping(self.policy, "failure", None, "implementation_exception"), (), ())
-                for source in failed_sources
-            },
+            **failed_results,
             **{
                 item.association: (
                     _mapping(self.policy, "result", item.outcome, None),

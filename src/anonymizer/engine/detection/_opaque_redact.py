@@ -60,7 +60,7 @@ from anonymizer.engine.graph_sdk.preparation import (
 from anonymizer.engine.graph_sdk.requests import AssociationInput
 from anonymizer.engine.graph_sdk.resources import ResourceLease
 from anonymizer.engine.replace.replace_runner import ReplacementResult
-from anonymizer.engine.rewrite.rewrite_workflow import RewriteResult
+from anonymizer.engine.rewrite.rewrite_workflow import RewriteResult, RewriteWorkflow
 from anonymizer.graph.activation import ActivationLimits
 from anonymizer.graph.workflow import (
     ArtifactType,
@@ -169,6 +169,18 @@ class _EvaluationInvocation:
         return self.handoff(evaluate)
 
 
+def builtin_rewrite_runner(runner: RewriteWorkflow, *, combined: bool, supplied: bool) -> bool:
+    from anonymizer.engine.rewrite.rewrite_workflow import _REWRITE_RUN
+
+    del combined, supplied
+    method = _REWRITE_RUN
+    return (
+        isinstance(runner, RewriteWorkflow)
+        and getattr(runner.run, "__func__", None) is method
+        and callable(getattr(runner._adapter, "run_workflow", None))
+    )
+
+
 def run_detection_rewrite(
     source: pd.DataFrame,
     *,
@@ -178,9 +190,10 @@ def run_detection_rewrite(
     detection_options: Mapping[str, Any],
     rewrite: Callable[[pd.DataFrame], RewriteResult],
     semantic_arguments: dict[str, Any] | None = None,
+    semantic_runner: RewriteWorkflow | None = None,
     combined: bool = False,
 ) -> ReplacementResult:
-    """Run the selected existing Rewrite schedule as one opaque invocation."""
+    """Admit native Rewrite independently of opaque detection callbacks."""
     from anonymizer.engine.detection._graph_profile import _run_sync_profile, project_detection_redact
 
     selected = (
@@ -190,12 +203,14 @@ def run_detection_rewrite(
     )
     if semantic_arguments is not None and selected:
         from anonymizer.engine.rewrite._semantic_profile import run_semantic_rewrite
+        from anonymizer.engine.rewrite.combined_rewrite_workflow import CombinedRewriteWorkflow
 
         return run_semantic_rewrite(
             source,
             detection=detection,
-            adapter=detection._adapter,
-            combined=combined,
+            adapter=semantic_runner._adapter if semantic_runner is not None else detection._adapter,
+            runner=semantic_runner,
+            combined=isinstance(semantic_runner, CombinedRewriteWorkflow) if semantic_runner is not None else combined,
             arguments=semantic_arguments,
             detection_arguments={
                 "model_configs": model_configs,

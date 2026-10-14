@@ -8,6 +8,9 @@ import math
 from dataclasses import dataclass, field
 from typing import NamedTuple, TypeAlias, cast
 
+import numpy as np
+import pandas as pd
+
 from anonymizer.engine.graph_sdk._artifact_shape import ArtifactShape, content_bytes
 from anonymizer.engine.graph_sdk._effect_values import EffectCode, PrivateValue, reject
 from anonymizer.engine.schemas.rewrite import EntityCategory, MeaningUnitImportance, SensitivityLevel
@@ -93,10 +96,82 @@ class EvaluationMetricsValue(_RewriteValue):
     iteration: int = 0
 
 
+@dataclass(frozen=True, slots=True, kw_only=True, repr=False)
+class RewriteControlValue(_RewriteValue):
+    """Observed legacy continuation decision; never QA or protection evidence."""
+
+    needs_repair: bool
+    iteration: int = 0
+
+
+@dataclass(frozen=True, slots=True, kw_only=True, repr=False, eq=False)
+class RewriteCandidateValue(_RewriteValue):
+    """A legacy scalar observation, without text or protection qualification.
+
+    NaN has an explicit tag so retained equality does not depend on NaN's
+    non-reflexive comparison. The payload itself is retained in the artifact.
+    """
+
+    value: object
+    missing: bool = False
+    opaque: bool = False
+    _observed: object = field(init=False, repr=False, compare=False)
+    _observed_tags: tuple[bool, bool] = field(init=False, repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "_observed", self.value)
+        object.__setattr__(self, "_observed_tags", (self.missing, self.opaque))
+        _RewriteValue.__post_init__(self)
+
+    def __eq__(self, other: object) -> bool:
+        if type(other) is not RewriteCandidateValue:
+            return False
+        return (
+            self.missing == other.missing
+            and self.opaque == other.opaque
+            and (
+                self.value is other.value
+                if self.opaque
+                else (
+                    type(self.value) is type(other.value)
+                    or type(self.value) in (int, float)
+                    and type(other.value) in (int, float)
+                )
+                and self.value == other.value
+            )
+        )
+
+    @classmethod
+    def capture(cls, value: object) -> RewriteCandidateValue:
+        if isinstance(value, (np.integer, np.floating, np.bool_)):
+            value = value.item()
+        if value is pd.NA or type(value) is float and math.isnan(value):
+            return cls(value=None, missing=True)
+        return cls(value=value, opaque=type(value) not in (str, int, float, bool, type(None)))
+
+    def project(self) -> object:
+        content = rewrite_content(self)
+        if content is None:
+            reject(EffectCode.INVALID_TYPE)
+        atoms, items = content
+        expected_shape = ArtifactShape(sum(content_bytes(v) for v in atoms if type(v) is str), items)
+        if type(self.shape) is not ArtifactShape or self.shape != expected_shape:
+            reject(EffectCode.CONTRADICTORY)
+        return float("nan") if self.missing else self.value
+
+
 RewriteArtifactValue: TypeAlias = (
-    RewriteQAValue | QualityAnswersValue | PrivacyAnswersValue | QualityComparisonValue | EvaluationMetricsValue
+    RewriteQAValue
+    | QualityAnswersValue
+    | PrivacyAnswersValue
+    | QualityComparisonValue
+    | EvaluationMetricsValue
+    | RewriteCandidateValue
+    | RewriteControlValue
 )
 REWRITE_TYPES = {
+    RewriteControlValue: ArtifactType(name="anonymizer.rewrite-control-observation", revision=1),
+    RewriteCandidateValue: ArtifactType(name="anonymizer.rewrite-candidate-observation", revision=1),
     RewriteQAValue: ArtifactType(name="anonymizer.rewrite-qa", revision=1),
     QualityAnswersValue: ArtifactType(name="anonymizer.quality-answers", revision=1),
     PrivacyAnswersValue: ArtifactType(name="anonymizer.privacy-answers", revision=1),
@@ -110,6 +185,49 @@ def rewrite_content(
 ) -> tuple[tuple[str | int | float | bool | None, ...], int] | None:
     """Validate only the closed evaluator rows and independently expose their content."""
     groups: tuple[tuple[object, type, tuple[type | tuple[type, ...], ...]], ...]
+    if type(value) is RewriteControlValue:
+        needs, iteration = getattr(value, "needs_repair", None), getattr(value, "iteration", None)
+        if (
+            type(needs) is not bool
+            or type(iteration) is not int
+            or iteration < 0
+            or max_items is not None
+            and max_items < 1
+        ):
+            return None
+        return (needs, iteration), 1
+    if type(value) is RewriteCandidateValue:
+        payload, missing = getattr(value, "value", object()), getattr(value, "missing", None)
+        opaque = getattr(value, "opaque", None)
+        if (
+            type(opaque) is not bool
+            or payload is not getattr(value, "_observed", object())
+            or (missing, opaque) != getattr(value, "_observed_tags", None)
+        ):
+            return None
+        if opaque:
+            if (
+                payload is not getattr(value, "_observed", None)
+                or missing is not False
+                or max_items is not None
+                and max_items < 1
+            ):
+                return None
+            # Arbitrary caller cells are retained observations, with no claim
+            # about text content, semantic validity or hidden object byte size.
+            return (), 1
+        if (
+            type(payload) not in (str, int, float, bool, type(None))
+            or type(missing) is not bool
+            or missing
+            and payload is not None
+            or type(payload) is float
+            and math.isnan(payload)
+            or max_items is not None
+            and max_items < 1
+        ):
+            return None
+        return (cast(str | int | float | bool | None, payload), missing), 1
     if type(value) is RewriteQAValue:
         groups = (
             (getattr(value, "quality", None), QualityQuestion, (int, str, str, str, str)),

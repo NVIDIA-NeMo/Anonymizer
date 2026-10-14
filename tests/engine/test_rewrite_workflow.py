@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+from typing import Any
 from unittest.mock import Mock, patch
 
 import numpy as np
@@ -1191,3 +1192,87 @@ def test_run_needs_human_review_not_overwritten_by_evaluate(
     )
 
     assert bool(result.dataframe[COL_NEEDS_HUMAN_REVIEW].iloc[0]) is True
+
+
+@pytest.mark.parametrize("combined", [False, True])
+def test_lowering_rejects_changed_entry_and_replay_before_adapter_effects(
+    monkeypatch: pytest.MonkeyPatch,
+    stub_df_with_entities: pd.DataFrame,
+    stub_pipeline_df: pd.DataFrame,
+    stub_eval_df: pd.DataFrame,
+    stub_rewrite_model_selection: RewriteModelSelection,
+    stub_replace_model_selection: ReplaceModelSelection,
+    combined: bool,
+) -> None:
+    from dataclasses import replace
+    from threading import get_ident
+    from types import SimpleNamespace
+    from typing import cast
+
+    from anonymizer.engine.detection._frame_publication import PublishedFrame
+    from anonymizer.engine.graph_sdk._effect_values import EffectRejected
+    from anonymizer.engine.graph_sdk.executor import ExecutionResult
+    from anonymizer.engine.rewrite.combined_rewrite_workflow import CombinedRewriteWorkflow
+
+    adapter = Mock()
+    adapter.run_workflow.side_effect = (
+        [WorkflowRunResult(stub_eval_df, [])] if combined else _standard_side_effect(stub_pipeline_df, stub_eval_df)
+    )
+    kind = CombinedRewriteWorkflow if combined else RewriteWorkflow
+    runner = kind(adapter)
+    lower = kind._run_lowering
+    caller = get_ident()
+    observations = []
+
+    def checked(self, frame, *, binding, **arguments):
+        assert get_ident() == caller
+        before = adapter.run_workflow.call_count
+        for changed in (frame.copy(), frame.assign(**{COL_TEXT: "changed source"})):
+            with pytest.raises(EffectRejected, match="foreign_owner"):
+                lower(self, changed, binding=binding, **arguments)
+        with pytest.raises(EffectRejected, match="foreign_owner"):
+            lower(self, frame, binding=replace(binding), **arguments)
+        with pytest.raises(EffectRejected, match="foreign_owner"):
+            lower(kind(adapter), frame, binding=binding, **arguments)
+        with pytest.raises(EffectRejected, match="foreign_owner"):
+            changed_arguments: dict[str, Any] = {**arguments, "preview_num_records": 1}
+            lower(self, frame, binding=binding, **changed_arguments)
+        original_adapter = self._adapter
+        self._adapter = Mock()
+        try:
+            with pytest.raises(EffectRejected, match="foreign_owner"):
+                lower(self, frame, binding=binding, **arguments)
+        finally:
+            self._adapter = original_adapter
+        assert adapter.run_workflow.call_count == before
+        result = lower(self, frame, binding=binding, **arguments)
+        completed = adapter.run_workflow.call_count
+        with pytest.raises(EffectRejected, match="foreign_owner"):
+            lower(self, frame, binding=binding, **arguments)
+        assert adapter.run_workflow.call_count == completed
+        observations.append(True)
+        return result
+
+    monkeypatch.setattr(kind, "_run_lowering", checked)
+    with patch(_REPLACE_PATCH) as replacement:
+        _mock_replace(replacement, stub_df_with_entities)
+        result = runner.run(
+            stub_df_with_entities,
+            model_configs=[],
+            selected_models=stub_rewrite_model_selection,
+            replace_model_selection=stub_replace_model_selection,
+            privacy_goal=_PRIVACY_GOAL,
+            evaluation=EvaluationCriteria(max_repair_iterations=0),
+        )
+    assert observations == [True]
+    assert result.dataframe[COL_REWRITTEN_TEXT].tolist() == ["Maria works"]
+    execution = result._execution
+    assert execution is not None
+    published = execution.frames[0]
+    assert isinstance(published, PublishedFrame)
+    assert COL_REWRITTEN_TEXT not in published._content
+    published._content[COL_REWRITTEN_TEXT] = "forged retained candidate"
+    with pytest.raises(ValueError, match="malformed retained frame columns"):
+        published.project(execution)
+    with pytest.raises(ValueError, match="different execution"):
+        published.project(cast(ExecutionResult, SimpleNamespace(frames=())))
