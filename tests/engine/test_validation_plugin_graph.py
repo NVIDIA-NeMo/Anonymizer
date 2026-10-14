@@ -240,16 +240,31 @@ def test_async_plugin_self_cancellation_remains_cancellation(self_cancel):
 
 @pytest.mark.parametrize("asynchronous", [False, True])
 @pytest.mark.parametrize(
-    "fault", [None, "foreign", "expired", "closed", "missing_owner", "malformed", "malformed_association"]
+    "fault",
+    [
+        None,
+        "foreign",
+        "expired",
+        "closed",
+        "missing_owner",
+        "malformed",
+        "malformed_association",
+        "missing_managed",
+        "malformed_frame",
+        "foreign_frame",
+        "unmanaged",
+    ],
 )
 def test_owned_plugin_borrows_source_without_another_invocation(monkeypatch, asynchronous, fault):
     from contextvars import copy_context
+
+    import pandas as pd
 
     from anonymizer.engine.graph_sdk._effect_values import EffectRejected
     from anonymizer.engine.graph_sdk._execution_delegated import _WORKER_BORROW
     from anonymizer.engine.graph_sdk.executor import LocalFailure
     from anonymizer.engine.graph_sdk.requests import SemanticAssociation
-    from anonymizer.engine.ndd._source_frame import _SOURCE_WORK, SourceWork
+    from anonymizer.engine.ndd._source_frame import _SOURCE_WORK, SourceWork, WorkflowSourceFrame
     from anonymizer.graph._values import InvocationId, TaskAttemptId
     from anonymizer.interface.errors import AnonymizerWorkflowError
     from tests.graph_sdk.test_delegated_execution import _execute, _fixture
@@ -280,6 +295,19 @@ def test_owned_plugin_borrows_source_without_another_invocation(monkeypatch, asy
                     association = object.__new__(SemanticAssociation)
                     object.__setattr__(association, "task", [])
                 work = SourceWork(association, COL_VALIDATION_DECISIONS) if fault != "malformed" else object()
+                if fault == "foreign_frame":
+                    peer = SemanticAssociation(task=TaskAttemptId.new(activation=association.task.activation))
+                    generator._anonymizer_source_frame = WorkflowSourceFrame.capture(
+                        pd.DataFrame({"text": ["Alice"]}), associations=(peer,)
+                    )
+                if fault in {"missing_managed", "malformed_frame"}:
+                    generator._anonymizer_source_frame = (
+                        WorkflowSourceFrame.capture(pd.DataFrame({"text": ["Alice"]}), associations=(association,))
+                        if fault == "missing_managed"
+                        else None
+                    )
+                if fault in {"missing_managed", "malformed_frame", "unmanaged"}:
+                    work = None
                 token = _SOURCE_WORK.set(work)  # ty: ignore[invalid-argument-type]
                 owner_token = _WORKER_BORROW.set(None) if fault == "missing_owner" else None
                 borrowed.expired = fault == "expired"
@@ -292,7 +320,7 @@ def test_owned_plugin_borrows_source_without_another_invocation(monkeypatch, asy
                             return asyncio.run_coroutine_threadsafe(generator.agenerate(_row()), loop).result()
                         return generator.generate(_row())
 
-                    if fault:
+                    if fault and fault != "unmanaged":
                         with pytest.raises((EffectRejected, AnonymizerWorkflowError)):
                             generate()
                         assert not model.calls
@@ -310,7 +338,7 @@ def test_owned_plugin_borrows_source_without_another_invocation(monkeypatch, asy
             execution, services, _ = _worker_services(execution, services, loop, pool, callback)
             before_execution = len(created)
             await _execute(execution, services)
-            assert len(created) == before_execution + 1
+            assert len(created) == before_execution + (2 if fault == "unmanaged" else 1)
             assert pool.occupied == 0 and not loop.is_closed()
             if fault is None:
                 with pytest.raises(EffectRejected):

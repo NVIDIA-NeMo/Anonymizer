@@ -152,7 +152,7 @@ class ChunkedValidationGenerator(ColumnGeneratorWithModelRegistry[ChunkedValidat
     def generate(self, data: dict[str, Any]) -> dict[str, Any]:  # ty: ignore[invalid-method-override]
         raw_models = {alias: self.get_model(alias) for alias in self.config.pool}
         models = {alias: _AsyncBridgedModelFacade(model) for alias, model in raw_models.items()}
-        work = current_source_work()
+        work = current_source_work(self)
         if work is not None:
             source_worker_borrow().authorize_source_sync(work.association)
             return chunked_validate_row(data, self._params(raw_models), models)
@@ -172,7 +172,7 @@ class ChunkedValidationGenerator(ColumnGeneratorWithModelRegistry[ChunkedValidat
 
     async def agenerate(self, data: dict[str, Any]) -> dict[str, Any]:  # ty: ignore[invalid-method-override]
         models = {alias: self.get_model(alias) for alias in self.config.pool}
-        work = current_source_work()
+        work = current_source_work(self)
         if work is not None:
             await source_worker_borrow().authorize_source(work.association)
             return await chunked_validate_row_async(data, self._params(models), models)

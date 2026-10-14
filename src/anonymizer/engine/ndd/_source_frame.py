@@ -30,10 +30,14 @@ class SourceWork:
 _SOURCE_WORK: ContextVar[SourceWork | None] = ContextVar("anonymizer_dd_source_work", default=None)
 
 
-def current_source_work() -> SourceWork | None:
+def current_source_work(generator: Any = None) -> SourceWork | None:
     work = _SOURCE_WORK.get()
     if work is not None and (type(work) is not SourceWork or not hasattr(work, "association")):
         raise AnonymizerWorkflowError("Malformed owned workflow source context")
+    if hasattr(generator, "_anonymizer_source_frame"):
+        frame = generator._anonymizer_source_frame
+        if type(frame) is not WorkflowSourceFrame or work is None or work.association not in frame.associations:
+            raise AnonymizerWorkflowError("Managed workflow generator lost its source correspondence")
     return work
 
 
@@ -153,6 +157,7 @@ class WorkflowSourceFrame:
                     if name not in columns:
                         continue
                     original = generator.agenerate
+                    generator._anonymizer_source_frame = self
 
                     async def generate(
                         record: dict[str, Any], *, _original: Any = original, _name: str = name
