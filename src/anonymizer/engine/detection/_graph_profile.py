@@ -250,6 +250,13 @@ def run_detection_redact(
                     selected_models,
                     detection_options,
                     handoff=handoff,
+                    replacement_receiver=replacement,
+                    replacement_arguments=dict(
+                        replace_method=replace_method,
+                        model_configs=model_configs,
+                        selected_models=replacement_models,
+                        preview_num_records=detection_options.get("preview_num_records"),
+                    ),
                 ),
                 pool,
             )

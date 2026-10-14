@@ -114,6 +114,12 @@ class RewriteEvaluationBinding:
     entry_arguments: dict[str, Any] | None = field(default=None, repr=False)
     _entry_owner: RewriteEvaluationBinding | None = field(default=None, repr=False, compare=False)
 
+    _map_prepare: Any | None = field(default=None, repr=False)
+
+    def prepare_replacement_maps(self, entity_rows: pd.DataFrame, passthrough_rows: pd.DataFrame):
+        self.authorize_entry()
+        return self._map_prepare(entity_rows, passthrough_rows) if self._map_prepare is not None else None
+
     def __post_init__(self) -> None:
         if self._entry_owner is None:
             self._entry_owner = self

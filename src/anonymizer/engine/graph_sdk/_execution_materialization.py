@@ -158,16 +158,14 @@ def _observe_dynamic_membership(
     )
     selected = members[:observed_count]
     if declaration.item_input is not None:
-        if len(facts.values) + len(selected) > limits.max_runtime_artifacts:
+        if facts.artifact_count + len(selected) > limits.max_runtime_artifacts:
             reject(EffectCode.LIMIT_EXCEEDED)
         if limits.max_runtime_artifact_bytes is not None and (
             sum(_artifact_bytes(item) for item in facts.values.values()) + collection.shape.content_bytes
             > limits.max_runtime_artifact_bytes
         ):
             reject(EffectCode.LIMIT_EXCEEDED)
-        if sum(len(item.parents) for item in facts.provenance.values()) + len(selected) > (
-            admitted.assessment_limits.max_provenance_edges
-        ):
+        if facts.provenance_edge_count + len(selected) > (admitted.assessment_limits.max_provenance_edges):
             reject(EffectCode.LIMIT_EXCEEDED)
         parent_key = OperationOutputKey(
             activation=activation,
@@ -436,7 +434,7 @@ def _materialize_bound_context(
                 )
             )
 
-    if len(facts.values) > limits.max_runtime_artifacts or (
+    if facts.artifact_count > limits.max_runtime_artifacts or (
         limits.max_runtime_artifact_bytes is not None
         and sum(_artifact_bytes(item) for item in facts.values.values()) > limits.max_runtime_artifact_bytes
     ):

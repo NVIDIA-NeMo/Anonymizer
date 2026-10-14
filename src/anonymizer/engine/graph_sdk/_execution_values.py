@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass, field, fields
+from dataclasses import dataclass, field, fields, replace
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Literal, Protocol, TypeAlias, runtime_checkable
 
@@ -293,8 +293,36 @@ class DelegatedRequestContract(PrivateValue):
     optional_tail: tuple[int, ...] = ()
     generation_groups: tuple[tuple[int, ...], ...] = ()
     selection: DelegatedGenerationSelection | None = None
+    publication_sources: tuple[tuple[NodeId, frozenset[str]], ...] = ()
+    observed_request: PhysicalRequestPolicy | None = None
+    _accepted_publication_sources: tuple[tuple[NodeId, frozenset[str]], ...] = field(
+        init=False, repr=False, compare=False
+    )
+    _accepted_observed_declaration: tuple[object, ...] | None = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
+        if self.observed_request is not None:
+            require_instance(self.observed_request, PhysicalRequestPolicy)
+            if self.mode != "opaque":
+                reject(EffectCode.CONTRADICTORY)
+        if type(self.publication_sources) is not tuple:
+            reject(EffectCode.INVALID_TYPE)
+        for item in self.publication_sources:
+            if (
+                type(item) is not tuple
+                or len(item) != 2
+                or not isinstance(item[0], NodeId)
+                or type(item[1]) is not frozenset
+                or not item[1]
+                or any(type(port) is not str or not port for port in item[1])
+            ):
+                reject(EffectCode.INVALID_TYPE)
+        if len({node for node, _ in self.publication_sources}) != len(self.publication_sources):
+            reject(EffectCode.DUPLICATE)
+        if not hasattr(self, "_accepted_publication_sources"):
+            object.__setattr__(self, "_accepted_publication_sources", self.publication_sources)
+        elif self.publication_sources != self._accepted_publication_sources:
+            reject(EffectCode.FOREIGN_OWNER)
         if self.readiness is not None:
             require_instance(self.readiness, DelegatedReadiness)
             self.readiness.__post_init__()
@@ -343,10 +371,50 @@ class DelegatedRequestContract(PrivateValue):
             "failover",
         }:
             reject(EffectCode.INVALID_VALUE)
+        observed = self.observed_request
+        readiness = self.readiness
+        declaration = (
+            None
+            if observed is None
+            else (
+                observed.visibility,
+                observed.pre_dispatch_control,
+                observed.retry_owner,
+                observed.replay,
+                observed.max_attempts,
+                self.child_slots,
+                self.generation_groups,
+                tuple((route.name, route.parse_attempts) for route in self.routes),
+                self.followups,
+                None
+                if readiness is None
+                else (
+                    readiness.slots,
+                    readiness.route.name,
+                    readiness.route.parse_attempts,
+                    readiness.ready_outcome,
+                    readiness.probe_outcomes,
+                ),
+            )
+        )
+        if not hasattr(self, "_accepted_observed_declaration"):
+            object.__setattr__(self, "_accepted_observed_declaration", declaration)
+        elif declaration != self._accepted_observed_declaration:
+            reject(EffectCode.FOREIGN_OWNER)
 
     @property
     def generations(self) -> tuple[tuple[int, ...], ...]:
         return self.generation_groups or (self.child_slots,)
+
+    def snapshot(self) -> DelegatedRequestContract:
+        """Retain cleanup authority independently of rejected declaration mutations."""
+        return replace(
+            self,
+            observed_request=None if self.observed_request is None else replace(self.observed_request),
+            routes=tuple(replace(route) for route in self.routes),
+            readiness=None if self.readiness is None else replace(self.readiness, route=replace(self.readiness.route)),
+            selection=None if self.selection is None else replace(self.selection),
+        )
 
     @property
     def owned_slots(self) -> tuple[int, ...]:
@@ -836,6 +904,10 @@ class DelegatedRequests(Protocol):
     async def complete_operations(
         self, results: tuple[tuple[SemanticAssociation, LocalResult], ...]
     ) -> tuple[RuntimeOutcome, ...]: ...
+
+    async def close_observed_requests(
+        self, associations: tuple[SemanticAssociation, ...], generated: frozenset[SemanticAssociation]
+    ) -> None: ...
 
     async def readiness(self) -> PhysicalRequestId: ...
 

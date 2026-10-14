@@ -31,7 +31,7 @@ from anonymizer.engine.evaluation.replace.relational_consistency_judge import Re
 from anonymizer.engine.evaluation.replace.type_fidelity_judge import TypeFidelityJudgeWorkflow
 from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter
 from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceWorkflow
-from anonymizer.engine.replace.strategies import apply_local_replace_strategy, apply_replacement_map
+from anonymizer.engine.replace.strategies import apply_local_replace_strategy
 from anonymizer.engine.row_partitioning import restore_diagnostic_columns
 from anonymizer.measurement import stage_timer
 
@@ -98,19 +98,29 @@ class ReplacementWorkflow:
             elif isinstance(replace_method, Substitute):
                 if self._llm_workflow is None:
                     raise ValueError("Substitute requires an llm_workflow, but none was provided.")
-                map_result = self._llm_workflow.generate_map_only(
+                from anonymizer.engine.replace._semantic_replace import run_substitute
+
+                result = run_substitute(
+                    self,
                     dataframe,
-                    model_configs=model_configs,
-                    selected_models=selected_models,
-                    instructions=replace_method.instructions,
-                    preview_num_records=preview_num_records,
+                    dict(
+                        replace_method=replace_method,
+                        model_configs=model_configs,
+                        selected_models=selected_models,
+                        preview_num_records=preview_num_records,
+                    ),
                 )
-                local_df = apply_replacement_map(map_result.dataframe)
-                failed_records = list(map_result.failed_records)
+                local_df = result.dataframe
+                failed_records = result.failed_records
+
             else:
                 raise ValueError(f"Unsupported replace method: {type(replace_method).__name__}")
 
-            result = ReplacementResult(dataframe=local_df, failed_records=failed_records)
+            result = ReplacementResult(
+                dataframe=local_df,
+                failed_records=failed_records,
+                _execution=getattr(result, "_execution", None) if isinstance(replace_method, Substitute) else None,
+            )
             measurement.update(
                 output_row_count=len(result.dataframe),
                 failed_record_count=len(result.failed_records),

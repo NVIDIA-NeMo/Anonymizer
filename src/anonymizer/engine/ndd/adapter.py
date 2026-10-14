@@ -361,7 +361,7 @@ class NddAdapter:
         workflow_input_df = self._attach_record_ids(df=df)
         if source_frame is None:
             source_frame = WorkflowSourceFrame.capture(workflow_input_df)
-        elif not source_frame.dataframe.equals(df):
+        elif not source_frame.matches(df):
             raise AnonymizerWorkflowError("Workflow source frame does not match submitted data")
         else:
             source_frame = replace(source_frame, dataframe=workflow_input_df)

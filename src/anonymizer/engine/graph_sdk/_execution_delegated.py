@@ -113,6 +113,7 @@ class _WorkerBorrow(PrivateValue):
         self.owner = owner
         self.adapter = adapter
         self.loop = adapter.borrowed_loop
+        self.transport_loop: asyncio.AbstractEventLoop | None = None
         self.expired = False
 
     @property
@@ -126,7 +127,7 @@ class _WorkerBorrow(PrivateValue):
             loop = asyncio.get_running_loop()
         except RuntimeError:
             reject(EffectCode.UNSUPPORTED)
-        if loop is not self.loop:
+        if loop is not self.loop and loop is not self.transport_loop:
             reject(EffectCode.UNSUPPORTED)
 
     async def _call(self, operation: Callable[[], Coroutine[object, object, _T]]) -> _T:
@@ -183,6 +184,7 @@ class _WorkerBorrow(PrivateValue):
         if _WORKER_BORROW.get() is not self or self.expired:
             reject(EffectCode.FOREIGN_OWNER)
         self.owner._require_transport(transport)
+        self.transport_loop = cast(asyncio.AbstractEventLoop, getattr(transport, "loop"))
 
     def bind_frame(
         self, dataframe: pd.DataFrame, *, targets: tuple[DatumId, ...] | None = None, source_limit: int | None = None
@@ -237,6 +239,11 @@ class _WorkerBorrow(PrivateValue):
         self, results: tuple[tuple[SemanticAssociation, LocalResult], ...]
     ) -> tuple[RuntimeOutcome, ...]:
         return await self._call(lambda: self.owner.complete_operations(results))
+
+    async def close_observed_requests(
+        self, associations: tuple[SemanticAssociation, ...], generated: frozenset[SemanticAssociation]
+    ) -> None:
+        return await self._call(lambda: self.owner.close_observed_requests(associations, generated))
 
     def authorize_sources_sync(self, associations: tuple[SemanticAssociation, ...]) -> None:
         if _WORKER_BORROW.get() is not self or self.expired:
@@ -303,9 +310,10 @@ class _DelegatedOwner(PrivateValue):
         self.worker_calls: set[asyncio.Task[object]] = set()
         self.worker_gate = asyncio.Lock()
         contract = self.policy.delegated
-        policy = self.policy.request
         assert contract is not None
         self.contract = contract
+        self.cleanup_contract = contract.snapshot()
+        policy = contract.observed_request or self.policy.request
         self.chains: dict[tuple[SemanticAssociation, int], RequestChain] = {}
         for job in jobs if policy is not None else ():
             assert policy is not None
@@ -330,6 +338,7 @@ class _DelegatedOwner(PrivateValue):
         self._require_transport(transport)
 
     def _require_transport(self, transport: object) -> None:
+        self.contract.__post_init__()
         if self.closed:
             reject(EffectCode.FOREIGN_OWNER)
         slots = self.contract.child_slots + (
@@ -647,6 +656,7 @@ class _DelegatedOwner(PrivateValue):
 
     def _check_submission(self) -> None:
         self._check()
+        self.contract.__post_init__()
         task = asyncio.current_task()
         if (task is not self.submission and (self.worker_call is None or task is not self.worker_call)) or self.active:
             reject(EffectCode.UNSUPPORTED)
@@ -723,6 +733,54 @@ class _DelegatedOwner(PrivateValue):
         result = await self._borrow(self._readiness())
         assert result is not None
         return result
+
+    async def close_observed_requests(
+        self, associations: tuple[SemanticAssociation, ...], generated: frozenset[SemanticAssociation]
+    ) -> None:
+        self._check_submission()
+        if self.contract.observed_request is None or type(associations) is not tuple:
+            reject(EffectCode.UNSUPPORTED)
+        for association in associations:
+            job = self._source_job(association)
+            source = self.runtime.frame.occurrence(job.scope)
+            for group in self.contract.generations if association in generated else ():
+                first = next(entry for entry in source.state.entries if entry.activation == source.keys[group[0]])
+                if first.status in {"ready", "unstarted", "running"}:
+                    reject(EffectCode.REQUEST_CAUSALITY)
+            self.runtime.blocked_reasons.update(self.runtime._unused_tails(cast(_OperationJob[DatumId], job)))
+        for association in associations:
+            job = self._source_job(association)
+            source = self.runtime.frame.occurrence(job.scope)
+            slots = self.contract.child_slots + (
+                ()
+                if self.runtime.frame.invocation_source is not None or self.contract.readiness is None
+                else self.contract.readiness.slots
+            )
+            for slot in slots:
+                key = source.keys[slot]
+                entry = next(entry for entry in source.state.entries if entry.activation == key)
+                if entry.status in {"ready", "unstarted"}:
+                    source.state = advance_activation(
+                        state=source.state, event=CloseUnstarted(activation=key, category="blocked")
+                    )
+        if self.runtime.frame.invocation_source is not None and all(
+            next(
+                entry.status
+                for entry in self.runtime.frame.occurrence(job.scope).state.entries
+                if entry.activation == self.runtime.frame.occurrence(job.scope).keys[self.contract.child_slots[0]]
+            )
+            not in {"ready", "unstarted", "running"}
+            for job in self.jobs.values()
+        ):
+            source = self.runtime.frame.invocation_source
+            for slot in self.contract.readiness.slots if self.contract.readiness is not None else ():
+                key = source.keys[slot]
+                entry = next(entry for entry in source.state.entries if entry.activation == key)
+                if entry.status in {"ready", "unstarted"}:
+                    source.state = advance_activation(
+                        state=source.state, event=CloseUnstarted(activation=key, category="blocked")
+                    )
+        self.runtime.control.scheduler_changed.set()
 
     async def _readiness(self) -> PhysicalRequestId:
         descriptor = self.contract.readiness
@@ -964,6 +1022,7 @@ class _DelegatedOwner(PrivateValue):
 
     def close(self) -> frozenset[SemanticAssociation]:
         self.closed = True
+        contract = self.cleanup_contract
         incomplete: set[SemanticAssociation] = set()
         targets: set[DatumId | InvocationId] = {job.scope for job in self.jobs.values()}
         if self.invocation_job is not None:
@@ -1000,11 +1059,9 @@ class _DelegatedOwner(PrivateValue):
                         source.state = advance_activation(
                             state=source.state, event=CloseUnstarted(activation=entry.activation, category="blocked")
                         )
-            unused = {} if self.cancelled or self.request_rejected else self.runtime._unused_tails(job)
+            unused = {} if self.cancelled or self.request_rejected else self.runtime._unused_tails(job, contract)
             for slot in (
-                self.contract.child_slots
-                if self.runtime.frame.invocation_source is not None
-                else self.contract.owned_slots
+                contract.child_slots if self.runtime.frame.invocation_source is not None else contract.owned_slots
             ):
                 key = self.runtime.frame.sources[job.scope].keys[slot]
                 state = self.runtime.frame.sources[job.scope].state
@@ -1017,7 +1074,7 @@ class _DelegatedOwner(PrivateValue):
                     )
         source = self.runtime.frame.invocation_source
         if source is not None:
-            owned_slots = set(self.contract.owned_slots)
+            owned_slots = set(contract.owned_slots)
             for entry in tuple(source.state.entries):
                 if entry.status in {"ready", "unstarted"} and (
                     self.runtime.policies[entry.template].submission_owner == self.policy.node
@@ -1146,7 +1203,11 @@ class _DelegatedOwner(PrivateValue):
                     if entry.template not in containers
                 )
             )
-            failed_sources = failed_sources | (incomplete if self.contract.mode == "opaque" else semantic_incomplete)
+            failed_sources = failed_sources | (
+                incomplete
+                if self.contract.mode == "opaque" and self.contract.observed_request is None
+                else semantic_incomplete
+            )
         successful = tuple(
             item
             for item in result.results
@@ -1221,34 +1282,68 @@ class _DelegatedOwner(PrivateValue):
                 and not any(item.outputs for item in frame_results)
                 and any(policy.submission_owner == self.policy.node for policy in runtime.policies.values())
             ):
-                from anonymizer.engine.graph_sdk._execution_publication import _final_outputs
-
-                targets = {self.jobs[cast(SemanticAssociation, item.association)].scope for item in successful}
-                finals = tuple(
-                    item
-                    for item in _final_outputs(runtime.prepared, runtime.frame.states, runtime.facts)
-                    if item.target in targets
-                )
-                if len(finals) != len(targets) or {item.target for item in finals} != targets:
-                    return self._failure("failure", "malformed_response")
-                semantic_results = []
-                for item in finals:
-                    producer = item.producer
-                    if not isinstance(producer, OperationOutputKey) or producer.activation not in runtime.operations:
+                if self.contract.publication_sources:
+                    self.contract.__post_init__()
+                    allowed = dict(self.contract.publication_sources)
+                    targets = {self.jobs[cast(SemanticAssociation, item.association)].scope for item in successful}
+                    semantic_results = []
+                    if (
+                        runtime.prepared.configuration.purpose != "execution_only"
+                        or type(frame) is not FramePublication
+                        or len(frame.associations) != len(targets)
+                    ):
                         return self._failure("failure", "malformed_response")
-                    entry = next(
-                        row
-                        for row in runtime.frame.sources[item.target].state.entries
-                        if row.activation == producer.activation
+                    seen_targets = set()
+                    for association in frame.associations:
+                        job = runtime.operations.get(association.task.activation)
+                        if (
+                            job is None
+                            or job.association != association
+                            or not isinstance(job.scope, DatumId)
+                            or job.scope not in targets
+                            or job.scope in seen_targets
+                            or job.policy.submission_owner != self.policy.node
+                            or job.node not in allowed
+                            or not {port for _, port, _ in frame._text} <= allowed[job.node]
+                        ):
+                            return self._failure("failure", "malformed_response")
+                        seen_targets.add(job.scope)
+                        accepted = runtime._operation_result(job.scope, job.activation)
+                        if accepted is None:
+                            return self._failure("failure", "malformed_response")
+                        semantic_results.append(accepted)
+                    frame_results = tuple(semantic_results)
+                else:
+                    from anonymizer.engine.graph_sdk._execution_publication import _final_outputs
+
+                    targets = {self.jobs[cast(SemanticAssociation, item.association)].scope for item in successful}
+                    finals = tuple(
+                        item
+                        for item in _final_outputs(runtime.prepared, runtime.frame.states, runtime.facts)
+                        if item.target in targets
                     )
-                    if runtime.policies[entry.template].submission_owner != self.policy.node:
+                    if len(finals) != len(targets) or {item.target for item in finals} != targets:
                         return self._failure("failure", "malformed_response")
-                    accepted = runtime._operation_result(item.target, producer.activation)
-                    if accepted is None:
-                        return self._failure("failure", "malformed_response")
-                    semantic_results.append(accepted)
-                frame_results = tuple(semantic_results)
-
+                    semantic_results = []
+                    for item in finals:
+                        producer = item.producer
+                        if (
+                            not isinstance(producer, OperationOutputKey)
+                            or producer.activation not in runtime.operations
+                        ):
+                            return self._failure("failure", "malformed_response")
+                        entry = next(
+                            row
+                            for row in runtime.frame.sources[item.target].state.entries
+                            if row.activation == producer.activation
+                        )
+                        if runtime.policies[entry.template].submission_owner != self.policy.node:
+                            return self._failure("failure", "malformed_response")
+                        accepted = runtime._operation_result(item.target, producer.activation)
+                        if accepted is None:
+                            return self._failure("failure", "malformed_response")
+                        semantic_results.append(accepted)
+                    frame_results = tuple(semantic_results)
             try:
                 accepted_frame = (
                     frame.accept(

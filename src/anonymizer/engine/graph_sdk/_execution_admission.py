@@ -445,7 +445,18 @@ def _validate_delegated_recipes(prepared: PreparedPlan, policies: tuple[Operatio
         if contract is None:
             continue
         contract.__post_init__()
-        request = policy.request
+        if contract.publication_sources:
+            if contract.mode != "opaque" or prepared.configuration.purpose != "execution_only":
+                reject(EffectCode.UNSUPPORTED)
+            for node, ports in contract.publication_sources:
+                producer = by_node.get(node)
+                if (
+                    producer is None
+                    or producer.submission_owner != policy.node
+                    or not ports <= {port.name for port in producer.implementations[0].capability.operation.outputs}
+                ):
+                    reject(EffectCode.FOREIGN_OWNER)
+        request = contract.observed_request or policy.request
         if contract.mode == "opaque":
             if (
                 prepared.configuration.purpose != "execution_only"
@@ -454,17 +465,22 @@ def _validate_delegated_recipes(prepared: PreparedPlan, policies: tuple[Operatio
                     slot.template != policy.node
                     and slot.template in by_node
                     and by_node[slot.template].submission_owner != policy.node
+                    and slot.index not in contract.owned_slots
                     for slot in recipe
                 )
                 or contract.usage_requirement != "unknown_allowed"
-                or contract.child_slots
-                or contract.routes
-                or contract.followups
-                or contract.readiness is not None
-                or contract.selection is not None
+                or contract.observed_request is None
+                and (
+                    contract.child_slots
+                    or contract.routes
+                    or contract.followups
+                    or contract.readiness is not None
+                    or contract.selection is not None
+                )
             ):
                 reject(EffectCode.UNSUPPORTED)
-            continue
+            if contract.observed_request is None:
+                continue
         source_free = (
             prepared.configuration.invocation_owned and not contract.child_slots and contract.readiness is not None
         )
@@ -477,7 +493,7 @@ def _validate_delegated_recipes(prepared: PreparedPlan, policies: tuple[Operatio
             or policy.safe_detachment != "forbidden"
         ):
             reject(EffectCode.UNSUPPORTED)
-        if any(
+        if contract.mode != "opaque" and any(
             item.capability.request_visibility != request.visibility
             or item.capability.pre_dispatch_control != request.pre_dispatch_control
             or item.capability.retry_owner != request.retry_owner
@@ -667,7 +683,8 @@ def _validate_delegated_services(admitted: AdmittedExecutionPlan, services: Exec
                 or handle.resource.handle is not worker
             ):
                 reject(EffectCode.UNSUPPORTED)
-            continue
+            if contract.observed_request is None:
+                continue
         if len(contract.routes) != 1:
             reject(EffectCode.UNSUPPORTED)
         if not contract.followups <= {"correction", "conversation_restart"}:
@@ -750,7 +767,10 @@ def _validate_delegated_services(admitted: AdmittedExecutionPlan, services: Exec
                     reject(EffectCode.UNSUPPORTED)
                 if implementation.capability.resource_lifetime == "stateless" or owned.safe_detachment != "forbidden":
                     reject(EffectCode.UNSUPPORTED)
-                handle.transport.validate(handle.resource, parents[0].borrowed_loop)
+                handle.transport.validate(
+                    handle.resource,
+                    handle.transport.owning_loop if contract.observed_request is not None else parents[0].borrowed_loop,
+                )
             elif handle.resource is not None or implementation.capability.resource_lifetime != "stateless":
                 reject(EffectCode.UNSUPPORTED)
             callback = (
@@ -774,6 +794,7 @@ def _validate_delegated_services(admitted: AdmittedExecutionPlan, services: Exec
                     or not loop.is_running()
                     or loop.is_closed()
                     or loop is asyncio.get_running_loop()
+                    and contract.observed_request is None
                 ):
                     reject(EffectCode.UNSUPPORTED)
             elif handle.delegated is not None and getattr(handle.delegated, "execution", None) != "same_loop":

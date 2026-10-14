@@ -114,6 +114,10 @@ class ForeignLoopTransport(PrivateValue):
         return self._lease
 
     @property
+    def owning_loop(self) -> asyncio.AbstractEventLoop:
+        return self._loop
+
+    @property
     def local_users(self) -> int:
         with self._lock:
             return len(self._users)

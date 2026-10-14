@@ -28,6 +28,29 @@ class _Discard:
     rejected: ExecutionAssessmentFact
 
 
+@pytest.mark.compat
+def test_rejected_membership_leaves_exact_capacity_for_a_later_peer() -> None:
+    fixture, result, callbacks = asyncio.run(
+        _execute_membership(
+            2,
+            item_counts=(1, 2, 1),
+            target_count=3,
+            artifact_headroom=4,
+            artifact_byte_headroom=128,
+            max_local_in_flight=1,
+        )
+    )
+    first, rejected, last = (call[0].association for call in callbacks[fixture.expander].calls)
+    assert len(result.artifacts) == 7
+    assert len(result.assessments) == len(result.final_outputs) == 2
+    assert {fact.activation for fact in result.assessments} == {first.task.activation, last.task.activation}
+    (failure,) = result.publication_failures
+    assert failure.association == rejected and failure.condition == "artifact_limit_exhausted"
+    assert all(fact.artifact in dict(result.artifacts) for fact in result.provenance)
+    assert len(callbacks[fixture.member].calls) == len(callbacks[fixture.join].calls) == 2
+    assert not result.requests.dispatches and not result.requests.remote_outstanding
+
+
 def _execute(
     monkeypatch: pytest.MonkeyPatch, *, retain_rejected: bool = False
 ) -> tuple[_MapFixture, ExecutionResult, dict[NodeId, _MapCallback], _Discard]:

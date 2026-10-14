@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Mapping
 
 from anonymizer.engine.graph_sdk._effect_values import (
     EffectCode,
@@ -136,26 +136,25 @@ def _operation_has_omitted_context(
 
 def _inherited_artifact_role(
     parent: ProvenanceKey | None,
-    provenance: Iterable[ArtifactProvenanceFact],
-    ports: Iterable[ExecutionPortFact],
+    provenance: Mapping[ProvenanceKey, ArtifactProvenanceFact],
+    ports: Mapping[tuple[ActivationKey, str], ExecutionPortFact],
 ) -> ArtifactRole:
     if parent is None:
         return "artifact"
-    source = next((item for item in provenance if item.key == parent), None)
-    if source is None:
+    source = provenance.get(parent)
+    if source is None or source.key != parent:
         return "artifact"
     if source.decision:
         return "decision"
     if isinstance(parent, OperationOutputKey):
-        occurrence = next(
-            (
-                item
-                for item in ports
-                if item.activation == parent.activation and item.target == parent.target and item.port == parent.port
-            ),
-            None,
-        )
-        if occurrence is not None and occurrence.role == "candidate":
+        occurrence = ports.get((parent.activation, parent.port))
+        if (
+            occurrence is not None
+            and occurrence.activation == parent.activation
+            and occurrence.target == parent.target
+            and occurrence.port == parent.port
+            and occurrence.role == "candidate"
+        ):
             return "candidate"
     return "artifact"
 

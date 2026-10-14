@@ -253,7 +253,10 @@ def _invocation_workflows(
     raw = prepared.workflow
     if (
         len(prepared.workflow.bodies()) != 1
-        or raw.choices
+        or any(
+            choice.selector in shared or any(branch.members & shared for branch in choice.branches)
+            for choice in raw.choices
+        )
         or any(not isinstance(node, OperationNode) for node in raw.operations)
     ):
         reject(EffectCode.UNSUPPORTED)
@@ -333,7 +336,10 @@ def _invocation_workflows(
         body = compile_graph(
             workflow=raw.workflow,
             interface=interface,
-            nodes=tuple(node for node in raw.operations if node.id in selected),
+            nodes=(
+                *(node for node in raw.operations if node.id in selected),
+                *(choice for choice in raw.choices if choice.selector in selected),
+            ),
             input_bindings=() if invocation else tuple(raw.input_bindings),
             output_bindings=() if invocation else tuple(raw.output_bindings),
             outcome_bindings=outcomes,

@@ -93,7 +93,7 @@ def _accept_outputs(
     outputs = results[0].outputs
     dependencies = {item.output: item for item in operation.output_dependencies if item.output in expected}
     new_outputs = [item for item in outputs if dependencies[item.port].identity_input is None]
-    if len(facts.values) + len(new_outputs) > limits.max_runtime_artifacts:
+    if facts.artifact_count + len(new_outputs) > limits.max_runtime_artifacts:
         return "limit"
     if limits.max_collection_items is not None and any(
         item.value.shape.items > limits.max_collection_items for item in outputs
@@ -120,9 +120,9 @@ def _accept_outputs(
             if aliased is None or facts.values[aliased] != output.value:
                 return "malformed"
     limits_assessment = admitted.assessment_limits
-    if len(facts.ports) + len(outputs) > limits_assessment.max_port_facts:
+    if facts.port_count + len(outputs) > limits_assessment.max_port_facts:
         return "limit"
-    current_edges = sum(len(item.parents) for item in facts.provenance.values())
+    current_edges = facts.provenance_edge_count
     if current_edges + sum(len(item) for item in planned_parents.values()) > limits_assessment.max_provenance_edges:
         return "limit"
     for output in outputs:

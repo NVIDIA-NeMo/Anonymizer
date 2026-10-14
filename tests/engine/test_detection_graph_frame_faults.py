@@ -17,6 +17,8 @@ from anonymizer.engine.graph_sdk.requests import AssociationResult, PortArtifact
 from tests.graph_sdk.test_delegated_execution import _execute
 from tests.graph_sdk.test_delegated_readiness import _ready_fixture
 
+pytestmark = pytest.mark.compat
+
 
 async def run_case(fault="valid", limited=False):
     e, s, original, *_ = _ready_fixture(usage="exact")

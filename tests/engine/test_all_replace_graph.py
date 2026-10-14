@@ -14,7 +14,7 @@ import pytest
 from anonymizer import Annotate, AnonymizerConfig, AnonymizerInput, Hash, Substitute
 from anonymizer.config.models import ReplaceModelSelection
 from anonymizer.engine.detection import _graph_profile
-from anonymizer.engine.detection._frame_publication import InvocationFrame, PublishedFrame
+from anonymizer.engine.detection._frame_publication import PublishedFrame
 from anonymizer.engine.replace._graph_redact import local_strategy
 from anonymizer.interface.errors import AnonymizerWorkflowError
 from tests.engine import test_detection_source_frame as detection_tests
@@ -71,6 +71,7 @@ def test_public_local_replacement_keeps_authenticated_frame(
 
 
 @pytest.mark.parametrize("mode", ["create", "preview", "drop", "all_failed", "no_entities"])
+@pytest.mark.compat
 def test_public_substitute_runs_actual_dd_and_preserves_map_failures(scripted_detection, monkeypatch, tmp_path, mode):
     maps = []
 
@@ -129,8 +130,20 @@ def test_public_substitute_runs_actual_dd_and_preserves_map_failures(scripted_de
     assert [failure.step for failure in result.failed_records] == (
         ["entity-detection", "replace-map-generation"] if mode == "drop" else []
     )
-    assert isinstance(result._execution.frames[0], InvocationFrame)
-    assert not result._execution.final_outputs and not result._execution.requests.dispatches
+    assert isinstance(result._execution.frames[0], PublishedFrame)
+    assert not result._execution.final_outputs
+    receipt = result._execution.requests
+    assert receipt.dispatched_count == (0 if mode == "no_entities" else 3)
+    assert sum(request.child.role == "readiness" for request in receipt.dispatches) == (
+        0 if mode == "no_entities" else 1
+    )
+    generations = [request for request in receipt.dispatches if request.child.role == "generation"]
+    assert len(generations) == (0 if mode == "no_entities" else 2)
+    assert all(len(request.associations) == 1 for request in generations)
+    assert len({next(iter(request.associations)).task.activation for request in generations}) == len(generations)
+    assert len(receipt.settlements) == receipt.dispatched_count
+    assert not receipt.remote_outstanding and not receipt.local_in_flight
+    assert result._execution._execution.context.prepared.configuration.purpose == "execution_only"
     assert result._execution._execution.context.prepared.declared_request_upper_bound is None
     restored = pickle.loads(pickle.dumps(result))
     pd.testing.assert_frame_equal(restored.trace_dataframe, result.trace_dataframe)

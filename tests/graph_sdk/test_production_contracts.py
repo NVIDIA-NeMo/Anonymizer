@@ -80,6 +80,7 @@ def local_route(
 
 
 @pytest.mark.parametrize("preview", [False, True], ids=["run", "preview"])
+@pytest.mark.compat
 def test_local_redact_preserves_projection_passthrough_and_failure(
     local_route: tuple[Anonymizer, AnonymizerConfig, AnonymizerInput, Mock], preview: bool
 ) -> None:
@@ -121,6 +122,7 @@ def test_local_redact_preserves_projection_passthrough_and_failure(
     cast(Mock, anonymizer._data_designer).preview.assert_not_called()
 
 
+@pytest.mark.compat
 def test_saved_result_evaluation_uses_trace_and_preserves_unavailable_rows(
     local_route: tuple[Anonymizer, AnonymizerConfig, AnonymizerInput, Mock], tmp_path: Path
 ) -> None:

@@ -35,7 +35,9 @@ from anonymizer.engine.constants import (
 from anonymizer.engine.evaluation.detection_judge import DetectionJudgeWorkflow
 from anonymizer.engine.graph_sdk._effect_values import EffectCode, reject
 from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter
-from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceWorkflow
+from anonymizer.engine.replace.llm_replace_workflow import (
+    LlmReplaceWorkflow,  # noqa: F401 - captured injectable factory
+)
 from anonymizer.engine.rewrite._semantic_evaluation import RewriteEvaluationBinding
 from anonymizer.engine.rewrite.domain_classification import DomainClassificationWorkflow
 from anonymizer.engine.rewrite.evaluate import EvaluateWorkflow
@@ -316,12 +318,14 @@ class RewriteWorkflow:
                 strict_entity_protection=strict_entity_protection,
             ),
         )
+
         with stage_timer(
             "CombinedRewriteWorkflow.run" if binding.combined else "RewriteWorkflow.run", input_row_count=len(dataframe)
         ) as measurement:
             all_failed: list[FailedRecord] = []
 
             entity_rows, passthrough_rows = split_rows(dataframe, column=COL_ENTITIES_BY_VALUE, predicate=_has_entities)
+            replace_result = binding.prepare_replacement_maps(entity_rows, passthrough_rows)
             measurement.update(
                 entity_row_count=len(entity_rows),
                 passthrough_row_count=len(passthrough_rows),
@@ -372,12 +376,8 @@ class RewriteWorkflow:
                 all_failed.extend(generated.failed_records)
             else:
                 # --- Step 1: replacement map (needs only detection output) ---
-                replace_workflow = LlmReplaceWorkflow(adapter=self._adapter)
-                replace_result = replace_workflow.generate_map_only(
-                    entity_rows,
-                    model_configs=model_configs,
-                    selected_models=replace_model_selection,
-                )
+                if replace_result is None:
+                    reject(EffectCode.MISSING)
                 entity_rows = _join_new_columns(
                     entity_rows, replace_result.dataframe, source_positions=replace_result.source_positions
                 )

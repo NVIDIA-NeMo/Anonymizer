@@ -36,6 +36,8 @@ from anonymizer.engine.rewrite.combined_rewrite_workflow import CombinedRewriteW
 from anonymizer.engine.rewrite.rewrite_workflow import RewriteResult, RewriteWorkflow
 from anonymizer.graph._values import InvocationId
 
+pytestmark = pytest.mark.compat
+
 
 @pytest.fixture
 def mixed_run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Callable[..., Any]:

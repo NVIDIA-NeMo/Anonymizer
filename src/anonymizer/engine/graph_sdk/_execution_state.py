@@ -49,6 +49,9 @@ from anonymizer.graph.workflow import (
     NodeId,
 )
 
+_Key = TypeVar("_Key")
+_Value = TypeVar("_Value")
+
 
 @dataclass(slots=True)
 class _ExecutionControl:
@@ -72,6 +75,31 @@ class _ExecutionFacts:
     next_artifact: int = 0
     _sources: ChainMap[tuple[DatumId, ActivationKey | NodeId, str], ProvenanceKey] = field(default_factory=ChainMap)
     _parent: _ExecutionFacts | None = field(default=None, repr=False)
+    _provenance_edges: int = field(default=0, init=False, repr=False)
+
+    @property
+    def artifact_count(self) -> int:
+        return self._count_entries(self.values)
+
+    @property
+    def port_count(self) -> int:
+        return self._count_entries(self.ports)
+
+    @property
+    def provenance_edge_count(self) -> int:
+        # Owner-created frozen parent sets are exposed only after finalization.
+        # Retained-result consumers still revalidate their actual parent sets.
+        return self._provenance_edges + (self._parent.provenance_edge_count if self._parent is not None else 0)
+
+    @staticmethod
+    def _count_entries(mapping: ChainMap[_Key, _Value]) -> int:
+        # The committed dictionary is authoritative; count only staged keys
+        # beyond it, including shadows, without unioning every committed key.
+        return len(mapping.maps[-1]) + sum(
+            not any(key in parent for parent in mapping.maps[index + 1 :])
+            for index, staged in enumerate(mapping.maps[:-1])
+            for key in staged
+        )
 
     def delta(self) -> _ExecutionFacts:
         return _ExecutionFacts(
@@ -95,6 +123,8 @@ class _ExecutionFacts:
         self.passthrough_parents.update(delta.passthrough_parents.maps[0])
         self._sources.update(delta._sources.maps[0])
         self.next_artifact = delta.next_artifact
+        self._provenance_edges += delta._provenance_edges
+        delta._provenance_edges = self.provenance_edge_count
         delta._parent = None
 
     def artifact(self, target: DatumId, occurrence: ActivationKey | NodeId, port: str) -> ArtifactRef | None:
@@ -139,6 +169,7 @@ class _ExecutionFacts:
         if key in self.provenance:
             reject(EffectCode.DUPLICATE)
         self.provenance[key] = fact
+        self._provenance_edges += len(fact.parents)
         if isinstance(key, (BoundInputKey, InitialCollectionKey)):
             prior = self.source(key.target, key.node, key.port)
             if (

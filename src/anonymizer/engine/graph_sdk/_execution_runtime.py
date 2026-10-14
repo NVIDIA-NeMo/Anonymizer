@@ -55,6 +55,7 @@ from anonymizer.engine.graph_sdk._execution_values import (
     _FACT_KEY,
     _RESULT_KEY,
     AdmittedExecutionPlan,
+    DelegatedRequestContract,
     ExecutionPortFact,
     ExecutionResult,
     ExecutionServices,
@@ -179,7 +180,12 @@ class _InvocationRuntime:
             state=initialize_requests(
                 scope=scope,
                 hard_limit=self.prepared.configuration.hard_request_limit,
-                policies=frozenset((item.request for item in self.admitted.policies if item.request is not None)),
+                policies=frozenset(
+                    request
+                    for item in self.admitted.policies
+                    for request in (item.request, None if item.delegated is None else item.delegated.observed_request)
+                    if request is not None
+                ),
             )
         )
         self.request_resources: dict[PhysicalRequestId, ResourceId] = {}
@@ -260,6 +266,7 @@ class _InvocationRuntime:
         # this synchronous traversal has bound inputs and committed its entries.
         batches: dict[NodeId | ActivationKey, list[_OperationJob[DatumId]]] = {}
         waiting = {wait.activation for wait in self.control.pending.values()}
+        pending_activations = {job.activation for jobs in self.submissions.values() for job in jobs}
         local = sum(
             any(job.policy.kind != "external" and job.activation not in waiting for job in jobs)
             for jobs in self.submissions.values()
@@ -267,9 +274,25 @@ class _InvocationRuntime:
         remote = sum(jobs[0].policy.kind == "external" for jobs in self.submissions.values())
         decisions = sum(job.policy.kind == "decision" for jobs in self.submissions.values() for job in jobs)
         scopes = tuple(self.frame.sources) or ((self.invocation,) if self.frame.invocation_source is not None else ())
+        successors: dict[NodeId, list[NodeId]] = {}
+        for edge in self.prepared.workflow.sequence:
+            successors.setdefault(edge.before, []).append(edge.after)
+        shared_predecessors: dict[NodeId, ActivationEntry] = {}
+        shared = self.frame.invocation_source
+        if shared is not None:
+            # This synchronous frontier cannot change the shared state before
+            # returning. Preserve its first unfinished predecessor, including
+            # the order between waiting and failed predecessors.
+            for row in shared.state.entries:
+                if row.status != "success":
+                    for destination in successors.get(row.template, ()):
+                        shared_predecessors.setdefault(destination, row)
+        adaptive_nodes = {item.node for item in self.admitted.context.adaptive_retrievals}
         scheduled = False
         for scope in scopes:
             source = self.frame.occurrence(scope)
+            indexed_state: ActivationState | None = None
+            entries_by_template: dict[NodeId, list[ActivationEntry]] = {}
             ready = sorted(
                 (entry for entry in source.state.entries if entry.status == "ready"),
                 key=lambda entry: entry.activation.occurrence,
@@ -284,39 +307,29 @@ class _InvocationRuntime:
                     continue
                 blocked = False
                 if isinstance(scope, DatumId):
-                    shared = self.frame.invocation_source
-                    predecessors = {
-                        edge.before for edge in self.prepared.workflow.sequence if edge.after == entry.template
-                    }
-                    predecessor = (
-                        next(
-                            (
-                                row
-                                for row in shared.state.entries
-                                if row.template in predecessors and row.status != "success"
-                            ),
-                            None,
-                        )
-                        if shared is not None
-                        else None
-                    )
+                    predecessor = shared_predecessors.get(entry.template)
                     if predecessor is not None:
                         if predecessor.status in {"ready", "unstarted", "running"}:
                             continue
                         blocked = True
                     elif entry.template in self.delegated_slots:
+                        # Refresh from the authoritative state after any local
+                        # transition; repeated template occurrences keep their
+                        # original order and lexical-parent qualification.
+                        if indexed_state is not source.state:
+                            indexed_state = source.state
+                            entries_by_template = {}
+                            for row in indexed_state.entries:
+                                entries_by_template.setdefault(row.template, []).append(row)
                         owner = next(
                             row
-                            for row in source.state.entries
-                            if row.template == self.delegated_slots[entry.template]
-                            and (
+                            for row in entries_by_template.get(self.delegated_slots[entry.template], ())
+                            if (
                                 self.policies[entry.template].submission_owner is not None
                                 or row.activation.parent == entry.activation.parent
                             )
                         )
-                        if owner.status in {"ready", "unstarted", "running"} or any(
-                            job.activation == owner.activation for jobs in self.submissions.values() for job in jobs
-                        ):
+                        if owner.status in {"ready", "unstarted", "running"} or owner.activation in pending_activations:
                             continue
                         blocked = True
                 policy = self.policies.get(entry.template)
@@ -370,7 +383,7 @@ class _InvocationRuntime:
                     scheduled = True
                     continue
 
-                adaptive = any(item.node == entry.template for item in self.admitted.context.adaptive_retrievals)
+                adaptive = entry.template in adaptive_nodes
                 batchable = isinstance(scope, DatumId) and (
                     policy.kind == "delegated" or policy.kind == "external" and not adaptive
                 )
@@ -429,6 +442,7 @@ class _InvocationRuntime:
                     )
                     try:
                         self._launch_batch((job,), stalled=stalled)
+                        pending_activations.add(job.activation)
                     finally:
                         if token is not None:
                             _CURRENT.reset(token)
@@ -494,8 +508,8 @@ class _InvocationRuntime:
                 == next((item.artifact_port for item in self.admitted.decisions if item.node == job.node))
                 else _inherited_artifact_role(
                     job.input_parents.get(input_artifact.port),
-                    self.facts.provenance.values(),
-                    self.facts.ports.values(),
+                    self.facts.provenance,
+                    self.facts.ports,
                 ),
             )
 
@@ -759,9 +773,11 @@ class _InvocationRuntime:
             consumed_context_ports=frozenset(),
         )
 
-    def _unused_tails(self, job: _OperationJob[DatumId]) -> dict[ActivationKey, UnusedRetryCapacity]:
+    def _unused_tails(
+        self, job: _OperationJob[DatumId], contract: DelegatedRequestContract | None = None
+    ) -> dict[ActivationKey, UnusedRetryCapacity]:
         """Close only unentered suffixes of successfully completed generation chains."""
-        contract = job.policy.delegated
+        contract = job.policy.delegated if contract is None else contract
         state = self.request_authority.state
         if not contract or not (contract.optional_tail or contract.generation_groups):
             return {}

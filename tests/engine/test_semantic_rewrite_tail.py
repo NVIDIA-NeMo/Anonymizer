@@ -90,6 +90,7 @@ def test_retained_closed_row_arity_rejects_before_access(value, field, extra):
 
 
 @pytest.mark.parametrize("finish", ["normal", "outer_failure", "after_metrics", "partial", "rollback", "cancel"])
+@pytest.mark.compat
 def test_prefix_publication_keeps_whole_submission_alive(monkeypatch, finish):
     asyncio.run(_lifecycle(monkeypatch, finish))
 
@@ -307,6 +308,7 @@ def _assert_final_evidence(result):
 
 
 @pytest.mark.parametrize("fault", ["peer_candidate", "missing_provenance"])
+@pytest.mark.compat
 def test_final_evidence_consumer_reconciles_canonical_provenance(monkeypatch, fault):
     from anonymizer.engine.rewrite import _semantic_profile
 

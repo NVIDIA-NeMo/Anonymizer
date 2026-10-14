@@ -403,6 +403,92 @@ async def execute_initial_evaluation(
         capabilities, policies = reparent_detection_policies(capabilities, policies, detection_ids["entry"])
         capabilities = (*capabilities, *detection_capabilities)
         policies = (*policies, *detection_policies)
+    map_ids = {}
+    map_entry = None
+    map_configuration_snapshot = None
+    map_factory = None
+    if not combined and callable(getattr(adapter, "run_workflow", None)):
+        import anonymizer.engine.rewrite.rewrite_workflow as rewrite_module
+        from anonymizer.engine.constants import COL_ENTITIES_BY_VALUE
+        from anonymizer.engine.replace._semantic_map import extend_map_graph, map_configuration
+
+        map_factory = rewrite_module.LlmReplaceWorkflow
+        map_arguments: dict[str, Any] = dict(
+            model_configs=arguments.get("model_configs", []),
+            selected_models=arguments.get("replace_model_selection"),
+            instructions=None,
+            entities_column=COL_ENTITIES_BY_VALUE,
+            preview_num_records=None,
+        )
+        map_configuration_snapshot = map_configuration(map_arguments)
+        if not detection_ids:
+            from anonymizer.engine.detection._semantic_detection import reparent_detection_policies
+
+            map_entry = NodeId.new(workflow=raw.workflow)
+            op = OperationSpec(
+                name="rewrite-map-entry",
+                inputs=(InputPort(name="source", artifact_type=ArtifactType(name="anonymizer.text", revision=1)),),
+                outputs=(),
+                output_dependencies=(),
+                outcomes=(
+                    OutcomeSpec(
+                        name="ok",
+                        category="success",
+                        produced_ports=frozenset(),
+                        context=frozenset(),
+                        evidence=frozenset(),
+                        state_effects=frozenset(),
+                        model_requirements=frozenset(),
+                        ceiling=ResourceCeiling(
+                            max_activations=1, max_model_requests=None, max_input_bytes=None, max_output_bytes=None
+                        ),
+                    ),
+                ),
+            )
+            cap, policy = _frame_implementation(map_entry, op, map_configuration_snapshot)
+            raw = compile_graph(
+                workflow=raw.workflow,
+                interface=replace(
+                    raw.interface,
+                    outcomes=tuple(
+                        replace(o, ceiling=replace(o.ceiling, max_activations=o.ceiling.max_activations + 1))
+                        for o in raw.interface.outcomes
+                    ),
+                ),
+                nodes=(*raw.nodes, OperationNode(id=map_entry, operation=op)),
+                input_bindings=(
+                    *raw.input_bindings,
+                    InputBinding(
+                        source=WorkflowInputRef(port="source"), destination=NodeInputRef(node=map_entry, port="source")
+                    ),
+                ),
+                output_bindings=tuple(raw.output_bindings),
+                outcome_bindings=tuple(raw.outcome_bindings),
+                sequence=(*raw.sequence, SequenceEdge(before=map_entry, after=ids["prefix"])),
+                protection=tuple(raw.protection_requirements),
+                limits=replace(
+                    raw.limits,
+                    max_nodes=raw.limits.max_nodes + 1,
+                    max_bindings=raw.limits.max_bindings + 1,
+                    max_sequence_edges=raw.limits.max_sequence_edges + 1,
+                ),
+                dynamic_limits=replace(
+                    raw.dynamic_limits, max_activation_occurrences=raw.dynamic_limits.max_activation_occurrences + 1
+                ),
+            )
+            capabilities, policies = reparent_detection_policies(capabilities, policies, map_entry)
+            capabilities = (*capabilities, cap)
+            policies = (*policies, policy)
+        raw, map_caps, map_policies, map_ids = extend_map_graph(
+            raw,
+            ids["prefix"],
+            map_configuration_snapshot,
+            submission_owner=detection_ids["entry"] if detection_ids else cast(NodeId, map_entry),
+            predecessor=detection_ids["final"] if detection_ids else map_entry,
+            optional=True,
+        )
+        capabilities = (*capabilities, *map_caps)
+        policies = (*policies, *map_policies)
     text = ArtifactType(name="anonymizer.text", revision=1)
     prepared = _prepare_frame_plan(
         data,
@@ -428,6 +514,10 @@ async def execute_initial_evaluation(
     def callback(inputs: tuple[AssociationInput, ...], requests: DelegatedRequests) -> LocalCompleted | LocalFailure:
         started = perf_counter()
         original_frame = requests.bind_frame(source, targets=tuple(targets), source_limit=len(selected_source))
+        if map_entry is not None:
+            from anonymizer.engine.detection._semantic_detection import complete_detection_entry
+
+            asyncio.run_coroutine_threadsafe(complete_detection_entry(requests, inputs), loop).result()
         if detection_ids and not optional_detection:
             from anonymizer.engine.detection._semantic_detection import complete_detection_entry
 
@@ -486,6 +576,79 @@ async def execute_initial_evaluation(
         )
         active = tuple(original_frame.associations[index] for index in positions)
         selected_runner = runner or (CombinedRewriteWorkflow if combined else RewriteWorkflow)(adapter)
+
+        def prepare_maps(entity_rows: pd.DataFrame, passthrough_rows: pd.DataFrame):
+            import anonymizer.engine.rewrite.rewrite_workflow as rewrite_module
+            from anonymizer.engine.replace._semantic_map import bind_map, map_configuration
+            from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceWorkflow
+            from anonymizer.engine.row_partitioning import ROW_ORDER_COL
+
+            if (
+                rewrite_module.LlmReplaceWorkflow is not map_factory
+                or map_configuration(map_arguments) != map_configuration_snapshot
+            ):
+                reject(EffectCode.FOREIGN_OWNER)
+            map_slots = {
+                name: next(slot.index for slot in prepared.reservation_recipe if slot.template == node)
+                for name, node in map_ids.items()
+            }
+            map_result = None
+            surviving = []
+            for rows, passthrough in ((passthrough_rows, True), (entity_rows, False)):
+                if rows.empty:
+                    continue
+                associations = tuple(active[position] for position in rows[ROW_ORDER_COL])
+                entry_inputs = asyncio.run_coroutine_threadsafe(
+                    requests.enter_operations(map_slots["entry"], associations), loop
+                ).result()
+                helper = LlmReplaceWorkflow(adapter) if passthrough else map_factory(adapter=adapter)
+                native_helper = helper if isinstance(helper, LlmReplaceWorkflow) else LlmReplaceWorkflow(adapter)
+                if any(item is None for item in entry_inputs):
+                    reject(EffectCode.REQUEST_CAUSALITY)
+                entry_inputs = cast(tuple[AssociationInput, ...], entry_inputs)
+                with bind_map(
+                    native_helper,
+                    rows,
+                    map_arguments,
+                    requests,
+                    WorkflowSourceFrame.capture(rows, associations=associations, invocation_bound=True),
+                    {k: v for k, v in map_slots.items() if k != "entry"},
+                    loop,
+                    entry_inputs=entry_inputs,
+                ) as mapping:
+                    if passthrough:
+                        result = mapping.run(native_helper, rows, map_arguments)
+                    else:
+                        result = helper.generate_map_only(
+                            rows,
+                            model_configs=map_arguments["model_configs"],
+                            selected_models=map_arguments["selected_models"],
+                        )
+                    native = mapping.claim.locked()
+                    if native:
+                        mapping.authenticate_result(result)
+                    if not native:
+                        mapping.bypass()
+                if passthrough:
+                    surviving.extend(associations)
+                else:
+                    map_result = result
+                    selected_positions = (
+                        resolve_source_positions(rows, result.dataframe, result.source_positions)
+                        if native
+                        else tuple(range(len(rows)))
+                    )
+                    surviving.extend(associations[index] for index in selected_positions)
+
+            async def begin_map_prefix() -> None:
+                for association in surviving:
+                    await requests.enter_operation(slots["prefix"], association)
+
+            asyncio.run_coroutine_threadsafe(begin_map_prefix(), loop).result()
+            if not observed_columns:
+                asyncio.run_coroutine_threadsafe(binding.passthrough(detected_frame), loop).result()
+            return map_result
+
         binding = RewriteEvaluationBinding(
             requests,
             WorkflowSourceFrame.capture(detected_frame, associations=active, invocation_bound=True),
@@ -496,23 +659,24 @@ async def execute_initial_evaluation(
             combined=combined,
             opaque=opaque,
             observed_columns=observed_columns,
-            prefix_is_child=bool(detection_ids),
+            prefix_is_child=bool(detection_ids) or map_entry is not None,
             criteria=arguments["evaluation"],
             receiver=selected_runner,
             adapter=adapter,
             entry_frame=detected_frame,
             entry_arguments=deepcopy(arguments),
         )
+        binding._map_prepare = prepare_maps if map_ids else None
         detection_elapsed = perf_counter() - started
         started = perf_counter()
-        if detection_ids:
+        if detection_ids and not map_ids:
 
             async def begin_prefix() -> None:
                 for association in active:
                     await requests.enter_operation(slots["prefix"], association)
 
             asyncio.run_coroutine_threadsafe(begin_prefix(), loop).result()
-        if not observed_columns:
+        if not observed_columns and not map_ids:
             asyncio.run_coroutine_threadsafe(binding.passthrough(detected_frame), loop).result()
         binding.authorize_entry()
         with selected_runner._bind_semantic(binding):
@@ -568,7 +732,7 @@ async def execute_initial_evaluation(
         callback=dispatch,
         pool=pool,
         borrowed_loop=loop,
-        limits=limits,
+        limits=replace(limits, max_runtime_artifacts=limits.max_runtime_artifacts + (20 * size if map_ids else 0)),
         ingress_limits=IngressLimits(
             max_associations=size,
             max_outputs_per_association=8,
@@ -599,8 +763,8 @@ async def execute_initial_evaluation(
             max_finding_code_bytes=32,
             max_absence_queries=0,
             max_assessment_facts=2 * size,
-            max_port_facts=(8 + 6 * allowance) * 20 * size,
-            max_provenance_edges=(8 + 6 * allowance) * 64 * size,
+            max_port_facts=((8 + 6 * allowance) * 20 + (48 if map_ids else 0)) * size,
+            max_provenance_edges=((8 + 6 * allowance) * 64 + (100 if map_ids else 0)) * size,
         ),
     )
 
@@ -612,7 +776,7 @@ async def execute_initial_evaluation(
         limits=QualificationLimits(
             max_productions=2,
             max_submissions=size,
-            max_port_facts=(8 + 6 * allowance) * 20 * size,
+            max_port_facts=((8 + 6 * allowance) * 20 + (48 if map_ids else 0)) * size,
             max_consumed_per_assessment=8,
             max_coverage_atoms=0,
             max_verified_evidence=size,
@@ -620,7 +784,7 @@ async def execute_initial_evaluation(
             max_fixed_point_steps=max(1, size),
             max_revision_entries=(8 + 6 * allowance) * 20 * size,
             max_absence_revisions=0,
-            max_provenance_edges=(8 + 6 * allowance) * 64 * size,
+            max_provenance_edges=((8 + 6 * allowance) * 64 + (100 if map_ids else 0)) * size,
         ),
     )
     current = evidence_revision_view(

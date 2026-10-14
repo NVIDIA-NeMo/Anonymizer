@@ -92,6 +92,7 @@ testpaths = ["tests"]
 markers = [
     "e2e: end-to-end tests",
     "integration: integration tests",
+    "compat: decisive compatibility, source ownership, and retained-value regressions",
 ]
 
 [tool.ty.src]
