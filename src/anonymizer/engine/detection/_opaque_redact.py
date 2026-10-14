@@ -6,9 +6,10 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable, Mapping
+from contextvars import copy_context
 from dataclasses import dataclass, replace
 from time import perf_counter
-from typing import Any
+from typing import Any, cast
 
 import pandas as pd
 from data_designer.config import ModelConfig
@@ -18,7 +19,7 @@ from anonymizer.engine.constants import COL_TEXT
 from anonymizer.engine.detection._frame_publication import InvocationFrame
 from anonymizer.engine.detection._graph_invocation import DetectionRedactInvocation
 from anonymizer.engine.detection.artifacts import ENTITY_SPANS_TYPE
-from anonymizer.engine.detection.detection_workflow import EntityDetectionWorkflow
+from anonymizer.engine.detection.detection_workflow import _DETECTION_RUN, EntityDetectionWorkflow
 from anonymizer.engine.graph_sdk._artifact_shape import content_bytes
 from anonymizer.engine.graph_sdk._execution_delegated import WorkerDelegatedSubmitter
 from anonymizer.engine.graph_sdk._execution_values import DelegatedRequests
@@ -57,7 +58,7 @@ from anonymizer.engine.graph_sdk.preparation import (
     StateRevisionView,
     prepare,
 )
-from anonymizer.engine.graph_sdk.requests import AssociationInput
+from anonymizer.engine.graph_sdk.requests import AssociationInput, AssociationResult, SemanticAssociation
 from anonymizer.engine.graph_sdk.resources import ResourceLease
 from anonymizer.engine.replace.replace_runner import ReplacementResult
 from anonymizer.engine.rewrite.rewrite_workflow import RewriteResult, RewriteWorkflow
@@ -86,6 +87,7 @@ from anonymizer.graph.workflow import (
     WorkflowOutputRef,
     compile_graph,
 )
+from anonymizer.interface.errors import AnonymizerWorkflowError
 
 
 @dataclass(frozen=True)
@@ -97,31 +99,117 @@ class _DetectionInvocation:
     selected_models: DetectionModelSelection
     detection_options: Mapping[str, Any]
     name: str = "opaque-detection-replace"
+    semantic_slots: Mapping[str, int] | None = None
+    semantic_loop: asyncio.AbstractEventLoop | None = None
+    semantic_targets: tuple[Any, ...] = ()
+    semantic_transform_slot: int | None = None
+    semantic_configuration: FrozenConfig | None = None
+    semantic_adapter: object | None = None
+    semantic_lowerings: tuple[Any, Any] | None = None
+    semantic_entry_slot: int | None = None
+    semantic_optional: bool = False
     handoff: Callable[[Callable[[], LocalCompleted | LocalFailure]], LocalCompleted | LocalFailure] | None = None
 
     def run(self, inputs: tuple[AssociationInput, ...], requests: DelegatedRequests) -> LocalCompleted | LocalFailure:
+        context = copy_context()
         return (
-            self._run(inputs, requests) if self.handoff is None else self.handoff(lambda: self._run(inputs, requests))
+            self._run(inputs, requests)
+            if self.handoff is None
+            else self.handoff(lambda: context.run(self._run, inputs, requests))
         )
 
     def _run(self, inputs: tuple[AssociationInput, ...], requests: DelegatedRequests) -> LocalCompleted | LocalFailure:
-        del inputs
         if requests.cancelled:
             return LocalFailure(failure="implementation_exception")
         started = perf_counter()
-        detected = self.detection.run(
-            self.source,
-            model_configs=self.model_configs,
-            selected_models=self.selected_models,
+        arguments: dict[str, Any] = {
+            "model_configs": self.model_configs,
+            "selected_models": self.selected_models,
             **self.detection_options,
-        )
+        }
+        if self.semantic_slots is not None:
+            if self.semantic_loop is None:
+                raise AnonymizerWorkflowError("Detection binding has no owning loop")
+            from anonymizer.engine.detection._semantic_detection import bind_detection, complete_detection_entry
+
+            if not self.semantic_optional:
+                asyncio.run_coroutine_threadsafe(
+                    complete_detection_entry(requests, inputs), self.semantic_loop
+                ).result()
+            source = requests.bind_frame(
+                self.source, targets=self.semantic_targets, source_limit=len(self.semantic_targets)
+            )
+            with bind_detection(
+                self.detection,
+                self.source,
+                arguments,
+                requests,
+                source,
+                dict(self.semantic_slots),
+                self.semantic_loop,
+                self.semantic_configuration,
+                self.semantic_adapter,
+                self.semantic_lowerings,
+                inputs if self.semantic_optional and inputs else None,
+                entry_slot=self.semantic_entry_slot,
+            ) as binding:
+                detected = self.detection.run(self.source, **arguments)
+            if self.semantic_optional and not binding.claim.locked():
+                asyncio.run_coroutine_threadsafe(
+                    complete_detection_entry(requests, inputs, "bypass", self.semantic_entry_slot), self.semantic_loop
+                ).result()
+        else:
+            detected = self.detection.run(self.source, **arguments)
         if requests.cancelled:
             return LocalFailure(failure="implementation_exception")
         detection_elapsed = perf_counter() - started
         started = perf_counter()
         replaced = self.transform(detected.dataframe)
+        if self.semantic_transform_slot is not None:
+            if self.semantic_loop is None:
+                raise AnonymizerWorkflowError("Detection binding has no owning loop")
+            transform_slot = self.semantic_transform_slot
+
+            async def finish() -> None:
+                if not source.associations:
+                    item = await requests.enter_operation(transform_slot, None)
+                    if item is None:
+                        raise AnonymizerWorkflowError("Empty detection transform is not ready")
+                    await binding.complete_empty_stage([item])
+                for position in detected.source_positions:
+                    item = await requests.enter_operation(transform_slot, source.associations[position])
+                    if item is None:
+                        raise AnonymizerWorkflowError("Detection transform is not ready")
+                    await requests.complete_operation(
+                        cast(SemanticAssociation, item.association),
+                        LocalCompleted(
+                            results=(
+                                AssociationResult(
+                                    association=item.association,
+                                    outcome="ok",
+                                    outputs=(),
+                                    consumed_context_ports=frozenset(),
+                                ),
+                            )
+                        ),
+                    )
+
+            asyncio.run_coroutine_threadsafe(finish(), self.semantic_loop).result()
         return LocalCompleted(
-            results=(),
+            results=tuple(
+                AssociationResult(
+                    association=item.association, outcome="ok", outputs=(), consumed_context_ports=frozenset()
+                )
+                for item in inputs
+                if item.association in {source.associations[position] for position in detected.source_positions}
+            )
+            if self.semantic_slots is not None
+            else (),
+            failed_sources=frozenset(
+                set(source.associations) - {source.associations[position] for position in detected.source_positions}
+            )
+            if self.semantic_slots is not None
+            else frozenset(),
             frame=InvocationFrame(
                 dataframe=replaced.dataframe.copy(),
                 detected_dataframe=detected.dataframe.copy(),
@@ -267,7 +355,23 @@ async def execute_injected_redact(
     callback: _DetectionInvocation | DetectionRedactInvocation | _EvaluationInvocation, pool: BlockingPool
 ) -> ExecutionResult:
 
+    expected_adapter = (
+        None if isinstance(callback, _EvaluationInvocation) else getattr(callback.detection, "_adapter", None)
+    )
+    expected_lowerings = (
+        None
+        if isinstance(callback, _EvaluationInvocation)
+        or not issubclass(type(callback.detection), EntityDetectionWorkflow)
+        else (callback.detection.detect_and_validate_entities, callback.detection.identify_latent_entities)
+    )
     authenticated = isinstance(callback, DetectionRedactInvocation)
+    bindable_detection = not isinstance(callback, _EvaluationInvocation) and issubclass(
+        type(callback.detection), EntityDetectionWorkflow
+    )
+    builtin_detection = (
+        not isinstance(callback, _EvaluationInvocation)
+        and getattr(callback.detection.run, "__func__", None) is _DETECTION_RUN
+    )
     preview = (
         None if isinstance(callback, _EvaluationInvocation) else callback.detection_options.get("preview_num_records")
     )
@@ -278,7 +382,7 @@ async def execute_injected_redact(
     targets = []
     for text in texts:
         graph, target = graph.add_text(text)
-        if authenticated:
+        if authenticated or bindable_detection:
             targets.append(target)
     if authenticated:
         callback = replace(callback, targets=tuple(targets))
@@ -291,7 +395,7 @@ async def execute_injected_redact(
             OutputPort(name="redacted", artifact_type=text_type),
             OutputPort(name="spans", artifact_type=ENTITY_SPANS_TYPE),
         )
-        if size
+        if authenticated and size
         else ()
     )
     data = graph.validate(
@@ -381,27 +485,97 @@ async def execute_injected_redact(
         callback.redact_configuration if isinstance(callback, DetectionRedactInvocation) else FrozenConfig(fields=()),
         aggregate=not authenticated,
     )
+    detection_ids = {}
+    detection_config = None
+    child_capabilities, child_policies = (), ()
+    if (bindable_detection or authenticated) and not isinstance(callback, _EvaluationInvocation):
+        from anonymizer.engine.detection._semantic_detection import (
+            detection_configuration,
+            extend_detection_graph,
+            reparent_detection_policies,
+        )
+
+        detection_config = detection_configuration(
+            {
+                "model_configs": callback.model_configs,
+                "selected_models": callback.selected_models,
+                **callback.detection_options,
+            }
+        )
+        raw, child_capabilities, child_policies, detection_ids = extend_detection_graph(
+            raw,
+            node,
+            detection_config,
+            latent=callback.detection_options.get("tag_latent_entities", True),
+            optional=not builtin_detection,
+            source_free=not size,
+        )
+    parent_capabilities, parent_policies = (capability,), (policy,)
+    if detection_ids:
+        parent_capabilities, parent_policies = reparent_detection_policies(
+            parent_capabilities, parent_policies, detection_ids["entry"]
+        )
     prepared = _prepare_frame_plan(
         data,
         raw,
-        (capability,),
+        (*parent_capabilities, *child_capabilities),
         tuple(BoundInput(target=target, source=target, port="source", artifact_type=text_type) for target in targets),
         invocation_owned=not targets,
     )
+    if detection_ids:
+        from anonymizer.engine.detection._semantic_detection import detection_slots
+
+        if isinstance(callback, DetectionRedactInvocation):
+            callback = replace(
+                callback,
+                semantic_slots=detection_slots(prepared, detection_ids),
+                semantic_loop=asyncio.get_running_loop(),
+                semantic_configuration=detection_config,
+                semantic_adapter=expected_adapter,
+                semantic_lowerings=expected_lowerings,
+                semantic_optional=not builtin_detection,
+                semantic_entry_slot=next(
+                    slot.index for slot in prepared.reservation_recipe if slot.template == detection_ids["entry"]
+                )
+                if not size
+                else None,
+                semantic_transform_slot=next(
+                    slot.index for slot in prepared.reservation_recipe if slot.template == node
+                ),
+            )
+        else:
+            callback = replace(
+                callback,
+                semantic_slots=detection_slots(prepared, detection_ids),
+                semantic_loop=asyncio.get_running_loop(),
+                semantic_configuration=detection_config,
+                semantic_adapter=expected_adapter,
+                semantic_lowerings=expected_lowerings,
+                semantic_entry_slot=next(
+                    slot.index for slot in prepared.reservation_recipe if slot.template == detection_ids["entry"]
+                )
+                if not size
+                else None,
+                semantic_optional=not builtin_detection,
+                semantic_targets=tuple(targets),
+                semantic_transform_slot=next(
+                    slot.index for slot in prepared.reservation_recipe if slot.template == node
+                ),
+            )
     return await _execute_frame_plan(
         prepared=prepared,
-        capabilities=(capability,),
-        callback=callback._run if isinstance(callback, DetectionRedactInvocation) else callback.run,
+        capabilities=(*parent_capabilities, *child_capabilities),
+        callback=callback.run,
         pool=pool,
         borrowed_loop=asyncio.get_running_loop(),
         limits=ExecutionLimits(
             max_local_in_flight=1,
             max_remote_outstanding=None,
-            max_runtime_artifacts=3 * size,
+            max_runtime_artifacts=max(1, 11 * size),
             max_runtime_artifact_bytes=None,
             max_collection_items=characters,
         ),
-        policies=(policy,),
+        policies=(*parent_policies, *child_policies),
         ingress_limits=IngressLimits(
             max_associations=max(1, size),
             max_outputs_per_association=2,
@@ -419,8 +593,8 @@ async def execute_injected_redact(
             max_finding_code_bytes=0,
             max_absence_queries=0,
             max_assessment_facts=0,
-            max_port_facts=3 * size,
-            max_provenance_edges=2 * size,
+            max_port_facts=20 * size,
+            max_provenance_edges=20 * size,
         ),
     )
 

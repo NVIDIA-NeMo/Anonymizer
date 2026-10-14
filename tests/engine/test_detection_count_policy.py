@@ -15,6 +15,7 @@ from anonymizer.engine.constants import COL_REPLACED_TEXT, COL_TEXT
 from anonymizer.engine.detection import _graph_profile
 from anonymizer.engine.detection.detection_workflow import EntityDetectionWorkflow
 from anonymizer.engine.graph_sdk.executor import ExecutionLimits
+from anonymizer.engine.graph_sdk.requests import TextArtifactValue
 from anonymizer.engine.ndd.adapter import NddAdapter
 from anonymizer.graph._values import ContractViolation
 from anonymizer.interface.errors import AnonymizerWorkflowError
@@ -50,7 +51,26 @@ def test_default_profile_retains_large_valid_labels_and_actual_byte_observations
     assert projected.dataframe[COL_REPLACED_TEXT].tolist() == [f"[REDACTED_{label}] travels."]
     assert projected.dataframe["extra"].tolist() == [17]
     result = projected._execution
-    assert result is not None and len(result.artifacts) == 5
+    assert result is not None and len(result.artifacts) == 7
+    observations = [
+        port
+        for port in result.ports
+        if port.artifact_type.name == "anonymizer.entity-observation-json" and port.port in {"detected", "entities"}
+    ]
+    assert sorted(port.port for port in observations) == ["detected", "entities"]
+    assert len({port.artifact for port in observations}) == 2
+    artifacts = dict(result.artifacts)
+    assert all(isinstance(value := artifacts[port.artifact], TextArtifactValue) and value.text for port in observations)
+    core = next(port for port in observations if port.port == "detected")
+    final = next(port for port in observations if port.port == "entities")
+    consumed = [port for port in result.ports if port.port == "in_detected"]
+    assert len(consumed) == 1 and consumed[0].artifact == core.artifact and consumed[0].node == final.node
+    operations = {
+        node.id: node.operation.name
+        for body in result._execution.context.prepared.workflow.bodies()
+        for node in body.operations
+    }
+    assert operations[core.node] == "detection-core" and operations[final.node] == "detection-final"
     assert sum(value.shape.content_bytes for _, value in result.artifacts) > 21000
     assert result._execution.ingress_limits.max_text_bytes is None
     assert result._execution.ingress_limits.max_metadata_bytes is None
@@ -115,7 +135,19 @@ def test_default_count_policy_preserves_empty_failure_and_complete_inventory(scr
         projected = _graph_profile.run_detection_redact(source, **arguments)
         assert len(projected.dataframe) == rows
         assert projected._execution is not None
-        assert len(projected._execution.artifacts) == 5 * rows
+        assert len(projected._execution.artifacts) == 7 * rows
+        observations = [
+            port
+            for port in projected._execution.ports
+            if port.artifact_type.name == "anonymizer.entity-observation-json" and port.port in {"detected", "entities"}
+        ]
+        assert sorted(port.port for port in observations) == ["detected"] * rows + ["entities"] * rows
+        assert len({port.artifact for port in observations}) == 2 * rows
+        consumed = [port for port in projected._execution.ports if port.port == "in_detected"]
+        assert len(consumed) == rows
+        assert {port.artifact for port in consumed} == {
+            port.artifact for port in observations if port.port == "detected"
+        }
 
 
 def test_default_policy_preserves_canonical_unicode_rejection_before_effects(scripted_detection):

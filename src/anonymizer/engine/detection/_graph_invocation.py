@@ -10,8 +10,9 @@ ordinary public execution leaves DataDesigner's retry and scheduling intact.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Mapping
-from dataclasses import dataclass
+from collections.abc import Callable, Mapping
+from contextvars import copy_context
+from dataclasses import dataclass, replace
 from typing import Any, cast
 
 import pandas as pd
@@ -19,7 +20,7 @@ from data_designer.config import ModelConfig
 
 from anonymizer.config.models import DetectionModelSelection
 from anonymizer.engine.constants import COL_FINAL_ENTITIES, COL_REPLACED_TEXT
-from anonymizer.engine.detection._frame_publication import FramePublication
+from anonymizer.engine.detection._frame_publication import FramePublication, InvocationFrame
 from anonymizer.engine.detection.artifacts import ENTITY_SPANS_TYPE, EntitySpansValue
 from anonymizer.engine.detection.chunked_validation import validation_chunks
 from anonymizer.engine.detection.detection_workflow import (
@@ -27,7 +28,7 @@ from anonymizer.engine.detection.detection_workflow import (
     EntityDetectionWorkflow,
 )
 from anonymizer.engine.detection.postprocess import EntitySpan
-from anonymizer.engine.graph_sdk._execution_values import DelegatedRequests, LocalCompleted
+from anonymizer.engine.graph_sdk._execution_values import DelegatedRequests, LocalCompleted, LocalFailure
 from anonymizer.engine.graph_sdk.capabilities import FrozenConfig
 from anonymizer.engine.graph_sdk.requests import (
     AssociationInput,
@@ -63,9 +64,28 @@ class DetectionRedactInvocation:
     output_port: str
     outcome: str
     execution: str = "same_loop"
+    semantic_slots: Mapping[str, int] | None = None
+    semantic_loop: asyncio.AbstractEventLoop | None = None
+    semantic_transform_slot: int | None = None
+    semantic_configuration: FrozenConfig | None = None
+    semantic_adapter: object | None = None
+    semantic_lowerings: tuple[Any, Any] | None = None
+    semantic_optional: bool = False
+    semantic_entry_slot: int | None = None
+    handoff: Callable[[Callable[[], LocalCompleted | LocalFailure]], LocalCompleted | LocalFailure] | None = None
 
-    async def submit(self, inputs: tuple[AssociationInput, ...], requests: DelegatedRequests) -> LocalCompleted:
-        return await asyncio.to_thread(self._run, inputs, requests)
+    async def submit(
+        self, inputs: tuple[AssociationInput, ...], requests: DelegatedRequests
+    ) -> LocalCompleted | LocalFailure:
+        return await asyncio.to_thread(self.run, inputs, requests)
+
+    def run(self, inputs: tuple[AssociationInput, ...], requests: DelegatedRequests) -> LocalCompleted | LocalFailure:
+        context = copy_context()
+        return (
+            self._run(inputs, requests)
+            if self.handoff is None
+            else self.handoff(lambda: context.run(self._run, inputs, requests))
+        )
 
     def _run(self, inputs: tuple[AssociationInput, ...], requests: DelegatedRequests) -> LocalCompleted:
         if any(
@@ -77,14 +97,43 @@ class DetectionRedactInvocation:
             raise AnonymizerWorkflowError("DD graph detection requires one source-text input per association")
         frame = requests.bind_frame(self.source, targets=self.targets, source_limit=len(self.targets))
         bridge = None if self.physical is None else NddRequestBridge(requests, self.slots, self.physical)
-        detected = self.detection.run(
-            self.source,
-            model_configs=self.model_configs,
-            selected_models=self.selected_models,
-            source_frame=frame,
-            request_bridge=bridge,
+        arguments: dict[str, Any] = {
+            "model_configs": self.model_configs,
+            "selected_models": self.selected_models,
+            "source_frame": frame,
+            "request_bridge": bridge,
             **self.detection_options,
-        )
+        }
+        if self.semantic_slots is not None:
+            if self.semantic_loop is None:
+                raise AnonymizerWorkflowError("Detection binding has no owning loop")
+            from anonymizer.engine.detection._semantic_detection import bind_detection, complete_detection_entry
+
+            if self.physical is None and not self.semantic_optional:
+                asyncio.run_coroutine_threadsafe(
+                    complete_detection_entry(requests, inputs), self.semantic_loop
+                ).result()
+            with bind_detection(
+                self.detection,
+                self.source,
+                arguments,
+                requests,
+                frame,
+                dict(self.semantic_slots),
+                self.semantic_loop,
+                self.semantic_configuration,
+                self.semantic_adapter,
+                self.semantic_lowerings,
+                inputs if self.semantic_optional and inputs else None,
+                self.semantic_entry_slot,
+            ) as binding:
+                detected = self.detection.run(self.source, **arguments)
+            if self.semantic_optional and not binding.claim.locked():
+                asyncio.run_coroutine_threadsafe(
+                    complete_detection_entry(requests, inputs, "bypass", self.semantic_entry_slot), self.semantic_loop
+                ).result()
+        else:
+            detected = self.detection.run(self.source, **arguments)
         positions = detected.source_positions
         if len(positions) != len(detected.dataframe):
             raise AnonymizerWorkflowError("DD graph detection has unclosed source results")
@@ -167,15 +216,77 @@ class DetectionRedactInvocation:
             for item in inputs
             if item.association in rows
         )
+        if self.semantic_transform_slot is not None:
+            if self.semantic_loop is None:
+                raise AnonymizerWorkflowError("Detection binding has no owning loop")
+            transform_slot = self.semantic_transform_slot
+            completed_sources = {}
+
+            async def finish() -> None:
+                nonlocal results
+                entered = await requests.enter_operations(
+                    transform_slot, tuple(cast(SemanticAssociation, result.association) for result in results)
+                )
+                if any(item is None for item in entered):
+                    raise AnonymizerWorkflowError("Detection transform is not ready")
+                accepted = tuple(
+                    replace(result, association=cast(AssociationInput, item).association)
+                    for result, item in zip(results, entered, strict=True)
+                )
+                outcomes = await requests.complete_operations(
+                    tuple(
+                        (cast(SemanticAssociation, result.association), LocalCompleted(results=(result,)))
+                        for result in accepted
+                    )
+                )
+                for outcome in outcomes:
+                    if outcome.condition != "result" or outcome.category != "success":
+                        raise AnonymizerWorkflowError(f"Local transform semantic output was rejected: {outcome!r}")
+                if len(outcomes) != len(accepted):
+                    raise AnonymizerWorkflowError("Local transform semantic output was rejected")
+                completed_sources.update(
+                    (result.association, projected.association)
+                    for result, projected in zip(results, accepted, strict=True)
+                )
+                if not frame.associations:
+                    item = await requests.enter_operation(transform_slot, None)
+                    if item is None:
+                        raise AnonymizerWorkflowError("Empty detection transform is not ready")
+                    await binding.complete_empty_stage([item])
+                results = accepted
+
+            asyncio.run_coroutine_threadsafe(finish(), self.semantic_loop).result()
+            successful = tuple(completed_sources[association] for association in successful)
+        results_by_source = {item.association: item for item in results}
+        results = tuple(results_by_source[association] for association in successful)
         return LocalCompleted(
-            results=results,
-            failed_sources=frozenset(set(frame.associations) - set(successful)),
-            frame=FramePublication.capture(
+            results=tuple(
+                AssociationResult(
+                    association=item.association, outcome="ok", outputs=(), consumed_context_ports=frozenset()
+                )
+                for item in inputs
+                if item.association in rows
+            )
+            if self.semantic_transform_slot is not None
+            else results,
+            failed_sources=frozenset(set(frame.associations) - set(rows)),
+            frame=InvocationFrame(protected, detected.dataframe, tuple(detected.failed_records), (), 0.0, 0.0, None)
+            if not frame.associations
+            else FramePublication.capture(
                 protected,
                 associations=successful,
                 text_ports=((COL_REPLACED_TEXT, self.output_port),),
                 failed_records=tuple(detected.failed_records),
                 opaque_source=self.source,
-                span_ports=((COL_FINAL_ENTITIES, "spans", tuple(spans[association] for association in successful)),),
+                span_ports=(
+                    (
+                        COL_FINAL_ENTITIES,
+                        "spans",
+                        tuple(
+                            cast(EntitySpansValue, next(port.value for port in result.outputs if port.port == "spans"))
+                            for result in results
+                        ),
+                    ),
+                ),
             ),
         )

@@ -19,6 +19,7 @@ from anonymizer.config.rewrite import EvaluationCriteria
 from anonymizer.engine.constants import COL_REWRITTEN_TEXT, COL_REWRITTEN_TEXT_INITIAL, COL_TEXT
 from anonymizer.engine.detection._frame_publication import FramePublication, FrameStages
 from anonymizer.engine.detection._opaque_redact import _execute_frame_plan, _frame_implementation, _prepare_frame_plan
+from anonymizer.engine.detection._semantic_detection import detection_configuration
 from anonymizer.engine.detection.detection_workflow import (
     _DETECTION_RUN,
     EntityDetectionResult,
@@ -277,7 +278,7 @@ def run_semantic_rewrite(
     limits = ExecutionLimits(
         max_local_in_flight=1,
         max_remote_outstanding=None,
-        max_runtime_artifacts=max(1, selected * (12 + 6 * allowance)),
+        max_runtime_artifacts=max(1, selected * (20 + 6 * allowance)),
         max_runtime_artifact_bytes=None,
         max_collection_items=None,
     )
@@ -369,6 +370,39 @@ async def execute_initial_evaluation(
         ),
     )
     raw, capabilities, policies, ids, body_ids = _tail(configuration, allowance, opaque=opaque)
+    detection_ids = {}
+    detection_config = (
+        detection_configuration(detection_arguments or {})
+        if detection is not None and issubclass(type(detection), EntityDetectionWorkflow)
+        else None
+    )
+    detection_adapter = getattr(detection, "_adapter", None) if detection is not None else None
+    detection_lowerings = (
+        (detection.detect_and_validate_entities, detection.identify_latent_entities)
+        if detection is not None and issubclass(type(detection), EntityDetectionWorkflow)
+        else None
+    )
+    optional_detection = (
+        detection is not None
+        and issubclass(type(detection), EntityDetectionWorkflow)
+        and getattr(detection.run, "__func__", None) is not _DETECTION_RUN
+    )
+    if detection is not None and issubclass(type(detection), EntityDetectionWorkflow):
+        from anonymizer.engine.detection._semantic_detection import (
+            extend_detection_graph,
+            reparent_detection_policies,
+        )
+
+        raw, detection_capabilities, detection_policies, detection_ids = extend_detection_graph(
+            raw,
+            ids["prefix"],
+            detection_configuration(detection_arguments or {}),
+            latent=(detection_arguments or {}).get("tag_latent_entities", True),
+            optional=optional_detection,
+        )
+        capabilities, policies = reparent_detection_policies(capabilities, policies, detection_ids["entry"])
+        capabilities = (*capabilities, *detection_capabilities)
+        policies = (*policies, *detection_policies)
     text = ArtifactType(name="anonymizer.text", revision=1)
     prepared = _prepare_frame_plan(
         data,
@@ -394,14 +428,46 @@ async def execute_initial_evaluation(
     def callback(inputs: tuple[AssociationInput, ...], requests: DelegatedRequests) -> LocalCompleted | LocalFailure:
         started = perf_counter()
         original_frame = requests.bind_frame(source, targets=tuple(targets), source_limit=len(selected_source))
+        if detection_ids and not optional_detection:
+            from anonymizer.engine.detection._semantic_detection import complete_detection_entry
+
+            asyncio.run_coroutine_threadsafe(complete_detection_entry(requests, inputs), loop).result()
 
         def detect() -> EntityDetectionResult | None:
             if detection is None:
                 return None
             native = getattr(detection.run, "__func__", None) is _DETECTION_RUN
-            return detection.run(
-                source, **({"source_frame": original_frame} if native else {}), **(detection_arguments or {})
-            )
+            arguments_for_detection = {
+                **({"source_frame": original_frame} if native else {}),
+                **(detection_arguments or {}),
+            }
+            if detection_ids:
+                from anonymizer.engine.detection._semantic_detection import (
+                    bind_detection,
+                    complete_detection_entry,
+                    detection_slots,
+                )
+
+                with bind_detection(
+                    detection,
+                    source,
+                    arguments_for_detection,
+                    requests,
+                    original_frame,
+                    detection_slots(prepared, detection_ids),
+                    loop,
+                    detection_config,
+                    detection_adapter,
+                    detection_lowerings,
+                    inputs if optional_detection else None,
+                ) as binding:
+                    result = detection.run(source, **arguments_for_detection)
+                if optional_detection and not binding.claim.locked():
+                    asyncio.run_coroutine_threadsafe(
+                        complete_detection_entry(requests, inputs, "bypass"), loop
+                    ).result()
+                return result
+            return detection.run(source, **arguments_for_detection)
 
         if detection_handoff is None or handoff is not None:
             detected = detect()
@@ -430,6 +496,7 @@ async def execute_initial_evaluation(
             combined=combined,
             opaque=opaque,
             observed_columns=observed_columns,
+            prefix_is_child=bool(detection_ids),
             criteria=arguments["evaluation"],
             receiver=selected_runner,
             adapter=adapter,
@@ -438,6 +505,13 @@ async def execute_initial_evaluation(
         )
         detection_elapsed = perf_counter() - started
         started = perf_counter()
+        if detection_ids:
+
+            async def begin_prefix() -> None:
+                for association in active:
+                    await requests.enter_operation(slots["prefix"], association)
+
+            asyncio.run_coroutine_threadsafe(begin_prefix(), loop).result()
         if not observed_columns:
             asyncio.run_coroutine_threadsafe(binding.passthrough(detected_frame), loop).result()
         binding.authorize_entry()

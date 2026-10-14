@@ -426,7 +426,14 @@ def _validate_delegated_recipes(prepared: PreparedPlan, policies: tuple[Operatio
         if (
             owner is None
             or owner.delegated is None
-            or owner.delegated.mode != "opaque"
+            or (
+                owner.delegated.mode != "opaque"
+                and not (
+                    owner.delegated.mode == "qualified"
+                    and child.kind == "local"
+                    and child.implementations[0].capability.max_physical_requests_per_activation == 0
+                )
+            )
             or child.implementations[0].capability.resource_lifetime != "stateless"
         ):
             reject(EffectCode.UNSUPPORTED)

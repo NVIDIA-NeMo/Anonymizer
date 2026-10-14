@@ -55,6 +55,7 @@ from anonymizer.engine.graph_sdk.requests import (
 )
 from anonymizer.graph._values import ActivationKey, DatumId, InvocationId, TaskAttemptId
 from anonymizer.graph.activation import CloseUnstarted, advance_activation
+from anonymizer.graph.workflow import SubgraphNode
 
 if TYPE_CHECKING:
     import pandas as pd
@@ -207,17 +208,52 @@ class _WorkerBorrow(PrivateValue):
             )
         )
 
-    async def enter_operation(self, slot: int, association: SemanticAssociation) -> AssociationInput | None:
+    async def enter_operation(self, slot: int, association: SemanticAssociation | None) -> AssociationInput | None:
         return await self._call(lambda: self.owner.enter_operation(slot, association))
 
     async def operation_result(self, slot: int, association: SemanticAssociation) -> AssociationResult | None:
         return await self._call(lambda: self.owner.operation_result(slot, association))
 
-    async def ready_operations(self, association: SemanticAssociation) -> tuple[int, ...]:
+    async def ready_operations(self, association: SemanticAssociation | None) -> tuple[int, ...]:
         return await self._call(lambda: self.owner.ready_operations(association))
 
     async def complete_operation(self, association: SemanticAssociation, result: LocalResult) -> RuntimeOutcome:
         return await self._call(lambda: self.owner.complete_operation(association, result))
+
+    async def ready_operations_many(self, associations: tuple[SemanticAssociation, ...]) -> tuple[tuple[int, ...], ...]:
+        return await self._call(lambda: self.owner.ready_operations_many(associations))
+
+    async def enter_operations(
+        self, slot: int, associations: tuple[SemanticAssociation, ...]
+    ) -> tuple[AssociationInput | None, ...]:
+        return await self._call(lambda: self.owner.enter_operations(slot, associations))
+
+    async def operation_results(
+        self, slot: int, associations: tuple[SemanticAssociation, ...]
+    ) -> tuple[AssociationResult | None, ...]:
+        return await self._call(lambda: self.owner.operation_results(slot, associations))
+
+    async def complete_operations(
+        self, results: tuple[tuple[SemanticAssociation, LocalResult], ...]
+    ) -> tuple[RuntimeOutcome, ...]:
+        return await self._call(lambda: self.owner.complete_operations(results))
+
+    def authorize_sources_sync(self, associations: tuple[SemanticAssociation, ...]) -> None:
+        if _WORKER_BORROW.get() is not self or self.expired:
+            reject(EffectCode.FOREIGN_OWNER)
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            pass
+        else:
+            if loop is self.owner.loop:
+                reject(EffectCode.UNSUPPORTED)
+
+        async def authorize() -> None:
+            for association in associations:
+                await self.owner._authorize_source(association)
+
+        asyncio.run_coroutine_threadsafe(self.owner._worker_call(self, authorize), self.owner.loop).result()
 
     async def readiness(self) -> PhysicalRequestId:
         return await self._call(self.owner.readiness)
@@ -325,8 +361,10 @@ class _DelegatedOwner(PrivateValue):
         except (AttributeError, TypeError):
             reject(EffectCode.FOREIGN_OWNER)
 
-    def _source_job(self, association: SemanticAssociation | None = None) -> _OperationJob[DatumId]:
+    def _source_job(self, association: SemanticAssociation | None = None) -> _OperationJob[DatumId | InvocationId]:
         if association is None:
+            if self.invocation_job is not None:
+                return self.invocation_job
             if len(self.jobs) != 1:
                 reject(EffectCode.MISSING)
             return next(iter(self.jobs.values()))
@@ -359,12 +397,12 @@ class _DelegatedOwner(PrivateValue):
         self.runtime.request_authority.apply(AcceptChildEvidence(evidence=evidence))
         return evidence
 
-    async def enter_operation(self, slot: int, association: SemanticAssociation) -> AssociationInput | None:
+    async def enter_operation(self, slot: int, association: SemanticAssociation | None) -> AssociationInput | None:
         """Enter an admitted semantic child without inventing a physical request."""
         self._check_submission()
         require_count(slot)
         source_job = self._source_job(association)
-        source = self.runtime.frame.sources[source_job.scope]
+        source = self.runtime.frame.occurrence(source_job.scope)
         key = source.keys.get(slot)
         entry = next((row for row in source.state.entries if row.activation == key), None)
         if entry is None:
@@ -407,7 +445,11 @@ class _DelegatedOwner(PrivateValue):
                 return None
             if entry.status != "running":
                 reject(EffectCode.REQUEST_CAUSALITY)
-            return source_job.inputs[0]
+            return (
+                source_job.inputs[0]
+                if source_job.inputs
+                else AssociationInput(association=source_job.association, inputs=())
+            )
         if self.runtime.policies[entry.template].submission_owner != self.policy.node:
             reject(EffectCode.FOREIGN_OWNER)
         active = self.runtime.operations.get(entry.activation)
@@ -425,7 +467,7 @@ class _DelegatedOwner(PrivateValue):
         self._check_submission()
         require_count(slot)
         source_job = self._source_job(association)
-        source = self.runtime.frame.sources[source_job.scope]
+        source = self.runtime.frame.occurrence(source_job.scope)
         key = source.keys.get(slot)
         if key is None:
             reject(EffectCode.FOREIGN_OWNER)
@@ -433,18 +475,28 @@ class _DelegatedOwner(PrivateValue):
         policy = self.runtime.policies.get(node)
         if policy is None or policy.submission_owner != self.policy.node:
             reject(EffectCode.FOREIGN_OWNER)
+        if not isinstance(source_job.scope, DatumId):
+            reject(EffectCode.UNSUPPORTED)
         return self.runtime._operation_result(source_job.scope, key)
 
-    async def ready_operations(self, association: SemanticAssociation) -> tuple[int, ...]:
+    async def ready_operations(self, association: SemanticAssociation | None) -> tuple[int, ...]:
         """Expose only ready child occurrences belonging to this live submission."""
         self._check_submission()
-        source = self.runtime.frame.sources[self._source_job(association).scope]
+        source = self.runtime.frame.occurrence(self._source_job(association).scope)
         ready = {
             entry.activation
             for entry in source.state.entries
-            if entry.status == "ready"
-            and (policy := self.runtime.policies.get(entry.template)) is not None
-            and policy.submission_owner == self.policy.node
+            if (
+                entry.status == "ready"
+                and (policy := self.runtime.policies.get(entry.template)) is not None
+                and policy.submission_owner == self.policy.node
+            )
+            or (
+                association is None
+                and self.invocation_job is not None
+                and entry.activation == self.invocation_job.activation
+                and entry.status == "running"
+            )
         }
         return tuple(slot for slot, key in source.keys.items() if key in ready)
 
@@ -460,16 +512,28 @@ class _DelegatedOwner(PrivateValue):
             bound = self.runtime.operations.get(association.task.activation)
         except (AttributeError, TypeError):
             reject(EffectCode.FOREIGN_OWNER)
-        if bound is None or bound.association != association or not isinstance(bound.scope, DatumId):
+        if (
+            bound is None
+            or bound.association != association
+            or (
+                not isinstance(bound.scope, DatumId)
+                and (self.invocation_job is None or bound.scope != self.invocation_job.scope)
+            )
+        ):
             reject(EffectCode.FOREIGN_OWNER)
-        job = cast(_OperationJob[DatumId], bound)
-        if association not in self.jobs and (
-            job.policy.submission_owner != self.policy.node
-            or job.scope not in {row.scope for row in self.jobs.values()}
+        job = bound
+        owner_association = self.invocation_job is not None and association == self.invocation_job.association
+        owned_scopes: set[DatumId | InvocationId] = {row.scope for row in self.jobs.values()}
+        if self.invocation_job is not None:
+            owned_scopes.add(self.invocation_job.scope)
+        if (
+            association not in self.jobs
+            and not owner_association
+            and (job.policy.submission_owner != self.policy.node or job.scope not in owned_scopes)
         ):
             reject(EffectCode.FOREIGN_OWNER)
         entry = next(
-            row for row in self.runtime.frame.sources[job.scope].state.entries if row.activation == job.activation
+            row for row in self.runtime.frame.occurrence(job.scope).state.entries if row.activation == job.activation
         )
         if entry.status != "running":
             reject(EffectCode.REQUEST_CAUSALITY)
@@ -496,6 +560,53 @@ class _DelegatedOwner(PrivateValue):
         final = self.runtime._complete_job(job, mapping, results, assessments)
         self.runtime.control.scheduler_changed.set()
         return final
+
+    async def ready_operations_many(self, associations: tuple[SemanticAssociation, ...]) -> tuple[tuple[int, ...], ...]:
+        """Coalesce loop handoffs while checking each source against the live owner."""
+        self._check_submission()
+        if type(associations) is not tuple:
+            reject(EffectCode.INVALID_TYPE)
+        return tuple([await self.ready_operations(association) for association in associations])
+
+    async def enter_operations(
+        self, slot: int, associations: tuple[SemanticAssociation, ...]
+    ) -> tuple[AssociationInput | None, ...]:
+        self._check_submission()
+        if type(associations) is not tuple:
+            reject(EffectCode.INVALID_TYPE)
+        entered = []
+        for index, association in enumerate(associations):
+            if index and index % 64 == 0:
+                await asyncio.sleep(0)
+            entered.append(await self.enter_operation(slot, association))
+        return tuple(entered)
+
+    async def operation_results(
+        self, slot: int, associations: tuple[SemanticAssociation, ...]
+    ) -> tuple[AssociationResult | None, ...]:
+        self._check_submission()
+        if type(associations) is not tuple:
+            reject(EffectCode.INVALID_TYPE)
+        return tuple([await self.operation_result(slot, association) for association in associations])
+
+    async def complete_operations(
+        self, results: tuple[tuple[SemanticAssociation, LocalResult], ...]
+    ) -> tuple[RuntimeOutcome, ...]:
+        self._check_submission()
+        if type(results) is not tuple:
+            reject(EffectCode.INVALID_TYPE)
+        outcomes = []
+        for index, item in enumerate(results):
+            if index and index % 64 == 0:
+                await asyncio.sleep(0)
+            if type(item) is not tuple or len(item) != 2:
+                reject(EffectCode.INVALID_TYPE)
+            association, result = item
+            outcome = await self.complete_operation(association, result)
+            outcomes.append(outcome)
+            if type(result) is LocalCompleted and (outcome.condition != "result" or outcome.category != "success"):
+                break
+        return tuple(outcomes)
 
     async def request(
         self,
@@ -598,7 +709,7 @@ class _DelegatedOwner(PrivateValue):
             borrow.expired = True
 
     def _satisfied(self, slot: int, outcomes: frozenset[str]) -> bool:
-        source = self.runtime.frame.invocation_source or self.runtime.frame.sources[self._source_job().scope]
+        source = self.runtime.frame.invocation_source or self.runtime.frame.occurrence(self._source_job().scope)
         key = source.keys[slot]
         return any(
             entry.activation == key and entry.status == "success" and entry.outcome in outcomes
@@ -636,7 +747,7 @@ class _DelegatedOwner(PrivateValue):
         results: tuple[AssociationResult, ...] = ()
         try:
             request = await self._request(descriptor.request_slot, "initial", None, None, chain)
-            source = self.runtime.frame.invocation_source or self.runtime.frame.sources[self._source_job().scope]
+            source = self.runtime.frame.invocation_source or self.runtime.frame.occurrence(self._source_job().scope)
             key = source.keys[descriptor.request_slot]
             entry = next(item for item in source.state.entries if item.activation == key)
             if entry.status == "success":
@@ -698,7 +809,7 @@ class _DelegatedOwner(PrivateValue):
         source = (
             shared
             if shared is not None and slot in shared.keys
-            else runtime.frame.sources[self._source_job(association).scope]
+            else runtime.frame.occurrence(self._source_job(association).scope)
         )
         key = source.keys[slot]
         entry = next(item for item in source.state.entries if item.activation == key)
@@ -854,7 +965,9 @@ class _DelegatedOwner(PrivateValue):
     def close(self) -> frozenset[SemanticAssociation]:
         self.closed = True
         incomplete: set[SemanticAssociation] = set()
-        targets = {job.scope for job in self.jobs.values()}
+        targets: set[DatumId | InvocationId] = {job.scope for job in self.jobs.values()}
+        if self.invocation_job is not None:
+            targets.add(self.invocation_job.scope)
         for operation in self.runtime.operations.values():
             if operation.policy.submission_owner != self.policy.node or operation.scope not in targets:
                 continue
@@ -904,8 +1017,12 @@ class _DelegatedOwner(PrivateValue):
                     )
         source = self.runtime.frame.invocation_source
         if source is not None:
+            owned_slots = set(self.contract.owned_slots)
             for entry in tuple(source.state.entries):
-                if entry.status in {"ready", "unstarted"}:
+                if entry.status in {"ready", "unstarted"} and (
+                    self.runtime.policies[entry.template].submission_owner == self.policy.node
+                    or any(source.keys.get(slot) == entry.activation for slot in owned_slots)
+                ):
                     incomplete.update(self.jobs)
                     source.state = advance_activation(
                         state=source.state, event=CloseUnstarted(activation=entry.activation, category="blocked")
@@ -952,13 +1069,21 @@ class _DelegatedOwner(PrivateValue):
             return self._failure("cancel_after_start")
         if type(result) is LocalFailure:
             return self._failure("failure", inspect_failure(result.failure))
-        from anonymizer.engine.detection._frame_publication import InvocationFrame
+        from anonymizer.engine.detection._frame_publication import AggregateFramePublication, InvocationFrame
 
         if (
             self.contract.mode == "opaque"
             and self.invocation_job is not None
             and type(getattr(result, "frame", None)) is InvocationFrame
         ):
+            source = runtime.frame.invocation_source
+            if source is None or any(
+                (policy := runtime.policies.get(entry.template)) is not None
+                and policy.submission_owner == self.policy.node
+                and entry.status != "success"
+                for entry in source.state.entries
+            ):
+                return self._failure("failure", "implementation_exception")
             accepted = _accept_invocation_frame(result)
             if accepted is None:
                 return self._failure("failure", "malformed_response")
@@ -1000,7 +1125,28 @@ class _DelegatedOwner(PrivateValue):
                 ):
                     return self._failure("failure", "malformed_response")
         if any(policy.submission_owner == self.policy.node for policy in runtime.policies.values()):
-            failed_sources = failed_sources | incomplete
+            containers = frozenset(
+                node.id
+                for body in runtime.prepared.workflow.bodies()
+                for node in body.operations
+                if isinstance(node, SubgraphNode)
+            )
+            if any(
+                entry.template not in runtime.policies and entry.template not in containers
+                for job in self.jobs.values()
+                for entry in runtime.frame.sources[job.scope].state.entries
+            ):
+                return self._failure("failure", "malformed_response")
+            semantic_incomplete = frozenset(
+                job.association
+                for job in self.jobs.values()
+                if any(
+                    runtime.policies[entry.template].submission_owner == self.policy.node and entry.status != "success"
+                    for entry in runtime.frame.sources[job.scope].state.entries
+                    if entry.template not in containers
+                )
+            )
+            failed_sources = failed_sources | (incomplete if self.contract.mode == "opaque" else semantic_incomplete)
         successful = tuple(
             item
             for item in result.results
@@ -1037,11 +1183,44 @@ class _DelegatedOwner(PrivateValue):
                 ):
                     return self._failure("failure", "implementation_exception")
         frame = getattr(result, "frame", False)
+        if type(frame) is InvocationFrame:
+            if (
+                self.contract.mode != "opaque"
+                or runtime.prepared.configuration.purpose != "execution_only"
+                or self.policy.implementations[0].capability.operation.outputs
+                or any(item.outputs for item in result.results)
+                or {item.association for item in result.results} != {item.association for item in successful}
+                or result.assessments
+            ):
+                return self._failure("failure", "malformed_response")
+            # Source closures were validated above; the frame remains aggregate and nonqualifying.
+            accepted = _accept_invocation_frame(LocalCompleted(results=(), frame=frame))
+            if accepted is None:
+                return self._failure("failure", "malformed_response")
+            runtime.frame.publications.append(
+                AggregateFramePublication(
+                    accepted,
+                    frozenset(
+                        operation.activation
+                        for operation in runtime.operations.values()
+                        if (
+                            operation.policy.submission_owner == self.policy.node
+                            or operation.policy.node == self.policy.node
+                        )
+                        and operation.scope in {job.scope for job in self.jobs.values()}
+                    ),
+                )
+            )
+            frame = None
         if frame is not None:
             from anonymizer.engine.detection._frame_publication import FramePublication
 
             frame_results = successful
-            if any(policy.submission_owner == self.policy.node for policy in runtime.policies.values()):
+            if (
+                self.contract.mode == "opaque"
+                and not any(item.outputs for item in frame_results)
+                and any(policy.submission_owner == self.policy.node for policy in runtime.policies.values())
+            ):
                 from anonymizer.engine.graph_sdk._execution_publication import _final_outputs
 
                 targets = {self.jobs[cast(SemanticAssociation, item.association)].scope for item in successful}
@@ -1064,7 +1243,7 @@ class _DelegatedOwner(PrivateValue):
                     )
                     if runtime.policies[entry.template].submission_owner != self.policy.node:
                         return self._failure("failure", "malformed_response")
-                    accepted = runtime._operation_result(item.target, producer.activation, port=producer.port)
+                    accepted = runtime._operation_result(item.target, producer.activation)
                     if accepted is None:
                         return self._failure("failure", "malformed_response")
                     semantic_results.append(accepted)

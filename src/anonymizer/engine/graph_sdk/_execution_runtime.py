@@ -101,6 +101,7 @@ from anonymizer.graph._values import (
 )
 from anonymizer.graph.activation import (
     ActivationEntry,
+    ActivationState,
     CloseUnstarted,
     ObserveTerminal,
     Start,
@@ -214,8 +215,8 @@ class _InvocationRuntime:
         if operation:
             self._operation_spans[activation] = _Span("operation", session=span.session, parent=span.ordinal)
 
-    def _close_observed_activations(self) -> None:
-        for state in self.frame.all_states:
+    def _close_observed_activations(self, changed: ActivationState | None = None) -> None:
+        for state in self.frame.all_states if changed is None else (changed,):
             for entry in state.entries:
                 span = self._activation_spans.get(entry.activation)
                 if (
@@ -633,7 +634,7 @@ class _InvocationRuntime:
             span = self._operation_spans[job.activation]
             span.outcome = mapping.category
             span.finish()
-            self._close_observed_activations()
+            self._close_observed_activations(source.state)
             return mapping
         job = cast(_OperationJob[DatumId], job)
         accepted = mapping.condition == "result"
@@ -708,7 +709,7 @@ class _InvocationRuntime:
             except BaseException:
                 span.reasons = span.reasons | frozenset[ObservationReason]({"internal_failure"})
         span.finish()
-        self._close_observed_activations()
+        self._close_observed_activations(self.frame.occurrence(job.scope).state)
         if mapping.category == "blocked" and mapping.condition == "artifact_limit_exhausted":
             self.blocked_reasons[job.activation] = mapping.condition
         if mapping.condition == "artifact_limit_exhausted" or accepted and mapping.condition != "result":

@@ -43,7 +43,11 @@ from anonymizer.graph.workflow import (
 if TYPE_CHECKING:
     import pandas as pd
 
-    from anonymizer.engine.detection._frame_publication import FramePublication, InvocationFrame
+    from anonymizer.engine.detection._frame_publication import (
+        AggregateFramePublication,
+        FramePublication,
+        InvocationFrame,
+    )
 
 
 @dataclass(slots=True)
@@ -72,7 +76,7 @@ class _InvocationFrame:
         self.invocation_workflow = invocation_workflow
         self.invocation_source: _SourceOccurrence | None = None
         self.sources: dict[DatumId, _SourceOccurrence] = {}
-        self.publications: list[FramePublication | InvocationFrame] = []
+        self.publications: list[AggregateFramePublication | FramePublication | InvocationFrame] = []
         self._initialize_activations()
         self._initialize_root_inputs()
 
@@ -230,6 +234,12 @@ def _invocation_workflows(
             or any(node.operation.inputs or node.operation.outputs for node in raw.operations)
             or any(
                 policy.kind != "local"
+                and not (
+                    policy.submission_owner in {owner.node for owner in owners}
+                    and all(item.capability.resource_lifetime == "stateless" for item in policy.implementations)
+                    and owners[0].delegated is not None
+                    and owners[0].delegated.mode == "opaque"
+                )
                 for policy in policies
                 if policy.node not in shared | {owner.node for owner in owners}
             )

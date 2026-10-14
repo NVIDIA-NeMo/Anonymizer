@@ -6,9 +6,9 @@ from __future__ import annotations
 import json
 import logging
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, ClassVar, cast
+from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 import pandas as pd
 from data_designer.config.column_configs import LLMStructuredColumnConfig, LLMTextColumnConfig
@@ -23,8 +23,6 @@ from anonymizer.config.rewrite import PrivacyGoal
 from anonymizer.engine.constants import (
     COL_AUGMENTED_ENTITIES,
     COL_DETECTED_ENTITIES,
-    COL_ENTITIES_BY_VALUE,
-    COL_FINAL_ENTITIES,
     COL_INITIAL_TAGGED_TEXT,
     COL_LATENT_ENTITIES,
     COL_MERGED_ENTITIES,
@@ -68,6 +66,7 @@ from anonymizer.interface.errors import AnonymizerWorkflowError
 from anonymizer.measurement import stage_timer
 
 if TYPE_CHECKING:
+    from anonymizer.engine.graph_sdk.executor import ExecutionResult
     from anonymizer.engine.ndd._graph_requests import NddRequestBridge
     from anonymizer.engine.ndd._source_frame import WorkflowSourceFrame
 
@@ -98,6 +97,7 @@ class EntityDetectionResult:
     dataframe: pd.DataFrame
     failed_records: list[FailedRecord]
     source_positions: tuple[int, ...] = ()
+    _execution: ExecutionResult | None = field(default=None, init=False, repr=False, compare=False)
 
 
 class EntityDetectionWorkflow:
@@ -386,6 +386,7 @@ class EntityDetectionWorkflow:
         data_summary: str | None = None,
         preview_num_records: int | None = None,
         _resolved_label_config: ResolvedEntityLabelConfig | None = None,
+        source_frame: WorkflowSourceFrame | None = None,
     ) -> EntityDetectionResult:
         """Detect latent/inferred entities that could enable re-identification.
 
@@ -422,6 +423,7 @@ class EntityDetectionWorkflow:
             ],
             workflow_name="latent-entity-detection",
             preview_num_records=preview_num_records,
+            **({"source_frame": source_frame} if source_frame is not None else {}),
         )
         latent_df = latent_result.dataframe.copy()
         if COL_LATENT_ENTITIES in latent_df.columns:
@@ -461,88 +463,33 @@ class EntityDetectionWorkflow:
         ``identify_latent_entities`` if ``tag_latent_entities`` is True
         (rewrite mode). Merges failures from both stages.
         """
+        from anonymizer.engine.detection._semantic_detection import run_detection
+
+        arguments: dict[str, Any] = {
+            "model_configs": model_configs,
+            "selected_models": selected_models,
+            "gliner_detection_threshold": gliner_detection_threshold,
+            "validation_max_entities_per_call": validation_max_entities_per_call,
+            "validation_excerpt_window_chars": validation_excerpt_window_chars,
+            "validation_single_chunk_full_text": validation_single_chunk_full_text,
+            "entity_labels": entity_labels,
+            "excluded_entity_labels": excluded_entity_labels,
+            "entity_label_examples": entity_label_examples,
+            "privacy_goal": privacy_goal,
+            "data_summary": data_summary,
+            "tag_latent_entities": tag_latent_entities,
+            "compute_grouped_entities": compute_grouped_entities,
+            "preview_num_records": preview_num_records,
+            "source_frame": source_frame,
+            "request_bridge": request_bridge,
+        }
         with stage_timer(
             "EntityDetectionWorkflow.run",
             input_row_count=len(dataframe),
             tag_latent_entities=tag_latent_entities,
         ) as measurement:
-            if tag_latent_entities and privacy_goal is None:
-                raise ValueError("privacy_goal is required when tag_latent_entities=True (rewrite mode)")
-
-            if request_bridge is not None and (source_frame is None or tag_latent_entities):
-                raise ValueError("Graph request binding requires a source frame and detection-only workflow")
-            compute_grouped = True if compute_grouped_entities is None else compute_grouped_entities
-            label_config = resolve_entity_label_config(
-                entity_labels=entity_labels,
-                excluded_entity_labels=excluded_entity_labels,
-                entity_label_examples=entity_label_examples,
-            )
-            detected_result = self.detect_and_validate_entities(
-                dataframe,
-                model_configs=model_configs,
-                selected_models=selected_models,
-                gliner_detection_threshold=gliner_detection_threshold,
-                validation_max_entities_per_call=validation_max_entities_per_call,
-                validation_excerpt_window_chars=validation_excerpt_window_chars,
-                validation_single_chunk_full_text=validation_single_chunk_full_text,
-                entity_labels=entity_labels,
-                excluded_entity_labels=excluded_entity_labels,
-                entity_label_examples=entity_label_examples,
-                data_summary=data_summary,
-                preview_num_records=preview_num_records,
-                _resolved_label_config=label_config,
-                **({"source_frame": source_frame} if source_frame is not None else {}),
-                **({"request_bridge": request_bridge} if request_bridge is not None else {}),
-            )
-
-            if tag_latent_entities:
-                latent_result = self.identify_latent_entities(
-                    detected_result.dataframe,
-                    model_configs=model_configs,
-                    selected_models=selected_models,
-                    gliner_detection_threshold=gliner_detection_threshold,
-                    entity_labels=entity_labels,
-                    excluded_entity_labels=excluded_entity_labels,
-                    entity_label_examples=entity_label_examples,
-                    privacy_goal=privacy_goal,
-                    data_summary=data_summary,
-                    preview_num_records=preview_num_records,
-                    _resolved_label_config=label_config,
-                )
-                final_df = latent_result.dataframe.copy()
-                final_failures = [*detected_result.failed_records, *latent_result.failed_records]
-                final_positions = tuple(
-                    detected_result.source_positions[index] for index in latent_result.source_positions
-                )
-            else:
-                final_df = detected_result.dataframe.copy()
-                final_failures = detected_result.failed_records
-                final_positions = detected_result.source_positions
-
-            # When entity_labels is explicitly provided (even if it matches DEFAULT_ENTITY_LABELS),
-            # the augmenter is strict and out-of-scope labels are filtered.
-            # entity_labels=None is the only way to get permissive augmentation.
-            if COL_DETECTED_ENTITIES in final_df.columns:
-                allowed = set(label_config.labels) if label_config.strict_labels else None
-                excluded_entity_labels_set = set(excluded_entity_labels) if excluded_entity_labels else None
-                final_df[COL_FINAL_ENTITIES] = final_df[COL_DETECTED_ENTITIES].apply(
-                    lambda raw: _materialize_final_entities(
-                        raw,
-                        allowed_labels=allowed,
-                        excluded_entity_labels=excluded_entity_labels_set,
-                    )
-                )
-                if compute_grouped:
-                    final_df[COL_ENTITIES_BY_VALUE] = final_df[COL_FINAL_ENTITIES].apply(_build_entities_by_value)
-            result = EntityDetectionResult(
-                dataframe=final_df,
-                failed_records=final_failures,
-                source_positions=final_positions,
-            )
-            measurement.update(
-                output_row_count=len(result.dataframe),
-                failed_record_count=len(result.failed_records),
-            )
+            result = run_detection(self, dataframe, arguments)
+            measurement.update(output_row_count=len(result.dataframe), failed_record_count=len(result.failed_records))
             return result
 
     def _inject_detector_params(

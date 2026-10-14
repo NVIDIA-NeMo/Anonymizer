@@ -101,6 +101,7 @@ class RewriteEvaluationBinding:
     combined: bool = False
     opaque: bool = False
     observed_columns: bool = False
+    prefix_is_child: bool = False
     iteration: int = 0
     publication_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
@@ -555,7 +556,16 @@ class RewriteEvaluationBinding:
             return row
         if not self.iteration and name in ({"metrics"} if self.opaque else {"quality", "privacy"}):
             async with self.publication_lock:
-                prefix = await self._call(self.requests.enter_operation(self.slots["prefix"], association))
+                completed_prefix = (
+                    await self._call(self.requests.operation_result(self.slots["prefix"], association))
+                    if self.prefix_is_child
+                    else None
+                )
+                prefix = (
+                    None
+                    if completed_prefix is not None
+                    else await self._call(self.requests.enter_operation(self.slots["prefix"], association))
+                )
                 if prefix is not None:
                     await self.after(self.state.rewritten_text, association, row, prefix=True)
         bound = await self._call(self.requests.enter_operation(self.slots[name], association))
@@ -692,6 +702,12 @@ class RewriteEvaluationBinding:
         else:
             return
         if name not in self.slots:
+            return
+        if (
+            name == "prefix"
+            and self.prefix_is_child
+            and await self._call(self.requests.operation_result(self.slots[name], association)) is not None
+        ):
             return
         bound = await self._call(self.requests.enter_operation(self.slots[name], association))
         if bound is None:

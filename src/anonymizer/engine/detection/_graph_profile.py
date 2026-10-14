@@ -31,6 +31,7 @@ from anonymizer.engine.detection._graph_invocation import DetectionRedactInvocat
 from anonymizer.engine.detection.artifacts import ENTITY_SPANS_TYPE
 from anonymizer.engine.detection.detection_workflow import (
     _DEFAULT_VALIDATION_MAX_ENTITIES_PER_CALL,
+    _DETECTION_RUN,
     EntityDetectionWorkflow,
 )
 from anonymizer.engine.graph_sdk._artifact_shape import content_bytes
@@ -270,6 +271,7 @@ def run_detection_redact(
                     detection_options,
                     "redacted",
                     "ok",
+                    handoff=handoff if getattr(detection.run, "__func__", None) is not _DETECTION_RUN else None,
                 ),
                 pool,
             )
@@ -286,7 +288,11 @@ def run_detection_redact(
         )
         return project_detection_redact(result)
 
-    return _run_sync_profile(operation, caller_callbacks=replacement is not None)
+    return _run_sync_profile(
+        operation,
+        caller_callbacks=replacement is not None
+        or (opaque and getattr(detection.run, "__func__", None) is not _DETECTION_RUN),
+    )
 
 
 def _run_sync_profile(
@@ -447,7 +453,7 @@ async def execute_detection_redact(
             max_local_in_flight=max(1, size + 1),
             max_remote_outstanding=max(1, size * count + 2),
             # Each source retains one root, three producer outputs and one assessment.
-            max_runtime_artifacts=5 * size,
+            max_runtime_artifacts=8 * size,
             max_runtime_artifact_bytes=None,
             max_collection_items=max(
                 validation_chunks, max((len(text) for text in selected_source[COL_TEXT]), default=0)
@@ -692,10 +698,36 @@ async def execute_detection_redact(
         )
         for node, spec in zip(ids, specs, strict=True)
     )
+    detection_ids = {}
+    detection_capabilities, detection_policies = (), ()
+    expected_detection_adapter = detection._adapter
+    expected_detection_lowerings = (detection.detect_and_validate_entities, detection.identify_latent_entities)
+    detection_configuration_snapshot = None
+    from anonymizer.engine.detection._semantic_detection import detection_configuration, extend_detection_graph
+
+    detection_configuration_snapshot = detection_configuration(
+        {"model_configs": model_configs, "selected_models": selected_models, **detection_options}
+    )
+    if targets:
+        workflow, detection_capabilities, detection_policies, detection_ids = extend_detection_graph(
+            workflow,
+            owner,
+            FrozenConfig(fields=()),
+            latent=False,
+            physical_sink=complete,
+        )
+    else:
+        detection_ids = {"core": owner, "final": complete}
+    all_capabilities = (*capabilities, *detection_capabilities)
+    all_ids = (*ids, *(node for node in detection_ids.values() if node not in ids))
     prepared = prepare(
         data=data,
         workflow=workflow,
-        activation_limits=ActivationLimits(max_events=3 * len(nodes), max_entries=len(nodes), max_parent_depth=1),
+        activation_limits=ActivationLimits(
+            max_events=3 * (len(nodes) + len(detection_ids)),
+            max_entries=len(nodes) + len(detection_ids),
+            max_parent_depth=1,
+        ),
         bound_inputs=tuple(
             BoundInput(target=target, source=target, port="source", artifact_type=text_type) for target in targets
         ),
@@ -708,18 +740,18 @@ async def execute_detection_redact(
         state=StateRevisionView(revisions=frozenset()),
         selections=tuple(
             ImplementationSelection(node=node, implementation=cap.implementation, configuration=cap.configuration)
-            for node, cap in zip(ids, capabilities, strict=True)
+            for node, cap in zip(all_ids, all_capabilities, strict=True)
         ),
-        capabilities=capabilities,
+        capabilities=all_capabilities,
         limits=PreparationLimits(
             max_bound_inputs=size,
             max_state_revisions=0,
-            max_selections=len(nodes),
+            max_selections=len(nodes) + len(detection_ids),
             max_config_depth=3,
             # Producer and assessor each add five atoms, counted in selection and capability.
-            max_config_atoms=2 * len(nodes) + 20,
-            max_total_activation_slots=max(size, 1) * len(nodes),
-            max_capabilities=len(nodes),
+            max_config_atoms=2 * len(nodes) + 20 + 20 * len(detection_ids),
+            max_total_activation_slots=max(size, 1) * (len(nodes) + len(detection_ids)),
+            max_capabilities=len(nodes) + len(detection_ids),
         ),
     )
     slots = {slot.template: slot.index for slot in prepared.reservation_recipe}
@@ -783,13 +815,15 @@ async def execute_detection_redact(
                 result_outcomes=frozenset(names),
                 runtime_outcomes=_runtime_rows(names, node not in locals_),
                 delegated=delegated,
+                submission_owner=owner if not targets and node == complete else None,
             )
         )
+    policies.extend(detection_policies)
     admitted = admit_execution_plan(
         context=admit_context_plan(
             prepared=prepared, bound_context=None, adaptive_retrievals=(), context_capabilities=()
         ),
-        capabilities=capabilities,
+        capabilities=all_capabilities,
         policies=tuple(policies),
         decisions=(),
         assessment_productions=()
@@ -825,8 +859,8 @@ async def execute_detection_redact(
             max_finding_code_bytes=64,
             max_absence_queries=0,
             max_assessment_facts=size,
-            max_port_facts=size * 8,
-            max_provenance_edges=size * 8,
+            max_port_facts=size * 24,
+            max_provenance_edges=size * 32,
         ),
     )
     loop = ensure_async_engine_loop()
@@ -876,6 +910,11 @@ async def execute_detection_redact(
             detection_options,
             "redacted",
             "ok",
+            semantic_slots={name: slots[node] for name, node in detection_ids.items()},
+            semantic_loop=asyncio.get_running_loop(),
+            semantic_configuration=detection_configuration_snapshot,
+            semantic_adapter=expected_detection_adapter,
+            semantic_lowerings=expected_detection_lowerings,
         )
         worker = WorkerDelegatedSubmitter(
             callback=consumer._run,
@@ -889,8 +928,8 @@ async def execute_detection_redact(
                 implementation=cap.implementation,
                 operation=cap.operation,
                 configuration=cap.configuration,
-                local=(RedactAssessment(configuration=cap.configuration) if targets else _ProfileLocal("ok"))
-                if node == complete
+                local=RedactAssessment(configuration=cap.configuration)
+                if node == complete and targets
                 else _ProfileLocal("async_required")
                 if node == probe
                 else None,
@@ -905,6 +944,21 @@ async def execute_detection_redact(
             for node, cap in zip(ids, capabilities, strict=True)
             if node != readiness
         )
+        handles = (
+            *handles,
+            *(
+                ImplementationHandle(
+                    implementation=cap.implementation,
+                    operation=cap.operation,
+                    configuration=cap.configuration,
+                    local=None,
+                    transport=None,
+                    delegated=None,
+                    resource=None,
+                )
+                for cap in detection_capabilities
+            ),
+        )
         services = ExecutionServices(
             handles=handles,
             context_resources=(),
@@ -912,7 +966,7 @@ async def execute_detection_redact(
             decision_limits=DecisionLimits(max_pending=0, max_lifetime_ns=0),
             clock=_Clock(),
         )
-        running = await start_execution(admitted=admitted, capabilities=capabilities, services=services)
+        running = await start_execution(admitted=admitted, capabilities=all_capabilities, services=services)
         handed_to_runtime = True
         return await _await_profile_execution(running)
     finally:
@@ -989,8 +1043,12 @@ def project_detection_redact(result: ExecutionResult) -> ReplacementResult:
         and type(result.frames[0]) is InvocationFrame
     ):
         frame = result.frames[0]
-        if result.invocation_state is None or any(
-            entry.status != "success" for entry in result.invocation_state.entries
+        if (
+            result.invocation_state is not None
+            and any(entry.status != "success" for entry in result.invocation_state.entries)
+        ) or (
+            result.invocation_state is None
+            and (not result.states or any(not state.complete for state in result.states) or result.final_outputs)
         ):
             raise AnonymizerWorkflowError("Opaque invocation did not complete")
         return ReplacementResult(

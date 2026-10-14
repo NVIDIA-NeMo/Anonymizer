@@ -214,6 +214,20 @@ def _resolve_availability(
             starter is not None and starter.status in _TERMINAL and all(item.status in _TERMINAL for item in iterations)
         ):
             impossible = True
+    if entry is None:
+        for choice in scope.choices:
+            branch = next((branch for branch in choice.branches if template in branch.members), None)
+            selector_seed = _reservation_for(reservations, choice.selector, context)
+            selector = entries.get(selector_seed.activation) if selector_seed is not None else None
+            if (
+                branch is not None
+                and selector is not None
+                and selector.status in _TERMINAL
+                and selector.outcome is not None
+                and selector.outcome not in branch.outcomes
+            ):
+                # Unselected work has no sequence obligation and produces no artifact.
+                return "ready" if output is None else "blocked"
     if entry is None or entry.status not in _TERMINAL:
         return "blocked" if impossible else "unstarted"
     if output is not None and not _produces(workflow, entry, output.port):

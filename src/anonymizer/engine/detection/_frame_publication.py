@@ -9,6 +9,7 @@ copies the frame structure and resolves transformed text from accepted artifacts
 
 from __future__ import annotations
 
+import json
 import math
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
@@ -21,7 +22,7 @@ from anonymizer.engine.detection.artifacts import EntitySpansValue
 from anonymizer.engine.graph_sdk.requests import AssociationResult, SemanticAssociation, TextArtifactValue
 from anonymizer.engine.ndd.adapter import FailedRecord
 from anonymizer.engine.rewrite.artifacts import RewriteCandidateValue
-from anonymizer.graph._values import ArtifactRef
+from anonymizer.graph._values import ActivationKey, ArtifactRef
 
 if TYPE_CHECKING:
     from anonymizer.engine.graph_sdk.executor import ExecutionPortFact, ExecutionResult
@@ -67,11 +68,16 @@ class PublishedFrame:
     _ports: tuple[str, ...]
     stages: FrameStages | None = None
     _observation_dtypes: tuple[tuple[str, np.dtype | pd.api.extensions.ExtensionDtype], ...] = ()
+    _json_columns: tuple[str, ...] = ()
+    _accepted_json_payloads: tuple[tuple[str, tuple[str, ...]], ...] = ()
     _accepted_observation_dtypes: tuple[tuple[str, np.dtype | pd.api.extensions.ExtensionDtype], ...] = field(
         init=False, repr=False, compare=False
     )
 
+    _accepted_json_columns: tuple[str, ...] = field(init=False, repr=False, compare=False)
+
     def __post_init__(self) -> None:
+        object.__setattr__(self, "_accepted_json_columns", self._json_columns)
         object.__setattr__(self, "_accepted_observation_dtypes", deepcopy(self._observation_dtypes))
 
     def project(self, result: ExecutionResult) -> pd.DataFrame:
@@ -116,15 +122,18 @@ class PublishedFrame:
             or not self._content.columns.equals(self._columns.drop(columns))
         ):
             raise ValueError("malformed retained frame columns")
+        if self._json_columns != self._accepted_json_columns:
+            raise ValueError("frame JSON projection differs from accepted output")
         if self._observation_dtypes != self._accepted_observation_dtypes:
             raise ValueError("frame presentation metadata differs from its accepted output")
         values = dict(result.artifacts)
+        ports_by_source = {}
+        for fact in result.ports:
+            ports_by_source.setdefault((fact.activation, fact.port), []).append(fact)
         projected = _copy_frame(self._content, self._opaque)
         for (column, references), port in zip(self._text, self._ports, strict=True):
             for source, reference in zip(self._sources, references, strict=True):
-                matches = [
-                    fact for fact in result.ports if fact.activation == source.task.activation and fact.port == port
-                ]
+                matches = ports_by_source.get((source.task.activation, port), ())
                 if (
                     len(matches) != 1
                     or matches[0].artifact != reference
@@ -144,6 +153,10 @@ class PublishedFrame:
                 for value in text
             ]
             dtype = dict(self._accepted_observation_dtypes).get(column)
+            if column in self._accepted_json_columns:
+                if tuple(observed) != dict(self._accepted_json_payloads).get(column):
+                    raise ValueError("JSON artifact differs from its accepted content")
+                observed = [json.loads(cast(str, value)) for value in observed]
             presented = pd.Series(observed, index=projected.index, dtype=dtype)
             if any(
                 type(value) is RewriteCandidateValue and RewriteCandidateValue.capture(cell) != value
@@ -176,6 +189,7 @@ class FramePublication:
     _opaque: tuple[object, ...]
     stages: FrameStages | None = None
     _observation_dtypes: tuple[tuple[str, np.dtype | pd.api.extensions.ExtensionDtype], ...] = ()
+    _json_columns: tuple[str, ...] = ()
 
     @classmethod
     def capture(
@@ -189,6 +203,7 @@ class FramePublication:
         span_ports: tuple[tuple[str, str, tuple[EntitySpansValue, ...]], ...] = (),
         observation_ports: tuple[tuple[str, str], ...] = (),
         stages: FrameStages | None = None,
+        json_ports: tuple[tuple[str, str], ...] = (),
     ) -> FramePublication:
         if (
             len(dataframe) != len(associations)
@@ -200,6 +215,9 @@ class FramePublication:
         text = (
             tuple((column, port, tuple(dataframe[column])) for column, port in text_ports)
             + span_ports
+            + tuple(
+                (column, port, tuple(json.dumps(value) for value in dataframe[column])) for column, port in json_ports
+            )
             + tuple(
                 (column, port, tuple(RewriteCandidateValue.capture(value) for value in dataframe[column]))
                 for column, port in observation_ports
@@ -220,7 +238,8 @@ class FramePublication:
             failed_records,
             opaque,
             stages.snapshot(opaque) if stages is not None else None,
-            tuple((column, dataframe[column].dtype) for column, _ in observation_ports),
+            tuple((column, dataframe[column].dtype) for column, _ in (*text_ports, *observation_ports)),
+            tuple(column for column, _ in json_ports),
         )
 
     def accept(self, results: tuple[AssociationResult, ...], *, opaque: tuple[object, ...]) -> FramePublication | None:
@@ -279,20 +298,20 @@ class FramePublication:
             opaque,
             self.stages.snapshot(opaque) if self.stages is not None else None,
             self._observation_dtypes,
+            self._json_columns,
         )
 
     def bind(self, ports: tuple[ExecutionPortFact, ...]) -> PublishedFrame | None:
         if not self._text:
             return None
+        ports_by_source = {}
+        for item in ports:
+            ports_by_source.setdefault((item.activation, item.port), []).append(item.artifact)
         text = []
         for column, port, _ in self._text:
             references = []
             for association in self.associations:
-                matches = [
-                    item.artifact
-                    for item in ports
-                    if item.activation == association.task.activation and item.port == port
-                ]
+                matches = ports_by_source.get((association.task.activation, port), ())
                 if len(matches) != 1:
                     return None
                 references.append(matches[0])
@@ -307,6 +326,12 @@ class FramePublication:
             tuple(port for _, port, _ in self._text),
             self.stages,
             self._observation_dtypes,
+            self._json_columns,
+            tuple(
+                (column, cast(tuple[str, ...], values))
+                for column, _, values in self._text
+                if column in self._json_columns
+            ),
         )
 
 
@@ -379,3 +404,14 @@ class InvocationFrame:
             raise ValueError("opaque frame cannot establish protection")
         self._validate()
         return self.dataframe.copy()
+
+
+@dataclass(frozen=True, slots=True)
+class AggregateFramePublication:
+    """Keep an opaque callback frame separate from its owner's internal observations."""
+
+    frame: InvocationFrame
+    internal_activations: frozenset[ActivationKey]
+
+    def bind(self, ports: tuple[ExecutionPortFact, ...]) -> InvocationFrame:
+        return self.frame.bind(tuple(port for port in ports if port.activation not in self.internal_activations))

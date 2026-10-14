@@ -52,7 +52,15 @@ def test_public_local_replacement_keeps_authenticated_frame(
     )
     assert strategy.format_template == "CHANGED"
     configured = [cap.configuration for cap in result._execution._execution.capabilities if cap.configuration.fields]
-    assert len(configured) == 1 and local_strategy(configured[0]) == original
+    local = [configuration for configuration in configured if configuration.fields[0].name in {"hash", "annotate"}]
+    detection = [configuration for configuration in configured if configuration.fields[0].name == "detection"]
+    assert len(configured) == 4 and len(local) == 1 and local_strategy(local[0]) == original
+    assert len(detection) == 3 and detection[0] == detection[1] == detection[2]
+    assert all(tuple(field.name for field in configuration.fields) == ("detection",) for configuration in detection)
+    admitted_detection = json.loads(detection[0].fields[0].value.value)
+    assert admitted_detection["tag_latent_entities"] is False
+    assert admitted_detection["gliner_detection_threshold"] == 0.3
+    assert not {"format_template", "normalize_label", "algorithm", "digest_length"} & admitted_detection.keys()
     assert result.dataframe.text_replaced.tolist() == [expected]
     assert result.trace_dataframe.extra.tolist() == [17]
     assert isinstance(result._execution.frames[0], PublishedFrame)
