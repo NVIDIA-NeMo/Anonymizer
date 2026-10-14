@@ -254,7 +254,7 @@ class MapItemPort(_PrivateValue):
             _reject(ValidationCode.INVALID_TYPE)
         return replace(self, path=(container, *_visits(self.path)))
 
-    def validate_in(self, *, workflow: WorkflowId, nodes: tuple[Node, ...]) -> None:
+    def validate_in(self, *, workflow: WorkflowId, nodes: tuple[Operation, ...]) -> None:
         """Validate the static route; dynamic admission binds its map declaration."""
         owner = workflow
         current = {node.id: node for node in _visits(nodes)}
@@ -267,7 +267,7 @@ class MapItemPort(_PrivateValue):
             if not isinstance(node, SubgraphNode):
                 _reject(ValidationCode.UNSUPPORTED)
             owner = node.body.workflow
-            current = {child.id: child for child in _visits(node.body.nodes)}
+            current = {child.id: child for child in _visits(node.body.operations)}
         if self.expander.workflow != owner:
             _reject(ValidationCode.FOREIGN_OWNER)
         expander = current.get(self.expander)
@@ -464,18 +464,18 @@ class OperationNode(_PrivateValue):
 class SubgraphNode(_PrivateValue):
     id: NodeId
     operation: OperationSpec
-    body: AdmittedWorkflow
+    body: Graph
 
     def __post_init__(self) -> None:
         if (
             not isinstance(self.id, NodeId)
             or not isinstance(self.operation, OperationSpec)
-            or not isinstance(self.body, AdmittedWorkflow)
+            or not isinstance(self.body, Graph)
         ):
             _reject(ValidationCode.INVALID_TYPE)
 
 
-Node: TypeAlias = OperationNode | SubgraphNode
+Operation: TypeAlias = OperationNode | SubgraphNode
 
 
 @dataclass(frozen=True, slots=True, kw_only=True, repr=False)
@@ -715,31 +715,7 @@ class LoopDecl(_PrivateValue):
             _reject(ValidationCode.OVERLAP)
 
 
-@dataclass(frozen=True, slots=True, kw_only=True, repr=False, eq=False)
-class DynamicScope(_PrivateValue):
-    workflow: AdmittedWorkflow
-    maps: tuple[MapDecl, ...]
-    joins: tuple[KeyedJoinDecl, ...]
-    loops: tuple[LoopDecl, ...]
-
-    def __post_init__(self) -> None:
-        if not isinstance(self.workflow, AdmittedWorkflow):
-            _reject(ValidationCode.INVALID_TYPE)
-        _tuple_of(self.maps, MapDecl)
-        _tuple_of(self.joins, KeyedJoinDecl)
-        _tuple_of(self.loops, LoopDecl)
-
-    def __eq__(self, other: object) -> bool:
-        return (
-            isinstance(other, DynamicScope)
-            and self.workflow == other.workflow
-            and frozenset(self.maps) == frozenset(other.maps)
-            and frozenset(self.joins) == frozenset(other.joins)
-            and frozenset(self.loops) == frozenset(other.loops)
-        )
-
-    def __hash__(self) -> int:
-        return hash((self.workflow, frozenset(self.maps), frozenset(self.joins), frozenset(self.loops)))
+Node: TypeAlias = Operation | ChoiceDecl | MapDecl | LoopDecl | KeyedJoinDecl
 
 
 @dataclass(frozen=True, slots=True, kw_only=True, repr=False)
@@ -839,22 +815,59 @@ class WorkflowLimits(_PrivateValue):
 
 
 @dataclass(frozen=True, slots=True, kw_only=True, repr=False, init=False, eq=False)
-class AdmittedWorkflow(_PrivateValue):
-    """Immutable static workflow produced only by successful admission."""
+class Graph(_PrivateValue):
+    """Immutable graph body containing operations and finite control nodes."""
 
     workflow: WorkflowId
     interface: OperationSpec
-    nodes: frozenset[Node]
+    nodes: tuple[Node, ...]
     input_bindings: frozenset[InputBinding]
     output_bindings: frozenset[OutputBinding]
     outcome_bindings: frozenset[OutcomeBinding]
     sequence: frozenset[SequenceEdge]
-    choices: frozenset[ChoiceDecl]
     protection_requirements: frozenset[ProtectionRequirement]
     protection_eligible_outcomes: frozenset[str]
     unmet_protection: frozenset[ProtectionRequirement]
     limits: WorkflowLimits
     expanded_node_count: int
+    dynamic_limits: DynamicLimits
+    activation_upper_bound: int
+    dynamic_depth: int
+
+    @property
+    def operations(self) -> tuple[Operation, ...]:
+        """Executable nodes; control nodes remain in the same graph body."""
+        return tuple(node for node in self.nodes if isinstance(node, (OperationNode, SubgraphNode)))
+
+    @property
+    def choices(self) -> frozenset[ChoiceDecl]:
+        return frozenset(node for node in self.nodes if isinstance(node, ChoiceDecl))
+
+    @property
+    def maps(self) -> tuple[MapDecl, ...]:
+        return tuple(node for node in self.nodes if isinstance(node, MapDecl))
+
+    @property
+    def loops(self) -> tuple[LoopDecl, ...]:
+        return tuple(node for node in self.nodes if isinstance(node, LoopDecl))
+
+    @property
+    def joins(self) -> tuple[KeyedJoinDecl, ...]:
+        return tuple(node for node in self.nodes if isinstance(node, KeyedJoinDecl))
+
+    def bodies(self) -> tuple[Graph, ...]:
+        """Return the graph topology, visiting each shared body once."""
+        pending: list[Graph] = [self]
+        seen: set[int] = set()
+        bodies: list[Graph] = []
+        while pending:
+            current = _visited_pop(pending)
+            if id(current) in seen:
+                continue
+            seen.add(id(current))
+            bodies.append(current)
+            pending.extend(node.body for node in _visits(current.operations) if isinstance(node, SubgraphNode))
+        return tuple(bodies)
 
     @property
     def map_item_ports(self) -> frozenset[MapItemPort]:
@@ -873,17 +886,17 @@ class AdmittedWorkflow(_PrivateValue):
         _key: object,
         workflow: WorkflowId,
         interface: OperationSpec,
-        nodes: frozenset[Node],
+        nodes: tuple[Node, ...],
         input_bindings: frozenset[InputBinding],
         output_bindings: frozenset[OutputBinding],
         outcome_bindings: frozenset[OutcomeBinding],
         sequence: frozenset[SequenceEdge],
-        choices: frozenset[ChoiceDecl],
         protection_requirements: frozenset[ProtectionRequirement],
         protection_eligible_outcomes: frozenset[str],
         unmet_protection: frozenset[ProtectionRequirement],
         limits: WorkflowLimits,
         expanded_node_count: int,
+        dynamic_limits: DynamicLimits,
     ) -> None:
         if _key is not _ADMISSION_KEY:
             raise TypeError("admitted workflows must be created by admission")
@@ -891,12 +904,26 @@ class AdmittedWorkflow(_PrivateValue):
             if name not in {"self", "_key"}:
                 object.__setattr__(self, name, value)
 
+        children = tuple(node.body for node in self.operations if isinstance(node, SubgraphNode))
+        factors = {item.member: item.max_children for item in self.maps}
+        factors.update({item.member: item.max_iterations for item in self.loops})
+        object.__setattr__(
+            self,
+            "activation_upper_bound",
+            sum(
+                factors.get(node.id, 1)
+                * (1 + (node.body.activation_upper_bound if isinstance(node, SubgraphNode) else 0))
+                for node in self.operations
+            ),
+        )
+        object.__setattr__(self, "dynamic_depth", 1 + max((child.dynamic_depth for child in children), default=0))
+
     def __eq__(self, other: object) -> bool:
         if self is other:
             return True
-        if not isinstance(other, AdmittedWorkflow):
+        if not isinstance(other, Graph):
             return False
-        pending: list[tuple[AdmittedWorkflow, AdmittedWorkflow]] = [(self, other)]
+        pending: list[tuple[Graph, Graph]] = [(self, other)]
         seen: set[tuple[int, int]] = set()
         while pending:
             left, right = _visited_pop(pending)
@@ -906,8 +933,8 @@ class AdmittedWorkflow(_PrivateValue):
             seen.add(pair)
             if not _equal(_workflow_local_state(left), _workflow_local_state(right)):
                 return False
-            left_nodes = {node.id: node for node in _visits(left.nodes)}
-            right_nodes = {node.id: node for node in _visits(right.nodes)}
+            left_nodes = {node.id: node for node in _visits(left.operations)}
+            right_nodes = {node.id: node for node in _visits(right.operations)}
             if not _equal(left_nodes.keys(), right_nodes.keys()):
                 return False
             for node_id, left_node in _visits(left_nodes.items()):
@@ -920,14 +947,14 @@ class AdmittedWorkflow(_PrivateValue):
         return True
 
     def __hash__(self) -> int:
-        pending: list[tuple[AdmittedWorkflow, bool]] = [(self, False)]
+        pending: list[tuple[Graph, bool]] = [(self, False)]
         hashes: dict[int, int] = {}
         while pending:
             workflow, children_visited = _visited_pop(pending)
             key = id(workflow)
             if key in hashes:
                 continue
-            children = [node.body for node in _visits(workflow.nodes) if isinstance(node, SubgraphNode)]
+            children = [node.body for node in _visits(workflow.operations) if isinstance(node, SubgraphNode)]
             if not children_visited:
                 pending.append((workflow, True))
                 pending.extend((child, False) for child in _visits(children) if id(child) not in hashes)
@@ -936,22 +963,10 @@ class AdmittedWorkflow(_PrivateValue):
                 hash((type(node), node.id, node.operation, hashes[id(node.body)]))
                 if isinstance(node, SubgraphNode)
                 else hash((type(node), node.id, node.operation))
-                for node in _visits(workflow.nodes)
+                for node in _visits(workflow.operations)
             )
             hashes[key] = hash((_workflow_local_state(workflow), node_hashes))
         return hashes[id(self)]
-
-
-def _reachable_workflows(pending: list[AdmittedWorkflow]) -> Iterator[AdmittedWorkflow]:
-    """Consume a local root stack, visiting each body identity once in caller order."""
-    seen: set[int] = set()
-    while pending:
-        current = _visited_pop(pending)
-        if id(current) in seen:
-            continue
-        seen.add(id(current))
-        yield current
-        pending.extend(node.body for node in _visits(current.nodes) if isinstance(node, SubgraphNode))
 
 
 def _map_item_ports(declarations: Iterable[EvidencePromise | ProtectionRequirement]) -> Iterator[MapItemPort]:
@@ -962,7 +977,7 @@ def _map_item_ports(declarations: Iterable[EvidencePromise | ProtectionRequireme
                 yield port
 
 
-def _workflow_local_state(workflow: AdmittedWorkflow) -> tuple[object, ...]:
+def _workflow_local_state(workflow: Graph) -> tuple[object, ...]:
     return (
         workflow.workflow,
         workflow.interface,
@@ -971,6 +986,12 @@ def _workflow_local_state(workflow: AdmittedWorkflow) -> tuple[object, ...]:
         workflow.outcome_bindings,
         workflow.sequence,
         workflow.choices,
+        frozenset(workflow.maps),
+        frozenset(workflow.loops),
+        frozenset(workflow.joins),
+        workflow.dynamic_limits,
+        workflow.activation_upper_bound,
+        workflow.dynamic_depth,
         workflow.protection_requirements,
         workflow.protection_eligible_outcomes,
         workflow.unmet_protection,
@@ -979,43 +1000,12 @@ def _workflow_local_state(workflow: AdmittedWorkflow) -> tuple[object, ...]:
     )
 
 
-@dataclass(frozen=True, slots=True, kw_only=True, repr=False, init=False)
-class AdmittedActivationWorkflow(_PrivateValue):
-    """A statically admitted workflow with finite dynamic declarations."""
-
-    workflow: AdmittedWorkflow
-    scopes: tuple[DynamicScope, ...]
-    limits: DynamicLimits
-    activation_upper_bound: int
-    dynamic_depth: int
-
-    def __init__(
-        self,
-        *,
-        _key: object,
-        workflow: AdmittedWorkflow,
-        scopes: tuple[DynamicScope, ...],
-        limits: DynamicLimits,
-        activation_upper_bound: int,
-        dynamic_depth: int,
-    ) -> None:
-        if _key is not _ADMISSION_KEY:
-            raise TypeError("admitted activation workflows must be created by admission")
-        object.__setattr__(self, "workflow", workflow)
-        object.__setattr__(self, "scopes", scopes)
-        object.__setattr__(self, "limits", limits)
-        object.__setattr__(self, "activation_upper_bound", activation_upper_bound)
-        object.__setattr__(self, "dynamic_depth", dynamic_depth)
-
-
 def _analysis_limit(*args: object, **kwargs: object) -> int | None:
     """Resolve the compiler envelope only from SDK-owned admission values."""
     owner = kwargs.get("workflow", args[0] if args else None)
     limits = kwargs.get("limits")
     if isinstance(limits, WorkflowLimits):
         return limits.max_analysis_work
-    if isinstance(owner, AdmittedActivationWorkflow):
-        return owner.workflow.limits.max_analysis_work
-    if isinstance(owner, AdmittedWorkflow):
+    if isinstance(owner, Graph):
         return owner.limits.max_analysis_work
     return None

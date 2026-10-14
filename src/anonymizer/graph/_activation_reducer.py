@@ -31,9 +31,7 @@ from anonymizer.graph._activation_values import (
 )
 from anonymizer.graph._values import ActivationKey, InvocationId, ValidationCode
 from anonymizer.graph.workflow import (
-    AdmittedActivationWorkflow,
-    AdmittedWorkflow,
-    DynamicScope,
+    Graph,
     LoopDecl,
     NodeId,
     NodeOutputRef,
@@ -43,13 +41,13 @@ from anonymizer.graph.workflow import (
 
 def initialize_activation(
     *,
-    workflow: AdmittedActivationWorkflow,
+    workflow: Graph,
     invocation: InvocationId,
     reservations: frozenset[ActivationSeed],
     limits: ActivationLimits,
 ) -> ActivationState:
     """Validate a complete finite occurrence reservation without selecting work."""
-    if not isinstance(workflow, AdmittedActivationWorkflow) or not isinstance(invocation, InvocationId):
+    if not isinstance(workflow, Graph) or not isinstance(invocation, InvocationId):
         _reject(ValidationCode.INVALID_TYPE)
     if not isinstance(reservations, frozenset) or any(not isinstance(seed, ActivationSeed) for seed in reservations):
         _reject(ValidationCode.INVALID_TYPE)
@@ -73,13 +71,13 @@ def initialize_activation(
     if len(reservations) > workflow.activation_upper_bound:
         _reject(ValidationCode.LIMIT_EXCEEDED)
     expected_templates: dict[NodeId, int] = {}
-    pending_workflows: list[tuple[AdmittedWorkflow, int]] = [(workflow.workflow, 1)]
+    pending_workflows: list[tuple[Graph, int]] = [(workflow, 1)]
     while pending_workflows:
         current, multiplier = pending_workflows.pop()
-        scope = next(item for item in workflow.scopes if item.workflow is current)
+        scope = current
         factors = {item.member: item.max_children for item in scope.maps}
         factors.update({item.member: item.max_iterations for item in scope.loops})
-        for node in current.nodes:
+        for node in current.operations:
             count = multiplier * factors.get(node.id, 1)
             expected_templates[node.id] = expected_templates.get(node.id, 0) + count
             if isinstance(node, SubgraphNode):
@@ -91,8 +89,8 @@ def initialize_activation(
         _reject(ValidationCode.MISSING)
     reservation_map = _seed_map(reservations)
     body_parents: dict[int, set[NodeId]] = {}
-    for scope in workflow.scopes:
-        for node in scope.workflow.nodes:
+    for scope in workflow.bodies():
+        for node in scope.operations:
             if isinstance(node, SubgraphNode):
                 body_parents.setdefault(id(node.body), set()).add(node.id)
     for seed in reservations:
@@ -115,11 +113,11 @@ def initialize_activation(
                 or seed.activation.iteration >= loop_decl.max_iterations
             ):
                 _reject(ValidationCode.CONTRADICTORY)
-        elif scope.workflow is workflow.workflow:
+        elif scope is workflow:
             if seed.activation.parent is not None or seed.activation.iteration is not None:
                 _reject(ValidationCode.CONTRADICTORY)
         else:
-            expected_parents = body_parents[id(scope.workflow)]
+            expected_parents = body_parents[id(scope)]
             if (
                 parent_seed is None
                 or parent_seed.template not in expected_parents
@@ -167,7 +165,7 @@ def _materialize(seed: ActivationSeed, entries: dict[ActivationKey, ActivationEn
         )
 
 
-def _produces(workflow: AdmittedActivationWorkflow, entry: ActivationEntry, port: str) -> bool:
+def _produces(workflow: Graph, entry: ActivationEntry, port: str) -> bool:
     if entry.outcome is None:
         return False
     node = _node(workflow, entry.template)
@@ -178,10 +176,10 @@ _Availability: TypeAlias = Literal["unstarted", "ready", "blocked"]
 
 
 def _resolve_availability(
-    workflow: AdmittedActivationWorkflow,
+    workflow: Graph,
     template: NodeId,
     context: ActivationKey | None,
-    scope: DynamicScope,
+    scope: Graph,
     entries: dict[ActivationKey, ActivationEntry],
     expansions: dict[ActivationKey, ExpansionEntry],
     reservations: dict[ActivationKey, ActivationSeed],
@@ -224,7 +222,7 @@ def _resolve_availability(
 
 
 def _initial_values_available(
-    workflow: AdmittedActivationWorkflow,
+    workflow: Graph,
     entry: ActivationEntry,
     loop: LoopDecl,
     entries: dict[ActivationKey, ActivationEntry],
@@ -247,7 +245,7 @@ def _initial_values_available(
 
 
 def _normalize(
-    workflow: AdmittedActivationWorkflow,
+    workflow: Graph,
     entries: dict[ActivationKey, ActivationEntry],
     expansions: dict[ActivationKey, ExpansionEntry],
     reservations: dict[ActivationKey, ActivationSeed],
@@ -260,7 +258,7 @@ def _normalize(
                 continue
             scope = _scope_for(workflow, entry.template)
             context = _context(reservations[entry.activation], scope)
-            for choice in scope.workflow.choices:
+            for choice in scope.choices:
                 if choice.selector != entry.template:
                     continue
                 for branch in choice.branches:
@@ -401,7 +399,7 @@ def _normalize(
             requirements: list[_Availability] = []
             if loop_member is None:
                 context = _context(reservations[key], scope)
-                for edge in scope.workflow.sequence:
+                for edge in scope.sequence:
                     if edge.after == entry.template and (map_member is None or edge.before != map_member.expander):
                         requirements.append(
                             _resolve_availability(
@@ -416,7 +414,7 @@ def _normalize(
                     )
                     else None
                 )
-                for binding in scope.workflow.input_bindings:
+                for binding in scope.input_bindings:
                     if binding.destination.node != entry.template or (
                         mapped_item_port is not None and binding.destination.port == mapped_item_port
                     ):
@@ -528,7 +526,7 @@ def advance_activation(*, state: ActivationState, event: ActivationEvent) -> Act
         for seed in event.seeds:
             scope = _scope_for(state.workflow, seed.template)
             choice_member = any(
-                seed.template in branch.members for choice in scope.workflow.choices for branch in choice.branches
+                seed.template in branch.members for choice in scope.choices for branch in choice.branches
             )
             if choice_member:
                 _reject(ValidationCode.OVERLAP)
@@ -552,7 +550,7 @@ def advance_activation(*, state: ActivationState, event: ActivationEvent) -> Act
             choice_members = {
                 member for choice in node.body.choices for branch in choice.branches for member in branch.members
             }
-            roots = {body_node.id for body_node in node.body.nodes} - choice_members
+            roots = {body_node.id for body_node in node.body.operations} - choice_members
             for seed in reservations.values():
                 if seed.activation.parent == event.activation and seed.template in roots:
                     _materialize(seed, entries)

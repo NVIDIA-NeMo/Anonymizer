@@ -15,7 +15,6 @@ from anonymizer.engine.graph_sdk.executor import MapItemKey, OperationOutputKey,
 from anonymizer.engine.graph_sdk.preparation import prepare
 from anonymizer.engine.graph_sdk.qualification import qualify
 from anonymizer.graph.workflow import (
-    DynamicScope,
     InputBinding,
     NodeId,
     NodeInputRef,
@@ -29,11 +28,10 @@ from anonymizer.graph.workflow import (
     WorkflowInputRef,
     WorkflowOutcomeRef,
     WorkflowOutputRef,
-    admit_activation_workflow,
-    admit_static_workflow,
 )
 from tests.graph_sdk import qualification_map_execution as fixture
 from tests.graph_sdk.test_map_item_boundary_witnesses import _qualification_inputs
+from tests.graph_sdk.workflow_construction import DynamicScope, admit_activation_workflow, admit_static_workflow
 
 
 def _container_expander(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:

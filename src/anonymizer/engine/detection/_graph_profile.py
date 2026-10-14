@@ -91,8 +91,6 @@ from anonymizer.engine.replace.replace_runner import ReplacementResult, Replacem
 from anonymizer.graph.activation import ActivationLimits
 from anonymizer.graph.workflow import (
     ArtifactType,
-    DynamicLimits,
-    DynamicScope,
     EvidencePromise,
     InputBinding,
     InputPort,
@@ -115,8 +113,7 @@ from anonymizer.graph.workflow import (
     WorkflowLimits,
     WorkflowOutcomeRef,
     WorkflowOutputRef,
-    admit_activation_workflow,
-    admit_static_workflow,
+    compile_graph,
 )
 from anonymizer.interface.errors import AnonymizerWorkflowError
 
@@ -613,7 +610,7 @@ async def execute_detection_redact(
                 ),
             ),
         )
-    raw = admit_static_workflow(
+    raw = compile_graph(
         workflow=workflow_id,
         interface=interface,
         nodes=nodes,
@@ -650,7 +647,6 @@ async def execute_detection_redact(
             *(SequenceEdge(before=probe, after=leaf) for leaf in leaves),
             *(SequenceEdge(before=node, after=complete) for node in ids if node != complete),
         ),
-        choices=(),
         protection=()
         if not targets
         else (
@@ -672,19 +668,7 @@ async def execute_detection_redact(
             max_choice_states=1,
         ),
     )
-    workflow = admit_activation_workflow(
-        workflow=raw,
-        scopes=(DynamicScope(workflow=raw, maps=(), joins=(), loops=()),),
-        limits=DynamicLimits(
-            max_maps=0,
-            max_joins=0,
-            max_loops=0,
-            max_children_per_map=0,
-            max_iterations_per_loop=0,
-            max_dynamic_depth=1,
-            max_activation_occurrences=len(nodes),
-        ),
-    )
+    workflow = raw
     capabilities = tuple(
         ImplementationCapability(
             implementation=ImplementationRef(name=spec.name, revision=1),

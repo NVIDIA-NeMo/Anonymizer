@@ -37,20 +37,14 @@ from anonymizer.engine.graph_sdk.requests import (
     TextCollectionValue,
 )
 from anonymizer.engine.graph_sdk.resources import ResourceLease
-from anonymizer.graph.workflow import (
-    ArtifactType,
-    DynamicScope,
-    OperationNode,
-    OutputPort,
-    admit_activation_workflow,
-    admit_static_workflow,
-)
+from anonymizer.graph.workflow import ArtifactType, OperationNode, OutputPort
 from tests.graph_sdk.effects_admission_fixtures import _selector_data, _valid_runtime_rows
 from tests.graph_sdk.effects_provider_fixtures import _CaseProvider, _LateAdaptiveProvider
 from tests.graph_sdk.effects_request_fixtures import _normalize, _policy
 from tests.graph_sdk.implementation_fixtures import _execution_implementation
 from tests.graph_sdk.test_adaptive_executor import _adaptive_workflow, _Clock, _UnusedTransport
 from tests.graph_sdk.test_preparation import _capability, _limits, _prepare
+from tests.graph_sdk.workflow_construction import DynamicScope, admit_activation_workflow, admit_static_workflow
 
 
 async def _assert_adaptive_materialization_case(case: dict[str, Any], *, late_mode: str | None = None) -> None:
@@ -61,8 +55,8 @@ async def _assert_adaptive_materialization_case(case: dict[str, Any], *, late_mo
     output_type = item_type
     if materialization["kind"] == "collection":
         output_type = ArtifactType(name="text_collection", revision=1)
-        static = workflow.workflow
-        operation_node = next(item for item in static.nodes if isinstance(item, OperationNode))
+        static = workflow
+        operation_node = next(item for item in static.operations if isinstance(item, OperationNode))
         operation = replace(
             operation_node.operation,
             outputs=(OutputPort(name="context", artifact_type=output_type),),
@@ -82,7 +76,7 @@ async def _assert_adaptive_materialization_case(case: dict[str, Any], *, late_mo
         workflow = admit_activation_workflow(
             workflow=rebuilt,
             scopes=(DynamicScope(workflow=rebuilt, maps=(), joins=(), loops=()),),
-            limits=workflow.limits,
+            limits=workflow.dynamic_limits,
         )
     data = _selector_data()
     target = next(iter(data.targets))

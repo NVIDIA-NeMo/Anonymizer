@@ -68,7 +68,6 @@ from anonymizer.graph.activation import ActivationLimits
 from anonymizer.graph.workflow import (
     ArtifactType,
     DynamicLimits,
-    DynamicScope,
     EvidencePromise,
     InputPort,
     NodeId,
@@ -85,12 +84,11 @@ from anonymizer.graph.workflow import (
     WorkflowInputRef,
     WorkflowLimits,
     WorkflowOutputRef,
-    admit_activation_workflow,
-    admit_static_workflow,
 )
 from tests.graph_sdk.implementation_fixtures import _execution_implementation, _implementation_handle, _selection
 from tests.graph_sdk.test_local_executor import _Clock, _runtime_rows
 from tests.graph_sdk.test_preparation import _capability, _data, _limits, _prepare, _workflow
+from tests.graph_sdk.workflow_construction import DynamicScope, admit_activation_workflow, admit_static_workflow
 from tests.graph_sdk.workflow_fixtures import _single_node_workflow
 
 SOURCE = ContextSourceRef(name="adaptive", revision=1)
@@ -221,8 +219,8 @@ def _adaptive_workflow(
     requests: int = 1,
 ):
     base, node, artifact = _workflow(requests=requests, with_input=True)
-    static = base.workflow
-    raw = next(item for item in static.nodes if isinstance(item, OperationNode))
+    static = base
+    raw = next(item for item in static.operations if isinstance(item, OperationNode))
     output_port = "assessment" if distinct_subject else "context"
     outcome = replace(
         raw.operation.outcomes[0],

@@ -19,7 +19,7 @@ def test_empty_map_retained_outcome_cannot_disagree_with_unchanged_declaration(m
     (expansion,) = result.states[0].expansions
     assert expansion.status == "closed" and not expansion.members
     entry = next(item for item in result.states[0].entries if item.template == nodes["EXP"])
-    mapping = next(mapping for scope in execution.context.prepared.workflow.scopes for mapping in scope.maps)
+    mapping = next(mapping for scope in execution.context.prepared.workflow.bodies() for mapping in scope.maps)
     original_outcomes = mapping.expansion_outcomes
     original = entry.outcome
     assert original in original_outcomes and "other" not in original_outcomes

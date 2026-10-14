@@ -35,19 +35,10 @@ from anonymizer.engine.graph_sdk.requests import (
     StopConfirmed,
 )
 from anonymizer.engine.graph_sdk.resources import ResourceLease
-from anonymizer.graph.workflow import (
-    ContextInputRef,
-    ContextUse,
-    DynamicLimits,
-    DynamicScope,
-    NodeId,
-    OperationNode,
-    WorkflowId,
-    admit_activation_workflow,
-    admit_static_workflow,
-)
+from anonymizer.graph.workflow import ContextInputRef, ContextUse, DynamicLimits, NodeId, OperationNode, WorkflowId
 from tests.graph_sdk.context_source_fixtures import _initial_binding_fixture
 from tests.graph_sdk.test_preparation import _capability, _data, _prepare, _workflow
+from tests.graph_sdk.workflow_construction import DynamicScope, admit_activation_workflow, admit_static_workflow
 
 
 @dataclass
@@ -226,8 +217,8 @@ class _BoundaryProvider:
 
 def _context_workflow():
     admitted, node, artifact = _workflow(with_input=True)
-    static = admitted.workflow
-    operation_node = next(item for item in static.nodes if isinstance(item, OperationNode))
+    static = admitted
+    operation_node = next(item for item in static.operations if isinstance(item, OperationNode))
     outcome = replace(
         operation_node.operation.outcomes[0],
         context=frozenset({ContextUse(port="input", meaning="test", capture="whole_artifact")}),

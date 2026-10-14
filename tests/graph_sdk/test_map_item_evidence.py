@@ -29,7 +29,6 @@ from anonymizer.engine.graph_sdk.qualification import qualify
 from anonymizer.engine.graph_sdk.records import CandidateRef
 from anonymizer.graph._values import ContractViolation, ValidationCode
 from anonymizer.graph.workflow import (
-    DynamicScope,
     InputBinding,
     InputPort,
     KeyedJoinDecl,
@@ -52,8 +51,6 @@ from anonymizer.graph.workflow import (
     WorkflowLimits,
     WorkflowOutcomeRef,
     WorkflowOutputRef,
-    admit_activation_workflow,
-    admit_static_workflow,
 )
 from tests.graph_sdk.test_dynamic_executor import _capability
 from tests.graph_sdk.test_effects_map_production_conformance import (
@@ -63,11 +60,17 @@ from tests.graph_sdk.test_effects_map_production_conformance import (
     _MapFixture,
 )
 from tests.graph_sdk.test_evidence import _qualification_limits
+from tests.graph_sdk.workflow_construction import (
+    DynamicScope,
+    admit_activation_workflow,
+    admit_static_workflow,
+    replace_scope,
+)
 
 
 def _direct_item_fixture(*, candidate_uses_membership: bool = True) -> _MapFixture:
     fixture = _map_fixture(member_assessment=True)
-    body = fixture.workflow.workflow
+    body = fixture.workflow
     endpoint = MapItemPort(
         path=(),
         expander=fixture.expander,
@@ -76,7 +79,7 @@ def _direct_item_fixture(*, candidate_uses_membership: bool = True) -> _MapFixtu
         membership_port="members",
         expansion_outcome="expand",
     )
-    member = next(node for node in body.nodes if node.id == fixture.member)
+    member = next(node for node in body.operations if node.id == fixture.member)
     promise = next(iter(member.operation.outcomes[0].evidence))
     operation = replace(
         member.operation,
@@ -123,7 +126,7 @@ def _direct_item_fixture(*, candidate_uses_membership: bool = True) -> _MapFixtu
             for outcome in body.interface.outcomes
         ),
     )
-    join = next(node for node in body.nodes if node.id == fixture.join)
+    join = next(node for node in body.operations if node.id == fixture.join)
     join_operation = replace(
         join.operation,
         inputs=(InputPort(name="members", artifact_type=fixture.collection_type),),
@@ -143,7 +146,7 @@ def _direct_item_fixture(*, candidate_uses_membership: bool = True) -> _MapFixtu
             else OperationNode(id=node.id, operation=join_operation)
             if node.id == join.id
             else node
-            for node in body.nodes
+            for node in body.operations
         ),
         input_bindings=(
             *body.input_bindings,
@@ -178,10 +181,10 @@ def _direct_item_fixture(*, candidate_uses_membership: bool = True) -> _MapFixtu
     )
     dynamic = admit_activation_workflow(
         workflow=static,
-        scopes=(replace(fixture.workflow.scopes[0], workflow=static),),
-        limits=fixture.workflow.limits,
+        scopes=(replace_scope(fixture.workflow.bodies()[0], workflow=static),),
+        limits=fixture.workflow.dynamic_limits,
     )
-    operations = {node.id: node.operation for node in static.nodes}
+    operations = {node.id: node.operation for node in static.operations}
     return replace(
         fixture,
         workflow=dynamic,
@@ -193,7 +196,7 @@ def _direct_item_fixture(*, candidate_uses_membership: bool = True) -> _MapFixtu
 
 def test_direct_item_endpoint_survives_static_dynamic_and_execution_admission() -> None:
     fixture = _direct_item_fixture()
-    endpoint = next(iter(fixture.workflow.workflow.map_item_ports))
+    endpoint = next(iter(fixture.workflow.map_item_ports))
     execution = _admit_fixture(fixture, port_fact_headroom=12)
     assert execution.context.prepared.workflow is fixture.workflow
     assert endpoint.member == fixture.member
@@ -202,7 +205,7 @@ def test_direct_item_endpoint_survives_static_dynamic_and_execution_admission() 
 
 
 def _nested_item_fixture(fixture: _MapFixture) -> _MapFixture:
-    body = fixture.workflow.workflow
+    body = fixture.workflow
     owner = WorkflowId.new()
     container = NodeId.new(workflow=owner)
     interface = replace(
@@ -274,11 +277,11 @@ def _nested_item_fixture(fixture: _MapFixture) -> _MapFixture:
     )
     dynamic = admit_activation_workflow(
         workflow=static,
-        scopes=(DynamicScope(workflow=static, maps=(), joins=(), loops=()), *fixture.workflow.scopes),
+        scopes=(DynamicScope(workflow=static, maps=(), joins=(), loops=()), *fixture.workflow.bodies()),
         limits=replace(
-            fixture.workflow.limits,
-            max_dynamic_depth=fixture.workflow.limits.max_dynamic_depth + 1,
-            max_activation_occurrences=fixture.workflow.limits.max_activation_occurrences + 1,
+            fixture.workflow.dynamic_limits,
+            max_dynamic_depth=fixture.workflow.dynamic_limits.max_dynamic_depth + 1,
+            max_activation_occurrences=fixture.workflow.dynamic_limits.max_activation_occurrences + 1,
         ),
     )
     return replace(fixture, workflow=dynamic)
@@ -286,9 +289,9 @@ def _nested_item_fixture(fixture: _MapFixture) -> _MapFixture:
 
 def _consumed_item_fixture() -> _MapFixture:
     fixture = _direct_item_fixture()
-    body = fixture.workflow.workflow
+    body = fixture.workflow
     producer = NodeId.new(workflow=body.workflow)
-    nodes = {node.id: node for node in body.nodes}
+    nodes = {node.id: node for node in body.operations}
     operation = replace(nodes[fixture.join].operation, name="candidate")
     member = nodes[fixture.member]
     member_operation = replace(
@@ -325,7 +328,7 @@ def _consumed_item_fixture() -> _MapFixture:
         nodes=(
             *(
                 OperationNode(id=node.id, operation=member_operation) if node.id == fixture.member else node
-                for node in body.nodes
+                for node in body.operations
             ),
             OperationNode(id=producer, operation=operation),
         ),
@@ -364,13 +367,14 @@ def _consumed_item_fixture() -> _MapFixture:
     )
     dynamic = admit_activation_workflow(
         workflow=static,
-        scopes=(replace(fixture.workflow.scopes[0], workflow=static),),
+        scopes=(replace_scope(fixture.workflow.bodies()[0], workflow=static),),
         limits=replace(
-            fixture.workflow.limits, max_activation_occurrences=fixture.workflow.limits.max_activation_occurrences + 1
+            fixture.workflow.dynamic_limits,
+            max_activation_occurrences=fixture.workflow.dynamic_limits.max_activation_occurrences + 1,
         ),
     )
     implementations = (*fixture.implementation_nodes, producer)
-    operations = {node.id: node.operation for node in static.nodes}
+    operations = {node.id: node.operation for node in static.operations}
     return replace(
         fixture,
         workflow=dynamic,
@@ -381,12 +385,12 @@ def _consumed_item_fixture() -> _MapFixture:
 
 def test_direct_item_endpoint_cannot_be_admitted_without_its_dynamic_map() -> None:
     fixture = _direct_item_fixture()
-    scope = fixture.workflow.scopes[0]
+    scope = fixture.workflow.bodies()[0]
     with pytest.raises(ContractViolation) as error:
         admit_activation_workflow(
-            workflow=scope.workflow,
-            scopes=(replace(scope, maps=(), joins=()),),
-            limits=fixture.workflow.limits,
+            workflow=scope,
+            scopes=(replace_scope(scope, maps=(), joins=()),),
+            limits=fixture.workflow.dynamic_limits,
         )
     assert error.value.code is ValidationCode.MISSING
 
@@ -410,7 +414,7 @@ def test_direct_item_endpoint_rejects_a_different_membership_output() -> None:
 
 def test_direct_item_subject_requires_a_separate_final_candidate_port() -> None:
     fixture = _direct_item_fixture()
-    requirement = next(iter(fixture.workflow.workflow.protection_requirements))
+    requirement = next(iter(fixture.workflow.protection_requirements))
     with pytest.raises(ContractViolation) as error:
         replace(requirement, candidate_port=None)
     assert error.value.code is ValidationCode.MISSING
@@ -419,7 +423,7 @@ def test_direct_item_subject_requires_a_separate_final_candidate_port() -> None:
 def test_leaf_operation_cannot_declare_a_composite_map_endpoint() -> None:
     fixture = _direct_item_fixture()
     with pytest.raises(ContractViolation) as error:
-        OperationNode(id=fixture.member, operation=fixture.workflow.workflow.interface)
+        OperationNode(id=fixture.member, operation=fixture.workflow.interface)
     assert error.value.code is ValidationCode.UNSUPPORTED
 
 
@@ -667,8 +671,8 @@ def test_dynamic_evidence_selection_obeys_exact_and_one_over_limits(bound: str) 
 
 def _two_map_fixture():
     fixture = _direct_item_fixture()
-    body = fixture.workflow.workflow
-    by_node = {node.id: node for node in body.nodes}
+    body = fixture.workflow
+    by_node = {node.id: node for node in body.operations}
     right_expander, right_member, right_join, final = (NodeId.new(workflow=body.workflow) for _ in range(4))
     endpoint = MapItemPort(
         path=(),
@@ -744,7 +748,10 @@ def _two_map_fixture():
         workflow=body.workflow,
         interface=interface,
         nodes=(
-            *(OperationNode(id=node.id, operation=barrier) if node.id == fixture.join else node for node in body.nodes),
+            *(
+                OperationNode(id=node.id, operation=barrier) if node.id == fixture.join else node
+                for node in body.operations
+            ),
             OperationNode(id=right_expander, operation=right_expander_operation),
             OperationNode(id=right_member, operation=right_member_operation),
             OperationNode(id=right_join, operation=barrier),
@@ -802,11 +809,11 @@ def _two_map_fixture():
         ),
         limits=replace(body.limits, max_nodes=7, max_bindings=body.limits.max_bindings + 6, max_sequence_edges=6),
     )
-    scope = fixture.workflow.scopes[0]
+    scope = fixture.workflow.bodies()[0]
     dynamic = admit_activation_workflow(
         workflow=static,
         scopes=(
-            replace(
+            replace_scope(
                 scope,
                 workflow=static,
                 maps=(
@@ -830,10 +837,10 @@ def _two_map_fixture():
                 ),
             ),
         ),
-        limits=replace(fixture.workflow.limits, max_maps=2, max_joins=2, max_activation_occurrences=9),
+        limits=replace(fixture.workflow.dynamic_limits, max_maps=2, max_joins=2, max_activation_occurrences=9),
     )
     implementations = (*fixture.implementation_nodes, right_expander, right_member, right_join, final)
-    operations = {node.id: node.operation for node in static.nodes}
+    operations = {node.id: node.operation for node in static.operations}
     fixture = replace(
         fixture,
         workflow=dynamic,

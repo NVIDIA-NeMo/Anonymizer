@@ -57,7 +57,7 @@ class Harness:
         self.authority.apply(
             Reserve(request=self.request, purpose="initial", associations=frozenset({self.association}), policy=policy)
         )
-        operation = next(iter(self.state.workflow.workflow.nodes)).operation
+        operation = next(iter(self.state.workflow.operations)).operation
         envelope = DispatchEnvelope(
             request=self.request,
             purpose="initial",

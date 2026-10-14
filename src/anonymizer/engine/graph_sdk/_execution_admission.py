@@ -39,7 +39,6 @@ from anonymizer.engine.graph_sdk._execution_values import (
 )
 from anonymizer.engine.graph_sdk._foreign_transport import ForeignLoopTransport
 from anonymizer.engine.graph_sdk._ingress_values import IngressLimits
-from anonymizer.engine.graph_sdk._workflow import reachable_workflows
 from anonymizer.engine.graph_sdk.blocking import BlockingTransport, _validate_provider_execution
 from anonymizer.engine.graph_sdk.capabilities import (
     ImplementationCapability,
@@ -101,16 +100,16 @@ def admit_execution_plan(
     if not isinstance(decisions, tuple) or any(not isinstance(item, DecisionDeclaration) for item in decisions):
         reject(EffectCode.INVALID_TYPE)
     # Candidate spans are transient values, never text context or map membership.
-    prepared_workflows = reachable_workflows(prepared.workflow)
+    prepared_workflows = prepared.workflow.bodies()
     for body in prepared_workflows:
-        for node in body.nodes:
+        for node in body.operations:
             for port in (*node.operation.inputs, *node.operation.outputs):
                 if port.artifact_type.name == ENTITY_SPANS_TYPE.name and port.artifact_type != ENTITY_SPANS_TYPE:
                     reject(EffectCode.UNSUPPORTED)
     if any(item.artifact_type == ENTITY_SPANS_TYPE for item in prepared.bound_inputs):
         reject(EffectCode.UNSUPPORTED)
     _validate_map_expansions(context, map_expansions)
-    workflow_owners = _workflow_owners(prepared.workflow.workflow)
+    workflow_owners = _workflow_owners(prepared.workflow)
     if any(item.node.workflow not in workflow_owners for item in policies):
         reject(EffectCode.FOREIGN_OWNER)
     selected = {item.node: item.capability for item in prepared.implementations}
@@ -190,7 +189,7 @@ def _validate_map_expansions(
     if not isinstance(declarations, tuple) or any(not isinstance(item, MapExpansionDecl) for item in declarations):
         reject(EffectCode.INVALID_TYPE)
     workflow = context.prepared.workflow
-    maps = [item for scope in workflow.scopes for item in scope.maps]
+    maps = [item for scope in workflow.bodies() for item in scope.maps]
     expected = {(item.expander, outcome) for item in maps for outcome in item.expansion_outcomes}
     keys = [(item.expander, item.outcome) for item in declarations]
     if len(keys) != len(set(keys)):
@@ -210,7 +209,7 @@ def _validate_map_expansions(
                 1,
             )
     for adaptive in context.adaptive_retrievals:
-        operation = _node_operation(workflow.workflow, adaptive.node)
+        operation = _node_operation(workflow, adaptive.node)
         output_type = next(item.artifact_type for item in operation.outputs if item.name == adaptive.output_port)
         _add_materialization_schema(
             schemas,
@@ -221,15 +220,15 @@ def _validate_map_expansions(
         )
     replacement_choices: list[tuple[InputBinding, ...]] = []
     by_key = {(item.expander, item.outcome): item for item in declarations}
-    for scope in workflow.scopes:
-        for endpoint in scope.workflow.map_item_ports:
+    for scope in workflow.bodies():
+        for endpoint in scope.map_item_ports:
             declaration = by_key.get((endpoint.expander, endpoint.expansion_outcome))
             if declaration is None:
                 reject(EffectCode.MISSING)
             if declaration.membership_port != endpoint.membership_port:
                 reject(EffectCode.CONTRADICTORY)
     for dynamic_map in maps:
-        member_operation = _node_operation(workflow.workflow, dynamic_map.member)
+        member_operation = _node_operation(workflow, dynamic_map.member)
         member_inputs = {item.name: item.artifact_type for item in member_operation.inputs}
         if dynamic_map.item_input is not None and any(
             fact.declaration.node == dynamic_map.member and fact.declaration.port == dynamic_map.item_input
@@ -239,7 +238,7 @@ def _validate_map_expansions(
         map_replacements: list[InputBinding] = []
         for outcome_name in dynamic_map.expansion_outcomes:
             declaration = by_key[(dynamic_map.expander, outcome_name)]
-            operation = _node_operation(workflow.workflow, dynamic_map.expander)
+            operation = _node_operation(workflow, dynamic_map.expander)
             outcome = next(item for item in operation.outcomes if item.name == outcome_name)
             output_types = {item.name: item.artifact_type for item in operation.outputs}
             if declaration.membership_port not in outcome.produced_ports:
@@ -261,7 +260,7 @@ def _validate_map_expansions(
             replacement_choices.append(tuple(map_replacements))
     for replacements in product(*replacement_choices):
         try:
-            validate_dynamic_input_summaries(workflow.workflow, replacements)
+            validate_dynamic_input_summaries(workflow, replacements)
         except ContractViolation as error:
             if error.code is ValidationCode.MISSING:
                 reject(EffectCode.MISSING)
@@ -276,28 +275,21 @@ def _validate_execution_fact_capacity(
     limits: AssessmentLimits,
 ) -> None:
     """Prove structural and operation fact storage from the finite reservation recipe."""
-    root = prepared.workflow.workflow
+    root = prepared.workflow
     operation_nodes: dict[NodeId, OperationSpec] = {}
     subgraph_nodes: dict[NodeId, OperationSpec] = {}
-    pending = [root]
-    seen: set[int] = set()
-    while pending:
-        current = pending.pop()
-        if id(current) in seen:
-            continue
-        seen.add(id(current))
-        for node in current.nodes:
+    for current in root.bodies():
+        for node in current.operations:
             if isinstance(node, OperationNode):
                 operation_nodes[node.id] = node.operation
             else:
                 subgraph_nodes[node.id] = node.operation
-                pending.append(node.body)
     port_facts = 0
     provenance_edges = 0
     assessment_facts = 0
     mapped_expanders = {
         declaration.expander: declaration.max_children
-        for scope in prepared.workflow.scopes
+        for scope in prepared.workflow.bodies()
         for declaration in scope.maps
         if declaration.item_input is not None
     }

@@ -285,7 +285,7 @@ class _InvocationRuntime:
                 if isinstance(scope, DatumId):
                     shared = self.frame.invocation_source
                     predecessors = {
-                        edge.before for edge in self.prepared.workflow.workflow.sequence if edge.after == entry.template
+                        edge.before for edge in self.prepared.workflow.sequence if edge.after == entry.template
                     }
                     predecessor = (
                         next(

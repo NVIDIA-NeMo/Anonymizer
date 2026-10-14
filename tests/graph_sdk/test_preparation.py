@@ -37,10 +37,8 @@ from anonymizer.engine.graph_sdk.preparation import (
 from anonymizer.graph._values import ActivationKey, InvocationId, PlanId
 from anonymizer.graph.activation import ActivationLimits, ActivationSeed, initialize_activation
 from anonymizer.graph.workflow import (
-    AdmittedActivationWorkflow,
     ArtifactType,
     DynamicLimits,
-    DynamicScope,
     InputBinding,
     InputPort,
     NodeId,
@@ -56,10 +54,14 @@ from anonymizer.graph.workflow import (
     WorkflowInputRef,
     WorkflowLimits,
     WorkflowOutcomeRef,
+)
+from tests.graph_sdk.implementation_fixtures import _selection
+from tests.graph_sdk.workflow_construction import (
+    AdmittedActivationWorkflow,
+    DynamicScope,
     admit_activation_workflow,
     admit_static_workflow,
 )
-from tests.graph_sdk.implementation_fixtures import _selection
 from tests.graph_sdk.workflow_fixtures import _shared_body_workflow
 
 
@@ -179,7 +181,7 @@ def _capability(
     configuration: FrozenConfig | None = None,
     external: bool = False,
 ) -> ImplementationCapability:
-    node = next(iter(workflow.workflow.nodes))
+    node = next(iter(workflow.operations))
     return ImplementationCapability(
         implementation=ImplementationRef(name="implementation", revision=1),
         operation=node.operation,
@@ -221,9 +223,7 @@ def _prepare(
     bound_inputs: tuple[BoundInput, ...] = (),
     limits: PreparationLimits | None = None,
 ) -> PreparedPlan:
-    actual_workflow, node, _ = (
-        _workflow() if workflow is None else (workflow, next(iter(workflow.workflow.nodes)).id, None)
-    )
+    actual_workflow, node, _ = _workflow() if workflow is None else (workflow, next(iter(workflow.operations)).id, None)
     actual_capability = capability or _capability(actual_workflow)
     return prepare(
         data=data or _data(2),
@@ -327,7 +327,7 @@ def test_prepare_two_targets_builds_real_p3_reservations() -> None:
 
 def test_shared_subgraph_body_is_selected_once_and_reserved_per_parent() -> None:
     body_dynamic, child, _ = _workflow()
-    body = body_dynamic.workflow
+    body = body_dynamic
     root_interface = replace(
         body.interface,
         name="shared-body-root",

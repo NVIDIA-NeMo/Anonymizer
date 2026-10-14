@@ -11,10 +11,11 @@ import pytest
 
 from anonymizer.engine.graph_sdk.preparation import prepare
 from anonymizer.engine.graph_sdk.qualification import qualify
-from anonymizer.graph.workflow import ProtectionRequirement, admit_static_workflow
+from anonymizer.graph.workflow import ProtectionRequirement
 from tests.graph_sdk import effects_map_execution, effects_map_fixtures
 from tests.graph_sdk.qualification_fixtures import _inputs
 from tests.graph_sdk.test_assessment_publication_rollback import _assert_rollback, _execute
+from tests.graph_sdk.workflow_construction import admit_static_workflow
 
 
 def test_rejected_staged_assessment_preserves_actual_qualified_peer(monkeypatch: pytest.MonkeyPatch) -> None:

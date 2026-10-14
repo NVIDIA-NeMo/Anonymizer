@@ -18,18 +18,18 @@ from anonymizer.graph._workflow_analysis import (
     _visits,
 )
 from anonymizer.graph._workflow_values import (
-    AdmittedWorkflow,
     ChoiceDecl,
     ContextInputRef,
     ContextUse,
     EvidencePort,
     EvidencePromise,
+    Graph,
     InputBinding,
     MapItemPort,
     ModelRequirement,
-    Node,
     NodeId,
     NodeInputRef,
+    Operation,
     OperationSpec,
     OutcomeBinding,
     OutcomeSpec,
@@ -41,7 +41,6 @@ from anonymizer.graph._workflow_values import (
     WorkflowInputRef,
     _analysis_limit,
     _map_item_ports,
-    _reachable_workflows,
     _reject,
     _tuple_of,
 )
@@ -126,17 +125,17 @@ def _selected_nodes(
 
 @_bounded_analysis(_analysis_limit)
 def validate_dynamic_input_summaries(
-    workflow: AdmittedWorkflow,
+    workflow: Graph,
     replacements: tuple[InputBinding, ...],
 ) -> None:
     """Recheck retained interface summaries after nonidentity dynamic input replacement."""
-    if not isinstance(workflow, AdmittedWorkflow):
+    if not isinstance(workflow, Graph):
         _reject(ValidationCode.INVALID_TYPE)
     _tuple_of(replacements, InputBinding)
     destinations = [item.destination for item in _visits(replacements)]
     if not _equal(len(destinations), len(set(_visits(destinations)))):
         _reject(ValidationCode.DUPLICATE)
-    reachable = list(_reachable_workflows([workflow]))
+    reachable = workflow.bodies()
     owners = {item.workflow: item for item in _visits(reachable)}
     grouped: dict[WorkflowId, list[InputBinding]] = {}
     for replacement in _visits(replacements):
@@ -158,7 +157,7 @@ def validate_dynamic_input_summaries(
         ) + tuple(_visits(values))
         _validate_paths(
             current.interface,
-            tuple(_visits(current.nodes)),
+            tuple(_visits(current.operations)),
             inputs,
             tuple(_visits(current.output_bindings)),
             tuple(_visits(current.outcome_bindings)),
@@ -171,7 +170,7 @@ def validate_dynamic_input_summaries(
 
 def _validate_paths(
     interface: OperationSpec,
-    nodes: tuple[Node, ...],
+    nodes: tuple[Operation, ...],
     input_bindings: tuple[InputBinding, ...],
     output_bindings: tuple[OutputBinding, ...],
     outcome_bindings: tuple[OutcomeBinding, ...],
@@ -460,7 +459,7 @@ def _validate_composition_path(
 
 
 def _outcome_options(
-    nodes: tuple[Node, ...],
+    nodes: tuple[Operation, ...],
     mappings: tuple[OutcomeBinding, ...],
     choices: tuple[ChoiceDecl, ...],
     interface: OperationSpec,

@@ -65,7 +65,6 @@ from anonymizer.graph.workflow import (
     ContextInputRef,
     ContextUse,
     CoverageAtom,
-    DynamicScope,
     InputBinding,
     NodeId,
     NodeInputRef,
@@ -82,14 +81,13 @@ from anonymizer.graph.workflow import (
     WorkflowInputRef,
     WorkflowOutcomeRef,
     WorkflowOutputRef,
-    admit_activation_workflow,
-    admit_static_workflow,
 )
 from tests.graph_sdk.effects_admission_fixtures import _valid_runtime_rows, _ZeroClock
 from tests.graph_sdk.implementation_fixtures import _execution_implementation, _selection
 from tests.graph_sdk.test_adaptive_executor import _adaptive_workflow, _AssessingLocal
 from tests.graph_sdk.test_decision_scheduling import _Callback
 from tests.graph_sdk.test_preparation import _capability, _data, _limits
+from tests.graph_sdk.workflow_construction import DynamicScope, admit_activation_workflow, admit_static_workflow
 
 
 def _qualification_limits(**changes: int) -> QualificationLimits:
@@ -228,7 +226,7 @@ async def _execute_assessment(
     base, node, artifact = _adaptive_workflow(
         assessment=True, requests=0, distinct_subject=candidate_input, alias_evidence=candidate_input or alias_output
     )
-    raw = base.workflow
+    raw = base
     read = StateEffect(kind="read", name="assessment-policy")
     operation = replace(
         raw.interface,
@@ -467,7 +465,7 @@ async def _execute_assessment(
     workflow = admit_activation_workflow(
         workflow=static,
         scopes=scopes,
-        limits=replace(base.limits, max_activation_occurrences=count, max_dynamic_depth=depth + 1),
+        limits=replace(base.dynamic_limits, max_activation_occurrences=count, max_dynamic_depth=depth + 1),
     )
     data = data if data is not None else _data(target_count)
     target_count = len(data.targets)

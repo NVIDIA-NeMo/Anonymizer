@@ -17,7 +17,6 @@ import pytest
 
 from anonymizer.graph._values import ContractViolation, ValidationCode
 from anonymizer.graph.workflow import (
-    AdmittedWorkflow,
     ArtifactType,
     CaptureMode,
     ChoiceBranch,
@@ -53,10 +52,9 @@ from anonymizer.graph.workflow import (
     WorkflowLimits,
     WorkflowOutcomeRef,
     WorkflowOutputRef,
-    admit_static_workflow,
-    substitute,
 )
 from tests.graph_sdk.reference.corpora import corpus_bytes
+from tests.graph_sdk.workflow_construction import AdmittedWorkflow, admit_static_workflow, substitute
 from tests.graph_sdk.workflow_fixtures import _single_node_workflow
 
 Json: TypeAlias = str | int | bool | None | list["Json"] | dict[str, "Json"]
@@ -493,7 +491,7 @@ class _Adapter:
                 ]
             ),
             "interface": self.operation_json(workflow.interface),
-            "nodes": _sorted([self.node_json(node) for node in workflow.nodes]),
+            "nodes": _sorted([self.node_json(node) for node in workflow.operations]),
             "outcome_bindings": _sorted(
                 [
                     {
@@ -880,3 +878,66 @@ def test_deep_legal_subgraphs_are_equality_hash_and_copy_safe() -> None:
 
 def test_frozen_reference_bytes_are_unchanged() -> None:
     assert hashlib.sha256(FROZEN_BYTES).hexdigest() == MANIFEST["corpus_sha256"]
+
+
+@pytest.mark.parametrize(
+    "parent_requests,child_requests,activation_ceiling,accepted",
+    [(2, None, 2, False), (None, 2, 2, True), (None, 2, 1, False)],
+)
+def test_complete_graph_substitution_enforces_request_and_activation_bounds(
+    parent_requests: int | None,
+    child_requests: int | None,
+    activation_ceiling: int,
+    accepted: bool,
+) -> None:
+    from anonymizer.graph.workflow import compile_graph
+    from anonymizer.graph.workflow import substitute as substitute_complete_graph
+
+    def graph(requests: int | None) -> AdmittedWorkflow:
+        owner = WorkflowId.new()
+        node = NodeId.new(workflow=owner)
+        operation = _zero_operation()
+        outcome = operation.outcomes[0]
+        operation = replace(
+            operation,
+            outcomes=(
+                replace(
+                    outcome,
+                    ceiling=replace(outcome.ceiling, max_model_requests=requests, max_activations=activation_ceiling),
+                ),
+            ),
+        )
+        return compile_graph(
+            workflow=owner,
+            interface=operation,
+            nodes=(OperationNode(id=node, operation=operation),),
+            input_bindings=(),
+            output_bindings=(),
+            outcome_bindings=(
+                OutcomeBinding(
+                    source=NodeOutcomeRef(node=node, outcome="ok"),
+                    destination=WorkflowOutcomeRef(outcome="ok"),
+                ),
+            ),
+            sequence=(),
+            protection=(),
+            limits=WorkflowLimits(
+                max_nodes=2,
+                max_bindings=2,
+                max_sequence_edges=0,
+                max_choices=0,
+                max_branch_members=0,
+                max_subgraph_depth=2,
+                max_choice_states=1,
+            ),
+        )
+
+    target, replacement = graph(parent_requests), graph(child_requests)
+    node = target.operations[0].id
+    if accepted:
+        result = substitute_complete_graph(workflow=target, target=node, replacement=replacement)
+        assert result.activation_upper_bound == 2
+    else:
+        with pytest.raises(ContractViolation) as rejected:
+            substitute_complete_graph(workflow=target, target=node, replacement=replacement)
+        assert rejected.value.code is ValidationCode.CONTRADICTORY

@@ -49,7 +49,7 @@ from anonymizer.graph.workflow import (
     WorkflowId,
     WorkflowLimits,
     WorkflowOutcomeRef,
-    admit_static_workflow,
+    compile_graph,
 )
 
 
@@ -121,14 +121,13 @@ def run_transform(callback: Callable[[], dict[str, Any]], *, name: str, column: 
             ),
         ),
     )
-    raw = admit_static_workflow(
+    raw = compile_graph(
         workflow=owner,
         interface=operation,
         nodes=(OperationNode(id=node, operation=operation),),
         input_bindings=(),
         output_bindings=(),
         sequence=(),
-        choices=(),
         protection=(),
         outcome_bindings=(
             OutcomeBinding(

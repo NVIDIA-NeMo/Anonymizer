@@ -214,8 +214,8 @@ def test_cancellation_drains_detection_without_starting_replacement():
 @pytest.mark.parametrize("parent,child,accepted", [(2, None, False), (None, 2, True)])
 def test_unknown_request_bound_preserves_finite_parent_promises(parent, child, accepted):
     from anonymizer.graph._values import ContractViolation
-    from anonymizer.graph.workflow import admit_static_workflow, substitute
     from tests.graph_sdk.test_workflow_static import _one_node_factory, _zero_operation
+    from tests.graph_sdk.workflow_construction import admit_static_workflow, substitute
 
     def operation(bound):
         original = _zero_operation()
@@ -239,10 +239,10 @@ def test_unknown_request_bound_preserves_finite_parent_promises(parent, child, a
     )
     replacement = _one_node_factory(lambda: operation(child))
     if accepted:
-        substitute(workflow=target, target=next(iter(target.nodes)).id, replacement=replacement)
+        substitute(workflow=target, target=next(iter(target.operations)).id, replacement=replacement)
     else:
         with pytest.raises(ContractViolation):
-            substitute(workflow=target, target=next(iter(target.nodes)).id, replacement=replacement)
+            substitute(workflow=target, target=next(iter(target.operations)).id, replacement=replacement)
 
 
 def test_empty_injected_frame_still_calls_both_callbacks(tmp_path):

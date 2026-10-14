@@ -47,7 +47,6 @@ from anonymizer.graph.workflow import (
     ContextUse,
     CoverageAtom,
     DynamicLimits,
-    DynamicScope,
     EvidencePromise,
     InputBinding,
     InputPort,
@@ -70,11 +69,10 @@ from anonymizer.graph.workflow import (
     WorkflowLimits,
     WorkflowOutcomeRef,
     WorkflowOutputRef,
-    admit_activation_workflow,
-    admit_static_workflow,
     substitute,
 )
 from tests.graph_sdk.test_preparation import _data
+from tests.graph_sdk.workflow_construction import DynamicScope, admit_activation_workflow, admit_static_workflow
 from tests.graph_sdk.workflow_fixtures import _single_node_workflow
 
 SOURCE = ContextSourceRef(name="context-source", revision=1)
@@ -516,7 +514,7 @@ async def _assert_context_source_initial_admission(case: dict[str, Any]) -> None
         if node_name.startswith("FOREIGN:"):
             node = NodeId.new(workflow=WorkflowId.new())
         elif node_name == "ABSENT_SAME_OWNER":
-            node = NodeId.new(workflow=workflow.workflow.workflow)
+            node = NodeId.new(workflow=workflow.workflow)
         else:
             node = nodes[node_name]
         shape = cast(str, value.get("shape", "collection" if type_name.endswith("collection") else "single"))

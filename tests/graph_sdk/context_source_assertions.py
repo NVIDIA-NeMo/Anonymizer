@@ -51,7 +51,6 @@ from anonymizer.graph.workflow import (
     ContextInputRef,
     ContextUse,
     DynamicLimits,
-    DynamicScope,
     InputPort,
     NodeId,
     OperationNode,
@@ -64,7 +63,6 @@ from anonymizer.graph.workflow import (
     WorkflowId,
     WorkflowInputRef,
     WorkflowLimits,
-    admit_activation_workflow,
 )
 from tests.graph_sdk.context_source_fixtures import (
     CONTEXT_CASES,
@@ -81,6 +79,7 @@ from tests.graph_sdk.evidence_fixtures import _qualification_limits
 from tests.graph_sdk.implementation_fixtures import _execution_implementation, _implementation_handle, _selection
 from tests.graph_sdk.test_local_executor import _Clock, _runtime_rows
 from tests.graph_sdk.test_preparation import _capability, _data, _limits
+from tests.graph_sdk.workflow_construction import DynamicScope, admit_activation_workflow
 from tests.graph_sdk.workflow_fixtures import _single_node_workflow
 
 
@@ -483,8 +482,8 @@ async def _assert_context_execution(
         else _single_workflow(input_type)
     )
     if mode == "substitution":
-        assert isinstance(next(iter(workflow.workflow.nodes)), SubgraphNode)
-        assert isinstance(next(iter(workflow.workflow.input_bindings)).source, ContextInputRef)
+        assert isinstance(next(iter(workflow.operations)), SubgraphNode)
+        assert isinstance(next(iter(workflow.input_bindings)).source, ContextInputRef)
     data = _data(1)
     target = next(iter(data.targets))
     request_policy = PhysicalRequestPolicy(

@@ -20,10 +20,10 @@ from anonymizer.engine.graph_sdk.evidence import (
 from anonymizer.engine.graph_sdk.executor import LocalCompleted
 from anonymizer.engine.graph_sdk.qualification import qualify
 from anonymizer.engine.graph_sdk.requests import AssociationInput
-from anonymizer.graph.workflow import AdmittedWorkflow, admit_static_workflow
 from tests.graph_sdk import qualification_fixtures
 from tests.graph_sdk import test_qualification_subject_context as fixture
 from tests.graph_sdk.evidence_fixtures import _qualification_limits
+from tests.graph_sdk.workflow_construction import AdmittedWorkflow, admit_static_workflow
 
 
 @pytest.mark.parametrize("latest", [2, 3])

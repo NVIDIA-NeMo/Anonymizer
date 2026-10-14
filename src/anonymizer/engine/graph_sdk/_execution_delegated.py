@@ -369,10 +369,10 @@ class _DelegatedOwner(PrivateValue):
             if reservation is not None and key is not None:
                 scope = next(
                     scope
-                    for scope in source.state.workflow.scopes
-                    if any(node.id == reservation.template for node in scope.workflow.nodes)
+                    for scope in source.state.workflow.bodies()
+                    if any(node.id == reservation.template for node in scope.operations)
                 )
-                for choice in scope.workflow.choices:
+                for choice in scope.choices:
                     branch = next(
                         (branch for branch in choice.branches if reservation.template in branch.members), None
                     )

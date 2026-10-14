@@ -46,7 +46,6 @@ from anonymizer.engine.graph_sdk.requests import (
 from anonymizer.engine.graph_sdk.resources import ResourceLease
 from anonymizer.graph.activation import ActivationLimits
 from anonymizer.graph.workflow import (
-    DynamicScope,
     InputBinding,
     InputPort,
     NodeId,
@@ -60,14 +59,13 @@ from anonymizer.graph.workflow import (
     SequenceEdge,
     WorkflowInputRef,
     WorkflowOutputRef,
-    admit_activation_workflow,
-    admit_static_workflow,
 )
 from tests.graph_sdk.effects_admission_fixtures import _valid_runtime_rows, _ZeroClock
 from tests.graph_sdk.implementation_fixtures import _execution_implementation, _selection
 from tests.graph_sdk.qualification_fixtures import _inputs
 from tests.graph_sdk.test_adaptive_executor import _adaptive_workflow, _AssessingLocal
 from tests.graph_sdk.test_preparation import _capability, _limits
+from tests.graph_sdk.workflow_construction import DynamicScope, admit_activation_workflow, admit_static_workflow
 
 
 @dataclass
@@ -159,7 +157,7 @@ async def _execute_repair(
     tamper: str | None = None,
 ):
     base, assessor, artifact = _adaptive_workflow(assessment=True, distinct_subject=True, requests=0)
-    raw = base.workflow
+    raw = base
     repair = NodeId.new(workflow=raw.workflow)
     producer = NodeId.new(workflow=raw.workflow)
     assessment = replace(
@@ -276,7 +274,7 @@ async def _execute_repair(
     workflow = admit_activation_workflow(
         workflow=static,
         scopes=(DynamicScope(workflow=static, maps=(), loops=(), joins=()),),
-        limits=replace(base.limits, max_activation_occurrences=3),
+        limits=replace(base.dynamic_limits, max_activation_occurrences=3),
     )
     graph = DataGraph.new()
     graph, target = graph.add_text("original")

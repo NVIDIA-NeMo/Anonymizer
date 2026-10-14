@@ -15,11 +15,11 @@ from anonymizer.engine.graph_sdk._ingress import inspect_artifact, inspect_assoc
 from anonymizer.engine.graph_sdk.executor import IngressLimits, start_execution
 from anonymizer.engine.graph_sdk.requests import TextArtifactValue
 from anonymizer.graph._values import ContractViolation
-from anonymizer.graph.workflow import admit_static_workflow, substitute
 from tests.graph_sdk.qualification_fixtures import _inputs
 from tests.graph_sdk.test_ingress_bounds import _rows
 from tests.graph_sdk.test_workflow_static import _one_node_factory, _zero_operation
 from tests.graph_sdk.typed_artifact_fixtures import span_graph
+from tests.graph_sdk.workflow_construction import admit_static_workflow, substitute
 
 
 def test_optional_ingress_bytes_preserve_counts_utf8_and_exact_shape() -> None:
@@ -118,7 +118,7 @@ def test_substitution_cannot_turn_finite_byte_promise_into_no_ceiling(parent, ch
     target = admit_static_workflow(
         workflow=target.workflow,
         interface=target.interface,
-        nodes=tuple(target.nodes),
+        nodes=tuple(target.operations),
         input_bindings=(),
         output_bindings=(),
         outcome_bindings=tuple(target.outcome_bindings),
@@ -129,10 +129,10 @@ def test_substitution_cannot_turn_finite_byte_promise_into_no_ceiling(parent, ch
     )
     replacement = _one_node_factory(lambda: operation(child))
     if accepted:
-        substitute(workflow=target, target=next(iter(target.nodes)).id, replacement=replacement)
+        substitute(workflow=target, target=next(iter(target.operations)).id, replacement=replacement)
     else:
         with pytest.raises(ContractViolation):
-            substitute(workflow=target, target=next(iter(target.nodes)).id, replacement=replacement)
+            substitute(workflow=target, target=next(iter(target.operations)).id, replacement=replacement)
 
 
 @pytest.mark.parametrize("field", ["max_local_in_flight", "max_runtime_artifacts"])

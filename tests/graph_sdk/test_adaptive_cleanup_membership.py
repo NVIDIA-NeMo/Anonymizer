@@ -245,7 +245,6 @@ def test_two_declared_artifact_types_share_source_without_sharing_provider(rever
     from anonymizer.engine.graph_sdk.capabilities import ImplementationRef
     from anonymizer.engine.graph_sdk.preparation import prepare
     from anonymizer.graph.workflow import (
-        DynamicScope,
         InputBinding,
         NodeId,
         NodeInputRef,
@@ -253,16 +252,15 @@ def test_two_declared_artifact_types_share_source_without_sharing_provider(rever
         OutputPort,
         SequenceEdge,
         WorkflowInputRef,
-        admit_activation_workflow,
-        admit_static_workflow,
     )
+    from tests.graph_sdk.workflow_construction import DynamicScope, admit_activation_workflow, admit_static_workflow
 
     async def run():
         a, b = Provider(), Provider()
         old, services, _ = _adaptive_fixture(a, capability_limit=2)
         previous = old.context.prepared
-        static = previous.workflow.workflow
-        (node_a,) = static.nodes
+        static = previous.workflow
+        (node_a,) = static.operations
         node_b = NodeId.new(workflow=static.workflow)
         extra = ArtifactType(name="extra", revision=1)
         operation_b = replace(node_a.operation, outputs=(OutputPort(name="context", artifact_type=extra),))
@@ -302,7 +300,7 @@ def test_two_declared_artifact_types_share_source_without_sharing_provider(rever
         dynamic = admit_activation_workflow(
             workflow=workflow,
             scopes=(DynamicScope(workflow=workflow, maps=(), joins=(), loops=()),),
-            limits=replace(previous.workflow.limits, max_activation_occurrences=2),
+            limits=replace(previous.workflow.dynamic_limits, max_activation_occurrences=2),
         )
         (cap_a,) = old.capabilities
         cap_b = replace(cap_a, implementation=ImplementationRef(name="second", revision=1), operation=operation_b)

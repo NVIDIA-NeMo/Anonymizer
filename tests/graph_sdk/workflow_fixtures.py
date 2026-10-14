@@ -5,11 +5,8 @@
 from __future__ import annotations
 
 from anonymizer.graph.workflow import (
-    AdmittedActivationWorkflow,
-    AdmittedWorkflow,
     ContextInputRef,
     DynamicLimits,
-    DynamicScope,
     InputBinding,
     NodeId,
     NodeInputRef,
@@ -26,6 +23,11 @@ from anonymizer.graph.workflow import (
     WorkflowLimits,
     WorkflowOutcomeRef,
     WorkflowOutputRef,
+)
+from tests.graph_sdk.workflow_construction import (
+    AdmittedActivationWorkflow,
+    AdmittedWorkflow,
+    DynamicScope,
     admit_activation_workflow,
     admit_static_workflow,
 )

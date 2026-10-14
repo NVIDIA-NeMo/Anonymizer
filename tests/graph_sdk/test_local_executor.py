@@ -33,7 +33,6 @@ from anonymizer.engine.graph_sdk.preparation import (
 from anonymizer.engine.graph_sdk.requests import AssociationInput, AssociationResult, SemanticAssociation
 from anonymizer.graph.activation import ActivationLimits
 from anonymizer.graph.workflow import (
-    DynamicScope,
     InputPort,
     NodeOutputRef,
     OperationNode,
@@ -41,11 +40,10 @@ from anonymizer.graph.workflow import (
     OutputDependency,
     OutputPort,
     WorkflowOutputRef,
-    admit_activation_workflow,
-    admit_static_workflow,
 )
 from tests.graph_sdk.implementation_fixtures import _execution_implementation, _implementation_handle, _selection
 from tests.graph_sdk.test_preparation import _capability, _data, _limits, _prepare, _workflow
+from tests.graph_sdk.workflow_construction import DynamicScope, admit_activation_workflow, admit_static_workflow
 from tests.graph_sdk.workflow_fixtures import _shared_body_workflow
 
 
@@ -238,8 +236,8 @@ def test_decision_callback_can_be_cancelled_before_it_returns_a_wait() -> None:
 
 async def _assert_decision_execution(*, cancel_before_wait: bool = False) -> None:
     workflow, node, artifact_type = _workflow(with_input=True)
-    static = workflow.workflow
-    raw_node = next(item for item in static.nodes if isinstance(item, OperationNode))
+    static = workflow
+    raw_node = next(item for item in static.operations if isinstance(item, OperationNode))
     decision_operation = replace(
         raw_node.operation,
         outputs=(OutputPort(name="decision", artifact_type=artifact_type),),
@@ -266,7 +264,7 @@ async def _assert_decision_execution(*, cancel_before_wait: bool = False) -> Non
     workflow = admit_activation_workflow(
         workflow=rebuilt,
         scopes=(DynamicScope(workflow=rebuilt, maps=(), joins=(), loops=()),),
-        limits=workflow.limits,
+        limits=workflow.dynamic_limits,
     )
     data = _data(1)
     target = next(iter(data.targets))
@@ -378,7 +376,7 @@ def test_shared_nested_body_executes_each_real_occurrence() -> None:
 
 async def _assert_shared_nested_body() -> None:
     body_dynamic, child, artifact_type = _workflow(with_input=True)
-    body = body_dynamic.workflow
+    body = body_dynamic
     interface = replace(
         body.interface,
         name="shared-body-root",

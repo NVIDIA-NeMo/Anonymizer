@@ -36,12 +36,10 @@ from anonymizer.engine.graph_sdk.preparation import BoundInput, PreparationConfi
 from anonymizer.engine.graph_sdk.requests import AssociationInput, AssociationResult, PortArtifact, TextArtifactValue
 from anonymizer.graph.activation import ActivationLimits
 from anonymizer.graph.workflow import (
-    AdmittedActivationWorkflow,
     ArtifactType,
     ContextInputRef,
     ContextUse,
     DynamicLimits,
-    DynamicScope,
     InputBinding,
     InputPort,
     NodeId,
@@ -60,8 +58,6 @@ from anonymizer.graph.workflow import (
     WorkflowLimits,
     WorkflowOutcomeRef,
     WorkflowOutputRef,
-    admit_activation_workflow,
-    admit_static_workflow,
 )
 from tests.graph_sdk.effects_provider_fixtures import _CaseProvider
 from tests.graph_sdk.effects_request_fixtures import _policy
@@ -69,6 +65,12 @@ from tests.graph_sdk.implementation_fixtures import _execution_implementation, _
 from tests.graph_sdk.test_dynamic_executor import _capability, _outcome, _rows
 from tests.graph_sdk.test_local_executor import _Clock
 from tests.graph_sdk.test_preparation import _limits
+from tests.graph_sdk.workflow_construction import (
+    AdmittedActivationWorkflow,
+    DynamicScope,
+    admit_activation_workflow,
+    admit_static_workflow,
+)
 
 
 @dataclass

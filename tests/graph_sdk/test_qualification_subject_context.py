@@ -63,7 +63,6 @@ from anonymizer.graph.workflow import (
     ContextInputRef,
     ContextUse,
     CoverageAtom,
-    DynamicScope,
     EvidencePromise,
     InputBinding,
     InputPort,
@@ -79,14 +78,13 @@ from anonymizer.graph.workflow import (
     StateEffect,
     WorkflowInputRef,
     WorkflowOutputRef,
-    admit_activation_workflow,
-    admit_static_workflow,
 )
 from tests.graph_sdk.implementation_fixtures import _execution_implementation, _selection
 from tests.graph_sdk.test_decision_scheduling import _Callback
 from tests.graph_sdk.test_effects_production_conformance import _valid_runtime_rows, _ZeroClock
 from tests.graph_sdk.test_evidence import _qualification_limits
 from tests.graph_sdk.test_preparation import _capability, _limits, _workflow
+from tests.graph_sdk.workflow_construction import DynamicScope, admit_activation_workflow, admit_static_workflow
 
 
 @dataclass
@@ -207,7 +205,7 @@ async def _execute_separate_subject_context(
     initial_collection: bool = False,
 ) -> tuple[AdmittedExecutionPlan, ExecutionResult]:
     base, node, artifact = _workflow(with_input=True)
-    raw = base.workflow
+    raw = base
     coverage = coverage if coverage is not None else frozenset({CoverageAtom(kind="field", name="text")})
     read = StateEffect(kind="read", name="read")
     assert versioned_context_ports in {("a",), ("b",), ("a", "b")}
@@ -406,12 +404,12 @@ async def _execute_separate_subject_context(
     workflow = admit_activation_workflow(
         workflow=static,
         scopes=(DynamicScope(workflow=static, maps=(), loops=(), joins=()),),
-        limits=replace(base.limits, max_activation_occurrences=len(nodes)),
+        limits=replace(base.dynamic_limits, max_activation_occurrences=len(nodes)),
     )
     capabilities = tuple(
         replace(
             _capability(workflow),
-            operation=next(declared.operation for declared in workflow.workflow.nodes if declared.id == item.id),
+            operation=next(declared.operation for declared in workflow.operations if declared.id == item.id),
             implementation=ImplementationRef(name=f"separate-context-{index}", revision=1),
         )
         for index, item in enumerate(nodes)

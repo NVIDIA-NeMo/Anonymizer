@@ -28,7 +28,6 @@ from anonymizer.graph.workflow import (
     ContextInputRef,
     ContextUse,
     DynamicLimits,
-    DynamicScope,
     EvidencePromise,
     InputBinding,
     InputPort,
@@ -51,12 +50,11 @@ from anonymizer.graph.workflow import (
     WorkflowInputRef,
     WorkflowOutcomeRef,
     WorkflowOutputRef,
-    admit_activation_workflow,
-    admit_static_workflow,
 )
 from tests.graph_sdk.local_execution_fixtures import _no_choice_limits
 from tests.graph_sdk.reference.corpora import load_cases
 from tests.graph_sdk.test_dynamic_executor import _capability, _outcome
+from tests.graph_sdk.workflow_construction import DynamicScope, admit_activation_workflow, admit_static_workflow
 
 MAP_CASES = {item["case_id"]: item for item in load_cases("effects") if item["family"] == "map"}
 
@@ -443,7 +441,9 @@ def _map_fixture(
             + int(ordinary is not None),
         ),
     )
-    implementations = tuple(next(iter(node.body.nodes)) if isinstance(node, SubgraphNode) else node for node in nodes)
+    implementations = tuple(
+        next(iter(node.body.operations)) if isinstance(node, SubgraphNode) else node for node in nodes
+    )
     implementation_nodes = tuple(node.id for node in implementations)
     capabilities = tuple(_capability(node.operation, index) for index, node in enumerate(implementations))
     return _MapFixture(

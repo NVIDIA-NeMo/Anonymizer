@@ -135,7 +135,7 @@ def _observe_dynamic_membership(
     facts: _ExecutionFacts,
     limits: ExecutionLimits,
 ) -> ActivationState:
-    scope = next(item for item in state.workflow.scopes if node.workflow == item.workflow.workflow)
+    scope = next(item for item in state.workflow.bodies() if node.workflow == item.workflow)
     declaration = next((item for item in scope.maps if item.expander == node), None)
     if declaration is None or outcome not in declaration.expansion_outcomes:
         return state
@@ -326,7 +326,7 @@ def _materialize_structure(
                             isinstance(output.source, NodeOutputRef)
                             and output.source.node == entry.template
                             and output.source.port == binding.destination.port
-                            for output in admitted.context.prepared.workflow.workflow.output_bindings
+                            for output in admitted.context.prepared.workflow.output_bindings
                         )
                         else "artifact"
                     ),

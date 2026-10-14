@@ -23,18 +23,11 @@ from anonymizer.engine.graph_sdk.executor import (
     start_execution,
 )
 from anonymizer.engine.graph_sdk.requests import AssociationInput, AssociationResult
-from anonymizer.graph.workflow import (
-    DynamicScope,
-    NodeOutcomeRef,
-    OperationNode,
-    OutcomeBinding,
-    WorkflowOutcomeRef,
-    admit_activation_workflow,
-    admit_static_workflow,
-)
+from anonymizer.graph.workflow import NodeOutcomeRef, OperationNode, OutcomeBinding, WorkflowOutcomeRef
 from tests.graph_sdk.implementation_fixtures import _execution_implementation
 from tests.graph_sdk.test_local_executor import _Clock, _runtime_rows
 from tests.graph_sdk.test_preparation import _capability, _data, _prepare, _workflow
+from tests.graph_sdk.workflow_construction import DynamicScope, admit_activation_workflow, admit_static_workflow
 
 
 @dataclass
@@ -80,7 +73,7 @@ def test_local_named_ingress_outcomes(mode: str, expected: str) -> None:
 
 async def _execute(mode: str, expected: str) -> None:
     workflow, node, _ = _workflow()
-    old = workflow.workflow
+    old = workflow
     operation = replace(
         old.interface,
         outcomes=(
@@ -107,7 +100,9 @@ async def _execute(mode: str, expected: str) -> None:
         limits=replace(old.limits, max_bindings=3, max_choice_states=3),
     )
     workflow = admit_activation_workflow(
-        workflow=static, scopes=(DynamicScope(workflow=static, maps=(), joins=(), loops=()),), limits=workflow.limits
+        workflow=static,
+        scopes=(DynamicScope(workflow=static, maps=(), joins=(), loops=()),),
+        limits=workflow.dynamic_limits,
     )
     capability = _capability(workflow)
     prepared = _prepare(data=_data(1), workflow=workflow, capability=capability)

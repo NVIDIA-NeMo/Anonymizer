@@ -26,13 +26,10 @@ from anonymizer.graph.activation import (
     initialize_activation,
 )
 from anonymizer.graph.workflow import (
-    AdmittedActivationWorkflow,
-    AdmittedWorkflow,
     ArtifactType,
     ChoiceBranch,
     ChoiceDecl,
     DynamicLimits,
-    DynamicScope,
     InputBinding,
     InputPort,
     KeyedJoinDecl,
@@ -60,10 +57,15 @@ from anonymizer.graph.workflow import (
     WorkflowLimits,
     WorkflowOutcomeRef,
     WorkflowOutputRef,
+)
+from tests.graph_sdk.reference.corpora import corpus_bytes
+from tests.graph_sdk.workflow_construction import (
+    AdmittedActivationWorkflow,
+    AdmittedWorkflow,
+    DynamicScope,
     admit_activation_workflow,
     admit_static_workflow,
 )
-from tests.graph_sdk.reference.corpora import corpus_bytes
 
 Json: TypeAlias = str | int | bool | None | list["Json"] | dict[str, "Json"]
 Object: TypeAlias = dict[str, Json]
@@ -654,7 +656,7 @@ class _Adapter:
         while pending:
             current, depth = pending.pop()
             maximum = max(maximum, depth)
-            pending.extend((node.body, depth + 1) for node in current.nodes if isinstance(node, SubgraphNode))
+            pending.extend((node.body, depth + 1) for node in current.operations if isinstance(node, SubgraphNode))
         return maximum
 
     def build_dynamic(self) -> AdmittedActivationWorkflow:
@@ -868,7 +870,7 @@ class _Adapter:
             if entry.outcome is not None:
                 operation = next(
                     node.operation
-                    for node in _scope_for_state(state, entry.template).workflow.nodes
+                    for node in _scope_for_state(state, entry.template).operations
                     if node.id == entry.template
                 )
                 outcome = next(item for item in operation.outcomes if item.name == entry.outcome)
@@ -935,8 +937,8 @@ class _Adapter:
             return {"status": "rejected", "code": error.code.value, "state": None}
 
 
-def _scope_for_state(state: ActivationState, template: NodeId) -> DynamicScope:
-    return next(scope for scope in state.workflow.scopes if any(node.id == template for node in scope.workflow.nodes))
+def _scope_for_state(state: ActivationState, template: NodeId) -> AdmittedWorkflow:
+    return next(scope for scope in state.workflow.bodies() if any(node.id == template for node in scope.operations))
 
 
 @pytest.mark.parametrize(

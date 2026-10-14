@@ -74,7 +74,7 @@ from anonymizer.graph.workflow import (
     ArtifactType,
     ChoiceBranch,
     ChoiceDecl,
-    DynamicScope,
+    DynamicLimits,
     EvidencePromise,
     InputBinding,
     InputPort,
@@ -101,7 +101,7 @@ from anonymizer.graph.workflow import (
     WorkflowLimits,
     WorkflowOutcomeRef,
     WorkflowOutputRef,
-    admit_static_workflow,
+    compile_graph,
 )
 
 
@@ -222,15 +222,13 @@ async def execute_initial_evaluation(
             max_group_members=0,
         ),
     )
-    raw, scopes, capabilities, policies, ids, body_ids = _tail(configuration, allowance)
+    raw, capabilities, policies, ids, body_ids = _tail(configuration, allowance)
     text = ArtifactType(name="anonymizer.text", revision=1)
     prepared = _prepare_frame_plan(
         data,
         raw,
         capabilities,
         tuple(BoundInput(target=t, source=t, port="source", artifact_type=text) for t in targets),
-        scopes=scopes,
-        max_occurrences=8 + 6 * allowance,
     )
     names = {node: name for name, node in ids.items() if name != "member"}
     body_names = {node: name for name, node in body_ids.items()}
@@ -545,17 +543,25 @@ def _tail(configuration: FrozenConfig, allowance: int):
         "rewrite-repair-evaluate", carried, carried, identity=("source", "baseline", "qa"), control=True, ceiling=5
     )
 
-    def admit(owner, interface, nodes, bindings, edges, outputs, outcomes, choices=()):
-        return admit_static_workflow(
+    def admit(owner, interface, nodes, bindings, edges, outputs, outcomes, controls=()):
+        return compile_graph(
             workflow=owner,
             interface=interface,
-            nodes=tuple(nodes),
+            nodes=(*nodes, *controls),
             input_bindings=tuple(bindings),
             output_bindings=tuple(outputs),
             outcome_bindings=tuple(outcomes),
             sequence=tuple(SequenceEdge(before=a, after=b) for a, b in sorted(edges, key=lambda e: repr(e))),
-            choices=choices,
             protection=(),
+            dynamic_limits=DynamicLimits(
+                max_maps=0,
+                max_joins=1,
+                max_loops=1,
+                max_children_per_map=0,
+                max_iterations_per_loop=allowance,
+                max_dynamic_depth=3,
+                max_activation_occurrences=max(5, 8 + 6 * allowance),
+            ),
             limits=WorkflowLimits(
                 max_nodes=20,
                 max_bindings=100,
@@ -650,6 +656,30 @@ def _tail(configuration: FrozenConfig, allowance: int):
             )
         ),
     )
+    loop = LoopDecl(
+        starter=ids["metrics"],
+        member=ids["member"],
+        join=ids["join"],
+        enter_outcomes=frozenset({"again"}),
+        bypass_outcomes=frozenset({"stop", "exhausted", "skipped"}),
+        continue_outcomes=frozenset({"again"}),
+        exit_outcomes=frozenset({"stop", "exhausted"}),
+        initial=tuple(
+            LoopInitialBinding(
+                source=NodeOutputRef(node=ids["metrics"], port=k),
+                destination=NodeInputRef(node=ids["member"], port="in_" + k),
+            )
+            for k in carried
+        ),
+        carried=tuple(
+            LoopCarriedBinding(
+                source=NodeOutputRef(node=ids["member"], port=k),
+                destination=NodeInputRef(node=ids["member"], port="in_" + k),
+            )
+            for k in carried
+        ),
+        max_iterations=allowance,
+    )
     raw = admit(
         root,
         interface,
@@ -676,6 +706,13 @@ def _tail(configuration: FrozenConfig, allowance: int):
             ),
         ],
         (
+            loop,
+            KeyedJoinDecl(
+                source=ids["metrics"],
+                join=ids["join"],
+                accepted_categories=frozenset({"success"}),
+                reduction="all_by_key",
+            ),
             ChoiceDecl(
                 selector=ids["join"],
                 branches=(
@@ -685,44 +722,4 @@ def _tail(configuration: FrozenConfig, allowance: int):
             ),
         ),
     )
-    loop = LoopDecl(
-        starter=ids["metrics"],
-        member=ids["member"],
-        join=ids["join"],
-        enter_outcomes=frozenset({"again"}),
-        bypass_outcomes=frozenset({"stop", "exhausted", "skipped"}),
-        continue_outcomes=frozenset({"again"}),
-        exit_outcomes=frozenset({"stop", "exhausted"}),
-        initial=tuple(
-            LoopInitialBinding(
-                source=NodeOutputRef(node=ids["metrics"], port=k),
-                destination=NodeInputRef(node=ids["member"], port="in_" + k),
-            )
-            for k in carried
-        ),
-        carried=tuple(
-            LoopCarriedBinding(
-                source=NodeOutputRef(node=ids["member"], port=k),
-                destination=NodeInputRef(node=ids["member"], port="in_" + k),
-            )
-            for k in carried
-        ),
-        max_iterations=allowance,
-    )
-    scopes = (
-        DynamicScope(
-            workflow=raw,
-            maps=(),
-            joins=(
-                KeyedJoinDecl(
-                    source=ids["metrics"],
-                    join=ids["join"],
-                    accepted_categories=frozenset({"success"}),
-                    reduction="all_by_key",
-                ),
-            ),
-            loops=(loop,),
-        ),
-        DynamicScope(workflow=body_raw, maps=(), joins=(), loops=()),
-    )
-    return raw, scopes, tuple(capabilities), tuple(policies), ids, body_ids
+    return raw, tuple(capabilities), tuple(policies), ids, body_ids

@@ -7,7 +7,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal, TypeAlias
 
-from anonymizer.engine.graph_sdk._workflow import reachable_workflows
 from anonymizer.engine.graph_sdk.capabilities import (
     ImplementationCapability,
     ImplementationSelection,
@@ -24,10 +23,9 @@ from anonymizer.engine.graph_sdk.data import ValidatedDataGraph
 from anonymizer.graph._values import DatumId, PlanId
 from anonymizer.graph.activation import ActivationLimits
 from anonymizer.graph.workflow import (
-    AdmittedActivationWorkflow,
-    AdmittedWorkflow,
     ArtifactType,
     ContextInputRef,
+    Graph,
     NodeId,
     OperationNode,
     ProtectionRequirement,
@@ -195,7 +193,7 @@ class ProtectionEligibility(_PrivateValue):
 class PreparedPlan(_PrivateValue):
     plan: PlanId
     data: ValidatedDataGraph
-    workflow: AdmittedActivationWorkflow
+    workflow: Graph
     activation_limits: ActivationLimits
     bound_inputs: frozenset[BoundInput]
     configuration: PreparationConfiguration
@@ -215,7 +213,7 @@ class PreparedPlan(_PrivateValue):
         _key: object,
         plan: PlanId,
         data: ValidatedDataGraph,
-        workflow: AdmittedActivationWorkflow,
+        workflow: Graph,
         activation_limits: ActivationLimits,
         bound_inputs: frozenset[BoundInput],
         configuration: PreparationConfiguration,
@@ -249,7 +247,7 @@ class PreparedPlan(_PrivateValue):
 def prepare(
     *,
     data: ValidatedDataGraph,
-    workflow: AdmittedActivationWorkflow,
+    workflow: Graph,
     activation_limits: ActivationLimits,
     bound_inputs: tuple[BoundInput, ...],
     configuration: PreparationConfiguration,
@@ -267,8 +265,10 @@ def prepare(
     if any(not isinstance(capability, ImplementationCapability) for capability in capabilities):
         _reject(PreparationCode.INVALID_TYPE)
 
-    reachable = reachable_workflows(workflow)
-    operation_nodes = {node.id: node for body in reachable for node in body.nodes if isinstance(node, OperationNode)}
+    reachable = workflow.bodies()
+    operation_nodes = {
+        node.id: node for body in reachable for node in body.operations if isinstance(node, OperationNode)
+    }
     recipe, map_expanders = _reservation_recipe(workflow)
     target_occurrences = tuple(
         TargetOccurrenceMap(
@@ -281,7 +281,7 @@ def prepare(
     if type(getattr(configuration, "invocation_owned", None)) is not bool:
         _reject(PreparationCode.INVALID_TYPE)
     if configuration.invocation_owned and (
-        data.targets or bound_inputs or workflow.workflow.interface.inputs or workflow.workflow.interface.outputs
+        data.targets or bound_inputs or workflow.interface.inputs or workflow.interface.outputs
     ):
         _reject(PreparationCode.CONTRADICTORY)
     occurrence_count = 1 if configuration.invocation_owned else len(data.targets)
@@ -322,12 +322,10 @@ def prepare(
         _reject(PreparationCode.DUPLICATE)
 
     context_inputs = {
-        binding.source.port
-        for binding in workflow.workflow.input_bindings
-        if isinstance(binding.source, ContextInputRef)
+        binding.source.port for binding in workflow.input_bindings if isinstance(binding.source, ContextInputRef)
     }
     root_inputs = {
-        port.name: port.artifact_type for port in workflow.workflow.interface.inputs if port.name not in context_inputs
+        port.name: port.artifact_type for port in workflow.interface.inputs if port.name not in context_inputs
     }
     expected_inputs = {(target, port) for target in data.targets for port in root_inputs}
     observed_inputs = set(input_keys)
@@ -354,7 +352,7 @@ def prepare(
     ):
         _reject(PreparationCode.HARD_BUDGET_INCOMPATIBLE)
 
-    eligibility = _eligibility(workflow.workflow, configuration)
+    eligibility = _eligibility(workflow, configuration)
     if any(item.artifact_type != root_inputs[item.port] for item in bound_inputs) or any(
         revision.effect.kind != "read" for revision in state.revisions
     ):
@@ -420,7 +418,7 @@ def _validate_outer_types(
 ) -> None:
     if (
         not isinstance(data, ValidatedDataGraph)
-        or not isinstance(workflow, AdmittedActivationWorkflow)
+        or not isinstance(workflow, Graph)
         or not isinstance(activation_limits, ActivationLimits)
         or not isinstance(bound_inputs, tuple)
         or any(not isinstance(item, BoundInput) for item in bound_inputs)
@@ -435,17 +433,16 @@ def _validate_outer_types(
 
 
 def _reservation_recipe(
-    workflow: AdmittedActivationWorkflow,
+    workflow: Graph,
 ) -> tuple[tuple[ReservationSlot, ...], int]:
-    scopes = {id(scope.workflow): scope for scope in workflow.scopes}
     slots: list[ReservationSlot] = []
     map_expanders = 0
 
-    def emit_scope(current: AdmittedWorkflow, container_parent: int | None) -> None:
+    def emit_scope(current: Graph, container_parent: int | None) -> None:
         nonlocal map_expanders
-        scope = scopes[id(current)]
+        scope = current
         dynamic_members = {item.member for item in (*scope.maps, *scope.loops)}
-        nodes = {node.id: node for node in current.nodes}
+        nodes = {node.id: node for node in current.operations}
         children: dict[NodeId, list[tuple[NodeId, int, bool]]] = {}
         for item in scope.maps:
             children.setdefault(item.expander, []).append((item.member, item.max_children, False))
@@ -465,11 +462,11 @@ def _reservation_recipe(
                 for occurrence in range(count):
                     emit_node(member, index, occurrence if is_loop else None)
 
-        for node in current.nodes:
+        for node in current.operations:
             if node.id not in dynamic_members:
                 emit_node(node.id, container_parent, None)
 
-    emit_scope(workflow.workflow, None)
+    emit_scope(workflow, None)
     if len(slots) != workflow.activation_upper_bound:
         _reject(PreparationCode.CONTRADICTORY)
     return tuple(slots), map_expanders
@@ -515,7 +512,7 @@ def _select_implementations(
     return tuple(selected)
 
 
-def _eligibility(workflow: AdmittedWorkflow, configuration: PreparationConfiguration) -> ProtectionEligibility:
+def _eligibility(workflow: Graph, configuration: PreparationConfiguration) -> ProtectionEligibility:
     declared = workflow.protection_eligible_outcomes
     required = configuration.required_protection_outcomes
     eligible = bool(required) and required <= declared

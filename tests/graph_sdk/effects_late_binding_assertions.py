@@ -37,7 +37,6 @@ from anonymizer.engine.graph_sdk.resources import ResourceLease
 from anonymizer.graph._values import ArtifactRef
 from anonymizer.graph.workflow import (
     ContextInputRef,
-    DynamicScope,
     InputPort,
     NodeOutputRef,
     OperationNode,
@@ -45,8 +44,6 @@ from anonymizer.graph.workflow import (
     OutputDependency,
     OutputPort,
     WorkflowOutputRef,
-    admit_activation_workflow,
-    admit_static_workflow,
 )
 from tests.graph_sdk.effects_provider_fixtures import (
     _CaseProvider,
@@ -55,6 +52,7 @@ from tests.graph_sdk.effects_provider_fixtures import (
 from tests.graph_sdk.effects_request_fixtures import _normalize, _policy
 from tests.graph_sdk.test_binding import _context_workflow
 from tests.graph_sdk.test_preparation import _data
+from tests.graph_sdk.workflow_construction import DynamicScope, admit_activation_workflow, admit_static_workflow
 
 
 def _assert_latest_publication(
@@ -193,8 +191,8 @@ async def _assert_late_initial_provider_case(case: dict[str, Any]) -> None:
     publication = materializations[0].get("publication") if materializations else None
     context_port = cast(str, materializations[0]["port"]) if materializations else "input"
     if context_port != "input":
-        static = workflow.workflow
-        operation_node = next(item for item in static.nodes if isinstance(item, OperationNode))
+        static = workflow
+        operation_node = next(item for item in static.operations if isinstance(item, OperationNode))
         operation = replace(
             operation_node.operation,
             inputs=(InputPort(name=context_port, artifact_type=artifact_type),),
@@ -257,7 +255,7 @@ async def _assert_late_initial_provider_case(case: dict[str, Any]) -> None:
         workflow = admit_activation_workflow(
             workflow=rebuilt,
             scopes=(DynamicScope(workflow=rebuilt, maps=(), joins=(), loops=()),),
-            limits=workflow.limits,
+            limits=workflow.dynamic_limits,
         )
     data = _data(1)
     target = next(iter(data.targets))

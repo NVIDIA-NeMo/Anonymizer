@@ -14,24 +14,25 @@ from anonymizer.graph._workflow_analysis import (
     _intersection,
     _subset,
     _union,
-    _visited_pop,
     _visits,
 )
 from anonymizer.graph._workflow_composition import _has_cycle, _validate_paths
 from anonymizer.graph._workflow_values import (
     _ADMISSION_KEY,
-    AdmittedActivationWorkflow,
-    AdmittedWorkflow,
     ArtifactType,
     ChoiceDecl,
     ContextInputRef,
     DynamicLimits,
-    DynamicScope,
+    Graph,
     InputBinding,
+    KeyedJoinDecl,
+    LoopDecl,
+    MapDecl,
     Node,
     NodeId,
     NodeInputRef,
     NodeOutputRef,
+    Operation,
     OperationNode,
     OperationSpec,
     OutcomeBinding,
@@ -44,30 +45,17 @@ from anonymizer.graph._workflow_values import (
     WorkflowLimits,
     _analysis_limit,
     _map_item_ports,
-    _reachable_workflows,
     _reject,
     _tuple_of,
     _validate_scalars,
 )
 
 
-@_bounded_analysis(_analysis_limit)
-def admit_activation_workflow(
-    *, workflow: AdmittedWorkflow, scopes: tuple[DynamicScope, ...], limits: DynamicLimits
-) -> AdmittedActivationWorkflow:
-    """Validate dynamic roles and compute a finite occurrence bound."""
-    if not isinstance(workflow, AdmittedWorkflow) or not isinstance(limits, DynamicLimits):
-        _reject(ValidationCode.INVALID_TYPE)
-    _tuple_of(scopes, DynamicScope)
-
-    reachable = list(_reachable_workflows([workflow]))
-    by_workflow = {id(scope.workflow): scope for scope in _visits(scopes)}
-    if not _equal(len(by_workflow), len(scopes)):
-        _reject(ValidationCode.DUPLICATE)
-    if not _equal(len(scopes), len(reachable)) or not _equal(
-        set(_visits(by_workflow)), {id(item) for item in _visits(reachable)}
-    ):
-        _reject(ValidationCode.MISSING)
+def _validate_controls(workflow: Graph) -> None:
+    """Check finite control roles on the same body accepted by static admission."""
+    limits = workflow.dynamic_limits
+    reachable = workflow.bodies()
+    scopes = reachable
     for body in _visits(reachable):
         for endpoint in _visits(body.map_item_ports):
             matches = [
@@ -101,7 +89,7 @@ def admit_activation_workflow(
         _reject(ValidationCode.LIMIT_EXCEEDED)
 
     for scope in _visits(scopes):
-        nodes = {node.id: node for node in _visits(scope.workflow.nodes)}
+        nodes = {node.id: node for node in _visits(scope.operations)}
         owned = set(_visits(nodes))
         declared_joins = [join.join for join in _visits(scope.joins)]
         aggregate_sources = [item.expander for item in _visits(scope.maps)] + [
@@ -117,7 +105,7 @@ def admit_activation_workflow(
             ),
             {node for item in _visits(scope.loops) for node in _visits((item.starter, item.member, item.join))},
         )
-        if any(not _equal(node.workflow, scope.workflow.workflow) for node in _visits(referenced)):
+        if any(not _equal(node.workflow, scope.workflow) for node in _visits(referenced)):
             _reject(ValidationCode.FOREIGN_OWNER)
         if (
             not _equal(len(members), len(set(_visits(members))))
@@ -132,7 +120,7 @@ def admit_activation_workflow(
             _reject(ValidationCode.MISSING)
         choice_members = {
             member
-            for choice in _visits(scope.workflow.choices)
+            for choice in _visits(scope.choices)
             for branch in _visits(choice.branches)
             for member in _visits(branch.members)
         }
@@ -150,11 +138,11 @@ def admit_activation_workflow(
                     isinstance(binding.source, NodeOutputRef)
                     and _equal(binding.source.node, item.member)
                     and not _equal(binding.destination.node, item.member)
-                    for binding in _visits(scope.workflow.input_bindings)
+                    for binding in _visits(scope.input_bindings)
                 )
                 outward_outputs = any(
                     isinstance(binding.source, NodeOutputRef) and _equal(binding.source.node, item.member)
-                    for binding in _visits(scope.workflow.output_bindings)
+                    for binding in _visits(scope.output_bindings)
                 )
                 if outward_inputs or outward_outputs:
                     _reject(ValidationCode.UNSUPPORTED)
@@ -165,7 +153,7 @@ def admit_activation_workflow(
                 _reject(ValidationCode.MISSING)
             bindings = [
                 binding
-                for binding in _visits(scope.workflow.input_bindings)
+                for binding in _visits(scope.input_bindings)
                 if _equal(binding.destination, NodeInputRef(node=item.member, port=item.item_input))
             ]
             if not _equal(len(bindings), 1):
@@ -194,7 +182,7 @@ def admit_activation_workflow(
                 _reject(ValidationCode.MISSING)
             static_bindings = {
                 (binding.source, binding.destination)
-                for binding in _visits(scope.workflow.input_bindings)
+                for binding in _visits(scope.input_bindings)
                 if _equal(binding.destination.node, item.member)
             }
             if not _equal(
@@ -213,7 +201,7 @@ def admit_activation_workflow(
         joins_by_source = {item.source: item for item in _visits(scope.joins)}
         if any(not _equal(joins_by_source[item.starter].join, item.join) for item in _visits(scope.loops)):
             _reject(ValidationCode.CONTRADICTORY)
-        edges = {(edge.before, edge.after) for edge in _visits(scope.workflow.sequence)}
+        edges = {(edge.before, edge.after) for edge in _visits(scope.sequence)}
         reachable_pairs = set(_visits(edges))
         changed = True
         while changed:
@@ -241,88 +229,20 @@ def admit_activation_workflow(
         ):
             _reject(ValidationCode.CONTRADICTORY)
 
-    scope_depth: dict[int, int] = {id(workflow): 1}
-    pending_depth = [workflow]
-    while pending_depth:
-        current = _visited_pop(pending_depth)
-        depth = scope_depth[id(current)]
-        for node in _visits(current.nodes):
-            if isinstance(node, SubgraphNode):
-                scope_depth[id(node.body)] = depth + 1
-                pending_depth.append(node.body)
-    dynamic_depth = max(_visits(scope_depth.values()), default=1)
-    if dynamic_depth > limits.max_dynamic_depth:
-        _reject(ValidationCode.LIMIT_EXCEEDED)
-
-    bounds: dict[int, int] = {}
-    stack: list[tuple[AdmittedWorkflow, bool]] = [(workflow, False)]
-    while stack:
-        current, visited = _visited_pop(stack)
-        if id(current) in bounds:
-            continue
-        children = [node.body for node in _visits(current.nodes) if isinstance(node, SubgraphNode)]
-        if not visited:
-            stack.append((current, True))
-            stack.extend((child, False) for child in _visits(children))
-            continue
-        scope = by_workflow[id(current)]
-        factors = {item.member: item.max_children for item in _visits(scope.maps)}
-        factors.update({item.member: item.max_iterations for item in _visits(scope.loops)})
-        bound = 0
-        for node in _visits(current.nodes):
-            node_bound = 1 + (bounds[id(node.body)] if isinstance(node, SubgraphNode) else 0)
-            bound += factors.get(node.id, 1) * node_bound
-            if bound > limits.max_activation_occurrences:
-                _reject(ValidationCode.LIMIT_EXCEEDED)
-        bounds[id(current)] = bound
-    upper_bound = bounds[id(workflow)]
-    if upper_bound > limits.max_activation_occurrences:
+    if workflow.dynamic_depth > limits.max_dynamic_depth or any(
+        body.activation_upper_bound > limits.max_activation_occurrences for body in _visits(reachable)
+    ):
         _reject(ValidationCode.LIMIT_EXCEEDED)
     if any(
-        outcome.ceiling.max_activations < bounds[id(item)]
-        for item in _visits(reachable)
-        for outcome in _visits(item.interface.outcomes)
+        outcome.ceiling.max_activations < body.activation_upper_bound
+        for body in _visits(reachable)
+        for outcome in _visits(body.interface.outcomes)
     ):
         _reject(ValidationCode.CONTRADICTORY)
-    ordered = tuple(by_workflow[id(item)] for item in _visits(reachable))
-    return AdmittedActivationWorkflow(
-        _key=_ADMISSION_KEY,
-        workflow=workflow,
-        scopes=ordered,
-        limits=limits,
-        activation_upper_bound=upper_bound,
-        dynamic_depth=dynamic_depth,
-    )
 
 
 @_bounded_analysis(_analysis_limit)
-def substitute_activation_workflow(
-    *, workflow: AdmittedActivationWorkflow, target: NodeId, replacement: AdmittedWorkflow
-) -> AdmittedActivationWorkflow:
-    """Substitute a static body and readmit the dynamic wrapper."""
-    if not isinstance(workflow, AdmittedActivationWorkflow):
-        _reject(ValidationCode.INVALID_TYPE)
-    updated = substitute(workflow=workflow.workflow, target=target, replacement=replacement)
-    root_scope = next(scope for scope in _visits(workflow.scopes) if scope.workflow is workflow.workflow)
-    admitted_scopes = [
-        DynamicScope(workflow=updated, maps=root_scope.maps, joins=root_scope.joins, loops=root_scope.loops)
-    ]
-    existing = {id(scope.workflow): scope for scope in _visits(workflow.scopes)}
-    roots = [node.body for node in _visits(updated.nodes) if isinstance(node, SubgraphNode)]
-    for current in _reachable_workflows(roots):
-        prior = existing.get(id(current))
-        admitted_scopes.append(
-            prior if prior is not None else DynamicScope(workflow=current, maps=(), joins=(), loops=())
-        )
-    return admit_activation_workflow(
-        workflow=updated,
-        scopes=tuple(_visits(admitted_scopes)),
-        limits=workflow.limits,
-    )
-
-
-@_bounded_analysis(_analysis_limit)
-def admit_static_workflow(
+def compile_graph(
     *,
     workflow: WorkflowId,
     interface: OperationSpec,
@@ -331,11 +251,46 @@ def admit_static_workflow(
     output_bindings: tuple[OutputBinding, ...],
     outcome_bindings: tuple[OutcomeBinding, ...],
     sequence: tuple[SequenceEdge, ...],
-    choices: tuple[ChoiceDecl, ...],
     protection: tuple[ProtectionRequirement, ...],
     limits: WorkflowLimits,
-) -> AdmittedWorkflow:
-    """Validate and normalize a pure static workflow declaration."""
+    dynamic_limits: DynamicLimits | None = None,
+) -> Graph:
+    """Compile typed operation and control nodes into one admitted topology."""
+    body = _compile_body(
+        workflow=workflow,
+        interface=interface,
+        nodes=nodes,
+        input_bindings=input_bindings,
+        output_bindings=output_bindings,
+        outcome_bindings=outcome_bindings,
+        sequence=sequence,
+        protection=protection,
+        limits=limits,
+        dynamic_limits=dynamic_limits,
+    )
+    _validate_controls(body)
+    return body
+
+
+@_bounded_analysis(_analysis_limit)
+def _compile_body(
+    *,
+    workflow: WorkflowId,
+    interface: OperationSpec,
+    nodes: tuple[Node, ...],
+    input_bindings: tuple[InputBinding, ...],
+    output_bindings: tuple[OutputBinding, ...],
+    outcome_bindings: tuple[OutcomeBinding, ...],
+    sequence: tuple[SequenceEdge, ...],
+    protection: tuple[ProtectionRequirement, ...],
+    limits: WorkflowLimits,
+    dynamic_limits: DynamicLimits | None = None,
+) -> Graph:
+    """Compile operations and controls into one admitted graph body."""
+    _tuple_of(nodes, (OperationNode, SubgraphNode, ChoiceDecl, MapDecl, LoopDecl, KeyedJoinDecl))
+    graph_nodes = nodes
+    choices = tuple(node for node in _visits(nodes) if isinstance(node, ChoiceDecl))
+    nodes = tuple(node for node in _visits(nodes) if isinstance(node, (OperationNode, SubgraphNode)))
     _validate_admission_types(
         workflow,
         interface,
@@ -356,7 +311,7 @@ def admit_static_workflow(
         1 + (node.body.expanded_node_count if isinstance(node, SubgraphNode) else 0) for node in _visits(nodes)
     )
     depth = max(
-        (1 + _workflow_depth(node.body) if isinstance(node, SubgraphNode) else 1 for node in _visits(nodes)), default=1
+        (1 + node.body.dynamic_depth if isinstance(node, SubgraphNode) else 1 for node in _visits(nodes)), default=1
     )
     choice_states = 1
     node_operations = {node.id: node.operation for node in _visits(nodes)}
@@ -399,38 +354,59 @@ def admit_static_workflow(
         interface, nodes, input_bindings, output_bindings, outcome_bindings, sequence, choices, check_cycles=False
     )
     eligible, unmet = _protection(interface, protection)
-    return AdmittedWorkflow(
+    if dynamic_limits is None:
+        if any(isinstance(node, (MapDecl, LoopDecl, KeyedJoinDecl)) for node in graph_nodes):
+            _reject(ValidationCode.MISSING)
+        dynamic_limits = DynamicLimits(
+            max_maps=0,
+            max_joins=0,
+            max_loops=0,
+            max_children_per_map=0,
+            max_iterations_per_loop=0,
+            max_dynamic_depth=limits.max_subgraph_depth,
+            max_activation_occurrences=limits.max_nodes,
+        )
+    if not isinstance(dynamic_limits, DynamicLimits):
+        _reject(ValidationCode.INVALID_TYPE)
+    if _duplicates(graph_nodes):
+        _reject(ValidationCode.DUPLICATE)
+    admitted = Graph(
         _key=_ADMISSION_KEY,
         workflow=workflow,
         interface=interface,
-        nodes=frozenset(_visits(nodes)),
+        nodes=tuple(_visits(graph_nodes)),
         input_bindings=frozenset(_visits(input_bindings)),
         output_bindings=frozenset(_visits(output_bindings)),
         outcome_bindings=frozenset(_visits(outcome_bindings)),
         sequence=frozenset(_visits(sequence)),
-        choices=frozenset(_visits(choices)),
         protection_requirements=frozenset(_visits(protection)),
         protection_eligible_outcomes=eligible,
         unmet_protection=unmet,
         limits=limits,
         expanded_node_count=expanded_count,
+        dynamic_limits=dynamic_limits,
     )
+    return admitted
 
 
 @_bounded_analysis(_analysis_limit)
-def substitute(*, workflow: AdmittedWorkflow, target: NodeId, replacement: AdmittedWorkflow) -> AdmittedWorkflow:
+def substitute(*, workflow: Graph, target: NodeId, replacement: Graph) -> Graph:
+    """Replace a graph operation and check all resulting control obligations."""
+    body = _substitute_body(workflow=workflow, target=target, replacement=replacement)
+    _validate_controls(body)
+    return body
+
+
+@_bounded_analysis(_analysis_limit)
+def _substitute_body(*, workflow: Graph, target: NodeId, replacement: Graph) -> Graph:
     """Replace one operation with a compatible, separately owned workflow."""
-    if (
-        not isinstance(workflow, AdmittedWorkflow)
-        or not isinstance(target, NodeId)
-        or not isinstance(replacement, AdmittedWorkflow)
-    ):
+    if not isinstance(workflow, Graph) or not isinstance(target, NodeId) or not isinstance(replacement, Graph):
         _reject(ValidationCode.INVALID_TYPE)
     if not _equal(target.workflow, workflow.workflow):
         _reject(ValidationCode.FOREIGN_OWNER)
     if _equal(replacement.workflow, workflow.workflow):
         _reject(ValidationCode.FOREIGN_OWNER)
-    indexed_nodes = {node.id: node for node in _visits(workflow.nodes)}
+    indexed_nodes = {node.id: node for node in _visits(workflow.operations)}
     target_node = indexed_nodes.get(target)
     if target_node is None:
         _reject(ValidationCode.MISSING)
@@ -438,19 +414,19 @@ def substitute(*, workflow: AdmittedWorkflow, target: NodeId, replacement: Admit
         _reject(ValidationCode.CONTRADICTORY)
     nodes = tuple(
         SubgraphNode(id=target, operation=target_node.operation, body=replacement) if _equal(node.id, target) else node
-        for node in _visits(workflow.nodes)
+        for node in _visits(workflow.operations)
     )
-    return admit_static_workflow(
+    return _compile_body(
         workflow=workflow.workflow,
         interface=workflow.interface,
-        nodes=nodes,
+        nodes=(*nodes, *workflow.choices, *workflow.maps, *workflow.loops, *workflow.joins),
         input_bindings=tuple(_visits(workflow.input_bindings)),
         output_bindings=tuple(_visits(workflow.output_bindings)),
         outcome_bindings=tuple(_visits(workflow.outcome_bindings)),
         sequence=tuple(_visits(workflow.sequence)),
-        choices=tuple(_visits(workflow.choices)),
         protection=tuple(_visits(workflow.protection_requirements)),
         limits=workflow.limits,
+        dynamic_limits=workflow.dynamic_limits,
     )
 
 
@@ -481,16 +457,6 @@ def _validate_admission_types(
     _tuple_of(protection, ProtectionRequirement)
 
 
-def _workflow_depth(workflow: AdmittedWorkflow) -> int:
-    maximum = 1
-    pending = [(workflow, 1)]
-    while pending:
-        current, depth = _visited_pop(pending)
-        maximum = max(maximum, depth)
-        pending.extend((node.body, depth + 1) for node in _visits(current.nodes) if isinstance(node, SubgraphNode))
-    return maximum
-
-
 def _node_references(
     input_bindings: tuple[InputBinding, ...],
     output_bindings: tuple[OutputBinding, ...],
@@ -514,7 +480,7 @@ def _node_references(
 
 def _validate_owners(
     workflow: WorkflowId,
-    nodes: tuple[Node, ...],
+    nodes: tuple[Operation, ...],
     input_bindings: tuple[InputBinding, ...],
     output_bindings: tuple[OutputBinding, ...],
     outcome_bindings: tuple[OutcomeBinding, ...],
@@ -535,7 +501,7 @@ def _duplicates(values: tuple[Any, ...] | list[Any]) -> bool:
 
 
 def _validate_duplicates(
-    nodes: tuple[Node, ...],
+    nodes: tuple[Operation, ...],
     input_bindings: tuple[InputBinding, ...],
     output_bindings: tuple[OutputBinding, ...],
     outcome_bindings: tuple[OutcomeBinding, ...],
@@ -578,7 +544,7 @@ def _source_type(
 
 def _validate_references(
     interface: OperationSpec,
-    nodes: tuple[Node, ...],
+    nodes: tuple[Operation, ...],
     input_bindings: tuple[InputBinding, ...],
     output_bindings: tuple[OutputBinding, ...],
     outcome_bindings: tuple[OutcomeBinding, ...],
@@ -711,7 +677,7 @@ def _validate_choice_reachability(sequence: tuple[SequenceEdge, ...], choices: t
             _reject(ValidationCode.CONTRADICTORY)
 
 
-def _validate_cycles(nodes: tuple[Node, ...], sequence: tuple[SequenceEdge, ...]) -> None:
+def _validate_cycles(nodes: tuple[Operation, ...], sequence: tuple[SequenceEdge, ...]) -> None:
     if _has_cycle(frozenset(node.id for node in _visits(nodes)), frozenset(_visits(sequence))):
         _reject(ValidationCode.CYCLE)
 

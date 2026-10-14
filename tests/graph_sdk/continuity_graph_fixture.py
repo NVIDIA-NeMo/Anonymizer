@@ -57,7 +57,6 @@ from anonymizer.graph.workflow import (
     ArtifactType,
     CoverageAtom,
     DynamicLimits,
-    DynamicScope,
     EvidencePromise,
     InputBinding,
     InputPort,
@@ -81,14 +80,13 @@ from anonymizer.graph.workflow import (
     WorkflowLimits,
     WorkflowOutcomeRef,
     WorkflowOutputRef,
-    admit_activation_workflow,
-    admit_static_workflow,
 )
 from tests.graph_sdk.evidence_fixtures import _qualification_limits
 from tests.graph_sdk.implementation_fixtures import _execution_implementation, _selection
 from tests.graph_sdk.test_decision_scheduling import _Callback
 from tests.graph_sdk.test_effects_production_conformance import _valid_runtime_rows, _ZeroClock
 from tests.graph_sdk.test_preparation import _capability, _limits
+from tests.graph_sdk.workflow_construction import DynamicScope, admit_activation_workflow, admit_static_workflow
 
 
 @dataclass(frozen=True)

@@ -25,12 +25,20 @@ Both examples project the saved result twice and assert that callback counts do 
 The example's `build()` function shows the complete declaration path:
 
 1. Create text datums with `DataGraph.new()` and `add_text()`, then validate explicit targets and relationships under `DataLimits`.
-2. Declare operation inputs, outputs, dependencies, outcomes and resource ceilings. Admit the static workflow, then its activation structure.
+2. Declare operation inputs, outputs, dependencies, outcomes and resource ceilings. Compile the complete graph with `compile_graph()`. Its `nodes` tuple contains operations, subgraphs and any choice, map, loop or keyed-join controls; supply `dynamic_limits` when those controls expand work.
 3. Declare implementation capabilities and select implementations during `prepare()`. The prepared plan binds the data, workflow, configuration, revisions and bounded activation inventory.
 4. Admit context and execution policies. Supply `ExecutionServices` with the corresponding callback handles.
 5. Call `await start_execution(...)`, then `await running.wait()`. Alternatively, call `execute_sync(...)` outside an active event loop.
 6. Admit qualification and construct an explicit `evidence_revision_view`. Call `qualify(admitted=..., result=..., current=...)` with the saved execution result.
 7. Bind a projection source. `project_protected` releases qualified current candidates; `project_content` selects retained artifacts for an explicit content view.
+
+`Graph` is the shared admitted representation consumed by activation, preparation
+and execution. `OperationNode` and `SubgraphNode` describe executable work;
+`ChoiceDecl`, `MapDecl`, `LoopDecl` and `KeyedJoinDecl` are control nodes in the
+same body. `Graph.operations` selects executable nodes and `Graph.bodies()`
+walks the declared topology, including shared subgraphs once. Compilation checks
+port and outcome compatibility, protection summaries, control ownership and
+finite expansion bounds before returning the graph.
 
 The admission functions return factory-protected values. Keep those values and pass them to their corresponding next boundary. Do not reconstruct an admitted plan or execution result from a dictionary. `ContractViolation`, `PreparationRejected`, and `EffectRejected` carry closed rejection codes; bounds and ownership checks occur before the affected work starts.
 

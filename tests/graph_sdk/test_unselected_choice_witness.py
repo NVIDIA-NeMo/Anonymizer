@@ -12,7 +12,6 @@ import pytest
 
 from anonymizer.engine.graph_sdk.qualification import qualify
 from anonymizer.graph.workflow import (
-    AdmittedWorkflow,
     ChoiceBranch,
     ChoiceDecl,
     NodeOutcomeRef,
@@ -20,10 +19,10 @@ from anonymizer.graph.workflow import (
     OutcomeBinding,
     SequenceEdge,
     WorkflowOutcomeRef,
-    admit_static_workflow,
 )
 from tests.graph_sdk import evidence_fixtures as fixture
 from tests.graph_sdk.qualification_fixtures import _inputs
+from tests.graph_sdk.workflow_construction import AdmittedWorkflow, admit_static_workflow
 
 
 def test_unselected_choice_retains_reservation_without_terminal(monkeypatch: pytest.MonkeyPatch) -> None:

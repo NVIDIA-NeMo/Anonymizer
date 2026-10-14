@@ -148,8 +148,8 @@ def test_output_dependency_cannot_reference_its_own_node_output(monkeypatch: pyt
     from typing import Any
 
     from anonymizer.graph._values import ContractViolation
-    from anonymizer.graph.workflow import AdmittedWorkflow, admit_static_workflow
     from tests.graph_sdk import test_qualification_subject_context as fixture
+    from tests.graph_sdk.workflow_construction import AdmittedWorkflow, admit_static_workflow
 
     def static(**kwargs: Any) -> AdmittedWorkflow:
         (node,) = kwargs["nodes"]

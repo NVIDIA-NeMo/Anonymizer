@@ -226,7 +226,7 @@ def build(
             ),
         ),
     )
-    static = g.admit_static_workflow(
+    static = g.compile_graph(
         workflow=owner,
         interface=interface,
         nodes=nodes,
@@ -242,7 +242,6 @@ def build(
             ),
         ),
         sequence=sequence,
-        choices=(),
         protection=(
             g.ProtectionRequirement(
                 outcome="ok",
@@ -264,19 +263,7 @@ def build(
             max_choice_states=1,
         ),
     )
-    workflow = g.admit_activation_workflow(
-        workflow=static,
-        scopes=(g.DynamicScope(workflow=static, maps=(), joins=(), loops=()),),
-        limits=g.DynamicLimits(
-            max_maps=0,
-            max_joins=0,
-            max_loops=0,
-            max_children_per_map=0,
-            max_iterations_per_loop=0,
-            max_dynamic_depth=1,
-            max_activation_occurrences=2,
-        ),
-    )
+    workflow = static
     config = g.FrozenConfig(fields=())
     capabilities = tuple(
         g.ImplementationCapability(
@@ -568,14 +555,14 @@ class MemoryContext(g.RemoteContext):
 async def run_context_example() -> dict[str, object]:
     admitted, _, _, _ = build(verified=False)
     prepared = admitted.context.prepared
-    raw = prepared.workflow.workflow
-    node = next(iter(raw.nodes))
+    raw = prepared.workflow
+    node = next(iter(raw.operations))
     assert isinstance(node, g.OperationNode)
     use = g.ContextUse(port="input", meaning="subject-context", capture="whole_artifact")
     operation = replace(
         node.operation, outcomes=tuple(replace(item, context=frozenset({use})) for item in node.operation.outcomes)
     )
-    static = g.admit_static_workflow(
+    static = g.compile_graph(
         workflow=raw.workflow,
         interface=replace(raw.interface, outcomes=operation.outcomes),
         nodes=(g.OperationNode(id=node.id, operation=operation),),
@@ -587,15 +574,10 @@ async def run_context_example() -> dict[str, object]:
         output_bindings=tuple(raw.output_bindings),
         outcome_bindings=tuple(raw.outcome_bindings),
         sequence=(),
-        choices=(),
         protection=(),
         limits=raw.limits,
     )
-    workflow = g.admit_activation_workflow(
-        workflow=static,
-        scopes=(g.DynamicScope(workflow=static, maps=(), joins=(), loops=()),),
-        limits=prepared.workflow.limits,
-    )
+    workflow = static
     source = g.ContextSourceRef(name="memory-context", revision=1)
     provider = MemoryContext(source)
     artifact_type = operation.inputs[0].artifact_type

@@ -12,7 +12,6 @@ from anonymizer.engine.detection.artifacts import ENTITY_SPANS_TYPE
 from anonymizer.engine.graph_sdk._effect_values import EffectCode, EffectRejected, reject, require_instance
 from anonymizer.engine.graph_sdk._ingress import inspect_failure, inspect_source, inspect_source_identity
 from anonymizer.engine.graph_sdk._request_driver import _RequestAuthority, drive_request, late_source_event
-from anonymizer.engine.graph_sdk._workflow import reachable_workflows
 from anonymizer.engine.graph_sdk.blocking import (
     BlockingContextProvider,
     _reject_worker_entry,
@@ -78,8 +77,8 @@ from anonymizer.engine.graph_sdk.resources import (
     close_resource,
 )
 from anonymizer.graph.workflow import (
-    AdmittedActivationWorkflow,
     ContextInputRef,
+    Graph,
     NodeInputRef,
     WorkflowInputRef,
 )
@@ -93,7 +92,7 @@ class BindingRejected(EffectRejected):
 class _BindingWork:
     binding: BindingId
     data: ValidatedDataGraph
-    workflow: AdmittedActivationWorkflow
+    workflow: Graph
     declarations: tuple[InitialContextDecl, ...]
     identities: tuple[BindingDeclarationId, ...]
     capabilities: tuple[ContextSourceCapability, ...]
@@ -123,7 +122,7 @@ class RunningBinding:
 async def start_initial_binding(
     *,
     data: ValidatedDataGraph,
-    workflow: AdmittedActivationWorkflow,
+    workflow: Graph,
     declarations: tuple[InitialContextDecl, ...],
     capabilities: tuple[ContextSourceCapability, ...],
     resources: tuple[ContextResource, ...],
@@ -455,14 +454,14 @@ def _can_retry(
 
 def _validate_binding(
     data: ValidatedDataGraph,
-    workflow: AdmittedActivationWorkflow,
+    workflow: Graph,
     declarations: tuple[InitialContextDecl, ...],
     capabilities: tuple[ContextSourceCapability, ...],
     resources: tuple[ContextResource, ...],
     limits: BindingLimits,
 ) -> None:
     require_instance(data, ValidatedDataGraph)
-    require_instance(workflow, AdmittedActivationWorkflow)
+    require_instance(workflow, Graph)
     require_instance(limits, BindingLimits)
     for values, maximum, expected in (
         (declarations, limits.max_declarations, InitialContextDecl),
@@ -520,7 +519,7 @@ def _validate_binding(
         if existing is not None and existing != candidate:
             reject(EffectCode.CONTRADICTORY)
         schemas[declaration.artifact_type] = candidate
-    nodes = {node.id: node for body in reachable_workflows(workflow) for node in body.nodes}
+    nodes = {node.id: node for body in workflow.bodies() for node in body.operations}
     workflow_owners = {item.workflow for item in nodes}
     for declaration in declarations:
         if declaration.target not in data.targets:
@@ -537,7 +536,7 @@ def _validate_binding(
         binding = next(
             (
                 item
-                for item in workflow.workflow.input_bindings
+                for item in workflow.input_bindings
                 if item.destination == NodeInputRef(node=declaration.node, port=declaration.port)
             ),
             None,
@@ -558,7 +557,7 @@ def _validate_binding(
             reject(EffectCode.CONTRADICTORY)
     context_destinations = {
         (binding.destination.node, binding.destination.port)
-        for binding in workflow.workflow.input_bindings
+        for binding in workflow.input_bindings
         if isinstance(binding.source, ContextInputRef)
     }
     expected = {(target, node, port) for target in data.targets for node, port in context_destinations}
@@ -567,11 +566,11 @@ def _validate_binding(
         reject(EffectCode.MISSING)
     if observed > expected:
         reject(EffectCode.EXTRA)
-    interface_types = {item.name: item.artifact_type for item in workflow.workflow.interface.inputs}
+    interface_types = {item.name: item.artifact_type for item in workflow.interface.inputs}
     collection_types = {artifact_type for artifact_type, schema in schemas.items() if schema[0] == "collection"}
     if any(
         isinstance(binding.source, WorkflowInputRef) and interface_types[binding.source.port] in collection_types
-        for binding in workflow.workflow.input_bindings
+        for binding in workflow.input_bindings
     ):
         reject(EffectCode.CONTRADICTORY)
 

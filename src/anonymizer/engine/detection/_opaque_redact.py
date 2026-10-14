@@ -63,10 +63,8 @@ from anonymizer.engine.replace.replace_runner import ReplacementResult
 from anonymizer.engine.rewrite.rewrite_workflow import RewriteResult
 from anonymizer.graph.activation import ActivationLimits
 from anonymizer.graph.workflow import (
-    AdmittedWorkflow,
     ArtifactType,
-    DynamicLimits,
-    DynamicScope,
+    Graph,
     InputBinding,
     InputPort,
     NodeId,
@@ -86,8 +84,7 @@ from anonymizer.graph.workflow import (
     WorkflowLimits,
     WorkflowOutcomeRef,
     WorkflowOutputRef,
-    admit_activation_workflow,
-    admit_static_workflow,
+    compile_graph,
 )
 
 
@@ -331,7 +328,7 @@ async def execute_injected_redact(
             for outcome in operation.outcomes
         ),
     )
-    raw = admit_static_workflow(
+    raw = compile_graph(
         workflow=owner,
         interface=interface,
         nodes=(OperationNode(id=node, operation=operation),),
@@ -352,7 +349,6 @@ async def execute_injected_redact(
             ),
         ),
         sequence=(),
-        choices=(),
         protection=(),
         limits=WorkflowLimits(
             max_nodes=1,
@@ -416,37 +412,22 @@ async def execute_injected_redact(
 
 def _prepare_frame_plan(
     data: ValidatedDataGraph,
-    raw: AdmittedWorkflow,
+    raw: Graph,
     capabilities: tuple[ImplementationCapability, ...],
     bound_inputs: tuple[BoundInput, ...],
     *,
     invocation_owned: bool = False,
-    scopes: tuple[DynamicScope, ...] = (),
-    max_occurrences: int | None = None,
 ) -> PreparedPlan:
     """Shared fixed-operation preparation for existing whole-frame consumers."""
-    scopes = scopes or (DynamicScope(workflow=raw, maps=(), joins=(), loops=()),)
-    nodes = tuple(node for scope in scopes for node in scope.workflow.nodes)
-    count = len(nodes) if max_occurrences is None else max_occurrences
-    loops = tuple(loop for scope in scopes for loop in scope.loops)
-    workflow = admit_activation_workflow(
-        workflow=raw,
-        scopes=scopes,
-        limits=DynamicLimits(
-            max_maps=0,
-            max_joins=sum(len(scope.joins) for scope in scopes),
-            max_loops=len(loops),
-            max_children_per_map=0,
-            max_iterations_per_loop=max((loop.max_iterations for loop in loops), default=0),
-            max_dynamic_depth=len(scopes) + 1,
-            max_activation_occurrences=count,
-        ),
-    )
+    bodies = raw.bodies()
+    nodes = tuple(node for body in bodies for node in body.operations)
+    count = raw.activation_upper_bound
+    workflow = raw
     sizes = [config_size(cap.configuration) for cap in capabilities]
     return prepare(
         data=data,
         workflow=workflow,
-        activation_limits=ActivationLimits(max_events=4 * count, max_entries=count, max_parent_depth=len(scopes) + 1),
+        activation_limits=ActivationLimits(max_events=4 * count, max_entries=count, max_parent_depth=len(bodies) + 1),
         bound_inputs=bound_inputs,
         configuration=PreparationConfiguration(
             purpose="execution_only",

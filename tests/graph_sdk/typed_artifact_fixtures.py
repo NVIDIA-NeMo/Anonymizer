@@ -36,7 +36,6 @@ from anonymizer.graph.activation import ActivationLimits
 from anonymizer.graph.workflow import (
     ArtifactType,
     DynamicLimits,
-    DynamicScope,
     InputBinding,
     InputPort,
     NodeId,
@@ -52,12 +51,11 @@ from anonymizer.graph.workflow import (
     WorkflowInputRef,
     WorkflowOutcomeRef,
     WorkflowOutputRef,
-    admit_activation_workflow,
-    admit_static_workflow,
 )
 from tests.graph_sdk.effects_admission_fixtures import _valid_runtime_rows, _ZeroClock
 from tests.graph_sdk.implementation_fixtures import _execution_implementation, _selection
 from tests.graph_sdk.test_preparation import _capability, _limits, _workflow
+from tests.graph_sdk.workflow_construction import DynamicScope, admit_activation_workflow, admit_static_workflow
 
 SOURCE = "Alice met Bob."
 ENTITIES = (
@@ -128,7 +126,7 @@ def span_graph(
     source_text: str = SOURCE,
 ) -> tuple[AdmittedExecutionPlan, tuple[ImplementationCapability, ...], ExecutionServices, tuple[NodeId, ...]]:
     base, _, _ = _workflow(with_input=True)
-    raw = base.workflow
+    raw = base
     owner = raw.workflow
     nodes = tuple(NodeId.new(workflow=owner) for _ in range(3))
     operations = []

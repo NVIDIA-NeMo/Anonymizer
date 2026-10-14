@@ -32,15 +32,12 @@ from anonymizer.engine.graph_sdk.requests import (
     UnknownUsage,
 )
 from anonymizer.graph.workflow import (
-    DynamicScope,
     NodeOutputRef,
     OperationNode,
     OutputBinding,
     OutputDependency,
     OutputPort,
     WorkflowOutputRef,
-    admit_activation_workflow,
-    admit_static_workflow,
 )
 from tests.graph_sdk.implementation_fixtures import _execution_implementation, _implementation_handle
 from tests.graph_sdk.reference.corpora import load_cases
@@ -51,6 +48,7 @@ from tests.graph_sdk.test_effects_production_conformance import (
     _ZeroClock,
 )
 from tests.graph_sdk.test_preparation import _capability, _data, _limits, _prepare, _workflow
+from tests.graph_sdk.workflow_construction import DynamicScope, admit_activation_workflow, admit_static_workflow
 
 CASES = tuple(
     case
@@ -118,7 +116,7 @@ async def _assert_terminal(case: dict[str, Any]) -> None:
     condition = case["case_id"].split("/")[1]
     workflow, node, artifact_type = _workflow(requests=1)
     if condition == "artifact_limit_exhausted":
-        static = workflow.workflow
+        static = workflow
         operation = replace(
             static.interface,
             outputs=(OutputPort(name="output", artifact_type=artifact_type),),
@@ -144,7 +142,7 @@ async def _assert_terminal(case: dict[str, Any]) -> None:
         workflow = admit_activation_workflow(
             workflow=rebuilt,
             scopes=(DynamicScope(workflow=rebuilt, maps=(), joins=(), loops=()),),
-            limits=workflow.limits,
+            limits=workflow.dynamic_limits,
         )
     capability = replace(_capability(workflow, external=True), resource_lifetime="stateless")
     prepared = _prepare(

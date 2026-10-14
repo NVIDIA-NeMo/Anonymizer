@@ -16,9 +16,9 @@ from anonymizer.graph.workflow import (
     WorkflowId,
     WorkflowLimits,
     WorkflowOutcomeRef,
-    admit_static_workflow,
 )
 from tests.graph_sdk.test_activation import _interface_outcome, _outcome
+from tests.graph_sdk.workflow_construction import admit_static_workflow
 
 
 def test_unjoined_body_roots_reject_before_activation_admission() -> None:

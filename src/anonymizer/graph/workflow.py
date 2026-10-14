@@ -5,14 +5,10 @@
 from __future__ import annotations
 
 from anonymizer.graph._values import ContractViolation as ContractViolation
-from anonymizer.graph._workflow_admission import admit_activation_workflow as admit_activation_workflow
-from anonymizer.graph._workflow_admission import admit_static_workflow as admit_static_workflow
+from anonymizer.graph._workflow_admission import compile_graph as compile_graph
 from anonymizer.graph._workflow_admission import substitute as substitute
-from anonymizer.graph._workflow_admission import substitute_activation_workflow as substitute_activation_workflow
 from anonymizer.graph._workflow_composition import Vertex as Vertex
 from anonymizer.graph._workflow_composition import validate_dynamic_input_summaries as validate_dynamic_input_summaries
-from anonymizer.graph._workflow_values import AdmittedActivationWorkflow as AdmittedActivationWorkflow
-from anonymizer.graph._workflow_values import AdmittedWorkflow as AdmittedWorkflow
 from anonymizer.graph._workflow_values import ArtifactType as ArtifactType
 from anonymizer.graph._workflow_values import CaptureMode as CaptureMode
 from anonymizer.graph._workflow_values import ChoiceBranch as ChoiceBranch
@@ -23,9 +19,9 @@ from anonymizer.graph._workflow_values import CoverageAtom as CoverageAtom
 from anonymizer.graph._workflow_values import CoverageKind as CoverageKind
 from anonymizer.graph._workflow_values import DynamicLimits as DynamicLimits
 from anonymizer.graph._workflow_values import DynamicReduction as DynamicReduction
-from anonymizer.graph._workflow_values import DynamicScope as DynamicScope
 from anonymizer.graph._workflow_values import EvidencePort as EvidencePort
 from anonymizer.graph._workflow_values import EvidencePromise as EvidencePromise
+from anonymizer.graph._workflow_values import Graph as Graph
 from anonymizer.graph._workflow_values import InputBinding as InputBinding
 from anonymizer.graph._workflow_values import InputPort as InputPort
 from anonymizer.graph._workflow_values import KeyedJoinDecl as KeyedJoinDecl
@@ -40,6 +36,7 @@ from anonymizer.graph._workflow_values import NodeId as NodeId
 from anonymizer.graph._workflow_values import NodeInputRef as NodeInputRef
 from anonymizer.graph._workflow_values import NodeOutcomeRef as NodeOutcomeRef
 from anonymizer.graph._workflow_values import NodeOutputRef as NodeOutputRef
+from anonymizer.graph._workflow_values import Operation as Operation
 from anonymizer.graph._workflow_values import OperationNode as OperationNode
 from anonymizer.graph._workflow_values import OperationSpec as OperationSpec
 from anonymizer.graph._workflow_values import OutcomeBinding as OutcomeBinding

@@ -151,7 +151,7 @@ def test_map_collection_output_identity_and_declaration(corruption: str) -> None
         assert isinstance(collection, TextCollectionValue) and len(collection.items) == 1
         object.__setattr__(collection, "items", (replace(collection.items[0], key=1),))
     elif corruption == "expansion-outcome":
-        mapping = next(mapping for scope in execution.context.prepared.workflow.scopes for mapping in scope.maps)
+        mapping = next(mapping for scope in execution.context.prepared.workflow.bodies() for mapping in scope.maps)
         assert mapping.expansion_outcomes == frozenset({"ok"})
         state = result.states[0]
         expander = next(entry for entry in state.entries if entry.template == mapping.expander)

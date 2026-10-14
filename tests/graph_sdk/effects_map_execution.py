@@ -46,7 +46,6 @@ from anonymizer.graph.activation import ActivationLimits
 from anonymizer.graph.workflow import (
     ArtifactType,
     DynamicLimits,
-    DynamicScope,
     InputBinding,
     InputPort,
     KeyedJoinDecl,
@@ -66,8 +65,6 @@ from anonymizer.graph.workflow import (
     WorkflowId,
     WorkflowInputRef,
     WorkflowOutcomeRef,
-    admit_activation_workflow,
-    admit_static_workflow,
 )
 from tests.graph_sdk.context_source_fixtures import SOURCE, _ContextProvider
 from tests.graph_sdk.effects_map_fixtures import MAP_CASES, _LoopCallback, _map_fixture, _MapCallback, _MapFixture
@@ -75,6 +72,7 @@ from tests.graph_sdk.local_execution_fixtures import _local_handle, _local_polic
 from tests.graph_sdk.test_dynamic_executor import _capability, _operation, _outcome
 from tests.graph_sdk.test_local_executor import _Clock
 from tests.graph_sdk.test_preparation import _data, _limits
+from tests.graph_sdk.workflow_construction import DynamicScope, admit_activation_workflow, admit_static_workflow
 
 
 def _admit_fixture(
@@ -95,9 +93,9 @@ def _admit_fixture(
         data=data,
         workflow=fixture.workflow,
         activation_limits=ActivationLimits(
-            max_events=max(20, 4 * fixture.workflow.limits.max_activation_occurrences),
-            max_entries=fixture.workflow.limits.max_activation_occurrences,
-            max_parent_depth=fixture.workflow.limits.max_dynamic_depth + 1,
+            max_events=max(20, 4 * fixture.workflow.dynamic_limits.max_activation_occurrences),
+            max_entries=fixture.workflow.dynamic_limits.max_activation_occurrences,
+            max_parent_depth=fixture.workflow.dynamic_limits.max_dynamic_depth + 1,
         ),
         bound_inputs=tuple(
             BoundInput(target=target, source=target, port="default", artifact_type=fixture.text_type)
@@ -113,7 +111,7 @@ def _admit_fixture(
         capabilities=fixture.capabilities,
         limits=_limits(
             capabilities=len(fixture.capabilities),
-            slots=fixture.workflow.limits.max_activation_occurrences * len(data.targets),
+            slots=fixture.workflow.dynamic_limits.max_activation_occurrences * len(data.targets),
         ),
     )
     context = admit_context_plan(
@@ -162,7 +160,7 @@ def _admit_fixture(
             max_finding_code_bytes=16,
             max_absence_queries=0,
             max_assessment_facts=len(data.targets)
-            * (fixture.workflow.limits.max_activation_occurrences if fixture.member_assessment else 1),
+            * (fixture.workflow.dynamic_limits.max_activation_occurrences if fixture.member_assessment else 1),
             max_port_facts=baseline_port_facts + port_fact_headroom,
             max_provenance_edges=baseline_provenance_edges + provenance_edge_headroom,
         ),

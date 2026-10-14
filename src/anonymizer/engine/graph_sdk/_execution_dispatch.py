@@ -202,7 +202,7 @@ async def _run_decision(
     wait = DecisionWait(
         wait=DecisionWaitId.new(invocation=activation.invocation),
         activation=activation,
-        workflow=admitted.context.prepared.workflow.workflow.workflow,
+        workflow=admitted.context.prepared.workflow.workflow,
         artifact=artifact,
         allowed_decisions=frozenset(item.decision for item in declaration.outcomes),
         deadline_ns=services.clock.now_ns() + declaration.max_lifetime_ns,

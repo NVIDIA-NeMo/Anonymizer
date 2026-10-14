@@ -27,12 +27,12 @@ from anonymizer.graph.activation import (
     ActivationState,
 )
 from anonymizer.graph.workflow import (
-    AdmittedWorkflow,
     ContextInputRef,
-    Node,
+    Graph,
     NodeId,
     NodeInputRef,
     NodeOutputRef,
+    Operation,
     OperationSpec,
     SubgraphNode,
     WorkflowId,
@@ -43,7 +43,7 @@ from anonymizer.graph.workflow import (
 def _lexical_path(
     activation: ActivationKey,
     entries: Mapping[ActivationKey, ActivationEntry],
-    nodes: Mapping[NodeId, Node],
+    nodes: Mapping[NodeId, Operation],
 ) -> tuple[NodeId, ...] | None:
     """Resolve lexical containers without mistaking map/loop parents for them."""
     path = []
@@ -80,7 +80,7 @@ def _loop_input_source(
     declaration = next(
         (
             item
-            for scope in admitted.context.prepared.workflow.scopes
+            for scope in admitted.context.prepared.workflow.bodies()
             for item in scope.loops
             if item.member == node and item.starter == parent
         ),
@@ -112,7 +112,7 @@ def _is_mapped_item_input(
         return False
     return any(
         declaration.member == node and declaration.expander == parent and declaration.item_input == port
-        for scope in admitted.context.prepared.workflow.scopes
+        for scope in admitted.context.prepared.workflow.bodies()
         for declaration in scope.maps
     )
 
@@ -173,7 +173,7 @@ def _source_activation(
         and context is not None
         and any(
             declaration.member == destination_entry.template
-            for scope in state.workflow.scopes
+            for scope in state.workflow.bodies()
             for declaration in (*scope.maps, *scope.loops)
         )
     ):
@@ -189,7 +189,12 @@ def _source_activation(
         if len(previous) == 1:
             return previous[0]
     dynamic_map = next(
-        (declaration for scope in state.workflow.scopes for declaration in scope.maps if declaration.member == source),
+        (
+            declaration
+            for scope in state.workflow.bodies()
+            for declaration in scope.maps
+            if declaration.member == source
+        ),
         None,
     )
     if dynamic_map is not None:
@@ -206,7 +211,12 @@ def _source_activation(
         selected = next(iter(expansion.members))
         return selected if selected in candidates else None
     dynamic_loop = next(
-        (declaration for scope in state.workflow.scopes for declaration in scope.loops if declaration.member == source),
+        (
+            declaration
+            for scope in state.workflow.bodies()
+            for declaration in scope.loops
+            if declaration.member == source
+        ),
         None,
     )
     if dynamic_loop is not None:
@@ -234,31 +244,13 @@ def _source_activation(
     return parent_context[0] if len(parent_context) == 1 else None
 
 
-def _workflow_owners(root: AdmittedWorkflow) -> frozenset[WorkflowId]:
-    owners: set[WorkflowId] = set()
-    pending = [root]
-    seen: set[int] = set()
-    while pending:
-        current = pending.pop()
-        if id(current) in seen:
-            continue
-        seen.add(id(current))
-        owners.add(current.workflow)
-        pending.extend(candidate.body for candidate in current.nodes if isinstance(candidate, SubgraphNode))
-    return frozenset(owners)
+def _workflow_owners(root: Graph) -> frozenset[WorkflowId]:
+    return frozenset(body.workflow for body in root.bodies())
 
 
-def _node_operation(root: AdmittedWorkflow, node: NodeId) -> OperationSpec:
-    pending = [root]
-    seen: set[int] = set()
-    while pending:
-        current = pending.pop()
-        if id(current) in seen:
-            continue
-        seen.add(id(current))
-        for candidate in current.nodes:
+def _node_operation(root: Graph, node: NodeId) -> OperationSpec:
+    for body in root.bodies():
+        for candidate in body.operations:
             if candidate.id == node:
                 return candidate.operation
-            if isinstance(candidate, SubgraphNode):
-                pending.append(candidate.body)
     reject(EffectCode.MISSING)

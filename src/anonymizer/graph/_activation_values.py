@@ -10,7 +10,7 @@ from typing import Any, Literal, Never, SupportsIndex, TypeAlias
 from anonymizer.graph._activation_topology import _context, _node, _reject, _scope_for
 from anonymizer.graph._values import ActivationKey, InvocationId, ValidationCode
 from anonymizer.graph.workflow import (
-    AdmittedActivationWorkflow,
+    Graph,
     NodeId,
     OutcomeClass,
     SubgraphNode,
@@ -118,7 +118,7 @@ class ActivationLimits(_PrivateValue):
 
 @dataclass(frozen=True, slots=True, kw_only=True, repr=False)
 class ActivationState(_PrivateValue):
-    workflow: AdmittedActivationWorkflow
+    workflow: Graph
     invocation: InvocationId
     entries: frozenset[ActivationEntry]
     expansions: frozenset[ExpansionEntry]
@@ -127,7 +127,7 @@ class ActivationState(_PrivateValue):
     limits: ActivationLimits
 
     def __post_init__(self) -> None:
-        if not isinstance(self.workflow, AdmittedActivationWorkflow) or not isinstance(self.invocation, InvocationId):
+        if not isinstance(self.workflow, Graph) or not isinstance(self.invocation, InvocationId):
             _reject(ValidationCode.INVALID_TYPE)
         if not isinstance(self.entries, frozenset) or any(
             not isinstance(item, ActivationEntry) for item in self.entries
@@ -179,7 +179,7 @@ class ActivationState(_PrivateValue):
         for key, seed in reservations.items():
             scope = _scope_for(self.workflow, seed.template)
             choice_member = any(
-                seed.template in branch.members for choice in scope.workflow.choices for branch in choice.branches
+                seed.template in branch.members for choice in scope.choices for branch in choice.branches
             )
             dynamic_member = any(seed.template == item.member for item in (*scope.maps, *scope.loops))
             if key.parent is None and not choice_member and not dynamic_member:
@@ -196,7 +196,7 @@ class ActivationState(_PrivateValue):
                 continue
             scope = _scope_for(self.workflow, entry.template)
             context = _context(reservations[entry.activation], scope)
-            for choice in scope.workflow.choices:
+            for choice in scope.choices:
                 if choice.selector == entry.template:
                     required.update(
                         seed.activation

@@ -34,7 +34,6 @@ from anonymizer.graph.workflow import (
     ArtifactType,
     CoverageAtom,
     DynamicLimits,
-    DynamicScope,
     EvidencePromise,
     InputBinding,
     InputPort,
@@ -59,8 +58,6 @@ from anonymizer.graph.workflow import (
     WorkflowInputRef,
     WorkflowOutcomeRef,
     WorkflowOutputRef,
-    admit_activation_workflow,
-    admit_static_workflow,
 )
 from tests.graph_sdk.local_execution_fixtures import _local_handle, _local_policies, _no_choice_limits, _selections
 from tests.graph_sdk.qualification_map_callbacks import _ReferenceMapCallback
@@ -68,6 +65,7 @@ from tests.graph_sdk.reference.corpora import load_cases
 from tests.graph_sdk.test_dynamic_executor import _capability, _outcome
 from tests.graph_sdk.test_local_executor import _Clock
 from tests.graph_sdk.test_preparation import _limits
+from tests.graph_sdk.workflow_construction import DynamicScope, admit_activation_workflow, admit_static_workflow
 
 
 async def _execute_reference_map(

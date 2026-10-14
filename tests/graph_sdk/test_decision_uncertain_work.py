@@ -13,8 +13,8 @@ from anonymizer.engine.graph_sdk.context import admit_context_plan
 from anonymizer.engine.graph_sdk.preparation import BoundInput, PreparationConfiguration, StateRevisionView, prepare
 from anonymizer.engine.graph_sdk.requests import PhysicalRequestPolicy
 from anonymizer.engine.graph_sdk.resources import ResourceLease
-from anonymizer.graph import workflow as wf
 from anonymizer.graph.activation import ActivationLimits
+from tests.graph_sdk import workflow_construction as wf
 from tests.graph_sdk.effects_admission_fixtures import _valid_runtime_rows
 from tests.graph_sdk.implementation_fixtures import _selection
 from tests.graph_sdk.test_external_executor import _LostTransport
@@ -28,7 +28,7 @@ def test_decision_pause_and_resume_preserves_uncertain_remote_work() -> None:
 
 async def _execute() -> None:
     workflow, decision_node, artifact = _workflow(with_input=True)
-    old = workflow.workflow
+    old = workflow
     remote_node = wf.NodeId.new(workflow=old.workflow)
     join_node = wf.NodeId.new(workflow=old.workflow)
     decision_operation = old.interface
@@ -71,7 +71,7 @@ async def _execute() -> None:
     workflow = wf.admit_activation_workflow(
         workflow=static,
         scopes=(wf.DynamicScope(workflow=static, maps=(), joins=(), loops=()),),
-        limits=replace(workflow.limits, max_activation_occurrences=3),
+        limits=replace(workflow.dynamic_limits, max_activation_occurrences=3),
     )
     capabilities = (
         replace(

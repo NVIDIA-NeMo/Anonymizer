@@ -61,7 +61,7 @@ from anonymizer.engine.graph_sdk.requests import (
 )
 from anonymizer.engine.graph_sdk.resources import CleanupFact
 from anonymizer.graph._values import ArtifactRef, DatumId
-from anonymizer.graph.workflow import AdmittedActivationWorkflow
+from anonymizer.graph.workflow import Graph
 
 
 @dataclass(frozen=True, slots=True, kw_only=True, repr=False)
@@ -395,7 +395,7 @@ class InspectionSource(_FactoryValue):
 @dataclass(frozen=True, slots=True, kw_only=True, repr=False, init=False)
 class BindingInspectionSource(_FactoryValue):
     data: ValidatedDataGraph
-    workflow: AdmittedActivationWorkflow
+    workflow: Graph
     binding: BindingResult
     limits: InspectionLimits
 
@@ -770,10 +770,10 @@ def bind_inspection_source(
 
 
 def bind_binding_inspection_source(
-    *, data: ValidatedDataGraph, workflow: AdmittedActivationWorkflow, binding: BindingResult, limits: InspectionLimits
+    *, data: ValidatedDataGraph, workflow: Graph, binding: BindingResult, limits: InspectionLimits
 ) -> BindingInspectionSource:
     require_instance(data, ValidatedDataGraph)
-    require_instance(workflow, AdmittedActivationWorkflow)
+    require_instance(workflow, Graph)
     require_instance(binding, BindingResult)
     require_instance(limits, InspectionLimits)
     if binding.receipt.data is not data or binding.receipt.workflow is not workflow:
@@ -782,11 +782,10 @@ def bind_binding_inspection_source(
 
 
 def _shape(prepared: PreparedPlan) -> GraphShapeSummary:
-    from anonymizer.engine.graph_sdk._workflow import reachable_workflows
 
     return GraphShapeSummary(
         target_count=len(prepared.target_occurrences),
-        template_node_count=sum(len(workflow.nodes) for workflow in reachable_workflows(prepared.workflow)),
+        template_node_count=sum(len(workflow.operations) for workflow in prepared.workflow.bodies()),
         activation_slots_per_target=prepared.activation_slots_per_target,
         total_activation_slots=prepared.total_activation_slots,
         maximum_dynamic_depth=prepared.workflow.dynamic_depth,
@@ -862,11 +861,10 @@ def explain(*, source: InspectionSource) -> ExplainSummary:
 
 
 def _forecast_split(execution: AdmittedExecutionPlan) -> tuple[CountEstimate, CountEstimate]:
-    from anonymizer.engine.graph_sdk._workflow import reachable_workflows
     from anonymizer.graph.workflow import SubgraphNode
 
     prepared = execution.context.prepared
-    workflows = reachable_workflows(prepared.workflow)
+    workflows = prepared.workflow.bodies()
     # Only a static, unconditional, unshared grammar establishes a physical
     # planned count. Dynamic scheduling or batching leaves the split unknown.
     if (
@@ -875,7 +873,7 @@ def _forecast_split(execution: AdmittedExecutionPlan) -> tuple[CountEstimate, Co
         or execution.decisions
         or any(policy.initial_request_purpose == "repair" for policy in execution.policies)
         or any(workflow.choices for workflow in workflows)
-        or any(isinstance(node, SubgraphNode) for workflow in workflows for node in workflow.nodes)
+        or any(isinstance(node, SubgraphNode) for workflow in workflows for node in workflow.operations)
         or any(
             item.capability.attribution == "keyed_shared_request"
             for policy in execution.policies

@@ -44,20 +44,18 @@ from anonymizer.engine.graph_sdk.requests import (
 )
 from anonymizer.engine.graph_sdk.resources import ResourceLease
 from anonymizer.graph.workflow import (
-    DynamicScope,
     NodeOutputRef,
     OperationNode,
     OutputBinding,
     OutputDependency,
     OutputPort,
     WorkflowOutputRef,
-    admit_activation_workflow,
-    admit_static_workflow,
 )
 from tests.graph_sdk.implementation_fixtures import _execution_implementation
 from tests.graph_sdk.test_adaptive_executor import _adaptive_rows
 from tests.graph_sdk.test_local_executor import _Clock
 from tests.graph_sdk.test_preparation import _capability, _data, _limits, _prepare, _workflow
+from tests.graph_sdk.workflow_construction import DynamicScope, admit_activation_workflow, admit_static_workflow
 
 
 @dataclass
@@ -267,7 +265,7 @@ def _capacity_plan(
 ) -> tuple[AdmittedExecutionPlan, ImplementationCapability]:
     workflow, node, artifact_type = _workflow(requests=2 if mode == "retry" else 1)
     if mode.startswith("output_"):
-        static = workflow.workflow
+        static = workflow
         operation = replace(
             static.interface,
             outputs=(OutputPort(name="output", artifact_type=artifact_type),),
@@ -293,7 +291,7 @@ def _capacity_plan(
         workflow = admit_activation_workflow(
             workflow=rebuilt,
             scopes=(DynamicScope(workflow=rebuilt, maps=(), joins=(), loops=()),),
-            limits=workflow.limits,
+            limits=workflow.dynamic_limits,
         )
     capability: ImplementationCapability = _capability(workflow, external=True)
     if mode == "retry":

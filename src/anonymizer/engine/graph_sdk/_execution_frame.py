@@ -28,10 +28,8 @@ from anonymizer.graph.activation import (
     initialize_activation,
 )
 from anonymizer.graph.workflow import (
-    AdmittedActivationWorkflow,
-    AdmittedWorkflow,
     ArtifactType,
-    DynamicScope,
+    Graph,
     NodeId,
     NodeOutcomeRef,
     OperationNode,
@@ -39,8 +37,7 @@ from anonymizer.graph.workflow import (
     ResourceCeiling,
     SequenceEdge,
     WorkflowOutcomeRef,
-    admit_activation_workflow,
-    admit_static_workflow,
+    compile_graph,
 )
 
 if TYPE_CHECKING:
@@ -65,8 +62,8 @@ class _InvocationFrame:
         invocation: InvocationId,
         facts: _ExecutionFacts,
         *,
-        target_workflow: AdmittedActivationWorkflow | None = None,
-        invocation_workflow: AdmittedActivationWorkflow | None = None,
+        target_workflow: Graph | None = None,
+        invocation_workflow: Graph | None = None,
     ) -> None:
         self.prepared = prepared
         self.invocation = invocation
@@ -104,8 +101,8 @@ class _InvocationFrame:
         if self.invocation_workflow is not None:
             self.invocation_source = self._initialize(self.invocation_workflow, self.prepared.invocation_offset)
 
-    def _initialize(self, workflow: AdmittedActivationWorkflow, offset: int) -> _SourceOccurrence:
-        templates = {node.id for scope in workflow.scopes for node in scope.workflow.nodes}
+    def _initialize(self, workflow: Graph, offset: int) -> _SourceOccurrence:
+        templates = {node.id for scope in workflow.bodies() for node in scope.operations}
         recipe = tuple(slot for slot in self.prepared.reservation_recipe if slot.template in templates)
         keys: dict[int, ActivationKey] = {}
         for slot in recipe:
@@ -123,9 +120,7 @@ class _InvocationFrame:
             limits=self.prepared.activation_limits,
         )
         return _SourceOccurrence(
-            state=advance_activation(
-                state=initialized, event=Select(seeds=_initial_seeds(workflow.workflow, reservations))
-            ),
+            state=advance_activation(state=initialized, event=Select(seeds=_initial_seeds(workflow, reservations))),
             keys=keys,
         )
 
@@ -200,14 +195,14 @@ class _InvocationFrame:
             )
 
 
-def _initial_seeds(workflow: AdmittedWorkflow, reservations: frozenset[ActivationSeed]) -> frozenset[ActivationSeed]:
+def _initial_seeds(workflow: Graph, reservations: frozenset[ActivationSeed]) -> frozenset[ActivationSeed]:
     blocked = {member for choice in workflow.choices for branch in choice.branches for member in branch.members}
     return frozenset(seed for seed in reservations if seed.activation.parent is None and seed.template not in blocked)
 
 
 def _invocation_workflows(
     prepared: PreparedPlan, policies: tuple[OperationExecutionPolicy, ...]
-) -> tuple[AdmittedActivationWorkflow, AdmittedActivationWorkflow | None]:
+) -> tuple[Graph, Graph | None]:
     """Place shared readiness in its own admitted activation scope, without a target."""
     shared = {
         prepared.reservation_recipe[index].template
@@ -217,7 +212,7 @@ def _invocation_workflows(
     }
     if prepared.configuration.invocation_owned:
         owners = [policy for policy in policies if policy.delegated is not None]
-        raw = prepared.workflow.workflow
+        raw = prepared.workflow
         local = len(policies) == 1 and policies[0].kind == "local" and policies[0].submission_owner is None
         if (
             (not local and (len(owners) != 1 or owners[0].delegated is None or owners[0].delegated.child_slots))
@@ -225,42 +220,42 @@ def _invocation_workflows(
                 local
                 and (
                     prepared.configuration.purpose != "execution_only"
-                    or len(raw.nodes) != 1
+                    or len(raw.operations) != 1
                     or policies[0].result_outcomes != frozenset({"ok"})
                 )
             )
             or raw.interface.inputs
             or raw.interface.outputs
-            or any(not isinstance(node, OperationNode) for node in raw.nodes)
-            or any(node.operation.inputs or node.operation.outputs for node in raw.nodes)
+            or any(not isinstance(node, OperationNode) for node in raw.operations)
+            or any(node.operation.inputs or node.operation.outputs for node in raw.operations)
             or any(
                 policy.kind != "local"
                 for policy in policies
                 if policy.node not in shared | {owner.node for owner in owners}
             )
-            or len(prepared.workflow.scopes) != 1
-            or any(scope.maps or scope.loops or scope.joins for scope in prepared.workflow.scopes)
+            or len(prepared.workflow.bodies()) != 1
+            or any(scope.maps or scope.loops or scope.joins for scope in prepared.workflow.bodies())
         ):
             reject(EffectCode.UNSUPPORTED)
         return prepared.workflow, prepared.workflow
     if len(prepared.target_occurrences) <= 1 or not shared:
         return prepared.workflow, None
-    raw = prepared.workflow.workflow
+    raw = prepared.workflow
     if (
-        len(prepared.workflow.scopes) != 1
+        len(prepared.workflow.bodies()) != 1
         or raw.choices
-        or any(not isinstance(node, OperationNode) for node in raw.nodes)
+        or any(not isinstance(node, OperationNode) for node in raw.operations)
     ):
         reject(EffectCode.UNSUPPORTED)
-    scope = prepared.workflow.scopes[0]
+    scope = prepared.workflow.bodies()[0]
     if scope.maps or scope.loops or scope.joins:
         reject(EffectCode.UNSUPPORTED)
-    if any(node.operation.inputs or node.operation.outputs for node in raw.nodes if node.id in shared):
+    if any(node.operation.inputs or node.operation.outputs for node in raw.operations if node.id in shared):
         reject(EffectCode.UNSUPPORTED)
     if any(edge.before not in shared and edge.after in shared for edge in raw.sequence):
         reject(EffectCode.UNSUPPORTED)
 
-    def project(selected: frozenset[NodeId], invocation: bool) -> AdmittedActivationWorkflow:
+    def project(selected: frozenset[NodeId], invocation: bool) -> Graph:
         interface = raw.interface
         edges = tuple(edge for edge in raw.sequence if edge.before in selected and edge.after in selected)
         outcomes = tuple(raw.outcome_bindings)
@@ -275,7 +270,7 @@ def _invocation_workflows(
             descriptor = descriptors[0]
             probe = prepared.reservation_recipe[descriptor.probe_slot].template
             physical = prepared.reservation_recipe[descriptor.request_slot].template
-            operation = next(node.operation for node in raw.nodes if node.id == probe)
+            operation = next(node.operation for node in raw.operations if node.id == probe)
             interface = replace(
                 operation,
                 outcomes=tuple(
@@ -285,31 +280,31 @@ def _invocation_workflows(
                             max_activations=len(selected),
                             max_model_requests=sum(
                                 max(cast(int, row.ceiling.max_model_requests) for row in node.operation.outcomes)
-                                for node in raw.nodes
+                                for node in raw.operations
                                 if node.id in selected
                             ),
                             max_input_bytes=None
                             if any(
                                 row.ceiling.max_input_bytes is None
-                                for node in raw.nodes
+                                for node in raw.operations
                                 if node.id in selected
                                 for row in node.operation.outcomes
                             )
                             else sum(
                                 max(cast(int, row.ceiling.max_input_bytes) for row in node.operation.outcomes)
-                                for node in raw.nodes
+                                for node in raw.operations
                                 if node.id in selected
                             ),
                             max_output_bytes=None
                             if any(
                                 row.ceiling.max_output_bytes is None
-                                for node in raw.nodes
+                                for node in raw.operations
                                 if node.id in selected
                                 for row in node.operation.outcomes
                             )
                             else sum(
                                 max(cast(int, row.ceiling.max_output_bytes) for row in node.operation.outcomes)
-                                for node in raw.nodes
+                                for node in raw.operations
                                 if node.id in selected
                             ),
                         ),
@@ -325,24 +320,19 @@ def _invocation_workflows(
                 for outcome in operation.outcomes
             )
             edges = (*edges, SequenceEdge(before=physical, after=probe))
-        body = admit_static_workflow(
+        body = compile_graph(
             workflow=raw.workflow,
             interface=interface,
-            nodes=tuple(node for node in raw.nodes if node.id in selected),
+            nodes=tuple(node for node in raw.operations if node.id in selected),
             input_bindings=() if invocation else tuple(raw.input_bindings),
             output_bindings=() if invocation else tuple(raw.output_bindings),
             outcome_bindings=outcomes,
             sequence=edges,
-            choices=(),
             protection=() if invocation else tuple(raw.protection_requirements),
             limits=raw.limits,
         )
-        return admit_activation_workflow(
-            workflow=body,
-            scopes=(DynamicScope(workflow=body, maps=(), loops=(), joins=()),),
-            limits=prepared.workflow.limits,
-        )
+        return body
 
-    return project(frozenset(node.id for node in raw.nodes if node.id not in shared), False), project(
+    return project(frozenset(node.id for node in raw.operations if node.id not in shared), False), project(
         frozenset(shared), True
     )

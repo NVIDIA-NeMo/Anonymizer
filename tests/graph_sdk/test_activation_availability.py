@@ -19,9 +19,7 @@ def test_terminal_predecessor_does_not_erase_required_output(port: str | None, e
     consumer = adapter.key("A1")
     assert next(entry for entry in state.entries if entry.activation == consumer).status == "unstarted"
     source = next(
-        binding.source
-        for binding in state.workflow.workflow.input_bindings
-        if isinstance(binding.source, NodeOutputRef)
+        binding.source for binding in state.workflow.input_bindings if isinstance(binding.source, NodeOutputRef)
     )
     # A retained malformed port must not become a request for sequence-only readiness.
     object.__setattr__(source, "port", port)

@@ -8,44 +8,42 @@ from typing import TYPE_CHECKING, Never
 
 from anonymizer.graph._values import ActivationKey, ContractViolation, ValidationCode
 from anonymizer.graph.workflow import (
-    AdmittedActivationWorkflow,
-    AdmittedWorkflow,
-    DynamicScope,
+    Graph,
     KeyedJoinDecl,
     LoopDecl,
     MapDecl,
-    Node,
     NodeId,
+    Operation,
 )
 
 if TYPE_CHECKING:
     from anonymizer.graph._activation_values import ActivationSeed
 
 
-def _nodes(workflow: AdmittedWorkflow) -> dict[NodeId, Node]:
-    return {node.id: node for node in workflow.nodes}
+def _nodes(workflow: Graph) -> dict[NodeId, Operation]:
+    return {node.id: node for node in workflow.operations}
 
 
-def _scope_for(workflow: AdmittedActivationWorkflow, template: NodeId) -> DynamicScope:
-    matches = [scope for scope in workflow.scopes if template in _nodes(scope.workflow)]
+def _scope_for(workflow: Graph, template: NodeId) -> Graph:
+    matches = [scope for scope in workflow.bodies() if template in _nodes(scope)]
     if not matches:
         _reject(ValidationCode.MISSING)
     return matches[0]
 
 
-def _node(workflow: AdmittedActivationWorkflow, template: NodeId) -> Node:
-    return _nodes(_scope_for(workflow, template).workflow)[template]
+def _node(workflow: Graph, template: NodeId) -> Operation:
+    return _nodes(_scope_for(workflow, template))[template]
 
 
-def _map_for(scope: DynamicScope, template: NodeId) -> MapDecl | None:
+def _map_for(scope: Graph, template: NodeId) -> MapDecl | None:
     return next((item for item in scope.maps if item.expander == template), None)
 
 
-def _loop_for(scope: DynamicScope, template: NodeId) -> LoopDecl | None:
+def _loop_for(scope: Graph, template: NodeId) -> LoopDecl | None:
     return next((item for item in scope.loops if item.starter == template), None)
 
 
-def _join_for(scope: DynamicScope, source: NodeId) -> KeyedJoinDecl | None:
+def _join_for(scope: Graph, source: NodeId) -> KeyedJoinDecl | None:
     return next((item for item in scope.joins if item.source == source), None)
 
 
@@ -62,7 +60,7 @@ def _depth(key: ActivationKey) -> int:
     return depth
 
 
-def _context(seed: ActivationSeed, scope: DynamicScope) -> ActivationKey | None:
+def _context(seed: ActivationSeed, scope: Graph) -> ActivationKey | None:
     dynamic_member = any(seed.template == item.member for item in (*scope.maps, *scope.loops))
     return (
         seed.activation.parent.parent

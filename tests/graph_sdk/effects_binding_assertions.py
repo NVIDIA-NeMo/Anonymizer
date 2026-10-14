@@ -44,7 +44,6 @@ from anonymizer.engine.graph_sdk.resources import ResourceLease
 from anonymizer.graph.workflow import (
     ArtifactType,
     ContextInputRef,
-    DynamicScope,
     InputPort,
     NodeId,
     NodeOutputRef,
@@ -53,8 +52,6 @@ from anonymizer.graph.workflow import (
     OutputDependency,
     OutputPort,
     WorkflowOutputRef,
-    admit_activation_workflow,
-    admit_static_workflow,
 )
 from tests.graph_sdk.effects_admission_fixtures import _valid_runtime_rows
 from tests.graph_sdk.effects_late_binding_assertions import (
@@ -71,6 +68,7 @@ from tests.graph_sdk.implementation_fixtures import _execution_implementation, _
 from tests.graph_sdk.test_adaptive_executor import _Clock
 from tests.graph_sdk.test_binding import _context_workflow
 from tests.graph_sdk.test_preparation import _capability, _data, _limits, _prepare
+from tests.graph_sdk.workflow_construction import DynamicScope, admit_activation_workflow, admit_static_workflow
 
 
 async def _assert_binding_corpus_case(case: dict[str, Any]) -> None:
@@ -99,8 +97,8 @@ async def _assert_binding_corpus_case(case: dict[str, Any]) -> None:
         input_type = (
             ArtifactType(name="text_collection", revision=1) if materialization_kind == "collection" else item_type
         )
-        static = workflow.workflow
-        operation_node = next(item for item in static.nodes if isinstance(item, OperationNode))
+        static = workflow
+        operation_node = next(item for item in static.operations if isinstance(item, OperationNode))
         operation = replace(
             operation_node.operation,
             inputs=(InputPort(name=context_port, artifact_type=input_type),),
@@ -163,13 +161,13 @@ async def _assert_binding_corpus_case(case: dict[str, Any]) -> None:
         workflow = admit_activation_workflow(
             workflow=rebuilt,
             scopes=(DynamicScope(workflow=rebuilt, maps=(), joins=(), loops=()),),
-            limits=workflow.limits,
+            limits=workflow.dynamic_limits,
         )
         artifact_type = input_type
     elif materialization_kind is None and max_response_items > 1:
         artifact_type = ArtifactType(name="text_collection", revision=1)
-        static = workflow.workflow
-        operation_node = next(item for item in static.nodes if isinstance(item, OperationNode))
+        static = workflow
+        operation_node = next(item for item in static.operations if isinstance(item, OperationNode))
         operation = replace(
             operation_node.operation,
             inputs=(InputPort(name="input", artifact_type=artifact_type),),
@@ -189,7 +187,7 @@ async def _assert_binding_corpus_case(case: dict[str, Any]) -> None:
         workflow = admit_activation_workflow(
             workflow=rebuilt,
             scopes=(DynamicScope(workflow=rebuilt, maps=(), joins=(), loops=()),),
-            limits=workflow.limits,
+            limits=workflow.dynamic_limits,
         )
     binding_sources = cast(dict[str, str], raw["binding_declarations"])
     order = list(dict.fromkeys(event["association"] for event in event_values if event["kind"] == "bind_policy"))

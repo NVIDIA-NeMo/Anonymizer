@@ -16,14 +16,7 @@ from anonymizer.engine.graph_sdk.executor import (
     MapExpansionDecl,
 )
 from anonymizer.graph._values import ContractViolation, ValidationCode
-from anonymizer.graph.workflow import (
-    ArtifactType,
-    MapDecl,
-    NodeId,
-    SubgraphNode,
-    WorkflowId,
-    admit_activation_workflow,
-)
+from anonymizer.graph.workflow import ArtifactType, MapDecl, NodeId, SubgraphNode, WorkflowId
 from tests.graph_sdk.effects_map_assertions import (
     _assert_bound_context_map_item_conflict,
     _assert_cancelled_map_result,
@@ -54,6 +47,7 @@ from tests.graph_sdk.effects_map_fixtures import MAP_CASES
 from tests.graph_sdk.effects_map_fixtures import _map_fixture as _map_fixture
 from tests.graph_sdk.effects_map_fixtures import _MapFixture as _MapFixture
 from tests.graph_sdk.test_activation import _loop_workflow
+from tests.graph_sdk.workflow_construction import admit_activation_workflow, replace_scope
 
 
 @pytest.mark.parametrize(
@@ -78,13 +72,13 @@ def test_map_operation_declaration_admits_through_production() -> None:
     case = MAP_CASES["map/admit_operation"]
     fixture = _map_fixture()
     assert case["expected"] == {"status": "accepted"}
-    assert fixture.workflow.scopes[0].maps[0].member == fixture.member
+    assert fixture.workflow.bodies()[0].maps[0].member == fixture.member
 
 
 def test_map_subgraph_declaration_admits_through_production() -> None:
     case = MAP_CASES["map/admit_subgraph"]
     fixture = _map_fixture(member_subgraph=True)
-    member = next(node for node in fixture.workflow.workflow.nodes if node.id == fixture.member)
+    member = next(node for node in fixture.workflow.operations if node.id == fixture.member)
     assert isinstance(member, SubgraphNode)
     assert case["expected"] == {"status": "accepted"}
 
@@ -97,7 +91,7 @@ def test_control_only_map_declaration_admits_through_production() -> None:
     case = MAP_CASES["map/admit_control_only"]
     fixture = _map_fixture(control_only=True)
     assert case["expected"] == {"status": "accepted"}
-    assert fixture.workflow.scopes[0].maps[0].item_input is None
+    assert fixture.workflow.bodies()[0].maps[0].item_input is None
     _admit_fixture(fixture)
 
 
@@ -237,7 +231,7 @@ def test_map_source_admission_precedence_matches_frozen_case(
 ) -> None:
     case = MAP_CASES[case_id]
     fixture = _map_fixture()
-    scope = fixture.workflow.scopes[0]
+    scope = fixture.workflow.bodies()[0]
     declaration = scope.maps[0]
     duplicate = replace(
         declaration,
@@ -246,9 +240,9 @@ def test_map_source_admission_precedence_matches_frozen_case(
 
     with pytest.raises(ContractViolation) as error:
         admit_activation_workflow(
-            workflow=fixture.workflow.workflow,
-            scopes=(replace(scope, maps=(declaration, duplicate)),),
-            limits=replace(fixture.workflow.limits, max_maps=2),
+            workflow=fixture.workflow,
+            scopes=(replace_scope(scope, maps=(declaration, duplicate)),),
+            limits=replace(fixture.workflow.dynamic_limits, max_maps=2),
         )
 
     assert error.value.code is code
@@ -260,7 +254,7 @@ def test_map_source_admission_precedence_matches_frozen_case(
 def test_duplicate_dynamic_source_roles_reject_before_shape_checks(case_id: str) -> None:
     case = MAP_CASES[case_id]
     workflow, starter, member, _ = _loop_workflow(2)
-    scope = workflow.scopes[0]
+    scope = workflow.bodies()[0]
     maps = scope.maps
     loops = scope.loops
     if case_id == "map/map_loop_duplicate_source":
@@ -277,10 +271,10 @@ def test_duplicate_dynamic_source_roles_reject_before_shape_checks(case_id: str)
 
     with pytest.raises(ContractViolation) as error:
         admit_activation_workflow(
-            workflow=workflow.workflow,
-            scopes=(replace(scope, maps=maps, loops=loops),),
+            workflow=workflow,
+            scopes=(replace_scope(scope, maps=maps, loops=loops),),
             limits=replace(
-                workflow.limits,
+                workflow.dynamic_limits,
                 max_maps=len(maps),
                 max_loops=len(loops),
                 max_children_per_map=1,

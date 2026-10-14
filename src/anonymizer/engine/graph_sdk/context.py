@@ -17,7 +17,6 @@ from anonymizer.engine.graph_sdk._effect_values import (
     require_text,
 )
 from anonymizer.engine.graph_sdk._ingress_values import IngressLimits
-from anonymizer.engine.graph_sdk._workflow import reachable_workflows
 from anonymizer.engine.graph_sdk.data import ValidatedDataGraph
 from anonymizer.engine.graph_sdk.preparation import PreparedPlan
 from anonymizer.engine.graph_sdk.requests import (
@@ -36,12 +35,12 @@ from anonymizer.engine.graph_sdk.requests import (
 from anonymizer.engine.graph_sdk.resources import CleanupAssociation, CleanupFact, ResourceLease
 from anonymizer.graph._values import DatumId
 from anonymizer.graph.workflow import (
-    AdmittedActivationWorkflow,
     ArtifactType,
     ContextInputRef,
-    Node,
+    Graph,
     NodeId,
     NodeInputRef,
+    Operation,
 )
 
 ContextRequirement: TypeAlias = Literal["required", "optional"]
@@ -343,7 +342,7 @@ _RESULT_KEY = object()
 class BindingReceipt(PrivateValue):
     binding: BindingId
     data: ValidatedDataGraph
-    workflow: AdmittedActivationWorkflow
+    workflow: Graph
     terminal: BindingTerminal
     sources: tuple[SourceBindingFact, ...]
     artifacts: tuple[BoundTextArtifact, ...]
@@ -533,10 +532,10 @@ def admit_context_plan(
         reject(EffectCode.INVALID_TYPE)
     if len(context_capabilities) != len(set(context_capabilities)):
         reject(EffectCode.DUPLICATE)
-    nodes = {node.id: node for body in reachable_workflows(prepared.workflow) for node in body.nodes}
+    nodes = {node.id: node for body in prepared.workflow.bodies() for node in body.operations}
     context_destinations = {
         (binding.destination.node, binding.destination.port)
-        for binding in prepared.workflow.workflow.input_bindings
+        for binding in prepared.workflow.input_bindings
         if isinstance(binding.source, ContextInputRef)
     }
     if context_destinations and bound_context is None:
@@ -609,7 +608,7 @@ def admit_context_plan(
 def _validate_bound_context(
     prepared: PreparedPlan,
     context: BoundContext,
-    nodes: dict[NodeId, Node],
+    nodes: dict[NodeId, Operation],
 ) -> None:
     receipt = context.receipt
     if receipt.terminal not in {"success", "partial"} or context.artifacts != receipt.artifacts:
@@ -634,7 +633,7 @@ def _validate_bound_context(
         binding = next(
             (
                 item
-                for item in prepared.workflow.workflow.input_bindings
+                for item in prepared.workflow.input_bindings
                 if item.destination == NodeInputRef(node=declaration.node, port=declaration.port)
             ),
             None,
@@ -658,7 +657,7 @@ def _validate_bound_context(
     context._validate_artifact_joins()
     destinations = {
         (binding.destination.node, binding.destination.port)
-        for binding in prepared.workflow.workflow.input_bindings
+        for binding in prepared.workflow.input_bindings
         if isinstance(binding.source, ContextInputRef)
     }
     expected = {(target, node, port) for target in targets for node, port in destinations}
@@ -673,7 +672,7 @@ def _validate_materialization_schema(
     prepared: PreparedPlan,
     bound_context: BoundContext | None,
     adaptive: tuple[AdaptiveRetrievalDecl, ...],
-    nodes: dict[NodeId, Node],
+    nodes: dict[NodeId, Operation],
 ) -> None:
     schemas: dict[ArtifactType, tuple[str, ArtifactType]] = {}
     initial = () if bound_context is None else tuple(item.declaration for item in bound_context.receipt.sources)
@@ -709,7 +708,7 @@ def _create_binding_result(
     *,
     binding: BindingId,
     data: ValidatedDataGraph,
-    workflow: AdmittedActivationWorkflow,
+    workflow: Graph,
     terminal: BindingTerminal,
     sources: tuple[SourceBindingFact, ...],
     artifacts: tuple[BoundTextArtifact, ...],

@@ -327,9 +327,7 @@ class _Qualification:
                 closed[expansion.parent] = expansion.status != "pending"
                 parent = self.facts.entries[expansion.parent]
                 scope = next(
-                    scope
-                    for scope in self.prepared.workflow.scopes
-                    if scope.workflow.workflow == parent.template.workflow
+                    scope for scope in self.prepared.workflow.bodies() if scope.workflow == parent.template.workflow
                 )
                 member_templates = {item.member for item in scope.maps if item.expander == parent.template} | {
                     item.member for item in scope.loops if item.starter == parent.template
@@ -1424,9 +1422,7 @@ class _Qualification:
         if candidate is None:
             return
         outcome = self.outputs[target][0].outcome
-        requirements = tuple(
-            item for item in self.prepared.workflow.workflow.protection_requirements if item.outcome == outcome
-        )
+        requirements = tuple(item for item in self.prepared.workflow.protection_requirements if item.outcome == outcome)
         if outcome not in self.prepared.configuration.required_protection_outcomes or not requirements:
             self.withholding[target].add("missing_assessment")
             return

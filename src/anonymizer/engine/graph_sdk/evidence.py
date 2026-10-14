@@ -20,7 +20,6 @@ from anonymizer.engine.graph_sdk._effect_values import (
 from anonymizer.engine.graph_sdk._execution_state import _ExecutionFacts
 from anonymizer.engine.graph_sdk._execution_topology import _lexical_path
 from anonymizer.engine.graph_sdk._ingress import inspect_artifact
-from anonymizer.engine.graph_sdk._workflow import reachable_workflows
 from anonymizer.engine.graph_sdk.capabilities import FrozenConfig, config_size
 from anonymizer.engine.graph_sdk.executor import (
     AdmittedExecutionPlan,
@@ -50,11 +49,10 @@ from anonymizer.graph._values import ActivationKey, ArtifactRef, ContractViolati
 from anonymizer.graph._workflow_composition import _project_consumed_ports, _project_evidence_port, _selected_nodes
 from anonymizer.graph.activation import ActivationEntry, ActivationState
 from anonymizer.graph.workflow import (
-    AdmittedActivationWorkflow,
-    AdmittedWorkflow,
     ContextInputRef,
     CoverageAtom,
     EvidencePromise,
+    Graph,
     MapItemPort,
     NodeId,
     OperationNode,
@@ -131,7 +129,7 @@ class AdmittedQualification(PrivateValue):
 
     def _subject_outputs(self, outcome: str) -> frozenset[str]:
         """Return final ports that carry this outcome's protection subjects."""
-        workflow = self.execution.context.prepared.workflow.workflow
+        workflow = self.execution.context.prepared.workflow
         if self.execution.context.prepared.configuration.purpose == "execution_only":
             return frozenset(port.name for port in workflow.interface.outputs)
         subjects = {item.subject_port for item in workflow.protection_requirements if item.outcome == outcome}
@@ -203,11 +201,11 @@ def admit_qualification(
     prepared = execution.context.prepared
     operations = {
         node.id: node.operation
-        for body in reachable_workflows(prepared.workflow)
-        for node in body.nodes
+        for body in prepared.workflow.bodies()
+        for node in body.operations
         if isinstance(node, OperationNode)
     }
-    owners = {body.workflow for body in reachable_workflows(prepared.workflow)}
+    owners = {body.workflow for body in prepared.workflow.bodies()}
     if any(item.node.workflow not in owners for item in productions):
         reject(EffectCode.FOREIGN_OWNER)
     keys = [(item.node, item.outcome, item.promise) for item in productions]
@@ -219,7 +217,7 @@ def admit_qualification(
     projections = () if prepared.configuration.purpose == "execution_only" else _PromiseProjection(execution).all()
     requirements = tuple(
         item
-        for item in prepared.workflow.workflow.protection_requirements
+        for item in prepared.workflow.protection_requirements
         if item.outcome in prepared.configuration.required_protection_outcomes
     )
     required = {
@@ -236,7 +234,7 @@ def admit_qualification(
         reject(EffectCode.UNSUPPORTED)
     node_order = {
         node.id: index
-        for index, node in enumerate(node for body in reachable_workflows(prepared.workflow) for node in body.nodes)
+        for index, node in enumerate(node for body in prepared.workflow.bodies() for node in body.operations)
     }
     resolved = tuple(
         sorted(resolved, key=lambda item: (node_order[item.declaration.node], item.outcome.name, item.promise.name))
@@ -292,7 +290,7 @@ class _RunFacts(_ExecutionFacts):
             require_instance(bound.receipt.artifacts, tuple)
             require_instance(bound.receipt.sources, tuple)
             source_limit = len(prepared.target_occurrences) * sum(
-                isinstance(binding.source, ContextInputRef) for binding in prepared.workflow.workflow.input_bindings
+                isinstance(binding.source, ContextInputRef) for binding in prepared.workflow.input_bindings
             )
             if max(len(bound.artifacts), len(bound.receipt.artifacts)) > limits.max_port_facts or len(
                 bound.receipt.sources
@@ -438,7 +436,7 @@ class _RunFacts(_ExecutionFacts):
             reject(EffectCode.MISSING)
         if len(self.result.states) != len(self.admitted.execution.context.prepared.target_occurrences):
             reject(EffectCode.MISSING)
-        states: list[tuple[DatumId | None, ActivationState, AdmittedActivationWorkflow, int]] = [
+        states: list[tuple[DatumId | None, ActivationState, Graph, int]] = [
             (target, state, execution.target_workflow, occurrence.occurrence_offset)
             for target, state, occurrence in zip(
                 (item.target for item in self.prepared.target_occurrences),
@@ -453,7 +451,7 @@ class _RunFacts(_ExecutionFacts):
         for target, state, workflow, offset in states:
             if state.invocation != record.invocation or state.workflow is not workflow:
                 reject(EffectCode.FOREIGN_OWNER)
-            templates = {node.id for scope in state.workflow.scopes for node in scope.workflow.nodes}
+            templates = {node.id for scope in state.workflow.bodies() for node in scope.operations}
             expected = {
                 offset + slot.index: slot for slot in self.prepared.reservation_recipe if slot.template in templates
             }
@@ -672,7 +670,7 @@ class _RunFacts(_ExecutionFacts):
         target_order = {item.target: index for index, item in enumerate(prepared.target_occurrences)}
         node_order = {
             node.id: index
-            for index, node in enumerate(node for body in reachable_workflows(prepared.workflow) for node in body.nodes)
+            for index, node in enumerate(node for body in prepared.workflow.bodies() for node in body.operations)
         }
         productions = {
             (item.declaration.node, item.outcome.name, item.promise.name): item for item in admitted._resolved
@@ -787,7 +785,7 @@ def evidence_revision_view(
     prepared = admitted.execution.context.prepared
     order = {
         node.id: index
-        for index, node in enumerate(node for body in reachable_workflows(prepared.workflow) for node in body.nodes)
+        for index, node in enumerate(node for body in prepared.workflow.bodies() for node in body.operations)
     }
     return EvidenceRevisionView(
         _key=_EVIDENCE_KEY,
@@ -923,11 +921,11 @@ class _PromiseProjection:
         self.workflow = execution.context.prepared.workflow
 
     def all(self) -> tuple[_ProjectedPromise, ...]:
-        return tuple(self._body(self.workflow.workflow, ()))
+        return tuple(self._body(self.workflow, ()))
 
-    def _body(self, body: AdmittedWorkflow, path: tuple[NodeId, ...]) -> list[_ProjectedPromise]:
+    def _body(self, body: Graph, path: tuple[NodeId, ...]) -> list[_ProjectedPromise]:
         projected: set[_ProjectedPromise] = set()
-        nodes = tuple(body.nodes)
+        nodes = tuple(body.operations)
         children = {
             node.id: self._body(node.body, (*path, node.id)) for node in nodes if isinstance(node, SubgraphNode)
         }
@@ -1008,9 +1006,9 @@ class _PromiseProjection:
         return list(projected)
 
     def _edges(
-        self, body: AdmittedWorkflow, assignment: dict[NodeId, OutcomeSpec], *, dependencies: bool = False
+        self, body: Graph, assignment: dict[NodeId, OutcomeSpec], *, dependencies: bool = False
     ) -> set[tuple[Vertex, Vertex]]:
-        scope = next(item for item in self.workflow.scopes if item.workflow is body)
+        scope = body
         replaced = {(item.member, item.item_input) for item in scope.maps if item.item_input is not None}
         edges: set[tuple[Vertex, Vertex]] = set()
         for binding in body.input_bindings:
@@ -1038,7 +1036,7 @@ class _PromiseProjection:
                 else ("out", binding.source.node, binding.source.port)
             )
             edges.add((source, ("wo", None, binding.destination.port)))
-        for node in body.nodes:
+        for node in body.operations:
             if node.id not in assignment:
                 continue
             for dependency in node.operation.output_dependencies:

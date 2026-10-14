@@ -16,10 +16,11 @@ from anonymizer.engine.graph_sdk.data import AtomicGroup, DatumDependency
 from anonymizer.engine.graph_sdk.evidence import QualificationLimits, admit_qualification
 from anonymizer.engine.graph_sdk.executor import AdmittedExecutionPlan, admit_execution_plan
 from anonymizer.graph._values import ContractViolation, DatumId, ValidationCode
-from anonymizer.graph.workflow import AdmittedWorkflow, CoverageAtom, admit_static_workflow
+from anonymizer.graph.workflow import CoverageAtom
 from tests.graph_sdk import test_qualification_subject_context as fixture
 from tests.graph_sdk.test_data_graph import _graph_with_texts, _validate
 from tests.graph_sdk.test_qualification_production_conformance import CORPUS
+from tests.graph_sdk.workflow_construction import AdmittedWorkflow, admit_static_workflow
 
 CASE_IDS = {
     "admission/requirement_subject_port",

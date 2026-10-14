@@ -59,9 +59,7 @@ class _ProvenanceValidator:
             if producer.artifact != output.candidate.artifact:
                 reject(EffectCode.CONTRADICTORY)
             bindings = [
-                item
-                for item in self.context.prepared.workflow.workflow.output_bindings
-                if item.destination.port == output.port
+                item for item in self.context.prepared.workflow.output_bindings if item.destination.port == output.port
             ]
             if len(bindings) != 1:
                 reject(EffectCode.MISSING)
@@ -78,7 +76,7 @@ class _ProvenanceValidator:
                 reject(EffectCode.CONTRADICTORY)
             actual_outcomes = {
                 binding.destination.outcome
-                for binding in self.context.prepared.workflow.workflow.outcome_bindings
+                for binding in self.context.prepared.workflow.outcome_bindings
                 for key, entry in self.context.facts.entries.items()
                 if self.context.facts.owners.get(key) == output.target
                 and entry.template == binding.source.node
@@ -89,7 +87,7 @@ class _ProvenanceValidator:
                 reject(EffectCode.CONTRADICTORY)
             if output.outcome not in {
                 item.name
-                for item in self.context.prepared.workflow.workflow.interface.outcomes
+                for item in self.context.prepared.workflow.interface.outcomes
                 if output.port in item.produced_ports
             }:
                 reject(EffectCode.CONTRADICTORY)
@@ -346,7 +344,7 @@ class _ProvenanceValidator:
         declaration = next(
             (
                 item
-                for scope in self.context.prepared.workflow.scopes
+                for scope in self.context.prepared.workflow.bodies()
                 for item in scope.maps
                 if item.expander == expander.template
             ),

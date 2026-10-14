@@ -24,9 +24,9 @@ from anonymizer.engine.graph_sdk.requests import (
     UnknownUsage,
 )
 from anonymizer.engine.graph_sdk.resources import ResourceLease
-from anonymizer.graph.workflow import AdmittedActivationWorkflow
 from tests.graph_sdk import evidence_fixtures as fixtures
 from tests.graph_sdk.qualification_fixtures import _inputs
+from tests.graph_sdk.workflow_construction import AdmittedActivationWorkflow
 
 
 @dataclass

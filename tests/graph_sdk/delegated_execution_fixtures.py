@@ -13,7 +13,6 @@ from anonymizer.engine.graph_sdk.executor import AdmittedExecutionPlan, Delegate
 from anonymizer.engine.graph_sdk.preparation import prepare
 from anonymizer.engine.graph_sdk.requests import ChildRoute
 from anonymizer.graph.workflow import (
-    DynamicScope,
     InputBinding,
     NodeId,
     NodeInputRef,
@@ -21,16 +20,15 @@ from anonymizer.graph.workflow import (
     OperationNode,
     SequenceEdge,
     WorkflowInputRef,
-    admit_activation_workflow,
-    admit_static_workflow,
 )
 from tests.graph_sdk.effects_admission_fixtures import _valid_runtime_rows
+from tests.graph_sdk.workflow_construction import DynamicScope, admit_activation_workflow, admit_static_workflow
 
 
 def with_parent_publication(execution: AdmittedExecutionPlan, *, readiness: bool = False) -> AdmittedExecutionPlan:
     prepared = execution.context.prepared
     base = prepared.workflow
-    raw = base.workflow
+    raw = base
     owner = next(item for item in execution.policies if item.delegated is not None)
     assessor = next(item for item in execution.policies if item.kind == "local")
     owner_op = execution.nodes[owner.node].operation
@@ -64,7 +62,7 @@ def with_parent_publication(execution: AdmittedExecutionPlan, *, readiness: bool
         replace(node, operation=parent_op if node.id == owner.node else assessor_op)
         if node.id in {owner.node, assessor.node}
         else node
-        for node in raw.nodes
+        for node in raw.operations
     )
     source_policies = tuple(execution.policies)
     sequence = tuple(raw.sequence)
@@ -164,7 +162,7 @@ def with_parent_publication(execution: AdmittedExecutionPlan, *, readiness: bool
     workflow = admit_activation_workflow(
         workflow=static,
         scopes=(DynamicScope(workflow=static, maps=(), loops=(), joins=()),),
-        limits=replace(base.limits, max_activation_occurrences=len(nodes)),
+        limits=replace(base.dynamic_limits, max_activation_occurrences=len(nodes)),
     )
     by_node = {node.id: node.operation for node in nodes}
     capabilities = tuple(

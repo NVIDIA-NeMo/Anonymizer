@@ -13,9 +13,9 @@ import pytest
 from anonymizer.engine.graph_sdk._effect_values import EffectRejected
 from anonymizer.engine.graph_sdk.evidence import admit_qualification
 from anonymizer.engine.graph_sdk.qualification import qualify
-from anonymizer.graph.workflow import AdmittedWorkflow, admit_static_workflow
 from tests.graph_sdk import evidence_fixtures as fixture
 from tests.graph_sdk.qualification_fixtures import _inputs
+from tests.graph_sdk.workflow_construction import AdmittedWorkflow, admit_static_workflow
 
 
 class _Checked(Exception):
@@ -55,7 +55,7 @@ def test_same_node_same_meaning_unrelated_subject_promise_is_extra(monkeypatch: 
         plan = kwargs["admitted"]
         assert len(plan.assessment_productions) == 2
         assert len({row.node for row in plan.assessment_productions}) == 1
-        operation = next(iter(plan.context.prepared.workflow.workflow.nodes)).operation
+        operation = next(iter(plan.context.prepared.workflow.operations)).operation
         promises = operation.outcomes[0].evidence
         assert len({promise.meaning for promise in promises}) == 1
         assert len({promise.subject_port for promise in promises}) == 2

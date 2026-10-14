@@ -39,7 +39,6 @@ from anonymizer.engine.graph_sdk._continuity_values import (
     _key_order,
 )
 from anonymizer.engine.graph_sdk._effect_values import EffectCode, PrivateValue, reject, require_count, require_instance
-from anonymizer.engine.graph_sdk._workflow import reachable_workflows
 from anonymizer.engine.graph_sdk.data import ValidatedDataGraph
 from anonymizer.engine.graph_sdk.executor import ExecutionResult, OperationOutputKey
 from anonymizer.engine.graph_sdk.preparation import PreparedPlan
@@ -233,7 +232,7 @@ def admit_continuity(
     if prepared.data != session.data or prepared.data.graph != session.data.graph:
         reject(EffectCode.FOREIGN_OWNER)
     groups = {row.target: row.group for row in session.groups}
-    nodes = {node.id: node for body in reachable_workflows(prepared.workflow) for node in body.nodes}
+    nodes = {node.id: node for body in prepared.workflow.bodies() for node in body.operations}
     for declaration in declarations:
         if declaration.target not in groups or declaration.node not in nodes:
             reject(EffectCode.FOREIGN_OWNER)

@@ -31,14 +31,13 @@ from anonymizer.graph.workflow import (
     OutputDependency,
     OutputPort,
     SequenceEdge,
-    admit_activation_workflow,
-    admit_static_workflow,
 )
 from tests.graph_sdk.test_dynamic_executor import _capability, _outcome
 from tests.graph_sdk.test_effects_map_production_conformance import _execute_membership
 from tests.graph_sdk.test_evidence import _qualification_limits
 from tests.graph_sdk.test_map_item_evidence import _direct_item_fixture
 from tests.graph_sdk.test_qualification_map_conformance import _execute_reference_map
+from tests.graph_sdk.workflow_construction import admit_activation_workflow, admit_static_workflow, replace_scope
 
 
 def _qualification_inputs(
@@ -156,7 +155,7 @@ def test_captured_item_subject_cannot_be_replaced_by_candidate_or_other_map(cros
 
 def test_failed_ordinary_prerequisite_blocks_member_after_item_publication() -> None:
     fixture = _direct_item_fixture()
-    body = fixture.workflow.workflow
+    body = fixture.workflow
     failed_source = NodeId.new(workflow=body.workflow)
     failure_operation = OperationSpec(
         name="failed-prerequisite",
@@ -165,7 +164,7 @@ def test_failed_ordinary_prerequisite_blocks_member_after_item_publication() -> 
         output_dependencies=(OutputDependency(output="default", inputs=frozenset(), identity_input=None),),
         outcomes=(_outcome("available", produced=frozenset({"default"})),),
     )
-    member = next(node for node in body.nodes if node.id == fixture.member)
+    member = next(node for node in body.operations if node.id == fixture.member)
     member = replace(
         member,
         operation=replace(
@@ -183,7 +182,7 @@ def test_failed_ordinary_prerequisite_blocks_member_after_item_publication() -> 
     static = admit_static_workflow(
         workflow=body.workflow,
         interface=interface,
-        nodes=tuple(member if node.id == member.id else node for node in body.nodes)
+        nodes=tuple(member if node.id == member.id else node for node in body.operations)
         + (OperationNode(id=failed_source, operation=failure_operation),),
         input_bindings=tuple(body.input_bindings)
         + (
@@ -206,13 +205,14 @@ def test_failed_ordinary_prerequisite_blocks_member_after_item_publication() -> 
     )
     dynamic = admit_activation_workflow(
         workflow=static,
-        scopes=(replace(fixture.workflow.scopes[0], workflow=static),),
+        scopes=(replace_scope(fixture.workflow.bodies()[0], workflow=static),),
         limits=replace(
-            fixture.workflow.limits, max_activation_occurrences=fixture.workflow.limits.max_activation_occurrences + 1
+            fixture.workflow.dynamic_limits,
+            max_activation_occurrences=fixture.workflow.dynamic_limits.max_activation_occurrences + 1,
         ),
     )
     implementation_nodes = fixture.implementation_nodes + (failed_source,)
-    operations = {node.id: node.operation for node in static.nodes}
+    operations = {node.id: node.operation for node in static.operations}
     fixture = replace(
         fixture,
         workflow=dynamic,

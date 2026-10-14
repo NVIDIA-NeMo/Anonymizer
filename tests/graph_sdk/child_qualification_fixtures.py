@@ -73,19 +73,12 @@ from anonymizer.graph.activation import (
     advance_activation,
     initialize_activation,
 )
-from anonymizer.graph.workflow import (
-    DynamicScope,
-    NodeId,
-    OperationNode,
-    ProtectionRequirement,
-    SequenceEdge,
-    admit_activation_workflow,
-    admit_static_workflow,
-)
+from anonymizer.graph.workflow import NodeId, OperationNode, ProtectionRequirement, SequenceEdge
 from tests.graph_sdk.effects_admission_fixtures import _valid_runtime_rows
 from tests.graph_sdk.implementation_fixtures import _execution_implementation, _selection
 from tests.graph_sdk.test_adaptive_executor import _adaptive_workflow
 from tests.graph_sdk.test_preparation import _capability, _data, _limits
+from tests.graph_sdk.workflow_construction import DynamicScope, admit_activation_workflow, admit_static_workflow
 
 
 def child_fixture(
@@ -103,8 +96,8 @@ def child_fixture(
 ):
     count = generations or (1 if simple else 4 if interleaved else 3 if failover else 2)
     base, assessor, artifact_type = _adaptive_workflow(assessment=True, requests=0)
-    raw = base.workflow
-    assessment_op = next(iter(raw.nodes)).operation
+    raw = base
+    assessment_op = next(iter(raw.operations)).operation
     owner = NodeId.new(workflow=raw.workflow)
     leaves = tuple(NodeId.new(workflow=raw.workflow) for _ in range(count))
     ordinary = (NodeId.new(workflow=raw.workflow),) if ordinary_slot else ()
@@ -179,7 +172,7 @@ def child_fixture(
     workflow = admit_activation_workflow(
         workflow=static,
         scopes=(DynamicScope(workflow=static, maps=(), loops=(), joins=()),),
-        limits=replace(base.limits, max_activation_occurrences=len(nodes)),
+        limits=replace(base.dynamic_limits, max_activation_occurrences=len(nodes)),
     )
     capabilities = tuple(
         replace(

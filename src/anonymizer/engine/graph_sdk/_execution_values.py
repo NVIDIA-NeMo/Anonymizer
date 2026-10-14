@@ -21,7 +21,6 @@ from anonymizer.engine.graph_sdk._effect_values import (
     require_text,
 )
 from anonymizer.engine.graph_sdk._ingress_values import IngressLimits
-from anonymizer.engine.graph_sdk._workflow import reachable_workflows
 from anonymizer.engine.graph_sdk.capabilities import (
     FrozenConfig,
     ImplementationCapability,
@@ -77,13 +76,13 @@ from anonymizer.graph.activation import (
     ActivationState,
 )
 from anonymizer.graph.workflow import (
-    AdmittedActivationWorkflow,
     ArtifactType,
     ContextInputRef,
-    Node,
+    Graph,
     NodeId,
     NodeInputRef,
     NodeOutputRef,
+    Operation,
     OperationSpec,
     OutcomeClass,
     OutcomeSpec,
@@ -637,8 +636,8 @@ _PLAN_KEY = object()
 
 @dataclass(frozen=True, slots=True, kw_only=True, repr=False, init=False)
 class AdmittedExecutionPlan(PrivateValue):
-    target_workflow: AdmittedActivationWorkflow
-    invocation_workflow: AdmittedActivationWorkflow | None
+    target_workflow: Graph
+    invocation_workflow: Graph | None
     context: AdmittedContextPlan
     capabilities: tuple[ImplementationCapability, ...]
     policies: frozenset[OperationExecutionPolicy]
@@ -650,7 +649,7 @@ class AdmittedExecutionPlan(PrivateValue):
     _ingress_policy: tuple[int, int, int | None, int, int | None, int | None, int | None, int] = field(
         init=False, compare=False
     )
-    nodes: Mapping[NodeId, Node] = field(compare=False)
+    nodes: Mapping[NodeId, Operation] = field(compare=False)
     input_sources: Mapping[NodeInputRef, WorkflowInputRef | ContextInputRef | NodeOutputRef] = field(compare=False)
     materialization_schemas: Mapping[ArtifactType, Literal["scalar", "collection"]] = field(compare=False)
 
@@ -662,8 +661,10 @@ class AdmittedExecutionPlan(PrivateValue):
         object.__setattr__(
             self, "_ingress_policy", tuple(getattr(self.ingress_limits, item.name) for item in fields(IngressLimits))
         )
-        bodies = reachable_workflows(self.context.prepared.workflow)
-        object.__setattr__(self, "nodes", MappingProxyType({node.id: node for body in bodies for node in body.nodes}))
+        bodies = self.context.prepared.workflow.bodies()
+        object.__setattr__(
+            self, "nodes", MappingProxyType({node.id: node for body in bodies for node in body.operations})
+        )
         object.__setattr__(
             self,
             "input_sources",
@@ -750,7 +751,7 @@ class AdmittedExecutionPlan(PrivateValue):
         promises = {item.name: item for item in outcome.evidence}
         if any(promises[item.promise].subject_port == port for item in productions) or any(
             isinstance(item.source, NodeOutputRef) and item.source.node == node and item.source.port == port
-            for item in self.context.prepared.workflow.workflow.output_bindings
+            for item in self.context.prepared.workflow.output_bindings
         ):
             return "candidate"
         return "evidence" if any(item.evidence_port == port for item in productions) else "artifact"

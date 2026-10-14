@@ -30,7 +30,6 @@ from anonymizer.engine.graph_sdk.preparation import BoundInput, PreparationConfi
 from anonymizer.engine.graph_sdk.requests import AssociationInput, AssociationResult, SemanticAssociation
 from anonymizer.graph.activation import ActivationLimits
 from anonymizer.graph.workflow import (
-    DynamicScope,
     InputBinding,
     InputPort,
     NodeId,
@@ -41,8 +40,6 @@ from anonymizer.graph.workflow import (
     SequenceEdge,
     WorkflowInputRef,
     WorkflowOutcomeRef,
-    admit_activation_workflow,
-    admit_static_workflow,
 )
 from tests.graph_sdk.implementation_fixtures import _execution_implementation, _implementation_handle, _selection
 from tests.graph_sdk.reference.corpora import load_cases
@@ -53,6 +50,7 @@ from tests.graph_sdk.test_effects_production_conformance import (
     _ZeroClock,
 )
 from tests.graph_sdk.test_preparation import _capability, _limits, _workflow
+from tests.graph_sdk.workflow_construction import DynamicScope, admit_activation_workflow, admit_static_workflow
 
 
 @dataclass
@@ -102,7 +100,7 @@ async def _assert_scheduling(case_id: str, local_capacity: int) -> None:
     both_decisions = case_id != "decisions/matching_resume_unrelated_advances"
     pending_limit = case["declaration"].get("max_pending", 2)
     original, _, artifact_type = _workflow(with_input=True)
-    static = original.workflow
+    static = original
     nodes = tuple(NodeId.new(workflow=static.workflow) for _ in range(3))
     operations = tuple(
         replace(static.interface, name=f"operation-{index}", inputs=() if index == 2 else static.interface.inputs)
@@ -140,7 +138,7 @@ async def _assert_scheduling(case_id: str, local_capacity: int) -> None:
     workflow = admit_activation_workflow(
         workflow=rebuilt,
         scopes=(DynamicScope(workflow=rebuilt, maps=(), joins=(), loops=()),),
-        limits=replace(original.limits, max_activation_occurrences=3),
+        limits=replace(original.dynamic_limits, max_activation_occurrences=3),
     )
     capabilities = tuple(
         replace(

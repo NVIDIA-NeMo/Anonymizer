@@ -12,7 +12,6 @@ import pytest
 
 from anonymizer.graph._values import ContractViolation
 from anonymizer.graph.workflow import (
-    AdmittedActivationWorkflow,
     CoverageAtom,
     MapItemPort,
     NodeId,
@@ -24,11 +23,15 @@ from anonymizer.graph.workflow import (
     WorkflowId,
     WorkflowLimits,
     WorkflowOutcomeRef,
-    admit_activation_workflow,
-    admit_static_workflow,
 )
 from tests.graph_sdk import qualification_map_execution as fixture
 from tests.graph_sdk.test_dynamic_executor import _operation, _outcome
+from tests.graph_sdk.workflow_construction import (
+    AdmittedActivationWorkflow,
+    admit_activation_workflow,
+    admit_static_workflow,
+    replace_scope,
+)
 
 
 @pytest.mark.parametrize(
@@ -155,7 +158,7 @@ def test_duplicate_map_declaration_rejected_before_execution(monkeypatch: pytest
         (raw,) = baseline["map_inputs"]
         assert mapping.item_input == raw["item_input"]
         assert mapping.expansion_outcomes == frozenset({raw["outcome"]})
-        kwargs["scopes"] = (replace(scope, maps=(mapping, mapping)),)
+        kwargs["scopes"] = (replace_scope(scope, maps=(mapping, mapping)),)
         kwargs["limits"] = replace(kwargs["limits"], max_maps=2)
         return admit_activation_workflow(**kwargs)
 

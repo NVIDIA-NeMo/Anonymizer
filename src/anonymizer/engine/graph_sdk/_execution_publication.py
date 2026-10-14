@@ -299,7 +299,7 @@ def _final_outputs(
 ) -> tuple[FinalOutputFact, ...]:
     results: list[FinalOutputFact] = []
     for target_map, state in zip(prepared.target_occurrences, states, strict=True):
-        for output_binding in prepared.workflow.workflow.output_bindings:
+        for output_binding in prepared.workflow.output_bindings:
             root_anchor = next(
                 (entry.activation for entry in state.entries if entry.activation.parent is None),
                 None,
@@ -336,7 +336,7 @@ def _final_outputs(
                 if not any(fact.key == producer and fact.artifact == artifact for fact in facts.provenance.values()):
                     reject(EffectCode.MISSING)
             workflow_outcome = None
-            for binding in prepared.workflow.workflow.outcome_bindings:
+            for binding in prepared.workflow.outcome_bindings:
                 outcome_activation = _source_activation(state, root_anchor, binding.source.node)
                 outcome_entry = next(
                     (

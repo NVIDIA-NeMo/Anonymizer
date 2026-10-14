@@ -16,7 +16,7 @@ if TYPE_CHECKING:
     from anonymizer.engine.graph_sdk.data import ValidatedDataGraph
     from anonymizer.engine.graph_sdk.evidence import AdmittedQualification
     from anonymizer.engine.graph_sdk.preparation import PreparedPlan
-    from anonymizer.graph.workflow import AdmittedActivationWorkflow
+    from anonymizer.graph.workflow import Graph
 
 _OBSERVATION_KEY = object()
 
@@ -237,7 +237,7 @@ def _requirements(pairs: int, depth: int, limits: ObservationLimits) -> Observat
 def binding_observation_requirements(
     *,
     data: ValidatedDataGraph,
-    workflow: AdmittedActivationWorkflow,
+    workflow: Graph,
     declarations: tuple[InitialContextDecl, ...],
     capabilities: tuple[ContextSourceCapability, ...],
     binding_limits: BindingLimits,
@@ -604,7 +604,7 @@ def observed_prepare(
     *,
     observations: ObservationSession,
     data: ValidatedDataGraph,
-    workflow: AdmittedActivationWorkflow,
+    workflow: Graph,
     activation_limits: ActivationLimits,
     bound_inputs: tuple[BoundInput, ...],
     configuration: PreparationConfiguration,
@@ -834,8 +834,8 @@ if TYPE_CHECKING:
     )
     from anonymizer.engine.graph_sdk.preparation import (
         ActivationLimits,
-        AdmittedActivationWorkflow,
         BoundInput,
+        Graph,
         ImplementationSelection,
         PreparationConfiguration,
         PreparationLimits,

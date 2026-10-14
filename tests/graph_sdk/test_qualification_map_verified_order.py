@@ -167,7 +167,7 @@ def test_two_maps_verified_tuple_uses_declared_ordinals(count: int, monkeypatch:
     )
     prepared = execution.context.prepared
     targets = {row.target: index for index, row in enumerate(prepared.target_occurrences)}
-    declared_nodes = {node.id: index for index, node in enumerate(prepared.workflow.workflow.nodes)}
+    declared_nodes = {node.id: index for index, node in enumerate(prepared.workflow.operations)}
     operations = {row.node: row.capability.operation for row in prepared.implementations}
     facts = result.assessments
 

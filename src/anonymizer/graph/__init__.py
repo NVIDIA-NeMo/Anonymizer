@@ -249,8 +249,6 @@ if TYPE_CHECKING:
     from anonymizer.graph._values import TaskAttemptId as TaskAttemptId
     from anonymizer.graph._values import ValidationCode as ValidationCode
     from anonymizer.graph.activation import ActivationLimits as ActivationLimits
-    from anonymizer.graph.workflow import AdmittedActivationWorkflow as AdmittedActivationWorkflow
-    from anonymizer.graph.workflow import AdmittedWorkflow as AdmittedWorkflow
     from anonymizer.graph.workflow import ArtifactType as ArtifactType
     from anonymizer.graph.workflow import ChoiceBranch as ChoiceBranch
     from anonymizer.graph.workflow import ChoiceDecl as ChoiceDecl
@@ -258,9 +256,9 @@ if TYPE_CHECKING:
     from anonymizer.graph.workflow import ContextUse as ContextUse
     from anonymizer.graph.workflow import CoverageAtom as CoverageAtom
     from anonymizer.graph.workflow import DynamicLimits as DynamicLimits
-    from anonymizer.graph.workflow import DynamicScope as DynamicScope
     from anonymizer.graph.workflow import EvidencePort as EvidencePort
     from anonymizer.graph.workflow import EvidencePromise as EvidencePromise
+    from anonymizer.graph.workflow import Graph as Graph
     from anonymizer.graph.workflow import InputBinding as InputBinding
     from anonymizer.graph.workflow import InputPort as InputPort
     from anonymizer.graph.workflow import KeyedJoinDecl as KeyedJoinDecl
@@ -291,8 +289,7 @@ if TYPE_CHECKING:
     from anonymizer.graph.workflow import WorkflowLimits as WorkflowLimits
     from anonymizer.graph.workflow import WorkflowOutcomeRef as WorkflowOutcomeRef
     from anonymizer.graph.workflow import WorkflowOutputRef as WorkflowOutputRef
-    from anonymizer.graph.workflow import admit_activation_workflow as admit_activation_workflow
-    from anonymizer.graph.workflow import admit_static_workflow as admit_static_workflow
+    from anonymizer.graph.workflow import compile_graph as compile_graph
 
     qualify = _qualify
     observed_qualify = _observed_qualify
@@ -309,12 +306,11 @@ _EXPORTS: dict[str, str] = {
     "ActivationKey": "anonymizer.graph._values",
     "ActivationLimits": "anonymizer.graph.activation",
     "AdaptiveRetrievalDecl": "anonymizer.engine.graph_sdk.context",
-    "AdmittedActivationWorkflow": "anonymizer.graph.workflow",
+    "Graph": "anonymizer.graph.workflow",
     "AdmittedContextPlan": "anonymizer.engine.graph_sdk.context",
     "AdmittedContinuity": "anonymizer.engine.graph_sdk.continuity",
     "AdmittedExecutionPlan": "anonymizer.engine.graph_sdk.executor",
     "AdmittedQualification": "anonymizer.engine.graph_sdk.evidence",
-    "AdmittedWorkflow": "anonymizer.graph.workflow",
     "ArtifactRef": "anonymizer.graph._values",
     "ArtifactSelection": "anonymizer.engine.graph_sdk.extensions",
     "ArtifactType": "anonymizer.graph.workflow",
@@ -386,7 +382,6 @@ _EXPORTS: dict[str, str] = {
     "DecisionWaitId": "anonymizer.engine.graph_sdk.executor",
     "DispatchEnvelope": "anonymizer.engine.graph_sdk.requests",
     "DynamicLimits": "anonymizer.graph.workflow",
-    "DynamicScope": "anonymizer.graph.workflow",
     "EffectCode": "anonymizer.engine.graph_sdk._effect_values",
     "EffectRejected": "anonymizer.engine.graph_sdk._effect_values",
     "EvidencePort": "anonymizer.graph.workflow",
@@ -528,12 +523,11 @@ _EXPORTS: dict[str, str] = {
     "WorkflowOutcomeRef": "anonymizer.graph.workflow",
     "WorkflowOutputRef": "anonymizer.graph.workflow",
     "accept_handoff": "anonymizer.engine.graph_sdk.continuity",
-    "admit_activation_workflow": "anonymizer.graph.workflow",
     "admit_context_plan": "anonymizer.engine.graph_sdk.context",
     "admit_continuity": "anonymizer.engine.graph_sdk.continuity",
     "admit_execution_plan": "anonymizer.engine.graph_sdk.executor",
     "admit_qualification": "anonymizer.engine.graph_sdk.evidence",
-    "admit_static_workflow": "anonymizer.graph.workflow",
+    "compile_graph": "anonymizer.graph.workflow",
     "begin_continuity": "anonymizer.engine.graph_sdk.continuity",
     "begin_observations": "anonymizer.engine.graph_sdk.observations",
     "bind_binding_inspection_source": "anonymizer.engine.graph_sdk.inspection",

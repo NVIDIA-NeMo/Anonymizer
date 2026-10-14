@@ -21,13 +21,10 @@ from anonymizer.engine.graph_sdk.evidence import (
 from anonymizer.engine.graph_sdk.executor import AdmittedExecutionPlan, ExecutionResult, MapItemKey, start_execution
 from anonymizer.engine.graph_sdk.qualification import qualify
 from anonymizer.graph._values import ActivationKey, DatumId, InvocationId
-from anonymizer.graph.workflow import (
-    AdmittedWorkflow,
-    NodeId,
-    admit_static_workflow,
-)
+from anonymizer.graph.workflow import NodeId
 from tests.graph_sdk import qualification_map_execution as fixture
 from tests.graph_sdk.evidence_fixtures import _qualification_limits
+from tests.graph_sdk.workflow_construction import AdmittedWorkflow, admit_static_workflow
 
 
 class _ExecutedGraph(Exception):
@@ -94,7 +91,7 @@ def _execute_root_protected_map(
         execution, result = captured.execution, captured.result
     else:
         raise AssertionError("Actual executor boundary was not reached")
-    nodes = {node.operation.name: node.id for node in execution.context.prepared.workflow.workflow.nodes}
+    nodes = {node.operation.name: node.id for node in execution.context.prepared.workflow.operations}
     assert sum(entry.template == nodes["N"] and entry.status == "success" for entry in result.states[0].entries) == 1
     assert len(result.record.terminals) == count + 3 + int(blocked_member)
     return execution, result, nodes
@@ -200,7 +197,7 @@ def test_empty_expansion_requires_closed_matching_outcome(corruption: str, monke
         membership = next(row for row in result.record.memberships if row.parent == expansion.parent)
         object.__setattr__(membership, "closed", False)
     else:
-        mapping = next(mapping for scope in execution.context.prepared.workflow.scopes for mapping in scope.maps)
+        mapping = next(mapping for scope in execution.context.prepared.workflow.bodies() for mapping in scope.maps)
         object.__setattr__(mapping, "expansion_outcomes", frozenset({"other"}))
     output = qualify(admitted=admitted, result=result, current=current, submissions=submissions)
     assert not output.qualified

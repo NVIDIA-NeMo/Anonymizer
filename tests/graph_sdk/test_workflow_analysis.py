@@ -19,7 +19,7 @@ from anonymizer.graph import _workflow_values as values
 from anonymizer.graph._values import ContractViolation, ValidationCode
 from anonymizer.graph._workflow_analysis import _ANALYSIS, _AnalysisMeter
 from anonymizer.graph._workflow_composition import validate_dynamic_input_summaries
-from anonymizer.graph.workflow import AdmittedWorkflow, NodeId, SubgraphNode, WorkflowId, admit_static_workflow
+from anonymizer.graph.workflow import NodeId, SubgraphNode, WorkflowId
 from tests.graph_sdk.reference.workflow_fixture_builders import (
     _context,
     _evidence,
@@ -34,6 +34,7 @@ from tests.graph_sdk.reference.workflow_fixture_builders import (
     _wrap,
 )
 from tests.graph_sdk.test_workflow_static import Json, Object, _Adapter, _execute, _object
+from tests.graph_sdk.workflow_construction import AdmittedWorkflow, admit_static_workflow
 
 _P = ParamSpec("_P")
 
@@ -64,7 +65,7 @@ def _readmit(workflow: AdmittedWorkflow, limit: int = 1_000_000) -> AdmittedWork
     return admit_static_workflow(
         workflow=workflow.workflow,
         interface=workflow.interface,
-        nodes=tuple(workflow.nodes),
+        nodes=tuple(workflow.operations),
         input_bindings=tuple(workflow.input_bindings),
         output_bindings=tuple(workflow.output_bindings),
         outcome_bindings=tuple(workflow.outcome_bindings),
@@ -178,7 +179,7 @@ def test_nested_and_replacement_analyses_share_the_outer_counter(monkeypatch: py
             for dependency in cast(list[Object], operation["output_dependencies"]):
                 dependency["identity_input"] = None
     workflow = _Adapter().admit(declaration)
-    child = next(node.body for node in workflow.nodes if isinstance(node, SubgraphNode))
+    child = next(node.body for node in workflow.operations if isinstance(node, SubgraphNode))
     replacements = (*workflow.input_bindings, *child.input_bindings)
     observed = _meters(monkeypatch)
     # An existing top-level compilation owns the budget even across rechecks.

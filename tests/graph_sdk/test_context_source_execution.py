@@ -42,7 +42,7 @@ def test_context_source_static_reference_cases(case: dict[str, Any]) -> None:
             revision=1,
         )
         workflow, _, _ = _nested_workflow(input_type)
-        admitted = workflow.workflow
+        admitted = workflow
     elif expected["static"] == "accepted":
         admitted, _, _ = _static_fixture(case)
     else:

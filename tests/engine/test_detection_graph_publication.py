@@ -319,7 +319,7 @@ def test_redact_evidence_projection_rejects_incomplete_dependencies(scripted_det
     from anonymizer.engine.detection import _graph_profile
     from anonymizer.graph._values import ContractViolation
 
-    original = _graph_profile.admit_static_workflow
+    original = _graph_profile.compile_graph
 
     def malformed(**kwargs):
         if fault == "missing_span":
@@ -342,7 +342,7 @@ def test_redact_evidence_projection_rejects_incomplete_dependencies(scripted_det
             )
         return original(**kwargs)
 
-    monkeypatch.setattr(_graph_profile, "admit_static_workflow", malformed)
+    monkeypatch.setattr(_graph_profile, "compile_graph", malformed)
     with pytest.raises(ContractViolation) as error:
         asyncio.run(run_graph_profile(scripted_detection, _source(), _options()))
     assert error.value.code.value == code

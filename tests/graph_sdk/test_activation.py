@@ -21,9 +21,7 @@ from anonymizer.graph.activation import (
     initialize_activation,
 )
 from anonymizer.graph.workflow import (
-    AdmittedActivationWorkflow,
     DynamicLimits,
-    DynamicScope,
     KeyedJoinDecl,
     LoopDecl,
     MapDecl,
@@ -40,6 +38,10 @@ from anonymizer.graph.workflow import (
     WorkflowId,
     WorkflowLimits,
     WorkflowOutcomeRef,
+)
+from tests.graph_sdk.workflow_construction import (
+    AdmittedActivationWorkflow,
+    DynamicScope,
     admit_activation_workflow,
     admit_static_workflow,
 )
@@ -464,9 +466,9 @@ def _loop_workflow(bound: int):
 
 def test_loop_rejects_keyed_join_target_mismatch() -> None:
     workflow, starter, _, _ = _loop_workflow(2)
-    scope = workflow.scopes[0]
+    scope = workflow.bodies()[0]
     mismatched = DynamicScope(
-        workflow=scope.workflow,
+        workflow=scope,
         maps=(),
         joins=(
             KeyedJoinDecl(
@@ -479,7 +481,7 @@ def test_loop_rejects_keyed_join_target_mismatch() -> None:
         loops=scope.loops,
     )
     with pytest.raises(ContractViolation) as raised:
-        admit_activation_workflow(workflow=scope.workflow, scopes=(mismatched,), limits=workflow.limits)
+        admit_activation_workflow(workflow=scope, scopes=(mismatched,), limits=workflow.dynamic_limits)
     assert raised.value.code is ValidationCode.CONTRADICTORY
 
 
@@ -487,7 +489,7 @@ def test_loop_rejects_keyed_join_target_mismatch() -> None:
 @pytest.mark.parametrize("reverse", [False, True])
 def test_duplicate_dynamic_role_precedes_missing_node(duplicate_role: str, reverse: bool) -> None:
     workflow, starter, member, join = _loop_workflow(2)
-    static = workflow.workflow
+    static = workflow
     absent = NodeId.new(workflow=static.workflow)
     maps = (
         MapDecl(
@@ -715,7 +717,7 @@ def test_subgraph_start_materializes_body_and_derives_parent_terminal() -> None:
 
 def test_initialization_allows_shared_body_under_distinct_parent_templates() -> None:
     body_workflow, child = _single()
-    body = body_workflow.workflow
+    body = body_workflow
     interface = OperationSpec(
         name="shared-body-root",
         inputs=(),
@@ -748,7 +750,7 @@ def test_initialization_allows_shared_body_under_distinct_parent_templates() -> 
 
 def test_nested_two_by_two_map_loop_reserves_twelve_distinct_keys() -> None:
     body_workflow, loop_starter, loop_member, loop_join = _loop_workflow(2)
-    body = body_workflow.workflow
+    body = body_workflow
     owner = WorkflowId.new()
     expander, member, join = (NodeId.new(workflow=owner) for _ in range(3))
     outer_outcomes = (_outcome("ok", "success"), _outcome("fail", "failure"))
@@ -814,7 +816,7 @@ def test_nested_two_by_two_map_loop_reserves_twelve_distinct_keys() -> None:
     )
     workflow = admit_activation_workflow(
         workflow=static,
-        scopes=(root_scope, body_workflow.scopes[0]),
+        scopes=(root_scope, body_workflow.bodies()[0]),
         limits=DynamicLimits(
             max_maps=1,
             max_joins=2,

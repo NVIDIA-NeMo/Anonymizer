@@ -44,7 +44,6 @@ from anonymizer.graph.activation import ActivationLimits
 from anonymizer.graph.workflow import (
     ArtifactType,
     DynamicLimits,
-    DynamicScope,
     InputBinding,
     InputPort,
     KeyedJoinDecl,
@@ -69,13 +68,12 @@ from anonymizer.graph.workflow import (
     WorkflowInputRef,
     WorkflowLimits,
     WorkflowOutcomeRef,
-    admit_activation_workflow,
-    admit_static_workflow,
 )
 from tests.graph_sdk.implementation_fixtures import _execution_implementation, _selection
 from tests.graph_sdk.test_evidence import _qualification_limits
 from tests.graph_sdk.test_local_executor import _Clock
 from tests.graph_sdk.test_preparation import _config, _data, _limits
+from tests.graph_sdk.workflow_construction import DynamicScope, admit_activation_workflow, admit_static_workflow
 from tests.graph_sdk.workflow_fixtures import _single_node_workflow
 
 
