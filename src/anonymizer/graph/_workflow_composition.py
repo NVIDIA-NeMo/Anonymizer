@@ -52,6 +52,10 @@ Vertex: TypeAlias = tuple[str, NodeId | None, str]
 def _walk_endpoints(
     start: Vertex, edges: set[tuple[Vertex, Vertex]], *, backward: bool, endpoint_kind: str
 ) -> frozenset[str]:
+    adjacency: dict[Vertex, list[Vertex]] = {}
+    for source, destination in _visits(edges):
+        origin, neighbor = (destination, source) if backward else (source, destination)
+        adjacency.setdefault(origin, []).append(neighbor)
     pending = [start]
     seen: set[Vertex] = set()
     endpoints: set[str] = set()
@@ -62,11 +66,7 @@ def _walk_endpoints(
         seen.add(current)
         if _equal(current[0], endpoint_kind):
             endpoints.add(current[2])
-        for source, destination in _visits(edges):
-            if backward and _equal(destination, current):
-                pending.append(source)
-            elif not backward and _equal(source, current):
-                pending.append(destination)
+        pending.extend(_visits(adjacency.get(current, ())))
     return frozenset(_visits(endpoints))
 
 

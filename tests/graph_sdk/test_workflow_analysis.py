@@ -365,3 +365,67 @@ def test_dynamic_endpoint_lifting_charges_variable_path_copy() -> None:
         assert meter.work == 13
     finally:
         _ANALYSIS.reset(token)
+
+
+@pytest.mark.parametrize(
+    ("start", "backward", "kind", "expected", "work"),
+    (
+        ("a", False, "wo", {"one", "two"}, 21),
+        ("a", False, "wi", {"a"}, 20),
+        ("two", True, "wi", {"a", "b"}, 25),
+        ("two", True, "ci", {"context"}, 24),
+        ("one", False, "wo", {"one", "two"}, 13),
+        ("a", True, "wi", {"a"}, 10),
+        ("other", True, "wi", {"isolated"}, 12),
+        ("isolated", False, "wo", set(), 11),
+        ("absent", False, "wo", set(), 9),
+        ("absent", True, "wi", {"absent"}, 10),
+    ),
+)
+def test_endpoint_walk_literal_direction_cycles_and_exact_work(
+    start: str, backward: bool, kind: str, expected: set[str], work: int
+) -> None:
+    owner = WorkflowId.new()
+    first, second = NodeId.new(workflow=owner), NodeId.new(workflow=owner)
+    vertices: dict[str, composition.Vertex] = {
+        "a": ("wi", None, "a"),
+        "b": ("wi", None, "b"),
+        "context": ("ci", None, "context"),
+        "input": ("ni", first, "same"),
+        "output": ("no", first, "same"),
+        "other": ("no", second, "same"),
+        "one": ("wo", None, "one"),
+        "two": ("wo", None, "two"),
+        "isolated": ("wi", None, "isolated"),
+        "absent": ("wi", None, "absent"),
+    }
+    edges = {
+        (vertices[source], vertices[destination])
+        for source, destination in (
+            ("a", "input"),
+            ("b", "input"),
+            ("context", "input"),
+            ("input", "output"),
+            ("output", "input"),
+            ("output", "one"),
+            ("one", "two"),
+            ("isolated", "other"),
+        )
+    }
+    # Eight index entries, each reachable edge, one pop per enqueued vertex
+    # (including the cycle revisit), then each distinct returned endpoint.
+    for limit in (work, work - 1):
+        meter = _AnalysisMeter(limit)
+        token = _ANALYSIS.set(meter)
+        try:
+            if limit == work:
+                assert composition._walk_endpoints(
+                    vertices[start], edges, backward=backward, endpoint_kind=kind
+                ) == frozenset(expected)
+            else:
+                with pytest.raises(ContractViolation) as exhausted:
+                    composition._walk_endpoints(vertices[start], edges, backward=backward, endpoint_kind=kind)
+                assert exhausted.value.code is ValidationCode.ANALYSIS_LIMIT_EXCEEDED
+            assert meter.work == limit
+        finally:
+            _ANALYSIS.reset(token)
