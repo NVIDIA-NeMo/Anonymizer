@@ -37,23 +37,10 @@ class _ProvenanceValidator:
         self.context = context
 
     def validate_provenance(self) -> None:
-        if len(self.context.result.provenance) > self.context.admitted.limits.max_port_facts:
-            reject(EffectCode.LIMIT_EXCEEDED)
-        for fact in self.context.result.provenance:
-            if fact.key in self.context.provenance:
-                reject(EffectCode.DUPLICATE)
-            if (
-                fact.artifact.invocation != self.context.result.record.invocation
-                or fact.key.target not in self.context.order
-            ):
-                reject(EffectCode.FOREIGN_OWNER)
-            if fact.artifact not in self.context.result.record.artifacts:
-                reject(EffectCode.MISSING)
-            self.context.provenance[fact.key] = fact
         self._validate_input_parents()
         self._validate_passthrough_parents()
         for fact in self.context.result.provenance:
-            if not fact.parents <= self.context.provenance.keys():
+            if not fact.parents <= self.context.facts.provenance.keys():
                 reject(EffectCode.MISSING)
             self._producer(fact)
         self._validate_artifact_allocations()
@@ -64,7 +51,7 @@ class _ProvenanceValidator:
         for output in self.context.result.final_outputs:
             if output.target not in self.context.order or output.candidate.target != output.target:
                 reject(EffectCode.FOREIGN_OWNER)
-            producer = self.context.provenance.get(output.producer)
+            producer = self.context.facts.provenance.get(output.producer)
             if producer is None:
                 reject(EffectCode.MISSING)
             if producer.key.target != output.target:
@@ -82,7 +69,7 @@ class _ProvenanceValidator:
             if isinstance(source, NodeOutputRef):
                 if not isinstance(output.producer, OperationOutputKey):
                     reject(EffectCode.CONTRADICTORY)
-                source_entry = self.context.entries[output.producer.activation]
+                source_entry = self.context.facts.entries[output.producer.activation]
                 if source_entry.template != source.node or output.producer.port != source.port:
                     reject(EffectCode.CONTRADICTORY)
             elif isinstance(source, WorkflowInputRef) and output.producer != RootInputKey(
@@ -92,8 +79,8 @@ class _ProvenanceValidator:
             actual_outcomes = {
                 binding.destination.outcome
                 for binding in self.context.prepared.workflow.workflow.outcome_bindings
-                for key, entry in self.context.entries.items()
-                if self.context.owners.get(key) == output.target
+                for key, entry in self.context.facts.entries.items()
+                if self.context.facts.owners.get(key) == output.target
                 and entry.template == binding.source.node
                 and entry.status == "success"
                 and entry.outcome == binding.source.outcome
@@ -125,7 +112,7 @@ class _ProvenanceValidator:
                 lineage = (MapItemKey, key.expander, key.target, key.item_key)
                 version = key.item_version
             elif isinstance(key, OperationOutputKey):
-                node = self.context.nodes[self.context.entries[key.activation].template]
+                node = self.context.nodes[self.context.facts.entries[key.activation].template]
                 if isinstance(node, SubgraphNode):
                     continue
                 dependency = next(item for item in node.operation.output_dependencies if item.output == key.port)
@@ -144,34 +131,23 @@ class _ProvenanceValidator:
                 reject(EffectCode.CONTRADICTORY)
 
     def _validate_input_parents(self) -> None:
-        for target, activation, port, parent in self.context.result._input_parents:
-            if (
-                activation not in self.context.entries
-                or target != self.context.owners.get(activation)
-                or parent.target != target
-            ):
-                reject(EffectCode.FOREIGN_OWNER)
-            key = (target, activation, port)
-            if key in self.context.input_parents:
-                reject(EffectCode.DUPLICATE)
-            self.context.input_parents[key] = parent
         expected = {
             (fact.target, fact.activation, fact.port)
             for fact in self.context.result.ports
-            if fact.activation in self.context.entries
-            and not isinstance(self.context.nodes[self.context.entries[fact.activation].template], SubgraphNode)
+            if fact.activation in self.context.facts.entries
+            and not isinstance(self.context.nodes[self.context.facts.entries[fact.activation].template], SubgraphNode)
             and fact.port
             in {
                 item.name
-                for item in self.context.nodes[self.context.entries[fact.activation].template].operation.inputs
+                for item in self.context.nodes[self.context.facts.entries[fact.activation].template].operation.inputs
             }
         }
-        if expected - self.context.input_parents.keys():
+        if expected - self.context.facts.input_parents.keys():
             reject(EffectCode.MISSING)
-        if self.context.input_parents.keys() - expected:
+        if self.context.facts.input_parents.keys() - expected:
             reject(EffectCode.CONTRADICTORY)
-        for (_, activation, port), parent in self.context.input_parents.items():
-            source = self.context.provenance.get(parent)
+        for (_, activation, port), parent in self.context.facts.input_parents.items():
+            source = self.context.facts.provenance.get(parent)
             if source is None:
                 reject(EffectCode.MISSING)
             if source.artifact != self.context.facts.ports[activation, port].artifact:
@@ -204,39 +180,30 @@ class _ProvenanceValidator:
                     reject(EffectCode.CONTRADICTORY)
 
     def _validate_passthrough_parents(self) -> None:
-        for target, activation, port, parent in self.context.result._passthrough_parents:
-            if (
-                activation not in self.context.entries
-                or target != self.context.owners.get(activation)
-                or parent.target != target
-            ):
-                reject(EffectCode.FOREIGN_OWNER)
-            key = (target, activation, port)
-            if key in self.context.passthrough_parents:
-                reject(EffectCode.DUPLICATE)
-            self.context.passthrough_parents[key] = parent
         expected = set()
         for fact in self.context.result.provenance:
             key = fact.key
-            if not isinstance(key, OperationOutputKey) or key.activation not in self.context.entries:
+            if not isinstance(key, OperationOutputKey) or key.activation not in self.context.facts.entries:
                 continue
-            node = self.context.nodes[self.context.entries[key.activation].template]
+            node = self.context.nodes[self.context.facts.entries[key.activation].template]
             if isinstance(node, SubgraphNode) and any(
                 binding.destination.port == key.port and isinstance(binding.source, WorkflowInputRef)
                 for binding in node.body.output_bindings
             ):
                 expected.add((key.target, key.activation, key.port))
-        if expected - self.context.passthrough_parents.keys():
+        if expected - self.context.facts.passthrough_parents.keys():
             reject(EffectCode.MISSING)
-        if self.context.passthrough_parents.keys() - expected:
+        if self.context.facts.passthrough_parents.keys() - expected:
             reject(EffectCode.CONTRADICTORY)
-        if any(parent not in self.context.provenance for parent in self.context.passthrough_parents.values()):
+        if any(
+            parent not in self.context.facts.provenance for parent in self.context.facts.passthrough_parents.values()
+        ):
             reject(EffectCode.MISSING)
 
     def _provenance_acyclic(self) -> None:
-        remaining = {key: len(fact.parents) for key, fact in self.context.provenance.items()}
+        remaining = {key: len(fact.parents) for key, fact in self.context.facts.provenance.items()}
         children: dict[ProvenanceKey, list[ProvenanceKey]] = {key: [] for key in remaining}
-        for key, fact in self.context.provenance.items():
+        for key, fact in self.context.facts.provenance.items():
             for parent in fact.parents:
                 children[parent].append(key)
         ready = [key for key, count in remaining.items() if count == 0]
@@ -254,10 +221,10 @@ class _ProvenanceValidator:
     def _producer(self, fact: ArtifactProvenanceFact) -> None:
         key = fact.key
         if isinstance(key, OperationOutputKey):
-            entry = self.context.entries.get(key.activation)
+            entry = self.context.facts.entries.get(key.activation)
             if entry is None:
                 reject(EffectCode.MISSING)
-            if self.context.owners.get(key.activation) != key.target:
+            if self.context.facts.owners.get(key.activation) != key.target:
                 reject(EffectCode.FOREIGN_OWNER)
             port = self.context.facts.ports.get((key.activation, key.port))
             if port is None or port.artifact != fact.artifact or port.node != entry.template:
@@ -274,9 +241,9 @@ class _ProvenanceValidator:
                 if len(bindings) != 1 or len(fact.parents) != 1:
                     reject(EffectCode.CONTRADICTORY)
                 source = bindings[0].source
-                parent = self.context.provenance[next(iter(fact.parents))]
+                parent = self.context.facts.provenance[next(iter(fact.parents))]
                 if isinstance(source, WorkflowInputRef):
-                    expected_key = self.context.passthrough_parents[key.target, key.activation, key.port]
+                    expected_key = self.context.facts.passthrough_parents[key.target, key.activation, key.port]
                     if parent.key != expected_key:
                         reject(EffectCode.CONTRADICTORY)
                 else:
@@ -284,7 +251,7 @@ class _ProvenanceValidator:
                         reject(EffectCode.CONTRADICTORY)
                     state = self.context.result.states[self.context.order.index(key.target)]
                     expected_activation = _source_activation(state, key.activation, source.node)
-                    source_entry = self.context.entries.get(parent.key.activation)
+                    source_entry = self.context.facts.entries.get(parent.key.activation)
                     if (
                         source_entry is None
                         or parent.key.activation != expected_activation
@@ -298,12 +265,14 @@ class _ProvenanceValidator:
             else:
                 dependency = next(item for item in node.operation.output_dependencies if item.output == key.port)
                 input_keys = [(key.target, key.activation, name) for name in dependency.inputs]
-                if any(item not in self.context.input_parents for item in input_keys):
+                if any(item not in self.context.facts.input_parents for item in input_keys):
                     reject(EffectCode.MISSING)
-                expected = frozenset(self.context.input_parents[item] for item in input_keys)
+                expected = frozenset(self.context.facts.input_parents[item] for item in input_keys)
                 if dependency.identity_input is not None:
-                    identity_parent = self.context.input_parents[key.target, key.activation, dependency.identity_input]
-                    if fact.artifact != self.context.provenance[identity_parent].artifact:
+                    identity_parent = self.context.facts.input_parents[
+                        key.target, key.activation, dependency.identity_input
+                    ]
+                    if fact.artifact != self.context.facts.provenance[identity_parent].artifact:
                         reject(EffectCode.CONTRADICTORY)
                 if fact.parents != expected or fact.decision != any(
                     item.node == entry.template for item in self.context.admitted.execution.decisions
@@ -357,21 +326,21 @@ class _ProvenanceValidator:
             )
             if fact.decision or source.declaration.materialization.kind != "collection" or fact.parents != expected:
                 reject(EffectCode.CONTRADICTORY)
-            value = dict(self.context.result.artifacts)[fact.artifact]
+            value = self.context.facts.values[fact.artifact]
             if not isinstance(value, TextCollectionValue) or {(item.key, item.version) for item in value.items} != {
                 (item.reference.key, item.reference.version) for item in items
             }:
                 reject(EffectCode.CONTRADICTORY)
 
     def _map_producer(self, fact: ArtifactProvenanceFact, key: MapItemKey) -> None:
-        member = self.context.entries.get(key.member)
-        expander = self.context.entries.get(key.expander)
+        member = self.context.facts.entries.get(key.member)
+        expander = self.context.facts.entries.get(key.expander)
         if member is None or expander is None:
             reject(EffectCode.MISSING)
         if (
             key.member.parent != key.expander
-            or self.context.owners.get(key.member) != key.target
-            or self.context.owners.get(key.expander) != key.target
+            or self.context.facts.owners.get(key.member) != key.target
+            or self.context.facts.owners.get(key.expander) != key.target
         ):
             reject(EffectCode.FOREIGN_OWNER)
         declaration = next(
@@ -398,7 +367,7 @@ class _ProvenanceValidator:
         parent = OperationOutputKey(activation=key.expander, target=key.target, port=publication.membership_port)
         if fact.parents != frozenset({parent}):
             reject(EffectCode.CONTRADICTORY)
-        collection = dict(self.context.result.artifacts)[self.context.provenance[parent].artifact]
+        collection = self.context.facts.values[self.context.facts.provenance[parent].artifact]
         if not isinstance(collection, TextCollectionValue):
             reject(EffectCode.CONTRADICTORY)
         if (key.item_key, key.item_version) not in {(item.key, item.version) for item in collection.items}:

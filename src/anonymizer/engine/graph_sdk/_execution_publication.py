@@ -4,7 +4,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, MutableMapping, MutableSequence
+from collections.abc import Mapping
+from dataclasses import replace
 from typing import TYPE_CHECKING, Literal
 
 from anonymizer.engine.detection.artifacts import ENTITY_SPANS_TYPE, EntitySpansValue
@@ -20,12 +21,11 @@ from anonymizer.engine.graph_sdk._execution_topology import (
 from anonymizer.engine.graph_sdk._execution_values import (
     _FACT_KEY,
     AdmittedExecutionPlan,
-    ArtifactProvenanceFact,
     AssessmentEnvironment,
+    EvidenceProductionDecl,
     ExecutionAssessmentFact,
     ExecutionImplementation,
     ExecutionLimits,
-    ExecutionPortFact,
     ExecutionServices,
     FinalOutputFact,
     LocalAssessmentResult,
@@ -90,86 +90,65 @@ def _accept_outputs(
     results: tuple[AssociationResult, ...],
     facts: _ExecutionFacts,
     limits: ExecutionLimits,
-) -> tuple[Literal["valid", "malformed", "limit"], tuple[ArtifactRef, ...]]:
+) -> Literal["valid", "malformed", "limit"]:
     if not _validate_output_shape(admitted, operation, mapping, association, inputs, results):
-        return "malformed", ()
+        return "malformed"
     assert mapping.outcome is not None
     outcome = next(item for item in operation.outcomes if item.name == mapping.outcome)
     expected = {item.name: item.artifact_type for item in operation.outputs if item.name in outcome.produced_ports}
     outputs = results[0].outputs
-    if len(outputs) != len(expected) or {item.port for item in outputs} != set(expected):
-        return "malformed", ()
-    if any(item.artifact is not None or item.artifact_type != expected[item.port] for item in outputs):
-        return "malformed", ()
     dependencies = {item.output: item for item in operation.output_dependencies if item.output in expected}
     new_outputs = [item for item in outputs if dependencies[item.port].identity_input is None]
     if len(facts.values) + len(new_outputs) > limits.max_runtime_artifacts:
-        return "limit", ()
+        return "limit"
     if limits.max_collection_items is not None and any(
         item.value.shape.items > limits.max_collection_items for item in outputs
     ):
-        return "limit", ()
+        return "limit"
     if limits.max_runtime_artifact_bytes is not None and (
         sum(_artifact_bytes(item) for item in facts.values.values())
         + sum(_artifact_bytes(item.value) for item in new_outputs)
         > limits.max_runtime_artifact_bytes
     ):
-        return "limit", ()
+        return "limit"
     input_artifacts = {item.port: item.artifact for item in inputs[0].inputs if item.artifact is not None}
     planned_parents: dict[str, frozenset[ProvenanceKey]] = {}
     for output in outputs:
         dependency = dependencies[output.port]
         if not dependency.inputs <= input_artifacts.keys():
-            return "malformed", ()
+            return "malformed"
         parent_keys = {input_parents[name] for name in dependency.inputs if name in input_parents}
         if len(parent_keys) != len(dependency.inputs):
-            return "malformed", ()
+            return "malformed"
         planned_parents[output.port] = frozenset(parent_keys)
         if dependency.identity_input is not None:
             aliased = input_artifacts.get(dependency.identity_input)
             if aliased is None or facts.values[aliased] != output.value:
-                return "malformed", ()
+                return "malformed"
     limits_assessment = admitted.assessment_limits
     if len(facts.ports) + len(outputs) > limits_assessment.max_port_facts:
-        return "limit", ()
-    current_edges = sum(len(item.parents) for item in facts.provenance)
+        return "limit"
+    current_edges = sum(len(item.parents) for item in facts.provenance.values())
     if current_edges + sum(len(item) for item in planned_parents.values()) > limits_assessment.max_provenance_edges:
-        return "limit", ()
-    created: list[ArtifactRef] = []
-    decision_output = any(item.node == node for item in admitted.decisions)
+        return "limit"
     for output in outputs:
         identity_input = dependencies[output.port].identity_input
         if identity_input is None:
             reference = ArtifactRef(invocation=invocation, key=facts.next_artifact, version=1)
             facts.next_artifact += 1
             facts.values[reference] = output.value
-            created.append(reference)
         else:
             reference = input_artifacts[identity_input]
-        facts.produced[(target, activation, output.port)] = reference
         key = OperationOutputKey(activation=activation, target=target, port=output.port)
-        facts.provenance.append(
-            ArtifactProvenanceFact(
-                _key=_FACT_KEY,
-                key=key,
-                artifact=reference,
-                parents=planned_parents[output.port],
-                decision=decision_output,
-            )
+        facts.add_output(
+            key,
+            node,
+            reference,
+            output.artifact_type,
+            planned_parents[output.port],
+            admitted._output_role(node, outcome, output.port),
         )
-        facts.ports.append(
-            ExecutionPortFact(
-                _key=_FACT_KEY,
-                activation=activation,
-                node=node,
-                target=target,
-                port=output.port,
-                artifact=reference,
-                artifact_type=output.artifact_type,
-                role=admitted._output_role(node, outcome, output.port),
-            )
-        )
-    return "valid", tuple(created)
+    return "valid"
 
 
 def _validate_output_shape(
@@ -234,34 +213,19 @@ def _identity_input(dependency: OutputDependency) -> str:
     return value
 
 
-def _capture_assessments(
+def _assessment_results(
     admitted: AdmittedExecutionPlan,
-    implementation: ExecutionImplementation,
-    association: SemanticAssociation,
-    activation: ActivationKey,
     node: NodeId,
     mapping: RuntimeOutcome,
+    association: SemanticAssociation,
     returned: tuple[LocalAssessmentResult, ...],
-    target: DatumId,
-    services: ExecutionServices,
-    facts: _ExecutionFacts,
-) -> bool:
-    if mapping.outcome is None:
-        return not returned
-    declarations = [
+) -> tuple[tuple[EvidenceProductionDecl, LocalAssessmentResult], ...] | None:
+    declarations = tuple(
         item for item in admitted.assessment_productions if item.node == node and item.outcome == mapping.outcome
-    ]
-    if len(returned) != len(declarations):
-        return False
-    if len(facts.assessments) + len(declarations) > admitted.assessment_limits.max_assessment_facts:
-        return False
-    absence_map = dict(services.absence_revisions)
-    operation = implementation.capability.operation
-    outcome = next(item for item in operation.outcomes if item.name == mapping.outcome)
-    reads = {item for item in outcome.state_effects if item.kind == "read"}
-    state_view = StateRevisionView(
-        revisions=frozenset(item for item in admitted.context.prepared.state.revisions if item.effect in reads)
     )
+    if len(returned) != len(declarations):
+        return None
+    selected = []
     for declaration in declarations:
         matches = [
             item
@@ -271,116 +235,75 @@ def _capture_assessments(
             and item.evidence_port == declaration.evidence_port
             and item.finding in declaration.supported_findings
         ]
-        artifact = facts.produced.get((target, activation, declaration.evidence_port))
-        if len(matches) != 1 or artifact is None:
-            return False
-        facts.assessments.append(
-            ExecutionAssessmentFact(
-                _key=_FACT_KEY,
-                activation=activation,
-                node=node,
-                outcome=mapping.outcome,
-                promise=declaration.promise,
-                evidence_artifact=artifact,
-                finding=matches[0].finding,
-                environment=AssessmentEnvironment(
-                    configuration=implementation.configuration,
-                    state=state_view,
-                    absences=frozenset(
-                        AbsenceRef(
-                            invocation=activation.invocation,
-                            query=query,
-                            scope_revision=absence_map[query],
-                        )
-                        for query in declaration.absence_queries
-                    ),
-                ),
-            )
-        )
-    return True
+        if len(matches) != 1:
+            return None
+        selected.append((declaration, matches[0]))
+    return tuple(selected)
 
 
-def _mark_assessment_subjects(
+def _capture_assessments(
     admitted: AdmittedExecutionPlan,
-    node: NodeId,
-    mapping: RuntimeOutcome,
-    target: DatumId,
+    implementation: ExecutionImplementation,
     activation: ActivationKey,
-    facts: _ExecutionFacts,
-) -> None:
-    if mapping.outcome is None:
-        return
-    declarations = [
-        item for item in admitted.assessment_productions if item.node == node and item.outcome == mapping.outcome
-    ]
-    if not declarations:
-        return
-    operation = admitted.nodes[node].operation
-    outcome = next(item for item in operation.outcomes if item.name == mapping.outcome)
-    promises = {item.name: item for item in outcome.evidence}
-    for port in {promises[item.promise].subject_port for item in declarations}:
-        indexes = [
-            index
-            for index, fact in enumerate(facts.ports)
-            if fact.activation == activation and fact.node == node and fact.target == target and fact.port == port
-        ]
-        if len(indexes) != 1 or facts.ports[indexes[0]].role == "decision":
-            reject(EffectCode.CONTRADICTORY)
-        fact = facts.ports[indexes[0]]
-        item_subject = any(
-            (owner, occurrence, name) == (target, activation, port) and isinstance(producer, MapItemKey)
-            for owner, occurrence, name, producer in facts.input_parents
-        )
-        facts.replace_port(
-            indexes[0],
-            ExecutionPortFact(
-                _key=_FACT_KEY,
-                activation=fact.activation,
-                node=fact.node,
-                target=fact.target,
-                port=fact.port,
-                artifact=fact.artifact,
-                artifact_type=fact.artifact_type,
-                role="artifact" if item_subject else "candidate",
-            ),
-        )
-
-
-def _validate_assessment_returns(
-    admitted: AdmittedExecutionPlan,
-    association: SemanticAssociation,
     node: NodeId,
     mapping: RuntimeOutcome,
-    returned: tuple[LocalAssessmentResult, ...],
+    returned: tuple[tuple[EvidenceProductionDecl, LocalAssessmentResult], ...],
+    target: DatumId,
+    services: ExecutionServices,
+    facts: _ExecutionFacts,
 ) -> bool:
     if mapping.outcome is None:
         return not returned
-    declarations = [
-        item for item in admitted.assessment_productions if item.node == node and item.outcome == mapping.outcome
-    ]
-    if len(returned) != len(declarations):
+    if len(facts.assessments) + len(returned) > admitted.assessment_limits.max_assessment_facts:
         return False
-    return all(
-        len(
-            [
-                item
-                for item in returned
-                if item.association == association
-                and item.promise == declaration.promise
-                and item.evidence_port == declaration.evidence_port
-                and item.finding in declaration.supported_findings
-            ]
-        )
-        == 1
-        for declaration in declarations
+    absence_map = dict(services.absence_revisions)
+    operation = implementation.capability.operation
+    outcome = next(item for item in operation.outcomes if item.name == mapping.outcome)
+    promises = {item.name: item for item in outcome.evidence}
+    reads = {item for item in outcome.state_effects if item.kind == "read"}
+    state_view = StateRevisionView(
+        revisions=frozenset(item for item in admitted.context.prepared.state.revisions if item.effect in reads)
     )
+    for declaration, result in returned:
+        artifact = facts.artifact(target, activation, declaration.evidence_port)
+        if artifact is None:
+            return False
+        facts.assessments[(activation, declaration.promise)] = ExecutionAssessmentFact(
+            _key=_FACT_KEY,
+            activation=activation,
+            node=node,
+            outcome=mapping.outcome,
+            promise=declaration.promise,
+            evidence_artifact=artifact,
+            finding=result.finding,
+            environment=AssessmentEnvironment(
+                configuration=implementation.configuration,
+                state=state_view,
+                absences=frozenset(
+                    AbsenceRef(
+                        invocation=activation.invocation,
+                        query=query,
+                        scope_revision=absence_map[query],
+                    )
+                    for query in declaration.absence_queries
+                ),
+            ),
+        )
+        port = promises[declaration.promise].subject_port
+        if not isinstance(port, str):
+            reject(EffectCode.CONTRADICTORY)
+        fact = facts.ports.get((activation, port))
+        if fact is None or fact.node != node or fact.target != target or fact.role == "decision":
+            reject(EffectCode.CONTRADICTORY)
+        item_subject = isinstance(facts.input_parents.get((target, activation, port)), MapItemKey)
+        facts.ports[activation, port] = replace(fact, _key=_FACT_KEY, role="artifact" if item_subject else "candidate")
+    return True
 
 
 def _final_outputs(
     prepared: PreparedPlan,
     states: tuple[ActivationState, ...],
-    produced: MutableMapping[tuple[DatumId, ActivationKey | NodeId, str], ArtifactRef],
-    provenance: MutableSequence[ArtifactProvenanceFact],
+    facts: _ExecutionFacts,
 ) -> tuple[FinalOutputFact, ...]:
     results: list[FinalOutputFact] = []
     for target_map, state in zip(prepared.target_occurrences, states, strict=True):
@@ -394,7 +317,7 @@ def _final_outputs(
             producer: ProvenanceKey
             if isinstance(output_binding.source, WorkflowInputRef):
                 producer = RootInputKey(target=target_map.target, port=output_binding.source.port)
-                source_fact = next((fact for fact in provenance if fact.key == producer), None)
+                source_fact = next((fact for fact in facts.provenance.values() if fact.key == producer), None)
                 if source_fact is None:
                     continue
                 artifact = source_fact.artifact
@@ -410,7 +333,7 @@ def _final_outputs(
                 )
                 if terminal is None or terminal.outcome is None:
                     continue
-                artifact = produced.get((target_map.target, terminal.activation, output_binding.source.port))
+                artifact = facts.artifact(target_map.target, terminal.activation, output_binding.source.port)
                 if artifact is None:
                     continue
                 producer = OperationOutputKey(
@@ -418,7 +341,7 @@ def _final_outputs(
                     target=target_map.target,
                     port=output_binding.source.port,
                 )
-                if not any(fact.key == producer and fact.artifact == artifact for fact in provenance):
+                if not any(fact.key == producer and fact.artifact == artifact for fact in facts.provenance.values()):
                     reject(EffectCode.MISSING)
             workflow_outcome = None
             for binding in prepared.workflow.workflow.outcome_bindings:

@@ -37,18 +37,16 @@ from anonymizer.engine.graph_sdk._execution_materialization import (
 from anonymizer.engine.graph_sdk._execution_publication import (
     _accept_invocation_frame,
     _accept_outputs,
+    _assessment_results,
     _canonical_record,
     _capture_assessments,
     _final_outputs,
-    _mark_assessment_subjects,
-    _validate_assessment_returns,
 )
 from anonymizer.engine.graph_sdk._execution_state import (
     _ExecutionControl,
     _ExecutionFacts,
     _ExecutionJob,
     _ExecutionTask,
-    _FactCheckpoint,
     _group_external_jobs,
     _InvocationJob,
     _OperationJob,
@@ -68,6 +66,7 @@ from anonymizer.engine.graph_sdk._execution_values import (
     LocalAssessmentResult,
     LocalCompleted,
     OperationExecutionPolicy,
+    OperationOutputKey,
     ProvenanceKey,
     PublicationFailureFact,
     RuntimeOutcome,
@@ -97,7 +96,6 @@ from anonymizer.engine.graph_sdk.resources import (
 )
 from anonymizer.graph._values import (
     ActivationKey,
-    ArtifactRef,
     ContractViolation,
     DatumId,
     InvocationId,
@@ -105,6 +103,7 @@ from anonymizer.graph._values import (
 )
 from anonymizer.graph.activation import (
     ActivationEntry,
+    ActivationState,
     CloseUnstarted,
     ObserveTerminal,
     Start,
@@ -183,15 +182,11 @@ class _InvocationRuntime:
             )
         )
         self.request_resources: dict[PhysicalRequestId, ResourceId] = {}
-        self.subgraph_inputs: dict[tuple[DatumId, ActivationKey, str], ArtifactRef] = {}
         self.subgraph_input_parents: dict[tuple[DatumId, ActivationKey, str], ProvenanceKey] = {}
-        self.facts.next_artifact = _materialize_bound_context(
+        _materialize_bound_context(
             self.admitted,
             self.invocation,
-            self.facts.values,
-            self.facts.produced,
-            self.facts.provenance,
-            self.facts.next_artifact,
+            self.facts,
             self.services.limits,
         )
         self.attempts: dict[ActivationKey, TaskAttemptId] = {}
@@ -417,11 +412,8 @@ class _InvocationRuntime:
                     self.frame.sources[target].state,
                     entry.activation,
                     entry.template,
-                    self.frame.root_inputs,
-                    self.subgraph_inputs,
                     self.subgraph_input_parents,
-                    self.facts.produced,
-                    self.facts.provenance,
+                    self.facts,
                 )
             except EffectRejected as exc:
                 if exc.code != EffectCode.MISSING:
@@ -490,12 +482,8 @@ class _InvocationRuntime:
             entry.activation,
             self.frame.sources[target].state,
             association,
-            self.frame.root_inputs,
-            self.subgraph_inputs,
             self.subgraph_input_parents,
-            self.facts.produced,
-            self.facts.values,
-            self.facts.provenance,
+            self.facts,
         )
         return _ExecutionJob(
             target=target,
@@ -509,29 +497,29 @@ class _InvocationRuntime:
         )
 
     def _record_input_ports(self, job: _ExecutionJob) -> None:
-        self.facts.input_parents.extend(
-            (job.target, job.activation, port, parent) for port, parent in job.input_parents.items()
+        self.facts.input_parents.update(
+            ((job.target, job.activation, port), parent) for port, parent in job.input_parents.items()
         )
         for input_artifact in job.inputs[0].inputs:
             if input_artifact.artifact is None:
                 reject(EffectCode.CONTRADICTORY)
-            self.facts.ports.append(
-                ExecutionPortFact(
-                    _key=_FACT_KEY,
-                    activation=job.activation,
-                    node=job.node,
-                    target=job.target,
-                    port=input_artifact.port,
-                    artifact=input_artifact.artifact,
-                    artifact_type=input_artifact.artifact_type,
-                    role="decision"
-                    if job.policy.kind == "decision"
-                    and input_artifact.port
-                    == next((item.artifact_port for item in self.admitted.decisions if item.node == job.node))
-                    else _inherited_artifact_role(
-                        job.input_parents.get(input_artifact.port), self.facts.provenance, self.facts.ports
-                    ),
-                )
+            self.facts.ports[(job.activation, input_artifact.port)] = ExecutionPortFact(
+                _key=_FACT_KEY,
+                activation=job.activation,
+                node=job.node,
+                target=job.target,
+                port=input_artifact.port,
+                artifact=input_artifact.artifact,
+                artifact_type=input_artifact.artifact_type,
+                role="decision"
+                if job.policy.kind == "decision"
+                and input_artifact.port
+                == next((item.artifact_port for item in self.admitted.decisions if item.node == job.node))
+                else _inherited_artifact_role(
+                    job.input_parents.get(input_artifact.port),
+                    self.facts.provenance.values(),
+                    self.facts.ports.values(),
+                ),
             )
 
     def _launch_job(
@@ -690,13 +678,16 @@ class _InvocationRuntime:
             return mapping
         assert isinstance(job, _ExecutionJob)
         accepted = mapping.condition == "result"
-        mapping, results, checkpoint, staged_result = self._stage_outputs(job, mapping, results, assessments)
-        mapping = self._advance_completed(job, mapping, results, checkpoint, staged_result)
+        mapping, results, delta = self._stage_outputs(job, mapping, results, assessments)
+        mapping = self._advance_completed(job, mapping, results, delta)
         if (
             job.policy.delegated is not None
             and mapping.condition == "result"
             and mapping.category == "success"
-            and any(key[0] == job.target and key[1] == job.activation for key in self.facts.produced)
+            and any(
+                isinstance(key, OperationOutputKey) and key.target == job.target and key.activation == job.activation
+                for key in self.facts.provenance
+            )
         ):
             self.blocked_reasons.update(self._unused_tails(job))
             selection = job.policy.delegated.selection
@@ -835,150 +826,125 @@ class _InvocationRuntime:
         mapping: RuntimeOutcome,
         results: tuple[AssociationResult, ...],
         assessments: tuple[LocalAssessmentResult, ...],
-    ) -> tuple[RuntimeOutcome, tuple[AssociationResult, ...], _FactCheckpoint | None, bool]:
-        staged_result = False
-        checkpoint: _FactCheckpoint | None = None
-        if mapping.condition == "result":
-            if job.policy.kind == "decision" and (not results):
-                results = (
-                    AssociationResult(
-                        association=job.association,
-                        outcome=mapping.outcome or "",
-                        outputs=(),
-                        consumed_context_ports=frozenset(),
-                    ),
-                )
-            if not _validate_assessment_returns(self.admitted, job.association, job.node, mapping, assessments):
-                mapping = _mapping(job.policy, "failure", None, "malformed_response")
-            elif not _valid_dynamic_membership_result(self.admitted, job.node, mapping, results):
-                mapping = _mapping(job.policy, "failure", None, "malformed_response")
-            else:
-                checkpoint = self.facts.checkpoint()
-                output_status, created = _accept_outputs(
-                    self.admitted,
-                    self.invocation,
-                    job.target,
-                    job.activation,
-                    job.node,
-                    job.implementation.capability.operation,
-                    mapping,
-                    job.association,
-                    job.inputs,
-                    job.input_parents,
-                    results,
-                    self.facts,
-                    self.services.limits,
-                )
-                if output_status != "valid":
-                    self.facts.restore(checkpoint)
-                    mapping = _mapping(
-                        job.policy,
-                        "artifact_limit_exhausted" if output_status == "limit" else "failure",
-                        None,
-                        None if output_status == "limit" else "malformed_response",
-                    )
-                elif not _capture_assessments(
-                    self.admitted,
-                    job.implementation,
-                    job.association,
-                    job.activation,
-                    job.node,
-                    mapping,
-                    assessments,
-                    job.target,
-                    self.services,
-                    self.facts,
-                ):
-                    self.facts.restore(checkpoint)
-                    mapping = _mapping(job.policy, "failure", None, "malformed_response")
-                else:
-                    _mark_assessment_subjects(self.admitted, job.node, mapping, job.target, job.activation, self.facts)
-                    staged_result = True
-                del created
-        return (mapping, results, checkpoint, staged_result)
+    ) -> tuple[RuntimeOutcome, tuple[AssociationResult, ...], _ExecutionFacts | None]:
+        if mapping.condition != "result":
+            return mapping, results, None
+        if job.policy.kind == "decision" and not results:
+            results = (
+                AssociationResult(
+                    association=job.association,
+                    outcome=mapping.outcome or "",
+                    outputs=(),
+                    consumed_context_ports=frozenset(),
+                ),
+            )
+        assessed = _assessment_results(self.admitted, job.node, mapping, job.association, assessments)
+        if assessed is None or not _valid_dynamic_membership_result(self.admitted, job.node, mapping, results):
+            return self._publication_failure(job, limit=False), results, None
+        delta = self.facts.delta()
+        status = _accept_outputs(
+            self.admitted,
+            self.invocation,
+            job.target,
+            job.activation,
+            job.node,
+            job.implementation.capability.operation,
+            mapping,
+            job.association,
+            job.inputs,
+            job.input_parents,
+            results,
+            delta,
+            self.services.limits,
+        )
+        if status == "valid" and not _capture_assessments(
+            self.admitted,
+            job.implementation,
+            job.activation,
+            job.node,
+            mapping,
+            assessed,
+            job.target,
+            self.services,
+            delta,
+        ):
+            status = "malformed"
+        if status != "valid":
+            return self._publication_failure(job, limit=status == "limit"), results, None
+        return mapping, results, delta
+
+    @staticmethod
+    def _publication_failure(job: _ExecutionJob, *, limit: bool) -> RuntimeOutcome:
+        return _mapping(
+            job.policy,
+            "artifact_limit_exhausted" if limit else "failure",
+            None,
+            None if limit else "malformed_response",
+        )
 
     def _advance_completed(
         self,
         job: _ExecutionJob,
         mapping: RuntimeOutcome,
         results: tuple[AssociationResult, ...],
-        checkpoint: _FactCheckpoint | None,
-        staged_result: bool,
+        delta: _ExecutionFacts | None,
     ) -> RuntimeOutcome:
-        prior_state = self.frame.sources[job.target].state
-        candidate_state = advance_activation(
-            state=prior_state,
-            event=ObserveTerminal(activation=job.activation, outcome=mapping.outcome, category=mapping.category),
-        )
-        if staged_result:
+        staged = delta is not None
+        delta = self.facts.delta() if delta is None else delta
+        candidate_state = self._terminal_state(job, mapping)
+        for _ in range(2):
+            checking_membership = staged and mapping.condition == "result"
             try:
-                membership = _dynamic_membership_value(self.admitted, job.node, mapping.outcome, results)
-                if membership is not None:
-                    candidate_state = _observe_dynamic_membership(
-                        self.admitted,
-                        candidate_state,
-                        job.target,
-                        job.activation,
-                        job.node,
-                        mapping.outcome,
-                        membership,
-                        self.facts,
-                        self.services.limits,
-                    )
+                if checking_membership:
+                    membership = _dynamic_membership_value(self.admitted, job.node, mapping.outcome, results)
+                    if membership is not None:
+                        candidate_state = _observe_dynamic_membership(
+                            self.admitted,
+                            candidate_state,
+                            job.target,
+                            job.activation,
+                            job.node,
+                            mapping.outcome,
+                            membership,
+                            delta,
+                            self.services.limits,
+                        )
+                checking_membership = False
+                candidate_state = self._materialize_completed(job, candidate_state, delta)
             except (ContractViolation, EffectRejected) as exc:
-                assert checkpoint is not None
-                self.facts.restore(checkpoint)
-                condition = (
-                    "artifact_limit_exhausted"
-                    if isinstance(exc, EffectRejected) and exc.code == EffectCode.LIMIT_EXCEEDED
-                    else "failure"
+                if not staged:
+                    raise
+                mapping = self._publication_failure(
+                    job,
+                    limit=isinstance(exc, EffectRejected) and exc.code == EffectCode.LIMIT_EXCEEDED,
                 )
-                mapping = _mapping(
-                    job.policy,
-                    condition,
-                    None,
-                    None if condition == "artifact_limit_exhausted" else "malformed_response",
-                )
-                candidate_state = advance_activation(
-                    state=prior_state,
-                    event=ObserveTerminal(
-                        activation=job.activation, outcome=mapping.outcome, category=mapping.category
-                    ),
-                )
-        try:
-            while True:
-                _materialize_subgraph_outputs(
-                    self.admitted,
-                    job.target,
-                    candidate_state,
-                    self.facts,
-                    self.subgraph_input_parents,
-                )
-                candidate_state, bridged = _bridge_structural_map_membership(
-                    self.admitted, candidate_state, job.target, self.facts, self.services.limits
-                )
-                if not bridged:
-                    break
-        except (ContractViolation, EffectRejected) as exc:
-            if not staged_result or checkpoint is None:
-                raise
-            self.facts.restore(checkpoint)
-            condition = (
-                "artifact_limit_exhausted"
-                if isinstance(exc, EffectRejected) and exc.code == EffectCode.LIMIT_EXCEEDED
-                else "failure"
-            )
-            mapping = _mapping(
-                job.policy, condition, None, None if condition == "artifact_limit_exhausted" else "malformed_response"
-            )
-            candidate_state = advance_activation(
-                state=prior_state,
-                event=ObserveTerminal(activation=job.activation, outcome=mapping.outcome, category=mapping.category),
-            )
-        if checkpoint is not None:
-            self.facts.commit(checkpoint)
+                candidate_state = self._terminal_state(job, mapping)
+                if checking_membership:
+                    # Failure can itself close a structural output. It gets a fresh delta.
+                    delta = self.facts.delta()
+                    continue
+            else:
+                self.facts.publish(delta)
+            break
         self.frame.sources[job.target].state = candidate_state
         return mapping
+
+    def _terminal_state(self, job: _ExecutionJob, mapping: RuntimeOutcome) -> ActivationState:
+        return advance_activation(
+            state=self.frame.sources[job.target].state,
+            event=ObserveTerminal(activation=job.activation, outcome=mapping.outcome, category=mapping.category),
+        )
+
+    def _materialize_completed(
+        self, job: _ExecutionJob, state: ActivationState, delta: _ExecutionFacts
+    ) -> ActivationState:
+        while True:
+            _materialize_subgraph_outputs(self.admitted, job.target, state, delta, self.subgraph_input_parents)
+            state, bridged = _bridge_structural_map_membership(
+                self.admitted, state, job.target, delta, self.services.limits
+            )
+            if not bridged:
+                return state
 
     async def _finalize(self) -> ExecutionResult:
         if self.control.cancelled:
@@ -1001,7 +967,7 @@ class _InvocationRuntime:
             self.blocked_reasons,
             invocation_state=None if self.frame.invocation_source is None else self.frame.invocation_source.state,
         )
-        final_outputs = _final_outputs(self.prepared, self.frame.states, self.facts.produced, self.facts.provenance)
+        final_outputs = _final_outputs(self.prepared, self.frame.states, self.facts)
         failed_attempts = {
             association.task for failure in self.submission_failures for association in failure.associations
         }
@@ -1027,7 +993,7 @@ class _InvocationRuntime:
                 }.values()
             ),
             adaptive_acquisitions=self.adaptive_acquisitions,
-            _input_parents=tuple(self.facts.input_parents),
+            _input_parents=tuple((*key, parent) for key, parent in self.facts.input_parents.items()),
             _passthrough_parents=tuple(
                 (target, activation, port, parent)
                 for (target, activation, port), parent in self.facts.passthrough_parents.items()
@@ -1039,16 +1005,16 @@ class _InvocationRuntime:
             cleanup=cleanup,
             pending_decisions=(),
             artifacts=tuple(self.facts.values.items()),
-            assessments=tuple(self.facts.assessments),
-            ports=tuple(self.facts.ports),
+            assessments=tuple(self.facts.assessments.values()),
+            ports=tuple(self.facts.ports.values()),
             final_outputs=final_outputs,
-            provenance=tuple(self.facts.provenance),
+            provenance=tuple(self.facts.provenance.values()),
             cleanup_associations=cleanup_associations,
             publication_failures=tuple(self.publication_failures),
             submission_failures=tuple(self.submission_failures),
             frames=tuple(
                 bound
                 for publication in self.frame.publications
-                if (bound := publication.bind(tuple(self.facts.ports))) is not None
+                if (bound := publication.bind(tuple(self.facts.ports.values()))) is not None
             ),
         )

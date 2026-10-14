@@ -17,6 +17,7 @@ from anonymizer import Rewrite
 from anonymizer.engine.constants import COL_ENTITIES_BY_VALUE, COL_REWRITE_BASELINE_TEXT, COL_TEXT
 from anonymizer.engine.graph_sdk._artifact_shape import ArtifactShape
 from anonymizer.engine.graph_sdk._effect_values import EffectRejected
+from anonymizer.engine.graph_sdk._execution_values import OperationOutputKey
 from anonymizer.engine.graph_sdk._ingress import inspect_artifact
 from anonymizer.engine.graph_sdk.blocking import BlockingPool
 from anonymizer.engine.graph_sdk.capabilities import ConfigField, ConfigText, FrozenConfig
@@ -112,7 +113,9 @@ async def _lifecycle(monkeypatch, finish):
                 }
                 await binding.after(binding.state.rewritten_text, association, row, prefix=True)
             runtime = binding.requests.owner.runtime
-            captured["prefix_refs"] = tuple(runtime.facts.produced.values())
+            captured["prefix_refs"] = tuple(
+                fact.artifact for key, fact in runtime.facts.provenance.items() if isinstance(key, OperationOutputKey)
+            )
             for association in binding.source.associations:
                 with pytest.raises(EffectRejected):
                     await binding._call(

@@ -4,8 +4,6 @@
 
 from __future__ import annotations
 
-from collections.abc import MutableMapping, MutableSequence
-
 from anonymizer.engine.graph_sdk._effect_values import (
     EffectCode,
     reject,
@@ -22,7 +20,6 @@ from anonymizer.engine.graph_sdk._execution_values import (
     ArtifactProvenanceFact,
     BoundInputKey,
     ExecutionLimits,
-    ExecutionPortFact,
     InitialCollectionKey,
     MapItemKey,
     OperationOutputKey,
@@ -67,6 +64,41 @@ from anonymizer.graph.workflow import (
 )
 
 
+def _input_source(
+    admitted: AdmittedExecutionPlan,
+    target: DatumId,
+    node: NodeId,
+    activation: ActivationKey,
+    state: ActivationState,
+    port: str,
+    subgraph_input_parents: dict[tuple[DatumId, ActivationKey, str], ProvenanceKey],
+    facts: _ExecutionFacts,
+) -> ArtifactProvenanceFact:
+    source = admitted.input_sources.get(NodeInputRef(node=node, port=port))
+    if not isinstance(admitted.nodes[node], SubgraphNode):
+        source = _loop_input_source(admitted, state, node, activation, port, source)
+    direct = facts.source(target, activation, port)
+    if direct is None and _is_mapped_item_input(admitted, state, node, activation, port):
+        reject(EffectCode.MISSING)
+    direct = direct or facts.source(target, node, port)
+    if direct is not None:
+        return direct
+    parent = None
+    if isinstance(source, (WorkflowInputRef, ContextInputRef)):
+        if activation.parent is not None:
+            parent = subgraph_input_parents.get((target, activation.parent, source.port))
+        if parent is None and isinstance(source, WorkflowInputRef):
+            parent = RootInputKey(target=target, port=source.port)
+    elif isinstance(source, NodeOutputRef):
+        occurrence = _source_activation(state, activation, source.node)
+        if occurrence is not None:
+            parent = OperationOutputKey(activation=occurrence, target=target, port=source.port)
+    found = facts.provenance.get(parent) if parent is not None else None
+    if found is None:
+        reject(EffectCode.MISSING)
+    return found
+
+
 def _operation_inputs(
     admitted: AdmittedExecutionPlan,
     target: DatumId,
@@ -74,78 +106,20 @@ def _operation_inputs(
     activation: ActivationKey,
     state: ActivationState,
     association: SemanticAssociation,
-    root_inputs: dict[tuple[DatumId, str], ArtifactRef],
-    subgraph_inputs: dict[tuple[DatumId, ActivationKey, str], ArtifactRef],
     subgraph_input_parents: dict[tuple[DatumId, ActivationKey, str], ProvenanceKey],
-    produced: MutableMapping[tuple[DatumId, ActivationKey | NodeId, str], ArtifactRef],
-    values: MutableMapping[ArtifactRef, ArtifactValue],
-    provenance: MutableSequence[ArtifactProvenanceFact],
+    facts: _ExecutionFacts,
 ) -> tuple[tuple[AssociationInput, ...], dict[str, ProvenanceKey]]:
-    operation = admitted.nodes[node].operation
     ports: list[PortArtifact] = []
     parents: dict[str, ProvenanceKey] = {}
-    for port in operation.inputs:
-        source = admitted.input_sources.get(NodeInputRef(node=node, port=port.name))
-        source = _loop_input_source(admitted, state, node, activation, port.name, source)
-        reference: ArtifactRef | None = produced.get((target, activation, port.name))
-        if reference is not None:
-            item_parent = next(
-                (
-                    fact.key
-                    for fact in provenance
-                    if fact.artifact == reference
-                    and isinstance(fact.key, MapItemKey)
-                    and fact.key.member == activation
-                    and fact.key.port == port.name
-                ),
-                None,
-            )
-            if item_parent is not None:
-                parents[port.name] = item_parent
-        mapped_item = _is_mapped_item_input(admitted, state, node, activation, port.name)
-        if reference is None and mapped_item:
-            reject(EffectCode.MISSING)
-        if reference is None:
-            reference = produced.get((target, node, port.name))
-        if reference is None and isinstance(source, (WorkflowInputRef, ContextInputRef)):
-            if activation.parent is not None:
-                reference = subgraph_inputs.get((target, activation.parent, source.port))
-                parent = subgraph_input_parents.get((target, activation.parent, source.port))
-                if parent is not None:
-                    parents[port.name] = parent
-            if reference is None and isinstance(source, WorkflowInputRef):
-                reference = root_inputs.get((target, source.port))
-            if reference is not None and isinstance(source, WorkflowInputRef):
-                parents.setdefault(port.name, RootInputKey(target=target, port=source.port))
-        elif reference is None and isinstance(source, NodeOutputRef):
-            source_activation = _source_activation(state, activation, source.node)
-            if source_activation is not None:
-                reference = produced.get((target, source_activation, source.port))
-                if reference is not None:
-                    parents[port.name] = OperationOutputKey(
-                        activation=source_activation, target=target, port=source.port
-                    )
-        if reference is None:
-            reject(EffectCode.MISSING)
-        if port.name not in parents:
-            candidates = [
-                fact.key
-                for fact in provenance
-                if fact.artifact == reference
-                and isinstance(fact.key, (BoundInputKey, InitialCollectionKey))
-                and fact.key.target == target
-                and fact.key.node == node
-                and fact.key.port == port.name
-            ]
-            if len(candidates) != 1:
-                reject(EffectCode.MISSING)
-            parents[port.name] = candidates[0]
+    for port in admitted.nodes[node].operation.inputs:
+        source = _input_source(admitted, target, node, activation, state, port.name, subgraph_input_parents, facts)
+        parents[port.name] = source.key
         ports.append(
             PortArtifact(
                 port=port.name,
                 artifact_type=port.artifact_type,
-                artifact=reference,
-                value=values[reference],
+                artifact=source.artifact,
+                value=facts.values[source.artifact],
             )
         )
     return (AssociationInput(association=association, inputs=tuple(ports)),), parents
@@ -192,7 +166,7 @@ def _observe_dynamic_membership(
             > limits.max_runtime_artifact_bytes
         ):
             reject(EffectCode.LIMIT_EXCEEDED)
-        if sum(len(item.parents) for item in facts.provenance) + len(selected) > (
+        if sum(len(item.parents) for item in facts.provenance.values()) + len(selected) > (
             admitted.assessment_limits.max_provenance_edges
         ):
             reject(EffectCode.LIMIT_EXCEEDED)
@@ -201,7 +175,7 @@ def _observe_dynamic_membership(
             target=target,
             port=expansion.membership_port,
         )
-        if not any(item.key == parent_key for item in facts.provenance):
+        if parent_key not in facts.provenance:
             reject(EffectCode.MISSING)
         version_keys: dict[int, int] = {}
         for member, item in zip(selected, collection.items, strict=True):
@@ -214,7 +188,7 @@ def _observe_dynamic_membership(
                 version=item.version,
             )
             facts.values[reference] = item.value
-            facts.produced[(target, member, declaration.item_input)] = reference
+
             key = MapItemKey(
                 expander=activation,
                 member=member,
@@ -223,7 +197,7 @@ def _observe_dynamic_membership(
                 item_key=item.key,
                 item_version=item.version,
             )
-            facts.provenance.append(
+            facts.add_provenance(
                 ArtifactProvenanceFact(
                     _key=_FACT_KEY,
                     key=key,
@@ -288,57 +262,17 @@ def _materialize_subgraph_inputs(
     state: ActivationState,
     activation: ActivationKey,
     node: NodeId,
-    root_inputs: dict[tuple[DatumId, str], ArtifactRef],
-    subgraph_inputs: dict[tuple[DatumId, ActivationKey, str], ArtifactRef],
     subgraph_input_parents: dict[tuple[DatumId, ActivationKey, str], ProvenanceKey],
-    produced: MutableMapping[tuple[DatumId, ActivationKey | NodeId, str], ArtifactRef],
-    provenance: MutableSequence[ArtifactProvenanceFact],
+    facts: _ExecutionFacts,
 ) -> None:
-    declaration = admitted.nodes[node]
-    for port in declaration.operation.inputs:
-        source = admitted.input_sources.get(NodeInputRef(node=node, port=port.name))
-        reference: ArtifactRef | None = produced.get((target, activation, port.name))
-        parent: ProvenanceKey | None = None
-        if reference is None and isinstance(source, ContextInputRef):
-            reference = produced.get((target, node, port.name))
-            if reference is not None:
-                parent = next(
-                    (fact.key for fact in provenance if fact.artifact == reference),
-                    None,
-                )
-        if reference is not None:
-            parent = parent or next(
-                (
-                    fact.key
-                    for fact in provenance
-                    if fact.artifact == reference
-                    and isinstance(fact.key, MapItemKey)
-                    and fact.key.member == activation
-                    and fact.key.port == port.name
-                ),
-                None,
-            )
-        mapped_item = _is_mapped_item_input(admitted, state, node, activation, port.name)
-        if reference is None and mapped_item:
-            reject(EffectCode.MISSING)
-        if reference is None and isinstance(source, (WorkflowInputRef, ContextInputRef)):
-            if activation.parent is not None:
-                reference = subgraph_inputs.get((target, activation.parent, source.port))
-                parent = subgraph_input_parents.get((target, activation.parent, source.port))
-            if reference is None and isinstance(source, WorkflowInputRef):
-                reference = root_inputs.get((target, source.port))
-                if reference is not None:
-                    parent = RootInputKey(target=target, port=source.port)
-        elif reference is None and isinstance(source, NodeOutputRef):
-            source_activation = _source_activation(state, activation, source.node)
-            if source_activation is not None:
-                reference = produced.get((target, source_activation, source.port))
-                parent = OperationOutputKey(activation=source_activation, target=target, port=source.port)
-        if reference is None or parent is None:
-            reject(EffectCode.MISSING)
-        key = (target, activation, port.name)
-        subgraph_inputs[key] = reference
-        subgraph_input_parents[key] = parent
+    subgraph_input_parents.update(
+        {
+            (target, activation, port.name): _input_source(
+                admitted, target, node, activation, state, port.name, subgraph_input_parents, facts
+            ).key
+            for port in admitted.nodes[node].operation.inputs
+        }
+    )
 
 
 def _materialize_subgraph_outputs(
@@ -360,7 +294,7 @@ def _materialize_subgraph_outputs(
             continue
         for binding in declaration.body.output_bindings:
             destination = (target, entry.activation, binding.destination.port)
-            if destination in facts.produced:
+            if facts.artifact(*destination) is not None:
                 continue
             source_key: ProvenanceKey
             if isinstance(binding.source, WorkflowInputRef):
@@ -385,10 +319,10 @@ def _materialize_subgraph_outputs(
                     target=target,
                     port=binding.source.port,
                 )
-            source_fact = next((item for item in facts.provenance if item.key == source_key), None)
+            source_fact = facts.provenance.get(source_key)
             if source_fact is None:
                 continue
-            facts.produced[destination] = source_fact.artifact
+
             if isinstance(binding.source, WorkflowInputRef):
                 facts.passthrough_parents[destination] = source_key
             key = OperationOutputKey(
@@ -396,40 +330,27 @@ def _materialize_subgraph_outputs(
                 target=target,
                 port=binding.destination.port,
             )
-            facts.provenance.append(
-                ArtifactProvenanceFact(
-                    _key=_FACT_KEY,
-                    key=key,
-                    artifact=source_fact.artifact,
-                    parents=frozenset({source_key}),
-                    decision=source_fact.decision,
-                )
-            )
             output_type = next(
                 item.artifact_type for item in declaration.operation.outputs if item.name == binding.destination.port
             )
-            facts.ports.append(
-                ExecutionPortFact(
-                    _key=_FACT_KEY,
-                    activation=entry.activation,
-                    node=entry.template,
-                    target=target,
-                    port=binding.destination.port,
-                    artifact=source_fact.artifact,
-                    artifact_type=output_type,
-                    role=(
-                        "decision"
-                        if source_fact.decision
-                        else "candidate"
-                        if any(
-                            isinstance(output.source, NodeOutputRef)
-                            and output.source.node == entry.template
-                            and output.source.port == binding.destination.port
-                            for output in admitted.context.prepared.workflow.workflow.output_bindings
-                        )
-                        else "artifact"
-                    ),
-                )
+            facts.add_output(
+                key,
+                entry.template,
+                source_fact.artifact,
+                output_type,
+                frozenset({source_key}),
+                (
+                    "decision"
+                    if source_fact.decision
+                    else "candidate"
+                    if any(
+                        isinstance(output.source, NodeOutputRef)
+                        and output.source.node == entry.template
+                        and output.source.port == binding.destination.port
+                        for output in admitted.context.prepared.workflow.workflow.output_bindings
+                    )
+                    else "artifact"
+                ),
             )
 
 
@@ -469,7 +390,7 @@ def _bridge_structural_map_membership(
             for item in admitted.map_expansions
             if item.expander == entry.template and item.outcome == entry.outcome
         )
-        reference = facts.produced.get((target, entry.activation, expansion.membership_port))
+        reference = facts.artifact(target, entry.activation, expansion.membership_port)
         if reference is None or reference not in facts.values:
             reject(EffectCode.MISSING)
         updated = _observe_dynamic_membership(
@@ -490,15 +411,12 @@ def _bridge_structural_map_membership(
 def _materialize_bound_context(
     admitted: AdmittedExecutionPlan,
     invocation: InvocationId,
-    values: MutableMapping[ArtifactRef, ArtifactValue],
-    produced: MutableMapping[tuple[DatumId, ActivationKey | NodeId, str], ArtifactRef],
-    provenance: MutableSequence[ArtifactProvenanceFact],
-    next_artifact: int,
+    facts: _ExecutionFacts,
     limits: ExecutionLimits,
-) -> int:
+) -> None:
     context = admitted.context.bound_context
     if context is None:
-        return next_artifact
+        return
     declarations = {item.identity: item.declaration for item in context.receipt.sources}
     groups: dict[BindingDeclarationId, list[BoundTextArtifact]] = {}
     for artifact in context.artifacts:
@@ -517,32 +435,31 @@ def _materialize_bound_context(
         version_keys: dict[int, int] = {}
         for item in items:
             if item.reference.key not in version_keys:
-                version_keys[item.reference.key] = next_artifact
-                next_artifact += 1
+                version_keys[item.reference.key] = facts.next_artifact
+                facts.next_artifact += 1
             reference = ArtifactRef(
                 invocation=invocation, key=version_keys[item.reference.key], version=item.reference.version
             )
-            values[reference] = TextArtifactValue(text=item.text)
+            facts.values[reference] = TextArtifactValue(text=item.text)
             key = BoundInputKey(
                 target=item.target,
                 node=item.node,
                 port=item.port,
                 binding_artifact=item.reference,
             )
-            provenance.append(
+            facts.add_provenance(
                 ArtifactProvenanceFact(_key=_FACT_KEY, key=key, artifact=reference, parents=frozenset(), decision=False)
             )
             item_refs.append(reference)
             parents.add(key)
-        destination = (declaration.target, declaration.node, declaration.port)
         if declaration.materialization.kind == "single":
             if declaration.version_selection == "exact_one" and len(item_refs) != 1:
                 reject(EffectCode.CONTRADICTORY)
-            produced[destination] = max(item_refs, key=lambda item: item.version)
+
         else:
-            reference = ArtifactRef(invocation=invocation, key=next_artifact, version=1)
-            next_artifact += 1
-            values[reference] = TextCollectionValue(
+            reference = ArtifactRef(invocation=invocation, key=facts.next_artifact, version=1)
+            facts.next_artifact += 1
+            facts.values[reference] = TextCollectionValue(
                 items=tuple(
                     TextCollectionItem(
                         key=item.reference.key,
@@ -558,18 +475,17 @@ def _materialize_bound_context(
                 port=declaration.port,
                 declaration=identity,
             )
-            provenance.append(
+            facts.add_provenance(
                 ArtifactProvenanceFact(
                     _key=_FACT_KEY, key=key, artifact=reference, parents=frozenset(parents), decision=False
                 )
             )
-            produced[destination] = reference
-    if len(values) > limits.max_runtime_artifacts or (
+
+    if len(facts.values) > limits.max_runtime_artifacts or (
         limits.max_runtime_artifact_bytes is not None
-        and sum(_artifact_bytes(item) for item in values.values()) > limits.max_runtime_artifact_bytes
+        and sum(_artifact_bytes(item) for item in facts.values.values()) > limits.max_runtime_artifact_bytes
     ):
         reject(EffectCode.LIMIT_EXCEEDED)
-    return next_artifact
 
 
 def _artifact_bytes(value: ArtifactValue) -> int:

@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from collections import ChainMap
 from dataclasses import dataclass, field, fields, replace
 from itertools import product
 from typing import Literal
@@ -16,6 +17,7 @@ from anonymizer.engine.graph_sdk._effect_values import (
     require_count,
     require_instance,
 )
+from anonymizer.engine.graph_sdk._execution_state import _ExecutionFacts
 from anonymizer.engine.graph_sdk._execution_topology import _lexical_path
 from anonymizer.engine.graph_sdk._ingress import inspect_artifact
 from anonymizer.engine.graph_sdk._workflow import reachable_workflows
@@ -32,7 +34,7 @@ from anonymizer.engine.graph_sdk.executor import (
     MapItemKey,
     OperationOutputKey,
 )
-from anonymizer.engine.graph_sdk.preparation import StateRevisionView
+from anonymizer.engine.graph_sdk.preparation import PreparedPlan, StateRevisionView
 from anonymizer.engine.graph_sdk.records import (
     AbsenceRef,
     CandidateRef,
@@ -45,7 +47,9 @@ from anonymizer.engine.graph_sdk.records import (
 from anonymizer.engine.graph_sdk.requests import TextArtifactValue, TextCollectionValue
 from anonymizer.graph._values import ActivationKey, ArtifactRef, ContractViolation, DatumId
 from anonymizer.graph._workflow_composition import _project_consumed_ports, _project_evidence_port, _selected_nodes
+from anonymizer.graph.activation import ActivationEntry, ActivationState
 from anonymizer.graph.workflow import (
+    AdmittedActivationWorkflow,
     AdmittedWorkflow,
     ContextInputRef,
     CoverageAtom,
@@ -263,17 +267,19 @@ def _resolve_production(
     return _Production(declaration=declaration, operation=operation, outcome=outcome, promise=promise)
 
 
-@dataclass(slots=True)
-class _EvidenceFacts:
+@dataclass(slots=True, kw_only=True)
+class _RunFacts(_ExecutionFacts):
     """Bounded occurrence indexes for authenticating one result's assessments."""
 
     admitted: AdmittedQualification
     result: ExecutionResult
-    ports: dict[tuple[ActivationKey, str], ExecutionPortFact]
-    artifacts: frozenset[ArtifactRef]
+    entries: dict[ActivationKey, ActivationEntry] = field(default_factory=dict)
+    owners: dict[ActivationKey, DatumId] = field(default_factory=dict)
+    shared: set[ActivationKey] = field(default_factory=set)
+    terminals: dict[ActivationKey, TerminalFact] = field(default_factory=dict)
 
     @classmethod
-    def from_result(cls, admitted: AdmittedQualification, result: ExecutionResult) -> _EvidenceFacts:
+    def from_result(cls, admitted: AdmittedQualification, result: ExecutionResult) -> _RunFacts:
         limits = admitted.limits
         execution = admitted.execution
         execution._validate_ingress_policy()
@@ -357,12 +363,20 @@ class _EvidenceFacts:
             reject(EffectCode.DUPLICATE)
         if frozenset(references) != record.artifacts:
             reject(EffectCode.CONTRADICTORY)
-        parents = {fact.key: fact.artifact for fact in result.provenance}
+        provenance = {fact.key: fact for fact in result.provenance}
+        if len(provenance) != len(result.provenance):
+            reject(EffectCode.DUPLICATE)
+        for fact in provenance.values():
+            if fact.artifact.invocation != record.invocation or fact.key.target not in record.targets:
+                reject(EffectCode.FOREIGN_OWNER)
+            if fact.artifact not in record.artifacts:
+                reject(EffectCode.MISSING)
         for fact in result.provenance:
             value = retained.get(fact.artifact)
             if type(value) is EntitySpansValue and not any(
-                parents.get(parent) == value.source or retained.get(parents.get(parent)) == value
+                provenance[parent].artifact == value.source or retained.get(provenance[parent].artifact) == value
                 for parent in fact.parents
+                if parent in provenance
             ):
                 reject(EffectCode.CONTRADICTORY)
         ports: dict[tuple[ActivationKey, str], ExecutionPortFact] = {}
@@ -385,7 +399,73 @@ class _EvidenceFacts:
             if (fact.artifact_type == ENTITY_SPANS_TYPE) != (type(retained[fact.artifact]) is EntitySpansValue):
                 reject(EffectCode.CONTRADICTORY)
             ports[key] = fact
-        return cls(admitted=admitted, result=result, ports=ports, artifacts=record.artifacts)
+        facts = cls(
+            admitted=admitted,
+            result=result,
+            ports=ChainMap(ports),
+            values=ChainMap(retained),
+        )
+        for fact in provenance.values():
+            facts.add_provenance(fact)
+        facts._index_states()
+        facts.terminals = {item.activation: item for item in record.terminals}
+        if len(facts.terminals) != len(record.terminals):
+            reject(EffectCode.DUPLICATE)
+        for rows, index in (
+            (result._input_parents, facts.input_parents),
+            (result._passthrough_parents, facts.passthrough_parents),
+        ):
+            for target, activation, port, parent in rows:
+                if activation not in facts.entries or target != facts.owners.get(activation) or parent.target != target:
+                    reject(EffectCode.FOREIGN_OWNER)
+                key = (target, activation, port)
+                if key in index:
+                    reject(EffectCode.DUPLICATE)
+                index[key] = parent
+        return facts
+
+    @property
+    def prepared(self) -> PreparedPlan:
+        return self.admitted.execution.context.prepared
+
+    def _index_states(self) -> None:
+        record = self.result.record
+        execution = self.admitted.execution
+        invocation = getattr(self.result, "invocation_state", None)
+        if (invocation is None) != (execution.invocation_workflow is None):
+            reject(EffectCode.MISSING)
+        if len(self.result.states) != len(self.admitted.execution.context.prepared.target_occurrences):
+            reject(EffectCode.MISSING)
+        states: list[tuple[DatumId | None, ActivationState, AdmittedActivationWorkflow, int]] = [
+            (target, state, execution.target_workflow, occurrence.occurrence_offset)
+            for target, state, occurrence in zip(
+                (item.target for item in self.prepared.target_occurrences),
+                self.result.states,
+                self.prepared.target_occurrences,
+                strict=True,
+            )
+        ]
+        if invocation is not None:
+            assert execution.invocation_workflow is not None
+            states.append((None, invocation, execution.invocation_workflow, self.prepared.invocation_offset))
+        for target, state, workflow, offset in states:
+            if state.invocation != record.invocation or state.workflow is not workflow:
+                reject(EffectCode.FOREIGN_OWNER)
+            templates = {node.id for scope in state.workflow.scopes for node in scope.workflow.nodes}
+            expected = {
+                offset + slot.index: slot for slot in self.prepared.reservation_recipe if slot.template in templates
+            }
+            for entry in state.entries:
+                if entry.activation in self.entries:
+                    reject(EffectCode.DUPLICATE)
+                slot = expected.get(entry.activation.occurrence)
+                if slot is None or entry.template != slot.template:
+                    reject(EffectCode.FOREIGN_OWNER)
+                self.entries[entry.activation] = entry
+                if target is None:
+                    self.shared.add(entry.activation)
+                else:
+                    self.owners[entry.activation] = target
 
     def port(self, fact: ExecutionAssessmentFact, name: str) -> ExecutionPortFact:
         port = self.ports.get((fact.activation, name))
@@ -499,15 +579,10 @@ class _EvidenceFacts:
     def map_item(self, fact: ExecutionAssessmentFact, port: str, endpoint: MapItemPort) -> MapItemSubjectRef | None:
         """Authenticate an endpoint against the captured input's materialization."""
         input_fact = self.port(fact, port)
-        parents = [
-            key
-            for target, activation, name, key in self.result._input_parents
-            if (target, activation, name) == (input_fact.target, fact.activation, port)
-        ]
-        if len(parents) != 1 or not isinstance(parents[0], MapItemKey):
+        key = self.input_parents.get((input_fact.target, fact.activation, port))
+        if not isinstance(key, MapItemKey):
             return None
-        key = parents[0]
-        entries = {entry.activation: entry for state in self.result.states for entry in state.entries}
+        entries = self.entries
         expander = entries.get(key.expander)
         member = entries.get(key.member)
         if (
@@ -529,23 +604,22 @@ class _EvidenceFacts:
             return None
         if _lexical_path(key.expander, entries, self.admitted.execution.nodes) != endpoint.path:
             return None
-        provenance = [item for item in self.result.provenance if item.key == key]
-        if len(provenance) != 1 or provenance[0].artifact != input_fact.artifact or provenance[0].decision:
+        provenance = self.provenance.get(key)
+        if provenance is None or provenance.artifact != input_fact.artifact or provenance.decision:
             reject(EffectCode.CONTRADICTORY)
         expected = OperationOutputKey(activation=key.expander, target=key.target, port=endpoint.membership_port)
-        if provenance[0].parents != frozenset({expected}):
+        if provenance.parents != frozenset({expected}):
             reject(EffectCode.CONTRADICTORY)
-        publications = [item for item in self.result.provenance if item.key == expected]
-        if len(publications) != 1:
+        publication = self.provenance.get(expected)
+        if publication is None:
             reject(EffectCode.CONTRADICTORY)
-        artifacts = dict(self.result.artifacts)
-        collection = artifacts.get(publications[0].artifact)
+        collection = self.values.get(publication.artifact)
         if not isinstance(collection, TextCollectionValue):
             reject(EffectCode.CONTRADICTORY)
         source_items = [
             item for item in collection.items if (item.key, item.version) == (key.item_key, key.item_version)
         ]
-        if len(source_items) != 1 or source_items[0].value != artifacts.get(input_fact.artifact):
+        if len(source_items) != 1 or source_items[0].value != self.values.get(input_fact.artifact):
             reject(EffectCode.CONTRADICTORY)
         expansions = [
             expansion
@@ -562,20 +636,11 @@ class _EvidenceFacts:
         return MapItemSubjectRef(artifact=input_fact.artifact, producer=key)
 
     def _verify_activation(self, fact: ExecutionAssessmentFact) -> DatumId:
-        prepared = self.admitted.execution.context.prepared
-        matches = [
-            (target.target, entry)
-            for target, state in zip(prepared.target_occurrences, self.result.states, strict=True)
-            for entry in state.entries
-            if entry.activation == fact.activation
-        ]
-        if len(matches) != 1:
-            reject(EffectCode.MISSING if not matches else EffectCode.DUPLICATE)
-        target, entry = matches[0]
-        terminals = [item for item in self.result.record.terminals if item.activation == fact.activation]
-        if len(terminals) != 1:
-            reject(EffectCode.MISSING if not terminals else EffectCode.DUPLICATE)
-        terminal = terminals[0]
+        entry = self.entries.get(fact.activation)
+        target = self.owners.get(fact.activation)
+        terminal = self.terminals.get(fact.activation)
+        if entry is None or target is None or terminal is None:
+            reject(EffectCode.MISSING)
         if entry.template != fact.node or fact.activation.invocation != self.result.record.invocation:
             reject(EffectCode.FOREIGN_OWNER)
         if (
@@ -587,6 +652,46 @@ class _EvidenceFacts:
         ):
             reject(EffectCode.CONTRADICTORY)
         return target
+
+    def verify_submissions(self, submissions: tuple[AssessmentSubmission, ...]) -> tuple[VerifiedEvidence, ...]:
+        admitted, result = self.admitted, self.result
+        require_instance(submissions, tuple)
+        if len(submissions) > min(admitted.limits.max_submissions, admitted.limits.max_verified_evidence):
+            reject(EffectCode.LIMIT_EXCEEDED)
+        if any(not isinstance(item, AssessmentSubmission) for item in submissions):
+            reject(EffectCode.INVALID_TYPE)
+        if any(not any(item.fact is fact for fact in result.assessments) for item in submissions):
+            reject(EffectCode.FOREIGN_OWNER)
+        identities = [item.fact.evidence_artifact for item in submissions]
+        if len(identities) != len(set(identities)):
+            reject(EffectCode.DUPLICATE)
+        verified = tuple(self.verify(item.fact) for item in submissions)
+        prepared = admitted.execution.context.prepared
+        target_order = {item.target: index for index, item in enumerate(prepared.target_occurrences)}
+        node_order = {
+            node.id: index
+            for index, node in enumerate(node for body in reachable_workflows(prepared.workflow) for node in body.nodes)
+        }
+        productions = {
+            (item.declaration.node, item.outcome.name, item.promise.name): item for item in admitted._resolved
+        }
+
+        def canonical_order(item: VerifiedEvidence) -> tuple[int, int, int, int, int, int]:
+            production = productions[item.node, item.outcome, item.promise.name]
+            port = production.declaration.evidence_port
+            target = self.ports[item.activation, port].target
+            port_order = next(index for index, output in enumerate(production.operation.outputs) if output.name == port)
+            artifact = item.reference.artifact
+            return (
+                target_order[target],
+                item.activation.occurrence,
+                node_order[item.node],
+                port_order,
+                artifact.key,
+                artifact.version,
+            )
+
+        return tuple(sorted(verified, key=canonical_order))
 
     def _verify_environment(self, fact: ExecutionAssessmentFact, production: _Production) -> None:
         execution = self.admitted.execution
@@ -612,42 +717,7 @@ def verify_evidence(
     """Authenticate retained assessment objects and derive their exact dependencies."""
     require_instance(admitted, AdmittedQualification)
     require_instance(result, ExecutionResult)
-    require_instance(submissions, tuple)
-    if len(submissions) > min(admitted.limits.max_submissions, admitted.limits.max_verified_evidence):
-        reject(EffectCode.LIMIT_EXCEEDED)
-    if any(not isinstance(item, AssessmentSubmission) for item in submissions):
-        reject(EffectCode.INVALID_TYPE)
-    facts = _EvidenceFacts.from_result(admitted, result)
-    if any(not any(item.fact is fact for fact in result.assessments) for item in submissions):
-        reject(EffectCode.FOREIGN_OWNER)
-    identities = [item.fact.evidence_artifact for item in submissions]
-    if len(identities) != len(set(identities)):
-        reject(EffectCode.DUPLICATE)
-    verified = tuple(facts.verify(item.fact) for item in submissions)
-    prepared = admitted.execution.context.prepared
-    target_order = {item.target: index for index, item in enumerate(prepared.target_occurrences)}
-    node_order = {
-        node.id: index
-        for index, node in enumerate(node for body in reachable_workflows(prepared.workflow) for node in body.nodes)
-    }
-    productions = {(item.declaration.node, item.outcome.name, item.promise.name): item for item in admitted._resolved}
-
-    def canonical_order(item: VerifiedEvidence) -> tuple[int, int, int, int, int, int]:
-        production = productions[item.node, item.outcome, item.promise.name]
-        port = production.declaration.evidence_port
-        target = facts.ports[item.activation, port].target
-        port_order = next(index for index, output in enumerate(production.operation.outputs) if output.name == port)
-        artifact = item.reference.artifact
-        return (
-            target_order[target],
-            item.activation.occurrence,
-            node_order[item.node],
-            port_order,
-            artifact.key,
-            artifact.version,
-        )
-
-    return tuple(sorted(verified, key=canonical_order))
+    return _RunFacts.from_result(admitted, result).verify_submissions(submissions)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True, repr=False, init=False)
@@ -702,7 +772,7 @@ def evidence_revision_view(
         for item in configurations
     ):
         reject(EffectCode.INVALID_TYPE)
-    _EvidenceFacts.from_result(admitted, result)
+    _RunFacts.from_result(admitted, result)
     _validate_current_revisions(admitted, result, artifacts, absences, configurations, state)
     selected = frozenset(artifacts)
     candidates = frozenset(

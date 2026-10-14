@@ -20,12 +20,10 @@ from anonymizer.engine.graph_sdk.evidence import (
     EvidenceRevisionView,
     MapItemSubjectRef,
     VerifiedEvidence,
-    _EvidenceFacts,
+    _RunFacts,
     evidence_validity,
-    verify_evidence,
 )
 from anonymizer.engine.graph_sdk.executor import (
-    ArtifactProvenanceFact,
     ExecutionResult,
     FinalOutputFact,
     OperationOutputKey,
@@ -53,9 +51,7 @@ from anonymizer.engine.graph_sdk.resources import (
     ResourceOwner,
 )
 from anonymizer.graph._values import ActivationKey, DatumId
-from anonymizer.graph.activation import ActivationEntry, ActivationState
 from anonymizer.graph.workflow import (
-    AdmittedActivationWorkflow,
     MapItemPort,
     NodeId,
     ProtectionRequirement,
@@ -220,7 +216,7 @@ def qualify(
         reject(EffectCode.INVALID_TYPE)
     if current._admitted is not admitted or current._result is not result:
         reject(EffectCode.FOREIGN_OWNER)
-    facts = _EvidenceFacts.from_result(admitted, result)
+    facts = _RunFacts.from_result(admitted, result)
     qualification = _Qualification(admitted, result, current, facts)
     qualification.reconcile()
     qualification.validate_provenance()
@@ -230,7 +226,7 @@ def qualify(
         return qualification.finish(())
     for target in qualification.order:
         qualification.select_candidate(target)
-    verified = verify_evidence(admitted=admitted, result=result, submissions=submissions)
+    verified = facts.verify_submissions(submissions)
     qualification.validate_assessment_inventory()
     qualification.request_accounting()
     if not qualification.cleanup_accounting():
@@ -252,7 +248,7 @@ class _Qualification:
         admitted: AdmittedQualification,
         result: ExecutionResult,
         current: EvidenceRevisionView,
-        facts: _EvidenceFacts,
+        facts: _RunFacts,
     ) -> None:
         self.admitted = admitted
         self.result = result
@@ -264,73 +260,37 @@ class _Qualification:
         self.recovered_children: set[PhysicalRequestId] = set()
         self.permissive_usage: set[PhysicalRequestId] = set()
         self.failed_terminals: set[ActivationKey] = set()
-        self.entries: dict[ActivationKey, ActivationEntry] = {}
-        self.owners: dict[ActivationKey, DatumId] = {}
-        self.shared: set[ActivationKey] = set()
         self.withholding: dict[DatumId, set[WithholdingCode]] = {target: set() for target in self.order}
         self.closed = {target: True for target in self.order}
         self.uncertain: set[DatumId] = set()
         self.candidates: dict[DatumId, CandidateRef] = {}
         self.supporting: dict[DatumId, set[VerifiedEvidence]] = {target: set() for target in self.order}
         self.outputs: dict[DatumId, tuple[FinalOutputFact, ...]] = {}
-        self.provenance: dict[ProvenanceKey, ArtifactProvenanceFact] = {}
-        self.input_parents: dict[tuple[DatumId, ActivationKey, str], ProvenanceKey] = {}
-        self.passthrough_parents: dict[tuple[DatumId, ActivationKey, str], ProvenanceKey] = {}
 
     def incomplete(self, target: DatumId) -> None:
         self.closed[target] = False
         self.withholding[target].add("incomplete_membership")
 
     def affected(self, activation: ActivationKey) -> frozenset[DatumId]:
-        return frozenset(self.order) if activation in self.shared else frozenset({self.owners[activation]})
+        return frozenset(self.order) if activation in self.facts.shared else frozenset({self.facts.owners[activation]})
 
     def offset(self, activation: ActivationKey) -> int:
-        if activation in self.shared:
+        if activation in self.facts.shared:
             return self.prepared.invocation_offset
         return next(
             item.occurrence_offset
             for item in self.prepared.target_occurrences
-            if item.target == self.owners[activation]
+            if item.target == self.facts.owners[activation]
         )
 
     def reconcile(self) -> None:
         record = self.result.record
-        execution = self.admitted.execution
-        invocation = getattr(self.result, "invocation_state", None)
-        if (invocation is None) != (execution.invocation_workflow is None):
-            reject(EffectCode.MISSING)
-        if len(self.result.states) != len(self.order):
-            reject(EffectCode.MISSING)
-        states: list[tuple[DatumId | None, ActivationState, AdmittedActivationWorkflow, int]] = [
-            (target, state, execution.target_workflow, occurrence.occurrence_offset)
-            for target, state, occurrence in zip(
-                self.order, self.result.states, self.prepared.target_occurrences, strict=True
-            )
-        ]
-        if invocation is not None:
-            assert execution.invocation_workflow is not None
-            states.append((None, invocation, execution.invocation_workflow, self.prepared.invocation_offset))
-        for target, state, workflow, offset in states:
-            if state.invocation != record.invocation or state.workflow is not workflow:
-                reject(EffectCode.FOREIGN_OWNER)
-            templates = {node.id for scope in state.workflow.scopes for node in scope.workflow.nodes}
-            expected = {
-                offset + slot.index: slot for slot in self.prepared.reservation_recipe if slot.template in templates
-            }
-            for entry in state.entries:
-                if entry.activation in self.entries:
-                    reject(EffectCode.DUPLICATE)
-                slot = expected.get(entry.activation.occurrence)
-                if slot is None or entry.template != slot.template:
-                    reject(EffectCode.FOREIGN_OWNER)
-                self.entries[entry.activation] = entry
-                if target is None:
-                    self.shared.add(entry.activation)
-                else:
-                    self.owners[entry.activation] = target
+        for target, state in zip(self.order, self.result.states, strict=True):
             if not state.complete:
-                for affected in self.order if target is None else (target,):
-                    self.incomplete(affected)
+                self.incomplete(target)
+        if self.result.invocation_state is not None and not self.result.invocation_state.complete:
+            for target in self.order:
+                self.incomplete(target)
         self._memberships()
         self._terminals()
         recovered_leaves = self._child_receipts()
@@ -338,7 +298,7 @@ class _Qualification:
             for target in self.affected(key):
                 self.withholding[target].add("terminal_failure")
         for pending in self.result.pending_decisions:
-            target = self.owners.get(pending.activation)
+            target = self.facts.owners.get(pending.activation)
             if target is None:
                 reject(EffectCode.FOREIGN_OWNER)
             self.incomplete(target)
@@ -351,21 +311,21 @@ class _Qualification:
             None: all(state.complete for state in self.result.states)
             and (self.result.invocation_state is None or self.result.invocation_state.complete)
         }
-        for key, entry in self.entries.items():
+        for key, entry in self.facts.entries.items():
             if key.parent is not None and (
-                key.parent not in self.entries or self.owners.get(key.parent) != self.owners.get(key)
+                key.parent not in self.facts.entries or self.facts.owners.get(key.parent) != self.facts.owners.get(key)
             ):
                 reject(EffectCode.FOREIGN_OWNER)
             expected.setdefault(key.parent, set()).add(key)
             if key.parent is not None:
-                closed[key.parent] = self.entries[key.parent].status in _TERMINAL
+                closed[key.parent] = self.facts.entries[key.parent].status in _TERMINAL
         for state in self.result.states:
             for expansion in state.expansions:
-                if expansion.parent not in self.entries:
+                if expansion.parent not in self.facts.entries:
                     reject(EffectCode.MISSING)
                 expected.setdefault(expansion.parent, set())
                 closed[expansion.parent] = expansion.status != "pending"
-                parent = self.entries[expansion.parent]
+                parent = self.facts.entries[expansion.parent]
                 scope = next(
                     scope
                     for scope in self.prepared.workflow.scopes
@@ -375,10 +335,12 @@ class _Qualification:
                     item.member for item in scope.loops if item.starter == parent.template
                 }
                 dynamic_members = frozenset(
-                    member for member in expected[expansion.parent] if self.entries[member].template in member_templates
+                    member
+                    for member in expected[expansion.parent]
+                    if self.facts.entries[member].template in member_templates
                 )
                 if expansion.members != dynamic_members:
-                    self.incomplete(self.owners[expansion.parent])
+                    self.incomplete(self.facts.owners[expansion.parent])
                 if not expansion.members and expansion.status == "closed":
                     admitted_outcomes = {
                         outcome
@@ -393,7 +355,7 @@ class _Qualification:
                         for outcome in (*item.enter_outcomes, *item.bypass_outcomes)
                     )
                     if parent.status != "success" or parent.outcome not in admitted_outcomes:
-                        self.incomplete(self.owners[expansion.parent])
+                        self.incomplete(self.facts.owners[expansion.parent])
         observed = {item.parent: item for item in self.result.record.memberships}
         if len(observed) != len(self.result.record.memberships):
             reject(EffectCode.DUPLICATE)
@@ -409,17 +371,15 @@ class _Qualification:
             if membership is not None:
                 if all_members & membership.members:
                     reject(EffectCode.DUPLICATE)
-                if any(member not in self.entries for member in membership.members):
+                if any(member not in self.facts.entries for member in membership.members):
                     reject(EffectCode.MISSING)
                 all_members.update(membership.members)
 
     def _terminals(self) -> None:
-        terminals = {item.activation: item for item in self.result.record.terminals}
-        if len(terminals) != len(self.result.record.terminals):
-            reject(EffectCode.DUPLICATE)
-        if set(terminals) - set(self.entries):
+        terminals = self.facts.terminals
+        if set(terminals) - set(self.facts.entries):
             reject(EffectCode.MISSING)
-        for key, entry in self.entries.items():
+        for key, entry in self.facts.entries.items():
             terminal = terminals.get(key)
             if terminal is None:
                 for target in self.affected(key):
@@ -515,7 +475,7 @@ class _Qualification:
         readiness_dependents: set[ActivationKey] = set()
         physical_owners = {}
         probes: set[ActivationKey] = set()
-        for owner in self.entries.values():
+        for owner in self.facts.entries.values():
             policy = policies.get(owner.template)
             if policy is None or policy.delegated is None:
                 continue
@@ -523,20 +483,20 @@ class _Qualification:
             offset = self.offset(owner.activation)
             descriptor = contract.readiness
             if descriptor is not None:
-                readiness_offset = self.prepared.invocation_offset if self.shared else offset
+                readiness_offset = self.prepared.invocation_offset if self.facts.shared else offset
                 semantic = next(
                     entry.activation
-                    for entry in self.entries.values()
+                    for entry in self.facts.entries.values()
                     if entry.activation.occurrence == readiness_offset + descriptor.owner_slot
                 )
                 physical = next(
                     entry.activation
-                    for entry in self.entries.values()
+                    for entry in self.facts.entries.values()
                     if entry.activation.occurrence == readiness_offset + descriptor.request_slot
                 )
                 probe = next(
                     entry.activation
-                    for entry in self.entries.values()
+                    for entry in self.facts.entries.values()
                     if entry.activation.occurrence == readiness_offset + descriptor.probe_slot
                 )
                 readiness_owners[semantic] = contract
@@ -544,10 +504,10 @@ class _Qualification:
                 probes.add(probe)
                 physical_owners[physical] = semantic
                 expected.add(physical)
-            for entry in self.entries.values():
+            for entry in self.facts.entries.values():
                 if (
                     entry.activation.occurrence - offset in contract.child_slots
-                    and self.owners.get(entry.activation) == self.owners[owner.activation]
+                    and self.facts.owners.get(entry.activation) == self.facts.owners[owner.activation]
                 ):
                     physical_owners[entry.activation] = owner.activation
                     expected.add(entry.activation)
@@ -568,7 +528,7 @@ class _Qualification:
             if not isinstance(association, SemanticAssociation) or association.task not in terminals:
                 reject(EffectCode.FOREIGN_OWNER)
             owner = terminals[association.task].activation
-            owner_policy = policies[self.entries[owner].template]
+            owner_policy = policies[self.facts.entries[owner].template]
             contract = owner_policy.delegated
             slots = () if contract is None else contract.child_slots
             routes = () if contract is None else contract.routes
@@ -583,13 +543,13 @@ class _Qualification:
                 slots, routes, followups = (descriptor.request_slot,), (descriptor.route,), frozenset()
             elif contract is not None and contract.readiness is not None:
                 descriptor = contract.readiness
-                offset = self.prepared.invocation_offset if self.shared else self.offset(owner)
+                offset = self.prepared.invocation_offset if self.facts.shared else self.offset(owner)
                 for index, outcomes in (
                     (descriptor.owner_slot, frozenset({descriptor.ready_outcome})),
                     (descriptor.probe_slot, descriptor.probe_outcomes),
                 ):
                     dependency = next(
-                        entry for entry in self.entries.values() if entry.activation.occurrence == offset + index
+                        entry for entry in self.facts.entries.values() if entry.activation.occurrence == offset + index
                     )
                     if (
                         dependency.status != "success"
@@ -615,7 +575,7 @@ class _Qualification:
                 item for item in receipt.dispatches if item.child is not None and item.child.chain == chain.chain
             ]
             if not history and (
-                (contract.readiness is not None and self.entries[owner].status != "success")
+                (contract.readiness is not None and self.facts.entries[owner].status != "success")
                 or contract.selection is not None
             ):
                 continue
@@ -643,7 +603,7 @@ class _Qualification:
                     or leaf not in terminals
                     or leaf.activation not in expected
                     or leaf.activation in used
-                    or self.owners.get(leaf.activation) != self.owners.get(owner)
+                    or self.facts.owners.get(leaf.activation) != self.facts.owners.get(owner)
                     or leaf.activation.parent != owner.parent
                     or leaf.activation.occurrence - offset not in slots
                 ):
@@ -686,16 +646,19 @@ class _Qualification:
                     summary.__post_init__()
                     if summary.category == "success" and (
                         summary.association != association
-                        or summary.outcome != self.entries[leaf.activation].outcome
-                        or (self.entries[owner].status == "success" and summary.outcome != self.entries[owner].outcome)
+                        or summary.outcome != self.facts.entries[leaf.activation].outcome
+                        or (
+                            self.facts.entries[owner].status == "success"
+                            and summary.outcome != self.facts.entries[owner].outcome
+                        )
                         or summary.outcome not in owner_policy.result_outcomes
                         or not any(
                             outcome.name == summary.outcome and outcome.category == "success"
-                            for outcome in self.nodes[self.entries[owner].template].operation.outcomes
+                            for outcome in self.nodes[self.facts.entries[owner].template].operation.outcomes
                         )
                     ):
                         reject(EffectCode.CONTRADICTORY)
-                if self.entries[leaf.activation].status not in {
+                if self.facts.entries[leaf.activation].status not in {
                     "success",
                     "failure",
                     "lost",
@@ -751,7 +714,7 @@ class _Qualification:
                     if fact.category == "failure":
                         self.recovered_children.add(dispatch.request)
                         recovered.add(child.leaf.activation)
-        for entry in self.entries.values():
+        for entry in self.facts.entries.values():
             policy = policies.get(entry.template)
             if policy is None or policy.delegated is None or not policy.delegated.generation_groups:
                 continue
@@ -772,8 +735,8 @@ class _Qualification:
         unused = expected - used - omitted
         if any(
             physical_owners[key] not in readiness_dependents | readiness_owners.keys()
-            or self.entries[key].status != "blocked"
-            or self.entries[physical_owners[key]].status == "success"
+            or self.facts.entries[key].status != "blocked"
+            or self.facts.entries[physical_owners[key]].status == "success"
             or any(row.activation == key for row in terminals.values())
             for key in unused
         ):
@@ -789,7 +752,7 @@ class _Qualification:
                 if isinstance(association, SemanticAssociation) and association.task.activation in expected | probes:
                     reject(EffectCode.CONTRADICTORY)
                 if isinstance(association, SemanticAssociation) and association.task in terminals:
-                    node = self.entries[terminals[association.task].activation].template
+                    node = self.facts.entries[terminals[association.task].activation].template
                     if (
                         policies[node].delegated is not None or association.task.activation in readiness_owners
                     ) and dispatch.request not in processed:
@@ -801,18 +764,18 @@ class _Qualification:
     ) -> set[ActivationKey]:
         accepted: set[ActivationKey] = set()
         policies = {policy.node: policy for policy in self.admitted.execution.policies}
-        terminals = {row.activation: row for row in self.result.record.terminals}
-        values = dict(self.result.artifacts)
+        terminals = self.facts.terminals
+        values = self.facts.values
         for owner in set(owners.values()):
-            contract = policies[self.entries[owner].template].delegated
-            if contract is None or contract.selection is None or self.entries[owner].status != "success":
+            contract = policies[self.facts.entries[owner].template].delegated
+            if contract is None or contract.selection is None or self.facts.entries[owner].status != "success":
                 continue
             selection = contract.selection
             ports = [port for port in self.result.ports if port.activation == owner and port.port == selection.port]
             if len(ports) != 1 or ports[0].artifact not in values:
                 reject(EffectCode.MISSING)
             port = ports[0]
-            expected = OperationOutputKey(target=self.owners[owner], activation=owner, port=selection.port)
+            expected = OperationOutputKey(target=self.facts.owners[owner], activation=owner, port=selection.port)
             provenance = [fact for fact in self.result.provenance if fact.key == expected]
             if len(provenance) != 1 or provenance[0].artifact != port.artifact:
                 reject(EffectCode.MISSING)
@@ -839,7 +802,7 @@ class _Qualification:
     ) -> set[ActivationKey]:
         """Authenticate unused capacity from admitted recipes and retained facts only."""
         receipt = self.result.requests
-        terminals = {row.activation: row for row in self.result.record.terminals}
+        terminals = self.facts.terminals
         accepted: set[ActivationKey] = set()
         policies = {row.node: row for row in self.admitted.execution.policies}
         for key, terminal in terminals.items():
@@ -847,12 +810,18 @@ class _Qualification:
             if cause is None:
                 continue
             owner, generation = cause.owner.activation, cause.after.activation
-            if key not in unused or owners.get(key) != owner or self.owners.get(generation) != self.owners[key]:
+            if (
+                key not in unused
+                or owners.get(key) != owner
+                or self.facts.owners.get(generation) != self.facts.owners[key]
+            ):
                 reject(EffectCode.FOREIGN_OWNER)
-            contract = policies[self.entries[owner].template].delegated
+            contract = policies[self.facts.entries[owner].template].delegated
             assert contract is not None
             offset = next(
-                row.occurrence_offset for row in self.prepared.target_occurrences if row.target == self.owners[key]
+                row.occurrence_offset
+                for row in self.prepared.target_occurrences
+                if row.target == self.facts.owners[key]
             )
             group = next((group for group in contract.generations if key.occurrence - offset in group), ())
             if (
@@ -862,8 +831,8 @@ class _Qualification:
                 or key.parent != owner.parent
                 or generation.parent != owner.parent
                 or terminal.attempt is not None
-                or self.entries[key].outcome is not None
-                or self.entries[key].status != "blocked"
+                or self.facts.entries[key].outcome is not None
+                or self.facts.entries[key].status != "blocked"
                 or not any(
                     isinstance(row.key, OperationOutputKey) and row.key.activation == owner
                     for row in self.result.provenance
@@ -999,7 +968,7 @@ class _Qualification:
         terminals = {item.activation: item for item in self.result.record.terminals}
         possible = {
             (activation, entry.template, entry.outcome, production.promise)
-            for activation, entry in self.entries.items()
+            for activation, entry in self.facts.entries.items()
             if entry.status == "success" and not isinstance(self.nodes[entry.template], SubgraphNode)
             for production in self.admitted.execution.assessment_productions
             if production.node == entry.template and production.outcome == entry.outcome
@@ -1011,7 +980,7 @@ class _Qualification:
             reject(EffectCode.DUPLICATE)
         if any(fact.activation.invocation != self.result.record.invocation for fact in self.result.assessments):
             reject(EffectCode.FOREIGN_OWNER)
-        if any(fact.activation not in self.entries for fact in self.result.assessments):
+        if any(fact.activation not in self.facts.entries for fact in self.result.assessments):
             reject(EffectCode.MISSING)
         if expected - observed:
             reject(EffectCode.MISSING)
@@ -1274,7 +1243,7 @@ class _Qualification:
                 }
                 if any(
                     isinstance(association, SemanticAssociation)
-                    and (entry := self.entries.get(association.task.activation)) is not None
+                    and (entry := self.facts.entries.get(association.task.activation)) is not None
                     and entry.template in nodes
                     for dispatch in self.result.requests.dispatches
                     for association in dispatch.associations
@@ -1317,10 +1286,12 @@ class _Qualification:
             ):
                 continue
             leaf = dispatch.child.leaf
-            if leaf is None or leaf.activation not in self.entries:
+            if leaf is None or leaf.activation not in self.facts.entries:
                 continue
             policy = next(
-                item for item in self.admitted.execution.policies if item.node == self.entries[leaf.activation].template
+                item
+                for item in self.admitted.execution.policies
+                if item.node == self.facts.entries[leaf.activation].template
             )
             if policy.safe_detachment != "forbidden":
                 continue
@@ -1423,7 +1394,7 @@ class _Qualification:
                     self.withholding[target].add(code)
 
     def _path(self, activation: ActivationKey) -> tuple[NodeId, ...]:
-        path = _lexical_path(activation, self.entries, self.nodes)
+        path = _lexical_path(activation, self.facts.entries, self.nodes)
         if path is None:
             reject(EffectCode.MISSING)
         return path
@@ -1520,13 +1491,13 @@ class _Qualification:
             if key in ancestry:
                 continue
             ancestry.add(key)
-            fact = self.provenance.get(key)
+            fact = self.facts.provenance.get(key)
             if fact is not None:
                 pending.extend(fact.parents)
         expanders = [
             key
-            for key, entry in self.entries.items()
-            if self.owners.get(key) == target
+            for key, entry in self.facts.entries.items()
+            if self.facts.owners.get(key) == target
             and entry.template == endpoint.expander
             and entry.status == "success"
             and entry.outcome == endpoint.expansion_outcome
@@ -1542,7 +1513,7 @@ class _Qualification:
             }
             members = [
                 key
-                for key, entry in self.entries.items()
+                for key, entry in self.facts.entries.items()
                 if key.parent == expander
                 and entry.template == endpoint.member
                 and entry.status == "success"
@@ -1642,7 +1613,7 @@ class _Qualification:
             if key in visited:
                 continue
             visited.add(key)
-            fact = self.provenance[key]
+            fact = self.facts.provenance[key]
             if fact.decision:
                 required.add(DecisionRef(artifact=fact.artifact))
             pending.extend(fact.parents)

@@ -444,7 +444,7 @@ class _DelegatedOwner(PrivateValue):
         outcome = next(row for row in operation.outcomes if row.name == entry.outcome)
         outputs = []
         for port in operation.outputs:
-            reference = self.runtime.facts.produced.get((source_job.target, key, port.name))
+            reference = self.runtime.facts.artifact(source_job.target, key, port.name)
             if port.name in outcome.produced_ports and reference is None:
                 reject(EffectCode.MISSING)
             if reference is not None:
@@ -1064,9 +1064,7 @@ class _DelegatedOwner(PrivateValue):
                 targets = {self.jobs[cast(SemanticAssociation, item.association)].target for item in successful}
                 finals = tuple(
                     item
-                    for item in _final_outputs(
-                        runtime.prepared, runtime.frame.states, runtime.facts.produced, runtime.facts.provenance
-                    )
+                    for item in _final_outputs(runtime.prepared, runtime.frame.states, runtime.facts)
                     if item.target in targets
                 )
                 if len(finals) != len(targets) or {item.target for item in finals} != targets:

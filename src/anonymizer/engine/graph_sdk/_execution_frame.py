@@ -75,7 +75,6 @@ class _InvocationFrame:
         self.invocation_workflow = invocation_workflow
         self.invocation_source: _SourceOccurrence | None = None
         self.sources: dict[DatumId, _SourceOccurrence] = {}
-        self.root_inputs: dict[tuple[DatumId, str], ArtifactRef] = {}
         self.publications: list[FramePublication | InvocationFrame] = []
         self._initialize_activations()
         self._initialize_root_inputs()
@@ -190,8 +189,7 @@ class _InvocationFrame:
                 self.facts.next_artifact += 1
                 self.facts.values[reference] = TextArtifactValue(text=datum_text[bound.source])
                 references[lineage] = reference
-            self.root_inputs[bound.target, bound.port] = reference
-            self.facts.provenance.append(
+            self.facts.add_provenance(
                 ArtifactProvenanceFact(
                     _key=_FACT_KEY,
                     key=RootInputKey(target=bound.target, port=bound.port),

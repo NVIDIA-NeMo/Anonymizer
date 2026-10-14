@@ -6,12 +6,15 @@ from __future__ import annotations
 
 import asyncio
 from collections import ChainMap
-from collections.abc import MutableMapping
 from dataclasses import dataclass, field
 from typing import TypeAlias
 
+from anonymizer.engine.graph_sdk._effect_values import EffectCode, reject
 from anonymizer.engine.graph_sdk._execution_values import (
+    _FACT_KEY,
     ArtifactProvenanceFact,
+    ArtifactRole,
+    BoundInputKey,
     DecisionResponse,
     DecisionWait,
     DecisionWaitId,
@@ -19,9 +22,12 @@ from anonymizer.engine.graph_sdk._execution_values import (
     ExecutionImplementation,
     ExecutionPortFact,
     ImplementationHandle,
+    InitialCollectionKey,
     LocalAssessmentResult,
     LocalCompleted,
+    MapItemKey,
     OperationExecutionPolicy,
+    OperationOutputKey,
     ProvenanceKey,
     RuntimeOutcome,
     SubmissionFailure,
@@ -38,6 +44,7 @@ from anonymizer.graph._values import (
     DatumId,
 )
 from anonymizer.graph.workflow import (
+    ArtifactType,
     NodeId,
 )
 
@@ -52,90 +59,103 @@ class _ExecutionControl:
     measured_handles: dict[SemanticAssociation, ImplementationHandle] = field(default_factory=dict)
 
 
-@dataclass(frozen=True, slots=True)
-class _FactCheckpoint:
-    values: MutableMapping[ArtifactRef, ArtifactValue]
-    produced: MutableMapping[tuple[DatumId, ActivationKey | NodeId, str], ArtifactRef]
-    passthrough_parents: MutableMapping[tuple[DatumId, ActivationKey, str], ProvenanceKey]
-    provenance: int
-    ports: int
-    assessments: int
-    next_artifact: int
-    replaced_ports: dict[int, ExecutionPortFact] = field(default_factory=dict)
-
-
 @dataclass(slots=True)
 class _ExecutionFacts:
-    values: MutableMapping[ArtifactRef, ArtifactValue] = field(default_factory=dict)
-    produced: MutableMapping[tuple[DatumId, ActivationKey | NodeId, str], ArtifactRef] = field(default_factory=dict)
-    provenance: list[ArtifactProvenanceFact] = field(default_factory=list)
-    ports: list[ExecutionPortFact] = field(default_factory=list)
-    assessments: list[ExecutionAssessmentFact] = field(default_factory=list)
-    input_parents: list[tuple[DatumId, ActivationKey, str, ProvenanceKey]] = field(default_factory=list)
-    passthrough_parents: MutableMapping[tuple[DatumId, ActivationKey, str], ProvenanceKey] = field(default_factory=dict)
+    """Canonical invocation facts, with isolated synchronous publication deltas."""
+
+    values: ChainMap[ArtifactRef, ArtifactValue] = field(default_factory=ChainMap)
+    provenance: ChainMap[ProvenanceKey, ArtifactProvenanceFact] = field(default_factory=ChainMap)
+    ports: ChainMap[tuple[ActivationKey, str], ExecutionPortFact] = field(default_factory=ChainMap)
+    assessments: ChainMap[tuple[ActivationKey, str], ExecutionAssessmentFact] = field(default_factory=ChainMap)
+    input_parents: dict[tuple[DatumId, ActivationKey, str], ProvenanceKey] = field(default_factory=dict)
+    passthrough_parents: ChainMap[tuple[DatumId, ActivationKey, str], ProvenanceKey] = field(default_factory=ChainMap)
     next_artifact: int = 0
+    _sources: ChainMap[tuple[DatumId, ActivationKey | NodeId, str], ProvenanceKey] = field(default_factory=ChainMap)
+    _parent: _ExecutionFacts | None = field(default=None, repr=False)
 
-    _checkpoint: _FactCheckpoint | None = field(default=None, init=False, repr=False)
-
-    def checkpoint(self) -> _FactCheckpoint:
-        """Open a synchronous publication delta, without copying accepted facts."""
-        if self._checkpoint is not None:
-            raise RuntimeError("publication delta is already open")
-        checkpoint = _FactCheckpoint(
-            values=self.values,
-            produced=self.produced,
-            passthrough_parents=self.passthrough_parents,
-            provenance=len(self.provenance),
-            ports=len(self.ports),
-            assessments=len(self.assessments),
+    def delta(self) -> _ExecutionFacts:
+        return _ExecutionFacts(
+            values=self.values.new_child(),
+            provenance=self.provenance.new_child(),
+            ports=self.ports.new_child(),
+            assessments=self.assessments.new_child(),
+            input_parents=self.input_parents,
+            passthrough_parents=self.passthrough_parents.new_child(),
             next_artifact=self.next_artifact,
+            _sources=self._sources.new_child(),
+            _parent=self,
         )
-        self.values = ChainMap({}, self.values)
-        self.produced = ChainMap({}, self.produced)
-        self.passthrough_parents = ChainMap({}, self.passthrough_parents)
-        self._checkpoint = checkpoint
-        return checkpoint
 
-    def replace_port(self, index: int, fact: ExecutionPortFact) -> None:
-        checkpoint = self._checkpoint
-        if checkpoint is not None and index < checkpoint.ports:
-            checkpoint.replaced_ports.setdefault(index, self.ports[index])
-        self.ports[index] = fact
+    def publish(self, delta: _ExecutionFacts) -> None:
+        if delta._parent is not self:
+            raise RuntimeError("publication delta does not belong to this invocation")
+        self.values.update(delta.values.maps[0])
+        self.provenance.update(delta.provenance.maps[0])
+        self.ports.update(delta.ports.maps[0])
+        self.assessments.update(delta.assessments.maps[0])
+        self.passthrough_parents.update(delta.passthrough_parents.maps[0])
+        self._sources.update(delta._sources.maps[0])
+        self.next_artifact = delta.next_artifact
+        delta._parent = None
 
-    def commit(self, checkpoint: _FactCheckpoint) -> None:
-        if self._checkpoint is None:
-            return  # already discarded
-        if self._checkpoint is not checkpoint:
-            raise RuntimeError("publication checkpoint does not own the open delta")
-        if not (
-            isinstance(self.values, ChainMap)
-            and isinstance(self.produced, ChainMap)
-            and isinstance(self.passthrough_parents, ChainMap)
-        ):
-            raise RuntimeError("publication mapping has no open delta")
-        checkpoint.values.update(self.values.maps[0])
-        checkpoint.produced.update(self.produced.maps[0])
-        checkpoint.passthrough_parents.update(self.passthrough_parents.maps[0])
-        self._close(checkpoint)
+    def artifact(self, target: DatumId, occurrence: ActivationKey | NodeId, port: str) -> ArtifactRef | None:
+        source = self.source(target, occurrence, port)
+        return None if source is None else source.artifact
 
-    def restore(self, checkpoint: _FactCheckpoint) -> None:
-        if self._checkpoint is None:
+    def source(self, target: DatumId, occurrence: ActivationKey | NodeId, port: str) -> ArtifactProvenanceFact | None:
+        key = self._sources.get((target, occurrence, port))
+        return self.provenance.get(key) if key is not None else None
+
+    def add_output(
+        self,
+        key: OperationOutputKey,
+        node: NodeId,
+        artifact: ArtifactRef,
+        artifact_type: ArtifactType,
+        parents: frozenset[ProvenanceKey],
+        role: ArtifactRole,
+    ) -> None:
+        self.add_provenance(
+            ArtifactProvenanceFact(
+                _key=_FACT_KEY,
+                key=key,
+                artifact=artifact,
+                parents=parents,
+                decision=role == "decision",
+            )
+        )
+        self.ports[key.activation, key.port] = ExecutionPortFact(
+            _key=_FACT_KEY,
+            activation=key.activation,
+            node=node,
+            target=key.target,
+            port=key.port,
+            artifact=artifact,
+            artifact_type=artifact_type,
+            role=role,
+        )
+
+    def add_provenance(self, fact: ArtifactProvenanceFact) -> None:
+        key = fact.key
+        if key in self.provenance:
+            reject(EffectCode.DUPLICATE)
+        self.provenance[key] = fact
+        if isinstance(key, (BoundInputKey, InitialCollectionKey)):
+            prior = self.source(key.target, key.node, key.port)
+            if (
+                isinstance(key, BoundInputKey)
+                and prior is not None
+                and (isinstance(prior.key, InitialCollectionKey) or prior.artifact.version >= fact.artifact.version)
+            ):
+                return
+            occurrence = key.node
+        elif isinstance(key, MapItemKey):
+            occurrence = key.member
+        elif isinstance(key, OperationOutputKey):
+            occurrence = key.activation
+        else:
             return
-        if self._checkpoint is not checkpoint:
-            raise RuntimeError("publication checkpoint does not own the open delta")
-        del self.provenance[checkpoint.provenance :]
-        del self.ports[checkpoint.ports :]
-        del self.assessments[checkpoint.assessments :]
-        for index, fact in checkpoint.replaced_ports.items():
-            self.ports[index] = fact
-        self.next_artifact = checkpoint.next_artifact
-        self._close(checkpoint)
-
-    def _close(self, checkpoint: _FactCheckpoint) -> None:
-        self.values = checkpoint.values
-        self.produced = checkpoint.produced
-        self.passthrough_parents = checkpoint.passthrough_parents
-        self._checkpoint = None
+        self._sources[key.target, occurrence, key.port] = key
 
 
 @dataclass(frozen=True, slots=True)

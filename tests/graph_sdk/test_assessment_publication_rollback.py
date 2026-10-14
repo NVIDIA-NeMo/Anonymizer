@@ -9,7 +9,7 @@ from dataclasses import dataclass
 
 import pytest
 
-from anonymizer.engine.graph_sdk._execution_state import _ExecutionFacts, _FactCheckpoint
+from anonymizer.engine.graph_sdk._execution_state import _ExecutionFacts
 from anonymizer.engine.graph_sdk.executor import (
     ExecutionAssessmentFact,
     ExecutionResult,
@@ -31,29 +31,15 @@ class _Discard:
 def _execute(
     monkeypatch: pytest.MonkeyPatch, *, retain_rejected: bool = False
 ) -> tuple[_MapFixture, ExecutionResult, dict[NodeId, _MapCallback], _Discard]:
-    discarded: list[_Discard] = []
-    restore = _ExecutionFacts.restore
+    deltas: list[_ExecutionFacts] = []
+    create_delta = _ExecutionFacts.delta
 
-    def observe(facts: _ExecutionFacts, checkpoint: _FactCheckpoint) -> None:
-        # The checkpoint records the accepted prefix; rollback discards only
-        # appended facts, leaving the previously published peer intact.
-        pending = facts.assessments[checkpoint.assessments :]
-        if pending:
-            (rejected,) = pending
-            assert checkpoint.assessments == 1
-            assert rejected.evidence_artifact in facts.values
-            staged = facts.values[rejected.evidence_artifact]
-            assert isinstance(staged, TextCollectionValue) and len(staged.items) == 2
-            assert any(port.artifact == rejected.evidence_artifact for port in facts.ports)
-            assert any(producer.artifact == rejected.evidence_artifact for producer in facts.provenance)
-            discarded.append(_Discard(tuple(facts.assessments[: checkpoint.assessments]), rejected))
-        restore(facts, checkpoint)
-        if pending and retain_rejected:
-            # Fault injection retains the real staged fact. No assessment is
-            # fabricated, and every other owner follows its ordinary rollback.
-            facts.assessments.extend(pending)
+    def observe(facts: _ExecutionFacts) -> _ExecutionFacts:
+        delta = create_delta(facts)
+        deltas.append(delta)
+        return delta
 
-    monkeypatch.setattr(_ExecutionFacts, "restore", observe)
+    monkeypatch.setattr(_ExecutionFacts, "delta", observe)
     fixture, result, callbacks = asyncio.run(
         _execute_membership(
             2,
@@ -64,8 +50,21 @@ def _execute(
             max_local_in_flight=1,
         )
     )
-    (discard,) = discarded
-    return fixture, result, callbacks, discard
+    rejected_deltas = [delta for delta in deltas if delta._parent is not None and delta.assessments.maps[0]]
+    (delta,) = rejected_deltas
+    (rejected,) = delta.assessments.maps[0].values()
+    assert delta._parent is not None
+    prior = tuple(delta._parent.assessments.values())
+    assert len(prior) == 1
+    assert rejected.evidence_artifact in delta.values
+    staged = delta.values[rejected.evidence_artifact]
+    assert isinstance(staged, TextCollectionValue) and len(staged.items) == 2
+    assert any(port.artifact == rejected.evidence_artifact for port in delta.ports.values())
+    assert any(producer.artifact == rejected.evidence_artifact for producer in delta.provenance.values())
+    if retain_rejected:
+        # Corrupt the valid fixture by retaining the real rejected delta's fact.
+        object.__setattr__(result, "assessments", (*result.assessments, rejected))
+    return fixture, result, callbacks, _Discard(prior, rejected)
 
 
 def _assert_rollback(
