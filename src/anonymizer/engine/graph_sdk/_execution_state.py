@@ -7,7 +7,7 @@ from __future__ import annotations
 import asyncio
 from collections import ChainMap
 from dataclasses import dataclass, field
-from typing import TypeAlias
+from typing import Generic, TypeAlias, TypeVar
 
 from anonymizer.engine.graph_sdk._effect_values import EffectCode, reject
 from anonymizer.engine.graph_sdk._execution_values import (
@@ -42,6 +42,7 @@ from anonymizer.graph._values import (
     ActivationKey,
     ArtifactRef,
     DatumId,
+    InvocationId,
 )
 from anonymizer.graph.workflow import (
     ArtifactType,
@@ -67,7 +68,6 @@ class _ExecutionFacts:
     provenance: ChainMap[ProvenanceKey, ArtifactProvenanceFact] = field(default_factory=ChainMap)
     ports: ChainMap[tuple[ActivationKey, str], ExecutionPortFact] = field(default_factory=ChainMap)
     assessments: ChainMap[tuple[ActivationKey, str], ExecutionAssessmentFact] = field(default_factory=ChainMap)
-    input_parents: dict[tuple[DatumId, ActivationKey, str], ProvenanceKey] = field(default_factory=dict)
     passthrough_parents: ChainMap[tuple[DatumId, ActivationKey, str], ProvenanceKey] = field(default_factory=ChainMap)
     next_artifact: int = 0
     _sources: ChainMap[tuple[DatumId, ActivationKey | NodeId, str], ProvenanceKey] = field(default_factory=ChainMap)
@@ -79,7 +79,6 @@ class _ExecutionFacts:
             provenance=self.provenance.new_child(),
             ports=self.ports.new_child(),
             assessments=self.assessments.new_child(),
-            input_parents=self.input_parents,
             passthrough_parents=self.passthrough_parents.new_child(),
             next_artifact=self.next_artifact,
             _sources=self._sources.new_child(),
@@ -158,42 +157,30 @@ class _ExecutionFacts:
         self._sources[key.target, occurrence, key.port] = key
 
 
+_Scope = TypeVar("_Scope", bound=DatumId | InvocationId, covariant=True)
+
+
 @dataclass(frozen=True, slots=True)
-class _OperationJob:
-    activation: ActivationKey
-    node: NodeId
+class _OperationJob(Generic[_Scope]):
+    """One bound operation; its typed scope distinguishes target and invocation work."""
+
+    scope: _Scope
     policy: OperationExecutionPolicy
-    implementation: ExecutionImplementation
     inputs: tuple[AssociationInput, ...]
     input_parents: dict[str, ProvenanceKey]
     association: SemanticAssociation
 
+    @property
+    def activation(self) -> ActivationKey:
+        return self.association.task.activation
 
-@dataclass(frozen=True, slots=True)
-class _ExecutionJob(_OperationJob):
-    target: DatumId
+    @property
+    def node(self) -> NodeId:
+        return self.policy.node
 
-
-@dataclass(frozen=True, slots=True)
-class _InvocationJob(_OperationJob):
-    """An operation activation owned by the invocation, with no target attribution."""
-
-
-def _group_external_jobs(jobs: list[_ExecutionJob]) -> list[list[_ExecutionJob]]:
-    groups: list[list[_ExecutionJob]] = []
-    for job in jobs:
-        shared = job.policy.kind == "delegated" or all(
-            item.capability.attribution == "keyed_shared_request" for item in job.policy.implementations
-        )
-        group = next(
-            (group for group in groups if shared and group[0].node == job.node and group[0].policy == job.policy),
-            None,
-        )
-        if group is None:
-            groups.append([job])
-        else:
-            group.append(job)
-    return groups
+    @property
+    def implementation(self) -> ExecutionImplementation:
+        return self.policy.implementations[0]
 
 
 _OperationResult: TypeAlias = tuple[RuntimeOutcome, tuple[AssociationResult, ...], tuple[LocalAssessmentResult, ...]]

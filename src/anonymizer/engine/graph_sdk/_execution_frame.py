@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, cast
 
 from anonymizer.engine.constants import COL_TEXT
 from anonymizer.engine.graph_sdk._effect_values import EffectCode, reject
-from anonymizer.engine.graph_sdk._execution_state import _ExecutionFacts, _ExecutionJob
+from anonymizer.engine.graph_sdk._execution_state import _ExecutionFacts, _OperationJob
 from anonymizer.engine.graph_sdk._execution_values import (
     _FACT_KEY,
     ArtifactProvenanceFact,
@@ -87,10 +87,10 @@ class _InvocationFrame:
     def target_keys(self) -> dict[DatumId, dict[int, ActivationKey]]:
         return {target: source.keys for target, source in self.sources.items()}
 
-    def occurrence(self, target: DatumId | None) -> _SourceOccurrence:
-        if target is not None:
+    def occurrence(self, target: DatumId | InvocationId) -> _SourceOccurrence:
+        if isinstance(target, DatumId):
             return self.sources[target]
-        if self.invocation_source is None:
+        if target != self.invocation or self.invocation_source is None:
             reject(EffectCode.MISSING)
         return self.invocation_source
 
@@ -131,7 +131,7 @@ class _InvocationFrame:
 
     def bind_source_frame(
         self,
-        jobs: tuple[_ExecutionJob, ...],
+        jobs: tuple[_OperationJob[DatumId], ...],
         dataframe: pd.DataFrame,
         *,
         targets: tuple[DatumId, ...] | None = None,
@@ -139,7 +139,7 @@ class _InvocationFrame:
     ) -> WorkflowSourceFrame:
         """Authenticate the whole submitted frame against this invocation's source jobs."""
         if targets is not None:
-            by_target = {job.target: job for job in jobs}
+            by_target = {job.scope: job for job in jobs}
             if (
                 type(targets) is not tuple
                 or any(type(target) is not DatumId for target in targets)
@@ -158,20 +158,20 @@ class _InvocationFrame:
         ):
             reject(EffectCode.MISSING)
         submitted = dataframe.iloc[:selected]
-        if len({job.target for job in jobs}) != len(jobs) or any(
-            job.target not in self.sources
-            or job.activation not in self.sources[job.target].keys.values()
+        if len({job.scope for job in jobs}) != len(jobs) or any(
+            job.scope not in self.sources
+            or job.activation not in self.sources[job.scope].keys.values()
             or job.association.task.activation != job.activation
             for job in jobs
         ):
             reject(EffectCode.FOREIGN_OWNER)
         if any(
-            not isinstance(value, str) or value != datum_text[job.target]
+            not isinstance(value, str) or value != datum_text[job.scope]
             for value, job in zip(submitted[COL_TEXT].tolist(), jobs, strict=True)
         ):
             reject(EffectCode.CONTRADICTORY)
         for job, cells in zip(jobs, submitted.itertuples(index=False, name=None), strict=True):
-            source = self.sources[job.target]
+            source = self.sources[job.scope]
             if not source.opaque_cells:
                 source.opaque_cells = cells
         return WorkflowSourceFrame.capture(

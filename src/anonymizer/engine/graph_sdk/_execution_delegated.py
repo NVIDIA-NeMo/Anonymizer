@@ -14,8 +14,6 @@ from anonymizer.engine.graph_sdk._effect_values import EffectCode, EffectRejecte
 from anonymizer.engine.graph_sdk._execution_dispatch import _mapping, _run_local
 from anonymizer.engine.graph_sdk._execution_publication import _accept_invocation_frame
 from anonymizer.engine.graph_sdk._execution_state import (
-    _ExecutionJob,
-    _InvocationJob,
     _OperationJob,
     _SubmissionResults,
 )
@@ -46,7 +44,6 @@ from anonymizer.engine.graph_sdk.requests import (
     FailureClass,
     MarkLost,
     PhysicalRequestId,
-    PortArtifact,
     RequestChain,
     RequestChainId,
     RequestChild,
@@ -56,8 +53,8 @@ from anonymizer.engine.graph_sdk.requests import (
     TransportFailure,
     TransportSuccess,
 )
-from anonymizer.graph._values import DatumId, TaskAttemptId
-from anonymizer.graph.activation import CloseUnstarted, Start, advance_activation
+from anonymizer.graph._values import DatumId, InvocationId
+from anonymizer.graph.activation import CloseUnstarted, advance_activation
 
 if TYPE_CHECKING:
     import pandas as pd
@@ -247,9 +244,9 @@ class _DelegatedOwner(PrivateValue):
     def __init__(
         self,
         runtime: _InvocationRuntime,
-        jobs: tuple[_ExecutionJob, ...],
+        jobs: tuple[_OperationJob[DatumId], ...],
         *,
-        invocation_job: _InvocationJob | None = None,
+        invocation_job: _OperationJob[InvocationId] | None = None,
     ) -> None:
         self.runtime = runtime
         self.jobs = {job.association: job for job in jobs}
@@ -271,7 +268,6 @@ class _DelegatedOwner(PrivateValue):
         assert contract is not None
         self.contract = contract
         self.chains: dict[tuple[SemanticAssociation, int], RequestChain] = {}
-        self.operations: dict[SemanticAssociation, _ExecutionJob] = {}
         for job in jobs if policy is not None else ():
             assert policy is not None
             runtime.request_authority.bind(
@@ -326,7 +322,7 @@ class _DelegatedOwner(PrivateValue):
         except (AttributeError, TypeError):
             reject(EffectCode.FOREIGN_OWNER)
 
-    def _source_job(self, association: SemanticAssociation | None = None) -> _ExecutionJob:
+    def _source_job(self, association: SemanticAssociation | None = None) -> _OperationJob[DatumId]:
         if association is None:
             if len(self.jobs) != 1:
                 reject(EffectCode.MISSING)
@@ -365,7 +361,7 @@ class _DelegatedOwner(PrivateValue):
         self._check_submission()
         require_count(slot)
         source_job = self._source_job(association)
-        source = self.runtime.frame.sources[source_job.target]
+        source = self.runtime.frame.sources[source_job.scope]
         key = source.keys.get(slot)
         entry = next((row for row in source.state.entries if row.activation == key), None)
         if entry is None:
@@ -411,15 +407,14 @@ class _DelegatedOwner(PrivateValue):
             return source_job.inputs[0]
         if self.runtime.policies[entry.template].submission_owner != self.policy.node:
             reject(EffectCode.FOREIGN_OWNER)
-        active = next((job for job in self.operations.values() if job.activation == entry.activation), None)
+        active = self.runtime.operations.get(entry.activation)
         if active is not None and entry.status == "running":
             return active.inputs[0]
-        if entry.status != "ready" or key in self.runtime.attempts:
+        if entry.status != "ready" or key in self.runtime.operations:
             reject(EffectCode.REQUEST_CAUSALITY)
-        job = self.runtime._bind_operation(source_job.target, entry, self.runtime.policies[entry.template])
-        self._prepare(job, job.association.task)()
+        job = self.runtime._bind_operation(source_job.scope, entry, self.runtime.policies[entry.template])
+        self.runtime._prepare_job(job)()
         self.runtime._start_observed_activation(job.activation, operation=True)
-        self.operations[job.association] = job
         return job.inputs[0]
 
     async def operation_result(self, slot: int, association: SemanticAssociation) -> AssociationResult | None:
@@ -427,7 +422,7 @@ class _DelegatedOwner(PrivateValue):
         self._check_submission()
         require_count(slot)
         source_job = self._source_job(association)
-        source = self.runtime.frame.sources[source_job.target]
+        source = self.runtime.frame.sources[source_job.scope]
         key = source.keys.get(slot)
         if key is None:
             reject(EffectCode.FOREIGN_OWNER)
@@ -435,41 +430,23 @@ class _DelegatedOwner(PrivateValue):
         policy = self.runtime.policies.get(node)
         if policy is None or policy.submission_owner != self.policy.node:
             reject(EffectCode.FOREIGN_OWNER)
-        entry = next((item for item in source.state.entries if item.activation == key), None)
-        if entry is None or entry.status in {"ready", "running", "unstarted"}:
-            return None
-        if entry.status != "success" or entry.outcome is None or key not in self.runtime.attempts:
-            reject(EffectCode.REQUEST_CAUSALITY)
-        operation = policy.implementations[0].capability.operation
-        outcome = next(row for row in operation.outcomes if row.name == entry.outcome)
-        outputs = []
-        for port in operation.outputs:
-            reference = self.runtime.facts.artifact(source_job.target, key, port.name)
-            if port.name in outcome.produced_ports and reference is None:
-                reject(EffectCode.MISSING)
-            if reference is not None:
-                outputs.append(
-                    PortArtifact(
-                        port=port.name,
-                        artifact_type=port.artifact_type,
-                        artifact=reference,
-                        value=self.runtime.facts.values[reference],
-                    )
-                )
-        return AssociationResult(
-            association=SemanticAssociation(task=self.runtime.attempts[key]),
-            outcome=entry.outcome,
-            outputs=tuple(outputs),
-            consumed_context_ports=frozenset(),
-        )
+        return self.runtime._operation_result(source_job.scope, key)
 
     async def complete_operation(self, association: SemanticAssociation, result: LocalResult) -> RuntimeOutcome:
         self._check_submission()
-        job = self.operations.get(association) or self.jobs.get(association)
-        if job is None:
+        if type(association) is not SemanticAssociation:
+            reject(EffectCode.FOREIGN_OWNER)
+        bound = self.runtime.operations.get(association.task.activation)
+        if bound is None or bound.association != association or not isinstance(bound.scope, DatumId):
+            reject(EffectCode.FOREIGN_OWNER)
+        job = cast(_OperationJob[DatumId], bound)
+        if association not in self.jobs and (
+            job.policy.submission_owner != self.policy.node
+            or job.scope not in {row.scope for row in self.jobs.values()}
+        ):
             reject(EffectCode.FOREIGN_OWNER)
         entry = next(
-            row for row in self.runtime.frame.sources[job.target].state.entries if row.activation == job.activation
+            row for row in self.runtime.frame.sources[job.scope].state.entries if row.activation == job.activation
         )
         if entry.status != "running":
             reject(EffectCode.REQUEST_CAUSALITY)
@@ -493,7 +470,6 @@ class _DelegatedOwner(PrivateValue):
                 mapping = _mapping(job.policy, "result", results[0].outcome, None)
         else:
             mapping = _mapping(job.policy, "failure", None, "malformed_response")
-        self.operations.pop(association, None)
         final = self.runtime._complete_job(job, mapping, results, assessments)
         self.runtime.control.scheduler_changed.set()
         return final
@@ -599,7 +575,7 @@ class _DelegatedOwner(PrivateValue):
             borrow.expired = True
 
     def _satisfied(self, slot: int, outcomes: frozenset[str]) -> bool:
-        source = self.runtime.frame.invocation_source or self.runtime.frame.sources[self._source_job().target]
+        source = self.runtime.frame.invocation_source or self.runtime.frame.sources[self._source_job().scope]
         key = source.keys[slot]
         return any(
             entry.activation == key and entry.status == "success" and entry.outcome in outcomes
@@ -618,7 +594,7 @@ class _DelegatedOwner(PrivateValue):
         descriptor = self.contract.readiness
         assert descriptor is not None
         semantic = self._job(descriptor.owner_slot)
-        self._prepare(semantic, semantic.association.task)()
+        self.runtime._prepare_job(semantic)()
         self.runtime._start_observed_activation(semantic.activation, operation=True)
         policy = semantic.policy.request
         assert policy is not None
@@ -637,7 +613,7 @@ class _DelegatedOwner(PrivateValue):
         results: tuple[AssociationResult, ...] = ()
         try:
             request = await self._request(descriptor.request_slot, "initial", None, None, chain)
-            source = self.runtime.frame.invocation_source or self.runtime.frame.sources[self._source_job().target]
+            source = self.runtime.frame.invocation_source or self.runtime.frame.sources[self._source_job().scope]
             key = source.keys[descriptor.request_slot]
             entry = next(item for item in source.state.entries if item.activation == key)
             if entry.status == "success":
@@ -666,7 +642,7 @@ class _DelegatedOwner(PrivateValue):
         descriptor = self.contract.readiness
         assert descriptor is not None
         job = self._job(descriptor.probe_slot)
-        self._prepare(job, job.association.task)()
+        self.runtime._prepare_job(job)()
         self.runtime._start_observed_activation(job.activation, operation=True)
         implementation = job.implementation
         handle = self.runtime.handles[
@@ -690,7 +666,7 @@ class _DelegatedOwner(PrivateValue):
     def cancelled(self) -> bool:
         return self.cancel_requested or self.runtime.control.cancelled
 
-    def _job(self, slot: int, association: SemanticAssociation | None = None) -> _OperationJob:
+    def _job(self, slot: int, association: SemanticAssociation | None = None) -> _OperationJob[DatumId | InvocationId]:
         require_count(slot)
         if slot not in self.contract.owned_slots:
             reject(EffectCode.FOREIGN_OWNER)
@@ -699,30 +675,21 @@ class _DelegatedOwner(PrivateValue):
         source = (
             shared
             if shared is not None and slot in shared.keys
-            else runtime.frame.sources[self._source_job(association).target]
+            else runtime.frame.sources[self._source_job(association).scope]
         )
         key = source.keys[slot]
         entry = next(item for item in source.state.entries if item.activation == key)
-        if key in runtime.attempts:
+        if key in runtime.operations:
             reject(EffectCode.DUPLICATE)
         if entry.status != "ready":
             reject(EffectCode.REQUEST_CAUSALITY)
         if self.cancelled:
             reject(EffectCode.REQUEST_CAUSALITY)
-        attempt = TaskAttemptId.new(activation=key)
-        policy = runtime.policies[entry.template]
-        implementation = policy.implementations[0]
-        if source is shared:
-            return _InvocationJob(
-                activation=key,
-                node=entry.template,
-                policy=policy,
-                implementation=implementation,
-                inputs=(AssociationInput(association=SemanticAssociation(task=attempt), inputs=()),),
-                input_parents={},
-                association=SemanticAssociation(task=attempt),
-            )
-        return runtime._bind_operation(self._source_job(association).target, entry, policy)
+        return runtime._bind_operation(
+            runtime.invocation if source is shared else self._source_job(association).scope,
+            entry,
+            runtime.policies[entry.template],
+        )
 
     async def _request(
         self,
@@ -786,7 +753,7 @@ class _DelegatedOwner(PrivateValue):
             runtime.request_resources[request] = handle.resource.resource
 
         def prepare() -> Callable[[], None]:
-            commit = self._prepare(leaf, attempt)
+            commit = runtime._prepare_job(leaf)
 
             def start() -> None:
                 commit()
@@ -842,7 +809,7 @@ class _DelegatedOwner(PrivateValue):
 
     def _finish(
         self,
-        job: _OperationJob,
+        job: _OperationJob[DatumId | InvocationId],
         mapping: RuntimeOutcome,
         results: tuple[AssociationResult, ...],
         assessments: tuple[LocalAssessmentResult, ...] = (),
@@ -861,25 +828,18 @@ class _DelegatedOwner(PrivateValue):
         if not task.cancelled():
             task.exception()  # Retrieve failures even when the submitting observer left.
 
-    def _prepare(self, leaf: _OperationJob, attempt: TaskAttemptId) -> Callable[[], None]:
-        self._check()
-        runtime = self.runtime
-        # Compute all rejecting activation work before the driver's authoritative Dispatch.
-        source = runtime.frame.occurrence(leaf.target if isinstance(leaf, _ExecutionJob) else None)
-        state = advance_activation(state=source.state, event=Start(activation=leaf.activation))
-
-        def commit() -> None:
-            source.state = state
-            runtime.attempts[leaf.activation] = attempt
-            if isinstance(leaf, _ExecutionJob):
-                runtime._record_input_ports(leaf)
-
-        return commit
-
     def close(self) -> frozenset[SemanticAssociation]:
         self.closed = True
         incomplete: set[SemanticAssociation] = set()
-        for operation in self.operations.values():
+        targets = {job.scope for job in self.jobs.values()}
+        for operation in self.runtime.operations.values():
+            if operation.policy.submission_owner != self.policy.node or operation.scope not in targets:
+                continue
+            source = self.runtime.frame.occurrence(operation.scope)
+            if not any(
+                row.activation == operation.activation and row.status == "running" for row in source.state.entries
+            ):
+                continue
             self.runtime._complete_job(
                 operation,
                 _mapping(
@@ -890,13 +850,12 @@ class _DelegatedOwner(PrivateValue):
                 ),
                 (),
             )
-            incomplete.update(job.association for job in self.jobs.values() if job.target == operation.target)
-        self.operations.clear()
+            incomplete.update(job.association for job in self.jobs.values() if job.scope == operation.scope)
         owned = {
             policy.node for policy in self.runtime.policies.values() if policy.submission_owner == self.policy.node
         }
         for job in self.jobs.values():
-            source = self.runtime.frame.sources[job.target]
+            source = self.runtime.frame.sources[job.scope]
             for previous in tuple(source.state.entries):
                 entry = next(row for row in source.state.entries if row.activation == previous.activation)
                 if entry.template in owned and entry.status != "success":
@@ -911,13 +870,13 @@ class _DelegatedOwner(PrivateValue):
                 if self.runtime.frame.invocation_source is not None
                 else self.contract.owned_slots
             ):
-                key = self.runtime.frame.sources[job.target].keys[slot]
-                state = self.runtime.frame.sources[job.target].state
+                key = self.runtime.frame.sources[job.scope].keys[slot]
+                state = self.runtime.frame.sources[job.scope].state
                 entry = next(item for item in state.entries if item.activation == key)
                 if entry.status in {"ready", "unstarted"}:
                     if key not in unused:
                         incomplete.add(job.association)
-                    self.runtime.frame.sources[job.target].state = advance_activation(
+                    self.runtime.frame.sources[job.scope].state = advance_activation(
                         state=state, event=CloseUnstarted(activation=key, category="blocked")
                     )
         source = self.runtime.frame.invocation_source
@@ -1010,7 +969,7 @@ class _DelegatedOwner(PrivateValue):
                 assert isinstance(item.association, SemanticAssociation)
                 job = self.jobs[item.association]
                 entry = next(
-                    row for row in runtime.frame.sources[job.target].state.entries if row.activation == job.activation
+                    row for row in runtime.frame.sources[job.scope].state.entries if row.activation == job.activation
                 )
                 if entry.status == "success" and (
                     item.outputs or any(value.association == item.association for value in result.assessments)
@@ -1039,8 +998,8 @@ class _DelegatedOwner(PrivateValue):
             except EffectRejected:
                 return self._failure("failure", "malformed_response")
             job = self.jobs[item.association]
-            source = runtime.frame.sources[job.target]
-            missing = {slot for slot in self.contract.child_slots if source.keys[slot] not in runtime.attempts}
+            source = runtime.frame.sources[job.scope]
+            missing = {slot for slot in self.contract.child_slots if source.keys[slot] not in runtime.operations}
             retry_unused = {key.occurrence for key in runtime._unused_tails(job)}
             missing -= {slot for slot in missing if source.keys[slot].occurrence in retry_unused}
             if missing != set(omitted):
@@ -1061,7 +1020,7 @@ class _DelegatedOwner(PrivateValue):
             if any(policy.submission_owner == self.policy.node for policy in runtime.policies.values()):
                 from anonymizer.engine.graph_sdk._execution_publication import _final_outputs
 
-                targets = {self.jobs[cast(SemanticAssociation, item.association)].target for item in successful}
+                targets = {self.jobs[cast(SemanticAssociation, item.association)].scope for item in successful}
                 finals = tuple(
                     item
                     for item in _final_outputs(runtime.prepared, runtime.frame.states, runtime.facts)
@@ -1072,7 +1031,7 @@ class _DelegatedOwner(PrivateValue):
                 semantic_results = []
                 for item in finals:
                     producer = item.producer
-                    if not isinstance(producer, OperationOutputKey) or producer.activation not in runtime.attempts:
+                    if not isinstance(producer, OperationOutputKey) or producer.activation not in runtime.operations:
                         return self._failure("failure", "malformed_response")
                     entry = next(
                         row
@@ -1081,28 +1040,10 @@ class _DelegatedOwner(PrivateValue):
                     )
                     if runtime.policies[entry.template].submission_owner != self.policy.node:
                         return self._failure("failure", "malformed_response")
-                    assert entry.outcome is not None
-                    semantic_results.append(
-                        AssociationResult(
-                            association=SemanticAssociation(task=runtime.attempts[producer.activation]),
-                            outcome=entry.outcome,
-                            consumed_context_ports=frozenset(),
-                            outputs=(
-                                PortArtifact(
-                                    port=producer.port,
-                                    artifact_type=next(
-                                        port.artifact_type
-                                        for port in runtime.policies[entry.template]
-                                        .implementations[0]
-                                        .capability.operation.outputs
-                                        if port.name == producer.port
-                                    ),
-                                    artifact=None,
-                                    value=runtime.facts.values[item.candidate.artifact],
-                                ),
-                            ),
-                        )
-                    )
+                    accepted = runtime._operation_result(item.target, producer.activation, port=producer.port)
+                    if accepted is None:
+                        return self._failure("failure", "malformed_response")
+                    semantic_results.append(accepted)
                 frame_results = tuple(semantic_results)
 
             try:
@@ -1112,7 +1053,7 @@ class _DelegatedOwner(PrivateValue):
                         opaque=tuple(
                             value
                             for job in self.jobs.values()
-                            for value in runtime.frame.sources[job.target].opaque_cells
+                            for value in runtime.frame.sources[job.scope].opaque_cells
                         ),
                     )
                     if type(frame) is FramePublication

@@ -5,8 +5,9 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from contextlib import suppress
-from typing import cast
+from typing import TypeVar, cast
 
 from anonymizer.engine.graph_sdk._effect_values import (
     EffectCode,
@@ -25,14 +26,12 @@ from anonymizer.engine.graph_sdk._execution_dispatch import (
 )
 from anonymizer.engine.graph_sdk._execution_frame import _InvocationFrame
 from anonymizer.engine.graph_sdk._execution_materialization import (
-    _bridge_structural_map_membership,
-    _dynamic_membership_value,
     _materialize_bound_context,
+    _materialize_structure,
     _materialize_subgraph_inputs,
-    _materialize_subgraph_outputs,
+    _membership_value,
     _observe_dynamic_membership,
     _operation_inputs,
-    _valid_dynamic_membership_result,
 )
 from anonymizer.engine.graph_sdk._execution_publication import (
     _accept_invocation_frame,
@@ -45,10 +44,7 @@ from anonymizer.engine.graph_sdk._execution_publication import (
 from anonymizer.engine.graph_sdk._execution_state import (
     _ExecutionControl,
     _ExecutionFacts,
-    _ExecutionJob,
     _ExecutionTask,
-    _group_external_jobs,
-    _InvocationJob,
     _OperationJob,
 )
 from anonymizer.engine.graph_sdk._execution_topology import (
@@ -82,10 +78,12 @@ from anonymizer.engine.graph_sdk.observations import (
 )
 from anonymizer.engine.graph_sdk.records import UnusedRetryCapacity
 from anonymizer.engine.graph_sdk.requests import (
+    AssociationInput,
     AssociationResult,
     ExactUsage,
     InvocationRequestScope,
     PhysicalRequestId,
+    PortArtifact,
     ScopeCancel,
     SemanticAssociation,
     initialize_requests,
@@ -103,15 +101,17 @@ from anonymizer.graph._values import (
 )
 from anonymizer.graph.activation import (
     ActivationEntry,
-    ActivationState,
     CloseUnstarted,
     ObserveTerminal,
     Start,
     advance_activation,
 )
 from anonymizer.graph.workflow import (
+    NodeId,
     SubgraphNode,
 )
+
+_Scope = TypeVar("_Scope", bound=DatumId | InvocationId)
 
 
 class _InvocationRuntime:
@@ -189,12 +189,12 @@ class _InvocationRuntime:
             self.facts,
             self.services.limits,
         )
-        self.attempts: dict[ActivationKey, TaskAttemptId] = {}
+        self.operations: dict[ActivationKey, _OperationJob[DatumId | InvocationId]] = {}
         self.cancelled_unstarted: set[ActivationKey] = set()
         self.blocked_reasons: dict[ActivationKey, str | UnusedRetryCapacity] = {}
         self.publication_failures: list[PublicationFailureFact] = []
         self.submission_failures: list[SubmissionFailure] = []
-        self.submissions: dict[_ExecutionTask, tuple[_ExecutionJob | _InvocationJob, ...]] = {}
+        self.submissions: dict[_ExecutionTask, tuple[_OperationJob[DatumId | InvocationId], ...]] = {}
 
     async def run(self) -> ExecutionResult:
         try:
@@ -240,266 +240,242 @@ class _InvocationRuntime:
         return await self._finalize()
 
     def _schedule_ready(self) -> bool:
-        scheduled = False
-        external_jobs: list[_ExecutionJob] = []
         if self.control.cancelled:
-            occurrences = [*self.frame.sources.values()]
-            if self.frame.invocation_source is not None:
-                occurrences.append(self.frame.invocation_source)
-            for source in occurrences:
-                for entry in tuple(source.state.entries):
-                    current = next(item for item in source.state.entries if item.activation == entry.activation)
-                    if current.status in {"ready", "unstarted"}:
+            changed = False
+            for source in (*self.frame.sources.values(), self.frame.invocation_source):
+                if source is None:
+                    continue
+                for previous in tuple(source.state.entries):
+                    entry = next(row for row in source.state.entries if row.activation == previous.activation)
+                    if entry.status in {"ready", "unstarted"}:
                         self.cancelled_unstarted.add(entry.activation)
                         source.state = advance_activation(
-                            state=source.state,
-                            event=CloseUnstarted(activation=entry.activation, category="blocked"),
+                            state=source.state, event=CloseUnstarted(activation=entry.activation, category="blocked")
                         )
-                        scheduled = True
-            return scheduled
-        if not self.frame.sources and self.frame.invocation_source is not None:
-            return self._schedule_source_free_submission()
-        for target, source in self.frame.sources.items():
-            state = source.state
+                        changed = True
+            return changed
+
+        # A frontier consumes capacity once per physical batch. No work runs until
+        # this synchronous traversal has bound inputs and committed its entries.
+        batches: dict[NodeId | ActivationKey, list[_OperationJob[DatumId]]] = {}
+        waiting = {wait.activation for wait in self.control.pending.values()}
+        local = sum(
+            any(job.policy.kind != "external" and job.activation not in waiting for job in jobs)
+            for jobs in self.submissions.values()
+        )
+        remote = sum(jobs[0].policy.kind == "external" for jobs in self.submissions.values())
+        decisions = sum(job.policy.kind == "decision" for jobs in self.submissions.values() for job in jobs)
+        scopes = tuple(self.frame.sources) or ((self.invocation,) if self.frame.invocation_source is not None else ())
+        scheduled = False
+        for scope in scopes:
+            source = self.frame.occurrence(scope)
             ready = sorted(
-                (item for item in state.entries if item.status == "ready"), key=lambda item: item.activation.occurrence
+                (entry for entry in source.state.entries if entry.status == "ready"),
+                key=lambda entry: entry.activation.occurrence,
             )
             for entry in ready:
-                scheduled = self._schedule_entry(target, entry, external_jobs) or scheduled
-        self._dispatch_external(external_jobs)
-        return scheduled
-
-    def _schedule_source_free_submission(self) -> bool:
-        source = self.frame.invocation_source
-        assert source is not None
-        for entry in source.state.entries:
-            policy = self.policies[entry.template]
-            if (
-                entry.status != "ready"
-                or policy.kind not in {"delegated", "local"}
-                or entry.template in self.delegated_slots
-            ):
-                continue
-            if self.services.limits.max_local_in_flight == 0:
-                reject(EffectCode.LIMIT_EXCEEDED)
-            implementation = policy.implementations[0]
-            attempt = TaskAttemptId.new(activation=entry.activation)
-            job = _InvocationJob(
-                activation=entry.activation,
-                node=entry.template,
-                policy=policy,
-                implementation=implementation,
-                inputs=(),
-                input_parents={},
-                association=SemanticAssociation(task=attempt),
-            )
-            source.state = advance_activation(state=source.state, event=Start(activation=entry.activation))
-            self.attempts[entry.activation] = attempt
-            self._start_observed_activation(entry.activation, operation=True)
-            handle = self.handles[
-                implementation.implementation, implementation.capability.operation, implementation.configuration
-            ]
-            coroutine = (
-                _DelegatedOwner(self, (), invocation_job=job).run(handle)
-                if policy.kind == "delegated"
-                else _run_local(
-                    policy, handle, job.association, (), self.control, self.admitted._response_limits(), invocation=True
-                )
-            )
-            task = asyncio.create_task(coroutine)
-            self.submissions[task] = (job,)
-            return True
-        return False
-
-    def _schedule_entry(self, target: DatumId, entry: ActivationEntry, external_jobs: list[_ExecutionJob]) -> bool:
-        shared = self.frame.invocation_source
-        if shared is not None:
-            predecessors = {
-                edge.before for edge in self.prepared.workflow.workflow.sequence if edge.after == entry.template
-            }
-            for predecessor in shared.state.entries:
-                if predecessor.template not in predecessors or predecessor.status == "success":
-                    continue
-                if predecessor.status in {"ready", "unstarted", "running"}:
-                    return False
-                self.frame.sources[target].state = advance_activation(
-                    state=self.frame.sources[target].state,
-                    event=CloseUnstarted(activation=entry.activation, category="blocked"),
-                )
-                return True
-        if entry.template in self.delegated_slots:
-            owner = next(
-                item
-                for item in self.frame.sources[target].state.entries
-                if item.template == self.delegated_slots[entry.template]
-                and (
-                    self.policies[entry.template].submission_owner is not None
-                    or item.activation.parent == entry.activation.parent
-                )
-            )
-            live_owner = any(job.activation == owner.activation for jobs in self.submissions.values() for job in jobs)
-            if self.control.cancelled or (owner.status not in {"ready", "unstarted", "running"} and not live_owner):
                 if self.control.cancelled:
                     self.cancelled_unstarted.add(entry.activation)
-                self.frame.sources[target].state = advance_activation(
-                    state=self.frame.sources[target].state,
-                    event=CloseUnstarted(activation=entry.activation, category="blocked"),
-                )
-                return True
-            return False
-        policy = self.policies.get(entry.template)
-        if policy is None:
-            return self._start_subgraph(target, entry)
-        decision_jobs = sum((item.policy.kind == "decision" for jobs in self.submissions.values() for item in jobs))
-        if policy.kind == "decision" and decision_jobs >= self.services.decision_limits.max_pending:
-            if self.services.decision_limits.max_pending == 0:
-                reject(EffectCode.PENDING_LIMIT)
-            return False
-        if _operation_has_omitted_context(self.admitted, target, entry.template):
-            self.blocked_reasons[entry.activation] = "omitted_optional"
-            self.frame.sources[target].state = advance_activation(
-                state=self.frame.sources[target].state,
-                event=CloseUnstarted(activation=entry.activation, category="blocked"),
-            )
-            return True
-        waiting_activations = {wait.activation for wait in self.control.pending.values()}
-        pending_groups = _group_external_jobs(external_jobs)
-        local_jobs = sum(
-            any(item.policy.kind != "external" and item.activation not in waiting_activations for item in jobs)
-            for jobs in self.submissions.values()
-        ) + sum(group[0].policy.kind == "delegated" for group in pending_groups)
-        remote_jobs = sum(jobs[0].policy.kind == "external" for jobs in self.submissions.values()) + sum(
-            group[0].policy.kind == "external" for group in pending_groups
-        )
-        joins_pending_batch = any(item.node == entry.template and item.policy == policy for item in external_jobs) and (
-            policy.kind == "delegated"
-            or all(item.capability.attribution == "keyed_shared_request" for item in policy.implementations)
-        )
-        if policy.kind != "external":
-            if self.services.limits.max_local_in_flight == 0:
-                reject(EffectCode.LIMIT_EXCEEDED)
-            if not joins_pending_batch and local_jobs >= self.services.limits.max_local_in_flight:
-                return False
-        if policy.kind == "delegated" and len(self.frame.sources) > 1:
-            pending = {job.target for job in external_jobs if job.node == entry.template}
-            peers = [
-                next((item for item in source.state.entries if item.template == entry.template), None)
-                for other, source in self.frame.sources.items()
-                if other not in pending
-            ]
-            if any(peer is None or peer.status != "ready" for peer in peers):
-                return False
-        remote_capacity_stalled = (
-            policy.kind == "external"
-            and self.services.limits.max_remote_outstanding is not None
-            and (not joins_pending_batch)
-            and (
-                max(len(self.request_authority.state.remote_outstanding), remote_jobs)
-                >= self.services.limits.max_remote_outstanding
-            )
-        )
-        if remote_capacity_stalled and remote_jobs:
-            return False
-        self._start_operation(target, entry, policy, external_jobs, remote_capacity_stalled)
-        return True
+                    source.state = advance_activation(
+                        state=source.state, event=CloseUnstarted(activation=entry.activation, category="blocked")
+                    )
+                    scheduled = True
+                    continue
+                blocked = False
+                if isinstance(scope, DatumId):
+                    shared = self.frame.invocation_source
+                    predecessors = {
+                        edge.before for edge in self.prepared.workflow.workflow.sequence if edge.after == entry.template
+                    }
+                    predecessor = (
+                        next(
+                            (
+                                row
+                                for row in shared.state.entries
+                                if row.template in predecessors and row.status != "success"
+                            ),
+                            None,
+                        )
+                        if shared is not None
+                        else None
+                    )
+                    if predecessor is not None:
+                        if predecessor.status in {"ready", "unstarted", "running"}:
+                            continue
+                        blocked = True
+                    elif entry.template in self.delegated_slots:
+                        owner = next(
+                            row
+                            for row in source.state.entries
+                            if row.template == self.delegated_slots[entry.template]
+                            and (
+                                self.policies[entry.template].submission_owner is not None
+                                or row.activation.parent == entry.activation.parent
+                            )
+                        )
+                        if owner.status in {"ready", "unstarted", "running"} or any(
+                            job.activation == owner.activation for jobs in self.submissions.values() for job in jobs
+                        ):
+                            continue
+                        blocked = True
+                policy = self.policies.get(entry.template)
+                if not blocked and isinstance(scope, InvocationId):
+                    if (
+                        policy is None
+                        or policy.kind not in {"delegated", "local"}
+                        or entry.template in self.delegated_slots
+                    ):
+                        continue
+                if not blocked and policy is not None:
+                    if policy.kind == "decision" and decisions >= self.services.decision_limits.max_pending:
+                        if self.services.decision_limits.max_pending == 0:
+                            reject(EffectCode.PENDING_LIMIT)
+                        continue
+                    if isinstance(scope, DatumId) and _operation_has_omitted_context(
+                        self.admitted, scope, entry.template
+                    ):
+                        self.blocked_reasons[entry.activation] = "omitted_optional"
+                        blocked = True
+                if blocked:
+                    source.state = advance_activation(
+                        state=source.state, event=CloseUnstarted(activation=entry.activation, category="blocked")
+                    )
+                    scheduled = True
+                    continue
+                if policy is None:
+                    if not isinstance(scope, DatumId) or not isinstance(
+                        self.admitted.nodes[entry.template], SubgraphNode
+                    ):
+                        continue
+                    try:
+                        _materialize_subgraph_inputs(
+                            self.admitted,
+                            scope,
+                            source.state,
+                            entry.activation,
+                            entry.template,
+                            self.subgraph_input_parents,
+                            self.facts,
+                        )
+                    except EffectRejected as exc:
+                        if exc.code != EffectCode.MISSING:
+                            raise
+                        source.state = advance_activation(
+                            state=source.state, event=CloseUnstarted(activation=entry.activation, category="blocked")
+                        )
+                    else:
+                        self._start_observed_activation(entry.activation, operation=False)
+                        source.state = advance_activation(state=source.state, event=Start(activation=entry.activation))
+                    scheduled = True
+                    continue
 
-    def _start_subgraph(self, target: DatumId, entry: ActivationEntry) -> bool:
-        if isinstance(self.admitted.nodes[entry.template], SubgraphNode):
-            try:
-                _materialize_subgraph_inputs(
-                    self.admitted,
-                    target,
-                    self.frame.sources[target].state,
-                    entry.activation,
-                    entry.template,
-                    self.subgraph_input_parents,
-                    self.facts,
+                adaptive = any(item.node == entry.template for item in self.admitted.context.adaptive_retrievals)
+                batchable = isinstance(scope, DatumId) and (
+                    policy.kind == "delegated" or policy.kind == "external" and not adaptive
                 )
-            except EffectRejected as exc:
-                if exc.code != EffectCode.MISSING:
-                    raise
-                self.frame.sources[target].state = advance_activation(
-                    state=self.frame.sources[target].state,
-                    event=CloseUnstarted(activation=entry.activation, category="blocked"),
+                shared_batch = policy.kind == "delegated" or all(
+                    item.capability.attribution == "keyed_shared_request" for item in policy.implementations
                 )
-                return True
-            self._start_observed_activation(entry.activation, operation=False)
-            self.frame.sources[target].state = advance_activation(
-                state=self.frame.sources[target].state, event=Start(activation=entry.activation)
-            )
-            return True
-        return False
-
-    def _start_operation(
-        self,
-        target: DatumId,
-        entry: ActivationEntry,
-        policy: OperationExecutionPolicy,
-        external_jobs: list[_ExecutionJob],
-        remote_capacity_stalled: bool,
-    ) -> None:
-        if self.control.cancelled:
-            self.cancelled_unstarted.add(entry.activation)
-            self.frame.sources[target].state = advance_activation(
-                state=self.frame.sources[target].state,
-                event=CloseUnstarted(activation=entry.activation, category="blocked"),
-            )
-            return
-        try:
-            job = self._bind_operation(target, entry, policy)
-        except EffectRejected as exc:
-            if exc.code != EffectCode.MISSING:
-                raise
-            self.frame.sources[target].state = advance_activation(
-                state=self.frame.sources[target].state,
-                event=CloseUnstarted(activation=entry.activation, category="blocked"),
-            )
-            return
-        self._start_observed_activation(entry.activation, operation=True)
-        self.frame.sources[target].state = advance_activation(
-            state=self.frame.sources[target].state, event=Start(activation=entry.activation)
-        )
-        self.attempts[entry.activation] = job.association.task
-        self._record_input_ports(job)
-        span = self._operation_spans[entry.activation]
-        token = _CURRENT.set(
-            (span.session, span.ordinal) if span.session is not None and span.ordinal is not None else None
-        )
-        try:
-            self._launch_job(job, external_jobs, remote_capacity_stalled)
-        finally:
-            _CURRENT.reset(token)
+                batch_key = entry.template if shared_batch else entry.activation
+                group = batches.get(batch_key)
+                if policy.kind != "external":
+                    if self.services.limits.max_local_in_flight == 0:
+                        reject(EffectCode.LIMIT_EXCEEDED)
+                    if group is None and local >= self.services.limits.max_local_in_flight:
+                        continue
+                if policy.kind == "delegated" and isinstance(scope, DatumId) and len(self.frame.sources) > 1:
+                    pending = {job.scope for job in group or ()}
+                    if any(
+                        next((row.status for row in peer.state.entries if row.template == entry.template), None)
+                        != "ready"
+                        for target, peer in self.frame.sources.items()
+                        if target not in pending
+                    ):
+                        continue
+                remote_limit = self.services.limits.max_remote_outstanding
+                stalled = (
+                    policy.kind == "external"
+                    and group is None
+                    and remote_limit is not None
+                    and (max(len(self.request_authority.state.remote_outstanding), remote) >= remote_limit)
+                )
+                if stalled and remote:
+                    continue
+                try:
+                    job = self._bind_operation(scope, entry, policy, inputless=isinstance(scope, InvocationId))
+                except EffectRejected as exc:
+                    if exc.code != EffectCode.MISSING:
+                        raise
+                    source.state = advance_activation(
+                        state=source.state, event=CloseUnstarted(activation=entry.activation, category="blocked")
+                    )
+                    scheduled = True
+                    continue
+                self._prepare_job(job)()
+                self._start_observed_activation(entry.activation, operation=True)
+                if batchable and not stalled:
+                    batches.setdefault(batch_key, []).append(cast(_OperationJob[DatumId], job))
+                else:
+                    span = self._operation_spans[entry.activation]
+                    token = (
+                        _CURRENT.set(
+                            (span.session, span.ordinal)
+                            if span.session is not None and span.ordinal is not None
+                            else None
+                        )
+                        if isinstance(scope, DatumId)
+                        else None
+                    )
+                    try:
+                        self._launch_batch((job,), stalled=stalled)
+                    finally:
+                        if token is not None:
+                            _CURRENT.reset(token)
+                if group is None:
+                    local += policy.kind != "external"
+                    remote += policy.kind == "external"
+                decisions += policy.kind == "decision"
+                scheduled = True
+                if isinstance(scope, InvocationId):
+                    return True
+        for group in batches.values():
+            self._launch_batch(tuple(group))
+        return scheduled
 
     def _bind_operation(
-        self, target: DatumId, entry: ActivationEntry, policy: OperationExecutionPolicy
-    ) -> _ExecutionJob:
-        """Bind one occurrence through the same artifact authority for every executor."""
+        self, scope: _Scope, entry: ActivationEntry, policy: OperationExecutionPolicy, *, inputless: bool = False
+    ) -> _OperationJob[_Scope]:
         association = SemanticAssociation(task=TaskAttemptId.new(activation=entry.activation))
-        inputs, parents = _operation_inputs(
-            self.admitted,
-            target,
-            entry.template,
-            entry.activation,
-            self.frame.sources[target].state,
-            association,
-            self.subgraph_input_parents,
-            self.facts,
+        inputs, parents = (
+            _operation_inputs(
+                self.admitted,
+                scope,
+                entry.template,
+                entry.activation,
+                self.frame.sources[scope].state,
+                association,
+                self.subgraph_input_parents,
+                self.facts,
+            )
+            if isinstance(scope, DatumId)
+            else (() if inputless else (AssociationInput(association=association, inputs=()),), {})
         )
-        return _ExecutionJob(
-            target=target,
-            activation=entry.activation,
-            node=entry.template,
-            policy=policy,
-            implementation=policy.implementations[0],
-            inputs=inputs,
-            input_parents=parents,
-            association=association,
-        )
+        return _OperationJob(scope=scope, policy=policy, inputs=inputs, input_parents=parents, association=association)
 
-    def _record_input_ports(self, job: _ExecutionJob) -> None:
-        self.facts.input_parents.update(
-            ((job.target, job.activation, port), parent) for port, parent in job.input_parents.items()
-        )
+    def _prepare_job(self, job: _OperationJob[DatumId | InvocationId]) -> Callable[[], None]:
+        """Stage activation validation before dispatch; commit only when its owner enters."""
+        source = self.frame.occurrence(job.scope)
+        state = advance_activation(state=source.state, event=Start(activation=job.activation))
+
+        def commit() -> None:
+            source.state = state
+            self.operations[job.activation] = job
+            if isinstance(job.scope, DatumId):
+                self._record_input_ports(cast(_OperationJob[DatumId], job))
+
+        return commit
+
+    def _record_input_ports(self, job: _OperationJob[DatumId]) -> None:
         for input_artifact in job.inputs[0].inputs:
             if input_artifact.artifact is None:
                 reject(EffectCode.CONTRADICTORY)
@@ -507,7 +483,7 @@ class _InvocationRuntime:
                 _key=_FACT_KEY,
                 activation=job.activation,
                 node=job.node,
-                target=job.target,
+                target=job.scope,
                 port=input_artifact.port,
                 artifact=input_artifact.artifact,
                 artifact_type=input_artifact.artifact_type,
@@ -522,83 +498,66 @@ class _InvocationRuntime:
                 ),
             )
 
-    def _launch_job(
-        self, job: _ExecutionJob, external_jobs: list[_ExecutionJob], remote_capacity_stalled: bool
-    ) -> None:
-        policy = job.policy
-        implementation = job.implementation
+    def _launch_batch(self, jobs: tuple[_OperationJob[DatumId | InvocationId], ...], *, stalled: bool = False) -> None:
+        job = jobs[0]
+        policy, implementation = job.policy, job.implementation
         handle = self.handles[
             implementation.implementation, implementation.capability.operation, implementation.configuration
         ]
-        if policy.kind == "external":
-            if remote_capacity_stalled:
-                coroutine = _immediate_execution_result(_mapping(policy, "request_limit_exhausted", None, None))
-            else:
-                adaptive = next(
-                    (item for item in self.admitted.context.adaptive_retrievals if item.node == job.node), None
-                )
-                if adaptive is None:
-                    external_jobs.append(job)
-                    return
-                if any(
-                    capability.source == adaptive.source
-                    and capability.artifact_type == adaptive.materialization.item_type
-                    for capability in self.failed_context_sources
-                ):
-                    coroutine = _immediate_execution_result(
-                        _mapping(policy, "failure", None, "implementation_exception")
-                    )
-                else:
-                    coroutine = _run_adaptive(
-                        self.admitted,
-                        policy,
-                        adaptive,
-                        job.association,
-                        job.inputs,
-                        self.request_authority,
-                        self.context_leases,
-                        self.control,
-                        self.services.limits,
-                        self.request_resources,
-                    )
+        if stalled:
+            coroutine = _immediate_execution_result(_mapping(policy, "request_limit_exhausted", None, None))
         elif policy.kind == "delegated":
-            external_jobs.append(job)
-            return
+            coroutine = (
+                _DelegatedOwner(self, (), invocation_job=cast(_OperationJob[InvocationId], job))
+                if isinstance(job.scope, InvocationId)
+                else _DelegatedOwner(self, cast(tuple[_OperationJob[DatumId], ...], jobs))
+            ).run(handle)
+        elif policy.kind == "external":
+            adaptive = next((item for item in self.admitted.context.adaptive_retrievals if item.node == job.node), None)
+            if adaptive is None:
+                coroutine = _run_external_batch(
+                    self.admitted,
+                    policy,
+                    self.handles,
+                    tuple(value for row in jobs for value in row.inputs),
+                    self.request_authority,
+                    self.control,
+                    self.services.limits,
+                    self.request_resources,
+                )
+            elif any(
+                capability.source == adaptive.source and capability.artifact_type == adaptive.materialization.item_type
+                for capability in self.failed_context_sources
+            ):
+                coroutine = _immediate_execution_result(_mapping(policy, "failure", None, "implementation_exception"))
+            else:
+                coroutine = _run_adaptive(
+                    self.admitted,
+                    policy,
+                    adaptive,
+                    job.association,
+                    job.inputs,
+                    self.request_authority,
+                    self.context_leases,
+                    self.control,
+                    self.services.limits,
+                    self.request_resources,
+                )
         elif policy.kind == "decision":
             coroutine = _run_decision(
                 self.admitted, policy, handle, job.association, job.inputs, job.activation, self.services, self.control
             )
         else:
             coroutine = _run_local(
-                policy, handle, job.association, job.inputs, self.control, self.admitted._response_limits()
+                policy,
+                handle,
+                job.association,
+                job.inputs,
+                self.control,
+                self.admitted._response_limits(),
+                invocation=isinstance(job.scope, InvocationId),
             )
-        task = asyncio.create_task(coroutine)
-        self.submissions[task] = (job,)
-
-    def _dispatch_external(self, external_jobs: list[_ExecutionJob]) -> None:
-        groups = _group_external_jobs(external_jobs)
-        for group in groups:
-            if group[0].policy.kind == "delegated":
-                implementation = group[0].implementation
-                handle = self.handles[
-                    implementation.implementation, implementation.capability.operation, implementation.configuration
-                ]
-                task = asyncio.create_task(_DelegatedOwner(self, tuple(group)).run(handle))
-                self.submissions[task] = tuple(group)
-                continue
-            physical = asyncio.create_task(
-                _run_external_batch(
-                    self.admitted,
-                    group[0].policy,
-                    self.handles,
-                    tuple((value for job in group for value in job.inputs)),
-                    self.request_authority,
-                    self.control,
-                    self.services.limits,
-                    self.request_resources,
-                )
-            )
-            self.submissions[physical] = tuple(group)
+        self.submissions[asyncio.create_task(coroutine)] = jobs
 
     async def _process_completed(self) -> None:
         scheduler_wakeup = asyncio.create_task(self.control.scheduler_changed.wait())
@@ -621,7 +580,7 @@ class _InvocationRuntime:
         returned = task.result()
         if isinstance(returned, (LocalCompleted, SubmissionFailure)):
             (job,) = jobs
-            assert isinstance(job, _InvocationJob)
+            assert isinstance(job.scope, InvocationId)
             frame = None
             if isinstance(returned, SubmissionFailure):
                 self.submission_failures.append(returned)
@@ -643,7 +602,7 @@ class _InvocationRuntime:
         for job in jobs:
             mapping, results, assessments = returned[job.association]
             if any(policy.submission_owner == job.node for policy in self.policies.values()):
-                source = self.frame.occurrence(job.target if isinstance(job, _ExecutionJob) else None)
+                source = self.frame.occurrence(job.scope)
                 entry = next(row for row in source.state.entries if row.activation == job.activation)
                 if entry.status not in {"ready", "unstarted", "running"}:
                     if mapping.category != "success":
@@ -658,13 +617,13 @@ class _InvocationRuntime:
 
     def _complete_job(
         self,
-        job: _OperationJob,
+        job: _OperationJob[DatumId | InvocationId],
         mapping: RuntimeOutcome,
         results: tuple[AssociationResult, ...],
         assessments: tuple[LocalAssessmentResult, ...] = (),
     ) -> RuntimeOutcome:
         """Commit an operation atomically and retain its final publication outcome."""
-        if isinstance(job, _InvocationJob):
+        if isinstance(job.scope, InvocationId):
             source = self.frame.invocation_source
             assert source is not None
             source.state = advance_activation(
@@ -676,16 +635,15 @@ class _InvocationRuntime:
             span.finish()
             self._close_observed_activations()
             return mapping
-        assert isinstance(job, _ExecutionJob)
+        job = cast(_OperationJob[DatumId], job)
         accepted = mapping.condition == "result"
-        mapping, results, delta = self._stage_outputs(job, mapping, results, assessments)
-        mapping = self._advance_completed(job, mapping, results, delta)
+        mapping = self._publish_operation(job, mapping, results, assessments)
         if (
             job.policy.delegated is not None
             and mapping.condition == "result"
             and mapping.category == "success"
             and any(
-                isinstance(key, OperationOutputKey) and key.target == job.target and key.activation == job.activation
+                isinstance(key, OperationOutputKey) and key.target == job.scope and key.activation == job.activation
                 for key in self.facts.provenance
             )
         ):
@@ -696,7 +654,7 @@ class _InvocationRuntime:
                     output.value for item in results for output in item.outputs if output.port == selection.port
                 )
                 for slot in selection.omitted(value):
-                    self.blocked_reasons[self.frame.sources[job.target].keys[slot]] = "omitted_optional"
+                    self.blocked_reasons[self.frame.sources[job.scope].keys[slot]] = "omitted_optional"
         span = self._operation_spans[job.activation]
         span.outcome = mapping.category
         if mapping.failure is not None:
@@ -757,14 +715,50 @@ class _InvocationRuntime:
             self.publication_failures.append(
                 PublicationFailureFact(
                     association=job.association,
-                    target=job.target,
+                    target=job.scope,
                     condition=mapping.condition,
                     failure=mapping.failure,
                 )
             )
         return mapping
 
-    def _unused_tails(self, job: _ExecutionJob) -> dict[ActivationKey, UnusedRetryCapacity]:
+    def _operation_result(
+        self, scope: DatumId, activation: ActivationKey, *, port: str | None = None
+    ) -> AssociationResult | None:
+        """Project completed artifacts from the sole bound occurrence record."""
+        source = self.frame.sources[scope]
+        entry = next((row for row in source.state.entries if row.activation == activation), None)
+        if entry is None or entry.status in {"ready", "running", "unstarted"}:
+            return None
+        if entry.status != "success" or entry.outcome is None or activation not in self.operations:
+            reject(EffectCode.REQUEST_CAUSALITY)
+        job = self.operations[activation]
+        operation = job.implementation.capability.operation
+        outcome = next(row for row in operation.outcomes if row.name == entry.outcome)
+        outputs = []
+        for declaration in operation.outputs:
+            if port is not None and declaration.name != port:
+                continue
+            reference = self.facts.artifact(scope, activation, declaration.name)
+            if declaration.name in outcome.produced_ports and reference is None:
+                reject(EffectCode.MISSING)
+            if reference is not None:
+                outputs.append(
+                    PortArtifact(
+                        port=declaration.name,
+                        artifact_type=declaration.artifact_type,
+                        artifact=reference if port is None else None,
+                        value=self.facts.values[reference],
+                    )
+                )
+        return AssociationResult(
+            association=job.association,
+            outcome=entry.outcome,
+            outputs=tuple(outputs),
+            consumed_context_ports=frozenset(),
+        )
+
+    def _unused_tails(self, job: _OperationJob[DatumId]) -> dict[ActivationKey, UnusedRetryCapacity]:
         """Close only unentered suffixes of successfully completed generation chains."""
         contract = job.policy.delegated
         state = self.request_authority.state
@@ -779,7 +773,7 @@ class _InvocationRuntime:
             or (contract.optional_tail and (state.denials or state.defects or state.remote_outstanding))
         ):
             return {}
-        source = self.frame.sources[job.target]
+        source = self.frame.sources[job.scope]
         entries = {item.activation: item for item in source.state.entries}
         if contract.readiness is not None:
             readiness = self.frame.invocation_source or source
@@ -789,14 +783,16 @@ class _InvocationRuntime:
         unused = {}
         for group in contract.generations:
             keys = tuple(source.keys[index] for index in group)
-            entered = tuple(key for key in keys if key in self.attempts)
+            entered = tuple(key for key in keys if key in self.operations)
             if not entered or entered != keys[: len(entered)] or len(entered) == len(keys):
                 continue
             last = entered[-1]
             if entries[last].status != "success":
                 continue
             history = [
-                row for row in state.dispatches if row.child is not None and row.child.leaf == self.attempts[last]
+                row
+                for row in state.dispatches
+                if row.child is not None and row.child.leaf == self.operations[last].association.task
             ]
             if len(history) != 1:
                 continue
@@ -816,135 +812,105 @@ class _InvocationRuntime:
                 )
             ):
                 continue
-            cause = UnusedRetryCapacity(owner=job.association.task, after=self.attempts[last])
+            cause = UnusedRetryCapacity(owner=job.association.task, after=self.operations[last].association.task)
             unused.update((key, cause) for key in keys[len(entered) :])
         return unused
 
-    def _stage_outputs(
+    def _publish_operation(
         self,
-        job: _ExecutionJob,
+        job: _OperationJob[DatumId],
         mapping: RuntimeOutcome,
         results: tuple[AssociationResult, ...],
         assessments: tuple[LocalAssessmentResult, ...],
-    ) -> tuple[RuntimeOutcome, tuple[AssociationResult, ...], _ExecutionFacts | None]:
-        if mapping.condition != "result":
-            return mapping, results, None
-        if job.policy.kind == "decision" and not results:
-            results = (
-                AssociationResult(
-                    association=job.association,
-                    outcome=mapping.outcome or "",
-                    outputs=(),
-                    consumed_context_ports=frozenset(),
-                ),
-            )
-        assessed = _assessment_results(self.admitted, job.node, mapping, job.association, assessments)
-        if assessed is None or not _valid_dynamic_membership_result(self.admitted, job.node, mapping, results):
-            return self._publication_failure(job, limit=False), results, None
+    ) -> RuntimeOutcome:
+        """Stage values, terminal state and structural expansion before one commit."""
         delta = self.facts.delta()
-        status = _accept_outputs(
-            self.admitted,
-            self.invocation,
-            job.target,
-            job.activation,
-            job.node,
-            job.implementation.capability.operation,
-            mapping,
-            job.association,
-            job.inputs,
-            job.input_parents,
-            results,
-            delta,
-            self.services.limits,
+        staged = False
+        membership = None
+        if mapping.condition == "result":
+            if job.policy.kind == "decision" and not results:
+                results = (
+                    AssociationResult(
+                        association=job.association,
+                        outcome=mapping.outcome or "",
+                        outputs=(),
+                        consumed_context_ports=frozenset(),
+                    ),
+                )
+            assessed = _assessment_results(self.admitted, job.node, mapping, job.association, assessments)
+            try:
+                membership = _membership_value(self.admitted, job.node, mapping.outcome, results)
+            except EffectRejected:
+                assessed = None
+            status = (
+                "malformed"
+                if assessed is None
+                else _accept_outputs(self.admitted, job, mapping, results, delta, self.services.limits)
+            )
+            if status == "valid" and not _capture_assessments(
+                self.admitted, job, mapping, assessed or (), self.services, delta
+            ):
+                status = "malformed"
+            staged = status == "valid"
+            if not staged:
+                mapping = self._publication_failure(job, limit=status == "limit")
+                delta = self.facts.delta()
+        source = self.frame.sources[job.scope]
+        state = advance_activation(
+            state=source.state,
+            event=ObserveTerminal(activation=job.activation, outcome=mapping.outcome, category=mapping.category),
         )
-        if status == "valid" and not _capture_assessments(
-            self.admitted,
-            job.implementation,
-            job.activation,
-            job.node,
-            mapping,
-            assessed,
-            job.target,
-            self.services,
-            delta,
-        ):
-            status = "malformed"
-        if status != "valid":
-            return self._publication_failure(job, limit=status == "limit"), results, None
-        return mapping, results, delta
+        if staged and membership is not None:
+            try:
+                state = _observe_dynamic_membership(
+                    self.admitted,
+                    state,
+                    job.scope,
+                    job.activation,
+                    job.node,
+                    mapping.outcome,
+                    membership,
+                    delta,
+                    self.services.limits,
+                )
+            except (ContractViolation, EffectRejected) as exc:
+                mapping = self._publication_failure(
+                    job, limit=isinstance(exc, EffectRejected) and exc.code == EffectCode.LIMIT_EXCEEDED
+                )
+                state = advance_activation(
+                    state=source.state,
+                    event=ObserveTerminal(
+                        activation=job.activation, outcome=mapping.outcome, category=mapping.category
+                    ),
+                )
+                delta = self.facts.delta()
+        try:
+            state = _materialize_structure(
+                self.admitted, job.scope, state, delta, self.subgraph_input_parents, self.services.limits
+            )
+        except (ContractViolation, EffectRejected) as exc:
+            if not staged:
+                raise
+            mapping = self._publication_failure(
+                job, limit=isinstance(exc, EffectRejected) and exc.code == EffectCode.LIMIT_EXCEEDED
+            )
+            state = advance_activation(
+                state=source.state,
+                event=ObserveTerminal(activation=job.activation, outcome=mapping.outcome, category=mapping.category),
+            )
+        else:
+            self.facts.publish(delta)
+        source.state = state
+        return mapping
 
     @staticmethod
-    def _publication_failure(job: _ExecutionJob, *, limit: bool) -> RuntimeOutcome:
+    def _publication_failure(job: _OperationJob[DatumId], *, limit: bool) -> RuntimeOutcome:
         return _mapping(
             job.policy,
             "artifact_limit_exhausted" if limit else "failure",
             None,
             None if limit else "malformed_response",
         )
-
-    def _advance_completed(
-        self,
-        job: _ExecutionJob,
-        mapping: RuntimeOutcome,
-        results: tuple[AssociationResult, ...],
-        delta: _ExecutionFacts | None,
-    ) -> RuntimeOutcome:
-        staged = delta is not None
-        delta = self.facts.delta() if delta is None else delta
-        candidate_state = self._terminal_state(job, mapping)
-        for _ in range(2):
-            checking_membership = staged and mapping.condition == "result"
-            try:
-                if checking_membership:
-                    membership = _dynamic_membership_value(self.admitted, job.node, mapping.outcome, results)
-                    if membership is not None:
-                        candidate_state = _observe_dynamic_membership(
-                            self.admitted,
-                            candidate_state,
-                            job.target,
-                            job.activation,
-                            job.node,
-                            mapping.outcome,
-                            membership,
-                            delta,
-                            self.services.limits,
-                        )
-                checking_membership = False
-                candidate_state = self._materialize_completed(job, candidate_state, delta)
-            except (ContractViolation, EffectRejected) as exc:
-                if not staged:
-                    raise
-                mapping = self._publication_failure(
-                    job,
-                    limit=isinstance(exc, EffectRejected) and exc.code == EffectCode.LIMIT_EXCEEDED,
-                )
-                candidate_state = self._terminal_state(job, mapping)
-                if checking_membership:
-                    # Failure can itself close a structural output. It gets a fresh delta.
-                    delta = self.facts.delta()
-                    continue
-            else:
-                self.facts.publish(delta)
-            break
-        self.frame.sources[job.target].state = candidate_state
-        return mapping
-
-    def _terminal_state(self, job: _ExecutionJob, mapping: RuntimeOutcome) -> ActivationState:
-        return advance_activation(
-            state=self.frame.sources[job.target].state,
-            event=ObserveTerminal(activation=job.activation, outcome=mapping.outcome, category=mapping.category),
-        )
-
-    def _materialize_completed(
-        self, job: _ExecutionJob, state: ActivationState, delta: _ExecutionFacts
-    ) -> ActivationState:
-        while True:
-            _materialize_subgraph_outputs(self.admitted, job.target, state, delta, self.subgraph_input_parents)
-            state, bridged = _bridge_structural_map_membership(
-                self.admitted, state, job.target, delta, self.services.limits
-            )
-            if not bridged:
-                return state
 
     async def _finalize(self) -> ExecutionResult:
         if self.control.cancelled:
@@ -961,7 +927,7 @@ class _InvocationRuntime:
             self.invocation,
             self.frame.states,
             self.frame.target_keys,
-            self.attempts,
+            {key: job.association.task for key, job in self.operations.items()},
             frozenset(self.facts.values),
             frozenset(self.cancelled_unstarted),
             self.blocked_reasons,
@@ -974,7 +940,11 @@ class _InvocationRuntime:
         failed_targets = {
             target
             for target, source in self.frame.sources.items()
-            if any(self.attempts.get(entry.activation) in failed_attempts for entry in source.state.entries)
+            if any(
+                entry.activation in self.operations
+                and self.operations[entry.activation].association.task in failed_attempts
+                for entry in source.state.entries
+            )
         }
         final_outputs = tuple(output for output in final_outputs if output.target not in failed_targets)
         return ExecutionResult(
@@ -993,7 +963,12 @@ class _InvocationRuntime:
                 }.values()
             ),
             adaptive_acquisitions=self.adaptive_acquisitions,
-            _input_parents=tuple((*key, parent) for key, parent in self.facts.input_parents.items()),
+            _input_parents=tuple(
+                (job.scope, job.activation, port, parent)
+                for job in self.operations.values()
+                if isinstance(job.scope, DatumId)
+                for port, parent in job.input_parents.items()
+            ),
             _passthrough_parents=tuple(
                 (target, activation, port, parent)
                 for (target, activation, port), parent in self.facts.passthrough_parents.items()

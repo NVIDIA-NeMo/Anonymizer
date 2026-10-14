@@ -14,7 +14,7 @@ from anonymizer.engine.graph_sdk._effect_values import (
     reject,
 )
 from anonymizer.engine.graph_sdk._execution_materialization import _artifact_bytes
-from anonymizer.engine.graph_sdk._execution_state import _ExecutionFacts
+from anonymizer.engine.graph_sdk._execution_state import _ExecutionFacts, _OperationJob
 from anonymizer.engine.graph_sdk._execution_topology import (
     _source_activation,
 )
@@ -24,7 +24,6 @@ from anonymizer.engine.graph_sdk._execution_values import (
     AssessmentEnvironment,
     EvidenceProductionDecl,
     ExecutionAssessmentFact,
-    ExecutionImplementation,
     ExecutionLimits,
     ExecutionServices,
     FinalOutputFact,
@@ -78,20 +77,15 @@ if TYPE_CHECKING:
 
 def _accept_outputs(
     admitted: AdmittedExecutionPlan,
-    invocation: InvocationId,
-    target: DatumId,
-    activation: ActivationKey,
-    node: NodeId,
-    operation: OperationSpec,
+    job: _OperationJob[DatumId],
     mapping: RuntimeOutcome,
-    association: SemanticAssociation,
-    inputs: tuple[AssociationInput, ...],
-    input_parents: dict[str, ProvenanceKey],
     results: tuple[AssociationResult, ...],
     facts: _ExecutionFacts,
     limits: ExecutionLimits,
 ) -> Literal["valid", "malformed", "limit"]:
-    if not _validate_output_shape(admitted, operation, mapping, association, inputs, results):
+    operation = job.implementation.capability.operation
+    inputs, input_parents = job.inputs, job.input_parents
+    if not _validate_output_shape(admitted, operation, mapping, job.association, inputs, results):
         return "malformed"
     assert mapping.outcome is not None
     outcome = next(item for item in operation.outcomes if item.name == mapping.outcome)
@@ -134,19 +128,19 @@ def _accept_outputs(
     for output in outputs:
         identity_input = dependencies[output.port].identity_input
         if identity_input is None:
-            reference = ArtifactRef(invocation=invocation, key=facts.next_artifact, version=1)
+            reference = ArtifactRef(invocation=job.activation.invocation, key=facts.next_artifact, version=1)
             facts.next_artifact += 1
             facts.values[reference] = output.value
         else:
             reference = input_artifacts[identity_input]
-        key = OperationOutputKey(activation=activation, target=target, port=output.port)
+        key = OperationOutputKey(activation=job.activation, target=job.scope, port=output.port)
         facts.add_output(
             key,
-            node,
+            job.node,
             reference,
             output.artifact_type,
             planned_parents[output.port],
-            admitted._output_role(node, outcome, output.port),
+            admitted._output_role(job.node, outcome, output.port),
         )
     return "valid"
 
@@ -243,15 +237,13 @@ def _assessment_results(
 
 def _capture_assessments(
     admitted: AdmittedExecutionPlan,
-    implementation: ExecutionImplementation,
-    activation: ActivationKey,
-    node: NodeId,
+    job: _OperationJob[DatumId],
     mapping: RuntimeOutcome,
     returned: tuple[tuple[EvidenceProductionDecl, LocalAssessmentResult], ...],
-    target: DatumId,
     services: ExecutionServices,
     facts: _ExecutionFacts,
 ) -> bool:
+    implementation, activation, node, target = job.implementation, job.activation, job.node, job.scope
     if mapping.outcome is None:
         return not returned
     if len(facts.assessments) + len(returned) > admitted.assessment_limits.max_assessment_facts:
@@ -295,7 +287,7 @@ def _capture_assessments(
         fact = facts.ports.get((activation, port))
         if fact is None or fact.node != node or fact.target != target or fact.role == "decision":
             reject(EffectCode.CONTRADICTORY)
-        item_subject = isinstance(facts.input_parents.get((target, activation, port)), MapItemKey)
+        item_subject = isinstance(job.input_parents.get(port), MapItemKey)
         facts.ports[activation, port] = replace(fact, _key=_FACT_KEY, role="artifact" if item_subject else "candidate")
     return True
 

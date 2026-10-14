@@ -337,14 +337,14 @@ def test_foreign_resources_do_not_override_publication_boundary(monkeypatch, sta
             execution, services, submit = base
             owner_node = next(row.node for row in execution.policies if row.delegated)
             if stage == "rollback":
-                original = _execution_runtime._materialize_subgraph_outputs
+                original = _execution_runtime._materialize_structure
 
                 def rollback(admitted, target, state, *args):
                     if any(row.template == owner_node and row.status == "success" for row in state.entries):
                         raise EffectRejected(EffectCode.CONTRADICTORY)
                     return original(admitted, target, state, *args)
 
-                monkeypatch.setattr(_execution_runtime, "_materialize_subgraph_outputs", rollback)
+                monkeypatch.setattr(_execution_runtime, "_materialize_structure", rollback)
             else:
 
                 class FailedAssessment:

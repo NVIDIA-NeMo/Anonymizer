@@ -33,6 +33,7 @@ from anonymizer.engine.graph_sdk.executor import (
     ExecutionResult,
     MapItemKey,
     OperationOutputKey,
+    ProvenanceKey,
 )
 from anonymizer.engine.graph_sdk.preparation import PreparedPlan, StateRevisionView
 from anonymizer.engine.graph_sdk.records import (
@@ -277,6 +278,7 @@ class _RunFacts(_ExecutionFacts):
     owners: dict[ActivationKey, DatumId] = field(default_factory=dict)
     shared: set[ActivationKey] = field(default_factory=set)
     terminals: dict[ActivationKey, TerminalFact] = field(default_factory=dict)
+    input_parents: dict[tuple[DatumId, ActivationKey, str], ProvenanceKey] = field(default_factory=dict)
 
     @classmethod
     def from_result(cls, admitted: AdmittedQualification, result: ExecutionResult) -> _RunFacts:

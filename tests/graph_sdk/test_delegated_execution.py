@@ -364,16 +364,18 @@ def test_unready_declared_slot_cannot_start_or_charge() -> None:
 
 @pytest.mark.parametrize("reason", ["scope_cancel", "stale_parser_proof"])
 def test_authoritative_dispatch_rechecks_after_start_preflight(monkeypatch, reason: str) -> None:
-    from anonymizer.engine.graph_sdk._execution_delegated import _DelegatedOwner
+    from anonymizer.engine.graph_sdk._execution_runtime import _InvocationRuntime
     from anonymizer.engine.graph_sdk.requests import AcceptResult, ScopeCancel
 
     execution, services, _, transports = _fixture(simple=reason == "scope_cancel")
-    prepare = _DelegatedOwner._prepare
+    prepare = _InvocationRuntime._prepare_job
     preflights = []
 
-    def invalidate(owner, leaf, attempt):
-        commit = prepare(owner, leaf, attempt)
-        authority = owner.runtime.request_authority
+    def invalidate(owner, leaf):
+        commit = prepare(owner, leaf)
+        if leaf.policy.kind != "external":
+            return commit
+        authority = owner.request_authority
         if reason == "scope_cancel":
             authority.apply(ScopeCancel())
         elif authority.state.dispatches:
@@ -383,7 +385,7 @@ def test_authoritative_dispatch_rechecks_after_start_preflight(monkeypatch, reas
                     request=first.request,
                     results=(
                         AssociationResult(
-                            association=owner._source_job().association,
+                            association=next(iter(first.associations)),
                             outcome="ok",
                             outputs=(),
                             consumed_context_ports=frozenset(),
@@ -394,7 +396,7 @@ def test_authoritative_dispatch_rechecks_after_start_preflight(monkeypatch, reas
         preflights.append(leaf.activation)
         return commit
 
-    monkeypatch.setattr(_DelegatedOwner, "_prepare", invalidate)
+    monkeypatch.setattr(_InvocationRuntime, "_prepare_job", invalidate)
     result = asyncio.run(_execute(execution, services))
     expected = int(reason == "stale_parser_proof")
     assert sum(item.calls for item in transports) == len(result.requests.dispatches) == expected

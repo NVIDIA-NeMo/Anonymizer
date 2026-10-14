@@ -25,7 +25,6 @@ from anonymizer.engine.graph_sdk._execution_values import (
     OperationOutputKey,
     ProvenanceKey,
     RootInputKey,
-    RuntimeOutcome,
 )
 from anonymizer.engine.graph_sdk.context import (
     BoundTextArtifact,
@@ -212,46 +211,21 @@ def _observe_dynamic_membership(
     )
 
 
-def _valid_dynamic_membership_result(
-    admitted: AdmittedExecutionPlan,
-    node: NodeId,
-    mapping: RuntimeOutcome,
-    results: tuple[AssociationResult, ...],
-) -> bool:
-    dynamic_map = next(
-        (
-            declaration
-            for dynamic_scope in admitted.context.prepared.workflow.scopes
-            for declaration in dynamic_scope.maps
-            if declaration.expander == node
-        ),
-        None,
-    )
-    if dynamic_map is None or mapping.outcome not in dynamic_map.expansion_outcomes:
-        return True
-    declaration = next(
-        item for item in admitted.map_expansions if item.expander == node and item.outcome == mapping.outcome
-    )
-    selected = [output for result in results for output in result.outputs if output.port == declaration.membership_port]
-    return len(selected) == 1 and isinstance(selected[0].value, TextCollectionValue)
-
-
-def _dynamic_membership_value(
+def _membership_value(
     admitted: AdmittedExecutionPlan,
     node: NodeId,
     outcome: str | None,
     results: tuple[AssociationResult, ...],
-) -> ArtifactValue | None:
+) -> TextCollectionValue | None:
     declaration = next(
-        (item for item in admitted.map_expansions if item.expander == node and item.outcome == outcome),
-        None,
+        (item for item in admitted.map_expansions if item.expander == node and item.outcome == outcome), None
     )
     if declaration is None:
         return None
     selected = [
         output.value for result in results for output in result.outputs if output.port == declaration.membership_port
     ]
-    if len(selected) != 1:
+    if len(selected) != 1 or not isinstance(selected[0], TextCollectionValue):
         reject(EffectCode.MISSING)
     return selected[0]
 
@@ -275,125 +249,108 @@ def _materialize_subgraph_inputs(
     )
 
 
-def _materialize_subgraph_outputs(
+def _materialize_structure(
     admitted: AdmittedExecutionPlan,
     target: DatumId,
     state: ActivationState,
     facts: _ExecutionFacts,
     input_parents: dict[tuple[DatumId, ActivationKey, str], ProvenanceKey],
-) -> None:
-    for entry in sorted(
-        state.entries, key=lambda item: (-_activation_depth(item.activation), item.activation.occurrence)
-    ):
-        if entry.status not in {"success", "failure", "cancelled", "lost", "blocked", "inconsistent"}:
-            continue
-        declaration = admitted.nodes[entry.template]
-        if not isinstance(declaration, SubgraphNode):
-            continue
-        if entry.outcome is None:
-            continue
-        for binding in declaration.body.output_bindings:
-            destination = (target, entry.activation, binding.destination.port)
-            if facts.artifact(*destination) is not None:
-                continue
-            source_key: ProvenanceKey
-            if isinstance(binding.source, WorkflowInputRef):
-                parent = input_parents.get((target, entry.activation, binding.source.port))
-                if parent is None:
-                    continue
-                source_key = parent
-            else:
-                source_activation = _source_activation(state, entry.activation, binding.source.node)
-                source_entry = next(
-                    (
-                        child
-                        for child in state.entries
-                        if child.activation == source_activation and child.status == "success"
-                    ),
-                    None,
-                )
-                if source_entry is None:
-                    continue
-                source_key = OperationOutputKey(
-                    activation=source_entry.activation,
-                    target=target,
-                    port=binding.source.port,
-                )
-            source_fact = facts.provenance.get(source_key)
-            if source_fact is None:
-                continue
-
-            if isinstance(binding.source, WorkflowInputRef):
-                facts.passthrough_parents[destination] = source_key
-            key = OperationOutputKey(
-                activation=entry.activation,
-                target=target,
-                port=binding.destination.port,
-            )
-            output_type = next(
-                item.artifact_type for item in declaration.operation.outputs if item.name == binding.destination.port
-            )
-            facts.add_output(
-                key,
-                entry.template,
-                source_fact.artifact,
-                output_type,
-                frozenset({source_key}),
-                (
-                    "decision"
-                    if source_fact.decision
-                    else "candidate"
-                    if any(
-                        isinstance(output.source, NodeOutputRef)
-                        and output.source.node == entry.template
-                        and output.source.port == binding.destination.port
-                        for output in admitted.context.prepared.workflow.workflow.output_bindings
-                    )
-                    else "artifact"
-                ),
-            )
-
-
-def _bridge_structural_map_membership(
-    admitted: AdmittedExecutionPlan,
-    state: ActivationState,
-    target: DatumId,
-    facts: _ExecutionFacts,
     limits: ExecutionLimits,
-) -> tuple[ActivationState, bool]:
-    for entry in sorted(state.entries, key=lambda item: item.activation.occurrence):
-        if (
-            entry.status != "success"
-            or entry.outcome is None
-            or not isinstance(admitted.nodes[entry.template], SubgraphNode)
+) -> ActivationState:
+    """Close structural outputs and membership in the same publication transaction."""
+    while True:
+        for entry in sorted(
+            state.entries, key=lambda item: (-_activation_depth(item.activation), item.activation.occurrence)
         ):
-            continue
-        dynamic_map = next(
+            if entry.status not in {"success", "failure", "cancelled", "lost", "blocked", "inconsistent"}:
+                continue
+            declaration = admitted.nodes[entry.template]
+            if not isinstance(declaration, SubgraphNode):
+                continue
+            if entry.outcome is None:
+                continue
+            for binding in declaration.body.output_bindings:
+                destination = (target, entry.activation, binding.destination.port)
+                if facts.artifact(*destination) is not None:
+                    continue
+                source_key: ProvenanceKey
+                if isinstance(binding.source, WorkflowInputRef):
+                    parent = input_parents.get((target, entry.activation, binding.source.port))
+                    if parent is None:
+                        continue
+                    source_key = parent
+                else:
+                    source_activation = _source_activation(state, entry.activation, binding.source.node)
+                    source_entry = next(
+                        (
+                            child
+                            for child in state.entries
+                            if child.activation == source_activation and child.status == "success"
+                        ),
+                        None,
+                    )
+                    if source_entry is None:
+                        continue
+                    source_key = OperationOutputKey(
+                        activation=source_entry.activation,
+                        target=target,
+                        port=binding.source.port,
+                    )
+                source_fact = facts.provenance.get(source_key)
+                if source_fact is None:
+                    continue
+
+                if isinstance(binding.source, WorkflowInputRef):
+                    facts.passthrough_parents[destination] = source_key
+                key = OperationOutputKey(
+                    activation=entry.activation,
+                    target=target,
+                    port=binding.destination.port,
+                )
+                output_type = next(
+                    item.artifact_type
+                    for item in declaration.operation.outputs
+                    if item.name == binding.destination.port
+                )
+                facts.add_output(
+                    key,
+                    entry.template,
+                    source_fact.artifact,
+                    output_type,
+                    frozenset({source_key}),
+                    (
+                        "decision"
+                        if source_fact.decision
+                        else "candidate"
+                        if any(
+                            isinstance(output.source, NodeOutputRef)
+                            and output.source.node == entry.template
+                            and output.source.port == binding.destination.port
+                            for output in admitted.context.prepared.workflow.workflow.output_bindings
+                        )
+                        else "artifact"
+                    ),
+                )
+        expansions = {item.parent: item for item in state.expansions}
+        pending = next(
             (
-                declaration
-                for scope in state.workflow.scopes
-                for declaration in scope.maps
-                if declaration.expander == entry.template and entry.outcome in declaration.expansion_outcomes
+                (entry, expansion)
+                for entry in sorted(state.entries, key=lambda item: item.activation.occurrence)
+                if entry.status == "success"
+                and isinstance(admitted.nodes[entry.template], SubgraphNode)
+                and (entry.activation not in expansions or expansions[entry.activation].status == "pending")
+                for expansion in admitted.map_expansions
+                if expansion.expander == entry.template and expansion.outcome == entry.outcome
             ),
             None,
         )
-        if dynamic_map is None:
-            continue
-        expansion_state = next(
-            (item for item in state.expansions if item.parent == entry.activation),
-            None,
-        )
-        if expansion_state is not None and expansion_state.status != "pending":
-            continue
-        expansion = next(
-            item
-            for item in admitted.map_expansions
-            if item.expander == entry.template and item.outcome == entry.outcome
-        )
+        if pending is None:
+            return state
+        entry, expansion = pending
         reference = facts.artifact(target, entry.activation, expansion.membership_port)
         if reference is None or reference not in facts.values:
             reject(EffectCode.MISSING)
-        updated = _observe_dynamic_membership(
+        state = _observe_dynamic_membership(
             admitted,
             state,
             target,
@@ -404,8 +361,6 @@ def _bridge_structural_map_membership(
             facts,
             limits,
         )
-        return updated, True
-    return state, False
 
 
 def _materialize_bound_context(
