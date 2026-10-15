@@ -66,7 +66,7 @@ def apply_local_replace_strategy(
     total_label_counts: Counter[str] = Counter()
     replacement_maps = []
     entity_values = output_df[entities_column] if entities_column in output_df.columns else repeat({}, len(output_df))
-    for idx, raw_entities in enumerate(entity_values):
+    for raw_entities in entity_values:
         rmap = _build_local_replacement_map(
             entities=EntitiesSchema.from_raw(raw_entities),
             strategy=strategy,
@@ -78,15 +78,13 @@ def apply_local_replace_strategy(
                 row_counts[r.get("label", "unknown")] += 1
             total_label_counts += row_counts
             n = sum(row_counts.values())
-            summary = ", ".join(f"{l}={c}" for l, c in row_counts.most_common()) if row_counts else "(none)"
-            logger.debug("  record %d: %d replacements — %s", idx, n, summary)
+            logger.debug("  record replacement count: %d", n)
         tracker.record_success()
     output_df[COL_REPLACEMENT_MAP] = replacement_maps
 
     if _debug:
         total = sum(total_label_counts.values())
-        summary = ", ".join(f"{label}={count}" for label, count in total_label_counts.most_common())
-        logger.debug("replacement stats: %d unique entities replaced (%s)", total, summary)
+        logger.debug("replacement stats: %d unique entities replaced", total)
 
     _apply_replacement_maps_to_dataframe(
         output_df,

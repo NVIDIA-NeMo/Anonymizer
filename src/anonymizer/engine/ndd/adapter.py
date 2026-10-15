@@ -284,7 +284,7 @@ class NddAdapter:
         self._run_lock = RLock()
         self._input_tokens_lock = Lock()
         self._cumulative_input_tokens: int = 0
-        logger.debug("NDD adapter: artifact_path=%s", getattr(data_designer, "_artifact_path", "unknown"))
+        logger.debug("NDD adapter initialized")
 
     @property
     def total_input_tokens(self) -> int:
@@ -365,11 +365,11 @@ class NddAdapter:
             raise AnonymizerWorkflowError("Workflow source frame does not match submitted data")
         else:
             source_frame = replace(source_frame, dataframe=workflow_input_df)
-        logger.debug("NDD workflow '%s' starting with %d records", workflow_name, len(workflow_input_df))
+        logger.debug("NDD workflow starting with %d records", len(workflow_input_df))
         if rewrite_binding is not None:
             columns = rewrite_binding.columns(columns)
         col_names = [c.name for c in columns]
-        logger.debug("NDD workflow '%s': %d columns %s", workflow_name, len(col_names), col_names)
+        logger.debug("NDD workflow column count: %d", len(col_names))
         available_model_aliases = [m.alias for m in model_configs]
         model_aliases = _extract_workflow_model_aliases(columns) or available_model_aliases
         record_count = (
@@ -441,15 +441,13 @@ class NddAdapter:
                         raise AnonymizerWorkflowError("Workflow output has unattributed source loss")
             except Exception as exc:
                 logger.warning(
-                    "Workflow failed for %d input record(s) on model(s) %s: %s",
+                    "Workflow failed for %d input record(s).",
                     record_count,
-                    available_model_aliases,
-                    exc,
                 )
                 logger.debug(
-                    "Workflow '%s' failure context: columns=%s",
-                    workflow_name,
-                    col_names,
+                    "Workflow failure context: input_records=%d column_count=%d",
+                    record_count,
+                    len(col_names),
                 )
                 try:
                     usage_probe.flush_private_trace_records()
@@ -486,7 +484,7 @@ class NddAdapter:
             )
             usage_probe.flush_private_trace_records()
 
-        logger.debug("NDD workflow '%s' returned %d records", workflow_name, len(output_df))
+        logger.debug("NDD workflow returned %d records", len(output_df))
         surviving_positions = set(source_positions)
         missing = workflow_input_df.iloc[[index for index in range(record_count) if index not in surviving_positions]]
         failed_records = [

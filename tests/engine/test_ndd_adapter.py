@@ -257,8 +257,8 @@ def test_preview_exception_wraps_in_workflow_error_and_logs(
     assert len(warning_records) == 1
     warning_msg = warning_records[0].getMessage()
     assert "3" in warning_msg
-    assert "test-model-alias" in warning_msg
-    assert "endpoint unreachable" in warning_msg
+    assert "test-model-alias" not in warning_msg
+    assert "endpoint unreachable" not in warning_msg
     assert "Check endpoint reachability" not in warning_msg
     assert "detect-workflow" not in warning_msg
     _assert_no_backend_reference(warning_msg)
@@ -266,8 +266,8 @@ def test_preview_exception_wraps_in_workflow_error_and_logs(
     debug_records = _unique_records(caplog, level=logging.DEBUG, message_contains="failure context")
     assert len(debug_records) == 1
     debug_msg = debug_records[0].getMessage()
-    assert "detect-workflow" in debug_msg
-    assert "output" in debug_msg
+    assert "detect-workflow" not in debug_msg
+    assert "output" not in debug_msg
     _assert_no_backend_reference(debug_msg)
 
 
@@ -301,8 +301,8 @@ def test_create_exception_wraps_in_workflow_error_and_logs(
     assert len(warning_records) == 1
     warning_msg = warning_records[0].getMessage()
     assert "2" in warning_msg
-    assert "test-model-alias" in warning_msg
-    assert "quota exceeded" in warning_msg
+    assert "test-model-alias" not in warning_msg
+    assert "quota exceeded" not in warning_msg
     assert "Check endpoint reachability" not in warning_msg
     assert "replace-workflow" not in warning_msg
     _assert_no_backend_reference(warning_msg)
@@ -310,8 +310,8 @@ def test_create_exception_wraps_in_workflow_error_and_logs(
     debug_records = _unique_records(caplog, level=logging.DEBUG, message_contains="failure context")
     assert len(debug_records) == 1
     debug_msg = debug_records[0].getMessage()
-    assert "replace-workflow" in debug_msg
-    assert "output" in debug_msg
+    assert "replace-workflow" not in debug_msg
+    assert "output" not in debug_msg
     _assert_no_backend_reference(debug_msg)
 
 
@@ -347,8 +347,8 @@ def test_load_dataset_exception_wraps_in_workflow_error_and_logs(
     assert len(warning_records) == 1
     warning_msg = warning_records[0].getMessage()
     assert "2" in warning_msg
-    assert "test-model-alias" in warning_msg
-    assert "corrupt parquet" in warning_msg
+    assert "test-model-alias" not in warning_msg
+    assert "corrupt parquet" not in warning_msg
     assert "Check local storage" not in warning_msg
     assert "Check endpoint reachability" not in warning_msg
     assert "replace-workflow" not in warning_msg
@@ -357,6 +357,6 @@ def test_load_dataset_exception_wraps_in_workflow_error_and_logs(
     debug_records = _unique_records(caplog, level=logging.DEBUG, message_contains="failure context")
     assert len(debug_records) == 1
     debug_msg = debug_records[0].getMessage()
-    assert "replace-workflow" in debug_msg
-    assert "output" in debug_msg
+    assert "replace-workflow" not in debug_msg
+    assert "output" not in debug_msg
     _assert_no_backend_reference(debug_msg)

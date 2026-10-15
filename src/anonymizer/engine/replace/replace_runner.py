@@ -90,7 +90,7 @@ class ReplacementWorkflow:
             strategy=strategy,
             input_row_count=len(dataframe),
         ) as measurement:
-            logger.debug("replacement strategy: %s on %d records", strategy, len(dataframe))
+            logger.debug("replacement starting on %d records", len(dataframe))
 
             if isinstance(replace_method, (Annotate, Redact, Hash)):
                 local_df = apply_local_replace_strategy(dataframe, strategy=replace_method)
@@ -259,7 +259,7 @@ class ReplacementWorkflow:
                 source_positions=run_result.source_positions,
             ).reset_index(drop=True)
         except Exception:
-            logger.debug("Replace judges workflow failed; evaluation scores may be unavailable.", exc_info=True)
+            logger.debug("Replace judges workflow failed; evaluation scores may be unavailable.")
             judged_df = prepared
 
         for judge in active:

@@ -109,7 +109,6 @@ def _detection_valid_fraction(row: pd.Series) -> float | None:
     except Exception:
         logger.warning(
             "Could not parse entities_by_value to compute detection_valid fraction; defaulting to None.",
-            exc_info=True,
         )
         return None
     if total == 0 or invalid_count == 0:
@@ -476,7 +475,7 @@ class RewriteWorkflow:
             )
             return df, judge_result.failed_records
         except Exception:
-            logger.debug("Rewrite judge workflow failed; scores may be unavailable.", exc_info=True)
+            logger.debug("Rewrite judge workflow failed; scores may be unavailable.")
             df[COL_JUDGE_EVALUATION] = None
             return df, []
 
@@ -541,7 +540,7 @@ class RewriteWorkflow:
                 # same scale as utility_score and leakage_mass in the rewrite scores section.
                 entity_rows[COL_DETECTION_VALID] = entity_rows.apply(_detection_valid_fraction, axis=1)
             except Exception:
-                logger.debug("Detection validity judge failed; scores may be unavailable.", exc_info=True)
+                logger.debug("Detection validity judge failed; scores may be unavailable.")
                 entity_rows[COL_DETECTION_VALID] = None
                 entity_rows[COL_DETECTION_INVALID_ENTITIES] = None
 

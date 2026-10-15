@@ -211,9 +211,9 @@ class Anonymizer:
             raise InvalidConfigError(str(exc)) from exc
         logger.info("🔧 Anonymizer initialized with %d model configs", len(self._model_configs))
         det = self._selected_models.detection
-        logger.info(LOG_INDENT + "🔎 detector:  %s", det.entity_detector)
-        logger.info(LOG_INDENT + "✅ validator: %s", ", ".join(det.entity_validator))
-        logger.info(LOG_INDENT + "🧩 augmenter: %s", det.entity_augmenter)
+        logger.info(LOG_INDENT + "🔎 detector configured")
+        logger.info(LOG_INDENT + "✅ validator pool size: %d", len(det.entity_validator))
+        logger.info(LOG_INDENT + "🧩 augmenter configured")
 
         if data_designer is not None:
             self._data_designer = data_designer
@@ -479,7 +479,7 @@ class Anonymizer:
         excluded_entity_labels = getattr(output, "excluded_entity_labels", None)
         data_summary = getattr(output, "data_summary", None)
         num_records = len(output.trace_dataframe)
-        mode_name = "rewrite" if is_rewrite else type(replace_method).__name__
+        mode_name = "rewrite" if is_rewrite else "replace"
         active_judges = ["rewrite_judge", "entity_coverage_judge"] if is_rewrite else ["entity_coverage_judge"]
         if evaluate_config.compute_detection_validity:
             active_judges.append("detection_validity_judge")
@@ -493,16 +493,14 @@ class Anonymizer:
             )
         logger.info("🧪 Running %s evaluation on %d records", mode_name, num_records)
         logger.debug(
-            "evaluation config: mode=%s, text_column=%s, detection_validity=%s, "
-            "entity_labels=%s, data_summary_provided=%s",
+            "evaluation config: mode=%s, detection_validity=%s, entity_labels=%s, data_summary_provided=%s",
             mode_name,
-            text_column,
             evaluate_config.compute_detection_validity,
             len(entity_labels) if entity_labels is not None else "default",
             bool(data_summary),
         )
         logger.debug("active evaluation judges: %s", ", ".join(active_judges))
-        logger.debug("evaluation models: %s", self._selected_models.evaluate)
+        logger.debug("evaluation models configured")
         evaluation_start = time.perf_counter()
         # trace_dataframe is in user-facing form (e.g., 'biography' instead of
         # '__nemo_anonymizer_text_input__'). The judge prompts reference the
@@ -630,8 +628,6 @@ class Anonymizer:
         result._execution = judged._execution
         if result.failed_records:
             logger.debug("%d evaluation failed record(s).", len(result.failed_records))
-            for failure in result.failed_records:
-                logger.debug("  %s (%s: %s)", failure.record_id, failure.step, failure.reason)
         logger.info(
             "🎉 Evaluation complete — %d records processed [%.1fs]",
             num_records,
@@ -718,11 +714,6 @@ class Anonymizer:
         )
         effective_label_count = len(label_config.labels)
         removed_label_count = configured_label_count - effective_label_count
-        label_scope: list[str] | str
-        if config.detect.entity_labels is None:
-            label_scope = "(defaults; see anonymizer.DEFAULT_ENTITY_LABELS for the pre-exclusion list)"
-        else:
-            label_scope = label_config.labels
         if logger.isEnabledFor(logging.DEBUG):
             text_lengths = input_df[COL_TEXT].astype(str).str.len()
             logger.debug(
@@ -734,21 +725,19 @@ class Anonymizer:
             )
             logger.debug(
                 "detection config: threshold=%.2f, configured_label_count=%d, "
-                "effective_label_count=%d, removed_by_exclusions=%d, labels=%s",
+                "effective_label_count=%d, removed_by_exclusions=%d",
                 config.detect.gliner_threshold,
                 configured_label_count,
                 effective_label_count,
                 removed_label_count,
-                label_scope,
             )
         else:
             logger.info(
-                "effective detection scope: %d %s (configured: %d, removed by exclusions: %d): %s",
+                "effective detection scope: %d %s (configured: %d, removed by exclusions: %d)",
                 effective_label_count,
                 "label" if effective_label_count == 1 else "labels",
                 configured_label_count,
                 removed_label_count,
-                label_scope,
             )
 
         detection_options: dict[str, Any] = dict(
@@ -768,7 +757,7 @@ class Anonymizer:
         opaque_replacement = config.replace is not None and not self._uses_graph_redact(config)
         opaque_frame = opaque_replacement or config.rewrite is not None
         if config.replace is not None:
-            logger.info("🔄 Running %s replacement with graph-owned detection", type(config.replace).__name__)
+            logger.info("🔄 Running replacement with graph-owned detection")
             graph_result = run_detection_redact(
                 input_df,
                 detection=self._detection_workflow,
@@ -841,8 +830,7 @@ class Anonymizer:
         if COL_DETECTED_ENTITIES in detected_df.columns:
             label_counts = _count_labels(detected_df[COL_DETECTED_ENTITIES])
             if label_counts:
-                summary = ", ".join(f"{label}={count}" for label, count in label_counts.most_common())
-                logger.info(LOG_INDENT + "labels: %s", summary)
+                logger.info(LOG_INDENT + "distinct entity labels: %d", len(label_counts))
         final_df = graph_result.dataframe
         execution = graph_result._execution
         post_detection_failures = list(frame.replacement_failures) if opaque_frame else []
@@ -856,8 +844,6 @@ class Anonymizer:
         all_failures = [*detection_failures, *post_detection_failures]
         if all_failures:
             logger.warning("%d record(s) failed during pipeline processing.", len(all_failures))
-            for f in all_failures:
-                logger.debug("  %s (%s: %s)", f.record_id, f.step, f.reason)
         text_col = context.resolved_text_column
         renamed_trace = _rename_output_columns(final_df, resolved_text_column=text_col)
         logger.info("🎉 Pipeline complete — %d records processed, %d total failures", num_records, len(all_failures))
@@ -943,7 +929,7 @@ class Anonymizer:
             ) as handler:
                 handler.enqueue(event)
         except Exception:  # noqa: BLE001 - best-effort
-            logger.debug("Failed to emit telemetry event", exc_info=True)
+            logger.debug("Failed to emit telemetry event")
 
     def _build_telemetry_event(
         self,
