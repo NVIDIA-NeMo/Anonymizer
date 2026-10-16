@@ -15,7 +15,7 @@ from anonymizer.graph import EffectCode, EffectRejected
 from anonymizer.graph.workflow import ArtifactType
 from tests.graph_sdk.evidence_fixtures import _execute_assessment, _IdentityHop
 from tests.graph_sdk.qualification_fixtures import _inputs
-from tests.graph_sdk.test_adaptive_executor import _AssessingLocal
+from tests.graph_sdk.test_assessment_executor import _AssessingLocal
 from tests.graph_sdk.test_qualification_subject_context import _execute_separate_subject_context
 
 

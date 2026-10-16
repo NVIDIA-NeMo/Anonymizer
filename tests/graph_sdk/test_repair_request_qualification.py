@@ -62,7 +62,7 @@ from anonymizer.graph.workflow import (
 from tests.graph_sdk.effects_admission_fixtures import _valid_runtime_rows, _ZeroClock
 from tests.graph_sdk.implementation_fixtures import _execution_implementation, _selection
 from tests.graph_sdk.qualification_fixtures import _inputs
-from tests.graph_sdk.test_adaptive_executor import _adaptive_workflow, _AssessingLocal
+from tests.graph_sdk.test_assessment_executor import _AssessingLocal, _single_output_workflow
 from tests.graph_sdk.test_preparation import _capability, _limits
 from tests.graph_sdk.workflow_construction import DynamicScope, admit_activation_workflow, admit_static_workflow
 
@@ -155,7 +155,7 @@ async def _execute_repair(
     kind: Literal["external", "local"] = "external",
     tamper: str | None = None,
 ):
-    base, assessor, artifact = _adaptive_workflow(assessment=True, distinct_subject=True, requests=0)
+    base, assessor, artifact = _single_output_workflow(assessment=True, distinct_subject=True, requests=0)
     raw = base
     repair = NodeId.new(workflow=raw.workflow)
     producer = NodeId.new(workflow=raw.workflow)

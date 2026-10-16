@@ -339,7 +339,7 @@ def test_actual_retrieval_queue_cancellation_preserves_worker_capacity() -> None
 @pytest.mark.parametrize("trusted_stop", [False, True])
 def test_actual_blocking_transport_late_failure_and_sdk_cleanup(trusted_stop: bool) -> None:
     from anonymizer.engine.graph_sdk.requests import DispatchEnvelope, StopConfirmed
-    from tests.graph_sdk.test_adaptive_executor import _external_running
+    from tests.graph_sdk.test_assessment_executor import _external_running
 
     async def run() -> None:
         pool = BlockingPool(max_workers=1)

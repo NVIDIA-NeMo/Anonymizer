@@ -76,7 +76,7 @@ from anonymizer.graph.activation import (
 from anonymizer.graph.workflow import NodeId, OperationNode, ProtectionRequirement, SequenceEdge
 from tests.graph_sdk.effects_admission_fixtures import _valid_runtime_rows
 from tests.graph_sdk.implementation_fixtures import _execution_implementation, _selection
-from tests.graph_sdk.test_adaptive_executor import _adaptive_workflow
+from tests.graph_sdk.test_assessment_executor import _single_output_workflow
 from tests.graph_sdk.test_preparation import _capability, _data, _limits
 from tests.graph_sdk.workflow_construction import DynamicScope, admit_activation_workflow, admit_static_workflow
 
@@ -95,7 +95,7 @@ def child_fixture(
     generations: int = 0,
 ):
     count = generations or (1 if simple else 4 if interleaved else 3 if failover else 2)
-    base, assessor, artifact_type = _adaptive_workflow(assessment=True, requests=0)
+    base, assessor, artifact_type = _single_output_workflow(assessment=True, requests=0)
     raw = base
     assessment_op = next(iter(raw.operations)).operation
     owner = NodeId.new(workflow=raw.workflow)

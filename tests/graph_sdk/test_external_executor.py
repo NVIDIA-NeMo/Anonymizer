@@ -51,7 +51,7 @@ from anonymizer.graph.workflow import (
     WorkflowOutputRef,
 )
 from tests.graph_sdk.implementation_fixtures import _execution_implementation
-from tests.graph_sdk.test_adaptive_executor import _adaptive_rows
+from tests.graph_sdk.test_assessment_executor import _external_rows
 from tests.graph_sdk.test_local_executor import _Clock
 from tests.graph_sdk.test_preparation import _capability, _data, _limits, _prepare, _workflow
 from tests.graph_sdk.workflow_construction import DynamicScope, admit_activation_workflow, admit_static_workflow
@@ -194,7 +194,7 @@ async def _assert_remote_capacity() -> None:
         safe_detachment="independent_after_dispatch",
         implementations=(implementation,),
         result_outcomes=frozenset({"ok"}),
-        runtime_outcomes=_adaptive_rows(),
+        runtime_outcomes=_external_rows(),
     )
     admitted = admit_execution_plan(
         context=context,
@@ -326,7 +326,7 @@ def _capacity_plan(
                 safe_detachment="independent_after_dispatch",
                 implementations=(implementation,),
                 result_outcomes=frozenset({"ok"}),
-                runtime_outcomes=_adaptive_rows(),
+                runtime_outcomes=_external_rows(),
             ),
         ),
         assessment_productions=(),

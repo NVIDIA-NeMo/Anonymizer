@@ -41,7 +41,7 @@ from anonymizer.graph._values import TaskAttemptId
 from tests.graph_sdk.child_qualification_fixtures import child_fixture
 from tests.graph_sdk.effects_admission_fixtures import _ZeroClock
 from tests.graph_sdk.qualification_fixtures import _inputs
-from tests.graph_sdk.test_adaptive_executor import _AssessingLocal
+from tests.graph_sdk.test_assessment_executor import _AssessingLocal
 
 MANIFEST = json.loads((Path(__file__).parent / "reference/delegated_execution/manifest.json").read_text())
 

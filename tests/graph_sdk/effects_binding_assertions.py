@@ -64,7 +64,7 @@ from tests.graph_sdk.effects_provider_fixtures import (
 )
 from tests.graph_sdk.effects_request_fixtures import _normalize, _policy
 from tests.graph_sdk.implementation_fixtures import _execution_implementation, _implementation_handle
-from tests.graph_sdk.test_adaptive_executor import _Clock
+from tests.graph_sdk.test_assessment_executor import _Clock
 from tests.graph_sdk.test_binding import _context_workflow
 from tests.graph_sdk.test_preparation import _capability, _data, _limits, _prepare
 from tests.graph_sdk.workflow_construction import DynamicScope, admit_activation_workflow, admit_static_workflow

@@ -118,7 +118,7 @@ class _RetryingTransport:
         return None
 
 
-def _adaptive_rows() -> tuple[RuntimeOutcome, ...]:
+def _external_rows() -> tuple[RuntimeOutcome, ...]:
     rows = [RuntimeOutcome(condition="result", reported_outcome="ok", failure=None, outcome="ok", category="success")]
     rows.extend(
         RuntimeOutcome(condition="failure", reported_outcome=None, failure=failure, outcome=None, category="failure")
@@ -148,7 +148,7 @@ def _adaptive_rows() -> tuple[RuntimeOutcome, ...]:
     return tuple(rows)
 
 
-def _adaptive_workflow(
+def _single_output_workflow(
     *,
     assessment: bool = False,
     distinct_subject: bool = False,
@@ -245,7 +245,7 @@ def test_external_execution_retries_with_new_charged_request() -> None:
 
 
 async def _external_running(transport):
-    workflow, node, artifact = _adaptive_workflow(requests=2)
+    workflow, node, artifact = _single_output_workflow(requests=2)
     data = _data(1)
     target = next(iter(data.targets))
     capability = replace(_capability(workflow, external=True), max_physical_requests_per_activation=2)
@@ -277,7 +277,7 @@ async def _external_running(transport):
         safe_detachment="forbidden",
         implementations=(implementation,),
         result_outcomes=frozenset({"ok"}),
-        runtime_outcomes=_adaptive_rows(),
+        runtime_outcomes=_external_rows(),
     )
     admitted = admit_execution_plan(
         context=context,
@@ -382,7 +382,7 @@ def test_local_assessment_retains_actual_callback_fact_and_environment(
 
 async def _assert_local_assessment(*, distinct_subject: bool, alias_evidence: bool) -> None:
     evidence_port = "assessment" if distinct_subject else "context"
-    workflow, node, artifact = _adaptive_workflow(
+    workflow, node, artifact = _single_output_workflow(
         assessment=True,
         distinct_subject=distinct_subject,
         alias_evidence=alias_evidence,

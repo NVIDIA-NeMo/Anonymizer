@@ -26,6 +26,8 @@ from anonymizer.engine.graph_sdk.observations import (
     begin_observations,
     reserve_observation_scope,
 )
+from tests.graph_sdk.reference.observations import reference
+from tests.graph_sdk.reference.observations.reference import PURPOSES as REFERENCE_PURPOSES
 from tests.graph_sdk.test_observations import Clock, Sink
 
 CORPUS = json.loads((Path(__file__).parent / "reference/observations/corpus.json").read_text())
@@ -143,31 +145,107 @@ def test_frozen_observation_answers(row) -> None:
     assert delivered == row["delivered_pairs"]
 
 
-# Adaptive retrieval is not a product request purpose. Rows that dispatch it are
-# excluded; the remaining rows project out only its purpose column.
-_ADAPTIVE_ACCOUNTING_IDS = frozenset({"purpose-adaptive_retrieval", "seven-purposes", "two-owners"})
+# Adaptive retrieval is not a product request purpose. Its column is projected out
+# of every accounting row. The only adaptive-only row is excluded. Rows that mix
+# adaptive dispatches with retained purposes keep their other dispatches; their
+# expected answers are recomputed by the frozen independent ``reference.account``
+# over the projected facts (never from product output), with the adaptive column
+# removed. The projected two-owners row leaves its second scope empty, so one
+# added non-adaptive two-owner row keeps summed two-scope accounting covered.
+_ADAPTIVE_ONLY_ACCOUNTING_IDS = frozenset({"purpose-adaptive_retrieval"})
+_RETAINED_PURPOSES = [purpose for purpose in REFERENCE_PURPOSES if purpose != "adaptive_retrieval"]
+_TWO_OWNER_RETAINED = {
+    "id": "two-owners-retained",
+    "facts": [
+        {
+            "dispatches": [{"identity": 0, "purpose": "initial_binding", "usage": [1, 2]}],
+            "possible_purposes": _RETAINED_PURPOSES,
+        },
+        {
+            "dispatches": [
+                {"identity": 1, "purpose": "initial", "usage": [3, 4]},
+                {"identity": 2, "purpose": "retry", "usage": [5, 6]},
+            ],
+            "possible_purposes": _RETAINED_PURPOSES,
+        },
+    ],
+}
+
+
+def _reference_expected(facts):
+    def estimate(value):
+        return {"knowledge": value.knowledge, "value": value.value}
+
+    accounting = reference.account(
+        tuple(
+            reference.Scope(
+                dispatches=None
+                if fact["dispatches"] is None
+                else tuple(
+                    reference.Dispatch(
+                        identity=item["identity"],
+                        purpose=item["purpose"],
+                        usage=None if item["usage"] is None else tuple(item["usage"]),
+                    )
+                    for item in fact["dispatches"]
+                ),
+                possible_purposes=tuple(fact["possible_purposes"]),
+            )
+            for fact in facts
+        )
+    )
+    column = REFERENCE_PURPOSES.index("adaptive_retrieval")
+    return {
+        "purposes": [estimate(value) for index, value in enumerate(accounting.purposes) if index != column],
+        "total": estimate(accounting.total),
+        "input_units": estimate(accounting.input_units),
+        "output_units": estimate(accounting.output_units),
+        "unknown_requests": estimate(accounting.unknown_requests),
+    }
 
 
 def _without_adaptive_purpose(row):
-    from tests.graph_sdk.reference.observations.reference import PURPOSES
-
-    column = PURPOSES.index("adaptive_retrieval")
+    column = REFERENCE_PURPOSES.index("adaptive_retrieval")
     facts = [
-        {**fact, "possible_purposes": [p for p in fact["possible_purposes"] if p != "adaptive_retrieval"]}
+        {
+            **fact,
+            "dispatches": None
+            if fact["dispatches"] is None
+            else [item for item in fact["dispatches"] if item["purpose"] != "adaptive_retrieval"],
+            "possible_purposes": [p for p in fact["possible_purposes"] if p != "adaptive_retrieval"],
+        }
         for fact in row["facts"]
     ]
-    assert not any(
-        dispatch["purpose"] == "adaptive_retrieval" for fact in facts for dispatch in fact["dispatches"] or ()
-    )
-    purposes = [value for index, value in enumerate(row["expected"]["purposes"]) if index != column]
-    return {**row, "facts": facts, "expected": {**row["expected"], "purposes": purposes}}
+    if facts == [
+        {**fact, "possible_purposes": [p for p in fact["possible_purposes"] if p != "adaptive_retrieval"]}
+        for fact in row["facts"]
+    ]:
+        purposes = [value for index, value in enumerate(row["expected"]["purposes"]) if index != column]
+        expected = {**row["expected"], "purposes": purposes}
+        assert expected == _reference_expected(facts)
+    else:
+        expected = _reference_expected(facts)
+    return {**row, "facts": facts, "expected": expected}
 
 
-@pytest.mark.parametrize(
-    "row",
-    [_without_adaptive_purpose(row) for row in CORPUS["accounting"] if row["id"] not in _ADAPTIVE_ACCOUNTING_IDS],
-    ids=lambda row: row["id"],
-)
+_ACCOUNTING_ROWS = [
+    _without_adaptive_purpose(row) for row in CORPUS["accounting"] if row["id"] not in _ADAPTIVE_ONLY_ACCOUNTING_IDS
+] + [{**_TWO_OWNER_RETAINED, "expected": _reference_expected(_TWO_OWNER_RETAINED["facts"])}]
+
+
+def test_projected_accounting_answers_match_reviewed_values() -> None:
+    expected = {row["id"]: row["expected"] for row in _ACCOUNTING_ROWS}
+    for row_id, total, units_in, units_out in (
+        ("seven-purposes", 6, 19, 25),
+        ("two-owners", 1, 1, 2),
+        ("two-owners-retained", 3, 9, 12),
+    ):
+        assert expected[row_id]["total"] == {"knowledge": "exact", "value": total}
+        assert expected[row_id]["input_units"] == {"knowledge": "exact", "value": units_in}
+        assert expected[row_id]["output_units"] == {"knowledge": "exact", "value": units_out}
+
+
+@pytest.mark.parametrize("row", _ACCOUNTING_ROWS, ids=lambda row: row["id"])
 def test_frozen_accounting_answers(row) -> None:
     from anonymizer.engine.graph_sdk.inspection import _PURPOSES, _account_receipts
     from anonymizer.engine.graph_sdk.requests import (

@@ -209,7 +209,7 @@ def test_actual_execution_hooks_and_pure_inspection(monkeypatch, scenario: str) 
 
     from anonymizer.engine.graph_sdk.executor import start_execution
     from anonymizer.engine.graph_sdk.inspection import bind_inspection_source, diagnose, explain, inspect
-    from tests.graph_sdk import test_adaptive_executor as remote
+    from tests.graph_sdk import test_assessment_executor as remote
     from tests.graph_sdk import test_local_executor as local
 
     observed = begin_observations(
@@ -691,6 +691,45 @@ def test_binding_invalid_limits_returns_original_rejection_and_complete_pair(mon
     receipt = observer.close()
     assert isinstance(receipt, ObservationReceipt)
     assert len(receipt.pairs) == 1 and receipt.pairs[0].terminal.reasons == frozenset({"invalid_input"})
+
+
+def test_binding_request_pairs_use_wrong_source_failure_terminal(monkeypatch) -> None:
+    import asyncio
+
+    from anonymizer.engine.graph_sdk.binding import start_initial_binding
+    from tests.graph_sdk import test_binding as fixture
+    from tests.graph_sdk.reference.corpora import load_cases
+
+    # The frozen effects answer for a response from another source is a failed
+    # malformed request; both request-scoped spans close with that category.
+    case = next(row for row in load_cases("effects") if row["case_id"] == "binding/wrong_source")
+    assert case["expected"]["state"]["terminals"] == {"R0": "failure"}
+    assert case["expected"]["state"]["association_terminals"]["D0"]["failure"] == "malformed_response"
+    observer = session(bounds=limits(max_count=1000, max_duration_ns=1000), pairs=1)
+
+    class Provider(fixture._Provider):
+        async def retrieve(self, **kwargs):
+            response = await super().retrieve(**kwargs)
+            return replace(response, source=replace(response.source, revision=response.source.revision + 1))
+
+    async def start(**kwargs):
+        return await start_initial_binding(**kwargs, observations=observer)
+
+    monkeypatch.setattr(fixture, "start_initial_binding", start)
+
+    async def run():
+        running, _, _, _ = await fixture._initial_running(Provider())
+        return (await running.wait()).receipt.requests
+
+    requests = asyncio.run(run())
+    receipt = observer.close()
+    assert isinstance(receipt, ObservationReceipt)
+    assert requests.terminals and all(terminal.category == "failure" for terminal in requests.terminals)
+    request_pairs = [
+        pair for pair in receipt.pairs if pair.start.boundary in {"physical_request", "request_reconciliation"}
+    ]
+    assert len(request_pairs) == 2 * len(requests.terminals)
+    assert all(pair.terminal.outcome == "failure" for pair in request_pairs)
 
 
 def test_cleanup_of_sdk_resource_with_active_worker_reports_unknown() -> None:
