@@ -14,24 +14,11 @@ from anonymizer.engine.detection.artifacts import ENTITY_SPANS_TYPE, EntitySpans
 from anonymizer.engine.detection.postprocess import EntitySpan
 from anonymizer.engine.graph_sdk._artifact_shape import ArtifactShape
 from anonymizer.engine.graph_sdk._ingress import inspect_artifact
-from anonymizer.engine.graph_sdk.continuity import (
-    ContinuityDecisionDecl,
-    ContinuityScope,
-    ContinuitySupportDecl,
-    StateDecisionKey,
-    StateGroupRef,
-    StateSubjectRef,
-    StateSupportRef,
-    TargetStateGroup,
-    admit_continuity,
-    begin_continuity,
-)
 from anonymizer.engine.graph_sdk.executor import ExecutionResult, IngressLimits, start_execution
 from anonymizer.engine.graph_sdk.requests import TextArtifactValue, TextCollectionItem, TextCollectionValue
 from anonymizer.graph import EffectCode, EffectRejected
 from anonymizer.graph._values import ArtifactRef, InvocationId, PlanId
 from anonymizer.graph.workflow import ArtifactType, NodeId
-from tests.graph_sdk.continuity_fixtures import limits as continuity_limits
 from tests.graph_sdk.qualification_fixtures import _inputs
 from tests.graph_sdk.typed_artifact_fixtures import ENTITIES, SOURCE, execute_spans, span_graph
 
@@ -149,42 +136,6 @@ def test_retained_span_mutation_cannot_reenter_qualification(mutate_shape: bool)
         object.__setattr__(value.entities[0], "end_position", 100)
     with pytest.raises(EffectRejected):
         _inputs(execution, result)
-
-
-def test_candidate_spans_are_rejected_as_continuity_decisions_at_admission() -> None:
-    execution, _, _, nodes = span_graph()
-    prepared = execution.context.prepared
-    target = next(iter(prepared.data.targets))
-    group = StateGroupRef(name="one")
-    limits = continuity_limits()
-    session = begin_continuity(
-        data=prepared.data,
-        scope=ContinuityScope(lifetime="per_call", state=None, groups=(TargetStateGroup(target=target, group=group),)),
-        limits=limits,
-    )
-    declaration = ContinuityDecisionDecl(
-        target=target,
-        node=nodes[0],
-        outcome="ok",
-        port="value",
-        key=StateDecisionKey(
-            group=group, subject=StateSubjectRef(kind="person", name="synthetic", version=1), slot="name"
-        ),
-        change="create",
-        prior=None,
-        supports=(
-            ContinuitySupportDecl(
-                reference=StateSupportRef(kind="assessment", name="one", version=1),
-                node=nodes[0],
-                outcome="ok",
-                promise="unused",
-                required_coverage=frozenset(),
-            ),
-        ),
-    )
-    with pytest.raises(EffectRejected) as error:
-        admit_continuity(prepared=prepared, session=session, declarations=(declaration,), limits=limits)
-    assert error.value.code is EffectCode.UNSUPPORTED
 
 
 def test_constructor_rejects_mutable_or_open_span_shapes() -> None:

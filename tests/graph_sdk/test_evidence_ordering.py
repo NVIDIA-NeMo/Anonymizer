@@ -41,7 +41,6 @@ def test_verified_order_uses_admitted_target_and_port_ordinals(
             additional_coverage=coverage,
             requirement_coverage=coverage,
             target_labels=("A", "B"),
-            environment=True,
             expose_evidence=False,
         )
     )

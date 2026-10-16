@@ -3,7 +3,7 @@
 
 # Graph SDK reference cases
 
-Active compact reference implementations generate answers independently of the product SDK. Their self-tests, mutation controls and product consumers are retained alongside the reviewed manifests and corpora. The foundation, compiler, evidence, publication, continuity and observation models have distinct bounded scopes; a reference self-test is not by itself a product acceptance test.
+Active compact reference implementations generate answers independently of the product SDK. Their self-tests, mutation controls and product consumers are retained alongside the reviewed manifests and corpora. The foundation, compiler, evidence, publication and observation models have distinct bounded scopes; a reference self-test is not by itself a product acceptance test.
 
 The historical data, workflow, activation, effects and qualification JSON corpora now live in `frozen/*.json.gz`. `corpora.py` verifies both compressed and original decoded digests before returning cached immutable bytes. Consumers receive separate decoded objects. The retired broad interpreters are not executed to regenerate these historical answers. `data_shapes.py` and `workflow_fixture_builders.py` retain the construction support needed by actual consumers.
 

@@ -128,4 +128,4 @@ def test_retained_map_corruption_matches_reference(case: dict[str, Any], monkeyp
     except EffectRejected as exc:
         actual = {"status": "rejected", "code": exc.code.value}
     assert calls == 1
-    assert actual == case["expected"]
+    assert actual == fixture._retained_expectation(case["expected"])

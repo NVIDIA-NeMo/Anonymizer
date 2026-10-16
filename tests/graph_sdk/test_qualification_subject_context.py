@@ -44,8 +44,6 @@ from anonymizer.engine.graph_sdk.executor import (
 from anonymizer.engine.graph_sdk.preparation import (
     BoundInput,
     PreparationConfiguration,
-    StateRevision,
-    StateRevisionView,
     prepare,
 )
 from anonymizer.engine.graph_sdk.qualification import qualify
@@ -75,7 +73,6 @@ from anonymizer.graph.workflow import (
     OutputPort,
     ProtectionRequirement,
     SequenceEdge,
-    StateEffect,
     WorkflowInputRef,
     WorkflowOutputRef,
 )
@@ -183,7 +180,6 @@ async def _execute_separate_subject_context(
     extra_evidence_dependency: bool = False,
     coverage: frozenset[CoverageAtom] | None = None,
     requirement_coverage: frozenset[CoverageAtom] | None = None,
-    environment: bool = False,
     finding: AssessmentFinding | None = None,
     execution_only: bool = False,
     expose_evidence: bool = True,
@@ -207,7 +203,6 @@ async def _execute_separate_subject_context(
     base, node, artifact = _workflow(with_input=True)
     raw = base
     coverage = coverage if coverage is not None else frozenset({CoverageAtom(kind="field", name="text")})
-    read = StateEffect(kind="read", name="read")
     assert versioned_context_ports in {("a",), ("b",), ("a", "b")}
     assert not initial_subject or versioned_context_dependencies is None
     assert not initial_collection or versioned_context_dependencies is not None
@@ -255,7 +250,6 @@ async def _execute_separate_subject_context(
             replace(
                 raw.interface.outcomes[0],
                 produced_ports=frozenset({"result", "evidence"}),
-                state_effects=frozenset({read}) if environment else frozenset(),
                 context=frozenset(
                     ContextUse(port=port, meaning="source", capture="whole_artifact") for port in initial_ports
                 )
@@ -326,7 +320,6 @@ async def _execute_separate_subject_context(
                 produced_ports=frozenset({"approved"}),
                 evidence=frozenset(),
                 context=frozenset({ContextUse(port="b", meaning="source", capture="whole_artifact")}),
-                state_effects=frozenset(),
             )
             for outcome in operation.outcomes
         ),
@@ -518,9 +511,6 @@ async def _execute_separate_subject_context(
             for name, source in (("subject", target), ("context", context_sources[target]))
             if name not in initial_ports and (versioned_context_dependencies is None or name == "subject")
         ),
-        state=StateRevisionView(
-            revisions=frozenset({StateRevision(effect=read, revision=1)}) if environment else frozenset()
-        ),
     )
     finding = finding if finding is not None else AssessmentFinding(status="satisfied", code="observed")
     assert not target_findings or len(target_findings) == target_count
@@ -576,7 +566,6 @@ async def _execute_separate_subject_context(
                 outcome="ok",
                 promise=promise,
                 evidence_port=port,
-                absence_queries=frozenset({0}) if environment else frozenset(),
                 supported_findings=supported_findings,
             )
             for promise, port in (
@@ -588,7 +577,6 @@ async def _execute_separate_subject_context(
             max_productions=1 + (additional_coverage is not None),
             max_findings_per_production=len(supported_findings),
             max_finding_code_bytes=16,
-            max_absence_queries=1 if environment else 0,
             max_assessment_facts=(1 + (additional_coverage is not None)) * target_count,
             max_port_facts=(3 + len(context_ports) + 2 * int(context_hop) + (additional_coverage is not None))
             * target_count,
@@ -653,7 +641,6 @@ async def _execute_separate_subject_context(
                 max_pending=target_count if decision_context else 0, max_lifetime_ns=10 if decision_context else 0
             ),
             clock=_ZeroClock(),
-            absence_revisions=((0, 1),) if environment and not execution_only else (),
         ),
     )
     if decision_context:
@@ -691,9 +678,7 @@ def test_assessment_subject_and_consumed_context_remain_distinct(missing: str | 
         admitted=admitted,
         result=result,
         artifacts=tuple(ref for ref, _ in result.artifacts if missing is None or ref != ports[missing]),
-        absences=(),
         configurations=((result.assessments[0].node, result.assessments[0].environment.configuration),),
-        state=execution.context.prepared.state,
     )
     output = qualify(
         admitted=admitted,
@@ -723,9 +708,7 @@ def test_execution_only_has_no_assessment_production_or_callback_result() -> Non
         admitted=admitted,
         result=result,
         artifacts=(),
-        absences=(),
         configurations=(),
-        state=StateRevisionView(revisions=frozenset()),
     )
     output = qualify(admitted=admitted, result=result, current=current, submissions=())
     assert output.qualified == output.verified == ()

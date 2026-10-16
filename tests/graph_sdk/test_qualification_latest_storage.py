@@ -46,9 +46,7 @@ def test_latest_candidate_sibling_is_unavailable_and_cannot_replace_final_output
         admitted=admitted,
         result=result,
         artifacts=(older,),
-        absences=(),
         configurations=((result.assessments[0].node, result.assessments[0].environment.configuration),),
-        state=execution.context.prepared.state,
     )
     assert not current.candidates
     submissions = (AssessmentSubmission(fact=result.assessments[0]),)

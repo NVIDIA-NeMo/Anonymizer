@@ -32,7 +32,7 @@ from anonymizer.engine.graph_sdk.executor import (
     admit_execution_plan,
     start_execution,
 )
-from anonymizer.engine.graph_sdk.preparation import BoundInput, PreparationConfiguration, StateRevisionView, prepare
+from anonymizer.engine.graph_sdk.preparation import BoundInput, PreparationConfiguration, prepare
 from anonymizer.engine.graph_sdk.requests import AssociationInput, AssociationResult, PortArtifact, TextArtifactValue
 from anonymizer.graph.activation import ActivationLimits
 from anonymizer.graph.workflow import (
@@ -329,7 +329,6 @@ async def _execute_case(
         configuration=PreparationConfiguration(
             purpose="execution_only", required_protection_outcomes=frozenset(), hard_request_limit=None
         ),
-        state=StateRevisionView(revisions=frozenset()),
         selections=tuple(_selection(node, cap) for node, cap in zip(nodes.values(), capabilities, strict=True)),
         capabilities=capabilities,
         limits=_limits(capabilities=2, slots=2),
@@ -357,7 +356,6 @@ async def _execute_case(
             max_productions=0,
             max_findings_per_production=0,
             max_finding_code_bytes=0,
-            max_absence_queries=0,
             max_assessment_facts=0,
             max_port_facts=16,
             max_provenance_edges=raw["materialization_limits"]["max_provenance_edges"],

@@ -480,9 +480,7 @@ def test_actual_member_evidence_authenticates_its_item_subject(count: int, mode:
             for ref in current_artifacts
             if mode != "missing_item_revision" or not verified or ref != verified[0].subject.artifact
         ),
-        absences=(),
         configurations=tuple({(fact.node, fact.environment.configuration) for fact in result.assessments}),
-        state=execution.context.prepared.state,
     )
     for index, item in enumerate(verified):
         expected = (
@@ -551,9 +549,7 @@ def test_map_item_can_be_consumed_while_subject_is_the_final_scalar_candidate(co
         admitted=admitted,
         result=result,
         artifacts=tuple(ref for ref, _ in result.artifacts),
-        absences=(),
         configurations=tuple({(fact.node, fact.environment.configuration) for fact in result.assessments}),
-        state=execution.context.prepared.state,
     )
     output = qualify(
         admitted=admitted,
@@ -853,7 +849,6 @@ def _two_map_fixture():
             outcome=outcome,
             promise=promise,
             evidence_port=port,
-            absence_queries=frozenset(),
             supported_findings=frozenset({AssessmentFinding(status="satisfied", code=promise)}),
         )
         for node, outcome, promise, port in (
@@ -899,9 +894,7 @@ def test_two_maps_require_their_own_member_evidence(omit_right: bool) -> None:
         admitted=admitted,
         result=result,
         artifacts=tuple(ref for ref, _ in result.artifacts),
-        absences=(),
         configurations=tuple({(fact.node, fact.environment.configuration) for fact in result.assessments}),
-        state=execution.context.prepared.state,
     )
     output = qualify(
         admitted=admitted,

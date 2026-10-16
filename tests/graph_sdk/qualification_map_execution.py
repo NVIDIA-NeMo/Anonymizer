@@ -25,8 +25,6 @@ from anonymizer.engine.graph_sdk.executor import (
 from anonymizer.engine.graph_sdk.preparation import (
     BoundInput,
     PreparationConfiguration,
-    StateRevision,
-    StateRevisionView,
     prepare,
 )
 from anonymizer.graph.activation import ActivationLimits
@@ -52,7 +50,6 @@ from anonymizer.graph.workflow import (
     OutputPort,
     ProtectionRequirement,
     SequenceEdge,
-    StateEffect,
     SubgraphNode,
     WorkflowId,
     WorkflowInputRef,
@@ -99,7 +96,6 @@ async def _execute_reference_map(
     collection_type = ArtifactType(name="members", revision=1)
     coverage = frozenset(CoverageAtom(kind="field", name=name) for name in ("K0", "K1"))
     required = frozenset({CoverageAtom(kind="field", name="K0")})
-    read = StateEffect(kind="read", name="read")
     root_promise = EvidencePromise(
         name="P", meaning="privacy", subject_port="subject", consumed_ports=frozenset({"context"}), coverage=coverage
     )
@@ -141,7 +137,6 @@ async def _execute_reference_map(
                 replace(
                     _outcome("ok", produced=frozenset({"result", "evidence"}), max_output_bytes=32),
                     evidence=frozenset({root_promise}),
-                    state_effects=frozenset({read}),
                 ),
             ),
         ),
@@ -265,7 +260,6 @@ async def _execute_reference_map(
                         ),
                     }
                 ),
-                state_effects=frozenset({read}),
             ),
         ),
     )
@@ -572,7 +566,6 @@ async def _execute_reference_map(
         configuration=PreparationConfiguration(
             purpose="protection", required_protection_outcomes=frozenset({"ok"}), hard_request_limit=None
         ),
-        state=StateRevisionView(revisions=frozenset({StateRevision(effect=read, revision=1)})),
         selections=_selections(by_node),
         capabilities=capabilities,
         limits=_limits(capabilities=len(operations), slots=9 if two_maps else 6 if nested or blocked_member else 5),
@@ -590,7 +583,6 @@ async def _execute_reference_map(
                 outcome="ok",
                 promise=promise,
                 evidence_port="evidence",
-                absence_queries=frozenset({0}) if name == "N" else frozenset(),
                 supported_findings=frozenset({AssessmentFinding(status="satisfied", code="observed")}),
             )
             for name, promise in (("N", "P"), ("MN", member_promise), *((("MN2", "P_ITEM_2"),) if two_maps else ()))
@@ -599,7 +591,6 @@ async def _execute_reference_map(
             max_productions=3 if two_maps else 2,
             max_findings_per_production=1,
             max_finding_code_bytes=16,
-            max_absence_queries=1,
             max_assessment_facts=5 if two_maps else 3,
             max_port_facts=24 if two_maps else 16,
             max_provenance_edges=24 if two_maps else 16,
@@ -652,7 +643,6 @@ async def _execute_reference_map(
             ),
             decision_limits=DecisionLimits(max_pending=0, max_lifetime_ns=0),
             clock=_Clock(),
-            absence_revisions=((0, 1),),
         ),
     )
     result = await running.wait()

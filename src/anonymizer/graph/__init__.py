@@ -53,38 +53,6 @@ if TYPE_CHECKING:
     from anonymizer.engine.graph_sdk.context import SourceResponse as SourceResponse
     from anonymizer.engine.graph_sdk.context import SourceResult as SourceResult
     from anonymizer.engine.graph_sdk.context import admit_context_plan as admit_context_plan
-    from anonymizer.engine.graph_sdk.continuity import AdmittedContinuity as AdmittedContinuity
-    from anonymizer.engine.graph_sdk.continuity import ContinuityCommit as ContinuityCommit
-    from anonymizer.engine.graph_sdk.continuity import ContinuityDecisionDecl as ContinuityDecisionDecl
-    from anonymizer.engine.graph_sdk.continuity import ContinuityHandoff as ContinuityHandoff
-    from anonymizer.engine.graph_sdk.continuity import ContinuityLimits as ContinuityLimits
-    from anonymizer.engine.graph_sdk.continuity import ContinuityScope as ContinuityScope
-    from anonymizer.engine.graph_sdk.continuity import ContinuitySession as ContinuitySession
-    from anonymizer.engine.graph_sdk.continuity import ContinuitySnapshot as ContinuitySnapshot
-    from anonymizer.engine.graph_sdk.continuity import ContinuityState as ContinuityState
-    from anonymizer.engine.graph_sdk.continuity import ContinuitySupportDecl as ContinuitySupportDecl
-    from anonymizer.engine.graph_sdk.continuity import ContinuityView as ContinuityView
-    from anonymizer.engine.graph_sdk.continuity import StateDecisionKey as StateDecisionKey
-    from anonymizer.engine.graph_sdk.continuity import StateDecisionRef as StateDecisionRef
-    from anonymizer.engine.graph_sdk.continuity import StateGroupRef as StateGroupRef
-    from anonymizer.engine.graph_sdk.continuity import StateIdentity as StateIdentity
-    from anonymizer.engine.graph_sdk.continuity import StateNamespace as StateNamespace
-    from anonymizer.engine.graph_sdk.continuity import StateSubjectRef as StateSubjectRef
-    from anonymizer.engine.graph_sdk.continuity import StateSupportRef as StateSupportRef
-    from anonymizer.engine.graph_sdk.continuity import TargetStateGroup as TargetStateGroup
-    from anonymizer.engine.graph_sdk.continuity import accept_handoff as accept_handoff
-    from anonymizer.engine.graph_sdk.continuity import admit_continuity as admit_continuity
-    from anonymizer.engine.graph_sdk.continuity import begin_continuity as begin_continuity
-    from anonymizer.engine.graph_sdk.continuity import capture_snapshot as capture_snapshot
-    from anonymizer.engine.graph_sdk.continuity import commit_qualified as commit_qualified
-    from anonymizer.engine.graph_sdk.continuity import create_continuity_state as create_continuity_state
-    from anonymizer.engine.graph_sdk.continuity import create_handoff as create_handoff
-    from anonymizer.engine.graph_sdk.continuity import encode_snapshot as encode_snapshot
-    from anonymizer.engine.graph_sdk.continuity import fork_continuity as fork_continuity
-    from anonymizer.engine.graph_sdk.continuity import fresh_continuity as fresh_continuity
-    from anonymizer.engine.graph_sdk.continuity import load_snapshot as load_snapshot
-    from anonymizer.engine.graph_sdk.continuity import restore_snapshot as restore_snapshot
-    from anonymizer.engine.graph_sdk.continuity import write_snapshot as write_snapshot
     from anonymizer.engine.graph_sdk.data import AtomicGroup as AtomicGroup
     from anonymizer.engine.graph_sdk.data import CoherenceScope as CoherenceScope
     from anonymizer.engine.graph_sdk.data import ContextView as ContextView
@@ -179,7 +147,6 @@ if TYPE_CHECKING:
     from anonymizer.engine.graph_sdk.observations import (
         execution_observation_requirements as execution_observation_requirements,
     )
-    from anonymizer.engine.graph_sdk.observations import observed_commit_qualified as observed_commit_qualified
     from anonymizer.engine.graph_sdk.observations import observed_context_admission as observed_context_admission
     from anonymizer.engine.graph_sdk.observations import observed_execution_admission as observed_execution_admission
     from anonymizer.engine.graph_sdk.observations import observed_prepare as observed_prepare
@@ -197,15 +164,12 @@ if TYPE_CHECKING:
     from anonymizer.engine.graph_sdk.preparation import PreparationConfiguration as PreparationConfiguration
     from anonymizer.engine.graph_sdk.preparation import PreparationLimits as PreparationLimits
     from anonymizer.engine.graph_sdk.preparation import PreparedPlan as PreparedPlan
-    from anonymizer.engine.graph_sdk.preparation import StateRevision as StateRevision
-    from anonymizer.engine.graph_sdk.preparation import StateRevisionView as StateRevisionView
     from anonymizer.engine.graph_sdk.preparation import prepare as prepare
     from anonymizer.engine.graph_sdk.preparation import recheck_capabilities as recheck_capabilities
     from anonymizer.engine.graph_sdk.qualification import QualificationResult as QualificationResult
     from anonymizer.engine.graph_sdk.qualification import QualifiedOutput as QualifiedOutput
     from anonymizer.engine.graph_sdk.qualification import TargetQualification as TargetQualification
     from anonymizer.engine.graph_sdk.qualification import qualify_retained as _qualify
-    from anonymizer.engine.graph_sdk.records import AbsenceRef as AbsenceRef
     from anonymizer.engine.graph_sdk.records import CandidateRef as CandidateRef
     from anonymizer.engine.graph_sdk.records import CanonicalRecord as CanonicalRecord
     from anonymizer.engine.graph_sdk.records import DecisionRef as DecisionRef
@@ -282,7 +246,6 @@ if TYPE_CHECKING:
     from anonymizer.graph.workflow import ProtectionRequirement as ProtectionRequirement
     from anonymizer.graph.workflow import ResourceCeiling as ResourceCeiling
     from anonymizer.graph.workflow import SequenceEdge as SequenceEdge
-    from anonymizer.graph.workflow import StateEffect as StateEffect
     from anonymizer.graph.workflow import SubgraphNode as SubgraphNode
     from anonymizer.graph.workflow import WorkflowId as WorkflowId
     from anonymizer.graph.workflow import WorkflowInputRef as WorkflowInputRef
@@ -297,7 +260,6 @@ if TYPE_CHECKING:
 _EXPORTS: dict[str, str] = {
     "diagnose_observations": "anonymizer.engine.graph_sdk.inspection",
     "BindingRejected": "anonymizer.engine.graph_sdk.binding",
-    "AbsenceRef": "anonymizer.engine.graph_sdk.records",
     "MapItemKey": "anonymizer.engine.graph_sdk.executor",
     "MapExpansionDecl": "anonymizer.engine.graph_sdk.executor",
     "BlockingAffinity": "anonymizer.engine.graph_sdk.blocking",
@@ -308,7 +270,6 @@ _EXPORTS: dict[str, str] = {
     "AdaptiveRetrievalDecl": "anonymizer.engine.graph_sdk.context",
     "Graph": "anonymizer.graph.workflow",
     "AdmittedContextPlan": "anonymizer.engine.graph_sdk.context",
-    "AdmittedContinuity": "anonymizer.engine.graph_sdk.continuity",
     "AdmittedExecutionPlan": "anonymizer.engine.graph_sdk.executor",
     "AdmittedQualification": "anonymizer.engine.graph_sdk.evidence",
     "ArtifactRef": "anonymizer.graph._values",
@@ -355,16 +316,6 @@ _EXPORTS: dict[str, str] = {
     "ContextSourceRef": "anonymizer.engine.graph_sdk.context",
     "ContextUse": "anonymizer.graph.workflow",
     "ContextView": "anonymizer.engine.graph_sdk.data",
-    "ContinuityCommit": "anonymizer.engine.graph_sdk.continuity",
-    "ContinuityDecisionDecl": "anonymizer.engine.graph_sdk.continuity",
-    "ContinuityHandoff": "anonymizer.engine.graph_sdk.continuity",
-    "ContinuityLimits": "anonymizer.engine.graph_sdk.continuity",
-    "ContinuityScope": "anonymizer.engine.graph_sdk.continuity",
-    "ContinuitySession": "anonymizer.engine.graph_sdk.continuity",
-    "ContinuitySnapshot": "anonymizer.engine.graph_sdk.continuity",
-    "ContinuityState": "anonymizer.engine.graph_sdk.continuity",
-    "ContinuitySupportDecl": "anonymizer.engine.graph_sdk.continuity",
-    "ContinuityView": "anonymizer.engine.graph_sdk.continuity",
     "ContractViolation": "anonymizer.graph._values",
     "CorrelationRef": "anonymizer.engine.graph_sdk.observations",
     "CoverageAtom": "anonymizer.graph.workflow",
@@ -487,22 +438,11 @@ _EXPORTS: dict[str, str] = {
     "SourceResponse": "anonymizer.engine.graph_sdk.context",
     "SourceResult": "anonymizer.engine.graph_sdk.context",
     "SourceView": "anonymizer.engine.graph_sdk.data",
-    "StateDecisionKey": "anonymizer.engine.graph_sdk.continuity",
-    "StateDecisionRef": "anonymizer.engine.graph_sdk.continuity",
-    "StateEffect": "anonymizer.graph.workflow",
-    "StateGroupRef": "anonymizer.engine.graph_sdk.continuity",
-    "StateIdentity": "anonymizer.engine.graph_sdk.continuity",
-    "StateNamespace": "anonymizer.engine.graph_sdk.continuity",
-    "StateRevision": "anonymizer.engine.graph_sdk.preparation",
-    "StateRevisionView": "anonymizer.engine.graph_sdk.preparation",
-    "StateSubjectRef": "anonymizer.engine.graph_sdk.continuity",
-    "StateSupportRef": "anonymizer.engine.graph_sdk.continuity",
     "StopConfirmed": "anonymizer.engine.graph_sdk.requests",
     "StopResult": "anonymizer.engine.graph_sdk.requests",
     "StopUnknown": "anonymizer.engine.graph_sdk.requests",
     "SubgraphNode": "anonymizer.graph.workflow",
     "TargetQualification": "anonymizer.engine.graph_sdk.qualification",
-    "TargetStateGroup": "anonymizer.engine.graph_sdk.continuity",
     "TargetStatus": "anonymizer.engine.graph_sdk.records",
     "TaskAttemptId": "anonymizer.graph._values",
     "TextArtifactValue": "anonymizer.engine.graph_sdk.requests",
@@ -522,37 +462,25 @@ _EXPORTS: dict[str, str] = {
     "WorkflowLimits": "anonymizer.graph.workflow",
     "WorkflowOutcomeRef": "anonymizer.graph.workflow",
     "WorkflowOutputRef": "anonymizer.graph.workflow",
-    "accept_handoff": "anonymizer.engine.graph_sdk.continuity",
     "admit_context_plan": "anonymizer.engine.graph_sdk.context",
-    "admit_continuity": "anonymizer.engine.graph_sdk.continuity",
     "admit_execution_plan": "anonymizer.engine.graph_sdk.executor",
     "admit_qualification": "anonymizer.engine.graph_sdk.evidence",
     "compile_graph": "anonymizer.graph.workflow",
-    "begin_continuity": "anonymizer.engine.graph_sdk.continuity",
     "begin_observations": "anonymizer.engine.graph_sdk.observations",
     "bind_binding_inspection_source": "anonymizer.engine.graph_sdk.inspection",
     "bind_inspection_source": "anonymizer.engine.graph_sdk.inspection",
     "bind_projection_source": "anonymizer.engine.graph_sdk.extensions",
     "binding_observation_requirements": "anonymizer.engine.graph_sdk.observations",
-    "capture_snapshot": "anonymizer.engine.graph_sdk.continuity",
-    "commit_qualified": "anonymizer.engine.graph_sdk.continuity",
-    "create_continuity_state": "anonymizer.engine.graph_sdk.continuity",
-    "create_handoff": "anonymizer.engine.graph_sdk.continuity",
     "diagnose": "anonymizer.engine.graph_sdk.inspection",
     "diagnose_binding": "anonymizer.engine.graph_sdk.inspection",
     "encode_inspection": "anonymizer.engine.graph_sdk.inspection",
-    "encode_snapshot": "anonymizer.engine.graph_sdk.continuity",
     "evidence_revision_view": "anonymizer.engine.graph_sdk.evidence",
     "evidence_validity": "anonymizer.engine.graph_sdk.evidence",
     "execute_sync": "anonymizer.engine.graph_sdk.executor",
     "execution_observation_requirements": "anonymizer.engine.graph_sdk.observations",
     "explain": "anonymizer.engine.graph_sdk.inspection",
-    "fork_continuity": "anonymizer.engine.graph_sdk.continuity",
-    "fresh_continuity": "anonymizer.engine.graph_sdk.continuity",
     "inspect": "anonymizer.engine.graph_sdk.inspection",
     "inspect_binding": "anonymizer.engine.graph_sdk.inspection",
-    "load_snapshot": "anonymizer.engine.graph_sdk.continuity",
-    "observed_commit_qualified": "anonymizer.engine.graph_sdk.observations",
     "observed_context_admission": "anonymizer.engine.graph_sdk.observations",
     "observed_execution_admission": "anonymizer.engine.graph_sdk.observations",
     "observed_prepare": "anonymizer.engine.graph_sdk.observations",
@@ -565,10 +493,8 @@ _EXPORTS: dict[str, str] = {
     "project_protected": "anonymizer.engine.graph_sdk.extensions",
     "recheck_capabilities": "anonymizer.engine.graph_sdk.preparation",
     "reserve_observation_scope": "anonymizer.engine.graph_sdk.observations",
-    "restore_snapshot": "anonymizer.engine.graph_sdk.continuity",
     "start_execution": "anonymizer.engine.graph_sdk.executor",
     "start_initial_binding": "anonymizer.engine.graph_sdk.binding",
-    "write_snapshot": "anonymizer.engine.graph_sdk.continuity",
 }
 
 

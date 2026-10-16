@@ -10,7 +10,7 @@ from dataclasses import replace
 from anonymizer.engine.graph_sdk import executor as ex
 from anonymizer.engine.graph_sdk.capabilities import ImplementationRef
 from anonymizer.engine.graph_sdk.context import admit_context_plan
-from anonymizer.engine.graph_sdk.preparation import BoundInput, PreparationConfiguration, StateRevisionView, prepare
+from anonymizer.engine.graph_sdk.preparation import BoundInput, PreparationConfiguration, prepare
 from anonymizer.engine.graph_sdk.requests import PhysicalRequestPolicy
 from anonymizer.engine.graph_sdk.resources import ResourceLease
 from anonymizer.graph.activation import ActivationLimits
@@ -101,7 +101,6 @@ async def _execute() -> None:
         configuration=PreparationConfiguration(
             purpose="execution_only", required_protection_outcomes=frozenset(), hard_request_limit=1
         ),
-        state=StateRevisionView(revisions=frozenset()),
         selections=tuple(_selection(node, capability) for node, capability in zip(nodes, capabilities, strict=True)),
         capabilities=capabilities,
         limits=_limits(capabilities=3),
@@ -155,7 +154,6 @@ async def _execute() -> None:
             max_productions=0,
             max_findings_per_production=0,
             max_finding_code_bytes=0,
-            max_absence_queries=0,
             max_assessment_facts=0,
             max_port_facts=2,
             max_provenance_edges=0,

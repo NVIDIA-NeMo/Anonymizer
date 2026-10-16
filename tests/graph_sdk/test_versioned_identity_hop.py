@@ -61,9 +61,7 @@ def test_versioned_context_crosses_an_ordinary_identity_hop(corruption: str) -> 
                 admitted=admitted,
                 result=result,
                 artifacts=tuple(older.artifact if ref == latest.artifact else ref for ref in current.artifacts),
-                absences=tuple(current.absences),
                 configurations=current.configurations,
-                state=current.state,
             )
             output = qualify(admitted=admitted, result=result, current=view, submissions=submissions)
             assert not output.qualified

@@ -14,10 +14,7 @@ from anonymizer.graph._workflow_analysis import _equal, _visited_pop, _visits
 OutcomeClass: TypeAlias = Literal["success", "failure", "cancelled", "lost", "blocked", "inconsistent"]
 
 
-StateEffectKind: TypeAlias = Literal["read", "write"]
-
-
-CoverageKind: TypeAlias = Literal["field", "source_view", "evaluation", "absence"]
+CoverageKind: TypeAlias = Literal["field", "source_view", "evaluation"]
 
 
 CaptureMode: TypeAlias = Literal["whole_artifact"]
@@ -29,10 +26,7 @@ DynamicReduction: TypeAlias = Literal["all_by_key"]
 _OUTCOME_CLASSES = frozenset(("success", "failure", "cancelled", "lost", "blocked", "inconsistent"))
 
 
-_STATE_EFFECT_KINDS = frozenset(("read", "write"))
-
-
-_COVERAGE_KINDS = frozenset(("field", "source_view", "evaluation", "absence"))
+_COVERAGE_KINDS = frozenset(("field", "source_view", "evaluation"))
 
 
 _CAPTURE_MODES = frozenset(("whole_artifact",))
@@ -317,17 +311,6 @@ class EvidencePromise(_PrivateValue):
 
 
 @dataclass(frozen=True, slots=True, kw_only=True, repr=False)
-class StateEffect(_PrivateValue):
-    kind: StateEffectKind
-    name: str
-
-    def __post_init__(self) -> None:
-        _validate_scalars(strings=(self.kind, self.name))
-        if self.kind not in _STATE_EFFECT_KINDS:
-            _reject(ValidationCode.INVALID_VALUE)
-
-
-@dataclass(frozen=True, slots=True, kw_only=True, repr=False)
 class ModelRequirement(_PrivateValue):
     capability: str
     revision: int
@@ -365,7 +348,6 @@ class OutcomeSpec(_PrivateValue):
     produced_ports: frozenset[str]
     context: frozenset[ContextUse]
     evidence: frozenset[EvidencePromise]
-    state_effects: frozenset[StateEffect]
     model_requirements: frozenset[ModelRequirement]
     ceiling: ResourceCeiling
 
@@ -373,7 +355,6 @@ class OutcomeSpec(_PrivateValue):
         _frozenset_of(self.produced_ports, str)
         _frozenset_of(self.context, ContextUse)
         _frozenset_of(self.evidence, EvidencePromise)
-        _frozenset_of(self.state_effects, StateEffect)
         _frozenset_of(self.model_requirements, ModelRequirement)
         if not isinstance(self.ceiling, ResourceCeiling):
             _reject(ValidationCode.INVALID_TYPE)

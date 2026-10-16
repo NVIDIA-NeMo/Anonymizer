@@ -29,9 +29,8 @@ from tests.graph_sdk.qualification_fixtures import (
 from tests.graph_sdk.qualification_fixtures import _inputs as _inputs
 
 
-@pytest.mark.parametrize("environment", [False, True])
-def test_successful_qualification_preserves_execution_record(environment: bool) -> None:
-    execution, result = asyncio.run(_execute_assessment(environment=environment))
+def test_successful_qualification_preserves_execution_record() -> None:
+    execution, result = asyncio.run(_execute_assessment())
     admitted, current, submissions = _inputs(execution, result)
     qualified = qualify(admitted=admitted, result=result, current=current, submissions=submissions)
     assert len(qualified.qualified) == 1
@@ -199,7 +198,6 @@ def test_caller_owned_resource_stays_open_without_withholding_release() -> None:
 
 
 def test_zero_capacity_member_configuration_remains_a_valid_current_key() -> None:
-    from anonymizer.engine.graph_sdk.preparation import StateRevisionView
     from tests.graph_sdk.test_effects_map_production_conformance import _execute_membership
 
     _, result, _ = asyncio.run(_execute_membership(0, max_children=0, outward_scalar="join"))
@@ -210,9 +208,7 @@ def test_zero_capacity_member_configuration_remains_a_valid_current_key() -> Non
         admitted=admitted,
         result=result,
         artifacts=(),
-        absences=(),
         configurations=tuple((item.node, item.capability.configuration) for item in prepared.implementations),
-        state=StateRevisionView(revisions=frozenset()),
     )
     assert len(current.configurations) == len(prepared.implementations)
     output = qualify(admitted=admitted, result=result, current=current, submissions=())
@@ -382,9 +378,7 @@ def test_failed_expansion_reconciles_actual_members(count: int, mode: str, statu
         admitted=admitted,
         result=result,
         artifacts=(),
-        absences=(),
         configurations=(),
-        state=execution.context.prepared.state,
     )
     expansion = next(iter(result.states[0].expansions))
     assert expansion.status == status and not expansion.members
@@ -642,9 +636,7 @@ def test_latest_initial_scalar_has_real_versioned_evidence(versions: tuple[int, 
             admitted=admitted,
             result=result,
             artifacts=refs,
-            absences=(),
             configurations=((result.assessments[0].node, result.assessments[0].environment.configuration),),
-            state=execution.context.prepared.state,
         )
         expected = "unknown" if choice is None else "current" if choice == max(versions) else "stale"
         assert evidence_validity(evidence=verified, current=current) == expected
@@ -688,9 +680,7 @@ def test_qualification_rejects_corrupted_materialized_lineage(mutation: str) -> 
                 admitted=admitted,
                 result=result,
                 artifacts=(),
-                absences=(),
                 configurations=(),
-                state=execution.context.prepared.state,
             )
             qualify(admitted=admitted, result=result, current=current, submissions=())
         assert error.value.code is (EffectCode.DUPLICATE if mutation == "cross-lineage" else EffectCode.CONTRADICTORY)
@@ -731,9 +721,7 @@ def test_latest_selection_cannot_be_rewritten_to_an_older_retained_version() -> 
             admitted=admitted,
             result=result,
             artifacts=tuple(ref for ref, _ in result.artifacts if ref.key != older.artifact.key or ref.version == 2),
-            absences=(),
             configurations=((result.assessments[0].node, result.assessments[0].environment.configuration),),
-            state=execution.context.prepared.state,
         )
         with pytest.raises(EffectRejected) as error:
             qualify(

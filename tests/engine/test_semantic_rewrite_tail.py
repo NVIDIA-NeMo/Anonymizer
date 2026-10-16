@@ -29,7 +29,6 @@ from anonymizer.engine.graph_sdk.evidence import (
     verify_evidence,
 )
 from anonymizer.engine.graph_sdk.executor import ExecutionLimits, LocalCompleted
-from anonymizer.engine.graph_sdk.preparation import StateRevisionView
 from anonymizer.engine.graph_sdk.requests import AssociationResult
 from anonymizer.engine.ndd.adapter import NddAdapter
 from anonymizer.engine.rewrite._semantic_profile import execute_initial_evaluation
@@ -262,9 +261,7 @@ def _assert_final_evidence(result):
                 admitted=admitted,
                 result=result,
                 artifacts=tuple(reference for reference, _ in result.artifacts),
-                absences=(),
                 configurations=((fact.node, configuration),),
-                state=StateRevisionView(revisions=frozenset()),
             )
 
         assert evidence_validity(evidence=item, current=view(fact.environment.configuration)) == "current"
@@ -295,9 +292,7 @@ def _assert_final_evidence(result):
         admitted=admitted,
         result=clone(result),
         artifacts=tuple(reference for reference, _ in result.artifacts),
-        absences=(),
         configurations=tuple(dict((fact.node, fact.environment.configuration) for fact in result.assessments).items()),
-        state=StateRevisionView(revisions=frozenset()),
     )
     with pytest.raises(EffectRejected):
         evidence_validity(evidence=verified[0], current=foreign)

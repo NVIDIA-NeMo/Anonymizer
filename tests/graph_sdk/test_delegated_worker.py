@@ -136,7 +136,6 @@ def _worker_services(execution, services, loop, pool, callback):
         activation_limits=previous.activation_limits,
         bound_inputs=tuple(previous.bound_inputs),
         configuration=previous.configuration,
-        state=previous.state,
         selections=tuple(_selection(item.node, item.capability) for item in previous.implementations),
         capabilities=capabilities,
         limits=previous.limits,

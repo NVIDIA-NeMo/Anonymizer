@@ -134,7 +134,6 @@ def extend_detection_graph(
                 produced_ports=frozenset(),
                 context=frozenset(),
                 evidence=frozenset(),
-                state_effects=frozenset(),
                 model_requirements=frozenset(),
                 ceiling=ResourceCeiling(
                     max_activations=1, max_model_requests=None, max_input_bytes=None, max_output_bytes=None
@@ -186,7 +185,6 @@ def extend_detection_graph(
                     produced_ports=frozenset(outputs),
                     context=frozenset(),
                     evidence=frozenset(),
-                    state_effects=frozenset(),
                     model_requirements=frozenset(),
                     ceiling=ResourceCeiling(
                         max_activations=1,
@@ -800,7 +798,6 @@ async def execute_detection(
                 produced_ports=frozenset({"returned_source"}),
                 context=frozenset(),
                 evidence=frozenset(),
-                state_effects=frozenset(),
                 model_requirements=frozenset(),
                 ceiling=ResourceCeiling(
                     max_activations=1, max_model_requests=None, max_input_bytes=None, max_output_bytes=None
@@ -1033,7 +1030,6 @@ async def execute_detection(
             max_productions=0,
             max_findings_per_production=0,
             max_finding_code_bytes=0,
-            max_absence_queries=0,
             max_assessment_facts=0,
             max_port_facts=24 * size,
             max_provenance_edges=40 * size,
@@ -1068,7 +1064,6 @@ def run_empty_detection(
                 produced_ports=frozenset(),
                 context=frozenset(),
                 evidence=frozenset(),
-                state_effects=frozenset(),
                 model_requirements=frozenset(),
                 ceiling=ResourceCeiling(
                     max_activations=1, max_model_requests=None, max_input_bytes=None, max_output_bytes=None
@@ -1188,7 +1183,6 @@ def run_empty_detection(
                 max_productions=0,
                 max_findings_per_production=0,
                 max_finding_code_bytes=0,
-                max_absence_queries=0,
                 max_assessment_facts=0,
                 max_port_facts=0,
                 max_provenance_edges=0,

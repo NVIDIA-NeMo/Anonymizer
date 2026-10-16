@@ -10,7 +10,6 @@ from typing import Literal
 
 from anonymizer.engine.graph_sdk._effect_values import EffectCode, PrivateValue, reject, require_instance
 from anonymizer.engine.graph_sdk.context import ContextProvider, ContextSelector, RetrievalBounds, SourceResult
-from anonymizer.engine.graph_sdk.continuity import ContinuityCommit
 from anonymizer.engine.graph_sdk.executor import ExecutionResult
 from anonymizer.engine.graph_sdk.qualification import QualificationResult
 from anonymizer.engine.graph_sdk.records import CandidateRef, CanonicalRecord, DecisionRef, EvidenceRef, TargetStatus
@@ -59,7 +58,6 @@ class ProjectionSource(PrivateValue):
     execution: ExecutionResult
     qualification: QualificationResult
     record: CanonicalRecord
-    continuity: ContinuityCommit | None
 
     def __init__(self, *, _key: object, **values: object) -> None:
         _initialize(self, _key, values)
@@ -91,7 +89,6 @@ class ArtifactProjectionItem(PrivateValue):
 @dataclass(frozen=True, slots=True, kw_only=True, repr=False, init=False)
 class ProtectedProjection(PrivateValue):
     record: CanonicalRecord
-    continuity: ContinuityCommit | None
     items: tuple[ProtectedProjectionItem, ...]
 
     def __init__(self, *, _key: object, **values: object) -> None:
@@ -118,31 +115,22 @@ class ArtifactSelection(PrivateValue):
         require_instance(self.artifact, ArtifactRef)
 
 
-def bind_projection_source(
-    *, execution: ExecutionResult, qualification: QualificationResult, continuity: ContinuityCommit | None
-) -> ProjectionSource:
+def bind_projection_source(*, execution: ExecutionResult, qualification: QualificationResult) -> ProjectionSource:
     require_instance(execution, ExecutionResult)
     require_instance(qualification, QualificationResult)
-    if continuity is not None:
-        require_instance(continuity, ContinuityCommit)
     if (
         qualification._result is not execution
         or qualification._admitted.execution is not execution._execution
         or qualification.record.invocation != execution.record.invocation
     ):
         reject(EffectCode.FOREIGN_OWNER)
-    if continuity is not None and (
-        continuity.execution is not execution or continuity.qualification is not qualification
-    ):
-        reject(EffectCode.FOREIGN_OWNER)
-    if qualification.required_decisions and continuity is None:
+    if qualification.required_decisions:
         reject(EffectCode.MISSING)
     return ProjectionSource(
         _key=_PROJECTION_KEY,
         execution=execution,
         qualification=qualification,
         record=qualification.record,
-        continuity=continuity,
     )
 
 
@@ -150,7 +138,7 @@ def _validate_source(source: ProjectionSource) -> None:
     require_instance(source, ProjectionSource)
     if source.record is not source.qualification.record:
         reject(EffectCode.FOREIGN_OWNER)
-    bind_projection_source(execution=source.execution, qualification=source.qualification, continuity=source.continuity)
+    bind_projection_source(execution=source.execution, qualification=source.qualification)
 
 
 def project_protected(*, source: ProjectionSource) -> ProtectedProjection:
@@ -158,8 +146,6 @@ def project_protected(*, source: ProjectionSource) -> ProtectedProjection:
     artifacts = dict(source.execution.artifacts)
     items = []
     for output in source.qualification.qualified:
-        if source.continuity is not None and output.target not in source.continuity.releasable:
-            continue
         value = artifacts.get(output.candidate.artifact)
         if value is None:
             reject(EffectCode.MISSING)
@@ -175,9 +161,7 @@ def project_protected(*, source: ProjectionSource) -> ProtectedProjection:
                 required_decisions=output.required_decisions,
             )
         )
-    return ProtectedProjection(
-        _key=_PROJECTION_KEY, record=source.record, continuity=source.continuity, items=tuple(items)
-    )
+    return ProtectedProjection(_key=_PROJECTION_KEY, record=source.record, items=tuple(items))
 
 
 def project_content(

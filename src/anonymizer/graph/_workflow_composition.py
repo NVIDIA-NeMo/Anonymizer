@@ -35,7 +35,6 @@ from anonymizer.graph._workflow_values import (
     OutcomeSpec,
     OutputBinding,
     SequenceEdge,
-    StateEffect,
     SubgraphNode,
     WorkflowId,
     WorkflowInputRef,
@@ -376,7 +375,6 @@ def _validate_composition_path(
                 identity_edges.add((("in", node, dependency.identity_input), output_vertex))
     contexts: set[ContextUse] = set()
     evidence: set[EvidencePromise] = set()
-    state_effects: set[StateEffect] = set()
     models: set[ModelRequirement] = set()
     ceiling: list[int | None] = [0, 0, 0, 0]
     declared_items = frozenset(_map_item_ports(_visits(external_outcome.evidence)))
@@ -420,7 +418,6 @@ def _validate_composition_path(
                     coverage=promise.coverage,
                 )
             )
-        state_effects.update(_visits(outcome.state_effects))
         models.update(_visits(outcome.model_requirements))
         values = outcome.ceiling
         ceiling[0] = cast(int, ceiling[0]) + values.max_activations
@@ -442,7 +439,6 @@ def _validate_composition_path(
         not _equal(external_outcome.produced_ports, produced_external)
         or not _equal(external_outcome.context, contexts)
         or not _equal(external_outcome.evidence, evidence)
-        or not _equal(external_outcome.state_effects, state_effects)
         or not _equal(external_outcome.model_requirements, models)
     ):
         _reject(ValidationCode.CONTRADICTORY)
@@ -512,7 +508,6 @@ def _outcome_signature(outcome: OutcomeSpec) -> tuple[object, ...]:
             )
             for promise in _visits(outcome.evidence)
         ),
-        frozenset((effect.kind, effect.name) for effect in _visits(outcome.state_effects)),
         frozenset((model.capability, model.revision) for model in _visits(outcome.model_requirements)),
         outcome.ceiling,
     )

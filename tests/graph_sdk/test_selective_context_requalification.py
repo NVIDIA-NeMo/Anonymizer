@@ -39,9 +39,7 @@ def test_context_revision_only_invalidates_evidence_that_consumed_it(
         admitted=admitted,
         result=result,
         artifacts=selected + (() if revision is None else (versions[revision],)),
-        absences=tuple(current.absences),
         configurations=current.configurations,
-        state=current.state,
     )
     output = qualify(admitted=admitted, result=result, current=changed, submissions=submissions)
     (verified,) = output.verified
@@ -79,9 +77,7 @@ def test_context_currentness_propagates_only_through_declared_relations(relation
         admitted=admitted,
         result=result,
         artifacts=tuple(ref for ref in current.artifacts if ref != b_port.artifact),
-        absences=tuple(current.absences),
         configurations=current.configurations,
-        state=current.state,
     )
     output = qualify(admitted=admitted, result=result, current=changed, submissions=submissions)
     expected = {"B", "C"} if relation == "independent" else set() if relation == "mixed" else {"C"}

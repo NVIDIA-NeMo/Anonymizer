@@ -32,7 +32,6 @@ class PreparationCode(str, Enum):
     FOREIGN_OWNER = "foreign_owner"
     DUPLICATE = "duplicate"
     MISSING_INPUT = "missing_input"
-    MISSING_STATE = "missing_state"
     UNSUPPORTED_CAPABILITY = "unsupported_capability"
     HARD_BUDGET_INCOMPATIBLE = "hard_budget_incompatible"
     PROTECTION_INELIGIBLE = "protection_ineligible"

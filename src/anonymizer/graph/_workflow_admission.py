@@ -702,7 +702,6 @@ def _compatible(target: OperationSpec, replacement: OperationSpec, *, allow_narr
             or not _equal(expected.produced_ports, actual.produced_ports)
             or not _equal(expected.context, actual.context)
             or not _equal(expected.evidence, actual.evidence)
-            or not _equal(expected.state_effects, actual.state_effects)
             or not _equal(expected.model_requirements, actual.model_requirements)
         ):
             return False

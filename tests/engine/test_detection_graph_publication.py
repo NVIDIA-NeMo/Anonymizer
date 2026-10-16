@@ -295,9 +295,7 @@ def test_real_redact_evidence_retains_source_candidate_and_span_versions(scripte
             admitted=admitted,
             result=result,
             artifacts=artifacts,
-            absences=(),
             configurations=((fact.node, fact.environment.configuration),),
-            state=fact.environment.state,
         )
 
     artifacts = tuple(reference for reference, _ in result.artifacts)

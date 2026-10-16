@@ -48,7 +48,6 @@ from anonymizer.engine.graph_sdk.preparation import (
     BoundInput,
     PreparationConfiguration,
     PreparedPlan,
-    StateRevisionView,
     prepare,
 )
 from anonymizer.engine.graph_sdk.requests import (
@@ -240,7 +239,6 @@ def _build_schema_fixture(case: dict[str, Any], *, revision: int = 1) -> _Schema
                         if adaptive
                         else frozenset({ContextUse(port="context", meaning="retrieved", capture="whole_artifact")}),
                         evidence=frozenset(),
-                        state_effects=frozenset(),
                         model_requirements=frozenset(),
                         ceiling=ResourceCeiling(
                             max_activations=1,
@@ -422,7 +420,6 @@ def _prepare_schema_fixture(fixture: _SchemaFixture) -> PreparedPlan:
         configuration=PreparationConfiguration(
             purpose="execution_only", required_protection_outcomes=frozenset(), hard_request_limit=None
         ),
-        state=StateRevisionView(revisions=frozenset()),
         selections=tuple(_selection(node, cap) for node, cap in zip(nodes, capabilities, strict=True)),
         capabilities=capabilities,
         limits=_limits(capabilities=2, slots=2),

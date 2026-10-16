@@ -29,7 +29,7 @@ from anonymizer.engine.graph_sdk.executor import (
     admit_execution_plan,
     start_execution,
 )
-from anonymizer.engine.graph_sdk.preparation import BoundInput, PreparationConfiguration, StateRevisionView, prepare
+from anonymizer.engine.graph_sdk.preparation import BoundInput, PreparationConfiguration, prepare
 from anonymizer.engine.graph_sdk.requests import AssociationInput, AssociationResult, PortArtifact, TextArtifactValue
 from anonymizer.engine.replace.strategies import ReplacementEntry, apply_entity_spans
 from anonymizer.graph.activation import ActivationLimits
@@ -232,7 +232,6 @@ def span_graph(
             purpose="execution_only", required_protection_outcomes=frozenset(), hard_request_limit=None
         ),
         bound_inputs=(BoundInput(target=target, source=target, port="source", artifact_type=source_type),),
-        state=StateRevisionView(revisions=frozenset()),
     )
     policies = tuple(
         OperationExecutionPolicy(
@@ -259,7 +258,6 @@ def span_graph(
             max_productions=0,
             max_findings_per_production=0,
             max_finding_code_bytes=0,
-            max_absence_queries=0,
             max_assessment_facts=0,
             max_port_facts=20,
             max_provenance_edges=20,

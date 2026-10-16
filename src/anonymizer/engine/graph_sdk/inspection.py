@@ -10,7 +10,6 @@ from functools import cache
 from types import UnionType
 from typing import Literal, TypeVar, get_args, get_origin, get_type_hints
 
-from anonymizer.engine.graph_sdk._continuity_values import ContinuityCommit
 from anonymizer.engine.graph_sdk._effect_values import EffectCode, PrivateValue, reject, require_count, require_instance
 from anonymizer.engine.graph_sdk._execution_values import (
     AdmittedExecutionPlan,
@@ -388,7 +387,6 @@ class InspectionSource(_FactoryValue):
     binding: BindingResult | None
     execution: ExecutionResult | None
     qualification: QualificationResult | None
-    continuity: ContinuityCommit | None
     observations: ObservationClose | None
 
 
@@ -676,7 +674,6 @@ def bind_inspection_source(
     binding: BindingResult | None = None,
     execution: ExecutionResult | None = None,
     qualification: QualificationResult | None = None,
-    continuity: ContinuityCommit | None = None,
     observations: ObservationClose | None = None,
     observation_session: ObservationSession | None = None,
     limits: InspectionLimits,
@@ -690,7 +687,6 @@ def bind_inspection_source(
         (binding, BindingResult),
         (execution, ExecutionResult),
         (qualification, QualificationResult),
-        (continuity, ContinuityCommit),
         (observations, (ObservationReceipt, ObservationFailure)),
         (observation_session, ObservationSession),
     ):
@@ -716,10 +712,6 @@ def bind_inspection_source(
     ):
         if child is not None and parent is not None and actual is not parent:
             reject(EffectCode.FOREIGN_OWNER)
-    if continuity is not None and (
-        continuity.execution is not execution or continuity.qualification is not qualification
-    ):
-        reject(EffectCode.FOREIGN_OWNER)
     owners = dict(
         data=prepared.data,
         workflow=prepared.workflow,
@@ -729,7 +721,6 @@ def bind_inspection_source(
         binding=binding,
         execution=execution,
         qualification=qualification,
-        continuity=continuity,
     )
     if isinstance(observations, ObservationReceipt):
         if observation_session is None or observation_session._closed is not observations:
@@ -764,7 +755,6 @@ def bind_inspection_source(
         binding=binding,
         execution=execution,
         qualification=qualification,
-        continuity=continuity,
         observations=observations,
     )
 
@@ -1164,8 +1154,6 @@ def diagnose(*, source: InspectionSource) -> DiagnosisSummary:
             bool(item.withholding & {"stale_evidence", "incomplete_coverage", "assessment_unknown"})
             for item in source.qualification.targets
         )
-    if source.continuity is not None:
-        reasons["continuity_conflict"] = len(source.continuity.conflicts)
     if view.resources is not None:
         reasons["cleanup_failed"] = view.resources.cleanup_failed
         reasons["cleanup_unknown"] = view.resources.cleanup_unknown

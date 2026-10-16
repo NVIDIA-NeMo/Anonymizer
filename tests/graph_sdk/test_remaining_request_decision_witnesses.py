@@ -112,9 +112,7 @@ def test_actual_consumed_decision_revision_is_selective(selection: str, revision
         result=result,
         artifacts=tuple(ref for ref in current.artifacts if ref.key != versions[2].key)
         + (() if revision is None else (versions[revision],)),
-        absences=tuple(current.absences),
         configurations=current.configurations,
-        state=current.state,
     )
     output = qualify(admitted=admitted, result=result, current=changed, submissions=submissions)
     (verified,) = output.verified
@@ -272,9 +270,7 @@ def test_known_decision_change_outranks_missing_ordinary_context() -> None:
         admitted=admitted,
         result=result,
         artifacts=tuple(ref for ref in current.artifacts if ref.key not in removed_keys) + (roots["b", 1],),
-        absences=tuple(current.absences),
         configurations=current.configurations,
-        state=current.state,
     )
     assert not changed.decisions  # The older retained version was never a decision occurrence.
     output = qualify(admitted=admitted, result=result, current=changed, submissions=submissions)
@@ -302,9 +298,7 @@ def test_another_targets_decision_lineage_cannot_supply_missing_current_key() ->
         admitted=admitted,
         result=result,
         artifacts=tuple(ref for ref in current.artifacts if ref != removed.artifact),
-        absences=tuple(current.absences),
         configurations=current.configurations,
-        state=current.state,
     )
     assert changed.decisions == frozenset({retained})
     output = qualify(admitted=admitted, result=result, current=changed, submissions=submissions)

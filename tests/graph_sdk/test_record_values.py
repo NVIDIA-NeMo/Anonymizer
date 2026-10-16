@@ -12,7 +12,6 @@ from typing import Any, cast
 import pytest
 
 from anonymizer.engine.graph_sdk.records import (
-    AbsenceRef,
     CandidateRef,
     CanonicalRecord,
     Completion,
@@ -54,7 +53,6 @@ class _RecordAdapter:
         dispatch = {
             "activation": lambda: self._activation(self._facts),
             "artifact": lambda: self._artifact(self._facts),
-            "absence": lambda: self._absence(self._facts),
             "evidence": lambda: self._evidence(self._facts),
             "membership": lambda: self._membership(self._facts),
             "terminal": lambda: self._terminal(self._facts),
@@ -98,19 +96,10 @@ class _RecordAdapter:
             version=cast(int, value["version"]),
         )
 
-    def _absence(self, value: dict[str, data_shapes.JsonValue]) -> AbsenceRef:
-        return AbsenceRef(
-            invocation=self._invocation(value["invocation"]),
-            query=cast(int, value["query"]),
-            scope_revision=cast(int, value["scope_revision"]),
-        )
-
-    def _consumed(self, value: data_shapes.JsonValue) -> ArtifactRef | CandidateRef | DecisionRef | AbsenceRef:
+    def _consumed(self, value: data_shapes.JsonValue) -> ArtifactRef | CandidateRef | DecisionRef:
         raw = _object(value)
         kind = cast(str, raw["kind"])
         reference = _object(raw["ref"])
-        if kind == "absence":
-            return self._absence(reference)
         artifact = self._artifact(reference)
         if kind == "artifact":
             return artifact
@@ -204,8 +193,13 @@ def _adapt_record_case(case: data_shapes.FixtureCase) -> tuple[str, str | None]:
 
 def test_all_reference_record_cases_match_product_validation() -> None:
     cases = data_shapes.load_data_cases()
-    record_cases = [case for case in cases if case["declaration"]["kind"] == "record"]
-    assert len(record_cases) == 74
+    # The neutral corpus also covers absence references, which the SDK does not model.
+    record_cases = [
+        case
+        for case in cases
+        if case["declaration"]["kind"] == "record" and case["declaration"]["boundary"] != "absence"
+    ]
+    assert len(record_cases) == 68
     for case in record_cases:
         actual_verdict, actual_code = _adapt_record_case(case)
         expected = case["expected"]

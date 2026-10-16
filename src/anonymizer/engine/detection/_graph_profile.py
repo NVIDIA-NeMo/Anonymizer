@@ -72,7 +72,6 @@ from anonymizer.engine.graph_sdk.preparation import (
     BoundInput,
     PreparationConfiguration,
     PreparationLimits,
-    StateRevisionView,
     prepare,
 )
 from anonymizer.engine.graph_sdk.qualification import QualificationResult, qualify_retained
@@ -523,7 +522,6 @@ async def execute_detection_redact(
                     produced_ports=frozenset({"redacted", "spans", "validation_chunks"}) if io else frozenset(),
                     context=frozenset(),
                     evidence=frozenset(),
-                    state_effects=frozenset(),
                     model_requirements=frozenset(),
                     ceiling=replace(ceiling, max_model_requests=requests),
                 )
@@ -744,7 +742,6 @@ async def execute_detection_redact(
             hard_request_limit=None,
             invocation_owned=not targets,
         ),
-        state=StateRevisionView(revisions=frozenset()),
         selections=tuple(
             ImplementationSelection(node=node, implementation=cap.implementation, configuration=cap.configuration)
             for node, cap in zip(all_ids, all_capabilities, strict=True)
@@ -752,7 +749,6 @@ async def execute_detection_redact(
         capabilities=all_capabilities,
         limits=PreparationLimits(
             max_bound_inputs=size,
-            max_state_revisions=0,
             max_selections=len(nodes) + len(detection_ids),
             max_config_depth=3,
             # Producer and assessor each add five atoms, counted in selection and capability.
@@ -841,7 +837,6 @@ async def execute_detection_redact(
                 outcome="ok",
                 promise="redaction",
                 evidence_port="assessment",
-                absence_queries=frozenset(),
                 supported_findings=frozenset({REDACT_MATCH, REDACT_MISMATCH}),
             ),
         ),
@@ -864,7 +859,6 @@ async def execute_detection_redact(
             max_productions=1,
             max_findings_per_production=2,
             max_finding_code_bytes=64,
-            max_absence_queries=0,
             max_assessment_facts=size,
             max_port_facts=size * 24,
             max_provenance_edges=size * 32,
@@ -1015,7 +1009,6 @@ def qualify_detection_redact(result: ExecutionResult) -> QualificationResult:
             max_required_decisions=0,
             max_fixed_point_steps=len(prepared.target_occurrences) + 1,
             max_revision_entries=limits.max_port_facts + prepared.limits.max_capabilities,
-            max_absence_revisions=0,
             max_provenance_edges=limits.max_provenance_edges,
         ),
     )
@@ -1023,13 +1016,11 @@ def qualify_detection_redact(result: ExecutionResult) -> QualificationResult:
         admitted=admitted,
         result=result,
         artifacts=tuple(reference for reference, _ in result.artifacts),
-        absences=(),
         configurations=tuple(
             (policy.node, policy.implementations[0].configuration)
             for policy in execution.policies
             if any(production.node == policy.node for production in execution.assessment_productions)
         ),
-        state=prepared.state,
     )
     return qualify_retained(admitted=admitted, result=result, current=current)
 

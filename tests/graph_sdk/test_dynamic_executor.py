@@ -29,7 +29,7 @@ from anonymizer.engine.graph_sdk.executor import (
     admit_execution_plan,
     start_execution,
 )
-from anonymizer.engine.graph_sdk.preparation import PreparationConfiguration, StateRevisionView, prepare
+from anonymizer.engine.graph_sdk.preparation import PreparationConfiguration, prepare
 from anonymizer.engine.graph_sdk.qualification import qualify
 from anonymizer.engine.graph_sdk.requests import (
     AssociationInput,
@@ -90,7 +90,6 @@ def _outcome(
         produced_ports=produced,
         context=frozenset(),
         evidence=frozenset(),
-        state_effects=frozenset(),
         model_requirements=frozenset(),
         ceiling=ResourceCeiling(
             max_activations=max_activations,
@@ -374,7 +373,6 @@ async def _assert_nested_two_by_two(*, same_key_versions: bool = False) -> None:
                 produced_ports=outcome.produced_ports,
                 context=outcome.context,
                 evidence=outcome.evidence,
-                state_effects=outcome.state_effects,
                 model_requirements=outcome.model_requirements,
                 ceiling=ResourceCeiling(
                     max_activations=2,
@@ -494,7 +492,6 @@ async def _assert_nested_two_by_two(*, same_key_versions: bool = False) -> None:
         configuration=PreparationConfiguration(
             purpose="execution_only", required_protection_outcomes=frozenset(), hard_request_limit=None
         ),
-        state=StateRevisionView(revisions=frozenset()),
         selections=selections,
         capabilities=capabilities,
         limits=_limits(capabilities=5, slots=13),
@@ -525,7 +522,6 @@ async def _assert_nested_two_by_two(*, same_key_versions: bool = False) -> None:
             max_productions=0,
             max_findings_per_production=0,
             max_finding_code_bytes=0,
-            max_absence_queries=0,
             max_assessment_facts=0,
             max_port_facts=20,
             max_provenance_edges=10,
@@ -626,9 +622,7 @@ async def _assert_nested_two_by_two(*, same_key_versions: bool = False) -> None:
         admitted=qualification,
         result=result,
         artifacts=tuple(latest.values()),
-        absences=(),
         configurations=(),
-        state=admitted.context.prepared.state,
     )
     qualified = qualify(admitted=qualification, result=result, current=current, submissions=())
     assert all(status.qualification == "not_assessed" for status in qualified.record.statuses)

@@ -159,11 +159,9 @@ def test_two_maps_verified_tuple_uses_declared_ordinals(count: int, monkeypatch:
         admitted=admitted,
         result=result,
         artifacts=tuple(ref for ref, _ in result.artifacts),
-        absences=tuple({ref for fact in result.assessments for ref in fact.environment.absences}),
         configurations=tuple(
             (item.node, item.capability.configuration) for item in execution.context.prepared.implementations
         ),
-        state=execution.context.prepared.state,
     )
     prepared = execution.context.prepared
     targets = {row.target: index for index, row in enumerate(prepared.target_occurrences)}

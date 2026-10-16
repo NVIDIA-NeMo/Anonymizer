@@ -122,7 +122,6 @@ def run_direct_map(
                     produced_ports=frozenset(),
                     context=frozenset(),
                     evidence=frozenset(),
-                    state_effects=frozenset(),
                     model_requirements=frozenset(),
                     ceiling=ResourceCeiling(
                         max_activations=1, max_model_requests=None, max_input_bytes=None, max_output_bytes=None
@@ -356,7 +355,6 @@ def run_direct_map(
                 max_productions=0,
                 max_findings_per_production=0,
                 max_finding_code_bytes=0,
-                max_absence_queries=0,
                 max_assessment_facts=0,
                 max_port_facts=40 * size,
                 max_provenance_edges=80 * size,

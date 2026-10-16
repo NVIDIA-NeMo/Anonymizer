@@ -29,8 +29,6 @@ from anonymizer.engine.graph_sdk.preparation import (
     PreparationConfiguration,
     PreparationLimits,
     PreparedPlan,
-    StateRevision,
-    StateRevisionView,
     prepare,
     recheck_capabilities,
 )
@@ -49,7 +47,6 @@ from anonymizer.graph.workflow import (
     OutcomeBinding,
     OutcomeSpec,
     ResourceCeiling,
-    StateEffect,
     WorkflowId,
     WorkflowInputRef,
     WorkflowLimits,
@@ -89,7 +86,7 @@ def _data(target_count: int) -> ValidatedDataGraph:
     )
 
 
-def _workflow(*, requests: int = 0, read: StateEffect | None = None, with_input: bool = False):
+def _workflow(*, requests: int = 0, with_input: bool = False):
     owner = WorkflowId.new()
     node = NodeId.new(workflow=owner)
     artifact = ArtifactType(name="text", revision=1)
@@ -100,7 +97,6 @@ def _workflow(*, requests: int = 0, read: StateEffect | None = None, with_input:
         produced_ports=frozenset(),
         context=frozenset(),
         evidence=frozenset(),
-        state_effects=frozenset({read}) if read is not None else frozenset(),
         model_requirements=frozenset(),
         ceiling=ResourceCeiling(
             max_activations=1,
@@ -203,7 +199,6 @@ def _capability(
 def _limits(*, capabilities: int = 1, slots: int = 10) -> PreparationLimits:
     return PreparationLimits(
         max_bound_inputs=10,
-        max_state_revisions=10,
         max_selections=10,
         max_config_depth=10,
         max_config_atoms=100,
@@ -219,7 +214,6 @@ def _prepare(
     capability: ImplementationCapability | None = None,
     activation_limits: ActivationLimits | None = None,
     configuration: PreparationConfiguration | None = None,
-    state: StateRevisionView | None = None,
     bound_inputs: tuple[BoundInput, ...] = (),
     limits: PreparationLimits | None = None,
 ) -> PreparedPlan:
@@ -236,7 +230,6 @@ def _prepare(
             required_protection_outcomes=frozenset(),
             hard_request_limit=None,
         ),
-        state=state or StateRevisionView(revisions=frozenset()),
         selections=(_selection(node, actual_capability),),
         capabilities=(actual_capability,),
         limits=limits or _limits(),
@@ -246,7 +239,6 @@ def _prepare(
 @pytest.mark.parametrize(
     "earlier_code",
     [
-        PreparationCode.MISSING_STATE,
         PreparationCode.UNSUPPORTED_CAPABILITY,
         PreparationCode.HARD_BUDGET_INCOMPATIBLE,
         PreparationCode.PROTECTION_INELIGIBLE,
@@ -255,18 +247,14 @@ def _prepare(
 def test_prepare_prioritizes_admission_failures_over_contradictory_input(
     earlier_code: PreparationCode, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    read = StateEffect(kind="read", name="memory")
-    workflow, _, _ = _workflow(requests=1, read=read, with_input=True)
+    workflow, _, _ = _workflow(requests=1, with_input=True)
     data = _data(1)
     target = next(iter(data.targets))
     capability = _capability(workflow, external=True)
     configuration = PreparationConfiguration(
         purpose="execution_only", required_protection_outcomes=frozenset(), hard_request_limit=None
     )
-    state = StateRevisionView(revisions=frozenset({StateRevision(effect=read, revision=1)}))
-    if earlier_code is PreparationCode.MISSING_STATE:
-        state = StateRevisionView(revisions=frozenset())
-    elif earlier_code is PreparationCode.UNSUPPORTED_CAPABILITY:
+    if earlier_code is PreparationCode.UNSUPPORTED_CAPABILITY:
         capability = replace(capability, attribution="aggregate_only")
     elif earlier_code is PreparationCode.HARD_BUDGET_INCOMPATIBLE:
         capability = replace(capability, pre_dispatch_control="none")
@@ -283,7 +271,6 @@ def test_prepare_prioritizes_admission_failures_over_contradictory_input(
             data=data,
             workflow=workflow,
             capability=capability,
-            state=state,
             configuration=configuration,
             bound_inputs=(
                 BoundInput(
@@ -349,7 +336,6 @@ def test_shared_subgraph_body_is_selected_once_and_reserved_per_parent() -> None
         configuration=PreparationConfiguration(
             purpose="execution_only", required_protection_outcomes=frozenset(), hard_request_limit=None
         ),
-        state=StateRevisionView(revisions=frozenset()),
         selections=(_selection(child, capability),),
         capabilities=(capability,),
         limits=_limits(slots=4),
@@ -415,9 +401,8 @@ def test_tagged_configuration_is_type_sensitive_canonical_and_immutable() -> Non
     assert repr(PreparationRejected(PreparationCode.MISSING_INPUT)) == "<PreparationRejected>"
 
 
-def test_prepare_binds_exact_root_input_and_read_revision() -> None:
-    read = StateEffect(kind="read", name="state")
-    workflow, _, artifact = _workflow(read=read, with_input=True)
+def test_prepare_binds_exact_root_input() -> None:
+    workflow, _, artifact = _workflow(with_input=True)
     data = _data(1)
     target = next(iter(data.targets))
     bound = BoundInput(target=target, port="input", source=target, artifact_type=artifact)
@@ -426,26 +411,11 @@ def test_prepare_binds_exact_root_input_and_read_revision() -> None:
         workflow=workflow,
         capability=_capability(workflow),
         bound_inputs=(bound,),
-        state=StateRevisionView(revisions=frozenset({StateRevision(effect=read, revision=1)})),
     )
     assert plan.bound_inputs == frozenset({bound})
-    assert plan.state.revisions == frozenset({StateRevision(effect=read, revision=1)})
     with pytest.raises(PreparationRejected) as raised:
-        _prepare(data=data, workflow=workflow, capability=_capability(workflow), state=plan.state)
+        _prepare(data=data, workflow=workflow, capability=_capability(workflow))
     assert raised.value.code is PreparationCode.MISSING_INPUT
-
-    extra = StateEffect(kind="read", name="extra")
-    with pytest.raises(PreparationRejected) as raised:
-        _prepare(
-            data=data,
-            workflow=workflow,
-            capability=_capability(workflow),
-            bound_inputs=(bound,),
-            state=StateRevisionView(
-                revisions=frozenset({StateRevision(effect=read, revision=1), StateRevision(effect=extra, revision=1)})
-            ),
-        )
-    assert raised.value.code is PreparationCode.MISSING_STATE
 
 
 def test_hard_budget_zero_is_allowed_only_for_controllable_external_work() -> None:
@@ -496,7 +466,6 @@ def test_catalog_limit_precedes_invalid_member_in_prepare_and_recheck() -> None:
         required_protection_outcomes=frozenset(),
         hard_request_limit=None,
     )
-    state = StateRevisionView(revisions=frozenset())
     selections = (_selection(node, capability),)
     with pytest.raises(PreparationRejected) as raised:
         invalid_capabilities = cast(tuple[ImplementationCapability, ...], (capability, object()))
@@ -506,7 +475,6 @@ def test_catalog_limit_precedes_invalid_member_in_prepare_and_recheck() -> None:
             activation_limits=activation_limits,
             bound_inputs=(),
             configuration=configuration,
-            state=state,
             selections=selections,
             capabilities=invalid_capabilities,
             limits=_limits(capabilities=1),
@@ -607,7 +575,6 @@ def test_prepared_plan_constructor_is_factory_protected_and_identity_based() -> 
             activation_limits=first.activation_limits,
             bound_inputs=first.bound_inputs,
             configuration=first.configuration,
-            state=first.state,
             implementations=first.implementations,
             reservation_recipe=first.reservation_recipe,
             target_occurrences=first.target_occurrences,

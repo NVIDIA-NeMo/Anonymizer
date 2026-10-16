@@ -132,7 +132,6 @@ def test_injected_redact_keeps_frame_calls_and_reports_unknown_work(tmp_path, st
             activation_limits=prepared.activation_limits,
             bound_inputs=(),
             configuration=replace(prepared.configuration, hard_request_limit=1),
-            state=prepared.state,
             selections=tuple(
                 # The real consumer's selected implementation is reused unchanged.
                 ImplementationSelection(

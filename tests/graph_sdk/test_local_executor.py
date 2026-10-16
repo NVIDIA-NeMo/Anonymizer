@@ -27,7 +27,6 @@ from anonymizer.engine.graph_sdk.executor import (
 from anonymizer.engine.graph_sdk.preparation import (
     BoundInput,
     PreparationConfiguration,
-    StateRevisionView,
     prepare,
 )
 from anonymizer.engine.graph_sdk.requests import AssociationInput, AssociationResult, SemanticAssociation
@@ -184,7 +183,6 @@ async def _assert_local_execution() -> None:
             max_productions=0,
             max_findings_per_production=0,
             max_finding_code_bytes=0,
-            max_absence_queries=0,
             max_assessment_facts=0,
             max_port_facts=10,
             max_provenance_edges=10,
@@ -325,7 +323,6 @@ async def _assert_decision_execution(*, cancel_before_wait: bool = False) -> Non
             max_productions=0,
             max_findings_per_production=0,
             max_finding_code_bytes=0,
-            max_absence_queries=0,
             max_assessment_facts=0,
             max_port_facts=2,
             max_provenance_edges=1,
@@ -397,7 +394,6 @@ async def _assert_shared_nested_body() -> None:
         configuration=PreparationConfiguration(
             purpose="execution_only", required_protection_outcomes=frozenset(), hard_request_limit=None
         ),
-        state=StateRevisionView(revisions=frozenset()),
         selections=(_selection(child, capability),),
         capabilities=(capability,),
         limits=_limits(slots=4),
@@ -424,7 +420,6 @@ async def _assert_shared_nested_body() -> None:
             max_productions=0,
             max_findings_per_production=0,
             max_finding_code_bytes=0,
-            max_absence_queries=0,
             max_assessment_facts=0,
             max_port_facts=4,
             max_provenance_edges=0,

@@ -186,7 +186,6 @@ def with_parent_publication(execution: AdmittedExecutionPlan, *, readiness: bool
         limits=replace(prepared.limits, max_capabilities=len(capabilities), max_config_atoms=200),
         configuration=prepared.configuration,
         bound_inputs=tuple(prepared.bound_inputs),
-        state=prepared.state,
     )
     assert owner.delegated is not None
     leaves = tuple(prepared.reservation_recipe[index].template for index in owner.delegated.child_slots)
@@ -271,7 +270,6 @@ def with_multiple_sources(execution: AdmittedExecutionPlan, count: int = 2, *, d
             for target in data.targets
             for item in prepared.bound_inputs
         ),
-        state=prepared.state,
     )
     return admit_execution_plan(
         context=admit_context_plan(

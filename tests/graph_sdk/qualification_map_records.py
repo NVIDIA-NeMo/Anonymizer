@@ -24,18 +24,31 @@ from anonymizer.engine.graph_sdk.executor import (
     OperationOutputKey,
     RootInputKey,
 )
-from anonymizer.engine.graph_sdk.preparation import (
-    StateRevision,
-    StateRevisionView,
-)
 from anonymizer.engine.graph_sdk.qualification import QualificationResult, qualify
-from anonymizer.engine.graph_sdk.records import AbsenceRef, CandidateRef, DecisionRef
+from anonymizer.engine.graph_sdk.records import CandidateRef, DecisionRef
 from anonymizer.graph._values import ActivationKey, ArtifactRef
 from anonymizer.graph.workflow import (
     NodeId,
-    StateEffect,
 )
 from tests.graph_sdk.qualification_map_execution import CORPUS, _execute_reference_map
+
+# The independent corpus also models absence and state-revision environments;
+# the SDK retains only selected configurations, so comparisons drop the rest.
+_UNMODELED_ENVIRONMENT = frozenset({"absences", "state"})
+
+
+def _retained_environment(environment: dict[str, Any]) -> dict[str, Any]:
+    return {key: value for key, value in environment.items() if key not in _UNMODELED_ENVIRONMENT}
+
+
+def _retained_expectation(expected: dict[str, Any]) -> dict[str, Any]:
+    """Project a frozen expectation onto the environment dimensions the SDK retains."""
+    if "verified" not in expected:
+        return expected
+    return {
+        **expected,
+        "verified": [{**row, "environment": _retained_environment(row["environment"])} for row in expected["verified"]],
+    }
 
 
 async def _run_reference_map_case(case: dict[str, Any]) -> dict[str, Any]:
@@ -199,22 +212,10 @@ async def _run_reference_map_case(case: dict[str, Any]) -> dict[str, Any]:
         artifacts=tuple(
             artifacts[f"{event['key']}v{event['value']}"] for event in revisions if event["collection"] == "artifacts"
         ),
-        absences=tuple(
-            AbsenceRef(invocation=result.record.invocation, query=int(event["key"][1:]), scope_revision=event["value"])
-            for event in revisions
-            if event["collection"] == "absences"
-        ),
         configurations=tuple(
             (nodes[event["key"]], configurations[nodes[event["key"]]])
             for event in revisions
             if event["collection"] == "configurations"
-        ),
-        state=StateRevisionView.from_revisions(
-            revisions=tuple(
-                StateRevision(effect=StateEffect(kind="read", name=event["key"]), revision=event["value"])
-                for event in revisions
-                if event["collection"] == "state"
-            )
         ),
     )
     submissions = tuple(
@@ -414,7 +415,11 @@ class _MapRecordNames:
                 ) == (event["item_key"], event["item_version"], event["expander"], event["member"], event["port"])
 
     def assert_assessments(self, events: list[dict[str, Any]]) -> None:
-        expected = [event for event in events if event["kind"] == "assessment"]
+        expected = [
+            {**event, "environment": _retained_environment(event["environment"])}
+            for event in events
+            if event["kind"] == "assessment"
+        ]
         actual: list[dict[str, Any]] = []
         target = self.execution.context.prepared.target_occurrences[0].target
         for fact in self.result.assessments:
@@ -458,13 +463,7 @@ class _MapRecordNames:
                     },
                     "coverage": sorted(atom.name for atom in promise.coverage),
                     "finding": fact.finding.status,
-                    "environment": {
-                        "absences": {f"Q{ref.query}": ref.scope_revision for ref in fact.environment.absences},
-                        "configurations": {node: "c0"},
-                        "state": {
-                            revision.effect.name: revision.revision for revision in fact.environment.state.revisions
-                        },
-                    },
+                    "environment": {"configurations": {node: "c0"}},
                 }
             )
         assert sorted(actual, key=lambda item: item["fact"]) == sorted(expected, key=lambda item: item["fact"])
@@ -509,7 +508,6 @@ class _MapRecordNames:
             consumed = {}
             roles = {}
             for port, ref in item.consumed_by_port:
-                assert not isinstance(ref, AbsenceRef)
                 consumed[port] = self.artifact(ref.artifact if isinstance(ref, (CandidateRef, DecisionRef)) else ref)
                 roles[port] = (
                     "candidate"
@@ -538,11 +536,7 @@ class _MapRecordNames:
                 "consumed_roles": roles,
                 "coverage": sorted(atom.name for atom in item.coverage),
                 "finding": item.finding.status,
-                "environment": {
-                    "absences": {f"Q{ref.query}": ref.scope_revision for ref in item.environment.absences},
-                    "configurations": {node: "c0"},
-                    "state": {revision.effect.name: revision.revision for revision in item.environment.state.revisions},
-                },
+                "environment": {"configurations": {node: "c0"}},
                 "validity": evidence_validity(evidence=item, current=output._current),
             }
             if isinstance(item.subject, MapItemSubjectRef):

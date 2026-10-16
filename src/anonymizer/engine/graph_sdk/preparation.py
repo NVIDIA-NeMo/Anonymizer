@@ -29,7 +29,6 @@ from anonymizer.graph.workflow import (
     NodeId,
     OperationNode,
     ProtectionRequirement,
-    StateEffect,
     SubgraphNode,
 )
 
@@ -52,38 +51,6 @@ class BoundInput(_PrivateValue):
         ):
             _reject(PreparationCode.INVALID_TYPE)
         _text(self.port)
-
-
-@dataclass(frozen=True, slots=True, kw_only=True, repr=False)
-class StateRevision(_PrivateValue):
-    effect: StateEffect
-    revision: int
-
-    def __post_init__(self) -> None:
-        if not isinstance(self.effect, StateEffect):
-            _reject(PreparationCode.INVALID_TYPE)
-        _integer(self.revision, positive=True)
-
-
-@dataclass(frozen=True, slots=True, kw_only=True, repr=False)
-class StateRevisionView(_PrivateValue):
-    revisions: frozenset[StateRevision]
-
-    def __post_init__(self) -> None:
-        if not isinstance(self.revisions, frozenset) or any(
-            not isinstance(revision, StateRevision) for revision in self.revisions
-        ):
-            _reject(PreparationCode.INVALID_TYPE)
-
-    @classmethod
-    def from_revisions(cls, *, revisions: tuple[StateRevision, ...]) -> StateRevisionView:
-        """Validate raw revision keys before converting them to a canonical set."""
-        if not isinstance(revisions, tuple) or any(not isinstance(item, StateRevision) for item in revisions):
-            _reject(PreparationCode.INVALID_TYPE)
-        effects = [item.effect for item in revisions]
-        if len(effects) != len(set(effects)):
-            _reject(PreparationCode.DUPLICATE)
-        return cls(revisions=frozenset(revisions))
 
 
 @dataclass(frozen=True, slots=True, kw_only=True, repr=False)
@@ -111,7 +78,6 @@ class PreparationConfiguration(_PrivateValue):
 @dataclass(frozen=True, slots=True, kw_only=True, repr=False)
 class PreparationLimits(_PrivateValue):
     max_bound_inputs: int
-    max_state_revisions: int
     max_selections: int
     max_config_depth: int
     max_config_atoms: int
@@ -121,7 +87,6 @@ class PreparationLimits(_PrivateValue):
     def __post_init__(self) -> None:
         for value in (
             self.max_bound_inputs,
-            self.max_state_revisions,
             self.max_selections,
             self.max_config_depth,
             self.max_config_atoms,
@@ -197,7 +162,6 @@ class PreparedPlan(_PrivateValue):
     activation_limits: ActivationLimits
     bound_inputs: frozenset[BoundInput]
     configuration: PreparationConfiguration
-    state: StateRevisionView
     implementations: frozenset[SelectedImplementation]
     reservation_recipe: tuple[ReservationSlot, ...]
     target_occurrences: tuple[TargetOccurrenceMap, ...]
@@ -217,7 +181,6 @@ class PreparedPlan(_PrivateValue):
         activation_limits: ActivationLimits,
         bound_inputs: frozenset[BoundInput],
         configuration: PreparationConfiguration,
-        state: StateRevisionView,
         implementations: frozenset[SelectedImplementation],
         reservation_recipe: tuple[ReservationSlot, ...],
         target_occurrences: tuple[TargetOccurrenceMap, ...],
@@ -251,14 +214,13 @@ def prepare(
     activation_limits: ActivationLimits,
     bound_inputs: tuple[BoundInput, ...],
     configuration: PreparationConfiguration,
-    state: StateRevisionView,
     selections: tuple[ImplementationSelection, ...],
     capabilities: tuple[ImplementationCapability, ...],
     limits: PreparationLimits,
 ) -> PreparedPlan:
     """Prepare one immutable graph plan without execution effects."""
     _validate_outer_types(
-        data, workflow, activation_limits, bound_inputs, configuration, state, selections, capabilities, limits
+        data, workflow, activation_limits, bound_inputs, configuration, selections, capabilities, limits
     )
     if len(capabilities) > limits.max_capabilities:
         _reject(PreparationCode.LIMIT_EXCEEDED)
@@ -293,7 +255,6 @@ def prepare(
     recipe_depth = _recipe_depth(recipe)
     if (
         len(bound_inputs) > limits.max_bound_inputs
-        or len(state.revisions) > limits.max_state_revisions
         or len(selections) > limits.max_selections
         or maximum_depth > limits.max_config_depth
         or total_atoms > limits.max_config_atoms
@@ -311,11 +272,9 @@ def prepare(
         _reject(PreparationCode.FOREIGN_OWNER)
 
     input_keys = [(item.target, item.port) for item in bound_inputs]
-    revision_effects = [revision.effect for revision in state.revisions]
     selected_nodes = [selection.node for selection in selections]
     if (
         len(input_keys) != len(set(input_keys))
-        or len(revision_effects) != len(set(revision_effects))
         or len(selected_nodes) != len(set(selected_nodes))
         or len(capabilities) != len(set(capabilities))
     ):
@@ -331,15 +290,6 @@ def prepare(
     observed_inputs = set(input_keys)
     if observed_inputs != expected_inputs or any(item.source not in datum_ids for item in bound_inputs):
         _reject(PreparationCode.MISSING_INPUT)
-    reads = {
-        effect
-        for node in operation_nodes.values()
-        for outcome in node.operation.outcomes
-        for effect in outcome.state_effects
-        if effect.kind == "read"
-    }
-    if set(revision_effects) != reads:
-        _reject(PreparationCode.MISSING_STATE)
     implementations = _select_implementations(operation_nodes, selections, capabilities)
     if configuration.hard_request_limit is not None and any(
         selected.capability.effect == "external"
@@ -353,9 +303,7 @@ def prepare(
         _reject(PreparationCode.HARD_BUDGET_INCOMPATIBLE)
 
     eligibility = _eligibility(workflow, configuration)
-    if any(item.artifact_type != root_inputs[item.port] for item in bound_inputs) or any(
-        revision.effect.kind != "read" for revision in state.revisions
-    ):
+    if any(item.artifact_type != root_inputs[item.port] for item in bound_inputs):
         _reject(PreparationCode.CONTRADICTORY)
     for capability in capabilities:
         validate_capability(capability)
@@ -377,7 +325,6 @@ def prepare(
         activation_limits=activation_limits,
         bound_inputs=frozenset(bound_inputs),
         configuration=configuration,
-        state=state,
         implementations=frozenset(implementations),
         reservation_recipe=recipe,
         target_occurrences=target_occurrences,
@@ -411,7 +358,6 @@ def _validate_outer_types(
     activation_limits: object,
     bound_inputs: object,
     configuration: object,
-    state: object,
     selections: object,
     capabilities: object,
     limits: object,
@@ -423,7 +369,6 @@ def _validate_outer_types(
         or not isinstance(bound_inputs, tuple)
         or any(not isinstance(item, BoundInput) for item in bound_inputs)
         or not isinstance(configuration, PreparationConfiguration)
-        or not isinstance(state, StateRevisionView)
         or not isinstance(selections, tuple)
         or any(not isinstance(item, ImplementationSelection) for item in selections)
         or not isinstance(capabilities, tuple)

@@ -230,9 +230,7 @@ def test_latest_revision_view_cannot_select_two_versions_of_one_key() -> None:
             admitted=admitted,
             result=result,
             artifacts=tuple(ref for ref, _ in result.artifacts),
-            absences=tuple(current.absences),
             configurations=current.configurations,
-            state=current.state,
         )
     assert error.value.code.value == "duplicate"
 

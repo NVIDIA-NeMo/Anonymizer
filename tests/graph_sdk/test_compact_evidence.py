@@ -49,7 +49,6 @@ def executions() -> dict[str, Any]:
                 versioned_context_dependencies=frozenset({"a"}),
                 coverage=frozenset(CoverageAtom(kind="field", name=name) for name in ("K0", "K1")),
                 requirement_coverage=frozenset({CoverageAtom(kind="field", name="K0")}),
-                environment=True,
                 expose_evidence=False,
                 target_labels=("A", "B", "C"),
                 dependencies=dependencies,
@@ -92,9 +91,7 @@ def test_compact_evidence_snapshot(snapshot: tuple[Any, ...], executions: dict[s
         admitted=admitted,
         result=result,
         artifacts=tuple(ref for ref in current.artifacts if ref.key != selected.key) + replacement,
-        absences=tuple(current.absences),
         configurations=current.configurations,
-        state=current.state,
     )
     submitted_label = ("all", "A", "B", "none")[submitted]
     chosen = tuple(

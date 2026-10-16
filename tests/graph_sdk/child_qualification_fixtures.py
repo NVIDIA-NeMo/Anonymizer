@@ -26,7 +26,7 @@ from anonymizer.engine.graph_sdk.executor import (
     RootInputKey,
     admit_execution_plan,
 )
-from anonymizer.engine.graph_sdk.preparation import BoundInput, PreparationConfiguration, StateRevisionView, prepare
+from anonymizer.engine.graph_sdk.preparation import BoundInput, PreparationConfiguration, prepare
 from anonymizer.engine.graph_sdk.records import (
     CandidateRef,
     CanonicalRecord,
@@ -199,7 +199,6 @@ def child_fixture(
             purpose="protection", required_protection_outcomes=frozenset({"ok"}), hard_request_limit=None
         ),
         bound_inputs=(BoundInput(target=target, source=target, port="input", artifact_type=artifact_type),),
-        state=StateRevisionView(revisions=frozenset()),
     )
     request = PhysicalRequestPolicy(
         visibility="dispatch_and_settlement",
@@ -252,7 +251,6 @@ def child_fixture(
                 outcome="ok",
                 promise="checked",
                 evidence_port="context",
-                absence_queries=frozenset(),
                 supported_findings=frozenset({finding}),
             ),
         ),
@@ -260,7 +258,6 @@ def child_fixture(
             max_productions=1,
             max_findings_per_production=1,
             max_finding_code_bytes=20,
-            max_absence_queries=0,
             max_assessment_facts=1,
             max_port_facts=8,
             max_provenance_edges=8,
@@ -438,9 +435,7 @@ def child_fixture(
                 promise="checked",
                 evidence_artifact=output,
                 finding=finding,
-                environment=AssessmentEnvironment(
-                    configuration=capabilities[0].configuration, state=prepared.state, absences=frozenset()
-                ),
+                environment=AssessmentEnvironment(configuration=capabilities[0].configuration),
             ),
         ),
         ports=(

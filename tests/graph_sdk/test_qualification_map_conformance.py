@@ -13,7 +13,7 @@ import pytest
 from anonymizer.graph import EffectRejected
 from tests.graph_sdk.qualification_map_execution import CORPUS, FLAT_CASE_IDS
 from tests.graph_sdk.qualification_map_execution import _execute_reference_map as _execute_reference_map
-from tests.graph_sdk.qualification_map_records import _run_reference_map_case
+from tests.graph_sdk.qualification_map_records import _retained_expectation, _run_reference_map_case
 
 
 @pytest.mark.parametrize(
@@ -24,7 +24,7 @@ def test_reference_map_case_through_real_execution(case: dict[str, Any]) -> None
         actual = asyncio.run(_run_reference_map_case(case))
     except EffectRejected as exc:
         actual = {"status": "rejected", "code": exc.code.value}
-    expected = json.loads(json.dumps(case["expected"]))
+    expected = _retained_expectation(json.loads(json.dumps(case["expected"])))
     if "verified" in expected:
         expected["verified"].sort(key=lambda row: (row["target"], row["activation"], row["evidence_artifact"]))
     if "record" in expected:

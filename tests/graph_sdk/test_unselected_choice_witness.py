@@ -59,7 +59,6 @@ def test_unselected_choice_retains_reservation_without_terminal(monkeypatch: pyt
                     name="unused",
                     produced_ports=frozenset(),
                     evidence=frozenset(),
-                    state_effects=frozenset(),
                 ),
             ),
         )

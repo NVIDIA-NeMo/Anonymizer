@@ -33,9 +33,7 @@ from anonymizer.engine.graph_sdk.context import (
     ContextSourceCapability,
 )
 from anonymizer.engine.graph_sdk.observations import NodeMeasurement
-from anonymizer.engine.graph_sdk.preparation import StateRevisionView
 from anonymizer.engine.graph_sdk.records import (
-    AbsenceRef,
     CandidateRef,
     CanonicalRecord,
 )
@@ -490,7 +488,6 @@ class EvidenceProductionDecl(PrivateValue):
     outcome: str
     promise: str
     evidence_port: str
-    absence_queries: frozenset[int]
     supported_findings: frozenset[AssessmentFinding]
 
     def __post_init__(self) -> None:
@@ -498,10 +495,6 @@ class EvidenceProductionDecl(PrivateValue):
         require_text(self.outcome)
         require_text(self.promise)
         require_text(self.evidence_port)
-        if not isinstance(self.absence_queries, frozenset):
-            reject(EffectCode.INVALID_TYPE)
-        for query in self.absence_queries:
-            require_count(query)
         if not isinstance(self.supported_findings, frozenset) or any(
             not isinstance(item, AssessmentFinding) for item in self.supported_findings
         ):
@@ -515,7 +508,6 @@ class AssessmentLimits(PrivateValue):
     max_productions: int
     max_findings_per_production: int
     max_finding_code_bytes: int
-    max_absence_queries: int
     max_assessment_facts: int
     max_port_facts: int
     max_provenance_edges: int
@@ -525,7 +517,6 @@ class AssessmentLimits(PrivateValue):
             self.max_productions,
             self.max_findings_per_production,
             self.max_finding_code_bytes,
-            self.max_absence_queries,
             self.max_assessment_facts,
             self.max_port_facts,
             self.max_provenance_edges,
@@ -550,14 +541,9 @@ class LocalAssessmentResult(PrivateValue):
 @dataclass(frozen=True, slots=True, kw_only=True, repr=False)
 class AssessmentEnvironment(PrivateValue):
     configuration: FrozenConfig
-    state: StateRevisionView
-    absences: frozenset[AbsenceRef]
 
     def __post_init__(self) -> None:
         require_instance(self.configuration, FrozenConfig)
-        require_instance(self.state, StateRevisionView)
-        if not isinstance(self.absences, frozenset) or any(not isinstance(item, AbsenceRef) for item in self.absences):
-            reject(EffectCode.INVALID_TYPE)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True, repr=False)
@@ -1029,7 +1015,6 @@ class ExecutionServices(PrivateValue):
     limits: ExecutionLimits
     decision_limits: DecisionLimits
     clock: MonotonicClock
-    absence_revisions: tuple[tuple[int, int], ...] = ()
 
 
 class DecisionWaitId(OpaqueIdentity):

@@ -52,11 +52,9 @@ def _qualification_inputs(
         admitted=admitted,
         result=result,
         artifacts=tuple(ref for ref, _ in result.artifacts),
-        absences=tuple({ref for fact in result.assessments for ref in fact.environment.absences}),
         configurations=tuple(
             (item.node, item.capability.configuration) for item in execution.context.prepared.implementations
         ),
-        state=execution.context.prepared.state,
     )
     owners = {(item.node, item.promise) for item in productions}
     submissions = tuple(

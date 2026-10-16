@@ -59,7 +59,6 @@ def test_finite_public_exports_and_factory_signatures() -> None:
     assert inspect.signature(g.InitialContextDecl).parameters["version_selection"].default == "exact_one"
     assert "version_selection" not in inspect.signature(g.AdaptiveRetrievalDecl).parameters
     assert "candidate_port" in inspect.signature(g.ProtectionRequirement).parameters
-    assert callable(g.StateRevisionView.from_revisions)
     assert g.MapItemPort and g.MapItemSubjectRef and g.VerifiedEvidence and g.RemoteContext
     with pytest.raises(AttributeError):
         getattr(g, "not_a_graph_export")
@@ -104,15 +103,11 @@ def test_saved_result_selective_requalification_never_reexecutes() -> None:
         admitted=qualification,
         result=result,
         artifacts=tuple(artifact for artifact, _ in result.artifacts if artifact != final),
-        absences=(),
         configurations=tuple((item.node, item.environment.configuration) for item in result.assessments),
-        state=admitted.context.prepared.state,
     )
     withheld = g.qualify(admitted=qualification, result=result, current=reduced)
     assert not withheld.qualified
-    assert not g.project_protected(
-        source=g.bind_projection_source(execution=result, qualification=withheld, continuity=None)
-    ).items
+    assert not g.project_protected(source=g.bind_projection_source(execution=result, qualification=withheld)).items
     restored = g.qualify(admitted=qualification, result=result, current=current)
     assert restored == qualified and (transform.calls, verifier.calls) == (1, 1)
     session = g.begin_observations(
@@ -231,9 +226,7 @@ def test_public_two_target_current_artifact_selection(selected: str) -> None:
         admitted=admitted,
         result=result,
         artifacts=tuple(ref for ref, _ in result.artifacts if ref in artifacts),
-        absences=(),
         configurations=all_current.configurations,
-        state=all_current.state,
     )
     qualified = g.qualify(admitted=admitted, result=result, current=current)
     assert len(qualified.verified) == len(result.assessments) == 2
@@ -241,7 +234,7 @@ def test_public_two_target_current_artifact_selection(selected: str) -> None:
     assert {item.candidate for item in qualified.qualified} == {
         item.candidate for item in candidates if item.target in expected
     }
-    source = g.bind_projection_source(execution=result, qualification=qualified, continuity=None)
+    source = g.bind_projection_source(execution=result, qualification=qualified)
     first = g.project_protected(source=source)
     assert {item.target for item in first.items} == expected
     assert g.project_protected(source=source) == first
@@ -336,7 +329,6 @@ def test_public_diagnosis_after_prepare_rejection() -> None:
             activation_limits=None,
             bound_inputs=(),
             configuration=None,
-            state=None,
             selections=(),
             capabilities=(),
             limits=None,

@@ -43,9 +43,7 @@ def _root_inputs(
         admitted=admitted,
         result=result,
         artifacts=tuple(refs.values()),
-        absences=tuple({a for fact in result.assessments for a in fact.environment.absences}),
         configurations=tuple({(fact.node, fact.environment.configuration) for fact in result.assessments}),
-        state=execution.context.prepared.state,
     )
     submissions = tuple(AssessmentSubmission(fact=fact) for fact in result.assessments if fact.promise == "P")
     return admitted, current, submissions

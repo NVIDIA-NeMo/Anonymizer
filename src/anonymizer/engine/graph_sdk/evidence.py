@@ -34,9 +34,8 @@ from anonymizer.engine.graph_sdk.executor import (
     OperationOutputKey,
     ProvenanceKey,
 )
-from anonymizer.engine.graph_sdk.preparation import PreparedPlan, StateRevisionView
+from anonymizer.engine.graph_sdk.preparation import PreparedPlan
 from anonymizer.engine.graph_sdk.records import (
-    AbsenceRef,
     CandidateRef,
     ConsumedRef,
     DecisionRef,
@@ -79,7 +78,6 @@ class QualificationLimits(PrivateValue):
     max_required_decisions: int
     max_fixed_point_steps: int
     max_revision_entries: int
-    max_absence_revisions: int
     max_provenance_edges: int
 
     def __post_init__(self) -> None:
@@ -554,14 +552,14 @@ class _RunFacts(_ExecutionFacts):
             self.map_item(fact, name, endpoint) is not None for endpoint in scoped_consumed for name in names
         ):
             reject(EffectCode.CONTRADICTORY)
-        self._verify_environment(fact, production)
+        self._verify_environment(fact)
         if fact.finding not in production.declaration.supported_findings:
             reject(EffectCode.UNSUPPORTED)
         return VerifiedEvidence(
             _key=_EVIDENCE_KEY,
             reference=EvidenceRef(
                 artifact=evidence.artifact,
-                consumed=frozenset(reference for _, reference in consumed) | fact.environment.absences,
+                consumed=frozenset(reference for _, reference in consumed),
             ),
             activation=fact.activation,
             node=fact.node,
@@ -693,21 +691,9 @@ class _RunFacts(_ExecutionFacts):
 
         return tuple(sorted(verified, key=canonical_order))
 
-    def _verify_environment(self, fact: ExecutionAssessmentFact, production: _Production) -> None:
-        execution = self.admitted.execution
-        policy = next(item for item in execution.policies if item.node == fact.node)
-        if any(item.invocation != self.result.record.invocation for item in fact.environment.absences):
-            reject(EffectCode.FOREIGN_OWNER)
-        queries = [item.query for item in fact.environment.absences]
-        if len(queries) != len(set(queries)):
-            reject(EffectCode.DUPLICATE)
-        if frozenset(queries) != production.declaration.absence_queries:
-            reject(EffectCode.MISSING)
+    def _verify_environment(self, fact: ExecutionAssessmentFact) -> None:
+        policy = next(item for item in self.admitted.execution.policies if item.node == fact.node)
         if fact.environment.configuration not in {item.configuration for item in policy.implementations}:
-            reject(EffectCode.CONTRADICTORY)
-        reads = frozenset(item for item in production.outcome.state_effects if item.kind == "read")
-        expected = frozenset(item for item in execution.context.prepared.state.revisions if item.effect in reads)
-        if fact.environment.state.revisions != expected:
             reject(EffectCode.CONTRADICTORY)
 
 
@@ -725,9 +711,7 @@ class EvidenceRevisionView(PrivateValue):
     candidates: frozenset[CandidateRef]
     artifacts: frozenset[ArtifactRef]
     decisions: frozenset[DecisionRef]
-    absences: frozenset[AbsenceRef]
     configurations: tuple[tuple[NodeId, FrozenConfig], ...]
-    state: StateRevisionView
     _admitted: AdmittedQualification
     _result: ExecutionResult
 
@@ -743,26 +727,16 @@ def evidence_revision_view(
     admitted: AdmittedQualification,
     result: ExecutionResult,
     artifacts: tuple[ArtifactRef, ...],
-    absences: tuple[AbsenceRef, ...],
     configurations: tuple[tuple[NodeId, FrozenConfig], ...],
-    state: StateRevisionView,
 ) -> EvidenceRevisionView:
     """Bind explicit current revisions to one admitted execution result."""
     require_instance(admitted, AdmittedQualification)
     require_instance(result, ExecutionResult)
     require_instance(artifacts, tuple)
-    require_instance(absences, tuple)
     require_instance(configurations, tuple)
-    require_instance(state, StateRevisionView)
-    limits = admitted.limits
-    if (
-        len(artifacts) + len(configurations) + len(state.revisions) > limits.max_revision_entries
-        or len(absences) > limits.max_absence_revisions
-    ):
+    if len(artifacts) + len(configurations) > admitted.limits.max_revision_entries:
         reject(EffectCode.LIMIT_EXCEEDED)
-    if any(not isinstance(item, ArtifactRef) for item in artifacts) or any(
-        not isinstance(item, AbsenceRef) for item in absences
-    ):
+    if any(not isinstance(item, ArtifactRef) for item in artifacts):
         reject(EffectCode.INVALID_TYPE)
     if any(
         not isinstance(item, tuple)
@@ -773,7 +747,7 @@ def evidence_revision_view(
     ):
         reject(EffectCode.INVALID_TYPE)
     _RunFacts.from_result(admitted, result)
-    _validate_current_revisions(admitted, result, artifacts, absences, configurations, state)
+    _validate_current_revisions(admitted, result, artifacts, configurations)
     selected = frozenset(artifacts)
     candidates = frozenset(
         item.candidate
@@ -796,9 +770,7 @@ def evidence_revision_view(
             for item in result.ports
             if item.role == "decision" and item.artifact in selected
         ),
-        absences=frozenset(absences),
         configurations=tuple(sorted(configurations, key=lambda item: order[item[0]])),
-        state=state,
         _admitted=admitted,
         _result=result,
     )
@@ -808,29 +780,17 @@ def _validate_current_revisions(
     admitted: AdmittedQualification,
     result: ExecutionResult,
     artifacts: tuple[ArtifactRef, ...],
-    absences: tuple[AbsenceRef, ...],
     configurations: tuple[tuple[NodeId, FrozenConfig], ...],
-    state: StateRevisionView,
 ) -> None:
     prepared = admitted.execution.context.prepared
     nodes = {item.node for item in prepared.implementations}
-    queries = {query for item in admitted.productions for query in item.absence_queries}
-    reads = {
-        effect
-        for item in prepared.implementations
-        for outcome in item.capability.operation.outcomes
-        for effect in outcome.state_effects
-        if effect.kind == "read"
-    }
-    if any(item.invocation != result.record.invocation for item in (*artifacts, *absences)) or any(
+    if any(item.invocation != result.record.invocation for item in artifacts) or any(
         node.workflow not in {item.workflow for item in nodes} for node, _ in configurations
     ):
         reject(EffectCode.FOREIGN_OWNER)
     keys = (
         [(item.invocation, item.key) for item in artifacts],
-        [(item.invocation, item.query) for item in absences],
         [node for node, _ in configurations],
-        [item.effect for item in state.revisions],
     )
     if any(len(group) != len(set(group)) for group in keys):
         reject(EffectCode.DUPLICATE)
@@ -838,8 +798,6 @@ def _validate_current_revisions(
         item not in result.record.artifacts for item in artifacts
     ):
         reject(EffectCode.MISSING)
-    if any(item.query not in queries for item in absences) or any(item.effect not in reads for item in state.revisions):
-        reject(EffectCode.UNSUPPORTED)
     for _, configuration in configurations:
         depth, atoms = config_size(configuration)
         if depth > prepared.limits.max_config_depth or atoms > prepared.limits.max_config_atoms:
@@ -855,9 +813,7 @@ def evidence_validity(*, evidence: VerifiedEvidence, current: EvidenceRevisionVi
     artifacts = {(item.invocation, item.key): item for item in current.artifacts}
     candidates = {item.target: item for item in current.candidates}
     decisions = {(item.artifact.invocation, item.artifact.key): item for item in current.decisions}
-    absences = {(item.invocation, item.query): item for item in current.absences}
     configurations = dict(current.configurations)
-    revisions = {item.effect: item.revision for item in current.state.revisions}
     comparisons: list[tuple[object, object | None]] = [
         (
             evidence.reference.artifact,
@@ -885,11 +841,8 @@ def evidence_validity(*, evidence: VerifiedEvidence, current: EvidenceRevisionVi
                 comparisons.append((reference.artifact, selected))
             else:
                 comparisons.append((reference, decisions.get(key)))
-        elif isinstance(reference, AbsenceRef):
-            comparisons.append((reference, absences.get((reference.invocation, reference.query))))
         else:
             comparisons.append((reference, artifacts.get((reference.invocation, reference.key))))
-    comparisons.extend((item.revision, revisions.get(item.effect)) for item in evidence.environment.state.revisions)
     if any(actual is not None and actual != expected for expected, actual in comparisons):
         return "stale"
     if any(actual is None for _, actual in comparisons):

@@ -110,9 +110,7 @@ def test_unretained_evidence_sibling_cannot_be_claimed_current() -> None:
             admitted=admitted,
             result=result,
             artifacts=tuple(sibling if ref == evidence else ref for ref, _ in result.artifacts),
-            absences=(),
             configurations=((result.assessments[0].node, result.assessments[0].environment.configuration),),
-            state=execution.context.prepared.state,
         )
     assert error.value.code.value == "missing"
 
@@ -134,9 +132,7 @@ def test_missing_evidence_only_revision_is_unknown_with_dependencies_current() -
         admitted=admitted,
         result=result,
         artifacts=refs,
-        absences=(),
         configurations=((result.assessments[0].node, result.assessments[0].environment.configuration),),
-        state=execution.context.prepared.state,
     )
     assert evidence_validity(evidence=verified, current=missing) == "unknown"
     output = qualify(admitted=admitted, result=result, current=missing, submissions=submissions)

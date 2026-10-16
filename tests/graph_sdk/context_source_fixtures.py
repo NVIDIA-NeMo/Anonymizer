@@ -270,7 +270,6 @@ def _operation(artifact_type: ArtifactType) -> OperationSpec:
                 produced_ports=frozenset({"output"}),
                 context=frozenset({ContextUse(port="context", meaning="retrieved", capture="whole_artifact")}),
                 evidence=frozenset(),
-                state_effects=frozenset(),
                 model_requirements=frozenset(),
                 ceiling=ResourceCeiling(
                     max_activations=2,
@@ -358,7 +357,6 @@ def _static_fixture(case: dict[str, Any]):
                         if evidence_raw is not None and outcome_name in {"ok", "main"}
                         else frozenset()
                     ),
-                    state_effects=frozenset(),
                     model_requirements=frozenset(),
                     ceiling=ResourceCeiling(
                         max_activations=max(1, len(node_ids)),

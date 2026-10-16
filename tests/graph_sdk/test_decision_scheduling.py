@@ -26,7 +26,7 @@ from anonymizer.engine.graph_sdk.executor import (
     admit_execution_plan,
     start_execution,
 )
-from anonymizer.engine.graph_sdk.preparation import BoundInput, PreparationConfiguration, StateRevisionView, prepare
+from anonymizer.engine.graph_sdk.preparation import BoundInput, PreparationConfiguration, prepare
 from anonymizer.engine.graph_sdk.requests import AssociationInput, AssociationResult, SemanticAssociation
 from anonymizer.graph.activation import ActivationLimits
 from anonymizer.graph.workflow import (
@@ -174,7 +174,6 @@ async def _assert_scheduling(case_id: str, local_capacity: int) -> None:
         configuration=PreparationConfiguration(
             purpose="execution_only", required_protection_outcomes=frozenset(), hard_request_limit=None
         ),
-        state=StateRevisionView(revisions=frozenset()),
         selections=tuple(_selection(node, capability) for node, capability in zip(nodes, capabilities, strict=True)),
         capabilities=capabilities,
         limits=_limits(capabilities=3, slots=3),

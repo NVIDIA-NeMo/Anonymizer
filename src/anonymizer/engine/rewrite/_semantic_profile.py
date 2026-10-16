@@ -437,7 +437,6 @@ async def execute_initial_evaluation(
                         produced_ports=frozenset(),
                         context=frozenset(),
                         evidence=frozenset(),
-                        state_effects=frozenset(),
                         model_requirements=frozenset(),
                         ceiling=ResourceCeiling(
                             max_activations=1, max_model_requests=None, max_input_bytes=None, max_output_bytes=None
@@ -751,7 +750,6 @@ async def execute_initial_evaluation(
                 outcome=outcome,
                 promise=EVALUATION_PROMISE,
                 evidence_port="metrics",
-                absence_queries=frozenset(),
                 supported_findings=frozenset({EVALUATION_PASS, EVALUATION_FAIL}),
             )
             for node in (() if opaque else (ids["initial"], ids["final"]))
@@ -761,7 +759,6 @@ async def execute_initial_evaluation(
             max_productions=2,
             max_findings_per_production=2,
             max_finding_code_bytes=32,
-            max_absence_queries=0,
             max_assessment_facts=2 * size,
             max_port_facts=((8 + 6 * allowance) * 20 + (48 if map_ids else 0)) * size,
             max_provenance_edges=((8 + 6 * allowance) * 64 + (100 if map_ids else 0)) * size,
@@ -783,7 +780,6 @@ async def execute_initial_evaluation(
             max_required_decisions=0,
             max_fixed_point_steps=max(1, size),
             max_revision_entries=(8 + 6 * allowance) * 20 * size,
-            max_absence_revisions=0,
             max_provenance_edges=((8 + 6 * allowance) * 64 + (100 if map_ids else 0)) * size,
         ),
     )
@@ -791,9 +787,7 @@ async def execute_initial_evaluation(
         admitted=qualification,
         result=result,
         artifacts=tuple(reference for reference, _ in result.artifacts),
-        absences=(),
         configurations=tuple(dict((fact.node, fact.environment.configuration) for fact in result.assessments).items()),
-        state=prepared.state,
     )
     qualify_retained(admitted=qualification, result=result, current=current)
     verify_evidence(
@@ -864,7 +858,6 @@ def _tail(configuration: FrozenConfig, allowance: int, *, opaque: bool = False):
                     produced_ports=frozenset(outputs),
                     context=frozenset(),
                     evidence=frozenset(),
-                    state_effects=frozenset(),
                     model_requirements=frozenset(),
                     ceiling=ResourceCeiling(
                         max_activations=ceiling,

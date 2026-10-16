@@ -63,9 +63,7 @@ def _inputs(
         )
         if latest
         else tuple(ref for ref, _ in result.artifacts),
-        absences=tuple({absence for fact in result.assessments for absence in fact.environment.absences}),
         configurations=tuple({(fact.node, fact.environment.configuration) for fact in result.assessments}),
-        state=execution.context.prepared.state,
     )
     submissions = tuple(AssessmentSubmission(fact=fact) for fact in result.assessments)
     return admitted, current, submissions

@@ -33,7 +33,7 @@ from tests.graph_sdk.reference.workflow_fixture_builders import (
     _workflow,
     _wrap,
 )
-from tests.graph_sdk.test_workflow_static import Json, Object, _Adapter, _execute, _object
+from tests.graph_sdk.test_workflow_static import Json, Object, _Adapter, _execute, _object, _without_state_effects
 from tests.graph_sdk.workflow_construction import AdmittedWorkflow, admit_static_workflow
 
 _P = ParamSpec("_P")
@@ -99,10 +99,10 @@ def test_tiny_product_normalization_matches_frozen_independent_answers(count: in
     expected = fixture["expected"]
     actual = _execute(declaration, None)
     assert expected["status"] == "accepted"
-    assert actual[:3] == (expected["status"], expected["code"], expected["normalized"])
+    assert actual[:3] == (expected["status"], expected["code"], _without_state_effects(expected["normalized"]))
 
 
-@pytest.mark.parametrize("field", ("ports", "cost", "context", "state", "evidence", "model"))
+@pytest.mark.parametrize("field", ("ports", "cost", "context", "evidence", "model"))
 def test_near_neighbor_effect_is_not_erased(field: str) -> None:
     declaration = _chain(3)
     first = _object(cast(list[Object], declaration["nodes"])[0]["operation"])
@@ -113,8 +113,6 @@ def test_near_neighbor_effect_is_not_erased(field: str) -> None:
         _object(alternate["ceiling"])["max_activations"] = 2
     elif field == "context":
         alternate["context"] = [_context("i0", "private-context")]
-    elif field == "state":
-        alternate["state_effects"] = [{"kind": "read", "name": "private-state"}]
     elif field == "evidence":
         alternate["evidence"] = [_evidence("assessment", "label", "o0", ("i0",), ("field",))]
     else:
@@ -239,7 +237,7 @@ def test_quotient_and_complete_product_have_the_same_hand_derived_interface(
         assert outcome.produced_ports == {"o0"}
         assert outcome.ceiling.max_activations == count
         assert outcome.ceiling.max_input_bytes == 8 * count
-        assert outcome.context == outcome.evidence == outcome.state_effects == outcome.model_requirements == frozenset()
+        assert outcome.context == outcome.evidence == outcome.model_requirements == frozenset()
     dependency = complete.interface.output_dependencies[0]
     assert dependency.inputs == {"i0"}
     assert dependency.identity_input == "i0"

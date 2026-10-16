@@ -25,12 +25,9 @@ from anonymizer.engine.graph_sdk.executor import (
     ExecutionResult,
     admit_execution_plan,
 )
-from anonymizer.engine.graph_sdk.preparation import (
-    StateRevisionView,
-)
-from anonymizer.engine.graph_sdk.records import AbsenceRef, CandidateRef, DecisionRef
+from anonymizer.engine.graph_sdk.records import CandidateRef, DecisionRef
 from anonymizer.graph import EffectCode, EffectRejected
-from anonymizer.graph._values import ArtifactRef, InvocationId
+from anonymizer.graph._values import ArtifactRef
 from anonymizer.graph.workflow import (
     CoverageAtom,
 )
@@ -137,27 +134,22 @@ def test_explicit_current_view_and_stale_precedes_missing(
     (verified,) = verify_evidence(admitted=admitted, result=result, submissions=(AssessmentSubmission(fact=fact),))
     artifacts = tuple(reference for reference, _ in result.artifacts)
     configurations = ((fact.node, fact.environment.configuration),)
-    state = StateRevisionView(revisions=frozenset())
     current = evidence_revision_view(
-        admitted=admitted, result=result, artifacts=artifacts, absences=(), configurations=configurations, state=state
+        admitted=admitted, result=result, artifacts=artifacts, configurations=configurations
     )
     assert evidence_validity(evidence=verified, current=current) == "current"
     missing = evidence_revision_view(
         admitted=admitted,
         result=result,
         artifacts=tuple(item for item in artifacts if item != fact.evidence_artifact),
-        absences=(),
         configurations=configurations,
-        state=state,
     )
     assert evidence_validity(evidence=verified, current=missing) == "unknown"
     changed = evidence_revision_view(
         admitted=admitted,
         result=result,
         artifacts=(),
-        absences=(),
         configurations=((fact.node, FrozenConfig(fields=())),),
-        state=state,
     )
     assert evidence_validity(evidence=verified, current=changed) == "stale"
     assert verified.environment is fact.environment
@@ -178,9 +170,7 @@ def test_revision_duplicates_and_foreign_result_binding_reject(
             admitted=admitted,
             result=result,
             artifacts=(reference, reference),
-            absences=(),
             configurations=(),
-            state=StateRevisionView(revisions=frozenset()),
         )
     assert error.value.code is EffectCode.DUPLICATE
     (verified,) = verify_evidence(admitted=admitted, result=result, submissions=(AssessmentSubmission(fact=fact),))
@@ -192,9 +182,7 @@ def test_revision_duplicates_and_foreign_result_binding_reject(
         admitted=other_admitted,
         result=other_result,
         artifacts=(),
-        absences=(),
         configurations=(),
-        state=StateRevisionView(revisions=frozenset()),
     )
     with pytest.raises(EffectRejected) as error:
         evidence_validity(evidence=verified, current=other_view)
@@ -215,9 +203,7 @@ def test_revision_aggregate_limit_is_checked_before_members(
             admitted=admitted,
             result=result,
             artifacts=cast(tuple, (object(),)),
-            absences=(),
             configurations=(),
-            state=StateRevisionView(revisions=frozenset()),
         )
     assert error.value.code is EffectCode.LIMIT_EXCEEDED
 
@@ -250,15 +236,13 @@ def test_same_prepared_plan_does_not_authenticate_a_different_execution(
                 admitted=admitted,
                 result=result,
                 artifacts=(),
-                absences=(),
                 configurations=(),
-                state=StateRevisionView(revisions=frozenset()),
             )
     assert error.value.code is EffectCode.FOREIGN_OWNER
 
 
-def test_absence_capture_does_not_consume_a_port_dependency_slot() -> None:
-    execution, result = asyncio.run(_execute_assessment(environment=True))
+def test_consumed_port_dependency_slots_are_exact() -> None:
+    execution, result = asyncio.run(_execute_assessment())
     admitted = admit_qualification(
         execution=execution,
         productions=execution.assessment_productions,
@@ -267,10 +251,6 @@ def test_absence_capture_does_not_consume_a_port_dependency_slot() -> None:
     fact = result.assessments[0]
     (verified,) = verify_evidence(admitted=admitted, result=result, submissions=(AssessmentSubmission(fact=fact),))
     assert len(verified.consumed_by_port) == 1
-    assert {(item.query, item.scope_revision) for item in verified.environment.absences} == {(7, 4)}
-    assert {(item.effect.name, item.revision) for item in verified.environment.state.revisions} == {
-        ("assessment-policy", 3)
-    }
     with pytest.raises(EffectRejected) as error:
         admit_qualification(
             execution=execution,
@@ -284,35 +264,18 @@ def test_absence_capture_does_not_consume_a_port_dependency_slot() -> None:
     ("dependency", "expected"),
     [
         ("none", "current"),
-        ("absence-missing", "unknown"),
-        ("absence-changed", "stale"),
-        ("state-missing", "unknown"),
-        ("state-changed", "stale"),
         ("input-missing", "unknown"),
         ("candidate-missing", "unknown"),
-        ("changed-and-missing", "stale"),
     ],
 )
-def test_validity_selectively_tracks_real_environment(dependency: str, expected: str) -> None:
-    execution, result = asyncio.run(_execute_assessment(environment=True))
+def test_validity_selectively_tracks_real_dependencies(dependency: str, expected: str) -> None:
+    execution, result = asyncio.run(_execute_assessment())
     admitted = admit_qualification(
         execution=execution, productions=execution.assessment_productions, limits=_qualification_limits()
     )
     fact = result.assessments[0]
     (verified,) = verify_evidence(admitted=admitted, result=result, submissions=(AssessmentSubmission(fact=fact),))
     artifacts = tuple(reference for reference, _ in result.artifacts)
-    absences = tuple(fact.environment.absences)
-    state = fact.environment.state
-    if dependency == "absence-missing":
-        absences = ()
-    if dependency in {"absence-changed", "changed-and-missing"}:
-        absences = tuple(replace(item, scope_revision=item.scope_revision + 1) for item in absences)
-    if dependency in {"state-missing", "changed-and-missing"}:
-        state = StateRevisionView(revisions=frozenset())
-    if dependency == "state-changed":
-        state = StateRevisionView(
-            revisions=frozenset(replace(item, revision=item.revision + 1) for item in state.revisions)
-        )
     if dependency == "input-missing":
         consumed = next(item.artifact for item in result.ports if item.port == "input")
         artifacts = tuple(item for item in artifacts if item != consumed)
@@ -322,14 +285,12 @@ def test_validity_selectively_tracks_real_environment(dependency: str, expected:
         admitted=admitted,
         result=result,
         artifacts=artifacts,
-        absences=absences,
         configurations=((fact.node, fact.environment.configuration),),
-        state=state,
     )
     assert evidence_validity(evidence=verified, current=current) == expected
 
 
-def test_missing_current_artifact_precedes_unsupported_absence(
+def test_missing_current_artifact_is_rejected(
     assessment_execution: tuple[AdmittedExecutionPlan, ExecutionResult],
 ) -> None:
     execution, result = assessment_execution
@@ -337,42 +298,29 @@ def test_missing_current_artifact_precedes_unsupported_absence(
         execution=execution, productions=execution.assessment_productions, limits=_qualification_limits()
     )
     missing = ArtifactRef(invocation=result.record.invocation, key=999, version=1)
-    unsupported = AbsenceRef(invocation=result.record.invocation, query=999, scope_revision=1)
     with pytest.raises(EffectRejected) as error:
         evidence_revision_view(
             admitted=admitted,
             result=result,
             artifacts=(missing,),
-            absences=(unsupported,),
             configurations=(),
-            state=StateRevisionView(revisions=frozenset()),
         )
     assert error.value.code is EffectCode.MISSING
 
 
-@pytest.mark.parametrize(
-    ("defect", "code"),
-    [("foreign", EffectCode.FOREIGN_OWNER), ("duplicate", EffectCode.DUPLICATE), ("missing", EffectCode.MISSING)],
-)
-def test_environment_identity_errors_precede_configuration_contradiction(defect: str, code: EffectCode) -> None:
-    execution, result = asyncio.run(_execute_assessment(environment=True))
+def test_unselected_environment_configuration_is_contradictory() -> None:
+    execution, result = asyncio.run(_execute_assessment())
     admitted = admit_qualification(
         execution=execution, productions=execution.assessment_productions, limits=_qualification_limits()
     )
     fact = result.assessments[0]
     original = fact.environment
-    absence = next(iter(original.absences))
-    absences = frozenset()
-    if defect == "foreign":
-        absences = frozenset({replace(absence, invocation=InvocationId.new(plan=result.record.plan))})
-    if defect == "duplicate":
-        absences = frozenset({absence, replace(absence, scope_revision=absence.scope_revision + 1)})
-    # Corrupt the retained fact solely to exercise validation of simultaneous defects.
-    object.__setattr__(fact, "environment", replace(original, configuration=FrozenConfig(fields=()), absences=absences))
+    # Corrupt the retained fact solely to exercise environment validation.
+    object.__setattr__(fact, "environment", replace(original, configuration=FrozenConfig(fields=())))
     try:
         with pytest.raises(EffectRejected) as error:
             verify_evidence(admitted=admitted, result=result, submissions=(AssessmentSubmission(fact=fact),))
-        assert error.value.code is code
+        assert error.value.code is EffectCode.CONTRADICTORY
     finally:
         object.__setattr__(fact, "environment", original)
 
@@ -415,9 +363,7 @@ def test_consumed_candidate_retains_target_and_alias_identity() -> None:
         admitted=admitted,
         result=result,
         artifacts=tuple(ref for ref, _ in result.artifacts),
-        absences=(),
         configurations=((fact.node, fact.environment.configuration),),
-        state=fact.environment.state,
     )
     assert evidence_validity(evidence=verified, current=current) == "current"
 
@@ -470,9 +416,7 @@ def test_consumed_decision_is_derived_from_an_actual_resumed_producer() -> None:
             admitted=admitted,
             result=result,
             artifacts=selected,
-            absences=(),
             configurations=((fact.node, fact.environment.configuration),),
-            state=fact.environment.state,
         )
         assert evidence_validity(evidence=verified, current=current) == ("unknown" if missing else "current")
 
@@ -506,16 +450,14 @@ def test_evidence_occurrence_authenticates_executor_role_precedence(nested: bool
         ("max_submissions", "verify"),
         ("max_verified_evidence", "verify"),
         ("max_revision_entries", "view"),
-        ("max_absence_revisions", "view"),
     ],
 )
 def test_actual_evidence_collections_accept_exact_limits_and_reject_one_over(bound: str, boundary: str) -> None:
-    execution, result = asyncio.run(_execute_assessment(environment=True))
+    execution, result = asyncio.run(_execute_assessment())
     fact = result.assessments[0]
     artifacts = tuple(reference for reference, _ in result.artifacts)
     configurations = ((fact.node, fact.environment.configuration),)
-    state = fact.environment.state
-    count = len(artifacts) + len(configurations) + len(state.revisions) if bound == "max_revision_entries" else 1
+    count = len(artifacts) + len(configurations) if bound == "max_revision_entries" else 1
 
     def invoke(limit: int) -> object:
         admitted = admit_qualification(
@@ -531,9 +473,7 @@ def test_actual_evidence_collections_accept_exact_limits_and_reject_one_over(bou
             admitted=admitted,
             result=result,
             artifacts=artifacts,
-            absences=tuple(fact.environment.absences),
             configurations=configurations,
-            state=state,
         )
 
     assert invoke(count) is not None

@@ -66,9 +66,7 @@ def test_separate_candidate_version_unavailability(submitted: bool) -> None:
         admitted=admitted,
         result=result,
         artifacts=tuple(older.artifact if ref == latest.artifact else ref for ref in current.artifacts),
-        absences=tuple(current.absences),
         configurations=current.configurations,
-        state=current.state,
     )
     assert context.artifact in view.artifacts and evidence in view.artifacts
     output = qualify(admitted=admitted, result=result, current=view, submissions=submissions if submitted else ())

@@ -34,7 +34,7 @@ from anonymizer.engine.graph_sdk.executor import (
     admit_execution_plan,
     start_execution,
 )
-from anonymizer.engine.graph_sdk.preparation import BoundInput, PreparationConfiguration, StateRevisionView, prepare
+from anonymizer.engine.graph_sdk.preparation import BoundInput, PreparationConfiguration, prepare
 from anonymizer.engine.graph_sdk.requests import (
     PhysicalRequestPolicy,
     SemanticAssociation,
@@ -106,7 +106,6 @@ def _admit_fixture(
             required_protection_outcomes=frozenset({"ok"}) if fixture.member_assessment else frozenset(),
             hard_request_limit=None,
         ),
-        state=StateRevisionView(revisions=frozenset()),
         selections=_selections(by_node),
         capabilities=fixture.capabilities,
         limits=_limits(
@@ -134,7 +133,6 @@ def _admit_fixture(
                 outcome="expand",
                 promise="assessment0",
                 evidence_port="members",
-                absence_queries=frozenset(),
                 supported_findings=frozenset({AssessmentFinding(status="satisfied", code="assessment0")}),
             ),
             *(
@@ -144,7 +142,6 @@ def _admit_fixture(
                         outcome="ok",
                         promise="member_checked",
                         evidence_port="evidence",
-                        absence_queries=frozenset(),
                         supported_findings=frozenset({AssessmentFinding(status="satisfied", code="member_checked")}),
                     ),
                 )
@@ -158,7 +155,6 @@ def _admit_fixture(
             else 1 + fixture.member_assessment,
             max_findings_per_production=1,
             max_finding_code_bytes=16,
-            max_absence_queries=0,
             max_assessment_facts=len(data.targets)
             * (fixture.workflow.dynamic_limits.max_activation_occurrences if fixture.member_assessment else 1),
             max_port_facts=baseline_port_facts + port_fact_headroom,
@@ -528,7 +524,6 @@ async def _execute_loop_resolution(mode: str):
         configuration=PreparationConfiguration(
             purpose="execution_only", required_protection_outcomes=frozenset(), hard_request_limit=None
         ),
-        state=StateRevisionView(revisions=frozenset()),
         selections=_selections(by_node),
         capabilities=capabilities,
         limits=_limits(capabilities=4, slots=loop_bound + 3),
@@ -560,7 +555,6 @@ async def _execute_loop_resolution(mode: str):
             max_productions=0,
             max_findings_per_production=0,
             max_finding_code_bytes=0,
-            max_absence_queries=0,
             max_assessment_facts=0,
             max_port_facts=12,
             max_provenance_edges=10,

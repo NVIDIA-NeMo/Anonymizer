@@ -47,7 +47,6 @@ class EntitySpansValue(PrivateValue):
 
     Construction validates the closed shape; publication additionally checks the
     reference and exact substrings against the declared authoritative text input.
-    This transient value cannot be committed as a continuity decision.
     """
 
     source: ArtifactRef

@@ -116,7 +116,6 @@ def test_qualification_declaration_rejected_before_callbacks(
             fixture._execute_separate_subject_context(
                 coverage=frozenset(CoverageAtom(kind="field", name=name) for name in ("K0", "K1")),
                 requirement_coverage=frozenset({CoverageAtom(kind="field", name="K0")}),
-                environment=True,
                 expose_evidence=False,
             )
         )

@@ -94,24 +94,7 @@ class DecisionRef(_PrivateRepr):
             raise ContractViolation(ValidationCode.INVALID_TYPE)
 
 
-@dataclass(frozen=True, slots=True, kw_only=True, repr=False)
-class AbsenceRef(_PrivateRepr):
-    invocation: InvocationId
-    query: int
-    scope_revision: int
-
-    def __post_init__(self) -> None:
-        if not isinstance(self.invocation, InvocationId):
-            raise ContractViolation(ValidationCode.INVALID_TYPE)
-        if isinstance(self.query, bool) or not isinstance(self.query, int):
-            raise ContractViolation(ValidationCode.INVALID_TYPE)
-        if isinstance(self.scope_revision, bool) or not isinstance(self.scope_revision, int):
-            raise ContractViolation(ValidationCode.INVALID_TYPE)
-        if self.query < 0 or self.scope_revision <= 0:
-            raise ContractViolation(ValidationCode.INVALID_VALUE)
-
-
-ConsumedRef: TypeAlias = ArtifactRef | CandidateRef | DecisionRef | AbsenceRef
+ConsumedRef: TypeAlias = ArtifactRef | CandidateRef | DecisionRef
 
 
 @dataclass(frozen=True, slots=True, kw_only=True, repr=False)
@@ -122,8 +105,8 @@ class EvidenceRef(_PrivateRepr):
     def __post_init__(self) -> None:
         if not isinstance(self.artifact, ArtifactRef):
             raise ContractViolation(ValidationCode.INVALID_TYPE)
-        _require_frozenset(self.consumed, (ArtifactRef, CandidateRef, DecisionRef, AbsenceRef))
-        if any(_consumed_invocation(item) != self.artifact.invocation for item in self.consumed):
+        _require_frozenset(self.consumed, (ArtifactRef, CandidateRef, DecisionRef))
+        if any(_consumed_artifact(item).invocation != self.artifact.invocation for item in self.consumed):
             raise ContractViolation(ValidationCode.FOREIGN_OWNER)
 
 
@@ -297,7 +280,7 @@ class CanonicalRecord(_PrivateRepr):
             raise ContractViolation(ValidationCode.FOREIGN_OWNER)
         for evidence in self.evidence:
             for consumed in evidence.consumed:
-                if _consumed_invocation(consumed) != self.invocation:
+                if _consumed_artifact(consumed).invocation != self.invocation:
                     raise ContractViolation(ValidationCode.FOREIGN_OWNER)
                 if isinstance(consumed, CandidateRef) and consumed.target.graph != self.graph:
                     raise ContractViolation(ValidationCode.FOREIGN_OWNER)
@@ -331,23 +314,13 @@ class CanonicalRecord(_PrivateRepr):
         for evidence in self.evidence:
             if evidence.artifact not in self.artifacts:
                 raise ContractViolation(ValidationCode.MISSING)
-            if any(
-                _consumed_artifact(item) not in self.artifacts
-                for item in evidence.consumed
-                if not isinstance(item, AbsenceRef)
-            ):
+            if any(_consumed_artifact(item) not in self.artifacts for item in evidence.consumed):
                 raise ContractViolation(ValidationCode.MISSING)
         if any(target not in {status.target for status in self.statuses} for target in self.targets):
             raise ContractViolation(ValidationCode.MISSING)
 
 
-def _consumed_invocation(reference: ConsumedRef) -> InvocationId:
-    if isinstance(reference, AbsenceRef):
-        return reference.invocation
-    return _consumed_artifact(reference).invocation
-
-
-def _consumed_artifact(reference: ArtifactRef | CandidateRef | DecisionRef) -> ArtifactRef:
+def _consumed_artifact(reference: ConsumedRef) -> ArtifactRef:
     if isinstance(reference, ArtifactRef):
         return reference
     return reference.artifact

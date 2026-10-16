@@ -23,7 +23,6 @@ from anonymizer.engine.graph_sdk._request_values import BindingRequestScope as B
 from anonymizer.engine.graph_sdk._request_values import ChildEvidence as ChildEvidence
 from anonymizer.engine.graph_sdk._request_values import ChildRoute as ChildRoute
 from anonymizer.engine.graph_sdk._request_values import ChildSourceKind as ChildSourceKind
-from anonymizer.engine.graph_sdk._request_values import ContinuityArtifactValue as ContinuityArtifactValue
 from anonymizer.engine.graph_sdk._request_values import Dispatch as Dispatch
 from anonymizer.engine.graph_sdk._request_values import DispatchEnvelope as DispatchEnvelope
 from anonymizer.engine.graph_sdk._request_values import ExactUsage as ExactUsage

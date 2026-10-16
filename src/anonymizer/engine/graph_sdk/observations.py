@@ -282,16 +282,11 @@ def execution_observation_requirements(
 def post_execution_observation_requirements(
     *,
     qualification: AdmittedQualification | None,
-    continuity_enabled: bool,
     projection_calls: int,
     limits: ObservationLimits,
 ) -> ObservationRequirements:
     require_count(projection_calls)
-    if type(continuity_enabled) is not bool:
-        from anonymizer.engine.graph_sdk._effect_values import EffectCode, reject
-
-        reject(EffectCode.INVALID_TYPE)
-    return _requirements(int(qualification is not None) + int(continuity_enabled) + 2 * projection_calls, 2, limits)
+    return _requirements(int(qualification is not None) + 2 * projection_calls, 2, limits)
 
 
 from contextvars import ContextVar
@@ -608,7 +603,6 @@ def observed_prepare(
     activation_limits: ActivationLimits,
     bound_inputs: tuple[BoundInput, ...],
     configuration: PreparationConfiguration,
-    state: StateRevisionView,
     selections: tuple[ImplementationSelection, ...],
     capabilities: tuple[ImplementationCapability, ...],
     limits: PreparationLimits,
@@ -624,7 +618,6 @@ def observed_prepare(
             activation_limits=activation_limits,
             bound_inputs=bound_inputs,
             configuration=configuration,
-            state=state,
             selections=selections,
             capabilities=capabilities,
             limits=limits,
@@ -741,26 +734,6 @@ def observed_qualify(
         return qualified
 
 
-def observed_commit_qualified(
-    *,
-    observations: ObservationSession,
-    admitted: AdmittedContinuity,
-    execution: ExecutionResult,
-    qualification: QualificationResult,
-) -> ContinuityCommit:
-    from anonymizer.engine.graph_sdk.continuity import commit_qualified
-
-    reserve_observation_scope(session=observations, requirements=_requirements(1, 2, observations.limits))
-    observations._bind(_PRODUCER, execution=execution, qualification=qualification)
-    with _Span("continuity_commit", session=observations) as span:
-        result = commit_qualified(admitted=admitted, execution=execution, qualification=qualification)
-        observations._bind(_PRODUCER, continuity=result)
-        if result.conflicts:
-            span.outcome = "partial" if result.releasable else "blocked"
-            span.reasons = frozenset({"continuity_conflict"})
-        return result
-
-
 def observed_project_protected(*, observations: ObservationSession, source: ProjectionSource) -> ProtectedProjection:
     from anonymizer.engine.graph_sdk.extensions import project_protected
 
@@ -769,8 +742,6 @@ def observed_project_protected(*, observations: ObservationSession, source: Proj
 
     if isinstance(source, ProjectionSource):
         observations._bind(_PRODUCER, execution=source.execution, qualification=source.qualification)
-        if source.continuity is not None:
-            observations._bind(_PRODUCER, continuity=source.continuity)
     with _Span("projection", session=observations) as span:
         with _Span("release") as release:
             result = project_protected(source=source)
@@ -794,8 +765,6 @@ def observed_project_content(
 
     if isinstance(source, ProjectionSource):
         observations._bind(_PRODUCER, execution=source.execution, qualification=source.qualification)
-        if source.continuity is not None:
-            observations._bind(_PRODUCER, continuity=source.continuity)
     with _Span("projection", session=observations):
         result = project_content(source=source, kind=kind, artifacts=artifacts)
         return result
@@ -819,12 +788,7 @@ if TYPE_CHECKING:
         ContextSourceCapability,
         PreparedPlan,
     )
-    from anonymizer.engine.graph_sdk.continuity import (
-        AdmittedContinuity,
-        ContinuityCommit,
-        ExecutionResult,
-        QualificationResult,
-    )
+    from anonymizer.engine.graph_sdk.executor import ExecutionResult
     from anonymizer.engine.graph_sdk.extensions import (
         ArtifactSelection,
         ContentKind,
@@ -839,11 +803,11 @@ if TYPE_CHECKING:
         ImplementationSelection,
         PreparationConfiguration,
         PreparationLimits,
-        StateRevisionView,
         ValidatedDataGraph,
     )
     from anonymizer.engine.graph_sdk.qualification import (
         AdmittedQualification,
         AssessmentSubmission,
         EvidenceRevisionView,
+        QualificationResult,
     )

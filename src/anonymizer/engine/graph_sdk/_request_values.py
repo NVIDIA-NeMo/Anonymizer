@@ -248,8 +248,7 @@ class TextCollectionValue(PrivateValue):
         )
 
 
-ContinuityArtifactValue: TypeAlias = TextArtifactValue | TextCollectionValue
-ArtifactValue: TypeAlias = ContinuityArtifactValue | EntitySpansValue | RewriteArtifactValue
+ArtifactValue: TypeAlias = TextArtifactValue | TextCollectionValue | EntitySpansValue | RewriteArtifactValue
 
 
 @dataclass(frozen=True, slots=True, kw_only=True, repr=False)

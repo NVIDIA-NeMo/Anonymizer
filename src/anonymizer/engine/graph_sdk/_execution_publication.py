@@ -25,7 +25,6 @@ from anonymizer.engine.graph_sdk._execution_values import (
     EvidenceProductionDecl,
     ExecutionAssessmentFact,
     ExecutionLimits,
-    ExecutionServices,
     FinalOutputFact,
     LocalAssessmentResult,
     LocalCompleted,
@@ -35,9 +34,8 @@ from anonymizer.engine.graph_sdk._execution_values import (
     RootInputKey,
     RuntimeOutcome,
 )
-from anonymizer.engine.graph_sdk.preparation import PreparedPlan, StateRevisionView
+from anonymizer.engine.graph_sdk.preparation import PreparedPlan
 from anonymizer.engine.graph_sdk.records import (
-    AbsenceRef,
     CandidateRef,
     CanonicalRecord,
     ExpectedMembership,
@@ -240,7 +238,6 @@ def _capture_assessments(
     job: _OperationJob[DatumId],
     mapping: RuntimeOutcome,
     returned: tuple[tuple[EvidenceProductionDecl, LocalAssessmentResult], ...],
-    services: ExecutionServices,
     facts: _ExecutionFacts,
 ) -> bool:
     implementation, activation, node, target = job.implementation, job.activation, job.node, job.scope
@@ -248,14 +245,9 @@ def _capture_assessments(
         return not returned
     if len(facts.assessments) + len(returned) > admitted.assessment_limits.max_assessment_facts:
         return False
-    absence_map = dict(services.absence_revisions)
     operation = implementation.capability.operation
     outcome = next(item for item in operation.outcomes if item.name == mapping.outcome)
     promises = {item.name: item for item in outcome.evidence}
-    reads = {item for item in outcome.state_effects if item.kind == "read"}
-    state_view = StateRevisionView(
-        revisions=frozenset(item for item in admitted.context.prepared.state.revisions if item.effect in reads)
-    )
     for declaration, result in returned:
         artifact = facts.artifact(target, activation, declaration.evidence_port)
         if artifact is None:
@@ -268,18 +260,7 @@ def _capture_assessments(
             promise=declaration.promise,
             evidence_artifact=artifact,
             finding=result.finding,
-            environment=AssessmentEnvironment(
-                configuration=implementation.configuration,
-                state=state_view,
-                absences=frozenset(
-                    AbsenceRef(
-                        invocation=activation.invocation,
-                        query=query,
-                        scope_revision=absence_map[query],
-                    )
-                    for query in declaration.absence_queries
-                ),
-            ),
+            environment=AssessmentEnvironment(configuration=implementation.configuration),
         )
         port = promises[declaration.promise].subject_port
         if not isinstance(port, str):

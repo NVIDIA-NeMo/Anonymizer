@@ -13,7 +13,6 @@ from anonymizer.engine.detection.artifacts import ENTITY_SPANS_TYPE
 from anonymizer.engine.graph_sdk._effect_values import (
     EffectCode,
     reject,
-    require_count,
     require_instance,
     require_literal,
 )
@@ -644,10 +643,7 @@ def _validate_assessments(
         )
         if dependency is None or dependency.inputs != promise.consumed_ports:
             reject(EffectCode.CONTRADICTORY)
-        if (
-            len(item.supported_findings) > limits.max_findings_per_production
-            or len(item.absence_queries) > limits.max_absence_queries
-        ):
+        if len(item.supported_findings) > limits.max_findings_per_production:
             reject(EffectCode.LIMIT_EXCEEDED)
         if any(len(value.code.encode()) > limits.max_finding_code_bytes for value in item.supported_findings):
             reject(EffectCode.LIMIT_EXCEEDED)
@@ -934,19 +930,3 @@ def _validate_initial_materialization_capacity(admitted: AdmittedExecutionPlan, 
         reject(EffectCode.LIMIT_EXCEEDED)
     if provenance_edges > admitted.assessment_limits.max_provenance_edges:
         reject(EffectCode.LIMIT_EXCEEDED)
-
-
-def _validate_absences(admitted: AdmittedExecutionPlan, services: ExecutionServices) -> None:
-    if not isinstance(services.absence_revisions, tuple) or any(
-        not isinstance(item, tuple) or len(item) != 2 for item in services.absence_revisions
-    ):
-        reject(EffectCode.INVALID_TYPE)
-    for query, revision in services.absence_revisions:
-        require_count(query)
-        require_count(revision, positive=True)
-    queries = [item[0] for item in services.absence_revisions]
-    if len(queries) != len(set(queries)):
-        reject(EffectCode.DUPLICATE)
-    expected = {query for item in admitted.assessment_productions for query in item.absence_queries}
-    if set(queries) != expected:
-        reject(EffectCode.MISSING)

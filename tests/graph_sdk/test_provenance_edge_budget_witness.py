@@ -42,9 +42,7 @@ def test_five_provenance_facts_have_exactly_three_parent_edges() -> None:
             admitted=smaller,
             result=result,
             artifacts=tuple(current.artifacts),
-            absences=tuple(current.absences),
             configurations=current.configurations,
-            state=current.state,
         )
     assert error.value.code is EffectCode.LIMIT_EXCEEDED
     with pytest.raises(EffectRejected) as error:

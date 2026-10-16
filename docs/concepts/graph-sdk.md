@@ -67,9 +67,7 @@ Malformed Unicode, non-finite scores, mutable containers and forged counts are
 rejected. Publication and inspection consume the same counts.
 
 Candidate spans are transient: they cannot be root text bindings, retrieved text
-materializations, map item/membership schemas, or continuity decisions. Continuity
-admission rejects span decisions before execution, while existing text and text
-collection snapshots retain their format. Initial binding rejects the reserved
+materializations, or map item/membership schemas. Initial binding rejects the reserved
 candidate-span type name at every revision before allocating binding identities,
 acquiring resources, or calling providers; custom text type names remain supported.
 Protected projections still require text candidates. Arbitrary domain schema registration and DataDesigner request
@@ -204,17 +202,13 @@ unassociated compatibility path.
 
 ## Saved results and current evidence
 
-Ordinary public `qualify` consumes all retained accepted assessments. There is no public assessment-subset selector. It does not execute the graph again. You can construct another `evidence_revision_view` for the same saved result to describe which artifacts, absences, configurations and state revisions remain current, then qualify again. Selective artifact requalification can withhold a candidate that was previously releasable. Restoring the same valid current view can restore qualification without another callback.
-
-Use `StateRevisionView.from_revisions(revisions=raw_revisions)` for an external tuple of state revisions. It checks the raw sequence before canonicalization, including duplicate effects. Constructing a frozenset first can discard information that validation needs.
+Ordinary public `qualify` consumes all retained accepted assessments. There is no public assessment-subset selector. It does not execute the graph again. You can construct another `evidence_revision_view` for the same saved result to describe which artifacts and configurations remain current, then qualify again. Selective artifact requalification can withhold a candidate that was previously releasable. Restoring the same valid current view can restore qualification without another callback.
 
 A `CandidateRef` identifies an exact final artifact. Replacing it with a newer artifact is a different claim. A numerical version comparison cannot establish external freshness or transfer evidence to a different candidate.
 
-## Decisions, continuity and snapshots
+## Decisions
 
 `RunningExecution.pending_decisions()` exposes installed waits. Submit a `DecisionResponse` containing that wait's identity, workflow and artifact through `submit_decision()`, then await `wait()`. `request_cancel()` requests cancellation. These operations belong to one process-local running task; the handle is not serializable and does not provide durable task resumption.
-
-Continuity is explicit. Create or restore a `ContinuityState`, begin a bounded session, admit the workflow's continuity declarations, and commit qualified support with `commit_qualified`. Bind the resulting commit when projection requires it. Snapshot operations (`capture_snapshot`, `encode_snapshot`, `write_snapshot`, `load_snapshot`, `restore_snapshot`) use the bounded versioned continuity format. `write_snapshot` replaces the destination atomically. `fork_continuity`, `create_handoff` and `accept_handoff` operate on continuity state, not running execution handles. Load snapshots under explicit limits and supply the required expected revision when capturing state or creating a handoff.
 
 ## Context providers and blocking callbacks
 
@@ -234,7 +228,7 @@ A `MapItemPort` names an exact expander, expansion outcome, item input, member a
 
 ## Bounded observations and inspection
 
-`begin_observations` creates a session with explicit count, depth, byte and duration limits. Binding and execution reserve their complete observation scope before effects. Explicit `observed_*` wrappers cover pure preparation, admission, qualification, continuity and projection boundaries. `close()` returns a cached receipt or an `ObservationFailure`; it never returns a partial receipt. Clock or sink failures do not change the semantic execution result.
+`begin_observations` creates a session with explicit count, depth, byte and duration limits. Binding and execution reserve their complete observation scope before effects. Explicit `observed_*` wrappers cover pure preparation, admission, qualification and projection boundaries. `close()` returns a cached receipt or an `ObservationFailure`; it never returns a partial receipt. Clock or sink failures do not change the semantic execution result.
 
 Inspection binds the exact owners through `bind_inspection_source`, or `bind_binding_inspection_source` for initial binding alone. `explain`, `inspect` and `diagnose` provide bounded closed summaries; `encode_inspection` emits canonical JSON. Forecasts distinguish exact counts, known upper bounds and unknown values. Missing phases and unknown usage remain unknown. Content projection is separate from this content-free inspection encoder. Provider logging and arbitrary host callback side effects are outside the observation privacy boundary.
 

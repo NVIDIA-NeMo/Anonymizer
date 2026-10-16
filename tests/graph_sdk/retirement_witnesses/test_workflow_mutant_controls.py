@@ -9,9 +9,13 @@ from typing import Any
 import pytest
 
 from tests.graph_sdk.retirement_witnesses.witness_sources import workflow_mutant_cases
-from tests.graph_sdk.test_workflow_static import _assert_case
+from tests.graph_sdk.test_workflow_static import _assert_case, _uses_unmodeled_effects
 
-CASES = workflow_mutant_cases()
+CASES = [
+    case
+    for case in workflow_mutant_cases()
+    if not _uses_unmodeled_effects(case, case["declaration"], case["replacement"])
+]
 
 
 @pytest.mark.parametrize("case", CASES, ids=lambda row: row["case_id"])

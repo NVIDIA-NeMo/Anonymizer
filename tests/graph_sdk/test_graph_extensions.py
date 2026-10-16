@@ -10,7 +10,6 @@ from unittest.mock import patch
 
 import pytest
 
-from anonymizer.engine.graph_sdk.continuity import StateNamespace, commit_qualified, create_continuity_state
 from anonymizer.engine.graph_sdk.extensions import (
     ArtifactSelection,
     ContentKind,
@@ -24,64 +23,64 @@ from anonymizer.engine.graph_sdk.requests import TextArtifactValue, TextCollecti
 from anonymizer.graph import EffectCode, EffectRejected
 from tests.graph_sdk.context_source_assertions import _assert_context_execution
 from tests.graph_sdk.context_source_fixtures import _ContextProvider
-from tests.graph_sdk.continuity_fixtures import limits, prepare_case
+from tests.graph_sdk.evidence_fixtures import _execute_assessment
 from tests.graph_sdk.qualification_fixtures import _inputs
 from tests.graph_sdk.test_qualification_subject_context import _execute_separate_subject_context
 
 
+def _qualified_subject_context(labels: tuple[str, ...] = ("A", "B")):
+    execution, result = asyncio.run(_execute_separate_subject_context(target_labels=labels))
+    admitted, current, submissions = _inputs(execution, result)
+    return result, qualify(admitted=admitted, result=result, current=current, submissions=submissions)
+
+
+def test_projection_source_requires_settled_decisions() -> None:
+    execution, result = asyncio.run(_execute_assessment(decision_input=True))
+    admitted, current, submissions = _inputs(execution, result, decisions=1)
+    qualified = qualify(admitted=admitted, result=result, current=current, submissions=submissions)
+    assert qualified.required_decisions
+    with pytest.raises(EffectRejected) as missing:
+        bind_projection_source(execution=result, qualification=qualified)
+    assert missing.value.code is EffectCode.MISSING
+
+
 def test_all_projection_kinds_keep_one_record_and_do_no_work() -> None:
-    async def run() -> None:
-        state = create_continuity_state(namespace=StateNamespace(name="history"), limits=limits())
-        graph, admitted = await prepare_case("independent", state)
-        with pytest.raises(EffectRejected) as missing:
-            bind_projection_source(execution=graph.result, qualification=graph.qualified, continuity=None)
-        assert missing.value.code is EffectCode.MISSING
-        receipt = commit_qualified(admitted=admitted, execution=graph.result, qualification=graph.qualified)
-        source = bind_projection_source(execution=graph.result, qualification=graph.qualified, continuity=receipt)
-        selections = tuple(
-            ArtifactSelection(target=o.target, artifact=o.candidate.artifact) for o in graph.qualified.qualified
-        )
-        before = state.view(limits=limits())
-        with (
-            patch(
-                "anonymizer.engine.graph_sdk.qualification.qualify", side_effect=AssertionError("no requalification")
-            ),
-            patch("anonymizer.engine.graph_sdk.continuity.commit_qualified", side_effect=AssertionError("no commit")),
-        ):
-            protected = project_protected(source=source)
-            assert protected.record is graph.qualified.record
-            for kind in ["annotation", "research", "execution_only", "custom"]:
-                content = project_content(source=source, kind=kind, artifacts=selections)
-                assert content.record is protected.record
-                assert {item.content.text for item in content.items if isinstance(item.content, TextArtifactValue)} == {
-                    item.content for item in protected.items
-                }
-        assert state.view(limits=limits()) == before
-        with pytest.raises(EffectRejected) as relabel:
-            project_content(source=source, kind=cast(ContentKind, "protected"), artifacts=selections)
-        assert relabel.value.code is EffectCode.UNSUPPORTED
-        with pytest.raises(EffectRejected) as duplicate:
-            project_content(source=source, kind="custom", artifacts=(selections[0], selections[0]))
-        assert duplicate.value.code is EffectCode.DUPLICATE
-        other, other_admitted = await prepare_case("independent", state, changes={"x": "reuse", "y": "reuse"})
-        other_receipt = commit_qualified(admitted=other_admitted, execution=other.result, qualification=other.qualified)
-        with pytest.raises(EffectRejected) as foreign:
-            bind_projection_source(execution=graph.result, qualification=graph.qualified, continuity=other_receipt)
-        assert foreign.value.code is EffectCode.FOREIGN_OWNER
-        # A copied structurally equal record cannot replace the owner's exact object.
-        original = source.record
-        object.__setattr__(source, "record", copy.copy(original))
-        # CanonicalRecord itself copies by identity; manufacture the independent value through its public constructor.
-        from dataclasses import fields
+    result, qualified = _qualified_subject_context()
+    assert len(qualified.qualified) == 2
+    source = bind_projection_source(execution=result, qualification=qualified)
+    selections = tuple(ArtifactSelection(target=o.target, artifact=o.candidate.artifact) for o in qualified.qualified)
+    with patch("anonymizer.engine.graph_sdk.qualification.qualify", side_effect=AssertionError("no requalification")):
+        protected = project_protected(source=source)
+        assert protected.record is qualified.record
+        assert len(protected.items) == 2
+        for kind in ["annotation", "research", "execution_only", "custom"]:
+            content = project_content(source=source, kind=kind, artifacts=selections)
+            assert content.record is protected.record
+            assert {item.content.text for item in content.items if isinstance(item.content, TextArtifactValue)} == {
+                item.content for item in protected.items
+            }
+    with pytest.raises(EffectRejected) as relabel:
+        project_content(source=source, kind=cast(ContentKind, "protected"), artifacts=selections)
+    assert relabel.value.code is EffectCode.UNSUPPORTED
+    with pytest.raises(EffectRejected) as duplicate:
+        project_content(source=source, kind="custom", artifacts=(selections[0], selections[0]))
+    assert duplicate.value.code is EffectCode.DUPLICATE
+    _, other = _qualified_subject_context()
+    with pytest.raises(EffectRejected) as foreign:
+        bind_projection_source(execution=result, qualification=other)
+    assert foreign.value.code is EffectCode.FOREIGN_OWNER
+    # A copied structurally equal record cannot replace the owner's exact object.
+    original = source.record
+    object.__setattr__(source, "record", copy.copy(original))
+    # CanonicalRecord itself copies by identity; manufacture the independent value through its public constructor.
+    from dataclasses import fields
 
-        object.__setattr__(
-            source, "record", type(original)(**{f.name: getattr(original, f.name) for f in fields(original)})
-        )
-        with pytest.raises(EffectRejected) as copied:
-            project_protected(source=source)
-        assert copied.value.code is EffectCode.FOREIGN_OWNER
-
-    asyncio.run(run())
+    object.__setattr__(
+        source, "record", type(original)(**{f.name: getattr(original, f.name) for f in fields(original)})
+    )
+    with pytest.raises(EffectRejected) as copied:
+        project_protected(source=source)
+    assert copied.value.code is EffectCode.FOREIGN_OWNER
 
 
 def test_real_collection_content_keeps_versions_without_flattening() -> None:
@@ -92,7 +91,7 @@ def test_real_collection_content_keeps_versions_without_flattening() -> None:
     )
     admitted, current, submissions = _inputs(execution, result, latest=True)
     qualified = qualify(admitted=admitted, result=result, current=current, submissions=submissions)
-    source = bind_projection_source(execution=result, qualification=qualified, continuity=None)
+    source = bind_projection_source(execution=result, qualification=qualified)
     port = next(port for port in result.ports if port.port == "a")
     content = project_content(
         source=source, kind="research", artifacts=(ArtifactSelection(target=port.target, artifact=port.artifact),)
@@ -142,26 +141,17 @@ def test_nominal_remote_malformed_oversize_and_cancellation(latest: bool) -> Non
 def test_protected_projection_rejects_collection_instead_of_flattening() -> None:
     from anonymizer.engine.graph_sdk.requests import TextArtifactValue, TextCollectionItem
 
-    async def run() -> None:
-        state = create_continuity_state(namespace=StateNamespace(name="history"), limits=limits())
-        graph, admitted = await prepare_case("independent", state)
-        receipt = commit_qualified(admitted=admitted, execution=graph.result, qualification=graph.qualified)
-        source = bind_projection_source(execution=graph.result, qualification=graph.qualified, continuity=receipt)
-        candidate = graph.qualified.qualified[0].candidate.artifact
-        previous = graph.result.artifacts
-        # Boundary fault injection into an existing factory result tests only the scalar guard;
-        # real collection production/content preservation is exercised separately above.
-        value = TextCollectionValue(
-            items=(TextCollectionItem(key=0, version=1, value=TextArtifactValue(text="secret")),)
-        )
-        object.__setattr__(
-            graph.result, "artifacts", tuple((ref, value if ref == candidate else old) for ref, old in previous)
-        )
-        try:
-            with pytest.raises(EffectRejected) as failure:
-                project_protected(source=source)
-            assert failure.value.code is EffectCode.UNSUPPORTED
-        finally:
-            object.__setattr__(graph.result, "artifacts", previous)
-
-    asyncio.run(run())
+    result, qualified = _qualified_subject_context()
+    source = bind_projection_source(execution=result, qualification=qualified)
+    candidate = qualified.qualified[0].candidate.artifact
+    previous = result.artifacts
+    # Boundary fault injection into an existing factory result tests only the scalar guard;
+    # real collection production/content preservation is exercised separately above.
+    value = TextCollectionValue(items=(TextCollectionItem(key=0, version=1, value=TextArtifactValue(text="secret")),))
+    object.__setattr__(result, "artifacts", tuple((ref, value if ref == candidate else old) for ref, old in previous))
+    try:
+        with pytest.raises(EffectRejected) as failure:
+            project_protected(source=source)
+        assert failure.value.code is EffectCode.UNSUPPORTED
+    finally:
+        object.__setattr__(result, "artifacts", previous)

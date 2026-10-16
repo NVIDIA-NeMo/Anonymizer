@@ -164,7 +164,6 @@ async def _assert_adaptive_materialization_case(case: dict[str, Any], *, late_mo
             max_productions=0,
             max_findings_per_production=0,
             max_finding_code_bytes=0,
-            max_absence_queries=0,
             max_assessment_facts=0,
             max_port_facts=2,
             max_provenance_edges=materialization_limits["max_provenance_edges"],

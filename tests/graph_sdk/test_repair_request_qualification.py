@@ -26,7 +26,7 @@ from anonymizer.engine.graph_sdk.executor import (
     admit_execution_plan,
     start_execution,
 )
-from anonymizer.engine.graph_sdk.preparation import BoundInput, PreparationConfiguration, StateRevisionView, prepare
+from anonymizer.engine.graph_sdk.preparation import BoundInput, PreparationConfiguration, prepare
 from anonymizer.engine.graph_sdk.qualification import qualify
 from anonymizer.engine.graph_sdk.requests import (
     AssociationInput,
@@ -309,7 +309,6 @@ async def _execute_repair(
             purpose="protection", required_protection_outcomes=frozenset({"ok"}), hard_request_limit=2
         ),
         bound_inputs=(BoundInput(target=target, source=target, port="candidate", artifact_type=artifact),),
-        state=StateRevisionView(revisions=frozenset()),
     )
     request = PhysicalRequestPolicy(
         visibility="dispatch_and_settlement",
@@ -347,7 +346,6 @@ async def _execute_repair(
                 outcome="ok",
                 promise="checked",
                 evidence_port="assessment",
-                absence_queries=frozenset(),
                 supported_findings=frozenset({finding}),
             ),
         ),
@@ -355,7 +353,6 @@ async def _execute_repair(
             max_productions=1,
             max_findings_per_production=1,
             max_finding_code_bytes=16,
-            max_absence_queries=0,
             max_assessment_facts=1,
             max_port_facts=8,
             max_provenance_edges=4,
@@ -389,7 +386,6 @@ async def _execute_repair(
         ),
         decision_limits=DecisionLimits(max_pending=0, max_lifetime_ns=0),
         clock=_ZeroClock(),
-        absence_revisions=(),
     )
     return admitted, await (
         await start_execution(admitted=admitted, capabilities=capabilities, services=services)

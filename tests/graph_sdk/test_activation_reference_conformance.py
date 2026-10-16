@@ -235,7 +235,6 @@ class _Adapter:
                     else frozenset(),
                     context=frozenset(),
                     evidence=frozenset(),
-                    state_effects=frozenset(),
                     model_requirements=frozenset(),
                     ceiling=ResourceCeiling(
                         max_activations=ceiling,
@@ -321,7 +320,6 @@ class _Adapter:
                     produced_ports=frozenset(),
                     context=frozenset(),
                     evidence=frozenset(),
-                    state_effects=frozenset(),
                     model_requirements=frozenset(),
                     ceiling=ResourceCeiling(
                         max_activations=0,
@@ -360,7 +358,6 @@ class _Adapter:
                         produced_ports=frozenset({"result"}),
                         context=frozenset(),
                         evidence=frozenset(),
-                        state_effects=frozenset(),
                         model_requirements=frozenset(),
                         ceiling=ResourceCeiling(
                             max_activations=0,
@@ -383,7 +380,6 @@ class _Adapter:
                         produced_ports=frozenset(),
                         context=frozenset(),
                         evidence=frozenset(),
-                        state_effects=frozenset(),
                         model_requirements=frozenset(),
                         ceiling=ResourceCeiling(
                             max_activations=0,

@@ -24,12 +24,11 @@ from anonymizer.engine.graph_sdk.evidence import (
     evidence_validity,
 )
 from anonymizer.engine.graph_sdk.executor import AdmittedExecutionPlan, AssessmentFinding, ExecutionResult
-from anonymizer.engine.graph_sdk.preparation import StateRevision, StateRevisionView
 from anonymizer.engine.graph_sdk.qualification import QualificationResult, qualify
-from anonymizer.engine.graph_sdk.records import AbsenceRef, CandidateRef, DecisionRef
+from anonymizer.engine.graph_sdk.records import CandidateRef, DecisionRef
 from anonymizer.graph import EffectRejected
 from anonymizer.graph._values import ActivationKey, ArtifactRef, ContractViolation, DatumId
-from anonymizer.graph.workflow import CoverageAtom, NodeId, StateEffect
+from anonymizer.graph.workflow import CoverageAtom, NodeId
 from tests.graph_sdk.reference.corpora import load_cases
 from tests.graph_sdk.test_qualification_subject_context import _execute_separate_subject_context
 
@@ -49,23 +48,15 @@ BASELINE_IDS = frozenset(
         "bounds/exact",
         "admission/production_one_over",
         "bounds/duplicate_artifacts_key",
-        "bounds/duplicate_absences_key",
         "bounds/duplicate_configurations_key",
-        "bounds/duplicate_state_key",
         "revision/invented_artifact",
-        "revision/invented_absence",
         "revision/invented_configuration",
-        "revision/invented_state",
         *(
             f"validity/{kind}_{state}"
             for kind in ("candidate", "evidence", "consumed")
             for state in ("current", "unknown")
         ),
-        *(
-            f"validity/{kind}_{state}"
-            for kind in ("absence", "configuration", "state")
-            for state in ("current", "stale", "unknown")
-        ),
+        *(f"validity/{kind}_{state}" for kind in ("configuration",) for state in ("current", "stale", "unknown")),
         *(
             f"bounds/{kind}_{boundary}"
             for kind in (
@@ -74,7 +65,6 @@ BASELINE_IDS = frozenset(
                 "edges",
                 "submissions",
                 "revisions",
-                "absences",
                 "coverage",
                 "verified",
                 "productions",
@@ -194,7 +184,6 @@ class _BaselineNames:
             consumed = {}
             roles = {}
             for port, ref in item.consumed_by_port:
-                assert not isinstance(ref, AbsenceRef)
                 consumed[port] = self.artifact(ref.artifact if isinstance(ref, (CandidateRef, DecisionRef)) else ref)
                 roles[port] = (
                     "candidate"
@@ -224,15 +213,7 @@ class _BaselineNames:
                     "consumed_roles": roles,
                     "coverage": sorted(atom.name for atom in item.coverage),
                     "finding": item.finding.status,
-                    "environment": {
-                        "absences": {
-                            f"Q{absence.query}": absence.scope_revision for absence in item.environment.absences
-                        },
-                        "configurations": {"N": "c0"},
-                        "state": {
-                            revision.effect.name: revision.revision for revision in item.environment.state.revisions
-                        },
-                    },
+                    "environment": {"configurations": {"N": "c0"}},
                     "validity": evidence_validity(evidence=item, current=output._current),
                 }
             )
@@ -287,13 +268,25 @@ class _BaselineNames:
 
 
 def _comparison_order(value: dict[str, Any]) -> dict[str, Any]:
-    """Compare opaque identities after each model checks its own ordinal order."""
+    """Compare opaque identities after each model checks its own ordinal order.
+
+    The independent corpus also models absence and state-revision environments;
+    the SDK retains only selected configurations, so rows compare on that dimension.
+    """
     if "verified" not in value:
         return value
     return {
         **value,
         "verified": sorted(
-            value["verified"],
+            (
+                {
+                    **row,
+                    "environment": {
+                        key: item for key, item in row["environment"].items() if key not in {"absences", "state"}
+                    },
+                }
+                for row in value["verified"]
+            ),
             key=lambda row: (
                 row["target"],
                 row["activation"],
@@ -347,7 +340,6 @@ def _run_baseline(case: dict[str, Any], events: list[dict[str, Any]]) -> dict[st
                 CoverageAtom(kind="field", name=name)
                 for name in (declaration["requirements"] or baseline["declaration"]["requirements"])[0]["coverage"]
             ),
-            environment=declaration["purpose"] != "execution_only",
             finding=AssessmentFinding(
                 status=assessments[0]["finding"] if assessments else "satisfied", code="observed"
             ),
@@ -367,6 +359,10 @@ def _qualify_flat(
     limits = QualificationLimits(
         **{field.name: declaration["limits"][field.name] for field in fields(QualificationLimits)}
     )
+    # The reference revision bound also counts state revisions, which the SDK
+    # does not model; charge the product only for the entries it receives.
+    state_entries = sum(event["kind"] == "revision" and event["collection"] == "state" for event in events)
+    limits = replace(limits, max_revision_entries=limits.max_revision_entries - state_entries)
     admitted = admit_qualification(
         execution=execution,
         productions=() if declaration["purpose"] == "execution_only" else execution.assessment_productions,
@@ -393,11 +389,6 @@ def _qualify_flat(
         artifacts=tuple(
             refs[f"{event['key']}v{event['value']}"] for event in revisions if event["collection"] == "artifacts"
         ),
-        absences=tuple(
-            AbsenceRef(invocation=result.record.invocation, query=int(event["key"][1:]), scope_revision=event["value"])
-            for event in revisions
-            if event["collection"] == "absences"
-        ),
         configurations=tuple(
             (
                 names.entry.template if event["key"] == "N" else NodeId.new(workflow=names.entry.template.workflow),
@@ -405,13 +396,6 @@ def _qualify_flat(
             )
             for event in revisions
             if event["collection"] == "configurations"
-        ),
-        state=StateRevisionView.from_revisions(
-            revisions=tuple(
-                StateRevision(effect=StateEffect(kind="read", name=event["key"]), revision=event["value"])
-                for event in revisions
-                if event["collection"] == "state"
-            )
         ),
     )
     actual_facts = {
@@ -471,10 +455,7 @@ CORRUPTION_IDS = frozenset(
         "authentication/evidence_port_target",
         "authentication/entry_node",
         "authentication/terminal_outcome",
-        "authentication/missing_absence_environment",
         "authentication/missing_configuration_environment",
-        "authentication/missing_state_environment",
-        "assessment/absence_query",
         "final_output/wrong_target",
         "final_output/wrong_outcome",
         "assessment/foreign_evidence",
@@ -513,7 +494,6 @@ def _run_retained_corruption(case: dict[str, Any], events: list[dict[str, Any]])
         _execute_separate_subject_context(
             coverage=frozenset(CoverageAtom(kind="field", name=name) for name in ("K0", "K1")),
             requirement_coverage=frozenset({CoverageAtom(kind="field", name="K0")}),
-            environment=True,
             expose_evidence=False,
             provenance_edge_limit=case["declaration"]["limits"]["max_provenance_edges"],
         )
@@ -621,23 +601,8 @@ def _run_retained_corruption(case: dict[str, Any], events: list[dict[str, Any]])
                 )
                 object.__setattr__(names.fact, "evidence_artifact", foreign)
             elif field == "environment":
-                environment = names.fact.environment
-                value = added[0][field]
-                if value["absences"] != original[field]["absences"]:
-                    object.__setattr__(
-                        environment,
-                        "absences",
-                        frozenset(
-                            AbsenceRef(invocation=result.record.invocation, query=int(key[1:]), scope_revision=revision)
-                            for key, revision in value["absences"].items()
-                        ),
-                    )
-                elif value["configurations"] != original[field]["configurations"]:
-                    assert value["configurations"] == {}
-                    object.__setattr__(environment, "configuration", None)
-                else:
-                    assert value["state"] == {}
-                    object.__setattr__(environment, "state", StateRevisionView(revisions=frozenset()))
+                assert added[0][field]["configurations"] == {}
+                object.__setattr__(names.fact.environment, "configuration", None)
             else:
                 value = NodeId.new(workflow=names.entry.template.workflow) if field == "node" else added[0][field]
                 object.__setattr__(names.fact, field, value)
@@ -795,7 +760,6 @@ def _run_propagation(case: dict[str, Any], events: list[dict[str, Any]]) -> dict
             requirement_coverage=frozenset(
                 CoverageAtom(kind="field", name=name) for name in declaration["requirements"][0]["coverage"]
             ),
-            environment=True,
             expose_evidence=False,
         )
     )
@@ -853,7 +817,6 @@ def _run_partial_promises(case: dict[str, Any], events: list[dict[str, Any]]) ->
             requirement_coverage=frozenset(
                 CoverageAtom(kind="field", name=name) for name in declaration["requirements"][0]["coverage"]
             ),
-            environment=True,
             expose_evidence=False,
         )
     )

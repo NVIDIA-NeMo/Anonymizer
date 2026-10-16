@@ -56,7 +56,6 @@ from anonymizer.engine.graph_sdk.preparation import (
     PreparationConfiguration,
     PreparationLimits,
     PreparedPlan,
-    StateRevisionView,
     prepare,
 )
 from anonymizer.engine.graph_sdk.requests import AssociationInput, AssociationResult, SemanticAssociation
@@ -570,7 +569,6 @@ async def execute_injected_redact(
                 produced_ports=frozenset(port.name for port in outputs),
                 context=frozenset(),
                 evidence=frozenset(),
-                state_effects=frozenset(),
                 model_requirements=frozenset(),
                 ceiling=ResourceCeiling(
                     max_activations=1, max_model_requests=None, max_input_bytes=None, max_output_bytes=None
@@ -856,7 +854,6 @@ async def execute_injected_redact(
             max_productions=0,
             max_findings_per_production=0,
             max_finding_code_bytes=0,
-            max_absence_queries=0,
             max_assessment_facts=0,
             max_port_facts=(48 if map_ids else 20) * size,
             max_provenance_edges=(100 if map_ids else 20) * size,
@@ -890,7 +887,6 @@ def _prepare_frame_plan(
             hard_request_limit=None,
             invocation_owned=invocation_owned,
         ),
-        state=StateRevisionView(revisions=frozenset()),
         selections=tuple(
             ImplementationSelection(
                 node=next(
@@ -904,7 +900,6 @@ def _prepare_frame_plan(
         capabilities=capabilities,
         limits=PreparationLimits(
             max_bound_inputs=len(bound_inputs),
-            max_state_revisions=0,
             max_selections=len(capabilities),
             max_config_depth=max(size[0] for size in sizes),
             max_config_atoms=sum(size[1] for size in sizes) * 2,

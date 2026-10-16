@@ -63,7 +63,6 @@ def extend_native_map_requests(
                     produced_ports=frozenset(),
                     context=frozenset(),
                     evidence=frozenset(),
-                    state_effects=frozenset(),
                     model_requirements=frozenset(),
                     ceiling=ResourceCeiling(
                         max_activations=1,

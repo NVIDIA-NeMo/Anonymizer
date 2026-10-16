@@ -55,7 +55,6 @@ def _outcome(name: str, category: OutcomeClass) -> OutcomeSpec:
         produced_ports=frozenset(),
         context=frozenset(),
         evidence=frozenset(),
-        state_effects=frozenset(),
         model_requirements=frozenset(),
         ceiling=ResourceCeiling(max_activations=1, max_model_requests=0, max_input_bytes=0, max_output_bytes=0),
     )
@@ -68,7 +67,6 @@ def _interface_outcome(source: OutcomeSpec, activations: int) -> OutcomeSpec:
         produced_ports=source.produced_ports,
         context=source.context,
         evidence=source.evidence,
-        state_effects=source.state_effects,
         model_requirements=source.model_requirements,
         ceiling=ResourceCeiling(
             max_activations=activations, max_model_requests=0, max_input_bytes=0, max_output_bytes=0

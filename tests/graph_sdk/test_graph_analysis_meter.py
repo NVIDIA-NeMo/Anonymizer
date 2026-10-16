@@ -24,7 +24,6 @@ def _operation(bound: int = 1) -> w.OperationSpec:
                 produced_ports=frozenset(),
                 context=frozenset(),
                 evidence=frozenset(),
-                state_effects=frozenset(),
                 model_requirements=frozenset(),
                 ceiling=w.ResourceCeiling(
                     max_activations=bound,

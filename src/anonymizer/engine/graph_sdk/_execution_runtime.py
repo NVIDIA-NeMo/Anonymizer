@@ -864,9 +864,7 @@ class _InvocationRuntime:
                 if assessed is None
                 else _accept_outputs(self.admitted, job, mapping, results, delta, self.services.limits)
             )
-            if status == "valid" and not _capture_assessments(
-                self.admitted, job, mapping, assessed or (), self.services, delta
-            ):
+            if status == "valid" and not _capture_assessments(self.admitted, job, mapping, assessed or (), delta):
                 status = "malformed"
             staged = status == "valid"
             if not staged:

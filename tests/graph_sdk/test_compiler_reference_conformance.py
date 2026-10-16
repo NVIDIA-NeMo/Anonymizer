@@ -35,7 +35,6 @@ from anonymizer.graph.workflow import (
     OutputDependency,
     OutputPort,
     ResourceCeiling,
-    StateEffect,
     WorkflowId,
     WorkflowOutcomeRef,
 )
@@ -43,7 +42,12 @@ from anonymizer.graph.workflow import (
 _REFERENCE = Path(__file__).parent / "reference" / "compiler_v1"
 _RAW = (_REFERENCE / "cases.json").read_bytes()
 _ROWS: list[dict[str, Any]] = json.loads(_RAW)
-_APPLICABLE = [row for row in _ROWS if not row["case"]["name"].startswith(("neighbor-dynamic-", "neighbor-subgraph-"))]
+# The SDK does not model state effects, so the reference's state-only neighbors are out of scope.
+_APPLICABLE = [
+    row
+    for row in _ROWS
+    if not row["case"]["name"].startswith(("neighbor-dynamic-", "neighbor-subgraph-", "neighbor-state-"))
+]
 _TEXT = ArtifactType(name="text", revision=1)
 
 
@@ -64,7 +68,6 @@ def _outcome(value: dict[str, Any]) -> OutcomeSpec:
         category="success",
         produced_ports=frozenset(value["ports"]),
         context=frozenset(ContextUse(port="in", meaning=name, capture="whole_artifact") for name in value["context"]),
-        state_effects=frozenset(StateEffect(kind="read", name=name) for name in value["state"]),
         evidence=promises,
         model_requirements=frozenset[ModelRequirement](),
         ceiling=ResourceCeiling(
@@ -118,7 +121,7 @@ def _actual(case: dict[str, Any]) -> set[str]:
             "selected": selected,
             "cost": sum(outcomes[index].ceiling.max_activations for index in selected),
         }
-        for field in ("ports", "labels", "context", "state", "evidence", "dynamic", "subgraph"):
+        for field in ("ports", "labels", "context", "evidence", "dynamic", "subgraph"):
             values = []
             for index in selected:
                 outcome = outcomes[index]
@@ -126,8 +129,6 @@ def _actual(case: dict[str, Any]) -> set[str]:
                     actual = sorted(outcome.produced_ports)
                 elif field == "context":
                     actual = sorted(item.meaning for item in outcome.context)
-                elif field == "state":
-                    actual = sorted(item.name for item in outcome.state_effects)
                 elif field in {"labels", "evidence"}:
                     actual = sorted(item.name.split(":", 1)[1] for item in outcome.evidence if item.meaning == field)
                 else:
@@ -141,11 +142,15 @@ def _actual(case: dict[str, Any]) -> set[str]:
     return observations
 
 
+def _without_state(rows: list[dict[str, Any]]) -> set[str]:
+    return {json.dumps({key: value for key, value in item.items() if key != "state"}, sort_keys=True) for item in rows}
+
+
 @pytest.mark.parametrize("row", _APPLICABLE, ids=lambda row: row["case"]["name"])
 def test_static_product_histories_match_independent_finite_cases(row: dict[str, Any]) -> None:
     actual = _actual(row["case"])
-    assert actual == {json.dumps(item, sort_keys=True) for item in row["expected"]}
-    assert actual != {json.dumps(item, sort_keys=True) for item in row["rejected_summary"]}
+    assert actual == _without_state(row["expected"])
+    assert actual != _without_state(row["rejected_summary"])
 
 
 def test_reference_bytes_and_explicit_translation_scope() -> None:
@@ -153,8 +158,8 @@ def test_reference_bytes_and_explicit_translation_scope() -> None:
     assert hashlib.sha256((_REFERENCE / "compiler_reference.py").read_bytes()).hexdigest() == (
         "30b145d46180395fa786eaba5e3d2d5c05f9f116255b8121f7e77a8557528e70"
     )
-    assert len(_ROWS) == 36 and len(_APPLICABLE) == 30
-    assert sum(row["raw_assignment_count"] for row in _APPLICABLE) == 203
+    assert len(_ROWS) == 36 and len(_APPLICABLE) == 27
+    assert sum(row["raw_assignment_count"] for row in _APPLICABLE) == 179
     assert all(
         not value["dynamic"] and not value["subgraph"]
         for row in _APPLICABLE

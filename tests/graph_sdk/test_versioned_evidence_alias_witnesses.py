@@ -89,9 +89,7 @@ def test_versioned_evidence_and_consumed_alias_are_stale(latest: int, monkeypatc
             admitted=admitted,
             result=result,
             artifacts=tuple(selected.values()),
-            absences=(),
             configurations=((result.assessments[0].node, result.assessments[0].environment.configuration),),
-            state=execution.context.prepared.state,
         )
         assert evidence_validity(evidence=verified, current=current) == ("current" if version == latest else "stale")
         output = qualify(admitted=admitted, result=result, current=current, submissions=submissions)

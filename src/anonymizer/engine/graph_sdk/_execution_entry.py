@@ -12,7 +12,7 @@ from anonymizer.engine.graph_sdk._effect_values import (
     reject,
     require_instance,
 )
-from anonymizer.engine.graph_sdk._execution_admission import _validate_absences, _validate_services
+from anonymizer.engine.graph_sdk._execution_admission import _validate_services
 from anonymizer.engine.graph_sdk._execution_runtime import _InvocationRuntime
 from anonymizer.engine.graph_sdk._execution_state import _ExecutionControl
 from anonymizer.engine.graph_sdk._execution_values import (
@@ -127,7 +127,6 @@ async def start_execution(
         ):
             reject(EffectCode.CHANGED_FAILOVER_POLICY)
         _validate_services(admitted, services)
-        _validate_absences(admitted, services)
         # Callback-held service objects cannot widen the policy selected here.
         services = replace(services, limits=replace(services.limits))
         ForeignLoopTransport.claim_many(

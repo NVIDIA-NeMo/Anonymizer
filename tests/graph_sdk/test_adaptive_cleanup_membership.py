@@ -310,7 +310,6 @@ def test_two_declared_artifact_types_share_source_without_sharing_provider(rever
             workflow=dynamic,
             activation_limits=replace(previous.activation_limits, max_events=6, max_entries=2),
             bound_inputs=tuple(previous.bound_inputs),
-            state=previous.state,
             selections=tuple(_selection(node, cap) for node, cap in ((node_a.id, cap_a), (node_b, cap_b))),
             capabilities=capabilities,
             configuration=replace(previous.configuration, hard_request_limit=2),

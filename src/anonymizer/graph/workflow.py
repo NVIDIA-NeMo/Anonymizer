@@ -48,8 +48,6 @@ from anonymizer.graph._workflow_values import OutputPort as OutputPort
 from anonymizer.graph._workflow_values import ProtectionRequirement as ProtectionRequirement
 from anonymizer.graph._workflow_values import ResourceCeiling as ResourceCeiling
 from anonymizer.graph._workflow_values import SequenceEdge as SequenceEdge
-from anonymizer.graph._workflow_values import StateEffect as StateEffect
-from anonymizer.graph._workflow_values import StateEffectKind as StateEffectKind
 from anonymizer.graph._workflow_values import SubgraphNode as SubgraphNode
 from anonymizer.graph._workflow_values import WorkflowId as WorkflowId
 from anonymizer.graph._workflow_values import WorkflowInputRef as WorkflowInputRef

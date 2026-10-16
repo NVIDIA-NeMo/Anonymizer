@@ -327,17 +327,15 @@ def test_actual_initial_binding_receipt_has_its_own_exact_scope(monkeypatch) -> 
 
 
 @pytest.mark.parametrize("sink_failure", [None, 0, 2])
-def test_full_pure_owner_chain_commit_and_repeated_release(monkeypatch, sink_failure) -> None:
+def test_full_pure_owner_chain_and_repeated_release(monkeypatch, sink_failure) -> None:
     import asyncio
 
     from anonymizer.engine.graph_sdk import observations as api
-    from anonymizer.engine.graph_sdk.continuity import StateNamespace, create_continuity_state
     from anonymizer.engine.graph_sdk.executor import start_execution
     from anonymizer.engine.graph_sdk.extensions import bind_projection_source
     from anonymizer.engine.graph_sdk.inspection import bind_inspection_source, inspect
-    from tests.graph_sdk import continuity_graph_fixture as fixture
-    from tests.graph_sdk.continuity_fixtures import limits as continuity_limits
-    from tests.graph_sdk.continuity_fixtures import prepare_case
+    from tests.graph_sdk import evidence_fixtures as fixture
+    from tests.graph_sdk.qualification_fixtures import _inputs
 
     observer = begin_observations(
         limits=limits(
@@ -363,72 +361,62 @@ def test_full_pure_owner_chain_commit_and_repeated_release(monkeypatch, sink_fai
         "admit_execution_plan",
         lambda **kwargs: api.observed_execution_admission(observations=observer, **kwargs),
     )
-    monkeypatch.setattr(fixture, "qualify", lambda **kwargs: api.observed_qualify(observations=observer, **kwargs))
 
     async def start(**kwargs):
         return await start_execution(observations=observer, **kwargs)
 
     monkeypatch.setattr(fixture, "start_execution", start)
 
-    async def run():
-        state = create_continuity_state(
-            namespace=StateNamespace(name="PRIVATE_STATE_CANARY"), limits=continuity_limits()
-        )
-        graph, admitted = await prepare_case("independent", state)
-        committed = api.observed_commit_qualified(
-            observations=observer, admitted=admitted, execution=graph.result, qualification=graph.qualified
-        )
-        projection_source = bind_projection_source(
-            execution=graph.result, qualification=graph.qualified, continuity=committed
-        )
-        first = api.observed_project_protected(observations=observer, source=projection_source)
-        second = api.observed_project_protected(observations=observer, source=projection_source)
-        assert first.items == second.items and {item.content for item in first.items} == {"A", "B"}
-        receipt = observer.close()
-        assert isinstance(receipt, ObservationReceipt)
-        boundaries = [pair.start.boundary for pair in receipt.pairs]
-        assert (
-            boundaries.count("preparation")
-            == boundaries.count("context_admission")
-            == boundaries.count("execution_admission")
-            == 1
-        )
-        assert boundaries.count("qualification") == boundaries.count("continuity_commit") == 1
-        assert boundaries.count("projection") == boundaries.count("release") == 2
-        assert receipt.delivery == ("complete" if sink_failure is None else "failed")
-        source = bind_inspection_source(
-            prepared=graph.execution.context.prepared,
-            context=graph.execution.context,
-            execution_plan=graph.execution,
-            execution=graph.result,
-            qualification=graph.qualified,
-            continuity=committed,
+    execution, result = asyncio.run(fixture._execute_assessment(target_count=2))
+    admitted, current, submissions = _inputs(execution, result)
+    qualified = api.observed_qualify(
+        observations=observer, admitted=admitted, result=result, current=current, submissions=submissions
+    )
+    projection_source = bind_projection_source(execution=result, qualification=qualified)
+    first = api.observed_project_protected(observations=observer, source=projection_source)
+    second = api.observed_project_protected(observations=observer, source=projection_source)
+    assert first.items == second.items and len(first.items) == 2
+    receipt = observer.close()
+    assert isinstance(receipt, ObservationReceipt)
+    boundaries = [pair.start.boundary for pair in receipt.pairs]
+    assert (
+        boundaries.count("preparation")
+        == boundaries.count("context_admission")
+        == boundaries.count("execution_admission")
+        == boundaries.count("qualification")
+        == 1
+    )
+    assert boundaries.count("projection") == boundaries.count("release") == 2
+    assert receipt.delivery == ("complete" if sink_failure is None else "failed")
+    source = bind_inspection_source(
+        prepared=execution.context.prepared,
+        context=execution.context,
+        execution_plan=execution,
+        execution=result,
+        qualification=qualified,
+        observations=receipt,
+        observation_session=observer,
+        limits=inspection_limits(
+            max_count=10000, max_pairs=1000, max_events=2000, max_nodes=100000, max_encoded_bytes=1000000
+        ),
+    )
+    view = inspect(source=source)
+    assert view.qualification is not None
+    assert view.qualification.met == view.qualification.assessed_targets == 2
+    assert view.qualification.verified_evidence == len(qualified.verified)
+    foreign = session()
+    foreign.close()
+    with pytest.raises(EffectRejected) as caught:
+        bind_inspection_source(
+            prepared=source.prepared,
+            context=source.context,
+            execution_plan=source.execution_plan,
+            execution=source.execution,
             observations=receipt,
-            observation_session=observer,
-            limits=inspection_limits(
-                max_count=10000, max_pairs=1000, max_events=2000, max_nodes=100000, max_encoded_bytes=1000000
-            ),
+            observation_session=foreign,
+            limits=source.limits,
         )
-        view = inspect(source=source)
-        assert view.qualification is not None
-        assert view.qualification.met == view.qualification.assessed_targets == 2
-        assert view.qualification.verified_evidence == len(graph.qualified.verified)
-        assert b"PRIVATE_STATE_CANARY" not in encode_inspection(value=receipt, limits=source.limits)
-        foreign = session()
-        foreign.close()
-        with pytest.raises(EffectRejected) as caught:
-            bind_inspection_source(
-                prepared=source.prepared,
-                context=source.context,
-                execution_plan=source.execution_plan,
-                execution=source.execution,
-                observations=receipt,
-                observation_session=foreign,
-                limits=source.limits,
-            )
-        assert caught.value.code == EffectCode.FOREIGN_OWNER
-
-    asyncio.run(run())
+    assert caught.value.code == EffectCode.FOREIGN_OWNER
 
 
 @pytest.mark.parametrize("mode", ["valid", "raises", "wrong_route", "over_count"])

@@ -42,7 +42,6 @@ from anonymizer.engine.graph_sdk.executor import (
 from anonymizer.engine.graph_sdk.preparation import (
     BoundInput,
     PreparationConfiguration,
-    StateRevisionView,
     prepare,
 )
 from anonymizer.engine.graph_sdk.requests import (
@@ -375,7 +374,6 @@ def _adaptive_fixture(provider, *, capability_limit=1):
             max_productions=0,
             max_findings_per_production=0,
             max_finding_code_bytes=0,
-            max_absence_queries=0,
             max_assessment_facts=0,
             max_port_facts=2,
             max_provenance_edges=1,
@@ -488,7 +486,6 @@ async def _external_running(transport):
             max_productions=0,
             max_findings_per_production=0,
             max_finding_code_bytes=0,
-            max_absence_queries=0,
             max_assessment_facts=0,
             max_port_facts=2,
             max_provenance_edges=1,
@@ -620,7 +617,6 @@ async def _assert_local_assessment(*, distinct_subject: bool, alias_evidence: bo
         max_productions=1,
         max_findings_per_production=1,
         max_finding_code_bytes=20,
-        max_absence_queries=0,
         max_assessment_facts=1,
         max_port_facts=3,
         max_provenance_edges=2,
@@ -638,7 +634,6 @@ async def _assert_local_assessment(*, distinct_subject: bool, alias_evidence: bo
                         outcome="ok",
                         promise="checked",
                         evidence_port="input",
-                        absence_queries=frozenset(),
                         supported_findings=frozenset({finding}),
                     ),
                 ),
@@ -656,7 +651,6 @@ async def _assert_local_assessment(*, distinct_subject: bool, alias_evidence: bo
                 outcome="ok",
                 promise="checked",
                 evidence_port=evidence_port,
-                absence_queries=frozenset(),
                 supported_findings=frozenset({finding}),
             ),
         ),
@@ -722,7 +716,6 @@ async def _assert_nested_assessment() -> None:
                 )
             }
         ),
-        state_effects=frozenset(),
         model_requirements=frozenset(),
         ceiling=ResourceCeiling(
             max_activations=1,
@@ -813,7 +806,6 @@ async def _assert_nested_assessment() -> None:
             required_protection_outcomes=frozenset(),
             hard_request_limit=None,
         ),
-        state=StateRevisionView(revisions=frozenset()),
         selections=(_selection(inner, capability),),
         capabilities=(capability,),
         limits=_limits(capabilities=1, slots=2),
@@ -846,7 +838,6 @@ async def _assert_nested_assessment() -> None:
                 outcome="ok",
                 promise="checked",
                 evidence_port="assessment",
-                absence_queries=frozenset(),
                 supported_findings=frozenset({finding}),
             ),
         ),
@@ -854,7 +845,6 @@ async def _assert_nested_assessment() -> None:
             max_productions=1,
             max_findings_per_production=1,
             max_finding_code_bytes=20,
-            max_absence_queries=0,
             max_assessment_facts=1,
             max_port_facts=5,
             max_provenance_edges=5,

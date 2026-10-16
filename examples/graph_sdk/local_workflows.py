@@ -161,7 +161,6 @@ def build(
         produced_ports=frozenset({"candidate"}),
         context=frozenset(),
         evidence=frozenset(),
-        state_effects=frozenset(),
         model_requirements=frozenset(),
         ceiling=g.ResourceCeiling(max_activations=1, max_model_requests=0, max_input_bytes=1024, max_output_bytes=1024),
     )
@@ -296,7 +295,6 @@ def build(
             required_protection_outcomes=frozenset({"ok"}) if verified else frozenset(),
             hard_request_limit=0,
         ),
-        state=g.StateRevisionView.from_revisions(revisions=()),
         selections=tuple(
             g.ImplementationSelection(node=node.id, implementation=capability.implementation, configuration=config)
             for node, capability in zip(nodes, capabilities, strict=True)
@@ -304,7 +302,6 @@ def build(
         capabilities=capabilities,
         limits=g.PreparationLimits(
             max_bound_inputs=count,
-            max_state_revisions=0,
             max_selections=2,
             max_config_depth=2,
             max_config_atoms=4,
@@ -344,7 +341,6 @@ def build(
                 outcome="ok",
                 promise="checked",
                 evidence_port="assessment",
-                absence_queries=frozenset(),
                 supported_findings=frozenset(
                     {
                         g.AssessmentFinding(status="satisfied", code="name-check"),
@@ -375,7 +371,6 @@ def build(
             max_productions=1,
             max_findings_per_production=2,
             max_finding_code_bytes=32,
-            max_absence_queries=0,
             max_assessment_facts=count,
             max_port_facts=8 * count,
             max_provenance_edges=8 * count,
@@ -426,7 +421,6 @@ def qualification_inputs(admitted: g.AdmittedExecutionPlan, result: g.ExecutionR
             max_required_decisions=0,
             max_fixed_point_steps=8,
             max_revision_entries=16 * count,
-            max_absence_revisions=0,
             max_provenance_edges=16 * count,
         ),
     )
@@ -434,9 +428,7 @@ def qualification_inputs(admitted: g.AdmittedExecutionPlan, result: g.ExecutionR
         admitted=qualification,
         result=result,
         artifacts=tuple(ref for ref, _ in result.artifacts),
-        absences=(),
         configurations=tuple(dict.fromkeys((item.node, item.environment.configuration) for item in result.assessments)),
-        state=admitted.context.prepared.state,
     )
     return qualification, current
 
@@ -447,7 +439,7 @@ async def run_example(*, verified: bool) -> dict[str, object]:
     result = await running.wait()
     qualification, current = qualification_inputs(admitted, result)
     qualified = g.qualify(admitted=qualification, result=result, current=current)
-    source = g.bind_projection_source(execution=result, qualification=qualified, continuity=None)
+    source = g.bind_projection_source(execution=result, qualification=qualified)
     protected = g.project_protected(source=source)
     selected = tuple(
         g.ArtifactSelection(target=item.target, artifact=item.candidate.artifact) for item in result.final_outputs

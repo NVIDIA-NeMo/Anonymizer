@@ -134,7 +134,6 @@ def extend_map_graph(
                     produced_ports=frozenset(outputs),
                     context=frozenset(),
                     evidence=frozenset(),
-                    state_effects=frozenset(),
                     model_requirements=frozenset(),
                     ceiling=ResourceCeiling(
                         max_activations=1,

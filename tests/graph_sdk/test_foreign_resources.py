@@ -154,7 +154,6 @@ async def fixture(
         activation_limits=previous.activation_limits,
         bound_inputs=tuple(previous.bound_inputs),
         configuration=previous.configuration,
-        state=previous.state,
         selections=tuple(_selection(i.node, i.capability) for i in previous.implementations),
         capabilities=capabilities,
         limits=previous.limits,

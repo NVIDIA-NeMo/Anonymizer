@@ -47,8 +47,6 @@ from anonymizer.engine.graph_sdk.executor import (
 from anonymizer.engine.graph_sdk.preparation import (
     BoundInput,
     PreparationConfiguration,
-    StateRevision,
-    StateRevisionView,
     prepare,
 )
 from anonymizer.engine.graph_sdk.requests import (
@@ -75,7 +73,6 @@ from anonymizer.graph.workflow import (
     OutputBinding,
     ProtectionRequirement,
     SequenceEdge,
-    StateEffect,
     SubgraphNode,
     WorkflowId,
     WorkflowInputRef,
@@ -169,7 +166,6 @@ class _IdentityHop:
 
 async def _execute_assessment(
     *,
-    environment: bool = False,
     candidate_input: bool = False,
     alias_output: bool = False,
     auxiliary_output: bool = False,
@@ -227,13 +223,11 @@ async def _execute_assessment(
         assessment=True, requests=0, distinct_subject=candidate_input, alias_evidence=candidate_input or alias_output
     )
     raw = base
-    read = StateEffect(kind="read", name="assessment-policy")
     operation = replace(
         raw.interface,
         outcomes=tuple(
             replace(
                 outcome,
-                state_effects=frozenset({read}) if environment else frozenset(),
                 context=frozenset({ContextUse(port="input", meaning="retrieved", capture="whole_artifact")})
                 if initial_resources
                 else outcome.context,
@@ -276,7 +270,6 @@ async def _execute_assessment(
                 replace(
                     outcome,
                     evidence=frozenset(),
-                    state_effects=frozenset(),
                     ceiling=replace(outcome.ceiling, max_model_requests=2 if external is not None else 0),
                 )
                 for outcome in operation.outcomes
@@ -551,9 +544,6 @@ async def _execute_assessment(
             )
             for target in data.targets
         ),
-        state=StateRevisionView(
-            revisions=frozenset({StateRevision(effect=read, revision=3)}) if environment else frozenset()
-        ),
     )
     finding = finding if finding is not None else AssessmentFinding(status="satisfied", code="observed")
     declaration = EvidenceProductionDecl(
@@ -561,7 +551,6 @@ async def _execute_assessment(
         outcome="ok",
         promise="checked",
         evidence_port=evidence_port,
-        absence_queries=frozenset({7}) if environment else frozenset(),
         supported_findings=frozenset({finding}),
     )
     admitted = admit_execution_plan(
@@ -622,7 +611,6 @@ async def _execute_assessment(
             max_productions=1 + int(partial_assessment),
             max_findings_per_production=1,
             max_finding_code_bytes=20,
-            max_absence_queries=1 if environment else 0,
             max_assessment_facts=(1 + int(partial_assessment)) * target_count,
             max_port_facts=(
                 3
@@ -686,7 +674,6 @@ async def _execute_assessment(
             max_pending=target_count if decision_input else 0, max_lifetime_ns=10 if decision_input else 0
         ),
         clock=_ZeroClock(),
-        absence_revisions=((7, 4),) if environment else (),
     )
     if external_failover:
         services = replace(
