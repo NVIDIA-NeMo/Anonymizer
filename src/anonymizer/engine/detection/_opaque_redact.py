@@ -954,7 +954,14 @@ async def _execute_frame_plan(
                 physical, transport = await asyncio.shield(acquisition)
                 break
             except asyncio.CancelledError as error:
-                interrupted = error
+                if acquisition.cancelled():
+                    raise
+                if interrupted is None:
+                    interrupted = error
+            except BaseException as error:
+                if interrupted is not None:
+                    raise interrupted from error
+                raise
         if interrupted is not None:
             await transport.close()
             raise interrupted
