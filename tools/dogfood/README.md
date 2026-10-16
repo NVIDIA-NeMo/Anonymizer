@@ -21,11 +21,11 @@ Files:
 
 ## Setup
 
-1. `uv sync --frozen --extra notebooks` — the `notebooks` extra is required because
-   `tools/serve_gliner.py` depends on packages it declares (`gliner2[local]`, `fastapi`,
-   `huggingface-hub`, etc.); confirmed in
-   [`docs/concepts/self-hosting-gliner.md`](../../docs/concepts/self-hosting-gliner.md#running-the-development-server-directly)
-   and `pyproject.toml`'s `[project.optional-dependencies].notebooks`.
+1. `uv sync --frozen --extra notebooks` — the `notebooks` extra is the documented setup for
+   `tools/serve_gliner.py`; the server's own packages (`gliner2[local]`, `fastapi`, …) are
+   installed by the wrapper into an isolated environment (`_SERVER_REQUIREMENTS` in
+   `src/anonymizer/notebooks/_runtime.py`). See
+   [`docs/concepts/self-hosting-gliner.md`](../../docs/concepts/self-hosting-gliner.md#running-the-development-server-directly).
 2. Start the detector server this kit's `providers.yaml` expects on `http://127.0.0.1:8001/v1`:
    ```bash
    uv run python tools/serve_gliner.py --host 127.0.0.1 --port 8001
