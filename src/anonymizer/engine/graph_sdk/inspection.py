@@ -329,7 +329,7 @@ class ReasonCount(PrivateValue):
     count: int
 
 
-@dataclass(frozen=True, slots=True, kw_only=True, repr=False, init=False)
+@dataclass(frozen=True, slots=True, kw_only=True, repr=False)
 class ExplainSummary(_FactoryValue):
     schema_version: Literal[1]
     shape: GraphShapeSummary
@@ -337,7 +337,7 @@ class ExplainSummary(_FactoryValue):
     hard_budget_support: Literal["supported", "unsupported", "unknown"]
 
 
-@dataclass(frozen=True, slots=True, kw_only=True, repr=False, init=False)
+@dataclass(frozen=True, slots=True, kw_only=True, repr=False)
 class InspectionSummary(_FactoryValue):
     schema_version: Literal[1]
     shape: GraphShapeSummary
@@ -350,7 +350,7 @@ class InspectionSummary(_FactoryValue):
     observation_delivery: ObservationDelivery
 
 
-@dataclass(frozen=True, slots=True, kw_only=True, repr=False, init=False)
+@dataclass(frozen=True, slots=True, kw_only=True, repr=False)
 class DiagnosisSummary(_FactoryValue):
     schema_version: Literal[1]
     reasons: tuple[ReasonCount, ...]
@@ -375,7 +375,7 @@ class InspectionLimits(PrivateValue):
             require_count(getattr(self, field.name))
 
 
-@dataclass(frozen=True, slots=True, kw_only=True, repr=False, init=False)
+@dataclass(frozen=True, slots=True, kw_only=True, repr=False)
 class InspectionSource(_FactoryValue):
     limits: InspectionLimits
     prepared: PreparedPlan
@@ -387,7 +387,7 @@ class InspectionSource(_FactoryValue):
     observations: ObservationClose | None
 
 
-@dataclass(frozen=True, slots=True, kw_only=True, repr=False, init=False)
+@dataclass(frozen=True, slots=True, kw_only=True, repr=False)
 class BindingInspectionSource(_FactoryValue):
     data: ValidatedDataGraph
     workflow: Graph
@@ -395,7 +395,7 @@ class BindingInspectionSource(_FactoryValue):
     limits: InspectionLimits
 
 
-@dataclass(frozen=True, slots=True, kw_only=True, repr=False, init=False)
+@dataclass(frozen=True, slots=True, kw_only=True, repr=False)
 class BindingInspectionSummary(_FactoryValue):
     schema_version: Literal[1]
     terminal: BindingTerminal
@@ -442,7 +442,9 @@ _MEMBERS = (
 
 @cache
 def _schema(kind: type) -> dict[str, object]:
-    return get_type_hints(kind)
+    assert is_dataclass(kind)
+    hints = get_type_hints(kind)
+    return {field.name: hints[field.name] for field in fields(kind)}
 
 
 def _members(value: object) -> tuple[tuple[str, object], ...]:

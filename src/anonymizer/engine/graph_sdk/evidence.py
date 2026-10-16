@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from collections import ChainMap
-from dataclasses import dataclass, field, fields, replace
+from dataclasses import InitVar, dataclass, field, fields, replace
 from itertools import product
 from typing import Literal
 
@@ -16,6 +16,7 @@ from anonymizer.engine.graph_sdk._effect_values import (
     reject,
     require_count,
     require_instance,
+    require_owner,
 )
 from anonymizer.engine.graph_sdk._execution_state import _ExecutionFacts
 from anonymizer.engine.graph_sdk._execution_topology import _lexical_path
@@ -99,29 +100,17 @@ class _Production(PrivateValue):
     promise: EvidencePromise
 
 
-@dataclass(frozen=True, slots=True, kw_only=True, repr=False, init=False)
+@dataclass(frozen=True, slots=True, kw_only=True, repr=False)
 class AdmittedQualification(PrivateValue):
+    _key: InitVar[object]
     execution: AdmittedExecutionPlan
     productions: tuple[EvidenceProductionDecl, ...]
     limits: QualificationLimits
     _resolved: tuple[_Production, ...]
     _projections: tuple[_ProjectedPromise, ...]
 
-    def __init__(
-        self,
-        *,
-        _key: object,
-        execution: AdmittedExecutionPlan,
-        productions: tuple[EvidenceProductionDecl, ...],
-        limits: QualificationLimits,
-        _resolved: tuple[_Production, ...],
-        _projections: tuple[_ProjectedPromise, ...],
-    ) -> None:
-        if _key is not _EVIDENCE_KEY:
-            raise TypeError("qualification admission requires admit_qualification")
-        for name, value in locals().copy().items():
-            if name not in {"self", "_key"}:
-                object.__setattr__(self, name, value)
+    def __post_init__(self, _key: object) -> None:
+        require_owner(_key, _EVIDENCE_KEY)
 
     def _subject_outputs(self, outcome: str) -> frozenset[str]:
         """Return final ports that carry this outcome's protection subjects."""
@@ -156,8 +145,9 @@ class MapItemSubjectRef(PrivateValue):
             reject(EffectCode.CONTRADICTORY)
 
 
-@dataclass(frozen=True, slots=True, kw_only=True, repr=False, init=False)
+@dataclass(frozen=True, slots=True, kw_only=True, repr=False)
 class VerifiedEvidence(PrivateValue):
+    _key: InitVar[object]
     reference: EvidenceRef
     activation: ActivationKey
     node: NodeId
@@ -171,11 +161,8 @@ class VerifiedEvidence(PrivateValue):
     _admitted: AdmittedQualification = field(hash=False)
     _result: ExecutionResult = field(hash=False)
 
-    def __init__(self, *, _key: object, **values: object) -> None:
-        if _key is not _EVIDENCE_KEY:
-            raise TypeError("verified evidence requires verify_evidence")
-        for name, value in values.items():
-            object.__setattr__(self, name, value)
+    def __post_init__(self, _key: object) -> None:
+        require_owner(_key, _EVIDENCE_KEY)
 
 
 def admit_qualification(
@@ -702,19 +689,17 @@ def verify_evidence(
     return _RunFacts.from_result(admitted, result).verify_submissions(submissions)
 
 
-@dataclass(frozen=True, slots=True, kw_only=True, repr=False, init=False)
+@dataclass(frozen=True, slots=True, kw_only=True, repr=False)
 class EvidenceRevisionView(PrivateValue):
+    _key: InitVar[object]
     candidates: frozenset[CandidateRef]
     artifacts: frozenset[ArtifactRef]
     configurations: tuple[tuple[NodeId, FrozenConfig], ...]
     _admitted: AdmittedQualification
     _result: ExecutionResult
 
-    def __init__(self, *, _key: object, **values: object) -> None:
-        if _key is not _EVIDENCE_KEY:
-            raise TypeError("revision views require evidence_revision_view")
-        for name, value in values.items():
-            object.__setattr__(self, name, value)
+    def __post_init__(self, _key: object) -> None:
+        require_owner(_key, _EVIDENCE_KEY)
 
 
 def evidence_revision_view(

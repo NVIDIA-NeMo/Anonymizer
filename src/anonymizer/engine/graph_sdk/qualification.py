@@ -4,10 +4,10 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, fields, is_dataclass, replace
+from dataclasses import InitVar, dataclass, fields, is_dataclass, replace
 from typing import Literal, get_args
 
-from anonymizer.engine.graph_sdk._effect_values import EffectCode, PrivateValue, reject, require_instance
+from anonymizer.engine.graph_sdk._effect_values import EffectCode, PrivateValue, reject, require_instance, require_owner
 from anonymizer.engine.graph_sdk._execution_topology import _lexical_path
 from anonymizer.engine.graph_sdk._execution_values import ImplementationResourceRegistration
 from anonymizer.engine.graph_sdk._qualification_provenance import _ProvenanceValidator
@@ -157,8 +157,9 @@ class QualifiedOutput(PrivateValue):
         )
 
 
-@dataclass(frozen=True, slots=True, kw_only=True, repr=False, init=False)
+@dataclass(frozen=True, slots=True, kw_only=True, repr=False)
 class QualificationResult(PrivateValue):
+    _key: InitVar[object]
     record: CanonicalRecord
     verified: tuple[VerifiedEvidence, ...]
     targets: tuple[TargetQualification, ...]
@@ -167,11 +168,8 @@ class QualificationResult(PrivateValue):
     _result: ExecutionResult
     _current: EvidenceRevisionView
 
-    def __init__(self, *, _key: object, **values: object) -> None:
-        if _key is not _QUALIFICATION_KEY:
-            raise TypeError("qualification results require qualify")
-        for name, value in values.items():
-            object.__setattr__(self, name, value)
+    def __post_init__(self, _key: object) -> None:
+        require_owner(_key, _QUALIFICATION_KEY)
 
 
 def qualify_retained(

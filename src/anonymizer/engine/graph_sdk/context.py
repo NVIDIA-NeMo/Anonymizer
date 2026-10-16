@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import InitVar, dataclass, field
 from typing import Literal, Protocol, TypeAlias, runtime_checkable
 
 from anonymizer.engine.graph_sdk._effect_values import (
@@ -14,6 +14,7 @@ from anonymizer.engine.graph_sdk._effect_values import (
     require_count,
     require_instance,
     require_literal,
+    require_owner,
     require_text,
 )
 from anonymizer.engine.graph_sdk._ingress_values import IngressLimits
@@ -333,8 +334,9 @@ class BoundTextArtifact(PrivateValue):
 _RESULT_KEY = object()
 
 
-@dataclass(frozen=True, slots=True, kw_only=True, repr=False, init=False)
+@dataclass(frozen=True, slots=True, kw_only=True, repr=False)
 class BindingReceipt(PrivateValue):
+    _key: InitVar[object]
     binding: BindingId
     data: ValidatedDataGraph
     workflow: Graph
@@ -345,23 +347,18 @@ class BindingReceipt(PrivateValue):
     cleanup: tuple[CleanupFact, ...]
     cleanup_associations: tuple[CleanupAssociation, ...]
 
-    def __init__(self, *, _key: object, **values: object) -> None:
-        if _key is not _RESULT_KEY:
-            raise TypeError("binding receipts are created by the binding executor")
-        for name, value in values.items():
-            object.__setattr__(self, name, value)
+    def __post_init__(self, _key: object) -> None:
+        require_owner(_key, _RESULT_KEY)
 
 
-@dataclass(frozen=True, slots=True, kw_only=True, repr=False, init=False)
+@dataclass(frozen=True, slots=True, kw_only=True, repr=False)
 class BoundContext(PrivateValue):
+    _key: InitVar[object]
     receipt: BindingReceipt
     artifacts: tuple[BoundTextArtifact, ...]
 
-    def __init__(self, *, _key: object, receipt: BindingReceipt, artifacts: tuple[BoundTextArtifact, ...]) -> None:
-        if _key is not _RESULT_KEY:
-            raise TypeError("bound contexts are created by the binding executor")
-        object.__setattr__(self, "receipt", receipt)
-        object.__setattr__(self, "artifacts", artifacts)
+    def __post_init__(self, _key: object) -> None:
+        require_owner(_key, _RESULT_KEY)
 
     def _validate_inventory_fields(self) -> None:
         """Validate both retained inventories before comparing their identities."""
@@ -411,16 +408,14 @@ class BoundContext(PrivateValue):
             reject(EffectCode.CONTRADICTORY)
 
 
-@dataclass(frozen=True, slots=True, kw_only=True, repr=False, init=False)
+@dataclass(frozen=True, slots=True, kw_only=True, repr=False)
 class BindingResult(PrivateValue):
+    _key: InitVar[object]
     receipt: BindingReceipt
     context: BoundContext | None
 
-    def __init__(self, *, _key: object, receipt: BindingReceipt, context: BoundContext | None) -> None:
-        if _key is not _RESULT_KEY:
-            raise TypeError("binding results are created by the binding executor")
-        object.__setattr__(self, "receipt", receipt)
-        object.__setattr__(self, "context", context)
+    def __post_init__(self, _key: object) -> None:
+        require_owner(_key, _RESULT_KEY)
 
 
 @runtime_checkable
@@ -465,16 +460,14 @@ class ContextResource(PrivateValue):
 _CONTEXT_KEY = object()
 
 
-@dataclass(frozen=True, slots=True, kw_only=True, repr=False, init=False)
+@dataclass(frozen=True, slots=True, kw_only=True, repr=False)
 class AdmittedContextPlan(PrivateValue):
+    _key: InitVar[object]
     prepared: PreparedPlan
     bound_context: BoundContext | None
 
-    def __init__(self, *, _key: object, **values: object) -> None:
-        if _key is not _CONTEXT_KEY:
-            raise TypeError("context plans are created by admission")
-        for name, value in values.items():
-            object.__setattr__(self, name, value)
+    def __post_init__(self, _key: object) -> None:
+        require_owner(_key, _CONTEXT_KEY)
 
 
 def admit_context_plan(

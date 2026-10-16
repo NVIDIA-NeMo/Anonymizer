@@ -4,9 +4,10 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import InitVar, dataclass
 from typing import Literal, TypeAlias
 
+from anonymizer.engine.graph_sdk._effect_values import require_owner
 from anonymizer.engine.graph_sdk.capabilities import (
     ImplementationCapability,
     ImplementationSelection,
@@ -154,8 +155,9 @@ class ProtectionEligibility(_PrivateValue):
             _reject(PreparationCode.INVALID_VALUE)
 
 
-@dataclass(frozen=True, slots=True, repr=False, eq=False, init=False)
+@dataclass(frozen=True, kw_only=True, slots=True, repr=False, eq=False)
 class PreparedPlan(_PrivateValue):
+    _key: InitVar[object]
     plan: PlanId
     data: ValidatedDataGraph
     workflow: Graph
@@ -171,30 +173,8 @@ class PreparedPlan(_PrivateValue):
     eligibility: ProtectionEligibility
     limits: PreparationLimits
 
-    def __init__(
-        self,
-        *,
-        _key: object,
-        plan: PlanId,
-        data: ValidatedDataGraph,
-        workflow: Graph,
-        activation_limits: ActivationLimits,
-        bound_inputs: frozenset[BoundInput],
-        configuration: PreparationConfiguration,
-        implementations: frozenset[SelectedImplementation],
-        reservation_recipe: tuple[ReservationSlot, ...],
-        target_occurrences: tuple[TargetOccurrenceMap, ...],
-        activation_slots_per_target: int,
-        total_activation_slots: int,
-        declared_request_upper_bound: int | None,
-        eligibility: ProtectionEligibility,
-        limits: PreparationLimits,
-    ) -> None:
-        if _key is not _PREPARED_KEY:
-            raise TypeError("prepared plans are created by prepare")
-        for name, value in locals().copy().items():
-            if name not in {"self", "_key"}:
-                object.__setattr__(self, name, value)
+    def __post_init__(self, _key: object) -> None:
+        require_owner(_key, _PREPARED_KEY)
 
     @property
     def invocation_offset(self) -> int:

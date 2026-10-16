@@ -5,10 +5,10 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import InitVar, dataclass
 from typing import Literal
 
-from anonymizer.engine.graph_sdk._effect_values import EffectCode, PrivateValue, reject, require_instance
+from anonymizer.engine.graph_sdk._effect_values import EffectCode, PrivateValue, reject, require_instance, require_owner
 from anonymizer.engine.graph_sdk.context import ContextProvider, ContextSelector, RetrievalBounds, SourceResult
 from anonymizer.engine.graph_sdk.executor import ExecutionResult
 from anonymizer.engine.graph_sdk.qualification import QualificationResult
@@ -46,62 +46,60 @@ class RemoteContext(ContextProvider, ABC):
         raise NotImplementedError
 
 
-def _initialize(value: object, key: object, values: dict[str, object]) -> None:
-    if key is not _PROJECTION_KEY:
-        raise TypeError("projections require their factory")
-    for name, member in values.items():
-        object.__setattr__(value, name, member)
-
-
-@dataclass(frozen=True, slots=True, kw_only=True, repr=False, init=False)
+@dataclass(frozen=True, slots=True, kw_only=True, repr=False)
 class ProjectionSource(PrivateValue):
+    _key: InitVar[object]
     execution: ExecutionResult
     qualification: QualificationResult
     record: CanonicalRecord
 
-    def __init__(self, *, _key: object, **values: object) -> None:
-        _initialize(self, _key, values)
+    def __post_init__(self, _key: object) -> None:
+        require_owner(_key, _PROJECTION_KEY)
 
 
-@dataclass(frozen=True, slots=True, kw_only=True, repr=False, init=False)
+@dataclass(frozen=True, slots=True, kw_only=True, repr=False)
 class ProtectedProjectionItem(PrivateValue):
+    _key: InitVar[object]
     target: DatumId
     candidate: CandidateRef
     content: str
     evidence: frozenset[EvidenceRef]
 
-    def __init__(self, *, _key: object, **values: object) -> None:
-        _initialize(self, _key, values)
+    def __post_init__(self, _key: object) -> None:
+        require_owner(_key, _PROJECTION_KEY)
 
 
-@dataclass(frozen=True, slots=True, kw_only=True, repr=False, init=False)
+@dataclass(frozen=True, slots=True, kw_only=True, repr=False)
 class ArtifactProjectionItem(PrivateValue):
+    _key: InitVar[object]
     target: DatumId
     artifact: ArtifactRef
     content: ArtifactValue
     status: TargetStatus
 
-    def __init__(self, *, _key: object, **values: object) -> None:
-        _initialize(self, _key, values)
+    def __post_init__(self, _key: object) -> None:
+        require_owner(_key, _PROJECTION_KEY)
 
 
-@dataclass(frozen=True, slots=True, kw_only=True, repr=False, init=False)
+@dataclass(frozen=True, slots=True, kw_only=True, repr=False)
 class ProtectedProjection(PrivateValue):
+    _key: InitVar[object]
     record: CanonicalRecord
     items: tuple[ProtectedProjectionItem, ...]
 
-    def __init__(self, *, _key: object, **values: object) -> None:
-        _initialize(self, _key, values)
+    def __post_init__(self, _key: object) -> None:
+        require_owner(_key, _PROJECTION_KEY)
 
 
-@dataclass(frozen=True, slots=True, kw_only=True, repr=False, init=False)
+@dataclass(frozen=True, slots=True, kw_only=True, repr=False)
 class ContentProjection(PrivateValue):
+    _key: InitVar[object]
     kind: ContentKind
     record: CanonicalRecord
     items: tuple[ArtifactProjectionItem, ...]
 
-    def __init__(self, *, _key: object, **values: object) -> None:
-        _initialize(self, _key, values)
+    def __post_init__(self, _key: object) -> None:
+        require_owner(_key, _PROJECTION_KEY)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True, repr=False)

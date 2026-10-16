@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from dataclasses import fields, replace
+from dataclasses import replace
 from typing import Literal
 
 from anonymizer.engine.graph_sdk._execution_values import _FACT_KEY, _RESULT_KEY, ImplementationResourceRegistration
@@ -481,6 +481,4 @@ def child_fixture(
 
 
 def result_with(result: ExecutionResult, **changes: object) -> ExecutionResult:
-    return ExecutionResult(
-        _key=_RESULT_KEY, **{**{field.name: getattr(result, field.name) for field in fields(result)}, **changes}
-    )
+    return replace(result, _key=_RESULT_KEY, **changes)

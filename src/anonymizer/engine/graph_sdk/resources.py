@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass
+from dataclasses import InitVar, dataclass
 from typing import Literal, Protocol, TypeAlias, runtime_checkable
 
 from anonymizer.engine.graph_sdk._effect_values import (
@@ -15,6 +15,7 @@ from anonymizer.engine.graph_sdk._effect_values import (
     reject,
     require_instance,
     require_literal,
+    require_owner,
 )
 from anonymizer.engine.graph_sdk.observations import _Span
 from anonymizer.graph._values import DatumId
@@ -43,33 +44,21 @@ class CloseableResource(Protocol):
 _LEASE_KEY = object()
 
 
-@dataclass(frozen=True, slots=True, kw_only=True, repr=False, init=False)
+@dataclass(frozen=True, slots=True, kw_only=True, repr=False)
 class ResourceLease(PrivateValue):
+    _key: InitVar[object]
     resource: ResourceId
     owner: ResourceOwner
     safe_detachment: SafeDetachment
     handle: object
 
-    def __init__(
-        self,
-        *,
-        _key: object,
-        resource: ResourceId,
-        owner: ResourceOwner,
-        safe_detachment: SafeDetachment,
-        handle: object,
-    ) -> None:
-        if _key is not _LEASE_KEY:
-            raise TypeError("resource leases must be created by their owner boundary")
-        require_instance(resource, ResourceId)
-        require_literal(owner, frozenset({"caller", "sdk"}))
-        require_literal(safe_detachment, frozenset({"forbidden", "independent_after_dispatch"}))
-        if handle is None:
+    def __post_init__(self, _key: object) -> None:
+        require_owner(_key, _LEASE_KEY)
+        # create() is the public verb: owner, detachment and handle are caller-supplied ingress.
+        require_literal(self.owner, frozenset({"caller", "sdk"}))
+        require_literal(self.safe_detachment, frozenset({"forbidden", "independent_after_dispatch"}))
+        if self.handle is None:
             reject(EffectCode.INVALID_TYPE)
-        object.__setattr__(self, "resource", resource)
-        object.__setattr__(self, "owner", owner)
-        object.__setattr__(self, "safe_detachment", safe_detachment)
-        object.__setattr__(self, "handle", handle)
 
     @classmethod
     def create(
@@ -110,20 +99,15 @@ class CleanupFact(PrivateValue):
 _ASSOCIATION_KEY = object()
 
 
-@dataclass(frozen=True, slots=True, kw_only=True, repr=False, init=False)
+@dataclass(frozen=True, slots=True, kw_only=True, repr=False)
 class CleanupAssociation(PrivateValue):
+    _key: InitVar[object]
     resource: ResourceId
     targets: frozenset[DatumId]
     purpose: CleanupPurpose
 
-    def __init__(
-        self, *, _key: object, resource: ResourceId, targets: frozenset[DatumId], purpose: CleanupPurpose
-    ) -> None:
-        if _key is not _ASSOCIATION_KEY:
-            raise TypeError("cleanup associations are created by the resource owner")
-        object.__setattr__(self, "resource", resource)
-        object.__setattr__(self, "targets", targets)
-        object.__setattr__(self, "purpose", purpose)
+    def __post_init__(self, _key: object) -> None:
+        require_owner(_key, _ASSOCIATION_KEY)
 
 
 def _cleanup_association(

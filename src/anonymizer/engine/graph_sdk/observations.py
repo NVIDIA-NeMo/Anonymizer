@@ -4,10 +4,10 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, fields
+from dataclasses import InitVar, dataclass, fields
 from typing import TYPE_CHECKING, Literal, Protocol, get_args
 
-from anonymizer.engine.graph_sdk._effect_values import PrivateValue, require_count
+from anonymizer.engine.graph_sdk._effect_values import PrivateValue, require_count, require_owner
 from anonymizer.engine.graph_sdk._ingress_values import IngressLimits
 
 if TYPE_CHECKING:
@@ -21,15 +21,14 @@ if TYPE_CHECKING:
 _OBSERVATION_KEY = object()
 
 
-@dataclass(frozen=True, slots=True, kw_only=True, repr=False, init=False)
+@dataclass(frozen=True, slots=True, kw_only=True, repr=False)
 class _FactoryValue(PrivateValue):
-    def __init__(self, *, _key: object, **values: object) -> None:
-        if _key is not _OBSERVATION_KEY:
-            raise TypeError("observation values require their factory")
-        if set(values) != {field.name for field in fields(self)}:
-            raise TypeError("invalid closed observation fields")
-        for name, value in values.items():
-            object.__setattr__(self, name, value)
+    """Owner-keyed base: subclasses inherit the key and this check; none defines its own __post_init__."""
+
+    _key: InitVar[object]
+
+    def __post_init__(self, _key: object) -> None:
+        require_owner(_key, _OBSERVATION_KEY)
 
 
 ObservationBoundary = Literal[
@@ -136,7 +135,7 @@ class LifecyclePair(PrivateValue):
     terminal: ObservationTerminal
 
 
-@dataclass(frozen=True, slots=True, kw_only=True, repr=False, init=False)
+@dataclass(frozen=True, slots=True, kw_only=True, repr=False)
 class ObservationReceipt(_FactoryValue):
     schema_version: Literal[1]
     pairs: tuple[LifecyclePair, ...]
@@ -150,7 +149,7 @@ class ObservationFailure(PrivateValue):
     code: ObservationFailureCode
 
 
-@dataclass(frozen=True, slots=True, kw_only=True, repr=False, init=False)
+@dataclass(frozen=True, slots=True, kw_only=True, repr=False)
 class ObservationRequirements(_FactoryValue):
     max_pairs_required: int
     max_events_required: int

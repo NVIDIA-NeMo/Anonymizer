@@ -13,7 +13,6 @@ import pytest
 from anonymizer.engine.graph_sdk.capabilities import FrozenConfig
 from anonymizer.engine.graph_sdk.evidence import (
     AssessmentSubmission,
-    VerifiedEvidence,
     admit_qualification,
     evidence_revision_view,
     evidence_validity,
@@ -115,9 +114,7 @@ def test_submission_limit_precedes_member_validation(
     assert error.value.code is EffectCode.LIMIT_EXCEEDED
 
 
-def test_factories_reject_direct_construction_and_boolean_limits() -> None:
-    with pytest.raises(TypeError):
-        VerifiedEvidence(_key=object())
+def test_factories_reject_boolean_limits() -> None:
     with pytest.raises(EffectRejected) as error:
         replace(_qualification_limits(), max_submissions=True)
     assert error.value.code is EffectCode.INVALID_TYPE

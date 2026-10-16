@@ -653,8 +653,9 @@ class ArtifactProvenanceFact(PrivateValue):
 _PLAN_KEY = object()
 
 
-@dataclass(frozen=True, slots=True, kw_only=True, repr=False, init=False)
+@dataclass(frozen=True, slots=True, kw_only=True, repr=False)
 class AdmittedExecutionPlan(PrivateValue):
+    _key: InitVar[object]
     target_workflow: Graph
     invocation_workflow: Graph | None
     context: AdmittedContextPlan
@@ -667,15 +668,14 @@ class AdmittedExecutionPlan(PrivateValue):
     _ingress_policy: tuple[int, int, int | None, int, int | None, int | None, int | None, int] = field(
         init=False, compare=False
     )
-    nodes: Mapping[NodeId, Operation] = field(compare=False)
-    input_sources: Mapping[NodeInputRef, WorkflowInputRef | ContextInputRef | NodeOutputRef] = field(compare=False)
-    materialization_schemas: Mapping[ArtifactType, Literal["scalar", "collection"]] = field(compare=False)
+    nodes: Mapping[NodeId, Operation] = field(init=False, compare=False)
+    input_sources: Mapping[NodeInputRef, WorkflowInputRef | ContextInputRef | NodeOutputRef] = field(
+        init=False, compare=False
+    )
+    materialization_schemas: Mapping[ArtifactType, Literal["scalar", "collection"]] = field(init=False, compare=False)
 
-    def __init__(self, *, _key: object, **values: object) -> None:
-        if _key is not _PLAN_KEY:
-            raise TypeError("execution plans are created by admission")
-        for name, value in values.items():
-            object.__setattr__(self, name, value)
+    def __post_init__(self, _key: object) -> None:
+        require_owner(_key, _PLAN_KEY)
         object.__setattr__(
             self, "_ingress_policy", tuple(getattr(self.ingress_limits, item.name) for item in fields(IngressLimits))
         )
@@ -939,16 +939,17 @@ class SubmissionFailure(PrivateValue):
 _RESULT_KEY = object()
 
 
-@dataclass(frozen=True, slots=True, kw_only=True, repr=False, init=False)
+@dataclass(frozen=True, slots=True, kw_only=True, repr=False)
 class ExecutionResult(PrivateValue):
+    _key: InitVar[object]
     _execution: AdmittedExecutionPlan
     implementation_resources: tuple[ImplementationResourceRegistration, ...]
-    _retained_resources: tuple[ResourceLease, ...]
+    _retained_resources: tuple[ResourceLease, ...] = ()
     _input_parents: tuple[tuple[DatumId, ActivationKey, str, ProvenanceKey], ...]
     _passthrough_parents: tuple[tuple[DatumId, ActivationKey, str, ProvenanceKey], ...]
     record: CanonicalRecord
     states: tuple[ActivationState, ...]
-    invocation_state: ActivationState | None
+    invocation_state: ActivationState | None = None
     requests: RequestReceipt
     cleanup: tuple[CleanupFact, ...]
     artifacts: tuple[tuple[ArtifactRef, ArtifactValue], ...]
@@ -958,18 +959,11 @@ class ExecutionResult(PrivateValue):
     provenance: tuple[ArtifactProvenanceFact, ...]
     cleanup_associations: tuple[CleanupAssociation, ...]
     publication_failures: tuple[PublicationFailureFact, ...]
-    frames: tuple[PublishedFrame | InvocationFrame, ...]
-    submission_failures: tuple[SubmissionFailure, ...]
+    frames: tuple[PublishedFrame | InvocationFrame, ...] = ()
+    submission_failures: tuple[SubmissionFailure, ...] = ()
 
-    def __init__(self, *, _key: object, **values: object) -> None:
-        if _key is not _RESULT_KEY:
-            raise TypeError("execution results are created by the executor")
-        object.__setattr__(self, "invocation_state", None)
-        object.__setattr__(self, "frames", ())
-        object.__setattr__(self, "submission_failures", ())
-        object.__setattr__(self, "_retained_resources", ())
-        for name, value in values.items():
-            object.__setattr__(self, name, value)
+    def __post_init__(self, _key: object) -> None:
+        require_owner(_key, _RESULT_KEY)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True, repr=False)

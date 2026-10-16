@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import InitVar, dataclass, field
 from typing import Literal, TypeAlias, TypeVar
 
 from anonymizer.engine.detection.artifacts import EntitySpansValue
@@ -17,6 +17,7 @@ from anonymizer.engine.graph_sdk._effect_values import (
     require_count,
     require_instance,
     require_literal,
+    require_owner,
     require_text,
 )
 from anonymizer.engine.rewrite.artifacts import REWRITE_TYPES, RewriteArtifactValue
@@ -159,18 +160,16 @@ class SemanticAssociation(PrivateValue):
 _DECLARATION_KEY = object()
 
 
-@dataclass(frozen=True, slots=True, kw_only=True, repr=False, init=False)
+@dataclass(frozen=True, slots=True, kw_only=True, repr=False)
 class BindingDeclarationId(PrivateValue):
+    _key: InitVar[object]
     binding: BindingId
     ordinal: int
 
-    def __init__(self, *, _key: object, binding: BindingId, ordinal: int) -> None:
-        if _key is not _DECLARATION_KEY:
-            raise TypeError("binding declaration identities are created by their binding owner")
-        require_instance(binding, BindingId)
-        require_count(ordinal)
-        object.__setattr__(self, "binding", binding)
-        object.__setattr__(self, "ordinal", ordinal)
+    def __post_init__(self, _key: object) -> None:
+        require_owner(_key, _DECLARATION_KEY)
+        require_instance(self.binding, BindingId)
+        require_count(self.ordinal)
 
     @classmethod
     def new(cls, *, binding: BindingId, ordinal: int) -> BindingDeclarationId:
@@ -702,27 +701,22 @@ class RequestReservation(PrivateValue):
 _BINDING_KEY = object()
 
 
-@dataclass(frozen=True, slots=True, kw_only=True, repr=False, init=False)
+@dataclass(frozen=True, slots=True, kw_only=True, repr=False)
 class RequestPolicyBinding(PrivateValue):
+    _key: InitVar[object]
     association: RequestAssociation
     policies: frozenset[PhysicalRequestPolicy]
 
-    def __init__(
-        self,
-        *,
-        _key: object,
-        association: RequestAssociation,
-        policies: frozenset[PhysicalRequestPolicy],
-    ) -> None:
-        if _key is not _BINDING_KEY:
-            raise TypeError("request policy bindings must be created by their owner")
-        require_instance(association, (SemanticAssociation, BindingAssociation))
-        if not isinstance(policies, frozenset) or any(not isinstance(item, PhysicalRequestPolicy) for item in policies):
+    def __post_init__(self, _key: object) -> None:
+        require_owner(_key, _BINDING_KEY)
+        # create() is the public verb: both fields are caller-supplied ingress.
+        require_instance(self.association, (SemanticAssociation, BindingAssociation))
+        if not isinstance(self.policies, frozenset) or any(
+            not isinstance(item, PhysicalRequestPolicy) for item in self.policies
+        ):
             reject(EffectCode.INVALID_TYPE)
-        if not policies:
+        if not self.policies:
             reject(EffectCode.INVALID_VALUE)
-        object.__setattr__(self, "association", association)
-        object.__setattr__(self, "policies", policies)
 
     @classmethod
     def create(
