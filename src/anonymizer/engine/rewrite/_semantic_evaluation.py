@@ -11,6 +11,7 @@ from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, NotRequired, TypedDict, TypeVar, cast
 
 import pandas as pd
+import pyarrow as pa
 from data_designer.config import ModelConfig
 from data_designer.config.column_types import ColumnConfigT
 
@@ -503,7 +504,7 @@ class RewriteEvaluationBinding:
             if COL_REWRITE_REPLACEMENT_READY in frame
             else pd.Series(False, index=frame.index)
         )
-        frame.loc[unavailable, COL_REWRITTEN_TEXT] = None
+        _withhold_rewritten_text(frame, unavailable)
         review = frame[COL_REWRITTEN_TEXT].isna() | frame[COL_ANY_HIGH_LEAKED].apply(bool)
         if evaluation.flag_utility_below is not None:
             review |= frame[COL_UTILITY_SCORE].apply(float) < evaluation.flag_utility_below
@@ -785,6 +786,7 @@ class RewriteEvaluationBinding:
             weighted_leakage=compute_weighted_leakage_rate(leakage, privacy_qa, self.criteria.sensitivity_weights),
             high_leak=high,
             needs_repair=cast(RewriteCandidateValue, inputs["candidate"]).project() is not None
+            and _replacement_ready(cast(RewriteCandidateValue, inputs["baseline"]))
             and determine_repair_needs(
                 any_high_leaked=high,
                 leakage_mass=leakage,
@@ -834,6 +836,34 @@ class _StageArguments(TypedDict):
     source_frame: WorkflowSourceFrame
     rewrite_binding: RewriteEvaluationBinding
     request_bridge: NotRequired[None]
+
+
+def _replacement_ready(baseline: RewriteCandidateValue) -> bool:
+    """Whether the rewrite baseline exists, i.e. its required replacements were applied.
+
+    `_prepare_rewrite_tagged_text` leaves the baseline unset exactly when the
+    replacement map could not be applied. Such a rewrite is withheld: the legacy
+    loop never repairs it (a repair would start from text that still carries the
+    original entities), and its rewritten text stays unavailable.
+    """
+    return isinstance(baseline.project(), str)
+
+
+def _withhold_rewritten_text(frame: pd.DataFrame, unavailable: pd.Series) -> None:
+    """Null the rewritten text of withheld rows without assigning into an Arrow `null` column.
+
+    When every rewrite in a DataDesigner batch is withheld, the rewritten column
+    arrives as `null[pyarrow]`; a masked assignment into it aborts the process
+    inside pyarrow. That column already holds only nulls, so give it the
+    `string[pyarrow]` dtype a partially withheld batch has.
+    """
+    column = frame[COL_REWRITTEN_TEXT]
+    if isinstance(column.dtype, pd.ArrowDtype) and pa.types.is_null(column.dtype.pyarrow_dtype):
+        frame[COL_REWRITTEN_TEXT] = pd.Series(
+            pd.array([None] * len(frame), dtype=pd.ArrowDtype(pa.string())), index=frame.index
+        )
+        return
+    frame.loc[unavailable, COL_REWRITTEN_TEXT] = None
 
 
 def _restore_arrow_dtypes(projected: pd.DataFrame, frame: pd.DataFrame) -> None:
