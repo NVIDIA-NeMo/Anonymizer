@@ -8,9 +8,9 @@ A rewrite is withheld when its replacement map cannot be applied
 (`RewriteWorkflow._run_evaluate_repair_loop`) excludes such rows from repair and
 nulls their rewritten text before and after the loop, and its regression
 `test_replacement_unavailable_remains_failed_closed_through_repair` pins that
-the record stays null and flagged for human review. Repair starts from the
-rewritten text's sensitive source, so publishing a repair of a withheld record
-could reproduce the original entity.
+the record stays null and flagged for human review. The released combined graph
+does not exclude them and publishes their repair; by operator ruling both
+schedules keep their released behavior.
 
 Each scenario runs this module as a script in a subprocess: an all-withheld
 batch used to abort the interpreter inside pyarrow, and a regression must fail
@@ -263,27 +263,30 @@ def test_staged_withheld_rewrite_stays_null_through_repair(tmp_path: Path, previ
 
 
 @pytest.mark.parametrize("preview", [False, True], ids=["run", "preview"])
-def test_combined_withheld_rewrite_stays_null_through_repair(tmp_path: Path, preview: bool) -> None:
+def test_combined_withheld_rewrite_publishes_repair_like_release(tmp_path: Path, preview: bool) -> None:
     result = _scenario(tmp_path, "preview" if preview else "run", True, "mixed")
 
-    # Intentional delta from the released combined graph, which publishes the repair of a withheld
-    # record. That graph (#240) predates the fail-closed withholding rule (#246) and never gated its
-    # repair skip condition on replacement readiness; the staged loop, the withholding rule, and its
-    # regression test all require the record to stay null. Both schedules now fail closed.
-    assert result["rewritten"] == [_REPAIRED, _null(preview), "Nothing here."]
+    # Released parity (operator ruling): the released combined graph repairs a withheld record like
+    # any other failing rewrite and publishes the repair, unlike the staged loop. Expected values are
+    # those of the released combined route (`main`) under this scripted transport.
+    assert result["rewritten"] == [_REPAIRED, _REPAIRED, "Nothing here."]
     assert result["needs_human_review"] == [True, True, False]
+    assert result["repair_iterations"] == [3, 3, 0]
     assert result["failed"] == 0
 
 
 @pytest.mark.parametrize("scenario", ["allwithheld", "allwithheld-repair"], ids=["no-repair", "repair"])
 @pytest.mark.parametrize("preview", [False, True], ids=["run", "preview"])
 @pytest.mark.parametrize("combined", [False, True], ids=["staged", "combined"])
-def test_all_withheld_batch_completes_with_null_rewrites(
+def test_all_withheld_batch_completes_like_release(
     tmp_path: Path, combined: bool, preview: bool, scenario: str
 ) -> None:
     result = _scenario(tmp_path, "preview" if preview else "run", combined, scenario)
 
-    assert result["rewritten"] == [_null(preview), _null(preview)]
+    # As released: the staged loop keeps every withheld rewrite null, while the combined graph
+    # repairs and publishes them when evaluation asks for repair (see the combined test above).
+    published = combined and scenario == "allwithheld-repair"
+    assert result["rewritten"] == ([_REPAIRED] * 2 if published else [_null(preview)] * 2)
     # Same dtype as a partially withheld batch in the release.
     assert result["rewritten_dtype"] == ("object" if preview else "string[pyarrow]")
     assert result["needs_human_review"] == [True, True]

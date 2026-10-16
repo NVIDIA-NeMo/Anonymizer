@@ -778,6 +778,13 @@ class RewriteEvaluationBinding:
         importance = {item.id: item.importance for item in qa.quality}
         leakage = compute_leakage_mass(privacy_answers, privacy_qa, self.criteria.sensitivity_weights)
         high = compute_any_high_leaked(privacy_answers, privacy_qa)
+        present = cast(RewriteCandidateValue, inputs["candidate"]).project() is not None
+        ready = _replacement_ready(cast(RewriteCandidateValue, inputs["baseline"]))
+        # Released parity (operator ruling): the staged loop never repairs a withheld rewrite and
+        # keeps it null, while the released combined graph repairs and publishes it like any other
+        # failing rewrite. A missing candidate whose replacements were applied (blank output)
+        # keeps its existing handling here.
+        repairable = (present or not ready) if self.combined else present and ready
         metric = EvaluationMetricsValue(
             utility=compute_utility_score(
                 [item.score for item in comparisons], [importance.get(item.id, "important") for item in comparisons]
@@ -785,8 +792,7 @@ class RewriteEvaluationBinding:
             leakage=leakage,
             weighted_leakage=compute_weighted_leakage_rate(leakage, privacy_qa, self.criteria.sensitivity_weights),
             high_leak=high,
-            needs_repair=cast(RewriteCandidateValue, inputs["candidate"]).project() is not None
-            and _replacement_ready(cast(RewriteCandidateValue, inputs["baseline"]))
+            needs_repair=repairable
             and determine_repair_needs(
                 any_high_leaked=high,
                 leakage_mass=leakage,
