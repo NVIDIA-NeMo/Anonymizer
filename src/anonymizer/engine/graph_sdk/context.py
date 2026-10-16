@@ -172,7 +172,6 @@ class InitialContextDecl(PrivateValue):
 class ContextSourceCapability(PrivateValue):
     source: ContextSourceRef
     artifact_type: ArtifactType
-    uses: frozenset[Literal["initial_binding", "adaptive_retrieval"]]
     execution: ProviderExecution
     resource_owner: Literal["caller", "sdk"]
     cancellation: str
@@ -184,10 +183,6 @@ class ContextSourceCapability(PrivateValue):
     def __post_init__(self) -> None:
         require_instance(self.source, ContextSourceRef)
         require_instance(self.artifact_type, ArtifactType)
-        if not isinstance(self.uses, frozenset) or any(not isinstance(item, str) for item in self.uses):
-            reject(EffectCode.INVALID_TYPE)
-        if not self.uses or not self.uses <= {"initial_binding", "adaptive_retrieval"}:
-            reject(EffectCode.INVALID_VALUE)
         require_literal(self.execution, frozenset({"async", "blocking"}))
         require_literal(self.resource_owner, frozenset({"caller", "sdk"}))
         require_literal(self.cancellation, frozenset({"before_dispatch_only", "cooperative_ack", "unobservable"}))
@@ -467,29 +462,6 @@ class ContextResource(PrivateValue):
             reject(EffectCode.CONTRADICTORY)
 
 
-@dataclass(frozen=True, slots=True, kw_only=True, repr=False)
-class AdaptiveRetrievalDecl(PrivateValue):
-    node: NodeId
-    source: ContextSourceRef
-    selector_ports: tuple[str, ...]
-    output_port: str
-    bounds: RetrievalBounds
-    materialization: ContextMaterialization
-
-    def __post_init__(self) -> None:
-        require_instance(self.node, NodeId)
-        require_instance(self.source, ContextSourceRef)
-        if not isinstance(self.selector_ports, tuple) or any(not isinstance(item, str) for item in self.selector_ports):
-            reject(EffectCode.INVALID_TYPE)
-        if len(self.selector_ports) != len(set(self.selector_ports)):
-            reject(EffectCode.DUPLICATE)
-        if any(not item for item in self.selector_ports):
-            reject(EffectCode.INVALID_VALUE)
-        require_text(self.output_port)
-        require_instance(self.bounds, RetrievalBounds)
-        require_instance(self.materialization, ContextMaterialization)
-
-
 _CONTEXT_KEY = object()
 
 
@@ -497,8 +469,6 @@ _CONTEXT_KEY = object()
 class AdmittedContextPlan(PrivateValue):
     prepared: PreparedPlan
     bound_context: BoundContext | None
-    adaptive_retrievals: tuple[AdaptiveRetrievalDecl, ...]
-    context_capabilities: tuple[ContextSourceCapability, ...]
 
     def __init__(self, *, _key: object, **values: object) -> None:
         if _key is not _CONTEXT_KEY:
@@ -511,27 +481,13 @@ def admit_context_plan(
     *,
     prepared: PreparedPlan,
     bound_context: BoundContext | None,
-    adaptive_retrievals: tuple[AdaptiveRetrievalDecl, ...],
-    context_capabilities: tuple[ContextSourceCapability, ...],
 ) -> AdmittedContextPlan:
-    """Admit immutable initial and adaptive context declarations without effects."""
+    """Admit immutable initial context declarations without effects."""
     require_instance(prepared, PreparedPlan)
     if bound_context is not None:
         require_instance(bound_context, BoundContext)
         if bound_context.receipt.data is not prepared.data or bound_context.receipt.workflow is not prepared.workflow:
             reject(EffectCode.FOREIGN_OWNER)
-    if not isinstance(adaptive_retrievals, tuple) or any(
-        not isinstance(item, AdaptiveRetrievalDecl) for item in adaptive_retrievals
-    ):
-        reject(EffectCode.INVALID_TYPE)
-    if not isinstance(context_capabilities, tuple):
-        reject(EffectCode.INVALID_TYPE)
-    if len(context_capabilities) > prepared.limits.max_capabilities:
-        reject(EffectCode.LIMIT_EXCEEDED)
-    if any(not isinstance(item, ContextSourceCapability) for item in context_capabilities):
-        reject(EffectCode.INVALID_TYPE)
-    if len(context_capabilities) != len(set(context_capabilities)):
-        reject(EffectCode.DUPLICATE)
     nodes = {node.id: node for body in prepared.workflow.bodies() for node in body.operations}
     context_destinations = {
         (binding.destination.node, binding.destination.port)
@@ -542,67 +498,8 @@ def admit_context_plan(
         reject(EffectCode.MISSING)
     if bound_context is not None:
         _validate_bound_context(prepared, bound_context, nodes)
-    selected = {item.node: item.capability for item in prepared.implementations}
-    declared_nodes = [item.node for item in adaptive_retrievals]
-    if len(declared_nodes) != len(set(declared_nodes)):
-        reject(EffectCode.DUPLICATE)
-    for declaration in adaptive_retrievals:
-        node = nodes.get(declaration.node)
-        if node is None:
-            reject(EffectCode.FOREIGN_OWNER)
-        inputs = {item.name for item in node.operation.inputs}
-        outputs = {item.name: item.artifact_type for item in node.operation.outputs}
-        if not set(declaration.selector_ports) <= inputs or declaration.output_port not in outputs:
-            reject(EffectCode.MISSING)
-        matches = [
-            item
-            for item in context_capabilities
-            if item.source == declaration.source
-            and item.artifact_type == declaration.materialization.item_type
-            and "adaptive_retrieval" in item.uses
-        ]
-        output_type = outputs[declaration.output_port]
-        materialization_valid = (
-            declaration.materialization.kind == "single"
-            and output_type == declaration.materialization.item_type
-            and declaration.bounds.max_items == 1
-        ) or (
-            declaration.materialization.kind == "collection"
-            and output_type != declaration.materialization.item_type
-            and declaration.bounds.max_items > 0
-        )
-        if (
-            len(matches) != 1
-            or not materialization_valid
-            or declaration.bounds.max_requests > matches[0].request.max_attempts
-        ):
-            reject(EffectCode.UNSUPPORTED)
-        capability = selected.get(declaration.node)
-        if capability is None or capability.attribution != "per_task":
-            reject(EffectCode.UNSUPPORTED)
-        producing = [
-            outcome for outcome in node.operation.outcomes if declaration.output_port in outcome.produced_ports
-        ]
-        if not producing or any(
-            (
-                outcome.ceiling.max_model_requests is not None
-                and declaration.bounds.max_requests > outcome.ceiling.max_model_requests
-            )
-            or (
-                outcome.ceiling.max_output_bytes is not None
-                and declaration.bounds.max_bytes > outcome.ceiling.max_output_bytes
-            )
-            for outcome in producing
-        ):
-            reject(EffectCode.LIMIT_EXCEEDED)
-    _validate_materialization_schema(prepared, bound_context, adaptive_retrievals, nodes)
-    return AdmittedContextPlan(
-        _key=_CONTEXT_KEY,
-        prepared=prepared,
-        bound_context=bound_context,
-        adaptive_retrievals=adaptive_retrievals,
-        context_capabilities=context_capabilities,
-    )
+    _validate_materialization_schema(prepared, bound_context)
+    return AdmittedContextPlan(_key=_CONTEXT_KEY, prepared=prepared, bound_context=bound_context)
 
 
 def _validate_bound_context(
@@ -668,26 +565,12 @@ def _validate_bound_context(
         reject(EffectCode.EXTRA)
 
 
-def _validate_materialization_schema(
-    prepared: PreparedPlan,
-    bound_context: BoundContext | None,
-    adaptive: tuple[AdaptiveRetrievalDecl, ...],
-    nodes: dict[NodeId, Operation],
-) -> None:
+def _validate_materialization_schema(prepared: PreparedPlan, bound_context: BoundContext | None) -> None:
     schemas: dict[ArtifactType, tuple[str, ArtifactType]] = {}
     initial = () if bound_context is None else tuple(item.declaration for item in bound_context.receipt.sources)
     declarations: list[tuple[ArtifactType, ContextMaterialization]] = [
         (item.artifact_type, item.materialization) for item in initial
     ]
-    declarations.extend(
-        (
-            next(
-                output.artifact_type for output in nodes[item.node].operation.outputs if output.name == item.output_port
-            ),
-            item.materialization,
-        )
-        for item in adaptive
-    )
     for output_type, materialization in declarations:
         item_type = materialization.item_type
         item_schema = schemas.get(item_type)

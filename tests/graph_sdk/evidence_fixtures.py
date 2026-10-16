@@ -10,7 +10,6 @@ from dataclasses import dataclass, fields, replace
 from anonymizer.engine.graph_sdk.binding import start_initial_binding
 from anonymizer.engine.graph_sdk.capabilities import ImplementationRef
 from anonymizer.engine.graph_sdk.context import (
-    AdaptiveRetrievalDecl,
     BindingLimits,
     ContextMaterialization,
     ContextResource,
@@ -170,7 +169,6 @@ async def _execute_assessment(
     predecessor_hop: bool = False,
     external_failover: bool = False,
     external_shared: bool = False,
-    adaptive_resource: ContextResource | None = None,
     coverage: frozenset[CoverageAtom] = frozenset(),
     target_count: int = 1,
     nested: bool = False,
@@ -196,7 +194,6 @@ async def _execute_assessment(
     assert not (auxiliary_output and (rename_ports or nested or predecessor_input or external is not None))
     assert not initial_resources or not (nested or rename_ports or predecessor_input or external or root_passthrough)
     assert not predecessor_hop or predecessor_input
-    assert adaptive_resource is None or (external is not None and not external_shared)
     assert not external_shared or external is not None
     assert not external_failover or external is not None
     predecessor = predecessor_input or external is not None
@@ -530,23 +527,7 @@ async def _execute_assessment(
         supported_findings=frozenset({finding}),
     )
     admitted = admit_execution_plan(
-        context=admit_context_plan(
-            prepared=prepared,
-            bound_context=bound_context,
-            adaptive_retrievals=(
-                AdaptiveRetrievalDecl(
-                    node=predecessor_node,
-                    source=adaptive_resource.source,
-                    selector_ports=("input",),
-                    output_port=evidence_port,
-                    bounds=RetrievalBounds(max_items=1, max_bytes=32, max_requests=2),
-                    materialization=ContextMaterialization(kind="single", item_type=artifact),
-                ),
-            )
-            if adaptive_resource
-            else (),
-            context_capabilities=(adaptive_resource.capability,) if adaptive_resource else (),
-        ),
+        context=admit_context_plan(prepared=prepared, bound_context=bound_context),
         capabilities=all_capabilities,
         policies=tuple(
             OperationExecutionPolicy(
@@ -619,13 +600,11 @@ async def _execute_assessment(
             )
             for item, capability in zip(nodes, capabilities, strict=True)
         ),
-        context_resources=(adaptive_resource,) if adaptive_resource else (),
         limits=execution_limits
         or ExecutionLimits(
             max_local_in_flight=1,
             max_remote_outstanding=1 if external is not None else 0,
-            max_runtime_artifacts=(1 + initial_item_limit + int(auxiliary_output) + int(adaptive_resource is not None))
-            * target_count,
+            max_runtime_artifacts=(1 + initial_item_limit + int(auxiliary_output)) * target_count,
             max_runtime_artifact_bytes=100,
             max_collection_items=0,
         ),

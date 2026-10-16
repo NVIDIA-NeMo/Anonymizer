@@ -14,12 +14,11 @@ from anonymizer.engine.graph_sdk._effect_values import (
     EffectRejected,
     reject,
 )
-from anonymizer.engine.graph_sdk._execution_cleanup import _acquire_context_resources, _cleanup_execution
+from anonymizer.engine.graph_sdk._execution_cleanup import _cleanup_execution
 from anonymizer.engine.graph_sdk._execution_delegated import _DelegatedOwner
 from anonymizer.engine.graph_sdk._execution_dispatch import (
     _immediate_execution_result,
     _mapping,
-    _run_adaptive,
     _run_external_batch,
     _run_local,
 )
@@ -163,9 +162,6 @@ class _InvocationRuntime:
             for handle in services.handles
             if handle.resource is not None
         )
-        self.context_leases, self.failed_context_sources, self.adaptive_acquisitions = _acquire_context_resources(
-            self.services.context_resources, invocation
-        )
         self.facts = _ExecutionFacts()
         self.frame = _InvocationFrame(
             self.prepared,
@@ -281,7 +277,6 @@ class _InvocationRuntime:
                 if row.status != "success":
                     for destination in successors.get(row.template, ()):
                         shared_predecessors.setdefault(destination, row)
-        adaptive_nodes = {item.node for item in self.admitted.context.adaptive_retrievals}
         scheduled = False
         for scope in scopes:
             source = self.frame.occurrence(scope)
@@ -373,10 +368,7 @@ class _InvocationRuntime:
                     scheduled = True
                     continue
 
-                adaptive = entry.template in adaptive_nodes
-                batchable = isinstance(scope, DatumId) and (
-                    policy.kind == "delegated" or policy.kind == "external" and not adaptive
-                )
+                batchable = isinstance(scope, DatumId) and policy.kind in {"delegated", "external"}
                 shared_batch = policy.kind == "delegated" or all(
                     item.capability.attribution == "keyed_shared_request" for item in policy.implementations
                 )
@@ -513,36 +505,16 @@ class _InvocationRuntime:
                 else _DelegatedOwner(self, cast(tuple[_OperationJob[DatumId], ...], jobs))
             ).run(handle)
         elif policy.kind == "external":
-            adaptive = next((item for item in self.admitted.context.adaptive_retrievals if item.node == job.node), None)
-            if adaptive is None:
-                coroutine = _run_external_batch(
-                    self.admitted,
-                    policy,
-                    self.handles,
-                    tuple(value for row in jobs for value in row.inputs),
-                    self.request_authority,
-                    self.control,
-                    self.services.limits,
-                    self.request_resources,
-                )
-            elif any(
-                capability.source == adaptive.source and capability.artifact_type == adaptive.materialization.item_type
-                for capability in self.failed_context_sources
-            ):
-                coroutine = _immediate_execution_result(_mapping(policy, "failure", None, "implementation_exception"))
-            else:
-                coroutine = _run_adaptive(
-                    self.admitted,
-                    policy,
-                    adaptive,
-                    job.association,
-                    job.inputs,
-                    self.request_authority,
-                    self.context_leases,
-                    self.control,
-                    self.services.limits,
-                    self.request_resources,
-                )
+            coroutine = _run_external_batch(
+                self.admitted,
+                policy,
+                self.handles,
+                tuple(value for row in jobs for value in row.inputs),
+                self.request_authority,
+                self.control,
+                self.services.limits,
+                self.request_resources,
+            )
         else:
             coroutine = _run_local(
                 policy,
@@ -686,18 +658,16 @@ class _InvocationRuntime:
         ):
             try:
                 measurement = handle.measurement.terminal_measurement()
-                route = (
-                    "context"
-                    if any(item.node == job.node for item in self.admitted.context.adaptive_retrievals)
-                    else job.policy.kind
-                )
                 if type(measurement) is WorkMeasurement and any(
                     type(getattr(measurement, name)) is int
                     and getattr(measurement, name) > span.session.limits.max_count
                     for name in ("input_count", "output_count", "artifact_count", "artifact_bytes", "request_count")
                 ):
                     span.session._disable("capacity_contract")
-                elif not _valid_measurement(measurement, span.session.limits.max_count) or measurement.route != route:
+                elif (
+                    not _valid_measurement(measurement, span.session.limits.max_count)
+                    or measurement.route != job.policy.kind
+                ):
                     span.session._disable("producer_contract")
                 else:
                     span.measurement = measurement
@@ -905,7 +875,6 @@ class _InvocationRuntime:
         cleanup, cleanup_associations = await _cleanup_execution(
             self.admitted,
             self.services.handles,
-            self.context_leases,
             self.request_authority.state,
             self.request_resources,
         )
@@ -941,15 +910,11 @@ class _InvocationRuntime:
             _retained_resources=tuple(
                 {
                     lease.resource: lease
-                    for lease in (
-                        *(handle.resource for handle in self.services.handles if handle.resource is not None),
-                        *self.context_leases.values(),
-                    )
+                    for lease in (handle.resource for handle in self.services.handles if handle.resource is not None)
                     if lease.owner == "sdk"
                     and any(fact.resource == lease.resource and fact.disposition == "left_open" for fact in cleanup)
                 }.values()
             ),
-            adaptive_acquisitions=self.adaptive_acquisitions,
             _input_parents=tuple(
                 (job.scope, job.activation, port, parent)
                 for job in self.operations.values()

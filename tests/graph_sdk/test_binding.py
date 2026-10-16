@@ -361,8 +361,6 @@ async def _assert_context_source_requires_exact_initial_declaration() -> None:
         admit_context_plan(
             prepared=prepared,
             bound_context=None,
-            adaptive_retrievals=(),
-            context_capabilities=(),
         )
     assert rejected.value.code.value == "missing"
 

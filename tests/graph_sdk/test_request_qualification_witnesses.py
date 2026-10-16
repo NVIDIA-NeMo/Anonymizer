@@ -106,7 +106,7 @@ def test_retained_retry_cannot_change_to_another_executed_target_association() -
     assert transport.calls == 3 and transport.closes == 1
 
 
-@pytest.mark.parametrize("purpose", ["initial_binding", "adaptive_retrieval", "repair"])
+@pytest.mark.parametrize("purpose", ["initial_binding", "repair"])
 def test_fresh_purpose_receipt_classification_without_claiming_physical_selector(purpose: str) -> None:
     # This is a retained-receipt reconciliation witness, not execution of these purposes.
     transport = _RecoveringTransport()

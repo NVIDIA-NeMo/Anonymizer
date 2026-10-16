@@ -239,9 +239,7 @@ def child_fixture(
         )
     finding = AssessmentFinding(status="satisfied", code="observed")
     execution = admit_execution_plan(
-        context=admit_context_plan(
-            prepared=prepared, bound_context=None, adaptive_retrievals=(), context_capabilities=()
-        ),
+        context=admit_context_plan(prepared=prepared, bound_context=None),
         capabilities=capabilities,
         policies=tuple(policies),
         assessment_productions=(
@@ -418,7 +416,6 @@ def child_fixture(
         _key=_RESULT_KEY,
         _execution=execution,
         implementation_resources=registrations,
-        adaptive_acquisitions=(),
         record=record,
         states=(state,),
         requests=request_receipt(state=requests),

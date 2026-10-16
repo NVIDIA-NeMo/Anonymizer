@@ -56,7 +56,6 @@ def test_finite_public_exports_and_factory_signatures() -> None:
     assert "AssessmentSubmission" not in g.__all__
     assert "advance_requests" not in g.__all__
     assert inspect.signature(g.InitialContextDecl).parameters["version_selection"].default == "exact_one"
-    assert "version_selection" not in inspect.signature(g.AdaptiveRetrievalDecl).parameters
     assert "candidate_port" in inspect.signature(g.ProtectionRequirement).parameters
     assert g.MapItemPort and g.MapItemSubjectRef and g.VerifiedEvidence and g.RemoteContext
     with pytest.raises(AttributeError):

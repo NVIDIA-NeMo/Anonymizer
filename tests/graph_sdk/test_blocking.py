@@ -191,15 +191,11 @@ def test_blocking_affinity_bounds_awaitables_reentry_and_cleanup() -> None:
     asyncio.run(run())
 
 
-@pytest.mark.parametrize("adaptive", [False, True])
 @pytest.mark.parametrize("mode", ["success", "cancel", "exception", "awaitable"])
-def test_actual_initial_and_adaptive_blocking_provider(adaptive: bool, mode: str) -> None:
+def test_actual_initial_blocking_provider(mode: str) -> None:
     from anonymizer.engine.graph_sdk.blocking import BlockingContextProvider
     from anonymizer.engine.graph_sdk.context import SourceItem, SourceResponse
-    from tests.graph_sdk.test_adaptive_executor import SOURCE as ADAPTIVE_SOURCE
-    from tests.graph_sdk.test_adaptive_executor import _adaptive_running
-    from tests.graph_sdk.test_binding import SOURCE as INITIAL_SOURCE
-    from tests.graph_sdk.test_binding import _initial_running
+    from tests.graph_sdk.test_binding import SOURCE, _initial_running
 
     async def run() -> None:
         pool = BlockingPool(max_workers=1)
@@ -210,8 +206,6 @@ def test_actual_initial_and_adaptive_blocking_provider(adaptive: bool, mode: str
         async def cancel(request):
             cancellation_seen.set()
             return StopUnknown()
-
-        source = ADAPTIVE_SOURCE if adaptive else INITIAL_SOURCE
 
         async def close():
             closes.append(True)
@@ -229,7 +223,7 @@ def test_actual_initial_and_adaptive_blocking_provider(adaptive: bool, mode: str
             if mode == "awaitable":
                 return unwanted()
             return SourceResponse(
-                source=source,
+                source=SOURCE,
                 items=(SourceItem(association=association, key=0, version=1, text="retrieved"),),
                 settlement=ExternalSettlement(
                     request=request,
@@ -242,10 +236,7 @@ def test_actual_initial_and_adaptive_blocking_provider(adaptive: bool, mode: str
         provider = BlockingContextProvider(callback=callback, pool=pool, affinity=AFFINITY, close=close, cancel=cancel)
         running = None
         try:
-            if adaptive:
-                running, _ = await _adaptive_running(provider)
-            else:
-                running, _, _, _ = await _initial_running(provider)
+            running, _, _, _ = await _initial_running(provider)
             await until(entered.is_set)
             if mode == "cancel":
                 running.request_cancel()
@@ -253,14 +244,14 @@ def test_actual_initial_and_adaptive_blocking_provider(adaptive: bool, mode: str
                 assert pool.occupied == 1
                 release.set()
             result = await asyncio.wait_for(running.wait(), 5)
-            receipt = result.requests if adaptive else result.receipt.requests
+            receipt = result.receipt.requests
             assert receipt.dispatched_count == 1 and len(calls) == 1
-            assert not closes  # Both actual entry paths retain caller ownership.
+            assert not closes  # The actual entry path retains caller ownership.
             if mode == "success":
                 assert receipt.terminals[0].category == "success"
-                assert result.final_outputs if adaptive else result.context
+                assert result.context
             else:
-                assert not (result.final_outputs if adaptive else result.context)
+                assert not result.context
                 assert receipt.terminals[0].category == ("failure" if mode == "awaitable" else "lost")
             if mode in {"success", "cancel"}:
                 assert len(receipt.settlements) == 1
@@ -277,21 +268,16 @@ def test_actual_initial_and_adaptive_blocking_provider(adaptive: bool, mode: str
     asyncio.run(run())
 
 
-@pytest.mark.parametrize("adaptive", [False, True])
-def test_actual_retrieval_queue_cancellation_preserves_worker_capacity(adaptive: bool) -> None:
+def test_actual_retrieval_queue_cancellation_preserves_worker_capacity() -> None:
     from anonymizer.engine.graph_sdk.blocking import BlockingContextProvider
     from anonymizer.engine.graph_sdk.context import SourceItem, SourceResponse
-    from tests.graph_sdk.test_adaptive_executor import SOURCE as ADAPTIVE_SOURCE
-    from tests.graph_sdk.test_adaptive_executor import _adaptive_running
-    from tests.graph_sdk.test_binding import SOURCE as INITIAL_SOURCE
-    from tests.graph_sdk.test_binding import _initial_running
+    from tests.graph_sdk.test_binding import SOURCE, _initial_running
 
     async def run() -> None:
         pool = BlockingPool(max_workers=1)
         entered, release = Event(), Event()
         stopped = asyncio.Event()
         calls = []
-        source = ADAPTIVE_SOURCE if adaptive else INITIAL_SOURCE
 
         async def cancel(request):
             stopped.set()
@@ -302,7 +288,7 @@ def test_actual_retrieval_queue_cancellation_preserves_worker_capacity(adaptive:
             entered.set()
             assert release.wait(5)
             return SourceResponse(
-                source=source,
+                source=SOURCE,
                 items=(SourceItem(association=association, key=0, version=1, text="retrieved"),),
                 settlement=ExternalSettlement(
                     request=request,
@@ -315,7 +301,7 @@ def test_actual_retrieval_queue_cancellation_preserves_worker_capacity(adaptive:
         provider = BlockingContextProvider(callback=callback, pool=pool, affinity=AFFINITY, cancel=cancel)
 
         async def start():
-            values = await (_adaptive_running(provider) if adaptive else _initial_running(provider))
+            values = await _initial_running(provider)
             return values[0]
 
         running = []
@@ -328,19 +314,19 @@ def test_actual_retrieval_queue_cancellation_preserves_worker_capacity(adaptive:
             await until(lambda: provider.local_users == 3)
             two.request_cancel()
             result_two = await asyncio.wait_for(two.wait(), 5)
-            receipt_two = result_two.requests if adaptive else result_two.receipt.requests
+            receipt_two = result_two.receipt.requests
             assert receipt_two.dispatched_count == 0 and not receipt_two.remote_outstanding
             one.request_cancel()
             await asyncio.wait_for(stopped.wait(), 5)
             assert len(calls) == 1 and pool.occupied == 1
             release.set()
             result_one, result_three = await asyncio.wait_for(asyncio.gather(one.wait(), three.wait()), 5)
-            receipt_one = result_one.requests if adaptive else result_one.receipt.requests
-            receipt_three = result_three.requests if adaptive else result_three.receipt.requests
+            receipt_one = result_one.receipt.requests
+            receipt_three = result_three.receipt.requests
             assert receipt_one.terminals[0].category == "lost"
             assert receipt_three.terminals[0].category == "success"
             assert len(receipt_one.settlements) == len(receipt_three.settlements) == 1
-            assert not (result_one.final_outputs if adaptive else result_one.context)
+            assert not result_one.context
             assert len(calls) == 2 and pool.occupied == 0
         finally:
             release.set()
@@ -419,69 +405,6 @@ def test_closed_pool_never_dispatches_or_charges() -> None:
         assert result.cancelled and result.stop_confirmed
         assert not authority.state.dispatched and not authority.state.reserved
         assert pool.occupied == 0
-
-    asyncio.run(run())
-
-
-@pytest.mark.parametrize("mode", ["mismatch", "malformed", "valid", "close_failure"])
-def test_adaptive_factory_retains_created_handle_for_cleanup(mode: str, monkeypatch: pytest.MonkeyPatch) -> None:
-    from anonymizer.engine.graph_sdk.blocking import BlockingContextProvider
-    from anonymizer.engine.graph_sdk.context import SourceItem, SourceResponse
-    from tests.graph_sdk import test_adaptive_executor as fixture
-
-    async def run() -> None:
-        pool = BlockingPool(max_workers=1)
-        calls, closes = [], []
-
-        async def close():
-            closes.append(True)
-            if mode == "close_failure":
-                raise RuntimeError("private cleanup failure")
-
-        def callback(*, request, association, selector, bounds):
-            calls.append(request)
-            return SourceResponse(
-                source=fixture.SOURCE,
-                items=(SourceItem(association=association, key=0, version=1, text="retrieved"),),
-                settlement=ExternalSettlement(
-                    request=request,
-                    disposition="completed",
-                    usage=ExactUsage(input_units=1, output_units=1),
-                    remote_stopped=True,
-                ),
-            )
-
-        adapter = BlockingContextProvider(callback=callback, pool=pool, affinity=AFFINITY, close=close)
-
-        class MalformedProvider:
-            async def close(self):
-                await close()
-
-        provider = MalformedProvider() if mode == "malformed" else adapter
-        original_capability, original_resource = fixture.ContextSourceCapability, fixture.ContextResource
-
-        def capability(**kwargs):
-            kwargs["resource_owner"] = "sdk"
-            kwargs["execution"] = "blocking" if mode == "valid" else "async"
-            return original_capability(**kwargs)
-
-        def resource(**kwargs):
-            kwargs.update(lease=None, factory=lambda: provider)
-            return original_resource(**kwargs)
-
-        monkeypatch.setattr(fixture, "ContextSourceCapability", capability)
-        monkeypatch.setattr(fixture, "ContextResource", resource)
-        try:
-            running, _ = await fixture._adaptive_running(adapter)
-            result = await running.wait()
-            assert len(calls) == result.requests.dispatched_count == (1 if mode == "valid" else 0)
-            assert closes == [True]
-            assert len(result.cleanup) == 2
-            assert sorted(row.disposition for row in result.cleanup) == (
-                ["close_failed", "closed"] if mode == "close_failure" else ["closed", "closed"]
-            )
-        finally:
-            await pool.close()
 
     asyncio.run(run())
 

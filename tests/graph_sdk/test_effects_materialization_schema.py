@@ -16,7 +16,6 @@ from anonymizer.engine.graph_sdk.capabilities import (
     ImplementationRef,
 )
 from anonymizer.engine.graph_sdk.context import (
-    AdaptiveRetrievalDecl,
     BindingLimits,
     BindingResult,
     ContextMaterialization,
@@ -44,7 +43,6 @@ from anonymizer.engine.graph_sdk.executor import (
     start_execution,
 )
 from anonymizer.engine.graph_sdk.preparation import (
-    BoundInput,
     PreparationConfiguration,
     PreparedPlan,
     prepare,
@@ -78,12 +76,9 @@ from anonymizer.graph.workflow import (
     OperationSpec,
     OutcomeBinding,
     OutcomeSpec,
-    OutputDependency,
-    OutputPort,
     ResourceCeiling,
     SequenceEdge,
     WorkflowId,
-    WorkflowInputRef,
     WorkflowLimits,
     WorkflowOutcomeRef,
 )
@@ -153,7 +148,6 @@ class _SiteConsumer(_ContextConsumer):
     "case_id",
     [
         "materialization/conflicting_schema",
-        "materialization/nested_collection_schema",
         "materialization/same_port_distinct_nodes",
     ],
 )
@@ -178,7 +172,6 @@ class _SchemaFixture:
     nodes: tuple[NodeId, ...]
     types: dict[str, ArtifactType]
     policy: PhysicalRequestPolicy
-    source_caps: tuple[ContextSourceCapability, ...]
     initial_caps: tuple[ContextSourceCapability, ...]
     providers: dict[ContextSourceRef, _Provider]
     declarations: tuple[InitialContextDecl, ...]
@@ -198,16 +191,12 @@ async def _assert_schema_case(case_id: str, allocations: list[BindingId]) -> Non
     bound = await _bind_schema_fixture(fixture)
     assert bound.context is not None and len(allocations) == 1
     prepared = _prepare_schema_fixture(fixture)
-    if case_id == "materialization/nested_collection_schema":
-        _assert_nested_rejection(fixture, bound, prepared)
-        return
     result = await _execute_distinct_sites(fixture, bound, prepared)
     _assert_distinct_site_result(fixture, bound, result)
 
 
 def _build_schema_fixture(case: dict[str, Any], *, revision: int = 1) -> _SchemaFixture:
     raw = case["declaration"]["materializations"]
-    nested = case["case_id"] == "materialization/nested_collection_schema"
     conflict = case["case_id"] == "materialization/conflicting_schema"
     types = {
         name: ArtifactType(name=name, revision=revision)
@@ -217,31 +206,23 @@ def _build_schema_fixture(case: dict[str, Any], *, revision: int = 1) -> _Schema
     nodes = tuple(NodeId.new(workflow=owner) for _ in raw)
     operations = []
     for index, item in enumerate(raw):
-        adaptive = nested and index == 1
-        input_type = types["text"] if adaptive else types[item["output_type"]]
         operations.append(
             OperationSpec(
                 name=f"context-{index}",
-                inputs=(InputPort(name="input" if adaptive else "context", artifact_type=input_type),),
-                outputs=(OutputPort(name="context", artifact_type=types[item["output_type"]]),) if adaptive else (),
-                output_dependencies=(
-                    OutputDependency(output="context", inputs=frozenset({"input"}), identity_input=None),
-                )
-                if adaptive
-                else (),
+                inputs=(InputPort(name="context", artifact_type=types[item["output_type"]]),),
+                outputs=(),
+                output_dependencies=(),
                 outcomes=(
                     OutcomeSpec(
                         name="ok",
                         category="success",
-                        produced_ports=frozenset({"context"}) if adaptive else frozenset(),
-                        context=frozenset()
-                        if adaptive
-                        else frozenset({ContextUse(port="context", meaning="retrieved", capture="whole_artifact")}),
+                        produced_ports=frozenset(),
+                        context=frozenset({ContextUse(port="context", meaning="retrieved", capture="whole_artifact")}),
                         evidence=frozenset(),
                         model_requirements=frozenset(),
                         ceiling=ResourceCeiling(
                             max_activations=1,
-                            max_model_requests=2 if adaptive else 0,
+                            max_model_requests=0,
                             max_input_bytes=12,
                             max_output_bytes=12,
                         ),
@@ -261,10 +242,10 @@ def _build_schema_fixture(case: dict[str, Any], *, revision: int = 1) -> _Schema
                 operations[0].outcomes[0],
                 context=frozenset(
                     ContextUse(port=f"root-{index}", meaning="retrieved", capture="whole_artifact")
-                    for index in range(1 if nested else 2)
+                    for index in range(2)
                 ),
                 ceiling=ResourceCeiling(
-                    max_activations=2, max_model_requests=2 if nested else 0, max_input_bytes=24, max_output_bytes=24
+                    max_activations=2, max_model_requests=0, max_input_bytes=24, max_output_bytes=24
                 ),
             ),
         ),
@@ -277,9 +258,7 @@ def _build_schema_fixture(case: dict[str, Any], *, revision: int = 1) -> _Schema
         ),
         input_bindings=tuple(
             InputBinding(
-                source=WorkflowInputRef(port=f"root-{index}")
-                if nested and index == 1
-                else ContextInputRef(port=f"root-{index}"),
+                source=ContextInputRef(port=f"root-{index}"),
                 destination=NodeInputRef(node=node, port=operation.inputs[0].name),
             )
             for index, (node, operation) in enumerate(zip(nodes, operations, strict=True))
@@ -325,23 +304,23 @@ def _build_schema_fixture(case: dict[str, Any], *, revision: int = 1) -> _Schema
         replay="idempotent",
         max_attempts=2,
     )
-    sources = tuple(ContextSourceRef(name=f"S{index if conflict or nested else 0}", revision=1) for index in range(2))
-    source_caps = tuple(
-        ContextSourceCapability(
-            source=source,
-            artifact_type=types[item["item_type"]],
-            uses=frozenset({"adaptive_retrieval" if nested and index == 1 else "initial_binding"}),
-            execution="async",
-            resource_owner="caller",
-            cancellation="cooperative_ack",
-            settlement="explicit_ack",
-            usage="exact",
-            request=policy,
-            safe_detachment="forbidden",
+    sources = tuple(ContextSourceRef(name=f"S{index if conflict else 0}", revision=1) for index in range(2))
+    initial_caps = tuple(
+        dict.fromkeys(
+            ContextSourceCapability(
+                source=source,
+                artifact_type=types[item["item_type"]],
+                execution="async",
+                resource_owner="caller",
+                cancellation="cooperative_ack",
+                settlement="explicit_ack",
+                usage="exact",
+                request=policy,
+                safe_detachment="forbidden",
+            )
+            for source, item in zip(sources, raw, strict=True)
         )
-        for index, (source, item) in enumerate(zip(sources, raw, strict=True))
     )
-    initial_caps = tuple(dict.fromkeys(source_caps[:1] if nested else source_caps))
     providers = {cap.source: _Provider(source=cap.source) for cap in initial_caps}
     declarations = tuple(
         InitialContextDecl(
@@ -355,20 +334,19 @@ def _build_schema_fixture(case: dict[str, Any], *, revision: int = 1) -> _Schema
             bounds=RetrievalBounds(max_items=item["max_items"], max_bytes=item["max_bytes"], max_requests=2),
             materialization=ContextMaterialization(kind=item["kind"], item_type=types[item["item_type"]]),
         )
-        for index, (node, source, item) in enumerate(zip(nodes, sources, raw, strict=True))
-        if not nested or index == 0
+        for node, source, item in zip(nodes, sources, raw, strict=True)
     )
     capabilities = tuple(
         replace(
-            _capability(workflow, external=nested and index == 1),
+            _capability(workflow),
             operation=operation,
             implementation=ImplementationRef(name=f"implementation-{index}", revision=1),
-            max_physical_requests_per_activation=2 if nested and index == 1 else 0,
+            max_physical_requests_per_activation=0,
         )
         for index, operation in enumerate(operations)
     )
     return _SchemaFixture(
-        case, workflow, data, nodes, types, policy, source_caps, initial_caps, providers, declarations, capabilities
+        case, workflow, data, nodes, types, policy, initial_caps, providers, declarations, capabilities
     )
 
 
@@ -405,17 +383,13 @@ async def _bind_schema_fixture(fixture: _SchemaFixture) -> BindingResult:
 
 
 def _prepare_schema_fixture(fixture: _SchemaFixture) -> PreparedPlan:
-    data, workflow, nodes, types = fixture.data, fixture.workflow, fixture.nodes, fixture.types
+    data, workflow, nodes = fixture.data, fixture.workflow, fixture.nodes
     capabilities = fixture.capabilities
-    target = next(iter(data.targets))
-    nested = fixture.case["case_id"] == "materialization/nested_collection_schema"
     return prepare(
         data=data,
         workflow=workflow,
         activation_limits=ActivationLimits(max_events=6, max_entries=2, max_parent_depth=1),
-        bound_inputs=(BoundInput(target=target, source=target, port="root-1", artifact_type=types["text"]),)
-        if nested
-        else (),
+        bound_inputs=(),
         configuration=PreparationConfiguration(
             purpose="execution_only", required_protection_outcomes=frozenset(), hard_request_limit=None
         ),
@@ -423,32 +397,6 @@ def _prepare_schema_fixture(fixture: _SchemaFixture) -> PreparedPlan:
         capabilities=capabilities,
         limits=_limits(capabilities=2, slots=2),
     )
-
-
-def _assert_nested_rejection(fixture: _SchemaFixture, bound: BindingResult, prepared: PreparedPlan) -> None:
-    case, nodes, types = fixture.case, fixture.nodes, fixture.types
-    raw = case["declaration"]["materializations"]
-    source_caps, providers = fixture.source_caps, fixture.providers
-    sources = tuple(cap.source for cap in source_caps)
-    adaptive = (
-        AdaptiveRetrievalDecl(
-            node=nodes[1],
-            source=sources[1],
-            selector_ports=("input",),
-            output_port="context",
-            bounds=RetrievalBounds(max_items=raw[1]["max_items"], max_bytes=raw[1]["max_bytes"], max_requests=2),
-            materialization=ContextMaterialization(kind=raw[1]["kind"], item_type=types[raw[1]["item_type"]]),
-        ),
-    )
-    with pytest.raises(EffectRejected) as rejected:
-        admit_context_plan(
-            prepared=prepared,
-            bound_context=bound.context,
-            adaptive_retrievals=adaptive,
-            context_capabilities=(source_caps[1],),
-        )
-    assert rejected.value.code.value == case["expected"]["code"] == "contradictory"
-    assert sum(provider.calls for provider in providers.values()) == 1
 
 
 async def _execute_distinct_sites(
@@ -460,9 +408,7 @@ async def _execute_distinct_sites(
     expected_texts: tuple[str, str] = ("a", "b"),
 ) -> ExecutionResult:
     case, nodes, capabilities = fixture.case, fixture.nodes, fixture.capabilities
-    context = admit_context_plan(
-        prepared=prepared, bound_context=bound.context, adaptive_retrievals=(), context_capabilities=()
-    )
+    context = admit_context_plan(prepared=prepared, bound_context=bound.context)
     admitted = admit_execution_plan(
         context=context,
         capabilities=capabilities,
@@ -493,7 +439,6 @@ async def _execute_distinct_sites(
                     _implementation_handle(cap, local=consumer, transport=None, resource=None)
                     for cap, consumer in zip(capabilities, consumers, strict=True)
                 ),
-                context_resources=(),
                 limits=ExecutionLimits(
                     max_local_in_flight=1,
                     max_remote_outstanding=0,

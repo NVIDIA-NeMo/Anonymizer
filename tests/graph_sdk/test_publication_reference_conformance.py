@@ -179,7 +179,6 @@ async def _compare(case: TextCase) -> None:
                     ),
                 ),
             ),
-            context_resources=(),
             limits=ExecutionLimits(
                 max_local_in_flight=0,
                 max_remote_outstanding=2,

@@ -57,7 +57,6 @@ async def _assert_bound_context_map_item_conflict() -> None:
     capability = ContextSourceCapability(
         source=SOURCE,
         artifact_type=fixture.text_type,
-        uses=frozenset({"initial_binding"}),
         execution="async",
         resource_owner="caller",
         cancellation="cooperative_ack",

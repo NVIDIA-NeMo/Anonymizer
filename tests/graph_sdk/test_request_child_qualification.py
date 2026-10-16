@@ -195,7 +195,6 @@ def test_delegated_service_gate_precedes_identity_and_tasks(monkeypatch: pytest.
 
     services = ExecutionServices(
         handles=(),
-        context_resources=(),
         limits=ExecutionLimits(
             max_local_in_flight=1,
             max_remote_outstanding=1,

@@ -33,9 +33,6 @@ from tests.graph_sdk.test_effects_production_conformance import (
 from tests.graph_sdk.test_effects_production_conformance import (
     test_binding_corpus_case_through_real_provider as check_binding,
 )
-from tests.graph_sdk.test_effects_production_conformance import (
-    test_late_adaptive_provider_result_is_suppressed_by_real_executor as check_late_adaptive,
-)
 from tests.graph_sdk.test_latest_binding_obligations import test_latest_binding_obligation as check_latest
 from tests.graph_sdk.test_preparation import _capability, _prepare
 from tests.graph_sdk.test_qualification import (
@@ -63,9 +60,7 @@ def test_sealed_binding_has_no_second_dispatch_publication_or_cleanup(monkeypatc
         # real admission boundary, before any execution can be constructed.
         for _ in range(2):
             with pytest.raises(EffectRejected) as rejected:
-                admit_context_plan(
-                    prepared=prepared, bound_context=None, adaptive_retrievals=(), context_capabilities=()
-                )
+                admit_context_plan(prepared=prepared, bound_context=None)
             assert rejected.value.code.value == "missing"
             await asyncio.sleep(0)
         return running
@@ -75,9 +70,7 @@ def test_sealed_binding_has_no_second_dispatch_publication_or_cleanup(monkeypatc
         (running,) = captured
         first = await running.wait()
         (prepared,) = prepared_plans
-        admitted = admit_context_plan(
-            prepared=prepared, bound_context=first.context, adaptive_retrievals=(), context_capabilities=()
-        )
+        admitted = admit_context_plan(prepared=prepared, bound_context=first.context)
         assert admitted.bound_context is first.context
         before = (first.receipt.sources, first.receipt.requests, first.receipt.artifacts, first.receipt.cleanup)
         for _ in range(3):
@@ -105,11 +98,6 @@ def test_exact_cleanup_owner_defect(mutation: str) -> None:
         check_missing_cleanup("missing")
     else:
         check_cleanup(True, "foreign-target")
-
-
-@pytest.mark.parametrize("case_id", ["materialization/adaptive_late_lost", "materialization/adaptive_late_cancelled"])
-def test_adaptive_late_publication_uses_actual_owner(case_id: str) -> None:
-    check_late_adaptive(next(row for row in load_cases("effects") if row["case_id"] == case_id))
 
 
 @pytest.mark.parametrize("case_id", ["binding/exact_item_byte_bounds", "binding/wrong_source"])

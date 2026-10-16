@@ -159,9 +159,7 @@ async def fixture(
         limits=previous.limits,
     )
     execution = admit_execution_plan(
-        context=admit_context_plan(
-            prepared=prepared, bound_context=None, adaptive_retrievals=(), context_capabilities=()
-        ),
+        context=admit_context_plan(prepared=prepared, bound_context=None),
         capabilities=capabilities,
         policies=tuple(
             replace(

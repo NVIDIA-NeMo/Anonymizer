@@ -69,7 +69,7 @@ async def _assert_resource_eligibility(case: dict[str, Any]) -> None:
         _capability(workflow, external=True), max_physical_requests_per_activation=policies["P0"].max_attempts
     )
     prepared = _prepare(data=_data(1), workflow=workflow, capability=capability)
-    context = admit_context_plan(prepared=prepared, bound_context=None, adaptive_retrievals=(), context_capabilities=())
+    context = admit_context_plan(prepared=prepared, bound_context=None)
     resource_event = case["events"][0]
     resource = _Resource()
     lease = ResourceLease.create(
@@ -112,7 +112,7 @@ async def _assert_resource_eligibility(case: dict[str, Any]) -> None:
     expected = case["expected"]["state"]
     for key, value in _normalize(state, tasks, requests, policies).items():
         assert value == expected[key], key
-    cleanup, associations = await _cleanup_execution(admitted, (handle,), {}, state, {requests["R0"]: lease.resource})
+    cleanup, associations = await _cleanup_execution(admitted, (handle,), state, {requests["R0"]: lease.resource})
     # The frozen resource model records completed close attempts; the executor
     # additionally reports left_open when eligibility retains an SDK lease.
     completed = {"Q0": fact.disposition for fact in cleanup if fact.disposition != "left_open"}

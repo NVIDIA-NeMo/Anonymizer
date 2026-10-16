@@ -269,7 +269,6 @@ async def _execute_case(
     capability = ContextSourceCapability(
         source=source,
         artifact_type=text_type,
-        uses=frozenset({"initial_binding"}),
         execution="async",
         resource_owner="sdk",
         cancellation="cooperative_ack",
@@ -333,9 +332,7 @@ async def _execute_case(
         limits=_limits(capabilities=2, slots=2),
     )
     admitted = admit_execution_plan(
-        context=admit_context_plan(
-            prepared=prepared, bound_context=bound.context, adaptive_retrievals=(), context_capabilities=()
-        ),
+        context=admit_context_plan(prepared=prepared, bound_context=bound.context),
         capabilities=capabilities,
         policies=tuple(
             OperationExecutionPolicy(
@@ -392,7 +389,6 @@ async def _execute_case(
                     _implementation_handle(cap, local=callback, transport=None, resource=None)
                     for cap, callback in zip(capabilities, callbacks, strict=True)
                 ),
-                context_resources=(),
                 limits=ExecutionLimits(
                     max_local_in_flight=1,
                     max_remote_outstanding=0,

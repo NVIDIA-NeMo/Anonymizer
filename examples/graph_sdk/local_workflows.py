@@ -295,9 +295,7 @@ def build(
             max_capabilities=2,
         ),
     )
-    context = g.admit_context_plan(
-        prepared=prepared, bound_context=None, adaptive_retrievals=(), context_capabilities=()
-    )
+    context = g.admit_context_plan(prepared=prepared, bound_context=None)
     policies = tuple(
         g.OperationExecutionPolicy(
             node=node.id,
@@ -360,7 +358,6 @@ def build(
             )
             for capability, callback in zip(capabilities, callbacks, strict=True)
         ),
-        context_resources=(),
         limits=g.ExecutionLimits(
             max_local_in_flight=1,
             max_remote_outstanding=0,
@@ -526,7 +523,6 @@ async def run_context_example() -> dict[str, object]:
     capability = g.ContextSourceCapability(
         source=source,
         artifact_type=artifact_type,
-        uses=frozenset({"initial_binding"}),
         execution="async",
         resource_owner="caller",
         cancellation="cooperative_ack",

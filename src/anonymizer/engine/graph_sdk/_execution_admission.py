@@ -36,7 +36,7 @@ from anonymizer.engine.graph_sdk._execution_values import (
 )
 from anonymizer.engine.graph_sdk._foreign_transport import ForeignLoopTransport
 from anonymizer.engine.graph_sdk._ingress_values import IngressLimits
-from anonymizer.engine.graph_sdk.blocking import BlockingTransport, _validate_provider_execution
+from anonymizer.engine.graph_sdk.blocking import BlockingTransport
 from anonymizer.engine.graph_sdk.capabilities import (
     ImplementationCapability,
     validate_capability,
@@ -44,7 +44,6 @@ from anonymizer.engine.graph_sdk.capabilities import (
 from anonymizer.engine.graph_sdk.context import (
     AdmittedContextPlan,
     BoundTextArtifact,
-    ContextResource,
 )
 from anonymizer.engine.graph_sdk.preparation import PreparedPlan
 from anonymizer.engine.graph_sdk.requests import (
@@ -120,21 +119,6 @@ def admit_execution_plan(
         if any(item.capability not in capabilities for item in policy.implementations):
             reject(EffectCode.UNSUPPORTED)
         _validate_policy(policy)
-        adaptive = next((item for item in context.adaptive_retrievals if item.node == policy.node), None)
-        if adaptive is not None:
-            source = next(
-                item
-                for item in context.context_capabilities
-                if item.source == adaptive.source and "adaptive_retrieval" in item.uses
-            )
-            if (
-                policy.kind != "external"
-                or policy.request != source.request
-                or policy.initial_request_purpose != "initial"
-            ):
-                reject(EffectCode.CONTRADICTORY)
-            if any(item.capability.attribution != "per_task" for item in policy.implementations):
-                reject(EffectCode.UNSUPPORTED)
     _validate_delegated_recipes(prepared, policies)
     _validate_assessments(prepared, policies, assessment_productions, assessment_limits)
     _validate_execution_fact_capacity(prepared, assessment_productions, assessment_limits)
@@ -179,16 +163,6 @@ def _validate_map_expansions(
                 materialization.kind,
                 1,
             )
-    for adaptive in context.adaptive_retrievals:
-        operation = _node_operation(workflow, adaptive.node)
-        output_type = next(item.artifact_type for item in operation.outputs if item.name == adaptive.output_port)
-        _add_materialization_schema(
-            schemas,
-            output_type,
-            adaptive.materialization.item_type,
-            adaptive.materialization.kind,
-            1,
-        )
     replacement_choices: list[tuple[InputBinding, ...]] = []
     by_key = {(item.expander, item.outcome): item for item in declarations}
     for scope in workflow.bodies():
@@ -619,7 +593,7 @@ def _validate_delegated_services(admitted: AdmittedExecutionPlan, services: Exec
     """Admit fixed generation and its declared optional correction with owned resources."""
     prepared = admitted.context.prepared
     delegated = [policy for policy in admitted.policies if policy.delegated is not None]
-    if delegated and (len(delegated) != 1 or admitted.context.adaptive_retrievals):
+    if len(delegated) > 1:
         reject(EffectCode.UNSUPPORTED)
     for policy in delegated:
         contract = policy.delegated
@@ -777,13 +751,6 @@ def _validate_services(admitted: AdmittedExecutionPlan, services: ExecutionServi
         services.limits.max_remote_outstanding is not None or services.limits.max_runtime_artifact_bytes is not None
     ) and any(policy.delegated is not None and policy.delegated.mode == "opaque" for policy in admitted.policies):
         reject(EffectCode.UNSUPPORTED)
-    if any(
-        services.limits.max_collection_items is not None
-        and item.materialization.kind == "collection"
-        and item.bounds.max_items > services.limits.max_collection_items
-        for item in admitted.context.adaptive_retrievals
-    ):
-        reject(EffectCode.LIMIT_EXCEEDED)
     bound_context = admitted.context.bound_context
     if bound_context is not None and any(
         services.limits.max_collection_items is not None
@@ -844,19 +811,6 @@ def _validate_services(admitted: AdmittedExecutionPlan, services: ExecutionServi
             expected_owner = "caller" if capability.resource_lifetime == "caller_owned" else "sdk"
             if handle.resource.owner != expected_owner or handle.resource.safe_detachment != policy.safe_detachment:
                 reject(EffectCode.CONTRADICTORY)
-    if not isinstance(services.context_resources, tuple) or any(
-        not isinstance(item, ContextResource) for item in services.context_resources
-    ):
-        reject(EffectCode.INVALID_TYPE)
-    expected_context = {
-        (item.source, item) for item in admitted.context.context_capabilities if "adaptive_retrieval" in item.uses
-    }
-    actual_context = {(item.source, item.capability) for item in services.context_resources}
-    if actual_context != expected_context or len(actual_context) != len(services.context_resources):
-        reject(EffectCode.MISSING if actual_context < expected_context else EffectCode.EXTRA)
-    for resource in services.context_resources:
-        if resource.lease is not None:
-            _validate_provider_execution(resource.lease.handle, resource.capability.execution)
 
 
 def _validate_initial_materialization_capacity(admitted: AdmittedExecutionPlan, limits: ExecutionLimits) -> None:

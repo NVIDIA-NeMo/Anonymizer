@@ -245,9 +245,7 @@ def span_graph(
         for n, c in zip(nodes, capabilities, strict=True)
     )
     admitted = admit_execution_plan(
-        context=admit_context_plan(
-            prepared=prepared, bound_context=None, adaptive_retrievals=(), context_capabilities=()
-        ),
+        context=admit_context_plan(prepared=prepared, bound_context=None),
         capabilities=capabilities,
         policies=policies,
         assessment_productions=(),
@@ -273,7 +271,6 @@ def span_graph(
             )
             for i, (o, c) in enumerate(zip(operations, capabilities, strict=True))
         ),
-        context_resources=(),
         limits=ExecutionLimits(
             max_local_in_flight=1,
             max_remote_outstanding=0,

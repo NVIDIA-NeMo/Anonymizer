@@ -333,9 +333,7 @@ async def _execute_repair(
     if tamper is not None:
         object.__setattr__(policies[0], "initial_request_purpose", tamper)
     admitted = admit_execution_plan(
-        context=admit_context_plan(
-            prepared=prepared, bound_context=None, adaptive_retrievals=(), context_capabilities=()
-        ),
+        context=admit_context_plan(prepared=prepared, bound_context=None),
         capabilities=capabilities,
         policies=policies,
         assessment_productions=(
@@ -374,7 +372,6 @@ async def _execute_repair(
             )
             for index, (node, cap) in enumerate(zip(nodes, capabilities, strict=True))
         ),
-        context_resources=(),
         limits=ExecutionLimits(
             max_local_in_flight=1,
             max_remote_outstanding=1,
@@ -418,7 +415,7 @@ def test_declared_fresh_repair_publishes_new_candidate_and_qualifies(purpose: Li
     assert transport.calls == transport.closes == 1
 
 
-@pytest.mark.parametrize("purpose", ["retry", "correction", "failover", "adaptive_retrieval", "unknown"])
+@pytest.mark.parametrize("purpose", ["retry", "correction", "failover", "unknown"])
 def test_invalid_initial_request_purpose_rejects_before_effects(purpose: str) -> None:
     transport = _RepairTransport()
     with pytest.raises(EffectRejected) as error:

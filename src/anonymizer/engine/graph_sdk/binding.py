@@ -546,9 +546,7 @@ def _validate_binding(
         matches = [
             item
             for item in capabilities
-            if item.source == declaration.source
-            and item.artifact_type == declaration.materialization.item_type
-            and "initial_binding" in item.uses
+            if item.source == declaration.source and item.artifact_type == declaration.materialization.item_type
         ]
         if len(matches) != 1 or declaration.bounds.max_requests > matches[0].request.max_attempts:
             reject(EffectCode.UNSUPPORTED)

@@ -28,8 +28,6 @@ from anonymizer.engine.graph_sdk.capabilities import (
 from anonymizer.engine.graph_sdk.context import (
     AdmittedContextPlan,
     BindingArtifactRef,
-    ContextResource,
-    ContextSourceCapability,
 )
 from anonymizer.engine.graph_sdk.observations import NodeMeasurement
 from anonymizer.engine.graph_sdk.records import (
@@ -737,13 +735,6 @@ class AdmittedExecutionPlan(PrivateValue):
                 schemas[fact.declaration.artifact_type] = (
                     "scalar" if fact.declaration.materialization.kind == "single" else "collection"
                 )
-        for declaration in self.context.adaptive_retrievals:
-            operation = self.nodes[declaration.node].operation
-            artifact_type = next(
-                item.artifact_type for item in operation.outputs if item.name == declaration.output_port
-            )
-            schemas[declaration.materialization.item_type] = "scalar"
-            schemas[artifact_type] = "scalar" if declaration.materialization.kind == "single" else "collection"
         for expansion in self.map_expansions:
             operation = self.nodes[expansion.expander].operation
             artifact_type = next(
@@ -933,35 +924,8 @@ class ImplementationResourceRegistration(PrivateValue):
 
 
 @dataclass(frozen=True, slots=True, kw_only=True, repr=False)
-class AdaptiveResourceAcquisition(PrivateValue):
-    """One admitted adaptive provider's actual lease transfer outcome."""
-
-    invocation: InvocationId
-    capability: ContextSourceCapability
-    outcome: Literal["acquired", "not_transferred"]
-    resource: ResourceId | None
-    owner: ResourceOwner
-    safe_detachment: SafeDetachment
-
-    def __post_init__(self) -> None:
-        for name in ("invocation", "capability", "outcome", "resource", "owner", "safe_detachment"):
-            if not hasattr(self, name):
-                reject(EffectCode.INVALID_TYPE)
-        require_instance(self.invocation, InvocationId)
-        require_instance(self.capability, ContextSourceCapability)
-        require_literal(self.outcome, frozenset({"acquired", "not_transferred"}))
-        require_literal(self.owner, frozenset({"caller", "sdk"}))
-        require_literal(self.safe_detachment, frozenset({"forbidden", "independent_after_dispatch"}))
-        if self.resource is not None:
-            require_instance(self.resource, ResourceId)
-        if (self.outcome == "acquired") != (self.resource is not None):
-            reject(EffectCode.CONTRADICTORY)
-
-
-@dataclass(frozen=True, slots=True, kw_only=True, repr=False)
 class ExecutionServices(PrivateValue):
     handles: tuple[ImplementationHandle, ...]
-    context_resources: tuple[ContextResource, ...]
     limits: ExecutionLimits
     clock: MonotonicClock
 
@@ -982,7 +946,6 @@ class ExecutionResult(PrivateValue):
     _execution: AdmittedExecutionPlan
     implementation_resources: tuple[ImplementationResourceRegistration, ...]
     _retained_resources: tuple[ResourceLease, ...]
-    adaptive_acquisitions: tuple[AdaptiveResourceAcquisition, ...]
     _input_parents: tuple[tuple[DatumId, ActivationKey, str, ProvenanceKey], ...]
     _passthrough_parents: tuple[tuple[DatumId, ActivationKey, str, ProvenanceKey], ...]
     record: CanonicalRecord

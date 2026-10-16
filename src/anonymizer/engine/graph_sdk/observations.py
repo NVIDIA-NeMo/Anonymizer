@@ -268,10 +268,8 @@ def execution_observation_requirements(
     from anonymizer.engine.graph_sdk.preparation import _recipe_depth
 
     prepared = execution.context.prepared
-    # Each slot may enter an adaptive boundary; every selected
-    # resource may need cleanup, including a failed factory's retained lease.
+    # Every selected resource may need cleanup.
     resources = sum(len(policy.implementations) for policy in execution.policies)
-    resources += len(execution.context.context_capabilities)
     return _requirements(
         1 + 4 * prepared.total_activation_slots + 2 * (prepared.declared_request_upper_bound or 0) + resources,
         4 + 2 * _recipe_depth(prepared.reservation_recipe),
@@ -631,8 +629,6 @@ def observed_context_admission(
     observations: ObservationSession,
     prepared: PreparedPlan,
     bound_context: BoundContext | None,
-    adaptive_retrievals: tuple[AdaptiveRetrievalDecl, ...],
-    context_capabilities: tuple[ContextSourceCapability, ...],
 ) -> AdmittedContextPlan:
     from anonymizer.engine.graph_sdk.context import admit_context_plan
 
@@ -647,12 +643,7 @@ def observed_context_admission(
     if isinstance(binding, BindingResult) and binding.context is not bound_context:
         observations._disable("producer_contract")
     with _Span("context_admission", session=observations):
-        result = admit_context_plan(
-            prepared=prepared,
-            bound_context=bound_context,
-            adaptive_retrievals=adaptive_retrievals,
-            context_capabilities=context_capabilities,
-        )
+        result = admit_context_plan(prepared=prepared, bound_context=bound_context)
         observations._bind(_PRODUCER, context=result)
         return result
 
@@ -780,9 +771,7 @@ if TYPE_CHECKING:
         OperationExecutionPolicy,
     )
     from anonymizer.engine.graph_sdk.context import (
-        AdaptiveRetrievalDecl,
         BoundContext,
-        ContextSourceCapability,
         PreparedPlan,
     )
     from anonymizer.engine.graph_sdk.executor import ExecutionResult

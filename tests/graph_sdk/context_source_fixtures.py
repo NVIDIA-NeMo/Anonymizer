@@ -96,7 +96,6 @@ def _initial_binding_fixture(
         capability=ContextSourceCapability(
             source=source,
             artifact_type=artifact,
-            uses=frozenset({"initial_binding"}),
             execution="async",
             resource_owner="caller",
             cancellation="cooperative_ack",
@@ -537,7 +536,6 @@ async def _assert_context_source_initial_admission(case: dict[str, Any]) -> None
     source_capability = ContextSourceCapability(
         source=SOURCE,
         artifact_type=source_item_type,
-        uses=frozenset({"initial_binding"}),
         execution="async",
         resource_owner="caller",
         cancellation="cooperative_ack",

@@ -30,7 +30,6 @@ if TYPE_CHECKING:
     from anonymizer.engine.graph_sdk.capabilities import ImplementationSelection as ImplementationSelection
     from anonymizer.engine.graph_sdk.capabilities import PreparationCode as PreparationCode
     from anonymizer.engine.graph_sdk.capabilities import PreparationRejected as PreparationRejected
-    from anonymizer.engine.graph_sdk.context import AdaptiveRetrievalDecl as AdaptiveRetrievalDecl
     from anonymizer.engine.graph_sdk.context import AdmittedContextPlan as AdmittedContextPlan
     from anonymizer.engine.graph_sdk.context import BindingLimits as BindingLimits
     from anonymizer.engine.graph_sdk.context import BindingReceipt as BindingReceipt
@@ -259,7 +258,6 @@ _EXPORTS: dict[str, str] = {
     "observed_qualify": "anonymizer.engine.graph_sdk.observations",
     "ActivationKey": "anonymizer.graph._values",
     "ActivationLimits": "anonymizer.graph.activation",
-    "AdaptiveRetrievalDecl": "anonymizer.engine.graph_sdk.context",
     "Graph": "anonymizer.graph.workflow",
     "AdmittedContextPlan": "anonymizer.engine.graph_sdk.context",
     "AdmittedExecutionPlan": "anonymizer.engine.graph_sdk.executor",

@@ -1,27 +1,15 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Real adaptive-context execution through the shared request authority."""
+"""Real external retry and local assessment execution through the shared request authority."""
 
 from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, replace
-from typing import cast
 
 import pytest
 
-from anonymizer.engine.graph_sdk.blocking import BlockingContextProvider
 from anonymizer.engine.graph_sdk.context import (
-    AdaptiveRetrievalDecl,
-    ContextMaterialization,
-    ContextResource,
-    ContextSelector,
-    ContextSourceCapability,
-    ContextSourceRef,
-    RetrievalBounds,
-    SourceItem,
-    SourceLost,
-    SourceResponse,
     admit_context_plan,
 )
 from anonymizer.engine.graph_sdk.executor import (
@@ -49,10 +37,8 @@ from anonymizer.engine.graph_sdk.requests import (
     DispatchEnvelope,
     ExactUsage,
     ExternalSettlement,
-    PhysicalRequestId,
     PhysicalRequestPolicy,
     PortArtifact,
-    RequestAssociation,
     SemanticAssociation,
     StopConfirmed,
     TextArtifactValue,
@@ -88,53 +74,6 @@ from tests.graph_sdk.test_local_executor import _Clock, _runtime_rows
 from tests.graph_sdk.test_preparation import _capability, _data, _limits, _prepare, _workflow
 from tests.graph_sdk.workflow_construction import DynamicScope, admit_activation_workflow, admit_static_workflow
 from tests.graph_sdk.workflow_fixtures import _single_node_workflow
-
-SOURCE = ContextSourceRef(name="adaptive", revision=1)
-
-
-@dataclass
-class _Provider:
-    calls: int = 0
-
-    async def retrieve(
-        self,
-        *,
-        request: PhysicalRequestId,
-        association: RequestAssociation,
-        selector: ContextSelector,
-        bounds: RetrievalBounds,
-    ) -> SourceResponse:
-        self.calls += 1
-        assert selector.fields[0].value == "target-0"
-        assert bounds.max_items == 1
-        return SourceResponse(
-            source=SOURCE,
-            items=(SourceItem(association=association, key=4, version=1, text="retrieved"),),
-            settlement=ExternalSettlement(
-                request=request,
-                disposition="completed",
-                usage=ExactUsage(input_units=1, output_units=1),
-                remote_stopped=True,
-            ),
-        )
-
-    async def cancel(self, request: PhysicalRequestId) -> StopConfirmed:
-        del request
-        return StopConfirmed(usage=ExactUsage(input_units=0, output_units=0))
-
-
-@dataclass
-class _UnusedTransport:
-    async def dispatch(self, request: DispatchEnvelope) -> TransportResult:
-        del request
-        raise AssertionError("adaptive retrieval must use its context provider")
-
-    async def cancel(self, request: object) -> StopConfirmed:
-        del request
-        return StopConfirmed(usage=ExactUsage(input_units=0, output_units=0))
-
-    async def close(self) -> None:
-        return None
 
 
 @dataclass
@@ -301,137 +240,6 @@ def _adaptive_workflow(
     )
 
 
-def test_adaptive_retrieval_materializes_provider_result_once() -> None:
-    asyncio.run(_assert_adaptive_retrieval())
-
-
-def _adaptive_fixture(provider, *, capability_limit=1):
-    workflow, node, artifact = _adaptive_workflow()
-    data = _data(1)
-    target = next(iter(data.targets))
-    capability = _capability(workflow, external=True)
-    prepared = _prepare(
-        data=data,
-        workflow=workflow,
-        capability=capability,
-        configuration=PreparationConfiguration(
-            purpose="execution_only", required_protection_outcomes=frozenset(), hard_request_limit=1
-        ),
-        bound_inputs=(BoundInput(target=target, source=target, port="input", artifact_type=artifact),),
-        limits=_limits(capabilities=capability_limit),
-    )
-    request_policy = PhysicalRequestPolicy(
-        visibility="dispatch_and_settlement",
-        pre_dispatch_control="executor",
-        retry_owner="executor",
-        replay="idempotent",
-        max_attempts=1,
-    )
-    source_capability = ContextSourceCapability(
-        source=SOURCE,
-        artifact_type=artifact,
-        uses=frozenset({"adaptive_retrieval"}),
-        execution="blocking" if isinstance(provider, BlockingContextProvider) else "async",
-        resource_owner="caller",
-        cancellation="cooperative_ack",
-        settlement="explicit_ack",
-        usage="exact",
-        request=request_policy,
-        safe_detachment="forbidden",
-    )
-    declaration = AdaptiveRetrievalDecl(
-        node=node,
-        source=SOURCE,
-        selector_ports=("input",),
-        output_port="context",
-        bounds=RetrievalBounds(max_items=1, max_bytes=20, max_requests=1),
-        materialization=ContextMaterialization(kind="single", item_type=artifact),
-    )
-    context = admit_context_plan(
-        prepared=prepared,
-        bound_context=None,
-        adaptive_retrievals=(declaration,),
-        context_capabilities=(source_capability,),
-    )
-    implementation = _execution_implementation(capability, request=request_policy)
-    policy = OperationExecutionPolicy(
-        node=node,
-        kind="external",
-        request=request_policy,
-        safe_detachment="forbidden",
-        implementations=(implementation,),
-        result_outcomes=frozenset({"ok"}),
-        runtime_outcomes=_adaptive_rows(),
-    )
-    admitted = admit_execution_plan(
-        context=context,
-        capabilities=(capability,),
-        policies=(policy,),
-        assessment_productions=(),
-        assessment_limits=AssessmentLimits(
-            max_productions=0,
-            max_findings_per_production=0,
-            max_finding_code_bytes=0,
-            max_assessment_facts=0,
-            max_port_facts=2,
-            max_provenance_edges=1,
-        ),
-    )
-    transport = _UnusedTransport()
-    services = ExecutionServices(
-        handles=(
-            ImplementationHandle(
-                implementation=capability.implementation,
-                operation=capability.operation,
-                configuration=capability.configuration,
-                local=None,
-                transport=transport,
-                resource=ResourceLease.create(owner="sdk", safe_detachment="forbidden", handle=transport),
-            ),
-        ),
-        context_resources=(
-            ContextResource(
-                source=SOURCE,
-                capability=source_capability,
-                lease=ResourceLease.create(owner="caller", safe_detachment="forbidden", handle=provider),
-                factory=None,
-            ),
-        ),
-        limits=ExecutionLimits(
-            max_local_in_flight=0,
-            max_remote_outstanding=1,
-            max_runtime_artifacts=3,
-            max_runtime_artifact_bytes=100,
-            max_collection_items=1,
-        ),
-        clock=_Clock(),
-    )
-    return admitted, services, target
-
-
-async def _adaptive_running(provider):
-    admitted, services, target = _adaptive_fixture(provider)
-    running = await start_execution(admitted=admitted, capabilities=admitted.capabilities, services=services)
-    return running, target
-
-
-async def _assert_adaptive_retrieval(*, malformed_lost: bool = False) -> None:
-    provider = _Provider()
-    running, target = await _adaptive_running(provider)
-    result = await running.wait()
-    assert provider.calls == 1
-    assert result.requests.dispatched_count == 1
-    assert result.states[0].complete
-    if malformed_lost:
-        assert result.record.terminals[0].category == "failure"
-        assert result.requests.terminals[0].failure == "malformed_response"
-        assert result.requests.remote_outstanding
-        assert not result.final_outputs
-        return
-    assert any(value == TextArtifactValue(text="retrieved") for _, value in result.artifacts)
-    assert result.final_outputs[0].candidate.target == target
-
-
 def test_external_execution_retries_with_new_charged_request() -> None:
     asyncio.run(_assert_external_retry())
 
@@ -453,8 +261,6 @@ async def _external_running(transport):
     context = admit_context_plan(
         prepared=prepared,
         bound_context=None,
-        adaptive_retrievals=(),
-        context_capabilities=(),
     )
     request_policy = PhysicalRequestPolicy(
         visibility="dispatch_and_settlement",
@@ -498,7 +304,6 @@ async def _external_running(transport):
                 resource=ResourceLease.create(owner="sdk", safe_detachment="forbidden", handle=transport),
             ),
         ),
-        context_resources=(),
         limits=ExecutionLimits(
             max_local_in_flight=0,
             max_remote_outstanding=1,
@@ -594,8 +399,6 @@ async def _assert_local_assessment(*, distinct_subject: bool, alias_evidence: bo
     context = admit_context_plan(
         prepared=prepared,
         bound_context=None,
-        adaptive_retrievals=(),
-        context_capabilities=(),
     )
     implementation = _execution_implementation(capability, request=None)
     policy = OperationExecutionPolicy(
@@ -656,7 +459,6 @@ async def _assert_local_assessment(*, distinct_subject: bool, alias_evidence: bo
     )
     services = ExecutionServices(
         handles=(_implementation_handle(capability, local=callback, transport=None, resource=None),),
-        context_resources=(),
         limits=ExecutionLimits(
             max_local_in_flight=1,
             max_remote_outstanding=0,
@@ -805,8 +607,6 @@ async def _assert_nested_assessment() -> None:
     context = admit_context_plan(
         prepared=prepared,
         bound_context=None,
-        adaptive_retrievals=(),
-        context_capabilities=(),
     )
     implementation = _execution_implementation(capability, request=None)
     policy = OperationExecutionPolicy(
@@ -860,7 +660,6 @@ async def _assert_nested_assessment() -> None:
                         resource=None,
                     ),
                 ),
-                context_resources=(),
                 limits=ExecutionLimits(
                     max_local_in_flight=1,
                     max_remote_outstanding=0,
@@ -878,19 +677,3 @@ async def _assert_nested_assessment() -> None:
     assert evidence.role == "evidence"
     assert result.final_outputs[0].candidate.artifact == evidence.artifact
     assert subject.artifact != result.final_outputs[0].candidate.artifact
-
-
-class _ForeignSource:
-    def __eq__(self, other: object) -> bool:
-        raise AssertionError("foreign source equality")
-
-
-def test_adaptive_lost_rejects_foreign_identity_without_hooks(monkeypatch: pytest.MonkeyPatch) -> None:
-    async def retrieve(self: _Provider, **kwargs: object) -> SourceResponse:
-        self.calls += 1
-        result = SourceLost(source=SOURCE, settlement=None)
-        object.__setattr__(result, "source", _ForeignSource())
-        return cast(SourceResponse, result)
-
-    monkeypatch.setattr(_Provider, "retrieve", retrieve)
-    asyncio.run(_assert_adaptive_retrieval(malformed_lost=True))

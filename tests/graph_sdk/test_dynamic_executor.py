@@ -495,7 +495,7 @@ async def _assert_nested_two_by_two(*, same_key_versions: bool = False) -> None:
         capabilities=capabilities,
         limits=_limits(capabilities=5, slots=13),
     )
-    context = admit_context_plan(prepared=prepared, bound_context=None, adaptive_retrievals=(), context_capabilities=())
+    context = admit_context_plan(prepared=prepared, bound_context=None)
     implementations = {
         node: _execution_implementation(capability, request=None) for node, capability in by_operation.items()
     }
@@ -567,7 +567,6 @@ async def _assert_nested_two_by_two(*, same_key_versions: bool = False) -> None:
             capabilities=capabilities,
             services=ExecutionServices(
                 handles=handles,
-                context_resources=(),
                 limits=ExecutionLimits(
                     max_local_in_flight=4,
                     max_remote_outstanding=0,

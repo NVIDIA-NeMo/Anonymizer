@@ -130,8 +130,6 @@ async def _assert_local_execution() -> None:
     context = admit_context_plan(
         prepared=prepared,
         bound_context=None,
-        adaptive_retrievals=(),
-        context_capabilities=(),
     )
     selected = next(iter(prepared.implementations))
     implementation = _execution_implementation(selected.capability, request=None)
@@ -170,7 +168,6 @@ async def _assert_local_execution() -> None:
                 resource=None,
             ),
         ),
-        context_resources=(),
         limits=ExecutionLimits(
             max_local_in_flight=2,
             max_remote_outstanding=0,
@@ -224,7 +221,7 @@ async def _assert_shared_nested_body() -> None:
         capabilities=(capability,),
         limits=_limits(slots=4),
     )
-    context = admit_context_plan(prepared=prepared, bound_context=None, adaptive_retrievals=(), context_capabilities=())
+    context = admit_context_plan(prepared=prepared, bound_context=None)
     implementation = _execution_implementation(capability, request=None)
     admitted = admit_execution_plan(
         context=context,
@@ -257,7 +254,6 @@ async def _assert_shared_nested_body() -> None:
             capabilities=(capability,),
             services=ExecutionServices(
                 handles=(_implementation_handle(capability, local=callback, transport=None, resource=None),),
-                context_resources=(),
                 limits=ExecutionLimits(
                     max_local_in_flight=2,
                     max_remote_outstanding=0,

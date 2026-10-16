@@ -272,7 +272,6 @@ class ActualRequestCounts(PrivateValue):
     total: CountEstimate
     initial: CountEstimate
     initial_binding: CountEstimate
-    adaptive_retrieval: CountEstimate
     retry: CountEstimate
     correction: CountEstimate
     repair: CountEstimate
@@ -300,7 +299,6 @@ class TerminalCounts(PrivateValue):
 class RouteCounts(PrivateValue):
     local: int
     external: int
-    context: int
 
 
 @dataclass(frozen=True, slots=True, kw_only=True, repr=False)
@@ -806,14 +804,13 @@ def explain(*, source: InspectionSource) -> ExplainSummary:
     if ceiling and source.execution_plan is not None:
         planned, conditional = _forecast_split(source.execution_plan)
     support: Literal["supported", "unsupported", "unknown"] = "unknown"
-    if source.execution_plan is not None and source.context is not None:
+    if source.execution_plan is not None:
         policies = [
             policy.request
             for policy in source.execution_plan.policies
             if policy.kind == "external"
             for item in policy.implementations
         ]
-        policies.extend(item.request for item in source.context.context_capabilities)
         capability_control = all(
             item.capability.request_visibility == "dispatch_and_settlement"
             and item.capability.pre_dispatch_control == "executor"
@@ -858,7 +855,6 @@ def _forecast_split(execution: AdmittedExecutionPlan) -> tuple[CountEstimate, Co
     # planned count. Dynamic scheduling or batching leaves the split unknown.
     if (
         prepared.workflow.dynamic_depth
-        or execution.context.adaptive_retrievals
         or any(policy.initial_request_purpose == "repair" for policy in execution.policies)
         or any(workflow.choices for workflow in workflows)
         or any(isinstance(node, SubgraphNode) for workflow in workflows for node in workflow.operations)
@@ -882,7 +878,7 @@ def _forecast_split(execution: AdmittedExecutionPlan) -> tuple[CountEstimate, Co
     )
 
 
-_PURPOSES = ("initial", "initial_binding", "adaptive_retrieval", "retry", "correction", "repair", "failover")
+_PURPOSES = ("initial", "initial_binding", "retry", "correction", "repair", "failover")
 
 
 def _account(
@@ -969,15 +965,13 @@ def inspect(*, source: InspectionSource) -> InspectionSummary:
                 for name in ("success", "failure", "cancelled", "lost", "blocked", "inconsistent")
             }
         )
-        kinds = dict.fromkeys(("local", "external", "context"), 0)
+        kinds = dict.fromkeys(("local", "external"), 0)
         policies = {policy.node: policy.kind for policy in execution._execution.policies}
-        adaptive = {item.node for item in execution._execution.context.adaptive_retrievals}
         states = execution.states + (() if execution.invocation_state is None else (execution.invocation_state,))
         entries = {entry.activation: entry for state in states for entry in state.entries}
         for terminal in execution.record.terminals:
             if terminal.attempt is not None:
-                entry = entries[terminal.activation]
-                kind = "context" if entry.template in adaptive else policies[entry.template]
+                kind = policies[entries[terminal.activation].template]
                 kinds["external" if kind == "delegated" else kind] += 1
         routes = RouteCounts(**kinds)
         receipts = (execution.requests,) if binding is None else (binding.requests, execution.requests)

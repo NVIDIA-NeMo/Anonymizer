@@ -268,7 +268,6 @@ async def _assert_binding_corpus_case(case: dict[str, Any]) -> None:
         ContextSourceCapability(
             source=source_refs[name],
             artifact_type=item_type,
-            uses=frozenset({"initial_binding"}),
             execution="async",
             resource_owner=owners.get(name, "caller"),
             cancellation="cooperative_ack",
@@ -542,8 +541,6 @@ async def _assert_initial_execution_projection(
     context = admit_context_plan(
         prepared=prepared,
         bound_context=bound_context,
-        adaptive_retrievals=(),
-        context_capabilities=(),
     )
     policy = OperationExecutionPolicy(
         node=node,
@@ -600,7 +597,6 @@ async def _assert_initial_execution_projection(
             capabilities=(capability,),
             services=ExecutionServices(
                 handles=(_implementation_handle(capability, local=consumer, transport=None, resource=None),),
-                context_resources=(),
                 limits=ExecutionLimits(
                     max_local_in_flight=1,
                     max_remote_outstanding=0,

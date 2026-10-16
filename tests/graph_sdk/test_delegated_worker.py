@@ -148,9 +148,7 @@ def _worker_services(execution, services, loop, pool, callback):
         for item in execution.policies
     )
     execution = admit_execution_plan(
-        context=admit_context_plan(
-            prepared=prepared, bound_context=None, adaptive_retrievals=(), context_capabilities=()
-        ),
+        context=admit_context_plan(prepared=prepared, bound_context=None),
         capabilities=capabilities,
         policies=policies,
         assessment_productions=execution.assessment_productions,

@@ -143,7 +143,31 @@ def test_frozen_observation_answers(row) -> None:
     assert delivered == row["delivered_pairs"]
 
 
-@pytest.mark.parametrize("row", CORPUS["accounting"], ids=lambda row: row["id"])
+# Adaptive retrieval is not a product request purpose. Rows that dispatch it are
+# excluded; the remaining rows project out only its purpose column.
+_ADAPTIVE_ACCOUNTING_IDS = frozenset({"purpose-adaptive_retrieval", "seven-purposes", "two-owners"})
+
+
+def _without_adaptive_purpose(row):
+    from tests.graph_sdk.reference.observations.reference import PURPOSES
+
+    column = PURPOSES.index("adaptive_retrieval")
+    facts = [
+        {**fact, "possible_purposes": [p for p in fact["possible_purposes"] if p != "adaptive_retrieval"]}
+        for fact in row["facts"]
+    ]
+    assert not any(
+        dispatch["purpose"] == "adaptive_retrieval" for fact in facts for dispatch in fact["dispatches"] or ()
+    )
+    purposes = [value for index, value in enumerate(row["expected"]["purposes"]) if index != column]
+    return {**row, "facts": facts, "expected": {**row["expected"], "purposes": purposes}}
+
+
+@pytest.mark.parametrize(
+    "row",
+    [_without_adaptive_purpose(row) for row in CORPUS["accounting"] if row["id"] not in _ADAPTIVE_ACCOUNTING_IDS],
+    ids=lambda row: row["id"],
+)
 def test_frozen_accounting_answers(row) -> None:
     from anonymizer.engine.graph_sdk.inspection import _PURPOSES, _account_receipts
     from anonymizer.engine.graph_sdk.requests import (

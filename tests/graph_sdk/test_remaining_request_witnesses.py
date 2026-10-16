@@ -5,23 +5,13 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import replace
 
 import pytest
 
-from anonymizer.engine.graph_sdk.context import (
-    ContextSelector,
-    ContextSourceRef,
-    RetrievalBounds,
-    SourceItem,
-    SourceResponse,
-)
 from anonymizer.engine.graph_sdk.qualification import qualify
-from anonymizer.engine.graph_sdk.requests import ExactUsage, ExternalSettlement, PhysicalRequestId, RequestAssociation
 from anonymizer.engine.graph_sdk.resources import ResourceLease
 from tests.graph_sdk.evidence_fixtures import _execute_assessment
-from tests.graph_sdk.qualification_fixtures import _BindingProvider, _initial_resource, _inputs, _RecoveringTransport
-from tests.graph_sdk.test_adaptive_executor import _UnusedTransport
+from tests.graph_sdk.qualification_fixtures import _inputs, _RecoveringTransport
 
 
 @pytest.mark.parametrize("reverse", [False, True])
@@ -81,66 +71,3 @@ def test_receipt_with_an_association_from_another_real_invocation_loses_attribut
         object.__setattr__(dispatch, "associations", original)
     assert qualify(admitted=admitted, result=result, current=current, submissions=submissions) == baseline
     assert all(transport.calls == 2 and transport.closes == 1 for transport in transports)
-
-
-class _IdentityRetrievalSource(_BindingProvider):
-    async def retrieve(
-        self,
-        *,
-        request: PhysicalRequestId,
-        association: RequestAssociation,
-        selector: ContextSelector,
-        bounds: RetrievalBounds,
-    ) -> SourceResponse:
-        self.calls += 1
-        assert bounds.max_items == 1
-        # A real source may return the same bytes as its selector. The operation
-        # explicitly declares identity; publication must enforce that declaration.
-        return SourceResponse(
-            source=self.source,
-            items=(
-                SourceItem(
-                    association=association,
-                    key=0,
-                    version=1,
-                    text=selector.fields[0].value,
-                ),
-            ),
-            settlement=ExternalSettlement(
-                request=request,
-                disposition="completed",
-                usage=ExactUsage(input_units=1, output_units=1),
-                remote_stopped=True,
-            ),
-        )
-
-
-def test_physical_adaptive_retrieval_is_verified_and_qualified() -> None:
-    provider = _IdentityRetrievalSource(source=ContextSourceRef(name="adaptive-qualified", revision=1))
-    resource = _initial_resource(provider)
-    resource = replace(
-        resource,
-        capability=replace(
-            resource.capability,
-            uses=frozenset({"adaptive_retrieval"}),
-            request=replace(resource.capability.request, max_attempts=2),
-        ),
-    )
-    transport = _UnusedTransport()
-    lease = ResourceLease.create(owner="sdk", safe_detachment="forbidden", handle=transport)
-    execution, result = asyncio.run(_execute_assessment(external=(transport, lease), adaptive_resource=resource))
-    (dispatch,) = result.requests.dispatches
-    assert dispatch.purpose == "adaptive_retrieval"
-    assert result.requests.terminals[0].category == "success"
-    assert len(result.requests.settlements) == 1
-    assert len(result.assessments) == len(result.final_outputs) == 1
-    assert len(result.record.terminals) == 2
-    assert all(item.category == "success" for item in result.record.terminals)
-    admitted, current, submissions = _inputs(execution, result)
-    output = qualify(admitted=admitted, result=result, current=current, submissions=submissions)
-    assert len(output.qualified) == 1
-    assert not output.targets[0].withholding and output.record.statuses[0].qualification == "met"
-    assert provider.calls == provider.closes == 1
-    assert not result.requests.local_in_flight and not result.requests.remote_outstanding
-    assert qualify(admitted=admitted, result=result, current=current, submissions=submissions) == output
-    assert provider.calls == provider.closes == 1

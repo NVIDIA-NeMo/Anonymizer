@@ -570,9 +570,7 @@ async def _execute_reference_map(
         limits=_limits(capabilities=len(operations), slots=9 if two_maps else 6 if nested or blocked_member else 5),
     )
     admitted = admit_execution_plan(
-        context=admit_context_plan(
-            prepared=prepared, bound_context=None, adaptive_retrievals=(), context_capabilities=()
-        ),
+        context=admit_context_plan(prepared=prepared, bound_context=None),
         capabilities=capabilities,
         policies=_local_policies(by_node),
         assessment_productions=tuple(
@@ -631,7 +629,6 @@ async def _execute_reference_map(
                 _local_handle(capability, callback)
                 for capability, callback in zip(capabilities, callbacks, strict=True)
             ),
-            context_resources=(),
             limits=ExecutionLimits(
                 max_local_in_flight=1,
                 max_remote_outstanding=0,

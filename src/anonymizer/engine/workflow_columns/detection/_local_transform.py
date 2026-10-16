@@ -191,9 +191,7 @@ def run_transform(callback: Callable[[], dict[str, Any]], *, name: str, column: 
         runtime_outcomes=_runtime_rows(("ok",), False),
     )
     admitted = admit_execution_plan(
-        context=admit_context_plan(
-            prepared=prepared, bound_context=None, adaptive_retrievals=(), context_capabilities=()
-        ),
+        context=admit_context_plan(prepared=prepared, bound_context=None),
         capabilities=(capability,),
         policies=(policy,),
         assessment_productions=(),
@@ -239,7 +237,6 @@ def run_transform(callback: Callable[[], dict[str, Any]], *, name: str, column: 
                 capabilities=(capability,),
                 services=ExecutionServices(
                     handles=(handle,),
-                    context_resources=(),
                     limits=ExecutionLimits(
                         max_local_in_flight=1,
                         max_remote_outstanding=0,

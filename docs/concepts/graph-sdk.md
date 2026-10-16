@@ -214,7 +214,7 @@ A `CandidateRef` identifies an exact final artifact. Replacing it with a newer a
 
 Subclass `RemoteContext` and implement asynchronous `retrieve` and `cancel`, using typed request, association, selector, bounds and result values. The example's `MemoryContext` makes two initial-binding calls against a caller-owned provider. Each call retains its own response versions and request receipt. Production providers must return the matching request settlement and association identities; a returned object of the wrong shape is not successful retrieval.
 
-`InitialContextDecl.version_selection` defaults to `"exact_one"`. With `"latest"`, an initial scalar binding can retain multiple versions of one source key and select their numeric maximum. This selection does not assert that the source is fresh. Adaptive retrieval has no `version_selection` field. Resource ownership is explicit: caller-owned resources remain the caller's responsibility; SDK-owned cleanup is recorded in the result.
+`InitialContextDecl.version_selection` defaults to `"exact_one"`. With `"latest"`, an initial scalar binding can retain multiple versions of one source key and select their numeric maximum. This selection does not assert that the source is fresh. Resource ownership is explicit: caller-owned resources remain the caller's responsibility; SDK-owned cleanup is recorded in the result.
 
 Use `BlockingContextProvider` or `BlockingTransport` with a `BlockingPool` for supported synchronous callbacks. Declare `BlockingAffinity` for the callback and its captured handles. A queued call does not count as a physical dispatch. Cancellation does not terminate an ordinary Python worker; capacity remains occupied until that worker actually completes. A late return can settle usage without replacing the request's first semantic terminal.
 
@@ -279,7 +279,7 @@ acquire this disposition. A later independent assessment failure still withholds
 protection. Qualification checks the declared Q occurrence, actual D/G attempts,
 published D output, complete request history and settlement; it never fabricates
 Q evidence. Ordinary omitted-context semantics remain unchanged.
-Other external operations, adaptive retrieval and concurrent borrowed requests
+Other external operations and concurrent borrowed requests
 remain gated in this subset. The ordinary borrowed owner rejects other loops/tasks
 and expires when submission finishes. These are executable graph-owner fixtures;
 no DD provider route is enabled yet.
@@ -416,16 +416,12 @@ it through the existing local assessment path. All registered SDK-owned clients,
 including an unsent Q client, close once on their creation loop after actual users
 drain. Its cleanup association remains required even without a Q request.
 Execution captures an invocation-local registration for every resource-bearing
-service handle before acquiring context providers or running operations.
+service handle before running operations.
 Qualification derives that complete handle-key domain from the admitted
 nonstateless implementations before joining resource owners and cleanup
 facts. Removing a cleanup fact and its association cannot hide a declared handle
 resource; removing its registration also fails the domain check. Shared leases
-still produce one cleanup fact. Adaptive acquisition retains an outcome for every
-admitted source capability, including unused providers and factories that fail
-before transferring a lease. Distinct capabilities for one source keep their own
-leases, and retrieval selects the capability matching its declared artifact type.
-Qualification joins acquired resources with handle resources before checking cleanup.
+still produce one cleanup fact.
 Initial-binding acquisition membership remains a separate retained-proof obligation;
 normal runtime cleanup includes those resources.
 Broader recipes, shared targets, additional optional shapes, opaque execution and actual DD

@@ -95,12 +95,7 @@ def test_source_join_refactor_preserves_existing_context_admission_diagnostic() 
     object.__setattr__(bound.receipt, "artifacts", changed)
     try:
         with pytest.raises(EffectRejected) as error:
-            admit_context_plan(
-                prepared=context.prepared,
-                bound_context=bound,
-                adaptive_retrievals=context.adaptive_retrievals,
-                context_capabilities=context.context_capabilities,
-            )
+            admit_context_plan(prepared=context.prepared, bound_context=bound)
         assert error.value.code is EffectCode.CONTRADICTORY
         assert provider.calls == provider.closes == 1
     finally:

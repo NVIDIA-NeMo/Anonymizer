@@ -35,7 +35,6 @@ from anonymizer.engine.graph_sdk.requests import (
     PhysicalRequestId,
     PortArtifact,
     RequestAssociation,
-    SemanticAssociation,
     StopConfirmed,
     TextArtifactValue,
     UnknownUsage,
@@ -206,7 +205,6 @@ async def _assert_local_bridge_case(case: dict[str, Any]) -> None:
         capabilities=(selected.capability,),
         services=ExecutionServices(
             handles=(_implementation_handle(selected.capability, local=callback, transport=None, resource=None),),
-            context_resources=(),
             limits=ExecutionLimits(
                 max_local_in_flight=1,
                 max_remote_outstanding=0,
@@ -237,49 +235,6 @@ async def _assert_local_bridge_case(case: dict[str, Any]) -> None:
     terminal = result.record.terminals[0]
     assert terminal.category == expected["tasks"]["T0"]
     assert terminal.attempt is not None
-
-
-@dataclass
-class _LateAdaptiveProvider:
-    source: ContextSourceRef
-    association_names: dict[object, str]
-    request_names: dict[PhysicalRequestId, str]
-    acknowledge_stop: bool
-    started: asyncio.Event = field(default_factory=asyncio.Event)
-    returned_after_cancel: bool = False
-
-    async def retrieve(
-        self,
-        *,
-        request: PhysicalRequestId,
-        association: SemanticAssociation,
-        selector: ContextSelector,
-        bounds: RetrievalBounds,
-    ) -> SourceResponse:
-        del selector, bounds
-        self.association_names[association] = "A0"
-        self.request_names[request] = "R0"
-        self.started.set()
-        try:
-            await asyncio.Event().wait()
-        except asyncio.CancelledError:
-            self.returned_after_cancel = True
-        return SourceResponse(
-            source=self.source,
-            items=(SourceItem(association=association, key=0, version=1, text="late"),),
-            settlement=ExternalSettlement(
-                request=request,
-                disposition="completed",
-                usage=ExactUsage(input_units=0, output_units=0),
-                remote_stopped=True,
-            ),
-        )
-
-    async def cancel(self, request: PhysicalRequestId) -> StopConfirmed:
-        del request
-        if not self.acknowledge_stop:
-            raise RuntimeError("transport did not acknowledge cancellation")
-        return StopConfirmed(usage=UnknownUsage())
 
 
 @dataclass

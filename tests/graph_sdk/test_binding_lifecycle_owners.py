@@ -112,7 +112,6 @@ async def _assert_binding_lifecycle() -> None:
     capability = ContextSourceCapability(
         source=SOURCE,
         artifact_type=artifact_type,
-        uses=frozenset({"initial_binding"}),
         execution="async",
         resource_owner="sdk",
         cancellation="cooperative_ack",

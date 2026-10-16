@@ -822,9 +822,7 @@ async def execute_detection_redact(
         )
     policies.extend(detection_policies)
     admitted = admit_execution_plan(
-        context=admit_context_plan(
-            prepared=prepared, bound_context=None, adaptive_retrievals=(), context_capabilities=()
-        ),
+        context=admit_context_plan(prepared=prepared, bound_context=None),
         capabilities=all_capabilities,
         policies=tuple(policies),
         assessment_productions=()
@@ -960,7 +958,6 @@ async def execute_detection_redact(
         )
         services = ExecutionServices(
             handles=handles,
-            context_resources=(),
             limits=limits,
             clock=_Clock(),
         )

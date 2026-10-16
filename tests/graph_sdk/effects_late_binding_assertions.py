@@ -281,7 +281,6 @@ async def _assert_late_initial_provider_case(case: dict[str, Any]) -> None:
     capability = ContextSourceCapability(
         source=source,
         artifact_type=artifact_type,
-        uses=frozenset({"initial_binding"}),
         execution="async",
         resource_owner=cast(Any, owner),
         cancellation="cooperative_ack",
@@ -442,7 +441,6 @@ async def _reject_foreign_binding_target() -> str | None:
     capability = ContextSourceCapability(
         source=source,
         artifact_type=artifact_type,
-        uses=frozenset({"initial_binding"}),
         execution="async",
         resource_owner="caller",
         cancellation="cooperative_ack",

@@ -27,31 +27,19 @@ from anonymizer.engine.graph_sdk.executor import (
     admit_execution_plan,
 )
 from anonymizer.engine.graph_sdk.requests import (
-    AcceptResult,
     AssociationResult,
     BindingAssociation,
     BindingDeclarationId,
     BindingId,
     BindingRequestScope,
-    Dispatch,
-    ExternalSettlement,
     InvocationRequestScope,
-    MarkLost,
-    ObserveSettlement,
     PhysicalRequestId,
     PhysicalRequestPolicy,
     PortArtifact,
-    RequestCancel,
-    RequestPolicyBinding,
-    Reserve,
     SemanticAssociation,
-    StopAcknowledged,
     TextArtifactValue,
     TextCollectionItem,
     TextCollectionValue,
-    UnknownUsage,
-    advance_requests,
-    bind_request_policies,
     initialize_requests,
 )
 from anonymizer.engine.graph_sdk.resources import ResourceLease, close_resource
@@ -62,15 +50,10 @@ from anonymizer.graph.workflow import (
     NodeId,
     WorkflowId,
 )
-from tests.graph_sdk.effects_adaptive_assertions import (
-    _assert_adaptive_materialization_case as _assert_adaptive_materialization_case,
-)
 from tests.graph_sdk.effects_admission_fixtures import (
-    ADAPTIVE_MATERIALIZATION_CASES,
     ADMISSION_CASES,
     BINDING_RESULT_SHAPE_CASES,
     CASES,
-    LATE_ADAPTIVE_CASES,
     LATE_INITIAL_CASES,
     LOCAL_BRIDGE_CASES,
     REAL_BINDING_CASES,
@@ -93,7 +76,7 @@ from tests.graph_sdk.effects_provider_fixtures import (
 from tests.graph_sdk.effects_provider_fixtures import _CaseProvider as _CaseProvider
 from tests.graph_sdk.effects_provider_fixtures import _ContextConsumer as _ContextConsumer
 from tests.graph_sdk.effects_request_fixtures import _apply as _apply
-from tests.graph_sdk.effects_request_fixtures import _Closable, _usage
+from tests.graph_sdk.effects_request_fixtures import _Closable
 from tests.graph_sdk.effects_request_fixtures import _normalize as _normalize
 from tests.graph_sdk.effects_request_fixtures import _policy as _policy
 from tests.graph_sdk.implementation_fixtures import _execution_implementation
@@ -143,9 +126,7 @@ def test_map_collection_shape_rejects_at_typed_constructor(
     ("case_id", "value"),
     (
         ("materialization/initial_wrong_item", 7),
-        ("materialization/adaptive_wrong_item", 7),
         ("materialization/initial_nested_value", {"items": []}),
-        ("materialization/adaptive_nested_value", {"items": []}),
     ),
 )
 def test_materialization_item_shape_rejects_at_typed_constructor(case_id: str, value: object) -> None:
@@ -294,8 +275,6 @@ def test_admission_capability_identity_survives_a_raised_limit(duplicate: bool, 
     context = admit_context_plan(
         prepared=prepared,
         bound_context=None,
-        adaptive_retrievals=(),
-        context_capabilities=(),
     )
     request = PhysicalRequestPolicy(
         visibility="dispatch_and_settlement",
@@ -346,117 +325,6 @@ def test_binding_foreign_target_admission_case_through_production() -> None:
     case = next(item for item in load_cases("effects") if item["case_id"] == "binding/invalid_local_zero_effects")
     rejected = asyncio.run(_reject_foreign_binding_target())
     assert rejected == cast(dict[str, str], case["expected"])["code"]
-
-
-@pytest.mark.parametrize(
-    "case",
-    ADAPTIVE_MATERIALIZATION_CASES,
-    ids=lambda case: cast(str, case["case_id"]),
-)
-def test_adaptive_materialization_corpus_through_real_execution(case: dict[str, Any]) -> None:
-    asyncio.run(_assert_adaptive_materialization_case(case))
-
-
-@pytest.mark.parametrize("case", LATE_ADAPTIVE_CASES, ids=lambda case: cast(str, case["case_id"]))
-def test_late_adaptive_result_stays_request_terminal_at_authority_boundary(case: dict[str, Any]) -> None:
-    raw = cast(dict[str, Any], case["declaration"])
-    invocation = InvocationId.new(plan=PlanId.new())
-    scope = InvocationRequestScope(invocation=invocation)
-    association = SemanticAssociation(
-        task=TaskAttemptId.new(
-            activation=ActivationKey(invocation=invocation, occurrence=0, parent=None, iteration=None)
-        )
-    )
-    policy = _policy(cast(dict[str, Any], raw["policies"])["P0"])
-    state = initialize_requests(scope=scope, hard_limit=cast(int, raw["hard_limit"]), policies=frozenset({policy}))
-    state = bind_request_policies(
-        state=state,
-        binding=RequestPolicyBinding.create(association=association, policies=frozenset({policy})),
-    )
-    request = PhysicalRequestId.new(scope=scope)
-    state = advance_requests(
-        state=state,
-        event=Reserve(
-            request=request,
-            purpose="adaptive_retrieval",
-            associations=frozenset({association}),
-            policy=policy,
-        ),
-    )
-    state = advance_requests(state=state, event=Dispatch(request=request))
-    if case["case_id"] == "materialization/adaptive_late_lost":
-        state = advance_requests(state=state, event=RequestCancel(request=request))
-        state = advance_requests(state=state, event=MarkLost(request=request))
-    else:
-        state = advance_requests(state=state, event=RequestCancel(request=request))
-        state = advance_requests(
-            state=state,
-            event=StopAcknowledged(request=request, usage=UnknownUsage()),
-        )
-    state = advance_requests(
-        state=state,
-        event=AcceptResult(
-            request=request,
-            results=(
-                AssociationResult(
-                    association=association,
-                    outcome="ok",
-                    outputs=(),
-                    consumed_context_ports=frozenset(),
-                ),
-            ),
-        ),
-    )
-    settlement_value = next(
-        cast(dict[str, Any], event["settlement"])
-        for event in cast(list[dict[str, Any]], case["events"])
-        if event["kind"] == "materialize_result"
-    )
-    state = advance_requests(
-        state=state,
-        event=ObserveSettlement(
-            settlement=ExternalSettlement(
-                request=request,
-                disposition=settlement_value["disposition"],
-                usage=_usage(settlement_value["usage"]),
-                remote_stopped=settlement_value["remote_stopped"],
-            )
-        ),
-    )
-    actual = _normalize(state, {"A0": association}, {"R0": request}, {"P0": policy})
-    expected = cast(dict[str, Any], case["expected"])["state"]
-    for key in (
-        "bindings",
-        "dispatched",
-        "dispatched_count",
-        "terminals",
-        "settlements",
-        "request_facts",
-        "request_failures",
-        "association_terminals",
-        "request_associations",
-        "request_policies",
-        "cancel_requested",
-        "local_in_flight",
-        "remote_outstanding",
-        "defects",
-        "denials",
-        "association_requests",
-        "attempts",
-    ):
-        assert actual[key] == expected[key], (case["case_id"], key)
-    assert not expected["materialization"]["ports"]
-    assert all(not item["identity"].startswith("OperationOutputKey:") for item in expected["artifacts"])
-
-
-@pytest.mark.parametrize("case", LATE_ADAPTIVE_CASES, ids=lambda case: cast(str, case["case_id"]))
-def test_late_adaptive_provider_result_is_suppressed_by_real_executor(case: dict[str, Any]) -> None:
-    asyncio.run(
-        _assert_adaptive_materialization_case(
-            case,
-            late_mode="lost" if case["case_id"] == "materialization/adaptive_late_lost" else "cancelled",
-        )
-    )
 
 
 @pytest.mark.parametrize("case", RESOURCE_CASES, ids=lambda case: cast(str, case["case_id"]))
@@ -594,8 +462,6 @@ def test_request_corpus_case_through_production(case: dict[str, Any]) -> None:
     [
         ("materialization/admit_initial_single", "materialization/initial_single_exact"),
         ("materialization/admit_initial_collection", "materialization/initial_collection_1"),
-        ("materialization/admit_adaptive_single", "materialization/adaptive_single_exact"),
-        ("materialization/admit_adaptive_collection", "materialization/adaptive_collection_1"),
     ],
 )
 def test_materialization_admission_matches_executed_declaration(admission_id: str, runtime_id: str) -> None:
@@ -607,7 +473,4 @@ def test_materialization_admission_matches_executed_declaration(admission_id: st
         assert runtime["declaration"][key] == value, key
     # The same declarations are admitted on the real path. Initial provider
     # binding supplies setup facts before pure context/execution admission.
-    if "initial" in admission_id:
-        asyncio.run(_assert_binding_corpus_case(runtime))
-    else:
-        asyncio.run(_assert_adaptive_materialization_case(runtime))
+    asyncio.run(_assert_binding_corpus_case(runtime))

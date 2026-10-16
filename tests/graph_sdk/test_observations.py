@@ -203,7 +203,7 @@ def test_encoding_exact_nodes_depth_bytes_and_bool_correlation() -> None:
     assert caught.value.code == EffectCode.INVALID_TYPE
 
 
-@pytest.mark.parametrize("scenario", ["local", "nested", "adaptive", "external"])
+@pytest.mark.parametrize("scenario", ["local", "nested", "external"])
 def test_actual_execution_hooks_and_pure_inspection(monkeypatch, scenario: str) -> None:
     import asyncio
 
@@ -240,8 +240,6 @@ def test_actual_execution_hooks_and_pure_inspection(monkeypatch, scenario: str) 
             await local._assert_local_execution()
         elif scenario == "nested":
             await local._assert_shared_nested_body()
-        elif scenario == "adaptive":
-            await remote._assert_adaptive_retrieval()
         else:
             await remote._assert_external_retry()
         result = await captured["running"].wait()
@@ -253,8 +251,6 @@ def test_actual_execution_hooks_and_pure_inspection(monkeypatch, scenario: str) 
         assert boundaries.count("operation") == entered
         assert boundaries.count("physical_request") == result.requests.dispatched_count
         assert boundaries.count("request_reconciliation") == result.requests.dispatched_count
-        if scenario == "adaptive":
-            assert boundaries.count("adaptive_retrieval") == 1
         admitted = captured["admitted"]
         source = bind_inspection_source(
             prepared=admitted.context.prepared,
@@ -474,12 +470,9 @@ def test_selected_measurement_cannot_change_semantic_result(monkeypatch, mode: s
         assert b"PRIVATE" not in encode_inspection(value=receipt, limits=inspection_limits(max_count=1000))
 
 
-@pytest.mark.parametrize("adaptive", [False, True])
 @pytest.mark.parametrize("mode", ["success", "cancel", "exception", "awaitable", "queue"])
-def test_blocking_actual_starts_never_count_queued_waiters(monkeypatch, adaptive: bool, mode: str) -> None:
+def test_blocking_actual_starts_never_count_queued_waiters(monkeypatch, mode: str) -> None:
     from anonymizer.engine.graph_sdk.binding import start_initial_binding
-    from anonymizer.engine.graph_sdk.executor import start_execution
-    from tests.graph_sdk import test_adaptive_executor as later
     from tests.graph_sdk import test_binding as initial
     from tests.graph_sdk import test_blocking as blocking
 
@@ -489,19 +482,13 @@ def test_blocking_actual_starts_never_count_queued_waiters(monkeypatch, adaptive
         observer = begin_observations(limits=limits(max_count=1000, max_duration_ns=1000), clock=Clock())
         assert isinstance(observer, ObservationSession)
         sessions.append(observer)
-        return await (
-            start_execution(**kwargs, observations=observer)
-            if adaptive
-            else start_initial_binding(**kwargs, observations=observer)
-        )
+        return await start_initial_binding(**kwargs, observations=observer)
 
-    monkeypatch.setattr(
-        later if adaptive else initial, "start_execution" if adaptive else "start_initial_binding", start
-    )
+    monkeypatch.setattr(initial, "start_initial_binding", start)
     if mode == "queue":
-        blocking.test_actual_retrieval_queue_cancellation_preserves_worker_capacity(adaptive)
+        blocking.test_actual_retrieval_queue_cancellation_preserves_worker_capacity()
     else:
-        blocking.test_actual_initial_and_adaptive_blocking_provider(adaptive, mode)
+        blocking.test_actual_initial_blocking_provider(mode)
     counts = []
     for observer in sessions:
         receipt = observer.close()
@@ -656,7 +643,7 @@ def test_pure_validation_rejection_still_closes_entered_boundary(boundary: str) 
     functions = {
         "context_admission": (
             api.observed_context_admission,
-            dict(prepared=None, bound_context=None, adaptive_retrievals=(), context_capabilities=()),
+            dict(prepared=None, bound_context=None),
         ),
         "execution_admission": (
             api.observed_execution_admission,
@@ -704,43 +691,6 @@ def test_binding_invalid_limits_returns_original_rejection_and_complete_pair(mon
     receipt = observer.close()
     assert isinstance(receipt, ObservationReceipt)
     assert len(receipt.pairs) == 1 and receipt.pairs[0].terminal.reasons == frozenset({"invalid_input"})
-
-
-@pytest.mark.parametrize("malformed_join", [False, True])
-def test_request_pairs_use_consumer_ingress_terminal(monkeypatch, malformed_join: bool) -> None:
-    import asyncio
-
-    from anonymizer.engine.graph_sdk.executor import start_execution
-    from tests.graph_sdk import test_adaptive_executor as fixture
-
-    observer = session(bounds=limits(max_count=1000, max_duration_ns=1000), pairs=1)
-
-    class Provider(fixture._Provider):
-        async def retrieve(self, **kwargs):
-            if not malformed_join:
-                return object()
-            response = await super().retrieve(**kwargs)
-            return replace(response, source=replace(response.source, revision=response.source.revision + 1))
-
-    async def start(**kwargs):
-        return await start_execution(**kwargs, observations=observer)
-
-    monkeypatch.setattr(fixture, "start_execution", start)
-
-    async def run():
-        running, _ = await fixture._adaptive_running(Provider())
-        return await running.wait()
-
-    result = asyncio.run(run())
-    receipt = observer.close()
-    assert isinstance(receipt, ObservationReceipt)
-    request_pairs = [
-        pair for pair in receipt.pairs if pair.start.boundary in {"physical_request", "request_reconciliation"}
-    ]
-    assert len(request_pairs) == 2 * len(result.requests.terminals)
-    for terminal in result.requests.terminals:
-        assert all(pair.terminal.outcome == terminal.category for pair in request_pairs)
-    assert all(pair.terminal.outcome == ("failure" if malformed_join else "lost") for pair in request_pairs)
 
 
 def test_cleanup_of_sdk_resource_with_active_worker_reports_unknown() -> None:

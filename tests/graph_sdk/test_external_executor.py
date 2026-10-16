@@ -178,8 +178,6 @@ async def _assert_remote_capacity() -> None:
     context = admit_context_plan(
         prepared=prepared,
         bound_context=None,
-        adaptive_retrievals=(),
-        context_capabilities=(),
     )
     request_policy = PhysicalRequestPolicy(
         visibility="dispatch_and_settlement",
@@ -232,7 +230,6 @@ async def _assert_remote_capacity() -> None:
                         ),
                     ),
                 ),
-                context_resources=(),
                 limits=ExecutionLimits(
                     max_local_in_flight=0,
                     max_remote_outstanding=1,
@@ -308,8 +305,6 @@ def _capacity_plan(
     context = admit_context_plan(
         prepared=prepared,
         bound_context=None,
-        adaptive_retrievals=(),
-        context_capabilities=(),
     )
     request_policy = PhysicalRequestPolicy(
         visibility="dispatch_and_settlement",
@@ -370,7 +365,6 @@ async def _assert_transient_remote_capacity(*, shared: bool = False, mode: str =
                     ),
                 ),
             ),
-            context_resources=(),
             limits=ExecutionLimits(
                 max_local_in_flight=0,
                 max_remote_outstanding=1,

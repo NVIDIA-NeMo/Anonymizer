@@ -166,7 +166,7 @@ def test_resource_inventories_are_bounded_before_indexes(field):
     async def run():
         async with _loop_and_pool() as (loop, pool):
             execution, result, _ = await executed(loop, pool, optional=True, failed=False)
-            limit = execution.context.prepared.limits.max_capabilities + len(execution.context.context_capabilities)
+            limit = execution.context.prepared.limits.max_capabilities
             changed = result_with(result, **{field: (getattr(result, field)[0],) * (limit + 1)})
             with pytest.raises(EffectRejected) as caught:
                 _qualify(execution, changed)

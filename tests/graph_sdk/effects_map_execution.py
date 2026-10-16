@@ -115,8 +115,6 @@ def _admit_fixture(
     context = admit_context_plan(
         prepared=prepared,
         bound_context=bound_context,
-        adaptive_retrievals=(),
-        context_capabilities=(),
     )
     policies = _local_policies(by_node)
     return admit_execution_plan(
@@ -226,7 +224,6 @@ async def _execute_membership(
         capability = ContextSourceCapability(
             source=SOURCE,
             artifact_type=context_item_type,
-            uses=frozenset({"initial_binding"}),
             execution="async",
             resource_owner="caller",
             cancellation="cooperative_ack",
@@ -341,7 +338,6 @@ async def _execute_membership(
         capabilities=fixture.capabilities,
         services=ExecutionServices(
             handles=handles,
-            context_resources=(),
             limits=ExecutionLimits(
                 max_local_in_flight=max_local_in_flight,
                 max_remote_outstanding=0,
@@ -528,8 +524,6 @@ async def _execute_loop_resolution(mode: str):
     context = admit_context_plan(
         prepared=prepared,
         bound_context=None,
-        adaptive_retrievals=(),
-        context_capabilities=(),
     )
     admitted = admit_execution_plan(
         context=context,
@@ -571,7 +565,6 @@ async def _execute_loop_resolution(mode: str):
             capabilities=capabilities,
             services=ExecutionServices(
                 handles=handles,
-                context_resources=(),
                 limits=ExecutionLimits(
                     max_local_in_flight=4,
                     max_remote_outstanding=0,

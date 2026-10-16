@@ -998,9 +998,7 @@ async def _execute_frame_plan_owned(
     from anonymizer.engine.detection._graph_profile import _await_profile_execution, _Clock, _ProfileLocal
 
     execution = admit_execution_plan(
-        context=admit_context_plan(
-            prepared=prepared, bound_context=None, adaptive_retrievals=(), context_capabilities=()
-        ),
+        context=admit_context_plan(prepared=prepared, bound_context=None),
         capabilities=capabilities,
         policies=policies,
         assessment_productions=assessment_productions,
@@ -1062,7 +1060,6 @@ async def _execute_frame_plan_owned(
             capabilities=capabilities,
             services=ExecutionServices(
                 handles=handles,
-                context_resources=(),
                 limits=limits,
                 clock=_Clock(),
             ),

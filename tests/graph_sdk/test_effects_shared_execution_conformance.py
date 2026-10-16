@@ -134,8 +134,6 @@ async def _assert_shared_case(case: dict[str, Any]) -> None:
     context = admit_context_plan(
         prepared=prepared,
         bound_context=None,
-        adaptive_retrievals=(),
-        context_capabilities=(),
     )
     implementation = _execution_implementation(capability, request=request_policy)
     admitted = admit_execution_plan(
@@ -164,7 +162,6 @@ async def _assert_shared_case(case: dict[str, Any]) -> None:
             capabilities=(capability,),
             services=ExecutionServices(
                 handles=(_implementation_handle(capability, local=None, transport=transport, resource=None),),
-                context_resources=(),
                 limits=ExecutionLimits(
                     max_local_in_flight=0,
                     max_remote_outstanding=1,

@@ -113,7 +113,6 @@ async def _assert_special_fixture_execution(case_id: str) -> None:
     source_capability = ContextSourceCapability(
         source=SOURCE,
         artifact_type=item_type,
-        uses=frozenset({"initial_binding"}),
         execution="async",
         resource_owner="caller",
         cancellation="cooperative_ack",
@@ -203,8 +202,6 @@ async def _assert_special_fixture_execution(case_id: str) -> None:
     context = admit_context_plan(
         prepared=prepared,
         bound_context=binding.context,
-        adaptive_retrievals=(),
-        context_capabilities=(),
     )
     implementation = _execution_implementation(capability, request=None)
     returned_outcome = cast(str, raw.get("returned_outcome", "ok"))
@@ -265,7 +262,6 @@ async def _assert_special_fixture_execution(case_id: str) -> None:
             capabilities=(capability,),
             services=ExecutionServices(
                 handles=(_implementation_handle(capability, local=callback, transport=None, resource=None),),
-                context_resources=(),
                 limits=ExecutionLimits(
                     max_local_in_flight=1,
                     max_remote_outstanding=0,
@@ -382,7 +378,6 @@ async def _assert_collection_schema_rejects_caller_root() -> _ProviderFactory:
     capability = ContextSourceCapability(
         source=SOURCE,
         artifact_type=item_type,
-        uses=frozenset({"initial_binding"}),
         execution="async",
         resource_owner="sdk",
         cancellation="cooperative_ack",
@@ -490,7 +485,6 @@ async def _assert_context_execution(
     source_capability = ContextSourceCapability(
         source=SOURCE,
         artifact_type=item_type,
-        uses=frozenset({"initial_binding"}),
         execution="async",
         resource_owner="caller",
         cancellation="cooperative_ack",
@@ -573,8 +567,6 @@ async def _assert_context_execution(
     context = admit_context_plan(
         prepared=prepared,
         bound_context=binding.context,
-        adaptive_retrievals=(),
-        context_capabilities=(),
     )
     implementation = _execution_implementation(capability, request=None)
     admitted = admit_execution_plan(
@@ -608,7 +600,6 @@ async def _assert_context_execution(
             capabilities=(capability,),
             services=ExecutionServices(
                 handles=(_implementation_handle(capability, local=callback, transport=None, resource=None),),
-                context_resources=(),
                 limits=ExecutionLimits(
                     max_local_in_flight=1,
                     max_remote_outstanding=0,

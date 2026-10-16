@@ -105,7 +105,7 @@ async def _execute(mode: str, expected: str) -> None:
     )
     capability = _capability(workflow)
     prepared = _prepare(data=_data(1), workflow=workflow, capability=capability)
-    context = admit_context_plan(prepared=prepared, bound_context=None, adaptive_retrievals=(), context_capabilities=())
+    context = admit_context_plan(prepared=prepared, bound_context=None)
     implementation = _execution_implementation(capability, request=None)
     rows = tuple(
         replace(
@@ -154,7 +154,6 @@ async def _execute(mode: str, expected: str) -> None:
                     resource=None,
                 ),
             ),
-            context_resources=(),
             limits=ExecutionLimits(
                 max_local_in_flight=1,
                 max_remote_outstanding=0,

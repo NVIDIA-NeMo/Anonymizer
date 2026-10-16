@@ -12,7 +12,6 @@ from anonymizer.engine.graph_sdk.capabilities import ImplementationCapability, I
 from anonymizer.engine.graph_sdk.context import (
     admit_context_plan,
 )
-from anonymizer.engine.graph_sdk.data import DataGraph, DataLimits
 from anonymizer.engine.graph_sdk.executor import (
     AdmittedExecutionPlan,
     AssessmentLimits,
@@ -185,38 +184,6 @@ REAL_BINDING_CASE_IDS = {
 
 REAL_BINDING_CASES = tuple(case for case in load_cases("effects") if case["case_id"] in REAL_BINDING_CASE_IDS)
 
-ADAPTIVE_MATERIALIZATION_CASE_IDS = {
-    "materialization/adaptive_single_exact",
-    "materialization/adaptive_single_multiple",
-    "materialization/adaptive_collection_1",
-    "materialization/adaptive_collection_2",
-    "materialization/adaptive_collection_3",
-    "materialization/adaptive_collection_one_over",
-    "materialization/adaptive_collection_0",
-    "materialization/adaptive_canonical_reorder",
-    "materialization/adaptive_duplicate",
-    "materialization/adaptive_outer_count_precedence",
-    "materialization/adaptive_single_zero_collection_limit",
-    "materialization/adaptive_foreign_association",
-    "materialization/adaptive_unmaterialized_result",
-    "materialization/adaptive_missing_parent",
-    "materialization/adaptive_foreign_parent",
-    "materialization/adaptive_invented_parent",
-    "materialization/adaptive_missing_source_fact",
-    "materialization/adaptive_result_bridge",
-    "binding/adaptive_omission_misuse",
-}
-
-ADAPTIVE_MATERIALIZATION_CASES = tuple(
-    case for case in load_cases("effects") if case["case_id"] in ADAPTIVE_MATERIALIZATION_CASE_IDS
-)
-
-LATE_ADAPTIVE_CASES = tuple(
-    case
-    for case in load_cases("effects")
-    if case["case_id"] in {"materialization/adaptive_late_lost", "materialization/adaptive_late_cancelled"}
-)
-
 LATE_INITIAL_CASES = tuple(
     case
     for case in load_cases("effects")
@@ -234,27 +201,6 @@ LATE_INITIAL_CASES = tuple(
         "materialization/latest_lost_late_multikey",
     }
 )
-
-
-def _selector_data():
-    graph = DataGraph.new()
-    graph, target = graph.add_text("selector")
-    return graph.validate(
-        targets=(target,),
-        source_relations=(),
-        contexts=(),
-        dependencies=(),
-        coherence=(),
-        atomic=(),
-        output_regions=(),
-        limits=DataLimits(
-            max_datums=1,
-            max_targets=1,
-            max_text_bytes=8,
-            max_declarations=0,
-            max_group_members=0,
-        ),
-    )
 
 
 def _assessment_limits() -> AssessmentLimits:
@@ -278,8 +224,6 @@ def _admit_unbound_execution(
         context=admit_context_plan(
             prepared=prepared,
             bound_context=None,
-            adaptive_retrievals=(),
-            context_capabilities=(),
         ),
         capabilities=capabilities,
         policies=policies,
@@ -480,7 +424,6 @@ def _admit_case(case: dict[str, Any]) -> None:
                 capabilities=tuple([*capabilities[:-1], changed]),
                 services=ExecutionServices(
                     handles=(),
-                    context_resources=(),
                     limits=ExecutionLimits(
                         max_local_in_flight=1,
                         max_remote_outstanding=1,

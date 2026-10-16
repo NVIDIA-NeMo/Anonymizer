@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import replace
-from typing import cast
 
 import pytest
 
@@ -69,11 +68,7 @@ def test_latest_candidate_sibling_is_unavailable_and_cannot_replace_final_output
         object.__setattr__(final, "candidate", original)
 
 
-def test_source_versions_and_adaptive_selection_reject_at_typed_constructors() -> None:
-    from typing import Any
-
-    from anonymizer.engine.graph_sdk.context import AdaptiveRetrievalDecl
-
+def test_source_versions_reject_at_typed_constructor() -> None:
     provider = _BindingProvider(source=ContextSourceRef(name="version-owner", revision=1), versions=(1, 2))
     execution, _ = asyncio.run(
         _execute_assessment(
@@ -88,17 +83,6 @@ def test_source_versions_and_adaptive_selection_reject_at_typed_constructors() -
     with pytest.raises(EffectRejected) as error:
         SourceItem(association=association, key=0, version=0, text="invalid")
     assert error.value.code is EffectCode.INVALID_VALUE
-    declaration = bound.receipt.sources[0].declaration
-    adaptive = AdaptiveRetrievalDecl(
-        node=declaration.node,
-        source=declaration.source,
-        selector_ports=(),
-        output_port="output",
-        bounds=declaration.bounds,
-        materialization=declaration.materialization,
-    )
-    with pytest.raises(TypeError, match="version_selection"):
-        replace(cast(Any, adaptive), version_selection="latest")
 
 
 @pytest.mark.parametrize("limit_name", ["max_runtime_artifacts", "max_runtime_artifact_bytes"])

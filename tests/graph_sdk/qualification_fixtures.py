@@ -181,7 +181,6 @@ def _initial_resource(provider: _BindingSource) -> ContextResource:
         capability=ContextSourceCapability(
             source=provider.source,
             artifact_type=ArtifactType(name="text", revision=1),
-            uses=frozenset({"initial_binding"}),
             execution="async",
             resource_owner="sdk",
             cancellation="cooperative_ack",

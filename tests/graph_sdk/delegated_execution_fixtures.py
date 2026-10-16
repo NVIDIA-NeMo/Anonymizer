@@ -226,9 +226,7 @@ def with_parent_publication(execution: AdmittedExecutionPlan, *, readiness: bool
         for policy in source_policies
     )
     return admit_execution_plan(
-        context=admit_context_plan(
-            prepared=updated, bound_context=None, adaptive_retrievals=(), context_capabilities=()
-        ),
+        context=admit_context_plan(prepared=updated, bound_context=None),
         capabilities=capabilities,
         policies=policies,
         assessment_productions=tuple(
@@ -271,9 +269,7 @@ def with_multiple_sources(execution: AdmittedExecutionPlan, count: int = 2, *, d
         ),
     )
     return admit_execution_plan(
-        context=admit_context_plan(
-            prepared=updated, bound_context=None, adaptive_retrievals=(), context_capabilities=()
-        ),
+        context=admit_context_plan(prepared=updated, bound_context=None),
         capabilities=execution.capabilities,
         policies=tuple(execution.policies),
         assessment_productions=execution.assessment_productions,

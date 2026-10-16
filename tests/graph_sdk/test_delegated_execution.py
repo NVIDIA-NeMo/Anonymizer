@@ -192,7 +192,6 @@ def _fixture(
         )
     services = ExecutionServices(
         handles=tuple(handles),
-        context_resources=(),
         limits=ExecutionLimits(
             max_local_in_flight=1,
             max_remote_outstanding=1,

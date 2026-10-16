@@ -23,9 +23,7 @@ from anonymizer.engine.rewrite.artifacts import REWRITE_TYPES, RewriteArtifactVa
 from anonymizer.graph._values import ArtifactRef, InvocationId, TaskAttemptId
 from anonymizer.graph.workflow import ArtifactType, OperationSpec
 
-RequestPurpose: TypeAlias = Literal[
-    "initial", "retry", "correction", "repair", "failover", "initial_binding", "adaptive_retrieval"
-]
+RequestPurpose: TypeAlias = Literal["initial", "retry", "correction", "repair", "failover", "initial_binding"]
 
 
 ReplaySafety: TypeAlias = Literal["never", "before_acceptance", "idempotent"]
@@ -79,7 +77,7 @@ RequestDefectCode: TypeAlias = Literal[
 ]
 
 
-_PURPOSES = frozenset({"initial", "retry", "correction", "repair", "failover", "initial_binding", "adaptive_retrieval"})
+_PURPOSES = frozenset({"initial", "retry", "correction", "repair", "failover", "initial_binding"})
 
 
 _FAILURES = frozenset(

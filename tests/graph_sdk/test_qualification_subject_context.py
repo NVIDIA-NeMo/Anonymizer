@@ -508,9 +508,7 @@ async def _execute_separate_subject_context(
     assert not target_findings or len(target_findings) == target_count
     supported_findings = frozenset(target_findings) if target_findings else frozenset({finding})
     admitted = admit_execution_plan(
-        context=admit_context_plan(
-            prepared=prepared, bound_context=bound_context, adaptive_retrievals=(), context_capabilities=()
-        ),
+        context=admit_context_plan(prepared=prepared, bound_context=bound_context),
         capabilities=capabilities,
         policies=(
             OperationExecutionPolicy(
@@ -608,7 +606,6 @@ async def _execute_separate_subject_context(
                 if ordinary_context_hop
                 else ()
             ),
-            context_resources=(),
             limits=ExecutionLimits(
                 max_local_in_flight=1,
                 max_remote_outstanding=0,
