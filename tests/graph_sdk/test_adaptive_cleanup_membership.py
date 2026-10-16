@@ -9,12 +9,12 @@ from dataclasses import dataclass, replace
 
 import pytest
 
-from anonymizer.engine.graph_sdk._effect_values import EffectCode, EffectRejected
 from anonymizer.engine.graph_sdk.context import ContextResource, ContextSourceCapability, admit_context_plan
 from anonymizer.engine.graph_sdk.executor import admit_execution_plan, start_execution
 from anonymizer.engine.graph_sdk.qualification import qualify, qualify_retained
 from anonymizer.engine.graph_sdk.requests import PhysicalRequestPolicy
 from anonymizer.engine.graph_sdk.resources import ResourceId, ResourceLease
+from anonymizer.graph import EffectCode, EffectRejected
 from anonymizer.graph._values import InvocationId
 from anonymizer.graph.workflow import ArtifactType
 from tests.graph_sdk.child_qualification_fixtures import result_with

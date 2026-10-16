@@ -13,11 +13,11 @@ import pytest
 
 from anonymizer.engine.detection.artifacts import ENTITY_SPANS_TYPE, EntitySpansValue
 from anonymizer.engine.graph_sdk._artifact_shape import ArtifactShape
-from anonymizer.engine.graph_sdk._effect_values import EffectCode, EffectRejected
 from anonymizer.engine.graph_sdk._ingress import inspect_artifact
 from anonymizer.engine.graph_sdk.executor import ExecutionResult, IngressLimits
 from anonymizer.engine.graph_sdk.inspection import InspectionSource, bind_inspection_source, inspect
 from anonymizer.engine.graph_sdk.requests import BindingId, TextArtifactValue, TextCollectionValue
+from anonymizer.graph import EffectCode, EffectRejected
 from tests.graph_sdk.qualification_fixtures import _inputs
 from tests.graph_sdk.reference.corpora import load_cases
 from tests.graph_sdk.test_effects_materialization_schema import (

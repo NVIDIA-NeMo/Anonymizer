@@ -12,7 +12,6 @@ from typing import Literal
 
 import pytest
 
-from anonymizer.engine.graph_sdk._effect_values import EffectRejected
 from anonymizer.engine.graph_sdk._request_driver import _RequestAuthority
 from anonymizer.engine.graph_sdk.requests import (
     AcceptChildEvidence,
@@ -39,6 +38,7 @@ from anonymizer.engine.graph_sdk.requests import (
     initialize_requests,
     request_receipt,
 )
+from anonymizer.graph import EffectRejected
 from anonymizer.graph._values import ActivationKey, InvocationId, PlanId, TaskAttemptId
 from tests.graph_sdk.reference.request_children.reference import cases, expected
 

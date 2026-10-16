@@ -10,11 +10,11 @@ from typing import cast
 
 import pytest
 
-from anonymizer.engine.graph_sdk._effect_values import EffectCode, EffectRejected
 from anonymizer.engine.graph_sdk.executor import (
     ExecutionLimits,
     MapExpansionDecl,
 )
+from anonymizer.graph import EffectCode, EffectRejected
 from anonymizer.graph._values import ContractViolation, ValidationCode
 from anonymizer.graph.workflow import ArtifactType, MapDecl, NodeId, SubgraphNode, WorkflowId
 from tests.graph_sdk.effects_map_assertions import (

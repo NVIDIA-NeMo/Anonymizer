@@ -37,7 +37,6 @@ from anonymizer.engine.constants import (
 )
 from anonymizer.engine.detection._graph_profile import run_detection_redact
 from anonymizer.engine.detection.detection_workflow import EntityDetectionResult, EntityDetectionWorkflow
-from anonymizer.engine.graph_sdk._effect_values import EffectRejected
 from anonymizer.engine.graph_sdk._execution_delegated import source_worker_borrow
 from anonymizer.engine.ndd._graph_requests import NddPhysicalTransport
 from anonymizer.engine.ndd.adapter import RECORD_ID_COLUMN, FailedRecord, NddAdapter, WorkflowRunResult
@@ -48,6 +47,7 @@ from anonymizer.engine.rewrite import rewrite_workflow
 from anonymizer.engine.rewrite.combined_rewrite_workflow import CombinedRewriteWorkflow
 from anonymizer.engine.rewrite.rewrite_workflow import RewriteWorkflow
 from anonymizer.engine.row_partitioning import ROW_ORDER_COL
+from anonymizer.graph import EffectRejected
 from anonymizer.graph._values import InvocationId
 from anonymizer.interface.errors import AnonymizerWorkflowError
 from tests.engine import test_detection_source_frame as detection_tests

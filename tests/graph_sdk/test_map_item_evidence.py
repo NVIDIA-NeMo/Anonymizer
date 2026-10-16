@@ -9,7 +9,6 @@ from dataclasses import replace
 
 import pytest
 
-from anonymizer.engine.graph_sdk._effect_values import EffectCode, EffectRejected
 from anonymizer.engine.graph_sdk.evidence import (
     AssessmentSubmission,
     MapItemSubjectRef,
@@ -27,6 +26,7 @@ from anonymizer.engine.graph_sdk.executor import (
 )
 from anonymizer.engine.graph_sdk.qualification import qualify
 from anonymizer.engine.graph_sdk.records import CandidateRef
+from anonymizer.graph import EffectCode, EffectRejected
 from anonymizer.graph._values import ContractViolation, ValidationCode
 from anonymizer.graph.workflow import (
     InputBinding,

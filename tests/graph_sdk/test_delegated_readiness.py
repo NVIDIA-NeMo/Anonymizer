@@ -11,7 +11,6 @@ from pathlib import Path
 
 import pytest
 
-from anonymizer.engine.graph_sdk._effect_values import EffectRejected
 from anonymizer.engine.graph_sdk.executor import (
     ImplementationHandle,
     LocalCompleted,
@@ -26,6 +25,7 @@ from anonymizer.engine.graph_sdk.requests import (
     TextArtifactValue,
     TransportSuccess,
 )
+from anonymizer.graph import EffectRejected
 from tests.graph_sdk.delegated_execution_fixtures import with_parent_publication
 from tests.graph_sdk.qualification_fixtures import _inputs
 from tests.graph_sdk.test_delegated_execution import _execute, _fixture, _Transport

@@ -9,7 +9,6 @@ from dataclasses import replace
 
 import pytest
 
-from anonymizer.engine.graph_sdk._effect_values import EffectRejected
 from anonymizer.engine.graph_sdk.executor import (
     ExecutionResult,
     MapItemKey,
@@ -18,6 +17,7 @@ from anonymizer.engine.graph_sdk.executor import (
 )
 from anonymizer.engine.graph_sdk.qualification import qualify
 from anonymizer.engine.graph_sdk.requests import TextCollectionValue
+from anonymizer.graph import EffectRejected
 from anonymizer.graph._values import ActivationKey, DatumId
 from tests.graph_sdk.qualification_fixtures import _inputs
 from tests.graph_sdk.qualification_map_execution import _execute_reference_map

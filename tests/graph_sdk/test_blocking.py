@@ -9,7 +9,6 @@ from typing import Any, cast
 
 import pytest
 
-from anonymizer.engine.graph_sdk._effect_values import EffectCode, EffectRejected
 from anonymizer.engine.graph_sdk._request_driver import _RequestAuthority, drive_request
 from anonymizer.engine.graph_sdk.blocking import BlockingAffinity, BlockingPool, BlockingTransport
 from anonymizer.engine.graph_sdk.requests import (
@@ -25,6 +24,7 @@ from anonymizer.engine.graph_sdk.requests import (
     request_receipt,
 )
 from anonymizer.engine.graph_sdk.resources import ResourceLease, close_resource
+from anonymizer.graph import EffectCode, EffectRejected
 from anonymizer.graph._values import InvocationId, PlanId
 from tests.graph_sdk.test_requests import _association, _policy
 

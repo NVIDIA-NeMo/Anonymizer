@@ -9,7 +9,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, cast
 
-from anonymizer.engine.graph_sdk._effect_values import EffectRejected
 from anonymizer.engine.graph_sdk.binding import start_initial_binding
 from anonymizer.engine.graph_sdk.context import (
     BindingLimits,
@@ -40,6 +39,7 @@ from anonymizer.engine.graph_sdk.requests import (
     StopConfirmed,
 )
 from anonymizer.engine.graph_sdk.resources import ResourceLease
+from anonymizer.graph import EffectRejected
 from anonymizer.graph._values import DatumId
 from anonymizer.graph.workflow import (
     ArtifactType,

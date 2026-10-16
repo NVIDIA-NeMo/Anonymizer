@@ -10,9 +10,9 @@ from typing import Any
 
 import pytest
 
-from anonymizer.engine.graph_sdk._effect_values import EffectRejected
 from anonymizer.engine.graph_sdk.executor import BoundInputKey, InitialCollectionKey
 from anonymizer.engine.graph_sdk.qualification import QualificationResult, qualify
+from anonymizer.graph import EffectRejected
 from tests.graph_sdk import context_source_assertions as fixture
 
 

@@ -1210,9 +1210,9 @@ def test_lowering_rejects_changed_entry_and_replay_before_adapter_effects(
     from typing import cast
 
     from anonymizer.engine.detection._frame_publication import PublishedFrame
-    from anonymizer.engine.graph_sdk._effect_values import EffectRejected
     from anonymizer.engine.graph_sdk.executor import ExecutionResult
     from anonymizer.engine.rewrite.combined_rewrite_workflow import CombinedRewriteWorkflow
+    from anonymizer.graph import EffectRejected
 
     adapter = Mock()
     adapter.run_workflow.side_effect = (

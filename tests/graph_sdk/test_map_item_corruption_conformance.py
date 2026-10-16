@@ -10,9 +10,9 @@ from typing import Any
 
 import pytest
 
-from anonymizer.engine.graph_sdk._effect_values import EffectRejected
 from anonymizer.engine.graph_sdk.executor import MapItemKey, RootInputKey
 from anonymizer.engine.graph_sdk.qualification import qualify
+from anonymizer.graph import EffectRejected
 from anonymizer.graph._values import ActivationKey, DatumId, InvocationId
 from tests.graph_sdk import qualification_map_records as fixture
 

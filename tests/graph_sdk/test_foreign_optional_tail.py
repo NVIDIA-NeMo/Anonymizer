@@ -12,11 +12,11 @@ from threading import Event, Thread
 
 import pytest
 
-from anonymizer.engine.graph_sdk._effect_values import EffectCode, EffectRejected
 from anonymizer.engine.graph_sdk._execution_delegated import _DelegatedOwner
 from anonymizer.engine.graph_sdk._foreign_transport import ForeignLoopTransport, _EntryGate
 from anonymizer.engine.graph_sdk.executor import start_execution
 from anonymizer.engine.graph_sdk.requests import TextArtifactValue
+from anonymizer.graph import EffectCode, EffectRejected
 from anonymizer.graph._values import InvocationId
 from tests.graph_sdk.test_blocking import until
 from tests.graph_sdk.test_delegated_execution import _execute

@@ -9,7 +9,6 @@ from dataclasses import dataclass, replace
 
 import pytest
 
-from anonymizer.engine.graph_sdk._effect_values import EffectCode, EffectRejected
 from anonymizer.engine.graph_sdk.binding import start_initial_binding
 from anonymizer.engine.graph_sdk.capabilities import ImplementationRef
 from anonymizer.engine.graph_sdk.context import (
@@ -57,6 +56,7 @@ from anonymizer.engine.graph_sdk.requests import (
     SemanticAssociation,
     TextArtifactValue,
 )
+from anonymizer.graph import EffectCode, EffectRejected
 from anonymizer.graph.activation import ActivationLimits
 from anonymizer.graph.workflow import (
     ArtifactType,

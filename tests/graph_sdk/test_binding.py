@@ -10,7 +10,6 @@ from typing import Any, cast
 
 import pytest
 
-from anonymizer.engine.graph_sdk._effect_values import EffectRejected
 from anonymizer.engine.graph_sdk.binding import start_initial_binding
 from anonymizer.engine.graph_sdk.blocking import BlockingContextProvider
 from anonymizer.engine.graph_sdk.context import (
@@ -35,6 +34,7 @@ from anonymizer.engine.graph_sdk.requests import (
     StopConfirmed,
 )
 from anonymizer.engine.graph_sdk.resources import ResourceLease
+from anonymizer.graph import EffectRejected
 from anonymizer.graph.workflow import ContextInputRef, ContextUse, DynamicLimits, NodeId, OperationNode, WorkflowId
 from tests.graph_sdk.context_source_fixtures import _initial_binding_fixture
 from tests.graph_sdk.test_preparation import _capability, _data, _prepare, _workflow

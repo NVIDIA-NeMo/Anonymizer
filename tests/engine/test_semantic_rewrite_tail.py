@@ -16,7 +16,6 @@ from data_designer.engine.dataset_builders.utils.async_concurrency import ensure
 from anonymizer import Rewrite
 from anonymizer.engine.constants import COL_ENTITIES_BY_VALUE, COL_REWRITE_BASELINE_TEXT, COL_TEXT
 from anonymizer.engine.graph_sdk._artifact_shape import ArtifactShape
-from anonymizer.engine.graph_sdk._effect_values import EffectCode, EffectRejected
 from anonymizer.engine.graph_sdk._execution_values import OperationOutputKey
 from anonymizer.engine.graph_sdk._ingress import inspect_artifact
 from anonymizer.engine.graph_sdk.blocking import BlockingPool
@@ -47,6 +46,7 @@ from anonymizer.engine.rewrite.artifacts import (
     RewriteQAValue,
 )
 from anonymizer.engine.rewrite.rewrite_workflow import RewriteResult, RewriteWorkflow
+from anonymizer.graph import EffectCode, EffectRejected
 
 
 @pytest.mark.parametrize("importance", ["critical", "important"])

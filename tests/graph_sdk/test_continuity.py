@@ -6,9 +6,9 @@ import asyncio
 
 import pytest
 
-from anonymizer.engine.graph_sdk._effect_values import EffectCode, EffectRejected
 from anonymizer.engine.graph_sdk.continuity import StateNamespace, commit_qualified, create_continuity_state
 from anonymizer.engine.graph_sdk.extensions import bind_projection_source, project_protected
+from anonymizer.graph import EffectCode, EffectRejected
 from tests.graph_sdk.continuity_fixtures import limits, prepare_case
 from tests.graph_sdk.continuity_graph_adapter import project
 from tests.graph_sdk.reference.continuity.reference import greatest

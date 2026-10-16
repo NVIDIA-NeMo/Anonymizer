@@ -10,10 +10,10 @@ from typing import Any
 
 import pytest
 
-from anonymizer.engine.graph_sdk._effect_values import EffectCode, EffectRejected
 from anonymizer.engine.graph_sdk.executor import MapItemKey, OperationOutputKey, admit_execution_plan
 from anonymizer.engine.graph_sdk.preparation import prepare
 from anonymizer.engine.graph_sdk.qualification import qualify
+from anonymizer.graph import EffectCode, EffectRejected
 from anonymizer.graph.workflow import (
     InputBinding,
     NodeId,

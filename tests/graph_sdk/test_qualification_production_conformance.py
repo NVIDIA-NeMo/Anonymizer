@@ -15,7 +15,6 @@ from typing import Any, cast
 
 import pytest
 
-from anonymizer.engine.graph_sdk._effect_values import EffectRejected
 from anonymizer.engine.graph_sdk.capabilities import FrozenConfig, PreparationRejected
 from anonymizer.engine.graph_sdk.evidence import (
     AssessmentSubmission,
@@ -28,6 +27,7 @@ from anonymizer.engine.graph_sdk.executor import AdmittedExecutionPlan, Assessme
 from anonymizer.engine.graph_sdk.preparation import StateRevision, StateRevisionView
 from anonymizer.engine.graph_sdk.qualification import QualificationResult, qualify
 from anonymizer.engine.graph_sdk.records import AbsenceRef, CandidateRef, DecisionRef
+from anonymizer.graph import EffectRejected
 from anonymizer.graph._values import ActivationKey, ArtifactRef, ContractViolation, DatumId
 from anonymizer.graph.workflow import CoverageAtom, NodeId, StateEffect
 from tests.graph_sdk.reference.corpora import load_cases

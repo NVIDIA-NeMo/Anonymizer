@@ -11,9 +11,9 @@ from pathlib import Path
 
 import pytest
 
-from anonymizer.engine.graph_sdk._effect_values import EffectCode, EffectRejected
 from anonymizer.engine.graph_sdk.executor import LocalFailure
 from anonymizer.engine.graph_sdk.requests import TextArtifactValue
+from anonymizer.graph import EffectCode, EffectRejected
 from anonymizer.graph._values import ContractViolation, InvocationId, TaskAttemptId
 from tests.graph_sdk.test_delegated_execution import _execute, _fixture
 from tests.graph_sdk.test_delegated_readiness import _qualify, _ready_fixture

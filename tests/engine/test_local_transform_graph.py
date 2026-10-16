@@ -239,11 +239,11 @@ def test_local_self_cancellation_closes_and_preserves_error(monkeypatch, executi
 @pytest.mark.parametrize("asynchronous", [False, True])
 @pytest.mark.parametrize("fault", [None, "foreign", "expired", "missing_owner"])
 def test_managed_transform_reuses_authenticated_owner(monkeypatch, asynchronous, fault):
-    from anonymizer.engine.graph_sdk._effect_values import EffectRejected
     from anonymizer.engine.graph_sdk._execution_delegated import _WORKER_BORROW
     from anonymizer.engine.graph_sdk.executor import LocalFailure
     from anonymizer.engine.graph_sdk.requests import SemanticAssociation
     from anonymizer.engine.ndd._source_frame import _SOURCE_WORK, SourceWork
+    from anonymizer.graph import EffectRejected
     from anonymizer.graph._values import InvocationId, TaskAttemptId
     from tests.graph_sdk.test_delegated_execution import _execute, _fixture
     from tests.graph_sdk.test_delegated_worker import _loop_and_pool, _worker_services

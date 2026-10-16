@@ -10,7 +10,6 @@ from typing import Any
 
 import pytest
 
-from anonymizer.engine.graph_sdk._effect_values import EffectRejected
 from anonymizer.engine.graph_sdk.binding import RunningBinding
 from anonymizer.engine.graph_sdk.context import ContextSourceRef, SourceResponse, admit_context_plan
 from anonymizer.engine.graph_sdk.preparation import PreparedPlan
@@ -21,6 +20,7 @@ from anonymizer.engine.graph_sdk.requests import (
     InvocationRequestScope,
     PhysicalRequestId,
 )
+from anonymizer.graph import EffectRejected
 from anonymizer.graph._values import InvocationId, PlanId
 from tests.graph_sdk import test_binding_lifecycle_owners as lifecycle
 from tests.graph_sdk.effects_admission_fixtures import _assert_decision_submission

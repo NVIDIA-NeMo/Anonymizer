@@ -6,8 +6,8 @@ from __future__ import annotations
 
 import pytest
 
-from anonymizer.engine.graph_sdk._effect_values import EffectCode, EffectRejected
 from anonymizer.engine.graph_sdk.qualification import qualify
+from anonymizer.graph import EffectCode, EffectRejected
 from tests.graph_sdk.test_versioned_map_and_membership_witnesses import _execute_root_protected_map, _root_inputs
 
 

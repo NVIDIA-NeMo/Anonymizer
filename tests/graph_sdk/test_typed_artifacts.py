@@ -13,7 +13,6 @@ import pytest
 from anonymizer.engine.detection.artifacts import ENTITY_SPANS_TYPE, EntitySpansValue
 from anonymizer.engine.detection.postprocess import EntitySpan
 from anonymizer.engine.graph_sdk._artifact_shape import ArtifactShape
-from anonymizer.engine.graph_sdk._effect_values import EffectCode, EffectRejected
 from anonymizer.engine.graph_sdk._ingress import inspect_artifact
 from anonymizer.engine.graph_sdk.continuity import (
     ContinuityDecisionDecl,
@@ -29,6 +28,7 @@ from anonymizer.engine.graph_sdk.continuity import (
 )
 from anonymizer.engine.graph_sdk.executor import ExecutionResult, IngressLimits, start_execution
 from anonymizer.engine.graph_sdk.requests import TextArtifactValue, TextCollectionItem, TextCollectionValue
+from anonymizer.graph import EffectCode, EffectRejected
 from anonymizer.graph._values import ArtifactRef, InvocationId, PlanId
 from anonymizer.graph.workflow import ArtifactType, NodeId
 from tests.graph_sdk.continuity_fixtures import limits as continuity_limits

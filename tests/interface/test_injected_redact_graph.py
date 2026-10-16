@@ -115,7 +115,7 @@ def test_injected_redact_keeps_frame_calls_and_reports_unknown_work(tmp_path, st
     assert observed.usage.input_units.knowledge == "unknown"
     qualification, current, submissions = _inputs(admitted, execution)
     assert not qualify(admitted=qualification, result=execution, current=current, submissions=submissions).qualified
-    from anonymizer.engine.graph_sdk._effect_values import EffectRejected
+    from anonymizer.graph import EffectRejected
     from tests.graph_sdk.child_qualification_fixtures import result_with
 
     forged = result_with(execution, requests=replace(execution.requests, dispatched_count=1))
@@ -287,7 +287,7 @@ def _execute_callback():
 @pytest.mark.parametrize("ceiling", [0, 1])
 def test_opaque_core_rejects_unsupported_selected_finite_ceiling(monkeypatch, field, ceiling):
     from anonymizer.engine.detection import _opaque_redact
-    from anonymizer.engine.graph_sdk._effect_values import EffectRejected
+    from anonymizer.graph import EffectRejected
 
     original = _opaque_redact.start_execution
 

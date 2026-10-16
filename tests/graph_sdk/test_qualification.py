@@ -10,7 +10,6 @@ from typing import cast
 
 import pytest
 
-from anonymizer.engine.graph_sdk._effect_values import EffectCode, EffectRejected
 from anonymizer.engine.graph_sdk.context import (
     ContextSourceRef,
 )
@@ -19,6 +18,7 @@ from anonymizer.engine.graph_sdk.evidence import AssessmentSubmission, admit_qua
 from anonymizer.engine.graph_sdk.executor import AssessmentFinding
 from anonymizer.engine.graph_sdk.qualification import qualify
 from anonymizer.engine.graph_sdk.resources import ResourceId, ResourceLease
+from anonymizer.graph import EffectCode, EffectRejected
 from tests.graph_sdk.evidence_fixtures import _execute_assessment, _qualification_limits
 from tests.graph_sdk.qualification_fixtures import (
     _BindingProvider,

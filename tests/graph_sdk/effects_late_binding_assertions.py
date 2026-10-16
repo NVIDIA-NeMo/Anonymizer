@@ -8,7 +8,6 @@ from collections.abc import Mapping
 from dataclasses import replace
 from typing import Any, cast
 
-from anonymizer.engine.graph_sdk._effect_values import EffectRejected
 from anonymizer.engine.graph_sdk.binding import start_initial_binding
 from anonymizer.engine.graph_sdk.context import (
     BindingLimits,
@@ -34,6 +33,7 @@ from anonymizer.engine.graph_sdk.requests import (
     TextArtifactValue,
 )
 from anonymizer.engine.graph_sdk.resources import ResourceLease
+from anonymizer.graph import EffectRejected
 from anonymizer.graph._values import ArtifactRef
 from anonymizer.graph.workflow import (
     ContextInputRef,

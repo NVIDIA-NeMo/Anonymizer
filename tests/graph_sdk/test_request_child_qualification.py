@@ -12,7 +12,6 @@ from pathlib import Path
 
 import pytest
 
-from anonymizer.engine.graph_sdk._effect_values import EffectRejected
 from anonymizer.engine.graph_sdk.executor import (
     DecisionLimits,
     ExecutionLimits,
@@ -29,6 +28,7 @@ from anonymizer.engine.graph_sdk.requests import (
     SemanticAssociation,
     UnknownUsage,
 )
+from anonymizer.graph import EffectRejected
 from anonymizer.graph._values import ActivationKey, ContractViolation, InvocationId, TaskAttemptId
 from tests.graph_sdk.child_qualification_fixtures import child_fixture, result_with
 from tests.graph_sdk.effects_admission_fixtures import _ZeroClock

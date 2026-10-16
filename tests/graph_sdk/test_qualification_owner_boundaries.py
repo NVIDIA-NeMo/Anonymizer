@@ -9,11 +9,11 @@ from typing import Any, cast
 
 import pytest
 
-from anonymizer.engine.graph_sdk._effect_values import EffectCode, EffectRejected
 from anonymizer.engine.graph_sdk.capabilities import PreparationCode, PreparationRejected
 from anonymizer.engine.graph_sdk.evidence import AssessmentSubmission
 from anonymizer.engine.graph_sdk.preparation import StateRevision, StateRevisionView
 from anonymizer.engine.graph_sdk.qualification import qualify
+from anonymizer.graph import EffectCode, EffectRejected
 from anonymizer.graph._values import ContractViolation, ValidationCode
 from anonymizer.graph.workflow import CoverageAtom, CoverageKind, EvidencePromise, StateEffect
 from tests.graph_sdk.test_qualification import _inputs

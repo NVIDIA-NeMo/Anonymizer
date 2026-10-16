@@ -10,10 +10,10 @@ from dataclasses import replace
 import pytest
 
 from anonymizer.engine.graph_sdk._artifact_shape import ArtifactShape
-from anonymizer.engine.graph_sdk._effect_values import EffectRejected
 from anonymizer.engine.graph_sdk._ingress import inspect_artifact, inspect_associations
 from anonymizer.engine.graph_sdk.executor import IngressLimits, start_execution
 from anonymizer.engine.graph_sdk.requests import TextArtifactValue
+from anonymizer.graph import EffectRejected
 from anonymizer.graph._values import ContractViolation
 from tests.graph_sdk.qualification_fixtures import _inputs
 from tests.graph_sdk.test_ingress_bounds import _rows

@@ -260,11 +260,11 @@ def test_owned_plugin_borrows_source_without_another_invocation(monkeypatch, asy
 
     import pandas as pd
 
-    from anonymizer.engine.graph_sdk._effect_values import EffectRejected
     from anonymizer.engine.graph_sdk._execution_delegated import _WORKER_BORROW
     from anonymizer.engine.graph_sdk.executor import LocalFailure
     from anonymizer.engine.graph_sdk.requests import SemanticAssociation
     from anonymizer.engine.ndd._source_frame import _SOURCE_WORK, SourceWork, WorkflowSourceFrame
+    from anonymizer.graph import EffectRejected
     from anonymizer.graph._values import InvocationId, TaskAttemptId
     from anonymizer.interface.errors import AnonymizerWorkflowError
     from tests.graph_sdk.test_delegated_execution import _execute, _fixture

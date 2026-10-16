@@ -9,11 +9,11 @@ from dataclasses import replace
 
 import pytest
 
-from anonymizer.engine.graph_sdk._effect_values import EffectRejected
 from anonymizer.engine.graph_sdk.context import ContextSourceRef
 from anonymizer.engine.graph_sdk.executor import BoundInputKey
 from anonymizer.engine.graph_sdk.qualification import qualify
 from anonymizer.engine.graph_sdk.requests import BindingAssociation
+from anonymizer.graph import EffectRejected
 from anonymizer.graph._values import DatumId
 from tests.graph_sdk.evidence_fixtures import _execute_assessment
 from tests.graph_sdk.qualification_fixtures import (

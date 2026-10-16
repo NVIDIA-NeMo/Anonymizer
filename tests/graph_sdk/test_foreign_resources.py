@@ -353,8 +353,8 @@ def test_foreign_public_cancel_drains_before_close(monkeypatch, stop_self_cancel
 )
 @pytest.mark.parametrize("optional", [False, True])
 def test_foreign_resource_rejection_precedes_invocation(monkeypatch, bad, optional):
-    from anonymizer.engine.graph_sdk._effect_values import EffectRejected
     from anonymizer.engine.graph_sdk.resources import ResourceLease
+    from anonymizer.graph import EffectRejected
     from anonymizer.graph._values import InvocationId
 
     async def run():
@@ -407,7 +407,7 @@ def test_foreign_resource_rejection_precedes_invocation(monkeypatch, bad, option
 
 @pytest.mark.parametrize("optional", [False, True])
 def test_claim_is_atomic_deduplicated_and_concurrent_admission_is_single_use(monkeypatch, optional):
-    from anonymizer.engine.graph_sdk._effect_values import EffectRejected
+    from anonymizer.graph import EffectRejected
     from anonymizer.graph._values import InvocationId
 
     async def run():
@@ -541,7 +541,7 @@ def test_caller_pool_unrelated_work_is_not_drained(optional):
 
 
 def test_unqualified_factory_profile_has_no_creation_effect():
-    from anonymizer.engine.graph_sdk._effect_values import EffectRejected
+    from anonymizer.graph import EffectRejected
 
     async def run():
         def forbidden():

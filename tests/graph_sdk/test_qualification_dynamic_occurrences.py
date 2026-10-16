@@ -9,10 +9,10 @@ from dataclasses import replace
 
 import pytest
 
-from anonymizer.engine.graph_sdk._effect_values import EffectCode, EffectRejected
 from anonymizer.engine.graph_sdk.evidence import AssessmentSubmission, admit_qualification, verify_evidence
 from anonymizer.engine.graph_sdk.executor import MapItemKey, OperationOutputKey, RootInputKey
 from anonymizer.engine.graph_sdk.qualification import qualify
+from anonymizer.graph import EffectCode, EffectRejected
 from tests.graph_sdk.test_effects_map_production_conformance import _execute_membership
 from tests.graph_sdk.test_evidence import _qualification_limits
 from tests.graph_sdk.test_qualification import _inputs

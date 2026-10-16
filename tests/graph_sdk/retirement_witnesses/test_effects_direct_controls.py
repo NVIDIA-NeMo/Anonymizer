@@ -6,13 +6,13 @@ from typing import Any, cast
 
 import pytest
 
-from anonymizer.engine.graph_sdk._effect_values import EffectCode, EffectRejected
 from anonymizer.engine.graph_sdk.capabilities import (
     PreparationCode,
     PreparationRejected,
 )
 from anonymizer.engine.graph_sdk.context import ContextSourceRef, SourceFailure
 from anonymizer.engine.graph_sdk.preparation import recheck_capabilities
+from anonymizer.graph import EffectCode, EffectRejected
 from tests.graph_sdk.test_preparation import _limits, _prepare
 
 

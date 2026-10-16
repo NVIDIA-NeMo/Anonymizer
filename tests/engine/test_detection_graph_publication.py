@@ -13,9 +13,9 @@ import pandas as pd
 import pytest
 
 from anonymizer.engine.constants import COL_REPLACEMENT_MAP, COL_TEXT
-from anonymizer.engine.graph_sdk._effect_values import EffectRejected
 from anonymizer.engine.graph_sdk.executor import admit_execution_plan
 from anonymizer.engine.ndd._graph_requests import NddPhysicalTransport, NddRequestBridge
+from anonymizer.graph import EffectRejected
 from tests.engine import test_detection_source_frame as detection_tests
 from tests.engine.test_detection_source_frame import run_graph_profile
 

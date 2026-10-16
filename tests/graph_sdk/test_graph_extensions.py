@@ -10,7 +10,6 @@ from unittest.mock import patch
 
 import pytest
 
-from anonymizer.engine.graph_sdk._effect_values import EffectCode, EffectRejected
 from anonymizer.engine.graph_sdk.continuity import StateNamespace, commit_qualified, create_continuity_state
 from anonymizer.engine.graph_sdk.extensions import (
     ArtifactSelection,
@@ -22,6 +21,7 @@ from anonymizer.engine.graph_sdk.extensions import (
 )
 from anonymizer.engine.graph_sdk.qualification import qualify
 from anonymizer.engine.graph_sdk.requests import TextArtifactValue, TextCollectionValue
+from anonymizer.graph import EffectCode, EffectRejected
 from tests.graph_sdk.context_source_assertions import _assert_context_execution
 from tests.graph_sdk.context_source_fixtures import _ContextProvider
 from tests.graph_sdk.continuity_fixtures import limits, prepare_case

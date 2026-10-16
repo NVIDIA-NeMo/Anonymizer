@@ -8,7 +8,6 @@ from typing import Any, cast
 
 import pytest
 
-from anonymizer.engine.graph_sdk._effect_values import EffectCode, EffectRejected
 from anonymizer.engine.graph_sdk.binding import start_initial_binding
 from anonymizer.engine.graph_sdk.context import (
     BindingLimits,
@@ -33,6 +32,7 @@ from anonymizer.engine.graph_sdk.requests import (
     TextCollectionValue,
 )
 from anonymizer.engine.graph_sdk.resources import ResourceLease
+from anonymizer.graph import EffectCode, EffectRejected
 from anonymizer.graph.workflow import (
     NodeId,
 )

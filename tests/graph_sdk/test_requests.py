@@ -8,7 +8,6 @@ from typing import Literal
 
 import pytest
 
-from anonymizer.engine.graph_sdk._effect_values import EffectCode, EffectRejected
 from anonymizer.engine.graph_sdk.requests import (
     AcceptFailure,
     AcceptResult,
@@ -35,6 +34,7 @@ from anonymizer.engine.graph_sdk.requests import (
     initialize_requests,
     request_receipt,
 )
+from anonymizer.graph import EffectCode, EffectRejected
 from anonymizer.graph._values import ActivationKey, InvocationId, PlanId, TaskAttemptId
 from anonymizer.graph.workflow import ArtifactType
 

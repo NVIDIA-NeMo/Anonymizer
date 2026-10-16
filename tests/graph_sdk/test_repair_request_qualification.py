@@ -10,7 +10,6 @@ from typing import Literal, cast
 
 import pytest
 
-from anonymizer.engine.graph_sdk._effect_values import EffectCode, EffectRejected
 from anonymizer.engine.graph_sdk.capabilities import ImplementationRef
 from anonymizer.engine.graph_sdk.context import admit_context_plan
 from anonymizer.engine.graph_sdk.data import DataGraph, DataLimits
@@ -44,6 +43,7 @@ from anonymizer.engine.graph_sdk.requests import (
     TransportSuccess,
 )
 from anonymizer.engine.graph_sdk.resources import ResourceLease
+from anonymizer.graph import EffectCode, EffectRejected
 from anonymizer.graph.activation import ActivationLimits
 from anonymizer.graph.workflow import (
     InputBinding,

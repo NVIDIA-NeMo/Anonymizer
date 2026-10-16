@@ -10,7 +10,7 @@ from typing import Any
 
 import pytest
 
-from anonymizer.engine.graph_sdk._effect_values import EffectRejected
+from anonymizer.graph import EffectRejected
 from tests.graph_sdk.qualification_map_execution import CORPUS, FLAT_CASE_IDS
 from tests.graph_sdk.qualification_map_execution import _execute_reference_map as _execute_reference_map
 from tests.graph_sdk.qualification_map_records import _run_reference_map_case

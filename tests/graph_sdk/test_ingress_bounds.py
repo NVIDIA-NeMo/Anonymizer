@@ -11,7 +11,6 @@ from typing import cast, get_args
 
 import pytest
 
-from anonymizer.engine.graph_sdk._effect_values import EffectRejected
 from anonymizer.engine.graph_sdk._ingress import inspect_associations, inspect_source
 from anonymizer.engine.graph_sdk.context import ContextSourceRef, SourceItem, SourceResponse
 from anonymizer.engine.graph_sdk.executor import AssessmentFinding, IngressLimits, LocalAssessmentResult
@@ -34,6 +33,7 @@ from anonymizer.engine.graph_sdk.requests import (
     UnknownUsage,
 )
 from anonymizer.engine.graph_sdk.resources import ResourceLease
+from anonymizer.graph import EffectRejected
 from anonymizer.graph._values import InvocationId, PlanId
 from anonymizer.graph.workflow import ArtifactType
 from tests.graph_sdk import evidence_fixtures

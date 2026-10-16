@@ -10,7 +10,6 @@ from typing import Any, cast
 
 import pytest
 
-from anonymizer.engine.graph_sdk._effect_values import EffectRejected
 from anonymizer.engine.graph_sdk.capabilities import ImplementationCapability, ImplementationRef
 from anonymizer.engine.graph_sdk.context import (
     admit_context_plan,
@@ -40,6 +39,7 @@ from anonymizer.engine.graph_sdk.requests import (
     PhysicalRequestPolicy,
     SemanticAssociation,
 )
+from anonymizer.graph import EffectRejected
 from anonymizer.graph._values import ArtifactRef, InvocationId
 from anonymizer.graph.workflow import (
     NodeId,

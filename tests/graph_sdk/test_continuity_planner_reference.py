@@ -9,10 +9,10 @@ from dataclasses import replace
 
 import pytest
 
-from anonymizer.engine.graph_sdk._effect_values import EffectCode, EffectRejected
 from anonymizer.engine.graph_sdk.continuity import _survivors
 from anonymizer.engine.graph_sdk.data import AtomicGroup, DataGraph, DatumDependency
 from anonymizer.engine.graph_sdk.records import DecisionRef
+from anonymizer.graph import EffectCode, EffectRejected
 from tests.graph_sdk.continuity_graph_fixture import execute_graph
 from tests.graph_sdk.reference.continuity.cases import Case, generated, known
 from tests.graph_sdk.reference.continuity.reference import greatest

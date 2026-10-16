@@ -9,8 +9,8 @@ from dataclasses import replace
 
 import pytest
 
-from anonymizer.engine.graph_sdk._effect_values import EffectRejected
 from anonymizer.engine.graph_sdk.qualification import qualify
+from anonymizer.graph import EffectRejected
 from anonymizer.graph._values import ActivationKey, ContractViolation, TaskAttemptId
 from tests.graph_sdk.evidence_fixtures import _execute_assessment
 from tests.graph_sdk.qualification_fixtures import _inputs

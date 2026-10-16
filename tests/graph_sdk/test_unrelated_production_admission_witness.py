@@ -10,9 +10,9 @@ from typing import Any
 
 import pytest
 
-from anonymizer.engine.graph_sdk._effect_values import EffectRejected
 from anonymizer.engine.graph_sdk.evidence import admit_qualification
 from anonymizer.engine.graph_sdk.qualification import qualify
+from anonymizer.graph import EffectRejected
 from tests.graph_sdk import evidence_fixtures as fixture
 from tests.graph_sdk.qualification_fixtures import _inputs
 from tests.graph_sdk.workflow_construction import AdmittedWorkflow, admit_static_workflow

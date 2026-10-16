@@ -10,11 +10,11 @@ from typing import Any
 
 import pytest
 
-from anonymizer.engine.graph_sdk._effect_values import EffectRejected
 from anonymizer.engine.graph_sdk.capabilities import PreparationRejected
 from anonymizer.engine.graph_sdk.data import AtomicGroup, DatumDependency
 from anonymizer.engine.graph_sdk.evidence import QualificationLimits, admit_qualification
 from anonymizer.engine.graph_sdk.executor import AdmittedExecutionPlan, admit_execution_plan
+from anonymizer.graph import EffectRejected
 from anonymizer.graph._values import ContractViolation, DatumId, ValidationCode
 from anonymizer.graph.workflow import CoverageAtom
 from tests.graph_sdk import test_qualification_subject_context as fixture

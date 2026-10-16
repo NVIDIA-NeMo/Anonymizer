@@ -10,10 +10,10 @@ from dataclasses import replace
 
 import pytest
 
-from anonymizer.engine.graph_sdk._effect_values import EffectRejected
 from anonymizer.engine.graph_sdk.executor import LocalCompleted, LocalFailure, MapItemKey, OperationOutputKey
 from anonymizer.engine.graph_sdk.qualification import qualify
 from anonymizer.engine.graph_sdk.requests import AssociationInput, TextArtifactValue, TextCollectionValue
+from anonymizer.graph import EffectRejected
 from tests.graph_sdk.qualification_fixtures import _inputs
 from tests.graph_sdk.qualification_map_callbacks import _ReferenceMapCallback
 from tests.graph_sdk.qualification_map_execution import _execute_reference_map

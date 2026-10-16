@@ -17,9 +17,9 @@ from anonymizer.config.rewrite import PrivacyGoal
 from anonymizer.engine.constants import COL_DETECTED_ENTITIES, COL_ENTITIES_BY_VALUE, COL_FINAL_ENTITIES, COL_TEXT
 from anonymizer.engine.detection._frame_publication import PublishedFrame
 from anonymizer.engine.detection.detection_workflow import EntityDetectionResult, EntityDetectionWorkflow
-from anonymizer.engine.graph_sdk._effect_values import EffectCode, EffectRejected
 from anonymizer.engine.graph_sdk.requests import TextArtifactValue
 from anonymizer.engine.ndd.adapter import FailedRecord, WorkflowRunResult
+from anonymizer.graph import EffectCode, EffectRejected
 from anonymizer.interface.errors import AnonymizerWorkflowError
 
 

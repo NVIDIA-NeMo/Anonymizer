@@ -9,9 +9,9 @@ from dataclasses import replace
 
 import pytest
 
-from anonymizer.engine.graph_sdk._effect_values import EffectCode, EffectRejected
 from anonymizer.engine.graph_sdk.executor import LocalCompleted, start_execution
 from anonymizer.engine.graph_sdk.requests import AssociationResult, PortArtifact, TextArtifactValue
+from anonymizer.graph import EffectCode, EffectRejected
 from tests.graph_sdk.delegated_execution_fixtures import with_multiple_sources
 from tests.graph_sdk.test_delegated_execution import _execute
 from tests.graph_sdk.test_delegated_readiness import _qualify, _ready_fixture

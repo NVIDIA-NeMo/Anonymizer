@@ -8,7 +8,6 @@ from typing import Any, cast
 
 import pytest
 
-from anonymizer.engine.graph_sdk._effect_values import EffectCode, EffectRejected
 from anonymizer.engine.graph_sdk.inspection import InspectionLimits, encode_inspection
 from anonymizer.engine.graph_sdk.observations import (
     _OBSERVATION_KEY,
@@ -23,6 +22,7 @@ from anonymizer.engine.graph_sdk.observations import (
     begin_observations,
     reserve_observation_scope,
 )
+from anonymizer.graph import EffectCode, EffectRejected
 
 
 class Clock:

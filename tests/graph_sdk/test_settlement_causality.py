@@ -8,7 +8,6 @@ from dataclasses import replace
 
 import pytest
 
-from anonymizer.engine.graph_sdk._effect_values import EffectCode, EffectRejected
 from anonymizer.engine.graph_sdk.requests import (
     Dispatch,
     ExactUsage,
@@ -26,6 +25,7 @@ from anonymizer.engine.graph_sdk.requests import (
     advance_requests,
     request_receipt,
 )
+from anonymizer.graph import EffectCode, EffectRejected
 from anonymizer.graph._values import InvocationId, PlanId
 from tests.graph_sdk.test_compact_foundation import _request_state
 

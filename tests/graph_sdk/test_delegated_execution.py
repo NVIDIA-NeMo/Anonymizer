@@ -12,7 +12,6 @@ from typing import ClassVar, Literal
 
 import pytest
 
-from anonymizer.engine.graph_sdk._effect_values import EffectCode, EffectRejected
 from anonymizer.engine.graph_sdk._execution_values import DelegatedRequests
 from anonymizer.engine.graph_sdk.executor import (
     AssessmentFinding,
@@ -38,6 +37,7 @@ from anonymizer.engine.graph_sdk.requests import (
     TransportFailure,
     TransportSuccess,
 )
+from anonymizer.graph import EffectCode, EffectRejected
 from anonymizer.graph._values import TaskAttemptId
 from tests.graph_sdk.child_qualification_fixtures import child_fixture
 from tests.graph_sdk.effects_admission_fixtures import _ZeroClock

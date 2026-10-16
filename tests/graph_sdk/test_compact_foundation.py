@@ -12,7 +12,6 @@ from typing import Any
 
 import pytest
 
-from anonymizer.engine.graph_sdk._effect_values import EffectRejected
 from anonymizer.engine.graph_sdk.data import AtomicGroup, CoherenceScope, DatumDependency, SourceRelation, SourceView
 from anonymizer.engine.graph_sdk.requests import (
     AcceptResult,
@@ -31,6 +30,7 @@ from anonymizer.engine.graph_sdk.requests import (
     initialize_requests,
 )
 from anonymizer.engine.graph_sdk.resources import ResourceLease, close_resource
+from anonymizer.graph import EffectRejected
 from anonymizer.graph._values import ContractViolation, InvocationId, PlanId
 from tests.graph_sdk.test_data_graph import _graph_with_texts, _validate
 from tests.graph_sdk.test_requests import _association, _policy

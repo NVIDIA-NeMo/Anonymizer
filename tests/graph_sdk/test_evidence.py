@@ -10,7 +10,6 @@ from typing import cast
 
 import pytest
 
-from anonymizer.engine.graph_sdk._effect_values import EffectCode, EffectRejected
 from anonymizer.engine.graph_sdk.capabilities import FrozenConfig
 from anonymizer.engine.graph_sdk.evidence import (
     AssessmentSubmission,
@@ -30,6 +29,7 @@ from anonymizer.engine.graph_sdk.preparation import (
     StateRevisionView,
 )
 from anonymizer.engine.graph_sdk.records import AbsenceRef, CandidateRef, DecisionRef
+from anonymizer.graph import EffectCode, EffectRejected
 from anonymizer.graph._values import ArtifactRef, InvocationId
 from anonymizer.graph.workflow import (
     CoverageAtom,

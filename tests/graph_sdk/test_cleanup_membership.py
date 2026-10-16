@@ -9,8 +9,8 @@ from dataclasses import replace
 
 import pytest
 
-from anonymizer.engine.graph_sdk._effect_values import EffectCode, EffectRejected
 from anonymizer.engine.graph_sdk.resources import ResourceId
+from anonymizer.graph import EffectCode, EffectRejected
 from anonymizer.graph._values import InvocationId
 from tests.graph_sdk.child_qualification_fixtures import result_with
 from tests.graph_sdk.test_delegated_execution import _execute

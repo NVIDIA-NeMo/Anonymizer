@@ -10,7 +10,6 @@ from typing import Any
 
 import pytest
 
-from anonymizer.engine.graph_sdk._effect_values import EffectRejected
 from anonymizer.engine.graph_sdk.evidence import (
     AdmittedQualification,
     AssessmentSubmission,
@@ -20,6 +19,7 @@ from anonymizer.engine.graph_sdk.evidence import (
 )
 from anonymizer.engine.graph_sdk.executor import AdmittedExecutionPlan, ExecutionResult, MapItemKey, start_execution
 from anonymizer.engine.graph_sdk.qualification import qualify
+from anonymizer.graph import EffectRejected
 from anonymizer.graph._values import ActivationKey, DatumId, InvocationId
 from anonymizer.graph.workflow import NodeId
 from tests.graph_sdk import qualification_map_execution as fixture

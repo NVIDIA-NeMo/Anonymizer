@@ -10,7 +10,6 @@ from typing import cast
 
 import pytest
 
-from anonymizer.engine.graph_sdk._effect_values import EffectRejected
 from anonymizer.engine.graph_sdk.blocking import BlockingContextProvider
 from anonymizer.engine.graph_sdk.context import (
     AdaptiveRetrievalDecl,
@@ -64,6 +63,7 @@ from anonymizer.engine.graph_sdk.requests import (
     TransportSuccess,
 )
 from anonymizer.engine.graph_sdk.resources import ResourceLease
+from anonymizer.graph import EffectRejected
 from anonymizer.graph.activation import ActivationLimits
 from anonymizer.graph.workflow import (
     ArtifactType,

@@ -12,7 +12,6 @@ from threading import Event, get_ident
 
 import pytest
 
-from anonymizer.engine.graph_sdk._effect_values import EffectCode, EffectRejected
 from anonymizer.engine.graph_sdk._foreign_transport import ForeignLoopTransport, _EntryGate
 from anonymizer.engine.graph_sdk._request_driver import _RequestAuthority, drive_request
 from anonymizer.engine.graph_sdk.requests import (
@@ -32,6 +31,7 @@ from anonymizer.engine.graph_sdk.requests import (
     TransportSuccess,
     initialize_requests,
 )
+from anonymizer.graph import EffectCode, EffectRejected
 from anonymizer.graph.activation import CloseUnstarted, ObserveTerminal, Select, Start, advance_activation
 from tests.graph_sdk.test_activation import _initialized
 from tests.graph_sdk.test_blocking import Control, until

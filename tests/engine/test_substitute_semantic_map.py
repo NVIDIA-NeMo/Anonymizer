@@ -26,12 +26,12 @@ from anonymizer.engine.constants import (
     COL_TEXT,
 )
 from anonymizer.engine.detection._frame_publication import FramePublication, InvocationFrame, PublishedFrame
-from anonymizer.engine.graph_sdk._effect_values import EffectRejected
 from anonymizer.engine.graph_sdk._execution_delegated import source_worker_borrow
 from anonymizer.engine.ndd.adapter import FailedRecord, WorkflowRunResult
 from anonymizer.engine.replace._semantic_map import MapBinding
 from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceResult, LlmReplaceWorkflow
 from anonymizer.engine.replace.replace_runner import ReplacementWorkflow
+from anonymizer.graph import EffectRejected
 from tests.engine import test_detection_source_frame as detection_tests
 
 scripted_detection = detection_tests.scripted_detection

@@ -224,8 +224,8 @@ def test_structured_source_admission_and_mutation(
 ) -> None:
     from anonymizer.config.rewrite import EvaluationCriteria, PrivacyGoal
     from anonymizer.engine.constants import COL_TEXT
-    from anonymizer.engine.graph_sdk._effect_values import EffectRejected
     from anonymizer.engine.ndd.model_loader import load_default_model_selection
+    from anonymizer.graph import EffectRejected
 
     frame = pd.DataFrame(
         {
@@ -402,7 +402,7 @@ def test_opaque_detector_with_native_adapter_preserves_caller_and_admission(
 ) -> None:
     from data_designer.interface.data_designer import DataDesigner
 
-    from anonymizer.engine.graph_sdk._effect_values import EffectRejected
+    from anonymizer.graph import EffectRejected
 
     path = tmp_path / "source.csv"
     pd.DataFrame({"text": ["No sensitive entities."]}).to_csv(path, index=False)

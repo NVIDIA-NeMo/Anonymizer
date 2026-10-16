@@ -9,7 +9,7 @@ from typing import Any, cast
 
 import pytest
 
-from anonymizer.engine.graph_sdk._effect_values import EffectRejected
+from anonymizer.graph import EffectRejected
 from anonymizer.graph.workflow import (
     ArtifactType,
     ContractViolation,

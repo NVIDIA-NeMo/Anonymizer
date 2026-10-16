@@ -15,13 +15,13 @@ from threading import Event, Thread, get_ident
 import pytest
 
 from anonymizer.engine.graph_sdk import _execution_delegated
-from anonymizer.engine.graph_sdk._effect_values import EffectRejected
 from anonymizer.engine.graph_sdk.blocking import BlockingAffinity, BlockingPool
 from anonymizer.engine.graph_sdk.context import admit_context_plan
 from anonymizer.engine.graph_sdk.executor import LocalFailure, admit_execution_plan, start_execution
 from anonymizer.engine.graph_sdk.preparation import prepare
 from anonymizer.engine.graph_sdk.requests import ExactUsage, StopConfirmed, StopUnknown, TextArtifactValue
 from anonymizer.engine.graph_sdk.resources import ResourceLease
+from anonymizer.graph import EffectRejected
 from tests.graph_sdk.implementation_fixtures import _selection
 from tests.graph_sdk.test_blocking import until
 from tests.graph_sdk.test_delegated_execution import _execute, _fixture, _Transport

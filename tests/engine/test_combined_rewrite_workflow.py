@@ -664,7 +664,7 @@ def test_standalone_finalizer_rejects_unobserved_initial_decision(
     stub_replace_model_selection: ReplaceModelSelection,
     decision: str | None,
 ) -> None:
-    from anonymizer.engine.graph_sdk._effect_values import EffectRejected
+    from anonymizer.graph import EffectRejected
 
     graph = CombinedRewriteWorkflow(adapter=Mock()).build_graph(
         selected_models=stub_rewrite_model_selection,
