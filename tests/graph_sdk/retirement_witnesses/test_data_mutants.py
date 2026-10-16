@@ -4,18 +4,17 @@
 
 from __future__ import annotations
 
-import json
 from copy import deepcopy
-from pathlib import Path
 from typing import Any, cast
 
 import pytest
 
 from anonymizer.engine.graph_sdk.records import TargetStatus
+from tests.graph_sdk.retirement_witnesses.witness_sources import data_mutant_cases
 from tests.graph_sdk.test_data_reference_conformance import _adapt
 from tests.graph_sdk.test_record_values import _RecordAdapter
 
-CASES = json.loads(Path(__file__).with_name("data-mutant-cases.json").read_text())
+CASES = data_mutant_cases()
 
 
 @pytest.mark.parametrize("row", CASES, ids=lambda row: row["mutant"])

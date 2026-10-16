@@ -4,7 +4,9 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+import re
+from collections.abc import Hashable, Mapping, Sequence
+from functools import cache
 from typing import cast
 
 from anonymizer.engine.graph_sdk.data import (
@@ -22,6 +24,7 @@ from anonymizer.engine.graph_sdk.data import (
 )
 from anonymizer.graph._values import ContractViolation, DatumId, GraphId, ValidationCode
 from tests.graph_sdk.reference import data_shapes
+from tests.graph_sdk.reference.representatives import representatives
 
 
 class _DataReferenceAdapter:
@@ -250,9 +253,50 @@ def _adapt(case: data_shapes.FixtureCase) -> data_shapes.ValidationResult:
     return {"verdict": "accept", "normalized": adapter.normalized(graph)}
 
 
-def test_all_frozen_data_cases_match_product_validation_and_normalization() -> None:
-    cases = data_shapes.load_data_cases()
-    data_cases = [case for case in cases if case["declaration"]["kind"] == "data"]
-    assert len(data_cases) == 38_267
-    for case in data_cases:
+_SWEPT_FAMILIES = frozenset({"precedence", "encoding-bounds", "ownership-negatives"})
+
+
+def _arity(value: Mapping[str, object]) -> tuple[int, ...]:
+    return tuple(len(item) for _, item in sorted(value.items()) if isinstance(item, list))
+
+
+def _data_signature(case: data_shapes.FixtureCase) -> Hashable:
+    """Family, case variant, frozen verdict/code and declaration/answer arities."""
+    expected = cast(Mapping[str, object], case["expected"])
+    variant = re.sub(rf"^{re.escape(case['family'])}-\d+", "", case["case_id"])
+    normalized = cast(Mapping[str, object], expected.get("normalized", {}))
+    return (
+        case["family"],
+        variant,
+        expected["verdict"],
+        expected.get("code"),
+        _arity(cast(Mapping[str, object], case["declaration"])),
+        _arity(normalized),
+    )
+
+
+@cache
+def _frozen_data_cases() -> tuple[data_shapes.FixtureCase, ...]:
+    """Decode once per session; consumers only read these cases."""
+    return tuple(case for case in data_shapes.load_data_cases() if case["declaration"]["kind"] == "data")
+
+
+def _data_representatives(cases: Sequence[data_shapes.FixtureCase]) -> list[data_shapes.FixtureCase]:
+    return representatives(cases, _data_signature, sweep=lambda case: case["family"] in _SWEPT_FAMILIES)
+
+
+def test_data_representatives_cover_every_frozen_signature() -> None:
+    cases = _frozen_data_cases()
+    assert len(cases) == 38_267
+    selected = _data_representatives(cases)
+    assert [case["case_id"] for case in selected] == [case["case_id"] for case in _data_representatives(cases)]
+    assert {_data_signature(case) for case in selected} == {_data_signature(case) for case in cases}
+    assert [case for case in cases if case["family"] in _SWEPT_FAMILIES] == [
+        case for case in selected if case["family"] in _SWEPT_FAMILIES
+    ]
+    assert len(selected) < len(cases) // 25
+
+
+def test_frozen_data_representatives_match_product_validation_and_normalization() -> None:
+    for case in _data_representatives(_frozen_data_cases()):
         assert _adapt(case) == case["expected"], case["case_id"]

@@ -6,14 +6,15 @@ from __future__ import annotations
 
 import json
 from copy import deepcopy
-from pathlib import Path
 from typing import Any, cast
 
 import pytest
 
+from tests.graph_sdk.retirement_witnesses.witness_sources import workflow_mutant_cases
+
 Json = Any
 Object = dict[str, Any]
-FROZEN_CASES = json.loads(Path(__file__).with_name("workflow-mutant-cases.json").read_text())
+FROZEN_CASES = workflow_mutant_cases()
 
 
 def _object(value: Json) -> Object:

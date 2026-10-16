@@ -8,7 +8,8 @@ import copy
 import hashlib
 import json
 import pickle
-from collections.abc import Callable
+import re
+from collections.abc import Callable, Hashable
 from dataclasses import FrozenInstanceError, replace
 from pathlib import Path
 from typing import TypeAlias, TypeVar, cast
@@ -54,6 +55,7 @@ from anonymizer.graph.workflow import (
     WorkflowOutputRef,
 )
 from tests.graph_sdk.reference.corpora import corpus_bytes
+from tests.graph_sdk.reference.representatives import representatives
 from tests.graph_sdk.workflow_construction import AdmittedWorkflow, admit_static_workflow, substitute
 from tests.graph_sdk.workflow_fixtures import _single_node_workflow
 
@@ -563,14 +565,56 @@ def _case(*, family: str, mutation: str) -> Object:
     )
 
 
-def test_all_frozen_cases_and_traces_match_product_boundaries() -> None:
+_BOUNDARY_MUTATION = re.compile(r"/(exact|exact_all|one_under_\w+|\w+_by_1)$")
+
+
+def _static_signature(case: Object) -> Hashable:
+    """Family, mode, frozen answer, declaration size and per-trace frozen answers."""
+    expected = _object(case["expected"])
+    declaration = _object(case["declaration"])
+    traces = tuple(
+        sorted(
+            (trace["transformation"], _object(trace["expected"])["status"], _object(trace["expected"])["code"])
+            for trace in map(_object, _array(case["traces"]))
+        )
+    )
+    return (
+        case["family"],
+        case["mode"],
+        expected["status"],
+        expected["code"],
+        json.dumps(expected["topology"], sort_keys=True),
+        len(_array(declaration["nodes"])),
+        len(_array(declaration["sequence"])),
+        traces,
+    )
+
+
+def _static_representatives() -> list[Object]:
     assert isinstance(CASES, list)
-    compared_cases = 0
-    compared_traces = 0
-    for value in CASES:
-        case = _object(value)
+    return representatives(
+        [_object(value) for value in CASES],
+        _static_signature,
+        sweep=lambda case: _BOUNDARY_MUTATION.search(cast(str, case["case_id"])) is not None,
+    )
+
+
+def test_static_representatives_cover_every_frozen_signature() -> None:
+    assert isinstance(CASES, list)
+    cases = [_object(value) for value in CASES]
+    assert len(cases) == 526
+    assert sum(len(_array(case["traces"])) for case in cases) == 962
+    selected = _static_representatives()
+    assert [case["case_id"] for case in selected] == [case["case_id"] for case in _static_representatives()]
+    assert {_static_signature(case) for case in selected} == {_static_signature(case) for case in cases}
+    boundary = [case for case in cases if _BOUNDARY_MUTATION.search(cast(str, case["case_id"]))]
+    assert boundary and all(case in selected for case in boundary)
+    assert len(selected) < len(cases) // 4
+
+
+def test_frozen_representatives_and_traces_match_product_boundaries() -> None:
+    for case in _static_representatives():
         _assert_case(case)
-        compared_cases += 1
         for trace_value in _array(case["traces"]):
             trace = _object(trace_value)
             traced_case = dict(case)
@@ -578,9 +622,6 @@ def test_all_frozen_cases_and_traces_match_product_boundaries() -> None:
             traced_case["replacement"] = trace["replacement"]
             traced_case["expected"] = trace["expected"]
             _assert_case(traced_case, suffix=f"/{trace['transformation']}")
-            compared_traces += 1
-    assert compared_cases == 526
-    assert compared_traces == 962
 
 
 def _zero_operation(name: str = "private-value") -> OperationSpec:

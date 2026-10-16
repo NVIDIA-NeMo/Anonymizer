@@ -37,11 +37,6 @@
       "adopted_sha256": "adf9a12a89af35519ef523de1ccd3fa54ae011111f4711cd317017b4b239d3f6",
       "relocated": false
     },
-    "coverage-draft.json": {
-      "frozen_sha256": "6dc9f712be43702b54faafd45849a4357b43a0b8649c13d18674d776e5c33d8d",
-      "adopted_sha256": "6dc9f712be43702b54faafd45849a4357b43a0b8649c13d18674d776e5c33d8d",
-      "relocated": false
-    },
     "p7_reference/test_model.py": {
       "frozen_sha256": "867b3f9f8c7d3bb5b2fd6789f0b087b7b03a0e3dfc1c90920968ec34bc85a85e",
       "adopted_sha256": "d56fae4fbab2df0a187c9076fd344a25c262dfde634dba0769121b8380ab45b8",
@@ -63,5 +58,11 @@
       "relocated": false
     }
   },
-  "changes": "Only package import qualification and matching calibration sys.modules module identity relocation. Original manifests remain unchanged; adopted generator source hashes differ while corpus bytes remain fixed."
+  "changes": "Only package import qualification and matching calibration sys.modules module identity relocation. Original manifests remain unchanged; adopted generator source hashes differ while corpus bytes remain fixed.",
+  "archived": {
+    "coverage-draft.json": {
+      "frozen_sha256": "6dc9f712be43702b54faafd45849a4357b43a0b8649c13d18674d776e5c33d8d",
+      "reason": "Campaign coverage ledger with no test consumer; relocated byte-identically to the campaign archive. frozen.json and README.md keep their historical references."
+    }
+  }
 }

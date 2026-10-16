@@ -8,11 +8,12 @@ from typing import Any
 
 import pytest
 
+from tests.graph_sdk.retirement_witnesses.witness_sources import activation_differences
 from tests.graph_sdk.test_activation_reference_conformance import (
     test_frozen_activation_case_matches_product as compare,
 )
 
-DIFFERENCES = {c["case_id"] for c in json.loads(Path(__file__).with_name("activation-differences.json").read_text())}
+DIFFERENCES = {c["case_id"] for c in activation_differences()}
 CASES = json.loads(Path(__file__).with_name("activation-extracted-cases.json").read_text())
 
 

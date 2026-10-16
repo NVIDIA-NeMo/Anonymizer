@@ -4,15 +4,14 @@
 
 from __future__ import annotations
 
-import json
-from pathlib import Path
 from typing import Any
 
 import pytest
 
+from tests.graph_sdk.retirement_witnesses.witness_sources import workflow_mutant_cases
 from tests.graph_sdk.test_workflow_static import _assert_case
 
-CASES = json.loads(Path(__file__).with_name("workflow-mutant-cases.json").read_text())
+CASES = workflow_mutant_cases()
 
 
 @pytest.mark.parametrize("case", CASES, ids=lambda row: row["case_id"])

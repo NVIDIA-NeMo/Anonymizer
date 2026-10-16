@@ -4,9 +4,7 @@
 
 from __future__ import annotations
 
-import json
 from copy import deepcopy
-from pathlib import Path
 from typing import Any
 
 import pytest
@@ -15,6 +13,7 @@ from tests.graph_sdk import test_effects_production_conformance as request_fixtu
 from tests.graph_sdk.retirement_witnesses.test_owner_boundaries import (
     test_binding_finish_and_wrong_source as check_binding,
 )
+from tests.graph_sdk.retirement_witnesses.witness_sources import extra_effects_traces
 from tests.graph_sdk.test_effects_production_conformance import (
     test_request_corpus_case_through_production as compare_request,
 )
@@ -35,11 +34,7 @@ _ALLOWED = frozenset(
         "source_result",
     }
 )
-_CASES = [
-    row
-    for row in json.loads(Path(__file__).with_name("extra-effects-traces.json").read_text())
-    if {event["kind"] for event in row["events"]} <= _ALLOWED
-]
+_CASES = [row for row in extra_effects_traces() if {event["kind"] for event in row["events"]} <= _ALLOWED]
 
 
 @pytest.mark.parametrize("case", _CASES, ids=lambda row: row["case_id"])

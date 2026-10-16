@@ -5,6 +5,8 @@
 
 `foundation_v2` and `evidence_v1` preserve independently reviewed finite reference bundles. The original README, manifests, corpora and review evidence remain unchanged. Their historical status and commands describe the original standalone locations. `adoption.json` records original and relocated digests; `relocation.patch` records the import-only changes needed here, including the calibration module identity. Both predicate/model source files and both corpus files are byte-identical to the reviewed originals. Source digests in a newly generated evidence manifest consequently differ from the historical manifest; all other manifest fields and corpus bytes agree.
 
+The evidence bundle's `coverage-draft.json` campaign ledger had no test consumer and now lives in the campaign archive. Its digest stays in `frozen.json` and under `archived` in `adoption.json`. The hash-pinned evidence README still describes it as part of the original review bundle.
+
 From the repository root, run the maintained checks:
 
 ```sh
