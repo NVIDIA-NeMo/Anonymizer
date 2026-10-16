@@ -403,6 +403,7 @@ class RewriteEvaluationBinding:
                 index=frame.index,
                 dtype=frame[COL_REWRITTEN_TEXT].dtype,
             )
+        _restore_arrow_dtypes(projected, frame)
         return selected, projected
 
     def lower_ready(
@@ -833,3 +834,28 @@ class _StageArguments(TypedDict):
     source_frame: WorkflowSourceFrame
     rewrite_binding: RewriteEvaluationBinding
     request_bridge: NotRequired[None]
+
+
+def _restore_arrow_dtypes(projected: pd.DataFrame, frame: pd.DataFrame) -> None:
+    """Keep DataDesigner's Arrow-backed column dtypes across row-wise reassembly.
+
+    `finish` rebuilds the published frame from per-row dicts, which decays
+    Arrow-backed columns to NumPy/object dtypes. The legacy Rewrite path
+    returned DataDesigner's Arrow-backed frames as-is, so restore each column
+    whose source dtype was Arrow-backed. Values are unchanged; missing values
+    become Arrow nulls (`pd.NA`), as in the legacy output. The rewritten text
+    keeps its observed candidate values here; frame publication presents it
+    with `rewritten_text_presentation_dtype`.
+    """
+    for column in projected.columns:
+        dtype = frame[column].dtype if column in frame.columns else None
+        if column != COL_REWRITTEN_TEXT and isinstance(dtype, pd.ArrowDtype) and projected[column].dtype != dtype:
+            projected[column] = pd.Series(
+                pd.array(projected[column].tolist(), dtype=dtype), index=projected.index, name=column
+            )
+
+
+def rewritten_text_presentation_dtype(frame: pd.DataFrame) -> dict[str, pd.ArrowDtype]:
+    """Return the legacy Arrow-backed presentation dtype of the rewritten text, if any."""
+    dtype = frame[COL_REWRITTEN_TEXT].dtype if COL_REWRITTEN_TEXT in frame.columns else None
+    return {COL_REWRITTEN_TEXT: dtype} if isinstance(dtype, pd.ArrowDtype) else {}

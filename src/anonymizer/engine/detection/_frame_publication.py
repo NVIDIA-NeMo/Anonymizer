@@ -25,6 +25,8 @@ from anonymizer.engine.rewrite.artifacts import RewriteCandidateValue
 from anonymizer.graph._values import ActivationKey, ArtifactRef
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from anonymizer.engine.graph_sdk.executor import ExecutionPortFact, ExecutionResult
 
 
@@ -159,12 +161,19 @@ class PublishedFrame:
                 observed = [json.loads(cast(str, value)) for value in observed]
             presented = pd.Series(observed, index=projected.index, dtype=dtype)
             if any(
-                type(value) is RewriteCandidateValue and RewriteCandidateValue.capture(cell) != value
+                type(value) is RewriteCandidateValue
+                and RewriteCandidateValue.capture(cell) != value
+                and not _arrow_null_presentation(value, cell, dtype)
                 for value, cell in zip(text, presented, strict=True)
             ):
                 raise ValueError("frame presentation differs from its accepted candidate")
             projected[column] = presented
         return projected.reindex(columns=self._columns)
+
+
+def _arrow_null_presentation(value: RewriteCandidateValue, cell: object, dtype: object) -> bool:
+    """A null candidate presents as `pd.NA` in a nullable Arrow column, as the legacy output did."""
+    return isinstance(dtype, pd.ArrowDtype) and cell is pd.NA and value == RewriteCandidateValue.capture(None)
 
 
 def _copy_frame(frame: pd.DataFrame, opaque: tuple[object, ...]) -> pd.DataFrame:
@@ -202,6 +211,7 @@ class FramePublication:
         opaque_source: pd.DataFrame,
         span_ports: tuple[tuple[str, str, tuple[EntitySpansValue, ...]], ...] = (),
         observation_ports: tuple[tuple[str, str], ...] = (),
+        observation_dtypes: Mapping[str, pd.api.extensions.ExtensionDtype] | None = None,
         stages: FrameStages | None = None,
         json_ports: tuple[tuple[str, str], ...] = (),
     ) -> FramePublication:
@@ -238,7 +248,10 @@ class FramePublication:
             failed_records,
             opaque,
             stages.snapshot(opaque) if stages is not None else None,
-            tuple((column, dataframe[column].dtype) for column, _ in (*text_ports, *observation_ports)),
+            tuple(
+                (column, (observation_dtypes or {}).get(column, dataframe[column].dtype))
+                for column, _ in (*text_ports, *observation_ports)
+            ),
             tuple(column for column, _ in json_ports),
         )
 

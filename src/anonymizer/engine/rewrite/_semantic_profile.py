@@ -64,6 +64,7 @@ from anonymizer.engine.rewrite._semantic_evaluation import (
     EVALUATION_PASS,
     EVALUATION_PROMISE,
     RewriteEvaluationBinding,
+    rewritten_text_presentation_dtype,
 )
 from anonymizer.engine.rewrite.artifacts import (
     REWRITE_TYPES,
@@ -694,6 +695,7 @@ async def execute_initial_evaluation(
             associations=tuple(selected[association] for association in successful),
             text_ports=(),
             observation_ports=((COL_REWRITTEN_TEXT, "candidate"),),
+            observation_dtypes=rewritten_text_presentation_dtype(result.dataframe),
             failed_records=tuple((detected.failed_records if detected is not None else []) + result.failed_records),
             opaque_source=source,
             stages=FrameStages(
