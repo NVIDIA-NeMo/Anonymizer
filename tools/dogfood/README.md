@@ -16,17 +16,26 @@ Files:
 - `compare.py` — diffs two `dogfood_run.py` output directories (columns, dtypes, entity overlap,
   surviving entity values in output, rewrite metrics).
 - `model_configs.yaml` / `providers.yaml` — a small default model pool (local GLiNER2 detector +
-  one gateway chat model) and provider definitions, naming env vars only.
+  two chat models behind the NVIDIA inference gateway) and provider definitions, naming env vars
+  only.
 
 ## Setup
 
-1. `uv sync --frozen`
-2. Start a GLiNER2-compatible detector server. Either:
-   - run `tools/serve_gliner.py` directly, or
-   - use the notebook runtime (`anonymizer.notebooks.create_anonymizer()`).
-   See [`docs/concepts/self-hosting-gliner.md`](../../docs/concepts/self-hosting-gliner.md) for the
-   server contract and both options. `providers.yaml` in this kit expects it on
-   `http://127.0.0.1:8001/v1`.
+1. `uv sync --frozen --extra notebooks` — the `notebooks` extra is required because
+   `tools/serve_gliner.py` depends on packages it declares (`gliner2[local]`, `fastapi`,
+   `huggingface-hub`, etc.); confirmed in
+   [`docs/concepts/self-hosting-gliner.md`](../../docs/concepts/self-hosting-gliner.md#running-the-development-server-directly)
+   and `pyproject.toml`'s `[project.optional-dependencies].notebooks`.
+2. Start the detector server this kit's `providers.yaml` expects on `http://127.0.0.1:8001/v1`:
+   ```bash
+   uv run python tools/serve_gliner.py --host 127.0.0.1 --port 8001
+   ```
+   Do **not** use `anonymizer.notebooks.create_anonymizer()` for this kit: that helper starts its
+   own server on a random port with a random bearer token and returns an in-process `Anonymizer`
+   client wired to that token (`src/anonymizer/notebooks/_runtime.py`, `_start_runtime` /
+   `_LocalRuntime`). `dogfood_run.py` is a separate process that talks to whatever endpoint
+   `providers.yaml` names, so there's no way to point it at a `create_anonymizer()`-managed server.
+   `tools/serve_gliner.py` is the only server option compatible with this kit.
 3. Export the gateway provider key named in `providers.yaml` (`NVIDIA_INFERENCE_API_KEY`), and
    `ANONYMIZER_LOCAL_GLINER2_TOKEN` if your detector server requires one.
 4. Create a second environment with the released wheel, pinned to the **same** `pandas` and
@@ -55,22 +64,39 @@ Then compare:
 ```
 
 `compare.py` reads `result.parquet` with `pyarrow.parquet` directly (`to_pylist()` per column)
-rather than `pandas.read_parquet`: the Substitute route's `final_entities` column comes back as an
-Arrow `struct<entities: list<struct<...>>>`, which plain pandas parquet loading cannot deserialize
-into Python objects. It falls back to `result.csv` if no parquet file was written.
+rather than `pandas.read_parquet`. The Substitute route's `final_entities` column round-trips
+through parquet as a pandas ArrowDtype-backed struct column
+(`struct<entities: list<item: struct<value: string, label: string, ...>>>[pyarrow]`); reading that
+back with `pandas.read_parquet` raises `ValueError: format number 1 of "struct<...>[pyarrow]" is
+not recognized` — pandas reconstructs the column's extension dtype from the nested-struct type
+string recorded in the parquet file's pandas metadata, and that reconstruction doesn't handle
+nested structs (reproduced directly: a plain object-dtype column of Python dicts round-trips fine;
+only pandas' own ArrowDtype struct columns, which is what NDD produces for `final_entities`, hit
+this). Reading the Arrow table directly sidesteps that dtype reconstruction. `compare.py` falls
+back to `result.csv` if no parquet file was written, and exits 1 with a clear message (not a
+traceback) if a run directory has no `meta.json` or no result file at all — including when the run
+being compared itself errored.
 
 ## What to look at
 
 - **`result.failed_records`** — each entry is a `FailedRecord(record_id, step, reason)`
   (`src/anonymizer/engine/ndd/adapter.py`): a row that was dropped by an NDD workflow, not merely
   flagged. Any non-empty list is worth understanding before trusting a route's output.
-- **`trace_dataframe["_replacement_application"].skipped_span_count`** — a per-record count of
-  replacement spans that were targeted but never applied. `> 0` means the *original* (unredacted)
-  text survives in `{text}_replaced` for that record, with no failed record and no review flag — the
-  only signal is this trace column. This is a known issue (DF-3): the replacement map is indexed by
-  exact `(original, label)` text in `src/anonymizer/engine/replace/strategies.py`
-  (`_apply_indexed_replacements`), with no Unicode/whitespace normalization, so an LLM-generated map
-  that paraphrases or drops an entity silently leaves the source text in place.
+- **Skipped replacement spans** — `trace_dataframe["_replacement_application"]` holds one dict per
+  record (`ReplacementApplication.to_metrics()` in `src/anonymizer/engine/replace/strategies.py`),
+  not a scalar, so pull the count out with
+  `trace_dataframe["_replacement_application"].map(lambda m: m["skipped_span_count"])` (equivalently
+  `.str["skipped_span_count"]` — verified both work on a synthetic dict-valued `Series`). `> 0` means
+  the *original* (unredacted) text survives in `{text}_replaced` for that record, with no failed
+  record and no review flag — this trace column is the only signal. This is a known issue (DF-3): the
+  replacement map is indexed by exact `(original, label)` text in
+  `_apply_indexed_replacements`/`_resolve_synthetic`. There is a value-only fallback
+  (`by_value`, used when `allow_value_fallback=True`, which the Substitute route's
+  `apply_replacement_map` sets) that resolves a span whose exact `(value, label)` pair is missing but
+  whose bare value has exactly one synthetic across all labels — so not every map miss causes a skip.
+  But there is no Unicode/whitespace normalization anywhere in this lookup, so an LLM-generated map
+  that paraphrases, retypes, or drops an entity's text still silently leaves the source text in
+  place.
 - **A null `{text}_rewritten` with `needs_human_review=True`** means the rewrite was *withheld by
   design*, not that anything crashed. In rewrite mode, when the replacement map required for a record
   isn't ready, `_extract_rewritten_text` in

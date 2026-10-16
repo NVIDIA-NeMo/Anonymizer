@@ -10,7 +10,7 @@ providers:
     endpoint: http://127.0.0.1:8001/v1
     provider_type: openai
     api_key: ANONYMIZER_LOCAL_GLINER2_TOKEN
-  - name: openrouter
+  - name: nvidia-gateway
     endpoint: https://inference-api.nvidia.com/v1
     provider_type: openai
     api_key: NVIDIA_INFERENCE_API_KEY

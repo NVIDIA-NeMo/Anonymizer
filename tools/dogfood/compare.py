@@ -3,10 +3,19 @@
 # SPDX-License-Identifier: Apache-2.0
 """Compare two dogfood_run.py output directories (e.g. branch vs released wheel).
 
-Loads result.parquet with pyarrow directly rather than pandas.read_parquet: the
-Substitute route's `final_entities` column is an Arrow struct<entities: list<struct<...>>>,
-which pandas cannot deserialize back into Python objects from parquet. Reading
-the Arrow table and converting each column with `to_pylist()` keeps nested
+Loads result.parquet with pyarrow directly rather than pandas.read_parquet. The
+Substitute route's `final_entities` column round-trips through parquet as a
+pandas ArrowDtype-backed struct column
+(`struct<entities: list<item: struct<value: string, label: string, ...>>>[pyarrow]`,
+confirmed from the engine's EntitiesSchema -> DataDesigner output). Reading that
+back with `pandas.read_parquet` raises, because pandas reconstructs the column's
+extension dtype from the nested-struct type string recorded in the parquet
+file's pandas metadata, and that reconstruction does not handle nested structs:
+`ValueError: format number 1 of "struct<entities: list<item: struct<...>>>
+[pyarrow]" is not recognized`. (A plain object-dtype column of Python dicts does
+not hit this — only pandas' own ArrowDtype struct columns do, which is what NDD
+produces.) Reading the Arrow table directly and converting each column with
+`to_pylist()` sidesteps the pandas dtype reconstruction and keeps nested
 structs usable; falls back to result.csv (with best-effort literal parsing of
 the stringified struct) if no parquet file is present.
 """
@@ -17,23 +26,47 @@ import argparse
 import ast
 import json
 import re
+import sys
 from pathlib import Path
 from typing import Any
 
 import pandas as pd
 
 
+class CompareError(Exception):
+    """A run directory can't be compared (missing meta.json/result file, or the run errored)."""
+
+
 def _load(run_dir: Path) -> tuple[pd.DataFrame, dict[str, Any]]:
-    meta: dict[str, Any] = json.loads((run_dir / "meta.json").read_text())
+    meta_path = run_dir / "meta.json"
+    if not meta_path.exists():
+        raise CompareError(f"{run_dir}: no meta.json — did dogfood_run.py finish writing this directory?")
+    meta: dict[str, Any] = json.loads(meta_path.read_text())
+
     parquet_path = run_dir / "result.parquet"
+    csv_path = run_dir / "result.csv"
+    if not parquet_path.exists() and not csv_path.exists():
+        if meta.get("status") == "error":
+            raise CompareError(
+                f"{run_dir}: dogfood_run.py errored ({meta.get('error_type')}: {meta.get('error')}) "
+                "— no result file to compare"
+            )
+        raise CompareError(f"{run_dir}: no result.parquet or result.csv found")
+
     if parquet_path.exists():
         import pyarrow.parquet as pq
 
         table = pq.read_table(parquet_path)
         df = pd.DataFrame({name: table.column(name).to_pylist() for name in table.column_names})
     else:
-        df = pd.read_csv(run_dir / "result.csv")
+        df = pd.read_csv(csv_path)
     return df, meta
+
+
+def _row0(df: pd.DataFrame, col: str, width: int = 260) -> str:
+    if len(df) == 0:
+        return "(0 rows)"
+    return str(df[col].iloc[0])[:width]
 
 
 def _entities(df: pd.DataFrame) -> list[list[dict[str, Any]]]:
@@ -76,8 +109,12 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
     dir_a, dir_b = Path(args.dir_a), Path(args.dir_b)
-    df_a, meta_a = _load(dir_a)
-    df_b, meta_b = _load(dir_b)
+    try:
+        df_a, meta_a = _load(dir_a)
+        df_b, meta_b = _load(dir_b)
+    except CompareError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
     ents_a, ents_b = _entities(df_a), _entities(df_b)
 
     print(f"== {dir_a} vs {dir_b} ({args.mode})")
@@ -139,8 +176,10 @@ def main(argv: list[str] | None = None) -> int:
                 if e.get("value") and str(e["value"]) in str(df[out_col].iloc[i])
             ]
             print(f"{name}: entity values surviving in {out_col}: {len(leaks)} {leaks[:8]}")
-        print(f"{dir_a} row0: {str(df_a[out_col].iloc[0])[:260]}")
-        print(f"{dir_b} row0: {str(df_b[out_col].iloc[0])[:260]}")
+        if out_col in df_a.columns:
+            print(f"{dir_a} row0: {_row0(df_a, out_col)}")
+        if out_col in df_b.columns:
+            print(f"{dir_b} row0: {_row0(df_b, out_col)}")
     else:
         for name, df in ((str(dir_a), df_a), (str(dir_b), df_b)):
             metric_cols = [
@@ -163,7 +202,7 @@ def main(argv: list[str] | None = None) -> int:
                     summary[col] = (round(float(numeric.min()), 3), round(float(numeric.max()), 3))
             print(f"{name}: rewrite metrics:", summary)
             if out_col in df.columns:
-                print(f"{name}: row0 rewritten: {str(df[out_col].iloc[0])[:300]}")
+                print(f"{name}: row0 rewritten: {_row0(df, out_col, width=300)}")
     return 0
 
 
