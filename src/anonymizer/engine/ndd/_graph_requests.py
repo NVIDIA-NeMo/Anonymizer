@@ -38,6 +38,13 @@ from anonymizer.engine.graph_sdk.requests import (
 from anonymizer.engine.ndd._source_frame import current_source_work
 from anonymizer.interface.errors import AnonymizerWorkflowError
 
+REQUIRED_DATA_DESIGNER_VERSION = "0.9.4"
+"""Exact DataDesigner version this graph request binding is compatible with.
+
+Must stay in sync with the ``data-designer`` pin in ``pyproject.toml``; see
+``tests/engine/test_graph_requests_version_pin.py`` for the sync check.
+"""
+
 
 @dataclass
 class _Exchange:
@@ -190,8 +197,10 @@ class NddRequestBridge:
     @contextmanager
     def bind(self, designer: Any) -> Iterator[None]:
         self.requests.require_transport(self.physical)
-        if version("data-designer") != "0.9.4":
-            raise AnonymizerWorkflowError("DD graph request binding requires DataDesigner 0.9.4")
+        if version("data-designer") != REQUIRED_DATA_DESIGNER_VERSION:
+            raise AnonymizerWorkflowError(
+                f"DD graph request binding requires DataDesigner {REQUIRED_DATA_DESIGNER_VERSION}"
+            )
         original = designer._create_resource_provider
         bridge = self
 
