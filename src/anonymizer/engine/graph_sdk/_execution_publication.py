@@ -64,7 +64,6 @@ from anonymizer.graph.activation import (
 from anonymizer.graph.workflow import (
     NodeId,
     OperationSpec,
-    OutputDependency,
     SubgraphNode,
     WorkflowInputRef,
 )
@@ -196,13 +195,6 @@ def _validate_output_shape(
         and results[0].consumed_context_ports
         == frozenset(use.port for use in outcome.context if use.port in present_inputs)
     )
-
-
-def _identity_input(dependency: OutputDependency) -> str:
-    value = dependency.identity_input
-    if value is None:
-        reject(EffectCode.CONTRADICTORY)
-    return value
 
 
 def _assessment_results(
