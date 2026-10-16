@@ -13,10 +13,41 @@ import pytest
 from anonymizer.engine.graph_sdk.executor import MapItemKey
 from anonymizer.engine.graph_sdk.qualification import qualify
 from anonymizer.graph import EffectRejected
-from anonymizer.graph._values import ContractViolation, InvocationId
+from anonymizer.graph._values import ActivationKey, ContractViolation, DatumId, GraphId, InvocationId, PlanId
 from tests.graph_sdk import qualification_map_records as maps
 from tests.graph_sdk.evidence_fixtures import _execute_assessment
 from tests.graph_sdk.qualification_fixtures import _inputs
+
+
+def _map_item_key(**changes: Any) -> MapItemKey:
+    invocation = InvocationId.new(plan=PlanId.new())
+    expander = ActivationKey(invocation=invocation, occurrence=0, parent=None, iteration=None)
+    member = ActivationKey(invocation=invocation, occurrence=1, parent=expander, iteration=None)
+    key = MapItemKey(
+        expander=expander,
+        member=member,
+        target=DatumId.new(graph=GraphId.new()),
+        port="item",
+        item_key=0,
+        item_version=1,
+    )
+    return replace(key, **changes)
+
+
+@pytest.mark.parametrize(
+    "field,value,expected",
+    [
+        ("item_key", -1, "invalid_value"),
+        ("item_version", 0, "invalid_value"),
+        ("item_key", True, "invalid_type"),
+        ("item_version", False, "invalid_type"),
+    ],
+)
+def test_map_item_key_scalars_reject_at_construction(field: str, value: object, expected: str) -> None:
+    _map_item_key()
+    with pytest.raises(EffectRejected) as error:
+        _map_item_key(**{field: value})
+    assert error.value.code.value == expected
 
 
 @pytest.mark.parametrize(

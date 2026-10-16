@@ -84,6 +84,12 @@ reject overflow. A workflow or replacement with no byte ceiling cannot satisfy
 a finite parent byte promise. The policy is fixed before effects; the executor
 does not enlarge it after receiving an output.
 
+Admission accepts `IngressLimits` and each delegated request contract
+(`DelegatedRequestContract`, its `PhysicalRequestPolicy`, `DelegatedReadiness`,
+`ChildRoute` and `DelegatedGenerationSelection` members) only as exact types;
+subclasses reject with `invalid_type`. The issued `IngressLimits` is a copy, so
+later changes to the caller's object never reach a run.
+
 Actual byte counts and independent UTF-8/shape checks remain mandatory. An absent
 ceiling does not claim bounded memory usage or a hard transport-response size.
 Context retrieval, observations and other explicitly bounded contracts retain
