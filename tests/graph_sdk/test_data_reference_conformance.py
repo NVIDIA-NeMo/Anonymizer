@@ -275,6 +275,11 @@ def _data_signature(case: data_shapes.FixtureCase) -> Hashable:
     )
 
 
+def _variant_class(case: data_shapes.FixtureCase) -> tuple[str, str]:
+    """Family and case variant, with enumerated indices normalized away."""
+    return case["family"], re.sub(r"\d+", "N", case["case_id"].removeprefix(case["family"]))
+
+
 @cache
 def _frozen_data_cases() -> tuple[data_shapes.FixtureCase, ...]:
     """Decode once per session; consumers only read these cases."""
@@ -294,6 +299,7 @@ def test_data_representatives_cover_every_frozen_signature() -> None:
     assert [case for case in cases if case["family"] in _SWEPT_FAMILIES] == [
         case for case in selected if case["family"] in _SWEPT_FAMILIES
     ]
+    assert {_variant_class(case) for case in selected} == {_variant_class(case) for case in cases}
     assert len(selected) < len(cases) // 25
 
 

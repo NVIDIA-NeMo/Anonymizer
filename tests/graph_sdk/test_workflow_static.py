@@ -568,8 +568,13 @@ def _case(*, family: str, mutation: str) -> Object:
 _BOUNDARY_MUTATION = re.compile(r"/(exact|exact_all|one_under_\w+|\w+_by_1)$")
 
 
+def _mutation_class(case: Object) -> tuple[str, str]:
+    """Family and mutation kind, with enumerated indices normalized away."""
+    return cast(str, case["family"]), re.sub(r"\d+", "N", cast(str, case["case_id"]).rsplit("/", 1)[-1])
+
+
 def _static_signature(case: Object) -> Hashable:
-    """Family, mode, frozen answer, declaration size and per-trace frozen answers."""
+    """Mutation class, mode, frozen answer, declaration size and per-trace frozen answers."""
     expected = _object(case["expected"])
     declaration = _object(case["declaration"])
     traces = tuple(
@@ -579,7 +584,7 @@ def _static_signature(case: Object) -> Hashable:
         )
     )
     return (
-        case["family"],
+        _mutation_class(case),
         case["mode"],
         expected["status"],
         expected["code"],
@@ -609,7 +614,10 @@ def test_static_representatives_cover_every_frozen_signature() -> None:
     assert {_static_signature(case) for case in selected} == {_static_signature(case) for case in cases}
     boundary = [case for case in cases if _BOUNDARY_MUTATION.search(cast(str, case["case_id"]))]
     assert boundary and all(case in selected for case in boundary)
-    assert len(selected) < len(cases) // 4
+    assert {_mutation_class(case) for case in selected} == {_mutation_class(case) for case in cases}
+    # At most first/last per signature plus the boundary sweep.
+    assert len(selected) <= 2 * len({_static_signature(case) for case in cases}) + len(boundary)
+    assert len(selected) < len(cases) // 3
 
 
 def test_frozen_representatives_and_traces_match_product_boundaries() -> None:
