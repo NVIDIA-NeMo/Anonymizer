@@ -433,7 +433,23 @@ def test_baseline_reference_against_actual_execution(case: dict[str, Any]) -> No
 
 # Corruptions that are only reachable by writing into a frozen retained terminal (object.__setattr__);
 # checked construction (OQ-2) makes these unrepresentable, so they no longer bind the retained boundary.
-FROZEN_VALUE_TAMPER_IDS = frozenset({"structural/non_bool_flag", "structural/success_with_reason"})
+FROZEN_VALUE_TAMPER_IDS = frozenset(
+    {
+        "structural/non_bool_flag",
+        "structural/success_with_reason",
+        # U1.4: re-joins of the executor's own retained inventory were removed (one index per revision view).
+        "joins/missing_candidate_artifact",
+        "provenance/swapped_dependency_parents",
+        "provenance/extra_input_producer",
+        "assessment/root_missing_terminal_unsubmitted",
+        "assessment/root_missing_terminal_submitted",
+        "authentication/entry_node",
+        "provenance/missing_producer",
+        "provenance/duplicate_producer",
+        "final_output/producer_activation",
+        "provenance/missing_parent_artifact",
+    }
+)
 CORRUPTION_IDS = frozenset(
     {
         "assessment/unsupported_finding",

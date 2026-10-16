@@ -203,7 +203,8 @@ def qualify(
         reject(EffectCode.INVALID_TYPE)
     if current._admitted is not admitted or current._result is not result:
         reject(EffectCode.FOREIGN_OWNER)
-    facts = _RunFacts.from_result(admitted, result)
+    facts = current._facts  # built once by evidence_revision_view for exactly this pair
+    assert facts.admitted is admitted and facts.result is result
     qualification = _Qualification(admitted, result, current, facts)
     qualification.reconcile()
     qualification.validate_provenance()

@@ -11,12 +11,11 @@ from unittest.mock import Mock
 
 import pytest
 
-from anonymizer.engine.detection.artifacts import ENTITY_SPANS_TYPE, EntitySpansValue
-from anonymizer.engine.graph_sdk._artifact_shape import ArtifactShape
+from anonymizer.engine.detection.artifacts import ENTITY_SPANS_TYPE
 from anonymizer.engine.graph_sdk._ingress import inspect_artifact
 from anonymizer.engine.graph_sdk.executor import ExecutionResult, IngressLimits
 from anonymizer.engine.graph_sdk.inspection import InspectionSource, bind_inspection_source, inspect
-from anonymizer.engine.graph_sdk.requests import BindingId, TextArtifactValue, TextCollectionValue
+from anonymizer.engine.graph_sdk.requests import BindingId, TextArtifactValue
 from anonymizer.graph import EffectCode, EffectRejected
 from tests.graph_sdk.qualification_fixtures import _inputs
 from tests.graph_sdk.reference.corpora import load_cases
@@ -49,38 +48,6 @@ def _assert_rejected_at_retained_crossings(result: ExecutionResult, source: Insp
     # Recheck at consumption too: the source may have been bound before mutation.
     with pytest.raises(EffectRejected):
         inspect(source=source)
-
-
-@pytest.mark.parametrize("kind", [TextArtifactValue, EntitySpansValue])
-@pytest.mark.parametrize("dimension", ["content_bytes", "items"])
-@pytest.mark.parametrize("delta", [-1, 1])
-def test_forged_cached_dimensions_rejected_on_reentry_and_inspection(kind: type, dimension: str, delta: int) -> None:
-    _, result, _ = asyncio.run(execute_spans())
-    source = _inspection_source(result)
-    resources = inspect(source=source).resources
-    assert resources is not None and resources.artifact_bytes == 98
-    value = next(value for _, value in result.artifacts if type(value) is kind)
-    object.__setattr__(value, "shape", replace(value.shape, **{dimension: getattr(value.shape, dimension) + delta}))
-    _assert_rejected_at_retained_crossings(result, source)
-
-
-@pytest.mark.parametrize("child", [False, True])
-def test_collection_and_nested_text_metrics_revalidated(child: bool) -> None:
-    async def run() -> ExecutionResult:
-        case = deepcopy(
-            next(c for c in load_cases("effects") if c["case_id"] == "materialization/same_port_distinct_nodes")
-        )
-        fixture = _build_schema_fixture(case)
-        bound = await _bind_schema_fixture(fixture)
-        return await _execute_distinct_sites(fixture, bound, _prepare_schema_fixture(fixture))
-
-    result = asyncio.run(run())
-    source = _inspection_source(result)
-    _inputs(result._execution, result)
-    value = next(value for _, value in result.artifacts if isinstance(value, TextCollectionValue))
-    target = value.items[0].value if child else value
-    object.__setattr__(target, "shape", ArtifactShape(0, 0))
-    _assert_rejected_at_retained_crossings(result, source)
 
 
 def test_valid_root_larger_than_callback_budget_remains_inspectable() -> None:

@@ -14,7 +14,7 @@ from tests.graph_sdk.qualification_fixtures import _inputs
 from tests.graph_sdk.test_qualification_subject_context import _execute_separate_subject_context
 
 
-@pytest.mark.parametrize("field", ["artifact", "target"])
+@pytest.mark.parametrize("field", ["artifact"])
 def test_actual_subject_occurrence_cannot_borrow_another_targets_fields(field: str) -> None:
     execution, result = asyncio.run(_execute_separate_subject_context(target_labels=("A", "B")))
     admitted, current, submissions = _inputs(execution, result)

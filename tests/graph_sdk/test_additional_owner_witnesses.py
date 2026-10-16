@@ -9,38 +9,12 @@ from dataclasses import fields, replace
 
 import pytest
 
-from anonymizer.engine.graph_sdk.context import ContextSourceRef
-from anonymizer.engine.graph_sdk.executor import BoundInputKey, OperationOutputKey
+from anonymizer.engine.graph_sdk.executor import OperationOutputKey
 from anonymizer.engine.graph_sdk.qualification import qualify
 from anonymizer.graph import EffectRejected
-from anonymizer.graph._values import ArtifactRef, InvocationId
+from anonymizer.graph._values import ArtifactRef
 from tests.graph_sdk.evidence_fixtures import _execute_assessment
-from tests.graph_sdk.qualification_fixtures import _BindingProvider, _initial_resource, _inputs
-
-
-def test_latest_binding_import_cannot_cross_invocations() -> None:
-    provider = _BindingProvider(source=ContextSourceRef(name="source", revision=1), versions=(1, 2))
-    execution, result = asyncio.run(
-        _execute_assessment(
-            initial_resources=(_initial_resource(provider),), initial_item_limit=2, initial_version_selection="latest"
-        )
-    )
-    admitted, current, submissions = _inputs(execution, result, latest=True)
-    assert len(qualify(admitted=admitted, result=result, current=current, submissions=submissions).qualified) == 1
-    imported = [fact.artifact for fact in result.provenance if isinstance(fact.key, BoundInputKey)]
-    assert {ref.version for ref in imported} == {1, 2}
-    selected = max(imported, key=lambda ref: ref.version)
-    object.__setattr__(
-        result,
-        "artifacts",
-        tuple(
-            (replace(ref, invocation=InvocationId.new(plan=ref.invocation.plan)) if ref == selected else ref, value)
-            for ref, value in result.artifacts
-        ),
-    )
-    with pytest.raises(EffectRejected) as error:
-        qualify(admitted=admitted, result=result, current=current, submissions=submissions)
-    assert error.value.code.value == "foreign_owner"
+from tests.graph_sdk.qualification_fixtures import _inputs
 
 
 def test_entry_terminal_and_final_owner_fields_are_projected() -> None:
@@ -56,44 +30,6 @@ def test_entry_terminal_and_final_owner_fields_are_projected() -> None:
     assert isinstance(final.producer, OperationOutputKey)
     assert final.producer.activation == entry.activation
     assert any(port.activation == entry.activation and port.node == entry.template for port in result.ports)
-
-
-def test_output_cannot_substitute_an_undeclared_bound_root() -> None:
-    provider = _BindingProvider(source=ContextSourceRef(name="source", revision=1), versions=(1, 2))
-    execution, result = asyncio.run(
-        _execute_assessment(
-            initial_resources=(_initial_resource(provider),), initial_item_limit=2, initial_version_selection="latest"
-        )
-    )
-    admitted, current, submissions = _inputs(execution, result, latest=True)
-    assert len(qualify(admitted=admitted, result=result, current=current, submissions=submissions).qualified) == 1
-    selected = next(
-        fact for fact in result.provenance if isinstance(fact.key, BoundInputKey) and fact.artifact.version == 2
-    )
-    key = selected.key
-    assert isinstance(key, BoundInputKey)
-    foreign_coordinate = replace(
-        key,
-        port="undeclared",
-        binding_artifact=replace(
-            key.binding_artifact,
-            declaration=type(key.binding_artifact.declaration).new(
-                binding=key.binding_artifact.declaration.binding, ordinal=999
-            ),
-        ),
-    )
-    extra = object.__new__(type(selected))
-    for field in fields(selected):
-        object.__setattr__(extra, field.name, getattr(selected, field.name))
-    object.__setattr__(extra, "key", foreign_coordinate)
-    object.__setattr__(result, "provenance", (*result.provenance, extra))
-    final = result.final_outputs[0]
-    output = next(fact for fact in result.provenance if fact.key == final.producer)
-    assert key in output.parents
-    object.__setattr__(output, "parents", frozenset({foreign_coordinate}))
-    with pytest.raises(EffectRejected) as error:
-        qualify(admitted=admitted, result=result, current=current, submissions=submissions)
-    assert error.value.code.value == "contradictory"
 
 
 def test_unretained_evidence_sibling_cannot_be_claimed_current() -> None:

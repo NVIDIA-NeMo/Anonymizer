@@ -16,16 +16,15 @@ from anonymizer.graph import EffectRejected
 from anonymizer.graph._values import ActivationKey, DatumId, InvocationId
 from tests.graph_sdk import qualification_map_records as fixture
 
+# wrong_item_owner / wrong_invocation were caught only by re-joining the executor's own retained index (U1.4).
 CASE_IDS = {
     f"map_item_evidence/{suffix}"
     for suffix in (
         "wrong_item_version",
         "wrong_item_key",
-        "wrong_item_owner",
         "wrong_expander",
         "wrong_member",
         "wrong_target",
-        "wrong_invocation",
         "typed_consumed_wrong_owner",
     )
 }

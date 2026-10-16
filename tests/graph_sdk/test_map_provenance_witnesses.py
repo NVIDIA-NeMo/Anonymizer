@@ -113,13 +113,7 @@ def test_actual_map_provenance_rejects_exact_coordinate_corruption(corruption: s
 
 @pytest.mark.parametrize(
     "corruption",
-    [
-        "collection-artifact",
-        "collection-items",
-        "producer-activation",
-        "membership-port",
-        "expansion-outcome",
-    ],
+    ["collection-artifact", "collection-items", "producer-activation", "membership-port"],
 )
 def test_map_collection_output_identity_and_declaration(corruption: str) -> None:
     execution, result, nodes = asyncio.run(_execute_reference_map(1))

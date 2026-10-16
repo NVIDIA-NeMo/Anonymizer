@@ -5,7 +5,6 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import replace
 from typing import Any
 
 import pytest
@@ -19,28 +18,6 @@ from tests.graph_sdk import test_qualification_subject_context as fixture
 from tests.graph_sdk.qualification_fixtures import _inputs
 from tests.graph_sdk.test_data_graph import _graph_with_texts, _validate
 from tests.graph_sdk.test_qualification_subject_context import _execute_separate_subject_context
-
-
-def test_duplicate_actual_source_binding_identity() -> None:
-    execution, result = asyncio.run(
-        _execute_separate_subject_context(
-            versioned_context_dependencies=frozenset({"a"}), versioned_context_ports=("a",)
-        )
-    )
-    admitted, current, submissions = _inputs(execution, result, latest=True)
-    baseline = qualify(admitted=admitted, result=result, current=current, submissions=submissions)
-    assert len(baseline.qualified) == 1
-    bound = execution.context.bound_context
-    assert bound is not None
-    sources = bound.receipt.sources
-    assert len(sources) == 1
-    object.__setattr__(bound.receipt, "sources", (*sources, replace(sources[0])))
-    assert bound.receipt.sources[0].identity == bound.receipt.sources[1].identity
-    with pytest.raises(EffectRejected) as error:
-        qualify(admitted=admitted, result=result, current=current, submissions=submissions)
-    assert error.value.code is EffectCode.DUPLICATE
-    object.__setattr__(bound.receipt, "sources", sources)
-    assert qualify(admitted=admitted, result=result, current=current, submissions=submissions) == baseline
 
 
 @pytest.mark.parametrize("submitted", [True, False])
@@ -138,23 +115,6 @@ def test_collection_required_declaration_missing_before_effects(monkeypatch: pyt
     monkeypatch.setattr(fixture, "start_initial_binding", probe)
     test_protected_initial_collection_exact_binding_parents()
     assert attempts == 1
-
-
-def test_absent_consumed_artifact_coordinate() -> None:
-    execution, result = asyncio.run(_execute_separate_subject_context())
-    admitted, current, submissions = _inputs(execution, result)
-    baseline = qualify(admitted=admitted, result=result, current=current, submissions=submissions)
-    assert len(baseline.qualified) == 1
-    port = next(item for item in result.ports if item.port == "context")
-    original = port.artifact
-    absent = replace(original, key=max(ref.key for ref, _ in result.artifacts) + 1)
-    assert absent.invocation == original.invocation and absent not in dict(result.artifacts)
-    object.__setattr__(port, "artifact", absent)
-    with pytest.raises(EffectRejected) as error:
-        qualify(admitted=admitted, result=result, current=current, submissions=submissions)
-    assert error.value.code is EffectCode.MISSING
-    object.__setattr__(port, "artifact", original)
-    assert qualify(admitted=admitted, result=result, current=current, submissions=submissions) == baseline
 
 
 def test_selected_same_graph_dependency_endpoint_is_valid() -> None:

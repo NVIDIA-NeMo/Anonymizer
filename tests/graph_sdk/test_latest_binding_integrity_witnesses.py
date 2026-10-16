@@ -31,8 +31,6 @@ from tests.graph_sdk.qualification_fixtures import (
         ("missing-cleanup", "missing"),
         ("foreign-association", "foreign_owner"),
         ("foreign-cleanup", "foreign_owner"),
-        ("foreign-source", "foreign_owner"),
-        ("foreign-artifact-source", "foreign_owner"),
     ],
 )
 def test_latest_binding_corruption_cannot_qualify(corruption: str, expected: str) -> None:
@@ -232,29 +230,4 @@ def test_latest_revision_view_cannot_select_two_versions_of_one_key() -> None:
             artifacts=tuple(ref for ref, _ in result.artifacts),
             configurations=current.configurations,
         )
-    assert error.value.code.value == "duplicate"
-
-
-def test_duplicate_retained_source_pair_is_not_silently_coalesced() -> None:
-    provider = _BindingProvider(source=ContextSourceRef(name="source", revision=1))
-    execution, result = asyncio.run(_execute_assessment(initial_resources=(_initial_resource(provider),)))
-    admitted, current, submissions = _inputs(execution, result)
-    assert (
-        len(
-            qualify(
-                admitted=admitted,
-                result=result,
-                current=current,
-                submissions=submissions,
-            ).qualified
-        )
-        == 1
-    )
-    bound = execution.context.bound_context
-    assert bound is not None and len(bound.artifacts) == 1
-    pair = (bound.artifacts[0], bound.artifacts[0])
-    object.__setattr__(bound, "artifacts", pair)
-    object.__setattr__(bound.receipt, "artifacts", pair)
-    with pytest.raises(EffectRejected) as error:
-        qualify(admitted=admitted, result=result, current=current, submissions=submissions)
     assert error.value.code.value == "duplicate"

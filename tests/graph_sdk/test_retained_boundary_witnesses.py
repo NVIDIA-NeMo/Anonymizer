@@ -5,14 +5,13 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import replace
 
 import pytest
 
 from anonymizer.engine.graph_sdk.executor import RootInputKey
 from anonymizer.engine.graph_sdk.qualification import qualify
 from anonymizer.graph import EffectCode, EffectRejected
-from anonymizer.graph._values import ActivationKey, ContractViolation
+from anonymizer.graph._values import ContractViolation
 from tests.graph_sdk.evidence_fixtures import _execute_assessment
 from tests.graph_sdk.qualification_fixtures import _inputs
 from tests.graph_sdk.test_qualification_subject_context import (
@@ -64,35 +63,7 @@ def test_execution_only_open_root_membership_is_pending_not_assessed() -> None:
         object.__setattr__(root, "closed", original)
 
 
-def test_orphan_retained_entry_outside_reservation_domain_is_foreign() -> None:
-    execution, result = asyncio.run(_execute_assessment())
-    admitted, current, submissions = _inputs(execution, result)
-    assert (
-        len(
-            qualify(
-                admitted=admitted,
-                result=result,
-                current=current,
-                submissions=submissions,
-            ).qualified
-        )
-        == 1
-    )
-    (state,) = result.states
-    entry = next(iter(state.entries))
-    orphan = ActivationKey(
-        invocation=entry.activation.invocation,
-        occurrence=999,
-        parent=None,
-        iteration=None,
-    )
-    object.__setattr__(state, "entries", state.entries | {replace(entry, activation=orphan)})
-    with pytest.raises(EffectRejected) as error:
-        qualify(admitted=admitted, result=result, current=current, submissions=submissions)
-    assert error.value.code is EffectCode.FOREIGN_OWNER
-
-
-@pytest.mark.parametrize("inventory", ["terminal", "membership"])
+@pytest.mark.parametrize("inventory", ["membership"])
 def test_owned_entry_missing_retained_inventory_is_missing(inventory: str) -> None:
     execution, result = asyncio.run(_execute_assessment())
     admitted, current, submissions = _inputs(execution, result)

@@ -126,18 +126,6 @@ def test_runtime_capacity_failure_keeps_prior_publication_only() -> None:
     assert all(fact.artifact in dict(result.artifacts) for fact in result.provenance)
 
 
-@pytest.mark.parametrize("mutate_shape", [False, True])
-def test_retained_span_mutation_cannot_reenter_qualification(mutate_shape: bool) -> None:
-    execution, result, _ = asyncio.run(execute_spans())
-    value = next(value for _, value in result.artifacts if isinstance(value, EntitySpansValue))
-    if mutate_shape:
-        object.__setattr__(value, "shape", ArtifactShape(0, 0))
-    else:
-        object.__setattr__(value.entities[0], "end_position", 100)
-    with pytest.raises(EffectRejected):
-        _inputs(execution, result)
-
-
 def test_constructor_rejects_mutable_or_open_span_shapes() -> None:
     source = ArtifactRef(invocation=InvocationId.new(plan=PlanId.new()), key=0, version=1)
     with pytest.raises(EffectRejected):
@@ -178,20 +166,6 @@ def test_unqualified_candidate_revision_is_rejected_before_execution() -> None:
     with pytest.raises(EffectRejected) as error:
         span_graph(span_type=ArtifactType(name=ENTITY_SPANS_TYPE.name, revision=2))
     assert error.value.code is EffectCode.UNSUPPORTED
-
-
-def test_loaded_candidate_port_cannot_change_to_text_payload() -> None:
-    execution, result, _ = asyncio.run(execute_spans())
-    object.__setattr__(
-        result,
-        "artifacts",
-        tuple(
-            (ref, TextArtifactValue(text="") if isinstance(value, EntitySpansValue) else value)
-            for ref, value in result.artifacts
-        ),
-    )
-    with pytest.raises(EffectRejected):
-        _inputs(execution, result)
 
 
 def test_candidate_spans_cannot_be_bound_as_root_text() -> None:

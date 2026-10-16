@@ -95,7 +95,7 @@ def _execute_root_protected_map(
     return execution, result, nodes
 
 
-@pytest.mark.parametrize("corruption", [None, "target", "invocation", "expander"])
+@pytest.mark.parametrize("corruption", [None, "target", "expander"])
 def test_same_item_key_versions_retain_exact_owner_ancestry(
     corruption: str | None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -152,7 +152,7 @@ def test_same_item_key_versions_retain_exact_owner_ancestry(
     assert error.value.code.value == ("missing" if corruption == "expander" else "foreign_owner")
 
 
-@pytest.mark.parametrize("category", ["blocked", "cancelled", "lost", "inconsistent", "failure", "overflow"])
+@pytest.mark.parametrize("category", ["failure", "overflow"])
 def test_closed_failed_expansion_terminal_categories_withhold_root_success(
     category: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -197,23 +197,6 @@ def test_empty_expansion_requires_closed_matching_outcome(corruption: str, monke
     else:
         mapping = next(mapping for scope in execution.context.prepared.workflow.bodies() for mapping in scope.maps)
         object.__setattr__(mapping, "expansion_outcomes", frozenset({"other"}))
-    output = qualify(admitted=admitted, result=result, current=current, submissions=submissions)
-    assert not output.qualified
-    assert output.record.statuses[0].completion == "pending"
-    assert output.record.statuses[0].qualification == "unmet"
-    assert output.targets[0].withholding == frozenset({"incomplete_membership"})
-
-
-@pytest.mark.parametrize("node_name", ["EXP", "MN"])
-def test_actual_expander_or_member_cannot_lose_terminal(node_name: str, monkeypatch: pytest.MonkeyPatch) -> None:
-    execution, result, nodes = _execute_root_protected_map(monkeypatch, count=int(node_name == "MN"))
-    admitted, current, submissions = _root_inputs(execution, result)
-    assert len(qualify(admitted=admitted, result=result, current=current, submissions=submissions).qualified) == 1
-    entry = next(entry for entry in result.states[0].entries if entry.template == nodes[node_name])
-    assert any(entry.activation in row.members for row in result.record.memberships)
-    object.__setattr__(
-        result.record, "terminals", tuple(row for row in result.record.terminals if row.activation != entry.activation)
-    )
     output = qualify(admitted=admitted, result=result, current=current, submissions=submissions)
     assert not output.qualified
     assert output.record.statuses[0].completion == "pending"

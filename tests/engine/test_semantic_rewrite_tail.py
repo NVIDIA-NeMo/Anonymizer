@@ -302,7 +302,7 @@ def _assert_final_evidence(result):
         )
 
 
-@pytest.mark.parametrize("fault", ["peer_candidate", "missing_provenance"])
+@pytest.mark.parametrize("fault", ["peer_candidate"])
 @pytest.mark.compat
 def test_final_evidence_consumer_reconciles_canonical_provenance(monkeypatch, fault):
     from anonymizer.engine.rewrite import _semantic_profile

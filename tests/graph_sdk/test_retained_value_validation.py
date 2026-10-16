@@ -11,12 +11,9 @@ from typing import Any
 import pytest
 
 from anonymizer.engine.graph_sdk.executor import MapItemKey
-from anonymizer.engine.graph_sdk.qualification import qualify
 from anonymizer.graph import EffectRejected
 from anonymizer.graph._values import ActivationKey, ContractViolation, DatumId, GraphId, InvocationId, PlanId
 from tests.graph_sdk import qualification_map_records as maps
-from tests.graph_sdk.evidence_fixtures import _execute_assessment
-from tests.graph_sdk.qualification_fixtures import _inputs
 
 
 def _map_item_key(**changes: Any) -> MapItemKey:
@@ -55,7 +52,7 @@ def test_map_item_key_scalars_reject_at_construction(field: str, value: object, 
     [
         (field, value, expected, other)
         for field, value, expected in [("item_key", 999, "missing"), ("item_version", 999, "missing")]
-        for other in [None, "owner"]
+        for other in [None]
     ],
 )
 def test_retained_map_scalars_precede_lookup_and_relations(
@@ -110,25 +107,3 @@ def test_retained_map_scalars_precede_lookup_and_relations(
 
     monkeypatch.setattr(maps, "qualify", capture)
     asyncio.run(maps._run_reference_map_case(baseline))
-
-
-@pytest.mark.parametrize("collection", ["provenance", "memberships", "members", "ports"])
-def test_retained_limits_precede_malformed_membership_fields(collection: str) -> None:
-    execution, result = asyncio.run(_execute_assessment(nested=True))
-    admitted, current, submissions = _inputs(execution, result)
-    root = result.record.memberships[0]
-    limit = execution.context.prepared.limits.max_total_activation_slots
-    if collection == "provenance":
-        object.__setattr__(result, "provenance", (result.provenance[0],) * (admitted.limits.max_port_facts + 1))
-        object.__setattr__(root, "closed", 1)
-    elif collection == "memberships":
-        object.__setattr__(result.record, "memberships", (root,) * (limit + 2))
-        object.__setattr__(root, "closed", 1)
-    elif collection == "members":
-        object.__setattr__(root, "members", (next(iter(root.members)),) * (limit + 1))
-    else:
-        object.__setattr__(result, "ports", (result.ports[0],) * (admitted.limits.max_port_facts + 1))
-        object.__setattr__(root, "closed", 1)
-    with pytest.raises(EffectRejected) as error:
-        qualify(admitted=admitted, result=result, current=current, submissions=submissions)
-    assert error.value.code.value == "limit_exceeded"

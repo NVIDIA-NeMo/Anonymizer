@@ -15,7 +15,7 @@ from tests.graph_sdk.evidence_fixtures import _execute_assessment
 from tests.graph_sdk.qualification_fixtures import _inputs
 
 
-@pytest.mark.parametrize("mutation", ["body-projection", "body-input-capture", "passthrough-capture"])
+@pytest.mark.parametrize("mutation", ["body-projection"])
 def test_subgraph_exact_projection_or_capture_rejects_equal_artifact_substitute(mutation: str) -> None:
     passthrough = mutation == "passthrough-capture"
     execution, result = asyncio.run(

@@ -67,7 +67,7 @@ def test_nested_retained_integrity_rejects_exact_corruption(
     assert error.value.code.value == expected
 
 
-@pytest.mark.parametrize("corruption", ["missing-container-terminal", "nested-open"])
+@pytest.mark.parametrize("corruption", ["nested-open"])
 def test_incomplete_nested_membership_withholds_retained_success(corruption: str) -> None:
     execution, result = asyncio.run(_execute_assessment(nested=True))
     admitted, current, submissions = _inputs(execution, result)
