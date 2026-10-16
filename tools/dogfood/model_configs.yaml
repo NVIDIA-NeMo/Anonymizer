@@ -1,0 +1,40 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# Small model pool for dogfood runs: one local detector plus one chat model
+# behind the NVIDIA inference gateway. Pair with providers.yaml. Swap the
+# chat model alias/model/provider to point at whatever you want to dogfood;
+# keep gliner-pii-detector as-is unless you are running a different detector
+# server.
+model_configs:
+  - alias: gliner-pii-detector
+    model: fastino/gliner2-privacy-filter-PII-multi
+    provider: local-gliner2
+    skip_health_check: true
+    inference_parameters:
+      max_parallel_requests: 8
+      timeout: 120
+
+  - alias: gpt-oss-120b
+    model: openai/gpt-oss-120b
+    provider: openrouter
+    inference_parameters:
+      max_parallel_requests: 16
+      max_tokens: 16384
+      temperature: 0.3
+      top_p: 0.95
+      timeout: 300
+
+  # Required for the bundled default role mappings: detection's
+  # latent_detector and rewrite's evaluator both resolve to this alias
+  # unless selected_models overrides them (see
+  # src/anonymizer/config/default_model_configs/{detection,rewrite}.yaml).
+  - alias: nemotron-30b-thinking
+    model: nvidia/nemotron-3-nano-30b-a3b
+    provider: openrouter
+    inference_parameters:
+      max_parallel_requests: 16
+      max_tokens: 8192
+      temperature: 0.4
+      top_p: 1.0
+      timeout: 300
