@@ -195,16 +195,13 @@ def test_raw_registration_fields_are_rechecked(field, value):
     asyncio.run(run())
 
 
-@pytest.mark.parametrize("shape", ["list", "object", "missing"])
+@pytest.mark.parametrize("shape", ["list", "object"])
 def test_registration_container_cannot_be_removed_or_retyped(shape):
     async def run():
         async with _loop_and_pool() as (loop, pool):
             execution, result, _ = await executed(loop, pool, optional=True, failed=False)
             changed = result_with(result)
-            if shape == "missing":
-                object.__delattr__(changed, "implementation_resources")
-            else:
-                object.__setattr__(changed, "implementation_resources", [] if shape == "list" else object())
+            object.__setattr__(changed, "implementation_resources", [] if shape == "list" else object())
             with pytest.raises(EffectRejected) as caught:
                 _qualify(execution, changed)
             assert caught.value.code == EffectCode.INVALID_TYPE

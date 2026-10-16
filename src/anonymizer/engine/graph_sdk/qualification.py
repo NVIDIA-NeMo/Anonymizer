@@ -1134,7 +1134,7 @@ class _Qualification:
     def _registered_handle_resources(self) -> dict[ResourceId, ResourceOwner] | None:
         """Join captured handle declarations to the independently admitted domain."""
         execution = self.admitted.execution
-        rows = getattr(self.result, "implementation_resources", None)
+        rows = self.result.implementation_resources
         if not isinstance(rows, tuple):
             reject(EffectCode.INVALID_TYPE)
         if len(rows) > self.prepared.limits.max_capabilities:
@@ -1142,13 +1142,13 @@ class _Qualification:
         for row in rows:
             require_instance(row, ImplementationResourceRegistration)
             row.__post_init__()
-            lease = getattr(row, "_lease", None)
+            lease = row._lease
             if lease is not None and (
                 not isinstance(lease, ResourceLease)
-                or getattr(lease, "resource", None) != row.resource
-                or getattr(lease, "owner", None) != row.owner
-                or getattr(lease, "safe_detachment", None) != row.safe_detachment
-                or getattr(lease, "handle", None) is None
+                or lease.resource != row.resource
+                or lease.owner != row.owner
+                or lease.safe_detachment != row.safe_detachment
+                or lease.handle is None
             ):
                 return None
         expected = {
@@ -1184,19 +1184,15 @@ class _Qualification:
 
     def _retained_request_resource(self, resource: ResourceId) -> bool:
         """Authenticate forbidden-detachment retention against a live Lost request."""
-        leases = getattr(self.result, "_retained_resources", ())
+        leases = self.result._retained_resources
         if not isinstance(leases, tuple) or len(leases) > self.prepared.limits.max_capabilities:
             return False
-        matching = [
-            lease
-            for lease in leases
-            if isinstance(lease, ResourceLease) and getattr(lease, "resource", None) == resource
-        ]
+        matching = [lease for lease in leases if isinstance(lease, ResourceLease) and lease.resource == resource]
         if (
             len(matching) != 1
-            or getattr(matching[0], "owner", None) != "sdk"
-            or getattr(matching[0], "safe_detachment", None) != "forbidden"
-            or getattr(matching[0], "handle", None) is None
+            or matching[0].owner != "sdk"
+            or matching[0].safe_detachment != "forbidden"
+            or matching[0].handle is None
         ):
             return False
         for dispatch in self.result.requests.dispatches:
@@ -1222,7 +1218,7 @@ class _Qualification:
             for implementation in policy.implementations:
                 if any(
                     row.resource == resource
-                    and isinstance(issued := getattr(row, "_lease", None), ResourceLease)
+                    and isinstance(issued := row._lease, ResourceLease)
                     and issued.handle is matching[0].handle
                     and row.owner == "sdk"
                     and row.safe_detachment == "forbidden"

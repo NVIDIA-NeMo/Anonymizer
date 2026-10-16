@@ -13,7 +13,6 @@ import pandas as pd
 import pytest
 
 from anonymizer.engine.constants import COL_REPLACEMENT_MAP, COL_TEXT
-from anonymizer.engine.graph_sdk.executor import admit_execution_plan
 from anonymizer.engine.ndd._graph_requests import NddPhysicalTransport, NddRequestBridge
 from anonymizer.graph import EffectRejected
 from tests.engine import test_detection_source_frame as detection_tests
@@ -86,31 +85,6 @@ def test_generated_frame_projection_is_isolated_and_partial_publication_is_withh
     assert not limited.frames
     with pytest.raises(ValueError, match="different execution"):
         result.frames[0].project(limited)
-
-
-@pytest.mark.parametrize("missing", ["generation_groups", "optional_tail", "selection"])
-def test_missing_delegated_fields_reject_at_raw_admission(missing):
-    from tests.graph_sdk.test_delegated_readiness import _ready_fixture
-
-    execution, *_ = _ready_fixture(generations=3)
-    owner = next(policy for policy in execution.policies if policy.delegated)
-
-    def clone(value, omitted=None, **updates):
-        raw = object.__new__(type(value))
-        for field in fields(value):
-            if field.name != omitted:
-                object.__setattr__(raw, field.name, updates.get(field.name, getattr(value, field.name)))
-        return raw
-
-    raw = clone(owner, delegated=clone(owner.delegated, omitted=missing))
-    with pytest.raises(EffectRejected):
-        admit_execution_plan(
-            context=execution.context,
-            capabilities=execution.capabilities,
-            policies=tuple(raw if policy is owner else policy for policy in execution.policies),
-            assessment_productions=execution.assessment_productions,
-            assessment_limits=execution.assessment_limits,
-        )
 
 
 @pytest.mark.parametrize("zero,sends", [(True, 5), (False, 8)])
@@ -519,19 +493,6 @@ def test_retained_chunk_closure_rejects_changed_membership_or_authority(scripted
         object.__setattr__(retained, field.name, updates.get(field.name, getattr(result, field.name)))
     with pytest.raises((EffectRejected, ContractViolation)):
         qualify_detection_redact(retained)
-
-
-@pytest.mark.parametrize("field", ["port", "slots"])
-def test_raw_generation_selection_missing_field_rejects(field):
-    from anonymizer.engine.graph_sdk.executor import DelegatedGenerationSelection
-
-    value = DelegatedGenerationSelection(port="chunks", slots=(1,))
-    raw = object.__new__(type(value))
-    for item in fields(value):
-        if item.name != field:
-            object.__setattr__(raw, item.name, getattr(value, item.name))
-    with pytest.raises(EffectRejected):
-        raw.__post_init__()
 
 
 def test_default_augmenter_restart_preserves_legacy_and_qualifies(scripted_detection, monkeypatch):

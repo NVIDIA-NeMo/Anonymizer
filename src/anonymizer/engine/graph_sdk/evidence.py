@@ -414,7 +414,7 @@ class _RunFacts(_ExecutionFacts):
     def _index_states(self) -> None:
         record = self.result.record
         execution = self.admitted.execution
-        invocation = getattr(self.result, "invocation_state", None)
+        invocation = self.result.invocation_state
         if (invocation is None) != (execution.invocation_workflow is None):
             reject(EffectCode.MISSING)
         if len(self.result.states) != len(self.admitted.execution.context.prepared.target_occurrences):

@@ -230,8 +230,8 @@ class DelegatedGenerationSelection(PrivateValue):
     slots: tuple[int, ...]
 
     def __post_init__(self) -> None:
-        require_text(getattr(self, "port", None))
-        require_instance(getattr(self, "slots", None), tuple)
+        require_text(self.port)
+        require_instance(self.slots, tuple)
         for slot in self.slots:
             require_count(slot)
         if not self.slots or len(set(self.slots)) != len(self.slots):
@@ -296,10 +296,8 @@ class DelegatedRequestContract(PrivateValue):
         require_literal(self.mode, frozenset({"qualified", "opaque"}))
         require_literal(self.usage_requirement, frozenset({"exact", "unknown_allowed"}))
         require_instance(self.child_slots, tuple)
-        require_instance(getattr(self, "optional_tail", None), tuple)
-        require_instance(getattr(self, "generation_groups", None), tuple)
-        if not hasattr(self, "selection"):
-            reject(EffectCode.INVALID_TYPE)
+        require_instance(self.optional_tail, tuple)
+        require_instance(self.generation_groups, tuple)
         if self.selection is not None:
             require_instance(self.selection, DelegatedGenerationSelection)
             self.selection.__post_init__()
@@ -407,8 +405,6 @@ class OperationExecutionPolicy(PrivateValue):
         if self.delegated is not None:
             require_instance(self.delegated, DelegatedRequestContract)
             self.delegated.__post_init__()
-        if not hasattr(self, "submission_owner"):
-            reject(EffectCode.INVALID_TYPE)
         if self.submission_owner is not None:
             require_instance(self.submission_owner, NodeId)
             if (
