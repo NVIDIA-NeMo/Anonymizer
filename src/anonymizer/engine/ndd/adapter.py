@@ -11,9 +11,9 @@ import tempfile
 import time
 import uuid
 from collections.abc import Iterator, Mapping
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from contextvars import ContextVar
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import wraps
 from pathlib import Path
 from threading import Lock, RLock
@@ -29,12 +29,16 @@ from data_designer.config.seed_source import LocalFileSeedSource
 from data_designer.config.utils.constants import TRACE_COLUMN_POSTFIX
 from data_designer.config.utils.trace_type import TraceType
 
+from anonymizer.engine.ndd._source_frame import WorkflowSourceFrame
+from anonymizer.engine.rewrite._semantic_evaluation import RewriteEvaluationBinding
 from anonymizer.interface.errors import AnonymizerWorkflowError
 from anonymizer.measurement import current_collector, record_ndd_workflow
 
 if TYPE_CHECKING:
     import pandas as pd
     from data_designer.interface.data_designer import DataDesigner
+
+    from anonymizer.engine.ndd._graph_requests import NddRequestBridge
 
 logger = logging.getLogger("anonymizer.ndd")
 
@@ -66,6 +70,7 @@ class WorkflowRunResult:
 
     dataframe: pd.DataFrame
     failed_records: list[FailedRecord]
+    source_positions: tuple[int, ...] | None = None
 
 
 @dataclass(frozen=True)
@@ -279,7 +284,7 @@ class NddAdapter:
         self._run_lock = RLock()
         self._input_tokens_lock = Lock()
         self._cumulative_input_tokens: int = 0
-        logger.debug("NDD adapter: artifact_path=%s", getattr(data_designer, "_artifact_path", "unknown"))
+        logger.debug("NDD adapter initialized")
 
     @property
     def total_input_tokens(self) -> int:
@@ -322,6 +327,9 @@ class NddAdapter:
         columns: list[ColumnConfigT],
         workflow_name: str,
         preview_num_records: int | None = None,
+        source_frame: WorkflowSourceFrame | None = None,
+        request_bridge: NddRequestBridge | None = None,
+        rewrite_binding: RewriteEvaluationBinding | None = None,
     ) -> WorkflowRunResult:
         """Run one workflow and return output with missing-record tracking.
 
@@ -344,10 +352,24 @@ class NddAdapter:
         Returns:
             `WorkflowRunResult` with the output DataFrame and any `FailedRecord` entries.
         """
+        if (request_bridge is not None or rewrite_binding is not None) and (
+            source_frame is None
+            or not source_frame.associations
+            and not (source_frame.invocation_bound and (len(df) == 0 or preview_num_records == 0))
+        ):
+            raise AnonymizerWorkflowError("DD request binding requires invocation-owned source associations")
         workflow_input_df = self._attach_record_ids(df=df)
-        logger.debug("NDD workflow '%s' starting with %d records", workflow_name, len(workflow_input_df))
+        if source_frame is None:
+            source_frame = WorkflowSourceFrame.capture(workflow_input_df)
+        elif not source_frame.matches(df):
+            raise AnonymizerWorkflowError("Workflow source frame does not match submitted data")
+        else:
+            source_frame = replace(source_frame, dataframe=workflow_input_df)
+        logger.debug("NDD workflow starting with %d records", len(workflow_input_df))
+        if rewrite_binding is not None:
+            columns = rewrite_binding.columns(columns)
         col_names = [c.name for c in columns]
-        logger.debug("NDD workflow '%s': %d columns %s", workflow_name, len(col_names), col_names)
+        logger.debug("NDD workflow column count: %d", len(col_names))
         available_model_aliases = [m.alias for m in model_configs]
         model_aliases = _extract_workflow_model_aliases(columns) or available_model_aliases
         record_count = (
@@ -374,7 +396,7 @@ class NddAdapter:
 
         with tempfile.TemporaryDirectory(prefix=f"anonymizer_{workflow_name}_") as tmp_dir:
             seed_path = str(Path(tmp_dir) / "seed.parquet")
-            seed_source = LocalFileSeedSource.from_dataframe(workflow_input_df, seed_path)
+            seed_source = LocalFileSeedSource.from_dataframe(source_frame.seed(), seed_path)
 
             config_builder = DataDesignerConfigBuilder(model_configs=model_configs)
             config_builder.with_seed_dataset(seed_source, sampling_strategy=SamplingStrategy.ORDERED)
@@ -387,7 +409,15 @@ class NddAdapter:
 
             task_traces: list[_TaskTrace] = []
             try:
-                with self._run_lock, usage_probe, _temporary_dd_task_trace(self._data_designer, collector=collector):
+                with (
+                    self._run_lock,
+                    usage_probe,
+                    request_bridge.bind(self._data_designer) if request_bridge is not None else nullcontext(),
+                    _temporary_dd_task_trace(self._data_designer, collector=collector),
+                    source_frame.bind_generators(
+                        self._data_designer, frozenset(col_names), rewrite_binding
+                    ) as source_failures,
+                ):
                     if preview_num_records is None:
                         run_results = self._data_designer.create(
                             config_builder,
@@ -406,17 +436,18 @@ class NddAdapter:
                             output_df = workflow_input_df.iloc[0:0].copy()
                         else:
                             output_df = preview_results.dataset
+                    output_df, source_positions = source_frame.project(output_df, requested=record_count)
+                    if source_frame.associations and set(range(record_count)) - set(source_positions) - source_failures:
+                        raise AnonymizerWorkflowError("Workflow output has unattributed source loss")
             except Exception as exc:
                 logger.warning(
-                    "Workflow failed for %d input record(s) on model(s) %s: %s",
+                    "Workflow failed for %d input record(s).",
                     record_count,
-                    available_model_aliases,
-                    exc,
                 )
                 logger.debug(
-                    "Workflow '%s' failure context: columns=%s",
-                    workflow_name,
-                    col_names,
+                    "Workflow failure context: input_records=%d column_count=%d",
+                    record_count,
+                    len(col_names),
                 )
                 try:
                     usage_probe.flush_private_trace_records()
@@ -453,16 +484,17 @@ class NddAdapter:
             )
             usage_probe.flush_private_trace_records()
 
-        logger.debug("NDD workflow '%s' returned %d records", workflow_name, len(output_df))
-        failed_records = self._detect_missing_records(
-            workflow_name=workflow_name,
-            input_df=(
-                workflow_input_df.iloc[:preview_num_records].copy()
-                if preview_num_records is not None
-                else workflow_input_df
-            ),
-            output_df=output_df,
-        )
+        logger.debug("NDD workflow returned %d records", len(output_df))
+        surviving_positions = set(source_positions)
+        missing = workflow_input_df.iloc[[index for index in range(record_count) if index not in surviving_positions]]
+        failed_records = [
+            FailedRecord(
+                record_id=record_id,
+                step=workflow_name,
+                reason="Record missing from workflow output",
+            )
+            for record_id in sorted(missing[RECORD_ID_COLUMN].astype(str).tolist())
+        ]
         _success_model_usage = usage_probe.model_usage()
         with self._run_lock:
             self._add_input_tokens(_success_model_usage)
@@ -479,7 +511,7 @@ class NddAdapter:
             column_names=col_names,
             model_usage=_success_model_usage,
         )
-        return WorkflowRunResult(dataframe=output_df, failed_records=failed_records)
+        return WorkflowRunResult(dataframe=output_df, failed_records=failed_records, source_positions=source_positions)
 
     def build_config(
         self,
@@ -567,70 +599,6 @@ class NddAdapter:
         row_data = {**row.to_dict(), "__row_idx__": row.name}
         serialized = json.dumps(row_data, default=str, sort_keys=True, separators=(",", ":"))
         return uuid.uuid5(uuid.NAMESPACE_URL, serialized).hex
-
-    def _detect_missing_records(
-        self,
-        *,
-        workflow_name: str,
-        input_df: pd.DataFrame,
-        output_df: pd.DataFrame,
-    ) -> list[FailedRecord]:
-        if RECORD_ID_COLUMN not in input_df.columns:
-            logger.warning(
-                "Missing-record detection skipped: input DataFrame lacks the record-tracking "
-                "column, so the adapter cannot verify whether any of %d input record(s) were "
-                "dropped.",
-                len(input_df),
-            )
-            logger.debug(
-                "Workflow '%s' detection skipped: input missing '%s'; input_columns=%s",
-                workflow_name,
-                RECORD_ID_COLUMN,
-                list(input_df.columns),
-            )
-            return []
-        if RECORD_ID_COLUMN not in output_df.columns:
-            input_cols = set(input_df.columns)
-            output_cols = set(output_df.columns)
-            other_dropped = sorted((input_cols - output_cols) - {RECORD_ID_COLUMN})
-            added = sorted(output_cols - input_cols)
-            logger.warning(
-                "Missing-record detection disabled: workflow output does not contain "
-                "the record-tracking column, so all %d input record(s) are being marked as "
-                "failed. This typically means seed-column pass-through is disabled or a "
-                "user-supplied column config overwrote it. Other input columns that were "
-                "also dropped: %s. Columns added by the workflow: %s.",
-                len(input_df),
-                other_dropped,
-                added,
-            )
-            logger.debug(
-                "Workflow '%s' detection disabled: output missing '%s'; input_columns=%s output_columns=%s",
-                workflow_name,
-                RECORD_ID_COLUMN,
-                list(input_df.columns),
-                list(output_df.columns),
-            )
-            return [
-                FailedRecord(
-                    record_id=record_id,
-                    step=workflow_name,
-                    reason=f"Output is missing required tracking column '{RECORD_ID_COLUMN}'",
-                )
-                for record_id in input_df[RECORD_ID_COLUMN].astype(str).tolist()
-            ]
-
-        input_ids = set(input_df[RECORD_ID_COLUMN].astype(str).tolist())
-        output_ids = set(output_df[RECORD_ID_COLUMN].astype(str).tolist())
-        missing_ids = sorted(input_ids - output_ids)
-        return [
-            FailedRecord(
-                record_id=record_id,
-                step=workflow_name,
-                reason="Record missing from workflow output",
-            )
-            for record_id in missing_ids
-        ]
 
 
 def _extract_workflow_model_aliases(columns: list[ColumnConfigT]) -> list[str]:

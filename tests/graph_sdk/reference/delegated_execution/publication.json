@@ -1,0 +1,36 @@
+{
+  "alphabet": [
+    "input",
+    "submit",
+    "dispatch",
+    "settle",
+    "publish_parent",
+    "assess",
+    "qualify"
+  ],
+  "bounds": {
+    "activations": 4,
+    "new_parent_artifacts": 1,
+    "parent_submissions": 1,
+    "physical_requests": 2,
+    "targets": 1
+  },
+  "cases": [
+    {
+      "dispatches": 1,
+      "name": "success"
+    },
+    {
+      "dispatches": 2,
+      "name": "correction"
+    }
+  ],
+  "graphs": 2,
+  "independence": [],
+  "input": "target-0",
+  "local_assessment": "satisfied",
+  "parent_output": "candidate:target-0",
+  "qualified_count": 1,
+  "trace_count": 2,
+  "version": 1
+}

@@ -1,0 +1,17 @@
+--- frozen/p7_reference/test_model.py
++++ adopted/p7_reference/test_model.py
+@@ -12,2 +12,7 @@
+-from p7_reference import model
+-from p7_reference.fixtures import build_raw, change_revision, enumerate_cases, write_bundle
++from tests.graph_sdk.reference.evidence_v1.p7_reference import model
++from tests.graph_sdk.reference.evidence_v1.p7_reference.fixtures import (
++    build_raw,
++    change_revision,
++    enumerate_cases,
++    write_bundle,
++)
+--- frozen/p7_reference/fixtures.py
++++ adopted/p7_reference/fixtures.py
+@@ -15 +15 @@
+-from p7_reference.model import (
++from tests.graph_sdk.reference.evidence_v1.p7_reference.model import (

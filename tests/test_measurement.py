@@ -15,9 +15,11 @@ import pandas as pd
 import pytest
 from data_designer.config.column_configs import CustomColumnConfig, LLMStructuredColumnConfig, LLMTextColumnConfig
 from data_designer.config.column_types import ColumnConfigT
+from data_designer.config.config_builder import DataDesignerConfigBuilder
 from data_designer.config.custom_column import custom_column_generator
 from data_designer.config.models import ModelConfig
 from data_designer.config.run_config import RunConfig
+from data_designer.config.seed_source import LocalFileSeedSource
 from data_designer.config.utils.constants import TRACE_COLUMN_POSTFIX
 from data_designer.config.utils.trace_type import TraceType
 from data_designer.interface.data_designer import DataDesigner
@@ -102,6 +104,12 @@ def trace_input_df() -> pd.DataFrame:
     return pd.DataFrame({"text": ["Alice works at Acme"], RECORD_ID_COLUMN: ["record-a"]})
 
 
+def _seed_frame(builder: object, count: int) -> pd.DataFrame:
+    seed = cast(DataDesignerConfigBuilder, builder).get_seed_config()
+    assert seed is not None and isinstance(seed.source, LocalFileSeedSource)
+    return pd.read_parquet(seed.source.path).iloc[:count].copy()
+
+
 def _trace_model_configs() -> list[ModelConfig]:
     return [ModelConfig(alias="alias", model="dummy-model", provider="provider")]
 
@@ -132,7 +140,7 @@ def test_ndd_adapter_records_workflow_measurement_without_raw_text() -> None:
         }
     )
     mock_dd = Mock(spec=DataDesigner)
-    mock_dd.preview.return_value = SimpleNamespace(dataset=input_df.iloc[[0]].copy())
+    mock_dd.preview.side_effect = lambda builder, **kwargs: SimpleNamespace(dataset=_seed_frame(builder, 1))
     adapter = NddAdapter(data_designer=mock_dd)
     collector = MeasurementCollector(record_hash_key="test-key")
 
@@ -203,7 +211,7 @@ def test_ndd_adapter_records_datadesigner_model_usage() -> None:
 
         def preview(self, _config_builder: object, *, num_records: int) -> SimpleNamespace:
             self._create_resource_provider("preview-dataset", _config_builder)
-            return SimpleNamespace(dataset=input_df.iloc[:num_records].copy())
+            return SimpleNamespace(dataset=_seed_frame(_config_builder, num_records))
 
     adapter = NddAdapter(data_designer=cast(DataDesigner, UsageDataDesigner()))
     collector = MeasurementCollector(record_hash_key="test-key")
@@ -298,7 +306,7 @@ def test_ndd_adapter_records_datadesigner_model_usage_by_alias_for_shared_model_
 
         def preview(self, _config_builder: object, *, num_records: int) -> SimpleNamespace:
             self._create_resource_provider("preview-dataset", _config_builder)
-            return SimpleNamespace(dataset=input_df.iloc[:num_records].copy())
+            return SimpleNamespace(dataset=_seed_frame(_config_builder, num_records))
 
     adapter = NddAdapter(data_designer=cast(DataDesigner, UsageDataDesigner()))
     collector = MeasurementCollector(record_hash_key="test-key")
@@ -873,7 +881,7 @@ def test_ndd_adapter_writes_native_dd_message_trace_and_strips_trace_columns(
         def preview(self, config_builder: object, *, num_records: int) -> SimpleNamespace:
             traced_column = cast(Any, config_builder).get_column_config("raw_detected")
             captured_columns.append(traced_column)
-            output = input_df.iloc[:num_records].copy()
+            output = _seed_frame(config_builder, num_records)
             output["raw_detected"] = "[]"
             output[f"raw_detected{TRACE_COLUMN_POSTFIX}"] = [
                 np.array(
@@ -951,8 +959,7 @@ class _TraceModelRegistry:
 
 
 class _CustomTraceDataDesigner:
-    def __init__(self, input_df: pd.DataFrame, *, facade: Any | None = None) -> None:
-        self.input_df = input_df
+    def __init__(self, *, facade: Any | None = None) -> None:
         self.resource_provider = SimpleNamespace(model_registry=_TraceModelRegistry(facade))
 
     def _create_resource_provider(self, *_args: Any, **_kwargs: Any) -> SimpleNamespace:
@@ -961,7 +968,7 @@ class _CustomTraceDataDesigner:
     def preview(self, config_builder: object, *, num_records: int) -> SimpleNamespace:
         resource_provider = self._create_resource_provider()
         model = resource_provider.model_registry.get_model(model_alias="alias")
-        output = self.input_df.iloc[:num_records].copy()
+        output = _seed_frame(config_builder, num_records)
         for column in cast(Any, config_builder).get_column_configs():
             for row_index, row in output.iterrows():
                 generated = column.generator_function(
@@ -977,12 +984,10 @@ class _CustomTraceDataDesigner:
 class _TaskTraceDataDesigner:
     def __init__(
         self,
-        input_df: pd.DataFrame,
         *,
         task_traces: list[Any] | None = None,
         error: Exception | None = None,
     ) -> None:
-        self.input_df = input_df
         self.task_traces = task_traces or []
         self.error = error
         self.run_config = RunConfig(async_trace=False)
@@ -996,7 +1001,7 @@ class _TaskTraceDataDesigner:
         assert self.run_config.async_trace is True
         if self.error is not None:
             raise self.error
-        return SimpleNamespace(dataset=self.input_df.iloc[:num_records].copy(), task_traces=self.task_traces)
+        return SimpleNamespace(dataset=_seed_frame(_config_builder, num_records), task_traces=self.task_traces)
 
 
 def _custom_trace_column(name: str, *, prompt: str, value: str) -> CustomColumnConfig:
@@ -1030,7 +1035,7 @@ def test_ndd_adapter_writes_custom_column_private_model_facade_dd_trace(
     tmp_path: Path,
     trace_input_df: pd.DataFrame,
 ) -> None:
-    adapter = NddAdapter(data_designer=cast(DataDesigner, _CustomTraceDataDesigner(trace_input_df)))
+    adapter = NddAdapter(data_designer=cast(DataDesigner, _CustomTraceDataDesigner()))
     trace_path = tmp_path / "trace.jsonl"
 
     with configured_measurement_session(
@@ -1089,7 +1094,7 @@ def test_ndd_adapter_reports_untraced_custom_columns_in_dd_trace_coverage(
     tmp_path: Path,
     trace_input_df: pd.DataFrame,
 ) -> None:
-    adapter = NddAdapter(data_designer=cast(DataDesigner, _CustomTraceDataDesigner(trace_input_df)))
+    adapter = NddAdapter(data_designer=cast(DataDesigner, _CustomTraceDataDesigner()))
     trace_path = tmp_path / "trace.jsonl"
 
     with configured_measurement_session(
@@ -1119,7 +1124,7 @@ def test_ndd_adapter_reports_untraced_custom_columns_in_dd_trace_coverage(
 def test_ndd_adapter_private_model_facade_trace_write_error_is_not_wrapped(
     trace_input_df: pd.DataFrame,
 ) -> None:
-    adapter = NddAdapter(data_designer=cast(DataDesigner, _CustomTraceDataDesigner(trace_input_df)))
+    adapter = NddAdapter(data_designer=cast(DataDesigner, _CustomTraceDataDesigner()))
     collector = MeasurementCollector(
         dd_trace_mode="all_messages",
         dd_trace_sink=_FailingSink("private trace sidecar unavailable"),
@@ -1143,9 +1148,7 @@ def test_ndd_adapter_flushes_private_model_facade_error_trace_when_workflow_fail
             raise RuntimeError("custom model call failed")
 
     trace_path = tmp_path / "trace.jsonl"
-    adapter = NddAdapter(
-        data_designer=cast(DataDesigner, _CustomTraceDataDesigner(trace_input_df, facade=FailingTraceModelFacade()))
-    )
+    adapter = NddAdapter(data_designer=cast(DataDesigner, _CustomTraceDataDesigner(facade=FailingTraceModelFacade())))
 
     with pytest.raises(AnonymizerWorkflowError, match="Workflow failed"):
         with configured_measurement_session(
@@ -1181,9 +1184,7 @@ def test_ndd_adapter_private_model_facade_trace_write_error_does_not_mask_workfl
         def completion(self, _messages: list[dict[str, Any]]) -> SimpleNamespace:
             raise RuntimeError("custom model call failed")
 
-    adapter = NddAdapter(
-        data_designer=cast(DataDesigner, _CustomTraceDataDesigner(trace_input_df, facade=FailingTraceModelFacade()))
-    )
+    adapter = NddAdapter(data_designer=cast(DataDesigner, _CustomTraceDataDesigner(facade=FailingTraceModelFacade())))
     collector = MeasurementCollector(
         dd_trace_mode="all_messages",
         dd_trace_sink=_FailingSink("private trace sidecar unavailable"),
@@ -1213,7 +1214,7 @@ def test_ndd_adapter_writes_sanitized_dd_task_traces_and_restores_run_config(
         status="error",
         error="raw secret token Alice",
     )
-    data_designer = _TaskTraceDataDesigner(trace_input_df, task_traces=[task_trace])
+    data_designer = _TaskTraceDataDesigner(task_traces=[task_trace])
     adapter = NddAdapter(data_designer=cast(DataDesigner, data_designer))
     task_trace_path = tmp_path / "task-trace.jsonl"
 
@@ -1284,9 +1285,7 @@ def test_ndd_adapter_task_trace_handles_mapping_and_invalid_timestamps(
         },
     ]
     task_trace_path = tmp_path / "task-trace.jsonl"
-    adapter = NddAdapter(
-        data_designer=cast(DataDesigner, _TaskTraceDataDesigner(trace_input_df, task_traces=task_traces))
-    )
+    adapter = NddAdapter(data_designer=cast(DataDesigner, _TaskTraceDataDesigner(task_traces=task_traces)))
 
     with configured_measurement_session(
         MeasurementConfig(output_path=tmp_path / "measurements.jsonl", dd_task_trace_path=task_trace_path)
@@ -1339,9 +1338,7 @@ def test_ndd_adapter_task_trace_write_error_is_not_wrapped_as_workflow_error(
         status="completed",
         error=None,
     )
-    adapter = NddAdapter(
-        data_designer=cast(DataDesigner, _TaskTraceDataDesigner(trace_input_df, task_traces=[task_trace]))
-    )
+    adapter = NddAdapter(data_designer=cast(DataDesigner, _TaskTraceDataDesigner(task_traces=[task_trace])))
     collector = MeasurementCollector(
         dd_task_trace_sink=_FailingSink("task trace sidecar unavailable"),
         fail_on_write_error=True,
@@ -1360,7 +1357,7 @@ def test_ndd_adapter_trace_write_error_is_not_wrapped_as_workflow_error(
 ) -> None:
     class TraceDataDesigner:
         def preview(self, _config_builder: object, *, num_records: int) -> SimpleNamespace:
-            output = trace_input_df.iloc[:num_records].copy()
+            output = _seed_frame(_config_builder, num_records)
             output["raw_detected"] = "[]"
             output[f"raw_detected{TRACE_COLUMN_POSTFIX}"] = [
                 [
@@ -1389,7 +1386,7 @@ def test_ndd_adapter_restores_run_config_when_task_traced_workflow_fails(
     tmp_path: Path,
     trace_input_df: pd.DataFrame,
 ) -> None:
-    data_designer = _TaskTraceDataDesigner(trace_input_df, error=RuntimeError("raw secret failure"))
+    data_designer = _TaskTraceDataDesigner(error=RuntimeError("raw secret failure"))
     adapter = NddAdapter(data_designer=cast(DataDesigner, data_designer))
 
     with pytest.raises(AnonymizerWorkflowError, match="Workflow failed"):

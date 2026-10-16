@@ -1,0 +1,79 @@
+--- frozen/reference.py
++++ maintained/reference.py
+@@ -4,11 +4,8 @@
+ 
+ from __future__ import annotations
+ 
+-import hashlib
+ import json
+-import sys
+ from itertools import combinations, product
+-from pathlib import Path
+ from typing import TYPE_CHECKING, TypedDict
+ 
+ if TYPE_CHECKING:
+@@ -72,11 +69,6 @@
+ TEXT_KINDS = ("artifact", "port", "provenance", "final_output")
+ CORRELATIONS = ("exact", "missing", "duplicate", "extra", "foreign", "unlocalizable", "outer")
+ SHAPES = ("valid", "output_bad", "assessment_bad")
+-
+-
+-def compute_digest(data: bytes) -> str:
+-    """Bind exact artifact bytes to a SHA256 digest."""
+-    return hashlib.sha256(data).hexdigest()
+ 
+ 
+ def enumerate_subsets(items: Sequence[str]) -> list[frozenset[str]]:
+@@ -225,52 +217,3 @@
+ def encode_json(value: object) -> bytes:
+     """Encode deterministic, compact case and manifest JSON."""
+     return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
+-
+-
+-def write_cases(destination: Path, simple_text: bool = False) -> dict[str, object]:
+-    """Write case bytes and bind their generator and calibration tests."""
+-    rows: list[Case] = list(generate_text_cases()) if simple_text else list(generate_cases())
+-    data = b"".join(encode_json(row) + b"\n" for row in rows)
+-    source = Path(__file__).read_bytes()
+-    manifest: dict[str, object] = dict(
+-        version=3,
+-        corpus="simple-text" if simple_text else "full-six",
+-        cases=len(rows),
+-        first=rows[0]["id"],
+-        last=rows[-1]["id"],
+-        generator_sha256=compute_digest(source),
+-        cases_sha256=compute_digest(data),
+-        tests_sha256=compute_digest(Path(__file__).with_name("test_reference.py").read_bytes()),
+-        authority_sha256="6c711f53ce9e7a737439608b7c8c633c16fd3fed1bc9178cdf197d71cad3859b",
+-        alphabet=dict(
+-            mode=2, correlation=7, shapes=9, capacities=3, usage=2, domain_failure=1 if simple_text else 2, aggregate=2
+-        ),
+-        bounds=dict(
+-            associations=2, requests=2, atoms_per_association=4 if simple_text else 6, capacity_per_kind=[0, 1, 2]
+-        ),
+-        declaration=dict(
+-            kinds=TEXT_KINDS if simple_text else KINDS,
+-            cost_per_kind=[int(kind in TEXT_KINDS) if simple_text else 1 for kind in KINDS],
+-            consumed_context_ports=[] if simple_text else ["ctx"],
+-            graph_outcomes=["ok"] if simple_text else ["ok", "domain_failure"],
+-        ),
+-        independence="A/B deltas disjoint; release closure excluded",
+-    )
+-    destination.mkdir(parents=True, exist_ok=True)
+-    (destination / "cases.jsonl").write_bytes(data)
+-    (destination / "manifest.json").write_bytes(encode_json(manifest) + b"\n")
+-    return manifest
+-
+-
+-def write_bundle(destination: Path) -> dict[str, object]:
+-    """Freeze both separate corpora and their manifests in one evidence bundle."""
+-    manifests = {
+-        name: write_cases(destination / name, simple_text=name == "simple-text") for name in ("full-six", "simple-text")
+-    }
+-    manifest: dict[str, object] = dict(version=3, corpora=manifests)
+-    (destination / "manifest.json").write_bytes(encode_json(manifest) + b"\n")
+-    return manifest
+-
+-
+-if __name__ == "__main__":
+-    print(json.dumps(write_bundle(Path(sys.argv[1])), sort_keys=True))

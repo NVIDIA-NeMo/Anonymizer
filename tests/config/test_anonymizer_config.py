@@ -91,6 +91,33 @@ def test_redact_allows_constant_template() -> None:
     assert strategy.replace(text="Alice", label="first_name") == "****"
 
 
+@pytest.mark.parametrize("template", ["", "{label:.0}", "{label:.0s}{label:.0}"])
+def test_redact_rejects_empty_static_render(template: str) -> None:
+    with pytest.raises(ValueError, match="must produce a nonempty replacement"):
+        Redact(format_template=template)
+
+
+@pytest.mark.parametrize("template", ["{}", "{label:d}", "{label!z}"])
+def test_redact_rejects_malformed_static_format_before_render(template: str) -> None:
+    with pytest.raises(ValueError, match="Invalid redaction template"):
+        Redact(format_template=template)
+
+
+@pytest.mark.parametrize("template,expected", [(" ", " "), ("\t", "\t"), ("{label:1.0}", " "), ("{{}}", "{}")])
+def test_redact_preserves_nonempty_constant_and_padded_render(template: str, expected: str) -> None:
+    assert Redact(format_template=template).replace(text="Alice", label="first_name") == expected
+
+
+def test_redact_checks_label_dependent_render_without_restricting_valid_labels() -> None:
+    strategy = Redact(format_template="{label:.{label}}")
+    assert strategy.replace(text="Alice", label="1") == "1"
+    with pytest.raises(ValueError, match="must produce a nonempty replacement"):
+        strategy.replace(text="Alice", label="0")
+    assert Redact(format_template="{label:{label}}", normalize_label=False).replace(text="Alice", label="3") == "3  "
+    with pytest.raises(ValueError, match="must produce a nonempty replacement"):
+        Redact(format_template="{label}", normalize_label=False).replace(text="Alice", label="")
+
+
 def test_entity_labels_defaults_to_none() -> None:
     config = AnonymizerConfig(replace=Redact())
     assert config.detect.entity_labels is None
@@ -203,7 +230,8 @@ def test_entity_label_examples_exclusion_wins_over_explicit_mismatch(
 
     assert detect.entity_labels == ["email"]
     assert detect.entity_label_examples == {"vendor_api_key": ["acme_live_abc123"]}
-    assert "vendor_api_key" in caplog.text
+    assert "vendor_api_key" not in caplog.text
+    assert "ignored (1 labels)" in caplog.text
     assert "acme_live_abc123" not in caplog.text
 
 
@@ -336,11 +364,14 @@ def test_excluded_entity_labels_whitespace_only_raises() -> None:
 
 def test_excluded_entity_labels_overlap_with_entity_labels_warns(caplog: pytest.LogCaptureFixture) -> None:
     with caplog.at_level(logging.WARNING, logger="anonymizer"):
-        AnonymizerConfig(
+        config = AnonymizerConfig(
             detect={"entity_labels": ["email", "city"], "excluded_entity_labels": ["email"]},
             replace=Redact(),
         )
-    assert "email" in caplog.text
+    assert config.detect.entity_labels == ["city", "email"]
+    assert config.detect.excluded_entity_labels == ["email"]
+    assert "email" not in caplog.text
+    assert "share 1 labels" in caplog.text
     assert "will never be detected" in caplog.text
 
 

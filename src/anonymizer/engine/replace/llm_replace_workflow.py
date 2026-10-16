@@ -6,7 +6,8 @@ from __future__ import annotations
 import json
 import logging
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any
 
 import pandas as pd
 from data_designer.config.column_configs import LLMStructuredColumnConfig
@@ -20,14 +21,15 @@ from anonymizer.engine.constants import (
     COL_ENTITIES_FOR_REPLACE_JSON,
     COL_ENTITY_EXAMPLES,
     COL_REPLACEMENT_MAP,
-    COL_REPLACEMENT_MAP_SOURCE,
     ENTITY_LABEL_EXAMPLES,
 )
-from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter
+from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter, WorkflowRunResult
 from anonymizer.engine.ndd.model_loader import resolve_model_alias
 from anonymizer.engine.prompt_utils import substitute_placeholders
-from anonymizer.engine.row_partitioning import merge_and_reorder, split_rows
 from anonymizer.engine.schemas import EntitiesByValueSchema, EntityReplacementMapSchema
+
+if TYPE_CHECKING:
+    from anonymizer.engine.graph_sdk.executor import ExecutionResult
 
 logger = logging.getLogger("anonymizer.replace.llm_workflow")
 REPLACEMENT_MAP_SOURCE_LLM = "llm"
@@ -43,6 +45,8 @@ _INTERNAL_COLUMNS = (COL_ENTITY_EXAMPLES, COL_ENTITIES_FOR_REPLACE, COL_ENTITIES
 class LlmReplaceResult:
     dataframe: pd.DataFrame
     failed_records: list[FailedRecord]
+    source_positions: tuple[int, ...] | None = None
+    _execution: ExecutionResult | None = field(default=None, repr=False, compare=False)
 
 
 class LlmReplaceWorkflow:
@@ -61,65 +65,47 @@ class LlmReplaceWorkflow:
         entities_column: str = COL_ENTITIES_BY_VALUE,
         preview_num_records: int | None = None,
     ) -> LlmReplaceResult:
-        replace_alias = resolve_model_alias("replacement_generator", selected_models)
+        from anonymizer.engine.replace._semantic_map import run_map
 
-        working_df = dataframe.copy()
-
-        # Parse the per-row entity payload once, then reuse it for prompt inputs.
-        parsed_entities = working_df[entities_column].apply(EntitiesByValueSchema.from_raw)
-        working_df[COL_ENTITY_EXAMPLES] = parsed_entities.apply(_create_entity_examples)
-        working_df[COL_ENTITIES_FOR_REPLACE] = parsed_entities.apply(_enrich_entities_for_template)
-        working_df[COL_ENTITIES_FOR_REPLACE_JSON] = working_df[COL_ENTITIES_FOR_REPLACE].apply(json.dumps)
-
-        # Partition: rows with an empty entity list bypass replacement-map generation.
-        entity_rows, passthrough_rows = split_rows(working_df, column=COL_ENTITIES_FOR_REPLACE, predicate=bool)
-        passthrough_rows[COL_REPLACEMENT_MAP] = [{"replacements": []} for _ in range(len(passthrough_rows))]
-        passthrough_rows[COL_REPLACEMENT_MAP_SOURCE] = REPLACEMENT_MAP_SOURCE_LLM
-
-        if entity_rows.empty:
-            passthrough_only = merge_and_reorder(passthrough_rows)
-            return LlmReplaceResult(
-                dataframe=passthrough_only.drop(columns=list(_INTERNAL_COLUMNS), errors="ignore"),
-                failed_records=[],
-            )
-
-        # Only rows with actual entities are sent to the LLM.
-        effective_preview_num_records = (
-            min(preview_num_records, len(entity_rows)) if preview_num_records is not None else None
+        return run_map(
+            self,
+            dataframe,
+            dict(
+                model_configs=model_configs,
+                selected_models=selected_models,
+                instructions=instructions,
+                entities_column=entities_column,
+                preview_num_records=preview_num_records,
+            ),
         )
-        run_result = self._adapter.run_workflow(
-            entity_rows,
+
+    def _generate_columns(
+        self,
+        dataframe: pd.DataFrame,
+        *,
+        model_configs: list[ModelConfig],
+        selected_models: ReplaceModelSelection,
+        instructions: str | None,
+        preview_num_records: int | None,
+        **binding: Any,
+    ) -> WorkflowRunResult:
+        """Lower one admitted generation batch to DataDesigner columns."""
+        return self._adapter.run_workflow(
+            dataframe,
             model_configs=model_configs,
             columns=[
                 LLMStructuredColumnConfig(
                     name=COL_REPLACEMENT_MAP,
                     prompt=_get_replacement_mapping_prompt(
-                        entities_column=COL_ENTITIES_FOR_REPLACE,
-                        instructions=instructions,
+                        entities_column=COL_ENTITIES_FOR_REPLACE, instructions=instructions
                     ),
-                    model_alias=replace_alias,
+                    model_alias=resolve_model_alias("replacement_generator", selected_models),
                     output_format=EntityReplacementMapSchema,
                 )
             ],
             workflow_name="replace-map-generation",
-            preview_num_records=effective_preview_num_records,
-        )
-        output_df = run_result.dataframe.copy()
-        # Drop any LLM-returned replacements that were not requested for this row.
-        output_df[COL_REPLACEMENT_MAP] = output_df.apply(
-            lambda row: _filter_replacement_map_to_input_entities(
-                raw_map=row.get(COL_REPLACEMENT_MAP, {"replacements": []}),
-                parsed_entities=EntitiesByValueSchema.from_raw(row.get(entities_column, {})),
-                record_id=str(row.get("_anonymizer_record_id", "")),
-            ),
-            axis=1,
-        )
-        output_df[COL_REPLACEMENT_MAP_SOURCE] = REPLACEMENT_MAP_SOURCE_LLM
-
-        combined = merge_and_reorder(output_df, passthrough_rows)
-        return LlmReplaceResult(
-            dataframe=combined.drop(columns=list(_INTERNAL_COLUMNS), errors="ignore"),
-            failed_records=run_result.failed_records,
+            preview_num_records=preview_num_records,
+            **binding,
         )
 
 
@@ -151,9 +137,7 @@ def _filter_replacement_map_to_input_entities(
         raw_map = raw_map.model_dump(mode="python")
     if not isinstance(raw_map, dict):
         logger.warning(
-            "Replacement map has unexpected type for record %s: %s",
-            record_id or "<unknown>",
-            type(raw_map).__name__,
+            "Replacement map has unexpected type.",
         )
         return {"replacements": []}
 
@@ -193,11 +177,8 @@ def _filter_replacement_map_to_input_entities(
 
     if synthetic_collision_labels:
         logger.warning(
-            "Replacement map repaired synthetic-original collision entries for record %s; repaired=%d "
-            "(repaired_by_label=%s)",
-            record_id or "<unknown>",
+            "Replacement map repaired synthetic-original collision entries; repaired=%d",
             sum(synthetic_collision_labels.values()),
-            dict(synthetic_collision_labels),
         )
     if logger.isEnabledFor(logging.DEBUG):
         raw_pairs = {(r.original, r.label) for r in parsed_map.replacements}
@@ -205,25 +186,19 @@ def _filter_replacement_map_to_input_entities(
         unrequested_labels = Counter(label for _, label in (raw_pairs - allowed_pairs))
         unfilled_labels = Counter(label for _, label in (allowed_pairs - filtered_pairs))
         logger.debug(
-            "Replacement map record %s: requested=%d raw=%d filtered=%d%s%s%s",
-            record_id or "<unknown>",
+            "Replacement map: requested=%d raw=%d filtered=%d unrequested=%d unfilled=%d collisions=%d",
             len(allowed_pairs),
             len(parsed_map.replacements),
             len(filtered),
-            f" unrequested_by_label={dict(unrequested_labels)}" if unrequested_labels else "",
-            f" unfilled_by_label={dict(unfilled_labels)}" if unfilled_labels else "",
-            f" synthetic_original_collision_by_label={dict(synthetic_collision_labels)}"
-            if synthetic_collision_labels
-            else "",
+            sum(unrequested_labels.values()),
+            sum(unfilled_labels.values()),
+            sum(synthetic_collision_labels.values()),
         )
     if not filtered and allowed_pairs:
-        requested_labels = Counter(label for _, label in allowed_pairs)
         logger.warning(
-            "Replacement map empty after filtering for record %s; requested=%d raw=%d (requested_by_label=%s)",
-            record_id or "<unknown>",
+            "Replacement map empty after filtering; requested=%d raw=%d",
             len(allowed_pairs),
             len(parsed_map.replacements),
-            dict(requested_labels),
         )
     return {"replacements": filtered}
 

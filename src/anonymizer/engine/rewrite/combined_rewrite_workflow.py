@@ -7,11 +7,9 @@ import json
 from dataclasses import dataclass
 from typing import Any
 
-import pandas as pd
 from data_designer.config import SkipConfig, custom_column_generator
 from data_designer.config.column_configs import CustomColumnConfig, LLMStructuredColumnConfig
 from data_designer.config.column_types import ColumnConfigT
-from data_designer.config.models import ModelConfig
 from pydantic import BaseModel
 
 from anonymizer.config.models import ReplaceModelSelection, RewriteModelSelection
@@ -48,27 +46,19 @@ from anonymizer.engine.replace.llm_replace_workflow import (
     _filter_replacement_map_to_input_entities,
     _get_replacement_mapping_prompt,
 )
+from anonymizer.engine.rewrite._semantic_evaluation import RewriteEvaluationBinding
 from anonymizer.engine.rewrite.domain_classification import DomainClassificationWorkflow
 from anonymizer.engine.rewrite.evaluate import EvaluateWorkflow
-from anonymizer.engine.rewrite.parsers import normalize_payload
 from anonymizer.engine.rewrite.qa_generation import QAGenerationWorkflow
 from anonymizer.engine.rewrite.repair import RepairWorkflow
 from anonymizer.engine.rewrite.rewrite_generation import (
     RewriteGenerationWorkflow,
-    restore_empty_skipped_span_label_counts,
 )
 from anonymizer.engine.rewrite.rewrite_workflow import (
-    RewriteResult,
     RewriteWorkflow,
-    _apply_passthrough_defaults,
-    _has_entities,
-    _join_new_columns,
 )
 from anonymizer.engine.rewrite.sensitivity_disposition import SensitivityDispositionWorkflow
-from anonymizer.engine.rewrite.workflow_utils import derive_seed_columns, select_seed_cols
-from anonymizer.engine.row_partitioning import merge_and_reorder, split_rows
 from anonymizer.engine.schemas import EntitiesByValueSchema, EntityReplacementMapSchema
-from anonymizer.measurement import stage_timer
 
 
 @dataclass(frozen=True)
@@ -105,13 +95,13 @@ class _FinalizationParams(BaseModel):
     flag_leakage_above: float | None
 
 
-def _iteration_column(column: str, iteration: int) -> str:
-    return f"{column}__iteration_{iteration}"
+def _iteration_column(column: str, iteration: int | None) -> str:
+    return column if iteration is None else f"{column}__iteration_{iteration}"
 
 
-def _evaluation_state(iteration: int, rewritten_text: str) -> EvaluationState:
+def _evaluation_state(iteration: int | None, rewritten_text: str) -> EvaluationState:
     return EvaluationState(
-        iteration=iteration,
+        iteration=0 if iteration is None else iteration,
         rewritten_text=rewritten_text,
         quality_reanswer=_iteration_column(COL_QUALITY_QA_REANSWER, iteration),
         privacy_reanswer=_iteration_column(COL_PRIVACY_QA_REANSWER, iteration),
@@ -202,13 +192,16 @@ def _remap_custom_column(
     mapping: dict[str, str],
     *,
     skip: SkipConfig | None = None,
+    additional_inputs: tuple[str, ...] = (),
 ) -> CustomColumnConfig:
     if not isinstance(column, CustomColumnConfig):
         raise TypeError(f"Expected CustomColumnConfig, got {type(column).__name__}")
 
     generator = column.generator_function
     metadata = generator.custom_column_metadata
-    required_columns = [mapping.get(name, name) for name in metadata["required_columns"]]
+    required_columns = list(
+        dict.fromkeys([*(mapping.get(name, name) for name in metadata["required_columns"]), *additional_inputs])
+    )
     side_effect_columns = [mapping.get(name, name) for name in metadata["side_effect_columns"]]
     model_aliases = list(metadata["model_aliases"])
     outputs = [column.name, *metadata["side_effect_columns"]]
@@ -314,6 +307,8 @@ def _repair_columns(
 def _finalization_column(
     states: list[EvaluationState],
     evaluation: EvaluationCriteria,
+    *,
+    semantic: bool = False,
 ) -> CustomColumnConfig:
     required_columns = list(
         dict.fromkeys(
@@ -350,28 +345,13 @@ def _finalization_column(
         side_effect_columns=side_effect_columns,
     )
     def finalize(row: dict[str, Any], generator_params: _FinalizationParams) -> dict[str, Any]:
-        state = next(
-            (candidate for candidate in reversed(states) if row.get(candidate.needs_repair) is not None),
-            states[0],
-        )
-        row[COL_REWRITTEN_TEXT] = row.get(state.rewritten_text)
-        row[COL_QUALITY_QA_REANSWER] = normalize_payload(row.get(state.quality_reanswer))
-        row[COL_PRIVACY_QA_REANSWER] = normalize_payload(row.get(state.privacy_reanswer))
-        row[COL_QUALITY_QA_COMPARE] = normalize_payload(row.get(state.quality_compare))
-        row[COL_UTILITY_SCORE] = row.get(state.utility_score)
-        row[COL_LEAKAGE_MASS] = row.get(state.leakage_mass)
-        row[COL_WEIGHTED_LEAKAGE_RATE] = row.get(state.weighted_leakage_rate)
-        row[COL_ANY_HIGH_LEAKED] = row.get(state.any_high_leaked)
-        row[COL_NEEDS_REPAIR] = row.get(state.needs_repair)
-        row[COL_REPAIR_ITERATIONS] = state.iteration
+        from anonymizer.engine.rewrite._semantic_profile import project_combined_observations
+        from anonymizer.engine.rewrite.rewrite_workflow import _REWRITE_BINDING
 
-        needs_review = row[COL_REWRITTEN_TEXT] is None or bool(row[COL_ANY_HIGH_LEAKED])
-        if generator_params.flag_utility_below is not None:
-            needs_review = needs_review or float(row[COL_UTILITY_SCORE]) < generator_params.flag_utility_below
-        if generator_params.flag_leakage_above is not None:
-            needs_review = needs_review or float(row[COL_LEAKAGE_MASS]) > generator_params.flag_leakage_above
-        row[COL_NEEDS_HUMAN_REVIEW] = needs_review
-        return row
+        current = _REWRITE_BINDING.get()
+        if current is not None and current[1].combined and not current[1].opaque:
+            return row
+        return project_combined_observations(row, evaluation)
 
     return CustomColumnConfig(
         name=COL_REWRITTEN_TEXT,
@@ -387,8 +367,8 @@ def _finalization_column(
 class CombinedRewriteWorkflow(RewriteWorkflow):
     """Proof-of-concept rewrite workflow executed as one DataDesigner graph."""
 
-    def __init__(self, adapter: NddAdapter) -> None:
-        super().__init__(adapter)
+    def __init__(self, adapter: NddAdapter, *, semantic_binding: RewriteEvaluationBinding | None = None) -> None:
+        super().__init__(adapter, semantic_binding=semantic_binding)
 
     def build_graph(
         self,
@@ -437,29 +417,27 @@ class CombinedRewriteWorkflow(RewriteWorkflow):
             )
         )
 
-        for iteration in range(evaluation.max_repair_iterations):
-            repair_state = _repair_state(iteration)
-            repair_states.append(repair_state)
+        iterations = range(evaluation.max_repair_iterations)
+        for iteration in iterations:
+            repair = _repair_state(iteration)
+            current = _evaluation_state(iteration + 1, repair.rewritten_text)
             columns.extend(
-                _repair_columns(
-                    self._adapter,
-                    selected_models=selected_models,
-                    privacy_goal=privacy_goal,
-                    evaluation=evaluation,
-                    previous=evaluation_states[-1],
-                    state=repair_state,
-                )
+                [
+                    *_repair_columns(
+                        self._adapter,
+                        selected_models=selected_models,
+                        privacy_goal=privacy_goal,
+                        evaluation=evaluation,
+                        previous=evaluation_states[-1],
+                        state=repair,
+                    ),
+                    *_evaluation_columns(
+                        self._adapter, selected_models=selected_models, evaluation=evaluation, state=current
+                    ),
+                ]
             )
-            evaluation_state = _evaluation_state(iteration + 1, repair_state.rewritten_text)
-            evaluation_states.append(evaluation_state)
-            columns.extend(
-                _evaluation_columns(
-                    self._adapter,
-                    selected_models=selected_models,
-                    evaluation=evaluation,
-                    state=evaluation_state,
-                )
-            )
+            repair_states.append(repair)
+            evaluation_states.append(current)
 
         columns.append(_finalization_column(evaluation_states, evaluation))
         internal_columns = [
@@ -477,62 +455,3 @@ class CombinedRewriteWorkflow(RewriteWorkflow):
             repair_states=repair_states,
             internal_columns=list(dict.fromkeys(internal_columns)),
         )
-
-    def run(
-        self,
-        dataframe: pd.DataFrame,
-        *,
-        model_configs: list[ModelConfig],
-        selected_models: RewriteModelSelection,
-        replace_model_selection: ReplaceModelSelection,
-        privacy_goal: PrivacyGoal,
-        evaluation: EvaluationCriteria,
-        data_summary: str | None = None,
-        preview_num_records: int | None = None,
-        strict_entity_protection: bool = False,
-    ) -> RewriteResult:
-        with stage_timer("CombinedRewriteWorkflow.run", input_row_count=len(dataframe)) as measurement:
-            entity_rows, passthrough_rows = split_rows(
-                dataframe,
-                column=COL_ENTITIES_BY_VALUE,
-                predicate=_has_entities,
-            )
-            measurement.update(
-                entity_row_count=len(entity_rows),
-                passthrough_row_count=len(passthrough_rows),
-            )
-            if entity_rows.empty:
-                _apply_passthrough_defaults(passthrough_rows)
-                result = RewriteResult(dataframe=merge_and_reorder(passthrough_rows), failed_records=[])
-                measurement.update(output_row_count=len(result.dataframe), failed_record_count=0)
-                return result
-
-            graph = self.build_graph(
-                selected_models=selected_models,
-                replace_model_selection=replace_model_selection,
-                privacy_goal=privacy_goal,
-                evaluation=evaluation,
-                data_summary=data_summary,
-                strict_entity_protection=strict_entity_protection,
-            )
-            seed = select_seed_cols(entity_rows, derive_seed_columns(graph.columns, entity_rows))
-            run_result = self._adapter.run_workflow(
-                seed,
-                model_configs=model_configs,
-                columns=graph.columns,
-                workflow_name="rewrite-combined",
-                preview_num_records=preview_num_records,
-            )
-            restore_empty_skipped_span_label_counts(run_result.dataframe)
-            entity_rows = _join_new_columns(entity_rows, run_result.dataframe)
-            entity_rows = entity_rows.drop(columns=graph.internal_columns, errors="ignore")
-            _apply_passthrough_defaults(passthrough_rows)
-            result = RewriteResult(
-                dataframe=merge_and_reorder(entity_rows, passthrough_rows),
-                failed_records=run_result.failed_records,
-            )
-            measurement.update(
-                output_row_count=len(result.dataframe),
-                failed_record_count=len(result.failed_records),
-            )
-            return result

@@ -39,3 +39,8 @@ for path in sorted(package.rglob("*.py")):
 
 with mkdocs_gen_files.open("reference/SUMMARY.md", "w") as nav_file:
     nav_file.writelines(nav.build_literate_nav())
+
+# Publish the runnable source from its maintained example, without a second copy.
+example_path = Path("examples/graph_sdk/local_workflows.py")
+with mkdocs_gen_files.open(example_path, "w") as example_file:
+    example_file.write(example_path.read_text())

@@ -12,14 +12,13 @@ validator pool. The per-chunk decisions are merged into a
 
 Public entry point: :func:`make_chunked_validation_generator`, which
 produces a ``@custom_column_generator``-decorated function bound to a
-concrete pool. Plugin columns call :func:`chunked_validate_row_async`
-directly. The helpers below are exposed for unit testing.
+concrete pool. Plugin columns invoke the same helpers under their opaque graph owner. The helpers below are exposed for unit testing.
 
 Failure contract. Each chunk attempts its round-robin primary first and
 fails over sequentially to the rest of the pool; a chunk only fails when
 every pool member has raised. The first failing chunk re-raises out of
 the generator, DataDesigner drops the row, and
-``NddAdapter._detect_missing_records`` surfaces it as a ``FailedRecord``.
+``NddAdapter.run_workflow`` source-position accounting surfaces it as a ``FailedRecord``.
 Raw text never silently leaks through as unscrubbed output.
 
 Concurrency. Async plugin execution dispatches chunks with ``asyncio.gather``
@@ -57,6 +56,7 @@ from anonymizer.engine.detection.postprocess import (
     TagNotation,
     build_tagged_text,
 )
+from anonymizer.engine.ndd._source_frame import source_generation
 from anonymizer.engine.schemas import (
     EntitiesSchema,
     RawValidationDecisionsSchema,
@@ -323,7 +323,7 @@ def _dispatch_chunk(
     exception (no alternate alias to try). Multi-alias pools get
     ``len(pool)`` total attempts. If every pool member raises, the *last*
     exception propagates so DataDesigner records the row as a
-    ``FailedRecord`` via ``NddAdapter._detect_missing_records``.
+    ``FailedRecord`` via ``NddAdapter.run_workflow`` source-position accounting.
 
     Each failover attempt is logged at WARNING so operators can correlate
     degraded pool members with run-level failure-rate spikes.
@@ -343,9 +343,8 @@ def _dispatch_chunk(
             )
             if attempt_index > 0:
                 logger.info(
-                    "validator chunk %d: recovered on failover alias=%s (attempt %d of %d)",
+                    "validator chunk %d: recovered on failover (attempt %d of %d)",
                     chunk_index,
-                    alias,
                     attempt_index + 1,
                     len(facades),
                 )
@@ -355,20 +354,14 @@ def _dispatch_chunk(
             remaining = len(facades) - attempt_index - 1
             if remaining > 0:
                 logger.warning(
-                    "validator chunk %d: alias=%s raised %s (%s); failing over to next pool member (%d remaining)",
+                    "validator chunk %d: request failed; failing over to next pool member (%d remaining)",
                     chunk_index,
-                    alias,
-                    type(exc).__name__,
-                    exc,
                     remaining,
                 )
             else:
                 logger.error(
-                    "validator chunk %d: alias=%s raised %s (%s); pool exhausted — row will be dropped",
+                    "validator chunk %d: request failed; pool exhausted — row will be dropped",
                     chunk_index,
-                    alias,
-                    type(exc).__name__,
-                    exc,
                 )
 
     # ``facades`` is non-empty by caller contract: ``chunked_validate_row``
@@ -410,9 +403,8 @@ async def _dispatch_chunk_async(
             )
             if attempt_index > 0:
                 logger.info(
-                    "validator chunk %d: recovered on failover alias=%s (attempt %d of %d)",
+                    "validator chunk %d: recovered on failover (attempt %d of %d)",
                     chunk_index,
-                    alias,
                     attempt_index + 1,
                     len(facades),
                 )
@@ -422,20 +414,14 @@ async def _dispatch_chunk_async(
             remaining = len(facades) - attempt_index - 1
             if remaining > 0:
                 logger.warning(
-                    "validator chunk %d: alias=%s raised %s (%s); failing over to next pool member (%d remaining)",
+                    "validator chunk %d: request failed; failing over to next pool member (%d remaining)",
                     chunk_index,
-                    alias,
-                    type(exc).__name__,
-                    exc,
                     remaining,
                 )
             else:
                 logger.error(
-                    "validator chunk %d: alias=%s raised %s (%s); pool exhausted — row will be dropped",
+                    "validator chunk %d: request failed; pool exhausted — row will be dropped",
                     chunk_index,
-                    alias,
-                    type(exc).__name__,
-                    exc,
                 )
 
     if last_exc is None:
@@ -444,6 +430,35 @@ async def _dispatch_chunk_async(
             "this violates the caller contract (a non-empty validator pool)."
         )
     raise last_exc
+
+
+def validation_chunks(
+    row: dict[str, Any], max_entities_per_call: int
+) -> tuple[ValidationCandidatesSchema, list[EntitySpan], list[list[tuple[Any, EntitySpan]]]]:
+    """One pure chunk selection shared by DD dispatch and canonical publication."""
+    candidates = ValidationCandidatesSchema.from_raw(row.get(COL_SEED_VALIDATION_CANDIDATES, {}))
+    seed_entities_schema = EntitiesSchema.from_raw(row.get(COL_SEED_ENTITIES, {}))
+
+    if not candidates.candidates:
+        return candidates, [], []
+
+    all_spans = [
+        EntitySpan(
+            entity_id=entity.id,
+            value=entity.value,
+            label=entity.label,
+            start_position=entity.start_position,
+            end_position=entity.end_position,
+            score=entity.score,
+            source=entity.source,
+        )
+        for entity in seed_entities_schema.entities
+    ]
+
+    ordered = order_candidates_by_position(candidates, all_spans)
+    chunks = chunk_candidates(ordered, max_entities_per_call)
+
+    return candidates, all_spans, chunks
 
 
 def _build_dispatch_kwargs_per_chunk(
@@ -460,44 +475,25 @@ def _build_dispatch_kwargs_per_chunk(
         )
 
     text = str(row.get(COL_TEXT, ""))
-    candidates = ValidationCandidatesSchema.from_raw(row.get(COL_SEED_VALIDATION_CANDIDATES, {}))
-    seed_entities_schema = EntitiesSchema.from_raw(row.get(COL_SEED_ENTITIES, {}))
-    notation_raw = row.get(COL_TAG_NOTATION) or TagNotation.sentinel.value
-    notation = TagNotation(str(notation_raw))
-
-    if not candidates.candidates:
+    notation = TagNotation(str(row.get(COL_TAG_NOTATION) or TagNotation.sentinel.value))
+    candidates, all_spans, chunks = validation_chunks(row, params.max_entities_per_call)
+    if not chunks:
         return candidates, []
-
-    all_spans = [
-        EntitySpan(
-            entity_id=entity.id,
-            value=entity.value,
-            label=entity.label,
-            start_position=entity.start_position,
-            end_position=entity.end_position,
-            score=entity.score,
-            source=entity.source,
-        )
-        for entity in seed_entities_schema.entities
-    ]
-
-    ordered = order_candidates_by_position(candidates, all_spans)
-    chunks = chunk_candidates(ordered, params.max_entities_per_call)
 
     if len(chunks) == 1:
         logger.debug(
-            "chunked validation: %d candidate(s) in 1 chunk (full-text excerpt), pool=%s",
-            len(ordered),
-            params.pool,
+            "chunked validation: %d candidate(s) in 1 chunk (full-text excerpt), pool_size=%d",
+            len(candidates.candidates),
+            len(params.pool),
         )
     else:
         logger.debug(
-            "chunked validation: %d candidate(s) in %d chunks (max=%d per chunk, window=%d chars), pool=%s",
-            len(ordered),
+            "chunked validation: %d candidate(s) in %d chunks (max=%d per chunk, window=%d chars), pool_size=%d",
+            len(candidates.candidates),
             len(chunks),
             params.max_entities_per_call,
             params.excerpt_window_chars,
-            params.pool,
+            len(params.pool),
         )
 
     # Single-chunk rows preserve parity with the pre-chunking
@@ -568,7 +564,8 @@ async def _bounded_dispatch_chunk_async(
     kwargs: dict[str, Any],
 ) -> RawValidationDecisionsSchema:
     async with semaphore:
-        return await _dispatch_chunk_async(**kwargs)
+        with source_generation(kwargs["chunk_index"]):
+            return await _dispatch_chunk_async(**kwargs)
 
 
 def chunked_validate_row(
@@ -609,9 +606,22 @@ async def chunked_validate_row_async(
         chunk_results: list[RawValidationDecisionsSchema] = []
     else:
         semaphore = asyncio.Semaphore(_chunk_worker_count(params, len(dispatch_kwargs_per_chunk)))
-        chunk_results = await asyncio.gather(
-            *[_bounded_dispatch_chunk_async(semaphore, kwargs) for kwargs in dispatch_kwargs_per_chunk]
-        )
+        tasks = [
+            asyncio.create_task(_bounded_dispatch_chunk_async(semaphore, kwargs))
+            for kwargs in dispatch_kwargs_per_chunk
+        ]
+        try:
+            chunk_results = await asyncio.gather(*tasks)
+        except BaseException:
+            # gather may report the first failed chunk while siblings still use
+            # borrowed DD clients. Retain those users before releasing the row.
+            drained = asyncio.gather(*tasks, return_exceptions=True)
+            while not drained.done():
+                try:
+                    await asyncio.shield(drained)
+                except asyncio.CancelledError:
+                    continue
+            raise
 
     row[COL_VALIDATION_DECISIONS] = merge_chunk_decisions(chunk_results, candidates)
     return row

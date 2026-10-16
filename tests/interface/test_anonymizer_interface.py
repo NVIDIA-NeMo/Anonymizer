@@ -1178,3 +1178,47 @@ def test_evaluate_passes_detection_context_to_coverage_judge(stub_input: Anonymi
     assert mock_coverage_wf.call_args.kwargs["excluded_entity_labels"] == ["email"]
     assert evaluated.data_summary == "Customer support transcripts."
     assert evaluated.excluded_entity_labels == ["email"]
+
+
+@pytest.mark.parametrize("preview", [False, True])
+def test_public_projection_retains_live_owner_without_saving_it(stub_input, preview):
+    import pickle
+    from copy import copy, deepcopy
+
+    class LiveOwner:
+        def __reduce__(self):
+            raise AssertionError("live runtime resources must not be serialized")
+
+    owner = LiveOwner()
+    replacement = ReplacementResult(
+        dataframe=pd.DataFrame({COL_TEXT: ["Alice"], COL_REPLACED_TEXT: ["[first_name]"]}), failed_records=[]
+    )
+    object.__setattr__(replacement, "_execution", owner)
+    anonymizer, detector, runner, _ = _make_anonymizer(replace_return=replacement)
+    config = AnonymizerConfig(replace=Redact())
+    result = (
+        anonymizer.preview(config=config, data=stub_input, num_records=1)
+        if preview
+        else anonymizer.run(config=config, data=stub_input)
+    )
+    from anonymizer.engine.detection._frame_publication import InvocationFrame
+    from anonymizer.engine.graph_sdk.executor import ExecutionResult
+
+    execution = result._execution
+    assert isinstance(execution, ExecutionResult)
+    frame = execution.frames[0]
+    assert isinstance(frame, InvocationFrame) and frame.retained_owner is owner
+    assert copy(result)._execution is execution
+    cloned = deepcopy(result)
+    assert cloned._execution is execution and cloned.dataframe is not result.dataframe
+    pd.testing.assert_frame_equal(cloned.dataframe, result.dataframe)
+    assert detector.run.call_count == runner.run.call_count == 1
+    restored = pickle.loads(pickle.dumps(result))
+    assert restored._execution is None
+    pd.testing.assert_frame_equal(restored.dataframe, result.dataframe)
+    pd.testing.assert_frame_equal(restored.trace_dataframe, result.trace_dataframe)
+    assert restored.replace_method == result.replace_method
+    assert restored.failed_records == result.failed_records
+    assert "_execution" not in result.__getstate__()
+    if preview:
+        assert restored.preview_num_records == 1
