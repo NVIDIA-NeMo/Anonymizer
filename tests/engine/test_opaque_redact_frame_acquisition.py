@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import asyncio
 import threading
-import time
 from typing import Any, cast
 
 import pytest
@@ -128,12 +127,20 @@ def test_cancelled_acquisition_raises_promptly_without_busy_spin(monkeypatch: py
 
 
 def test_outer_cancel_then_success_closes_transport_and_reraises_first(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Caller cancelled twice while pending; acquisition then succeeds -> close + first error."""
+    """Caller cancelled twice while pending; acquisition then succeeds -> close + first error.
+
+    The acquisition's success is gated on a ``threading.Event`` set only after both outer
+    cancels have been delivered and observed (each is followed by a yielding sleep so the
+    cancellation has reached the awaiting coroutine). This removes the fixed-delay race
+    between the two cancels and ``ForeignLoopTransport.create`` completing: without the
+    gate, a slow CI host could let the acquisition resolve before either cancel lands.
+    """
     _patch_owned_and_policy(monkeypatch)
     created: list[_FakeTransport] = []
+    cancels_delivered = threading.Event()
 
     def slow_create(cls: type[ForeignLoopTransport], **kwargs: Any) -> _FakeTransport:
-        time.sleep(0.3)
+        assert cancels_delivered.wait(timeout=10), "outer cancels were not delivered before the gate timeout"
         transport = _FakeTransport()
         created.append(transport)
         return transport
@@ -145,8 +152,10 @@ def test_outer_cancel_then_success_closes_transport_and_reraises_first(monkeypat
         task = asyncio.ensure_future(_call_frame_plan())
         await asyncio.sleep(0.05)
         task.cancel("first-cancel")
-        await asyncio.sleep(0.05)
+        await asyncio.sleep(0.05)  # let the first cancellation reach the awaiting coroutine
         task.cancel("second-cancel")
+        await asyncio.sleep(0.05)  # let the second cancellation reach the awaiting coroutine
+        cancels_delivered.set()
         with pytest.raises(asyncio.CancelledError) as excinfo:
             await task
         return excinfo.value
@@ -158,11 +167,17 @@ def test_outer_cancel_then_success_closes_transport_and_reraises_first(monkeypat
 
 
 def test_outer_cancel_then_factory_failure_chains_first_interrupt(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Caller cancelled once while pending; acquisition then fails with a non-cancel error."""
+    """Caller cancelled once while pending; acquisition then fails with a non-cancel error.
+
+    As above, the factory failure is gated on a ``threading.Event`` set only after the
+    outer cancel has been delivered and observed, so the ordering is deterministic rather
+    than relying on a fixed delay racing the cancel.
+    """
     _patch_owned_and_policy(monkeypatch)
+    cancel_delivered = threading.Event()
 
     def failing_slow_create(cls: type[ForeignLoopTransport], **kwargs: Any) -> ForeignLoopTransport:
-        time.sleep(0.3)
+        assert cancel_delivered.wait(timeout=10), "outer cancel was not delivered before the gate timeout"
         raise RuntimeError("factory boom")
 
     monkeypatch.setattr(ForeignLoopTransport, "create", classmethod(failing_slow_create))
@@ -172,7 +187,8 @@ def test_outer_cancel_then_factory_failure_chains_first_interrupt(monkeypatch: p
         task = asyncio.ensure_future(_call_frame_plan())
         await asyncio.sleep(0.05)
         task.cancel("first-cancel")
-        await asyncio.sleep(0.05)
+        await asyncio.sleep(0.05)  # let the cancellation reach the awaiting coroutine
+        cancel_delivered.set()
         with pytest.raises(asyncio.CancelledError) as excinfo:
             await task
         return excinfo.value
