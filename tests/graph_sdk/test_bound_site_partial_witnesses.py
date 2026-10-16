@@ -5,14 +5,12 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import replace
 from typing import cast
 
 import pytest
 
 from anonymizer.engine.graph_sdk.executor import BoundInputKey
 from anonymizer.engine.graph_sdk.qualification import qualify
-from anonymizer.graph import EffectCode, EffectRejected
 from tests.graph_sdk.qualification_fixtures import _inputs
 from tests.graph_sdk.test_qualification_subject_context import _execute_separate_subject_context
 
@@ -54,37 +52,3 @@ def test_bound_declarations_join_their_exact_node_port_and_versions(ordinary_con
     assert len(output.qualified) == 1
     assert output.record.statuses[0].qualification == "met"
     assert qualify(admitted=admitted, result=result, current=current, submissions=submissions) == output
-
-
-def test_retained_binding_reference_zero_version_rejects_before_lookup() -> None:
-    execution, result = asyncio.run(
-        _execute_separate_subject_context(
-            versioned_context_dependencies=frozenset({"a"}), versioned_context_ports=("a",)
-        )
-    )
-    admitted, current, submissions = _inputs(execution, result, latest=True)
-    baseline = qualify(admitted=admitted, result=result, current=current, submissions=submissions)
-    assert len(baseline.qualified) == 1
-    fact = next(item for item in result.provenance if isinstance(item.key, BoundInputKey))
-    original = fact.key
-    assert isinstance(original, BoundInputKey)
-    changed = replace(original, binding_artifact=replace(original.binding_artifact))
-    object.__setattr__(changed.binding_artifact, "version", 0)
-    parents = tuple((row, row.parents) for row in result.provenance)
-    captures = result._input_parents
-    object.__setattr__(fact, "key", changed)
-    for row, old in parents:
-        object.__setattr__(row, "parents", frozenset(changed if key == original else key for key in old))
-    object.__setattr__(
-        result, "_input_parents", tuple((t, a, p, changed if key == original else key) for t, a, p, key in captures)
-    )
-    try:
-        with pytest.raises(EffectRejected) as error:
-            qualify(admitted=admitted, result=result, current=current, submissions=submissions)
-        assert error.value.code is EffectCode.INVALID_VALUE
-    finally:
-        object.__setattr__(fact, "key", original)
-        for row, old in parents:
-            object.__setattr__(row, "parents", old)
-        object.__setattr__(result, "_input_parents", captures)
-    assert qualify(admitted=admitted, result=result, current=current, submissions=submissions) == baseline

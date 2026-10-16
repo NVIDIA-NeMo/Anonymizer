@@ -220,11 +220,11 @@ async def _run_external_batch(
             authority.apply(AcceptFailure(request=request, failure=failure))
             correction_only = True
         elif type(result) is TransportSuccess:
-            invalid = inspect_associations(result.results, associations, admitted._response_limits())
+            invalid = inspect_associations(result.results, associations, admitted.ingress_limits)
             if invalid is None:
                 safe_rows = (
                     type(result.results) is tuple
-                    and len(result.results) <= admitted._response_limits().max_associations
+                    and len(result.results) <= admitted.ingress_limits.max_associations
                     and all(
                         type(row) is AssociationResult and _trusted_association(row.association)
                         for row in result.results

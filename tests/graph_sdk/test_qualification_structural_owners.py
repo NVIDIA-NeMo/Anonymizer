@@ -54,18 +54,6 @@ def test_duplicate_retained_membership_rows_preserve_observable_multiplicity() -
     assert rejected.value.code is EffectCode.DUPLICATE
 
 
-def test_admitted_container_requires_a_structural_terminal() -> None:
-    execution, result = asyncio.run(_execute_assessment(nested=True))
-    admitted, current, submissions = _inputs(execution, result)
-    assert len(qualify(admitted=admitted, result=result, current=current, submissions=submissions).qualified) == 1
-    (container,) = tuple(terminal for terminal in result.record.terminals if terminal.structural)
-    assert container.attempt is None
-    object.__setattr__(container, "structural", False)
-    with pytest.raises(ContractViolation) as rejected:
-        qualify(admitted=admitted, result=result, current=current, submissions=submissions)
-    assert rejected.value.code is ValidationCode.CONTRADICTORY
-
-
 def test_child_membership_cannot_cross_prepared_target_owners() -> None:
     execution, result = asyncio.run(_execute_assessment(nested=True, target_count=2))
     admitted, current, submissions = _inputs(execution, result)
@@ -88,9 +76,7 @@ def test_child_membership_cannot_cross_prepared_target_owners() -> None:
     assert rejected.value.code is EffectCode.FOREIGN_OWNER
 
 
-@pytest.mark.parametrize(
-    "fault", ["missing", "duplicate", "foreign-duplicate", "invalid-foreign", "scalar-foreign", "oversized-invalid"]
-)
+@pytest.mark.parametrize("fault", ["missing", "duplicate", "foreign-duplicate", "oversized-invalid"])
 def test_terminal_inventory_precedence(fault: str) -> None:
     execution, result = asyncio.run(_execute_separate_subject_context())
     admitted, current, submissions = _inputs(execution, result)
@@ -117,10 +103,6 @@ def test_terminal_inventory_precedence(fault: str) -> None:
         object.__setattr__(changed, "activation", foreign)
         rows = (changed, changed)
         expected = EffectCode.FOREIGN_OWNER
-        if fault in ("invalid-foreign", "scalar-foreign"):
-            object.__setattr__(changed, "category", 1 if fault == "invalid-foreign" else "invalid")
-            error_type = ContractViolation
-            expected = ValidationCode.INVALID_TYPE if fault == "invalid-foreign" else ValidationCode.INVALID_VALUE
     try:
         object.__setattr__(result.record, "terminals", rows)
         with pytest.raises(error_type) as rejected:

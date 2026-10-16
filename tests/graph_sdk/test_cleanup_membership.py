@@ -48,7 +48,7 @@ async def executed(loop, pool, *, optional, failed=True):
 
 @pytest.mark.parametrize("optional", [False, True])
 @pytest.mark.parametrize("failed", [False, True])
-@pytest.mark.parametrize("registration", ["retained", "selected_removed", "all_removed", "no_resource", "foreign_id"])
+@pytest.mark.parametrize("registration", ["retained", "selected_removed", "all_removed", "foreign_id"])
 def test_paired_deletion_cannot_erase_declared_resource_even_when_membership_is_changed(optional, failed, registration):
     async def run():
         async with _loop_and_pool() as (loop, pool):
@@ -58,11 +58,6 @@ def test_paired_deletion_cannot_erase_declared_resource_even_when_membership_is_
                 rows = tuple(row for row in rows if row.resource != resource)
             elif registration == "all_removed":
                 rows = ()
-            elif registration == "no_resource":
-                original = next(row for row in rows if row.resource == resource)
-                forged = replace(original)
-                object.__setattr__(forged, "resource", None)
-                rows = tuple(forged if row is original else row for row in rows)
             elif registration == "foreign_id":
                 rows = tuple(
                     replace(row, resource=ResourceId.new()) if row.resource == resource else row for row in rows
@@ -73,14 +68,9 @@ def test_paired_deletion_cannot_erase_declared_resource_even_when_membership_is_
                 cleanup=tuple(f for f in result.cleanup if f.resource != resource),
                 cleanup_associations=tuple(a for a in result.cleanup_associations if a.resource != resource),
             )
-            if registration == "no_resource":
-                with pytest.raises(EffectRejected) as caught:
-                    _qualify(execution, changed)
-                assert caught.value.code == EffectCode.INVALID_TYPE
-            else:
-                qualified = _qualify(execution, changed)
-                assert not qualified.qualified
-                assert all("inconsistent_attribution" in target.withholding for target in qualified.targets)
+            qualified = _qualify(execution, changed)
+            assert not qualified.qualified
+            assert all("inconsistent_attribution" in target.withholding for target in qualified.targets)
             assert len(_qualify(execution, result).qualified) == int(not failed)
 
     asyncio.run(run())
@@ -171,26 +161,6 @@ def test_resource_inventories_are_bounded_before_indexes(field):
             with pytest.raises(EffectRejected) as caught:
                 _qualify(execution, changed)
             assert caught.value.code == EffectCode.LIMIT_EXCEEDED
-
-    asyncio.run(run())
-
-
-@pytest.mark.parametrize("field,value", [("resource", "not-an-id"), ("owner", "invented"), ("configuration", object())])
-def test_raw_registration_fields_are_rechecked(field, value):
-    async def run():
-        async with _loop_and_pool() as (loop, pool):
-            execution, result, resource = await executed(loop, pool, optional=True, failed=False)
-            original = next(row for row in result.implementation_resources if row.resource == resource)
-            forged = replace(original)
-            object.__setattr__(forged, field, value)
-            changed = result_with(
-                result,
-                implementation_resources=tuple(
-                    forged if row is original else row for row in result.implementation_resources
-                ),
-            )
-            with pytest.raises(EffectRejected):
-                _qualify(execution, changed)
 
     asyncio.run(run())
 

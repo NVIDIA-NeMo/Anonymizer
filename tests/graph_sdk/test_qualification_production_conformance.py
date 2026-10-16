@@ -431,6 +431,9 @@ def test_baseline_reference_against_actual_execution(case: dict[str, Any]) -> No
         assert _comparison_order(actual) == _comparison_order(trace["expected"])
 
 
+# Corruptions that are only reachable by writing into a frozen retained terminal (object.__setattr__);
+# checked construction (OQ-2) makes these unrepresentable, so they no longer bind the retained boundary.
+FROZEN_VALUE_TAMPER_IDS = frozenset({"structural/non_bool_flag", "structural/success_with_reason"})
 CORRUPTION_IDS = frozenset(
     {
         "assessment/unsupported_finding",
@@ -693,7 +696,9 @@ def _run_retained_corruption(case: dict[str, Any], events: list[dict[str, Any]])
 
 
 @pytest.mark.parametrize(
-    "case", [case for case in CORPUS if case["case_id"] in CORRUPTION_IDS], ids=lambda case: case["case_id"]
+    "case",
+    [case for case in CORPUS if case["case_id"] in CORRUPTION_IDS and case["case_id"] not in FROZEN_VALUE_TAMPER_IDS],
+    ids=lambda case: case["case_id"],
 )
 def test_reference_corruption_at_actual_retained_boundary(case: dict[str, Any]) -> None:
     for trace in [{"events": case["events"], "expected": case["expected"]}, *case["traces"]]:

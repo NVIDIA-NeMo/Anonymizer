@@ -158,7 +158,6 @@ class TerminalFact(_PrivateRepr):
         if self.unused_retry is not None:
             if not isinstance(self.unused_retry, UnusedRetryCapacity):
                 raise ContractViolation(ValidationCode.INVALID_TYPE)
-            self.unused_retry.__post_init__()
             if self.unused_retry.owner.activation.invocation != self.activation.invocation:
                 raise ContractViolation(ValidationCode.FOREIGN_OWNER)
             if (

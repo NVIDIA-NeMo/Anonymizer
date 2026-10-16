@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 from inspect import iscoroutinefunction
 from itertools import product
 from typing import Literal
@@ -24,6 +25,9 @@ from anonymizer.engine.graph_sdk._execution_values import (
     AdmittedExecutionPlan,
     AssessmentLimits,
     DelegatedCallable,
+    DelegatedGenerationSelection,
+    DelegatedReadiness,
+    DelegatedRequestContract,
     EvidenceProductionDecl,
     ExecutionKind,
     ExecutionLimits,
@@ -48,6 +52,8 @@ from anonymizer.engine.graph_sdk.context import (
 from anonymizer.engine.graph_sdk.preparation import PreparedPlan
 from anonymizer.engine.graph_sdk.requests import (
     BindingDeclarationId,
+    ChildRoute,
+    PhysicalRequestPolicy,
 )
 from anonymizer.graph._values import (
     ContractViolation,
@@ -77,8 +83,10 @@ def admit_execution_plan(
 ) -> AdmittedExecutionPlan:
     """Admit exact execution policies over one immutable prepared plan."""
     require_instance(context, AdmittedContextPlan)
-    require_instance(ingress_limits, IngressLimits)
-    ingress_limits.__post_init__()
+    # Exact type, then a detached copy: the issued response policy never aliases the caller's object.
+    if type(ingress_limits) is not IngressLimits:
+        reject(EffectCode.INVALID_TYPE)
+    ingress_limits = replace(ingress_limits)
     prepared = context.prepared
     if not isinstance(capabilities, tuple):
         reject(EffectCode.INVALID_TYPE)
@@ -387,7 +395,7 @@ def _validate_delegated_recipes(prepared: PreparedPlan, policies: tuple[Operatio
         contract = policy.delegated
         if contract is None:
             continue
-        contract.__post_init__()
+        _require_exact_contract(contract)
         if contract.publication_sources:
             if contract.mode != "opaque" or prepared.configuration.purpose != "execution_only":
                 reject(EffectCode.UNSUPPORTED)
@@ -739,14 +747,34 @@ def _validate_delegated_services(admitted: AdmittedExecutionPlan, services: Exec
                 reject(EffectCode.UNSUPPORTED)
 
 
+def _require_exact_contract(contract: DelegatedRequestContract) -> None:
+    """Accept only exact, immutable recipe types, so the admitted recipe cannot change after admission.
+
+    Every member was validated when it was constructed; exact types (no subclass properties) plus frozen
+    dataclasses over tuples/frozensets of primitives make the caller's object a detached snapshot.
+    """
+    readiness, selection = contract.readiness, contract.selection
+    if (
+        type(contract) is not DelegatedRequestContract
+        or type(contract.observed_request) not in (type(None), PhysicalRequestPolicy)
+        or type(readiness) not in (type(None), DelegatedReadiness)
+        or (readiness is not None and type(readiness.route) is not ChildRoute)
+        or type(selection) not in (type(None), DelegatedGenerationSelection)
+        or (selection is not None and type(selection.slots) is not tuple)
+        or any(type(item) is not tuple for item in (contract.child_slots, contract.routes, contract.optional_tail))
+        or type(contract.generation_groups) is not tuple
+        or any(type(group) is not tuple for group in contract.generation_groups)
+        or any(type(route) is not ChildRoute for route in contract.routes)
+    ):
+        reject(EffectCode.INVALID_TYPE)
+
+
 def _validate_services(admitted: AdmittedExecutionPlan, services: ExecutionServices) -> None:
     if any(isinstance(handle.transport, ForeignLoopTransport) for handle in services.handles) and not any(
         policy.delegated is not None for policy in admitted.policies
     ):
         reject(EffectCode.UNSUPPORTED)
-    admitted._validate_ingress_policy()
     require_instance(services.limits, ExecutionLimits)
-    services.limits.__post_init__()
     if (
         services.limits.max_remote_outstanding is not None or services.limits.max_runtime_artifact_bytes is not None
     ) and any(policy.delegated is not None and policy.delegated.mode == "opaque" for policy in admitted.policies):

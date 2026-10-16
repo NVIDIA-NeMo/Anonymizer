@@ -365,7 +365,6 @@ class _Qualification:
                 for target in self.affected(key):
                     self.incomplete(target)
                 continue
-            terminal.__post_init__()
             structural = isinstance(self.nodes[entry.template], SubgraphNode)
             if terminal.structural != structural or terminal.category != entry.status:
                 reject(EffectCode.CONTRADICTORY)
@@ -497,7 +496,6 @@ class _Qualification:
         processed: set[PhysicalRequestId] = set()
         used_groups: set[tuple[ActivationKey, tuple[int, ...]]] = set()
         for chain in receipt.chains:
-            chain.__post_init__()
             if (
                 chain.chain.scope != receipt.scope
                 or len(chain.associations) != 1
@@ -573,10 +571,8 @@ class _Qualification:
                 used_groups.add((owner, slots))
             prior: RequestReservation | None = None
             for dispatch in history:
-                dispatch.__post_init__()
                 child = dispatch.child
                 assert child is not None
-                child.__post_init__()
                 leaf = child.leaf
                 if (
                     leaf is None
@@ -614,16 +610,12 @@ class _Qualification:
                 settlements = [item for item in receipt.settlements if item.request == dispatch.request]
                 if len(facts) != 1 or terminals[leaf].category != facts[0].category:
                     reject(EffectCode.CONTRADICTORY)
-                facts[0].__post_init__()
                 unsettled_loss = (
                     facts[0].category == "lost" and not settlements and dispatch.request in receipt.remote_outstanding
                 )
                 if len(settlements) != 1 and not unsettled_loss:
                     reject(EffectCode.CONTRADICTORY)
-                for settlement in settlements:
-                    settlement.__post_init__()
                 for summary in facts[0].results:
-                    summary.__post_init__()
                     if summary.category == "success" and (
                         summary.association != association
                         or summary.outcome != self.facts.entries[leaf.activation].outcome
@@ -651,7 +643,6 @@ class _Qualification:
                 for evidence in receipt.child_evidence:
                     if evidence.chain != chain.chain or evidence.request != dispatch.request:
                         continue
-                    evidence.__post_init__()
                     if (
                         facts[0].category != "failure"
                         or facts[0].failure != "malformed_response"
@@ -1141,7 +1132,6 @@ class _Qualification:
             reject(EffectCode.LIMIT_EXCEEDED)
         for row in rows:
             require_instance(row, ImplementationResourceRegistration)
-            row.__post_init__()
             lease = row._lease
             if lease is not None and (
                 not isinstance(lease, ResourceLease)
@@ -1259,7 +1249,6 @@ class _Qualification:
             reject(EffectCode.LIMIT_EXCEEDED)
         for fact in cleanup:
             require_instance(fact, CleanupFact)
-            fact.__post_init__()
         for association in cleanup_associations:
             require_instance(association, CleanupAssociation)
             require_instance(association.resource, ResourceId)

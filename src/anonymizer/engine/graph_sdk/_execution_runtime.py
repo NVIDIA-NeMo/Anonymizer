@@ -522,7 +522,7 @@ class _InvocationRuntime:
                 job.association,
                 job.inputs,
                 self.control,
-                self.admitted._response_limits(),
+                self.admitted.ingress_limits,
                 invocation=isinstance(job.scope, InvocationId),
             )
         self.submissions[asyncio.create_task(coroutine)] = jobs

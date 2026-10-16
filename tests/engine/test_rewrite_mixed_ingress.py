@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import replace
 from pathlib import Path
 from threading import get_ident
 from typing import Any, cast
@@ -192,28 +193,35 @@ def test_inherited_receiver_uses_its_actual_schedule(mixed_run: Callable[..., An
 
 
 @pytest.mark.parametrize("combined", [False, True])
-@pytest.mark.parametrize("mutation", ["candidate", "dtype", "dtype_numeric", "shape"])
+@pytest.mark.parametrize("mutation", ["dtype", "shape"])
 def test_retained_observation_mutation_rejects(mixed_run: Callable[..., Any], combined: bool, mutation: str) -> None:
-    result, _, _, _, _ = mixed_run("mock_detection", combined, candidate=42 if mutation == "dtype_numeric" else "123")
+    result, _, _, _, _ = mixed_run("mock_detection", combined, candidate="123")
     execution = result._execution
     published = execution.frames[0]
-    if mutation in {"candidate", "shape"}:
-        ref = dict(published._text)[COL_REWRITTEN_TEXT][0]
-        value = dict(execution.artifacts)[ref]
-        if mutation == "candidate":
-            object.__setattr__(value, "value", "456")  # Same type and byte length.
-        else:
-            from anonymizer.engine.graph_sdk._artifact_shape import ArtifactShape
+    if mutation == "shape":
+        from anonymizer.engine.graph_sdk._artifact_shape import ArtifactShape
 
-            object.__setattr__(value, "shape", ArtifactShape(content_bytes=0, items=1))
+        ref = dict(published._text)[COL_REWRITTEN_TEXT][0]
+        object.__setattr__(dict(execution.artifacts)[ref], "shape", ArtifactShape(content_bytes=0, items=1))
     else:
-        object.__setattr__(
-            published,
-            "_observation_dtypes",
-            ((COL_REWRITTEN_TEXT, np.dtype("float64" if mutation == "dtype_numeric" else "int64")),),
-        )
+        object.__setattr__(published, "_observation_dtypes", ((COL_REWRITTEN_TEXT, np.dtype("int64")),))
     with pytest.raises((ValueError, RuntimeError)):
         published.project(execution)
+
+
+def test_published_presentation_dtypes_are_detached_from_the_publisher(mixed_run: Callable[..., Any]) -> None:
+    class Presentation(pd.api.extensions.ExtensionDtype):
+        name = "u1-presentation"
+        type = object
+        marker = "accepted"
+
+    result, _, _, _, _ = mixed_run("mock_detection", False)
+    published = result._execution.frames[0]
+    publisher_dtype = Presentation()
+    accepted = replace(published, _observation_dtypes=(("presentation", publisher_dtype),))
+    publisher_dtype.marker = "changed later"  # the publisher's object, after acceptance
+    ((_, detached),) = accepted._observation_dtypes
+    assert detached is not publisher_dtype and detached.marker == "accepted"
 
 
 @pytest.mark.parametrize("combined", [False, True])

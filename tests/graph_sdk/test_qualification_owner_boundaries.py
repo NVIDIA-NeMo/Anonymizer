@@ -86,21 +86,3 @@ def test_consumed_port_cannot_introduce_an_unsupported_role() -> None:
     with pytest.raises(EffectRejected) as error:
         qualify(admitted=admitted, result=result, current=current, submissions=submissions)
     assert error.value.code is EffectCode.UNSUPPORTED
-
-
-@pytest.mark.parametrize(
-    ("field", "value", "code"),
-    [
-        ("structural", 1, ValidationCode.INVALID_TYPE),
-        ("reasons", frozenset({"unexpected"}), ValidationCode.INVALID_VALUE),
-        ("attempt", None, ValidationCode.CONTRADICTORY),
-    ],
-)
-def test_retained_terminal_preserves_its_value_invariants(field: str, value: object, code: ValidationCode) -> None:
-    execution, result = asyncio.run(_execute_separate_subject_context())
-    admitted, current, submissions = _inputs(execution, result)
-    (terminal,) = result.record.terminals
-    object.__setattr__(terminal, field, value)
-    with pytest.raises(ContractViolation) as error:
-        qualify(admitted=admitted, result=result, current=current, submissions=submissions)
-    assert error.value.code is code

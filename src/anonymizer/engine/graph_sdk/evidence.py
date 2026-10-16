@@ -26,7 +26,6 @@ from anonymizer.engine.graph_sdk.executor import (
     AdmittedExecutionPlan,
     AssessmentEnvironment,
     AssessmentFinding,
-    BoundInputKey,
     EvidenceProductionDecl,
     ExecutionAssessmentFact,
     ExecutionPortFact,
@@ -265,7 +264,6 @@ class _RunFacts(_ExecutionFacts):
     def from_result(cls, admitted: AdmittedQualification, result: ExecutionResult) -> _RunFacts:
         limits = admitted.limits
         execution = admitted.execution
-        execution._validate_ingress_policy()
         prepared = execution.context.prepared
         bound = execution.context.bound_context
         if bound is not None:
@@ -298,18 +296,8 @@ class _RunFacts(_ExecutionFacts):
                 len(membership.members) > prepared.limits.max_total_activation_slots
             ):
                 reject(EffectCode.LIMIT_EXCEEDED)
-        for membership in record.memberships:
-            membership._validate_fields()
         for terminal in record.terminals:
             require_instance(terminal, TerminalFact)
-            terminal._validate_fields()
-        for fact in result.provenance:
-            if isinstance(fact.key, MapItemKey):
-                fact.key._validate_fields()
-            elif isinstance(fact.key, BoundInputKey):
-                fact.key.__post_init__()
-        if bound is not None:
-            bound._validate_inventory_fields()
         if (
             result._execution is not execution
             or record.plan != prepared.plan

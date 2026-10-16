@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import InitVar, dataclass, field, fields, replace
+from dataclasses import InitVar, dataclass, field, replace
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Literal, Protocol, TypeAlias, runtime_checkable
 
@@ -208,7 +208,6 @@ class DelegatedReadiness(PrivateValue):
         if len(set(self.slots)) != 3:
             reject(EffectCode.DUPLICATE)
         require_instance(self.route, ChildRoute)
-        self.route.__post_init__()
         if self.route.parse_attempts != 1:
             reject(EffectCode.UNSUPPORTED)
         require_text(self.ready_outcome)
@@ -262,10 +261,6 @@ class DelegatedRequestContract(PrivateValue):
     selection: DelegatedGenerationSelection | None = None
     publication_sources: tuple[tuple[NodeId, frozenset[str]], ...] = ()
     observed_request: PhysicalRequestPolicy | None = None
-    _accepted_publication_sources: tuple[tuple[NodeId, frozenset[str]], ...] = field(
-        init=False, repr=False, compare=False
-    )
-    _accepted_observed_declaration: tuple[object, ...] | None = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         if self.observed_request is not None:
@@ -286,13 +281,8 @@ class DelegatedRequestContract(PrivateValue):
                 reject(EffectCode.INVALID_TYPE)
         if len({node for node, _ in self.publication_sources}) != len(self.publication_sources):
             reject(EffectCode.DUPLICATE)
-        if not hasattr(self, "_accepted_publication_sources"):
-            object.__setattr__(self, "_accepted_publication_sources", self.publication_sources)
-        elif self.publication_sources != self._accepted_publication_sources:
-            reject(EffectCode.FOREIGN_OWNER)
         if self.readiness is not None:
             require_instance(self.readiness, DelegatedReadiness)
-            self.readiness.__post_init__()
         require_literal(self.mode, frozenset({"qualified", "opaque"}))
         require_literal(self.usage_requirement, frozenset({"exact", "unknown_allowed"}))
         require_instance(self.child_slots, tuple)
@@ -300,7 +290,6 @@ class DelegatedRequestContract(PrivateValue):
         require_instance(self.generation_groups, tuple)
         if self.selection is not None:
             require_instance(self.selection, DelegatedGenerationSelection)
-            self.selection.__post_init__()
             if self.optional_tail or any((slot,) not in self.generation_groups for slot in self.selection.slots):
                 reject(EffectCode.UNSUPPORTED)
         for group in self.generation_groups:
@@ -326,7 +315,6 @@ class DelegatedRequestContract(PrivateValue):
         require_instance(self.routes, tuple)
         for route in self.routes:
             require_instance(route, ChildRoute)
-            route.__post_init__()
         if len({route.name for route in self.routes}) != len(self.routes):
             reject(EffectCode.DUPLICATE)
         if type(self.followups) is not frozenset or not self.followups <= {
@@ -336,36 +324,6 @@ class DelegatedRequestContract(PrivateValue):
             "failover",
         }:
             reject(EffectCode.INVALID_VALUE)
-        observed = self.observed_request
-        readiness = self.readiness
-        declaration = (
-            None
-            if observed is None
-            else (
-                observed.visibility,
-                observed.pre_dispatch_control,
-                observed.retry_owner,
-                observed.replay,
-                observed.max_attempts,
-                self.child_slots,
-                self.generation_groups,
-                tuple((route.name, route.parse_attempts) for route in self.routes),
-                self.followups,
-                None
-                if readiness is None
-                else (
-                    readiness.slots,
-                    readiness.route.name,
-                    readiness.route.parse_attempts,
-                    readiness.ready_outcome,
-                    readiness.probe_outcomes,
-                ),
-            )
-        )
-        if not hasattr(self, "_accepted_observed_declaration"):
-            object.__setattr__(self, "_accepted_observed_declaration", declaration)
-        elif declaration != self._accepted_observed_declaration:
-            reject(EffectCode.FOREIGN_OWNER)
 
     @property
     def generations(self) -> tuple[tuple[int, ...], ...]:
@@ -404,7 +362,6 @@ class OperationExecutionPolicy(PrivateValue):
         require_literal(self.kind, frozenset({"local", "external", "delegated"}))
         if self.delegated is not None:
             require_instance(self.delegated, DelegatedRequestContract)
-            self.delegated.__post_init__()
         if self.submission_owner is not None:
             require_instance(self.submission_owner, NodeId)
             if (
@@ -545,7 +502,6 @@ class BoundInputKey(PrivateValue):
         require_instance(self.node, NodeId)
         require_text(self.port)
         require_instance(self.binding_artifact, BindingArtifactRef)
-        self.binding_artifact.__post_init__()
 
 
 @dataclass(frozen=True, slots=True, kw_only=True, repr=False)
@@ -661,9 +617,6 @@ class AdmittedExecutionPlan(PrivateValue):
     assessment_productions: tuple[EvidenceProductionDecl, ...]
     assessment_limits: AssessmentLimits
     ingress_limits: IngressLimits
-    _ingress_policy: tuple[int, int, int | None, int, int | None, int | None, int | None, int] = field(
-        init=False, compare=False
-    )
     nodes: Mapping[NodeId, Operation] = field(init=False, compare=False)
     input_sources: Mapping[NodeInputRef, WorkflowInputRef | ContextInputRef | NodeOutputRef] = field(
         init=False, compare=False
@@ -672,9 +625,6 @@ class AdmittedExecutionPlan(PrivateValue):
 
     def __post_init__(self, _key: object) -> None:
         require_owner(_key, _PLAN_KEY)
-        object.__setattr__(
-            self, "_ingress_policy", tuple(getattr(self.ingress_limits, item.name) for item in fields(IngressLimits))
-        )
         bodies = self.context.prepared.workflow.bodies()
         object.__setattr__(
             self, "nodes", MappingProxyType({node.id: node for body in bodies for node in body.operations})
@@ -687,27 +637,6 @@ class AdmittedExecutionPlan(PrivateValue):
             ),
         )
         object.__setattr__(self, "materialization_schemas", MappingProxyType(self._compile_materialization_schemas()))
-
-    def _validate_ingress_policy(self) -> None:
-        """Preserve the response envelope selected at admission, including absent byte limits."""
-        require_instance(self.ingress_limits, IngressLimits)
-        self.ingress_limits.__post_init__()
-        current = tuple(getattr(self.ingress_limits, item.name) for item in fields(IngressLimits))
-        if getattr(self, "_ingress_policy", None) != current:
-            reject(EffectCode.CONTRADICTORY)
-
-    def _response_limits(self) -> IngressLimits:
-        """Give the executor a detached copy of the issued response policy."""
-        return IngressLimits(
-            max_associations=self._ingress_policy[0],
-            max_outputs_per_association=self._ingress_policy[1],
-            max_collection_items=self._ingress_policy[2],
-            max_assessments=self._ingress_policy[3],
-            max_metadata_items=self._ingress_policy[4],
-            max_text_bytes=self._ingress_policy[5],
-            max_metadata_bytes=self._ingress_policy[6],
-            max_depth=self._ingress_policy[7],
-        )
 
     def _service_implementations(self) -> tuple[tuple[OperationExecutionPolicy, ExecutionImplementation], ...]:
         """Declared handle domain, excluding semantic work borrowed by a delegate."""

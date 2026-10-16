@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 import math
 from copy import deepcopy
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, cast
 
 import numpy as np
@@ -72,15 +72,10 @@ class PublishedFrame:
     _observation_dtypes: tuple[tuple[str, np.dtype | pd.api.extensions.ExtensionDtype], ...] = ()
     _json_columns: tuple[str, ...] = ()
     _accepted_json_payloads: tuple[tuple[str, tuple[str, ...]], ...] = ()
-    _accepted_observation_dtypes: tuple[tuple[str, np.dtype | pd.api.extensions.ExtensionDtype], ...] = field(
-        init=False, repr=False, compare=False
-    )
-
-    _accepted_json_columns: tuple[str, ...] = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "_accepted_json_columns", self._json_columns)
-        object.__setattr__(self, "_accepted_observation_dtypes", deepcopy(self._observation_dtypes))
+        # Detach the presentation dtypes from the publisher's objects once, at acceptance.
+        object.__setattr__(self, "_observation_dtypes", deepcopy(self._observation_dtypes))
 
     def project(self, result: ExecutionResult) -> pd.DataFrame:
         if not any(self is frame for frame in result.frames):
@@ -124,10 +119,6 @@ class PublishedFrame:
             or not self._content.columns.equals(self._columns.drop(columns))
         ):
             raise ValueError("malformed retained frame columns")
-        if self._json_columns != self._accepted_json_columns:
-            raise ValueError("frame JSON projection differs from accepted output")
-        if self._observation_dtypes != self._accepted_observation_dtypes:
-            raise ValueError("frame presentation metadata differs from its accepted output")
         values = dict(result.artifacts)
         ports_by_source = {}
         for fact in result.ports:
@@ -154,8 +145,8 @@ class PublishedFrame:
                 else {"entities": [entity.as_dict() for entity in cast(EntitySpansValue, value).entities]}
                 for value in text
             ]
-            dtype = dict(self._accepted_observation_dtypes).get(column)
-            if column in self._accepted_json_columns:
+            dtype = dict(self._observation_dtypes).get(column)
+            if column in self._json_columns:
                 if tuple(observed) != dict(self._accepted_json_payloads).get(column):
                     raise ValueError("JSON artifact differs from its accepted content")
                 observed = [json.loads(cast(str, value)) for value in observed]

@@ -21,11 +21,7 @@ from tests.graph_sdk.qualification_fixtures import _BindingProvider, _initial_re
     [
         "owner-and-duplicate",
         "oversize-and-invalid",
-        "invalid-and-owner",
-        "receipt-only-invalid",
-        "receipt-only-scalar",
         "receipt-only-oversize",
-        "invalid-and-foreign-execution",
     ],
 )
 def test_retained_binding_checks_preserve_precedence_and_do_not_repeat_provider_work(defect: str) -> None:
@@ -47,23 +43,12 @@ def test_retained_binding_checks_preserve_precedence_and_do_not_repeat_provider_
     if defect == "owner-and-duplicate":
         changed = (*original, foreign)
         expected = EffectCode.FOREIGN_OWNER
-    elif defect in {"oversize-and-invalid", "receipt-only-oversize"}:
+    else:
         changed = (None,) * (admitted.limits.max_port_facts + 1)
         expected = EffectCode.LIMIT_EXCEEDED
-    elif defect == "receipt-only-scalar":
-        invalid_reference = replace(original[-1].reference)
-        invalid_artifact = replace(original[-1], reference=invalid_reference)
-        object.__setattr__(invalid_reference, "version", 0)
-        changed = (invalid_artifact,)
-        expected = EffectCode.INVALID_VALUE
-    else:
-        changed = (foreign, None)
-        expected = EffectCode.INVALID_TYPE
     if not defect.startswith("receipt-only"):
         object.__setattr__(bound, "artifacts", changed)
     object.__setattr__(bound.receipt, "artifacts", changed)
-    if defect == "invalid-and-foreign-execution":
-        object.__setattr__(result, "_execution", object())
     try:
         with pytest.raises(EffectRejected) as error:
             qualify(admitted=admitted, result=result, current=current, submissions=submissions)

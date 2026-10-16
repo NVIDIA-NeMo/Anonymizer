@@ -338,7 +338,6 @@ class _DelegatedOwner(PrivateValue):
         self._require_transport(transport)
 
     def _require_transport(self, transport: object) -> None:
-        self.contract.__post_init__()
         if self.closed:
             reject(EffectCode.FOREIGN_OWNER)
         slots = self.contract.child_slots + (
@@ -554,7 +553,7 @@ class _DelegatedOwner(PrivateValue):
             invalid = inspect_associations(
                 result.results,
                 frozenset({association}),
-                self.runtime.admitted._response_limits(),
+                self.runtime.admitted.ingress_limits,
                 assessments=result.assessments,
             )
             if invalid is None or invalid or result.frame is not None or result.failed_sources:
@@ -656,7 +655,6 @@ class _DelegatedOwner(PrivateValue):
 
     def _check_submission(self) -> None:
         self._check()
-        self.contract.__post_init__()
         task = asyncio.current_task()
         if (task is not self.submission and (self.worker_call is None or task is not self.worker_call)) or self.active:
             reject(EffectCode.UNSUPPORTED)
@@ -842,7 +840,7 @@ class _DelegatedOwner(PrivateValue):
         ]
         try:
             returned = await _run_local(
-                job.policy, handle, job.association, job.inputs, self, self.runtime.admitted._response_limits()
+                job.policy, handle, job.association, job.inputs, self, self.runtime.admitted.ingress_limits
             )
             assert isinstance(returned, tuple)
             mapping, results, assessments = returned
@@ -971,7 +969,7 @@ class _DelegatedOwner(PrivateValue):
         if completion.cancelled:
             mapping = _mapping(policy, "cancel_after_dispatch" if completion.stop_confirmed else "lost", None, None)
         elif type(value) is TransportSuccess:
-            invalid = inspect_associations(value.results, chain.associations, runtime.admitted._response_limits())
+            invalid = inspect_associations(value.results, chain.associations, runtime.admitted.ingress_limits)
             if invalid is None:
                 authority.apply(AcceptResult(request=request, results=()))
                 mapping = _mapping(policy, "request_inconsistent", None, None)
@@ -1161,7 +1159,7 @@ class _DelegatedOwner(PrivateValue):
         invalid = inspect_associations(
             result.results,
             frozenset(self.jobs) - failed_sources,
-            runtime.admitted._response_limits(),
+            runtime.admitted.ingress_limits,
             assessments=result.assessments,
         )
         if (
@@ -1283,7 +1281,6 @@ class _DelegatedOwner(PrivateValue):
                 and any(policy.submission_owner == self.policy.node for policy in runtime.policies.values())
             ):
                 if self.contract.publication_sources:
-                    self.contract.__post_init__()
                     allowed = dict(self.contract.publication_sources)
                     targets = {self.jobs[cast(SemanticAssociation, item.association)].scope for item in successful}
                     semantic_results = []

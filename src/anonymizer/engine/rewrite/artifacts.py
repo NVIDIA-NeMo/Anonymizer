@@ -115,13 +115,6 @@ class RewriteCandidateValue(_RewriteValue):
     value: object
     missing: bool = False
     opaque: bool = False
-    _observed: object = field(init=False, repr=False, compare=False)
-    _observed_tags: tuple[bool, bool] = field(init=False, repr=False, compare=False)
-
-    def __post_init__(self) -> None:
-        object.__setattr__(self, "_observed", self.value)
-        object.__setattr__(self, "_observed_tags", (self.missing, self.opaque))
-        _RewriteValue.__post_init__(self)
 
     def __eq__(self, other: object) -> bool:
         if type(other) is not RewriteCandidateValue:
@@ -199,19 +192,10 @@ def rewrite_content(
     if type(value) is RewriteCandidateValue:
         payload, missing = getattr(value, "value", object()), getattr(value, "missing", None)
         opaque = getattr(value, "opaque", None)
-        if (
-            type(opaque) is not bool
-            or payload is not getattr(value, "_observed", object())
-            or (missing, opaque) != getattr(value, "_observed_tags", None)
-        ):
+        if type(opaque) is not bool:
             return None
         if opaque:
-            if (
-                payload is not getattr(value, "_observed", None)
-                or missing is not False
-                or max_items is not None
-                and max_items < 1
-            ):
+            if missing is not False or max_items is not None and max_items < 1:
                 return None
             # Arbitrary caller cells are retained observations, with no claim
             # about text content, semantic validity or hidden object byte size.

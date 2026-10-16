@@ -237,7 +237,9 @@ def test_map_binding_rejects_copied_stale_and_replayed_entries(monkeypatch: pyte
     assert adapter.run_workflow.call_count == (1 if mutation == "replay" else 0)
 
 
-@pytest.mark.parametrize("mutation", ["declaration", "map_result"])
+@pytest.mark.parametrize(
+    "mutation", ["map_result"]
+)  # keeps the retained test id; "declaration" was frozen-value tamper
 def test_mutated_publication_or_map_cannot_authorize_downstream_work(mutation: str) -> None:
     source = _source()
     adapter = Mock()
@@ -251,17 +253,8 @@ def test_mutated_publication_or_map_cannot_authorize_downstream_work(mutation: s
 
     class ChangedMap(LlmReplaceWorkflow):
         def generate_map_only(self, dataframe: pd.DataFrame, **kwargs: Any) -> LlmReplaceResult:
-            if mutation == "declaration":
-                owner = source_worker_borrow().owner
-                producer = next(
-                    policy.node
-                    for policy in owner.runtime.policies.values()
-                    if policy.implementations[0].capability.operation.name == "replacement-generate"
-                )
-                object.__setattr__(owner.contract, "publication_sources", ((producer, frozenset({"raw_map"})),))
             result = super().generate_map_only(dataframe, **kwargs)
-            if mutation == "map_result":
-                result.dataframe[COL_REPLACEMENT_MAP].iloc[0]["replacements"].append(_raw()["replacements"][1])
+            result.dataframe[COL_REPLACEMENT_MAP].iloc[0]["replacements"].append(_raw()["replacements"][1])
             return result
 
     with pytest.raises(EffectRejected):
@@ -271,11 +264,15 @@ def test_mutated_publication_or_map_cannot_authorize_downstream_work(mutation: s
             model_configs=[],
             selected_models=ReplaceModelSelection(replacement_generator="test"),
         )
-    assert adapter.run_workflow.call_count == (1 if mutation == "map_result" else 0)
+    assert adapter.run_workflow.call_count == 1
 
 
-@pytest.mark.parametrize("mutation", ["child_slots", "readiness", "request_policy"])
-@pytest.mark.parametrize("after_http", [False, True], ids=["before-effects", "after-http"])
+# After checked construction only pre-effect slot mutations remain observable; the rest were frozen-value tamper.
+@pytest.mark.parametrize(
+    "after_http,mutation",
+    [(False, "child_slots"), (False, "readiness")],
+    ids=["before-effects-child_slots", "before-effects-readiness"],
+)
 def test_retained_observed_request_mutation_rejects_and_closes_resources(
     scripted_detection: Any,
     monkeypatch: pytest.MonkeyPatch,
