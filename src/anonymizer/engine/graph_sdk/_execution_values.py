@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass, field, fields, replace
+from dataclasses import InitVar, dataclass, field, fields, replace
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Literal, Protocol, TypeAlias, runtime_checkable
 
@@ -17,6 +17,7 @@ from anonymizer.engine.graph_sdk._effect_values import (
     require_count,
     require_instance,
     require_literal,
+    require_owner,
     require_text,
 )
 from anonymizer.engine.graph_sdk._ingress_values import IngressLimits
@@ -595,8 +596,9 @@ ProvenanceKey: TypeAlias = OperationOutputKey | RootInputKey | BoundInputKey | I
 _FACT_KEY = object()
 
 
-@dataclass(frozen=True, slots=True, kw_only=True, repr=False, init=False)
+@dataclass(frozen=True, slots=True, kw_only=True, repr=False)
 class ExecutionAssessmentFact(PrivateValue):
+    _key: InitVar[object]
     activation: ActivationKey
     node: NodeId
     outcome: str
@@ -605,12 +607,13 @@ class ExecutionAssessmentFact(PrivateValue):
     finding: AssessmentFinding
     environment: AssessmentEnvironment
 
-    def __init__(self, *, _key: object, **values: object) -> None:
-        _init_fact(self, _key, values)
+    def __post_init__(self, _key: object) -> None:
+        require_owner(_key, _FACT_KEY)
 
 
-@dataclass(frozen=True, slots=True, kw_only=True, repr=False, init=False)
+@dataclass(frozen=True, slots=True, kw_only=True, repr=False)
 class ExecutionPortFact(PrivateValue):
+    _key: InitVar[object]
     activation: ActivationKey
     node: NodeId
     target: DatumId
@@ -619,37 +622,32 @@ class ExecutionPortFact(PrivateValue):
     artifact_type: ArtifactType
     role: ArtifactRole
 
-    def __init__(self, *, _key: object, **values: object) -> None:
-        _init_fact(self, _key, values)
+    def __post_init__(self, _key: object) -> None:
+        require_owner(_key, _FACT_KEY)
 
 
-@dataclass(frozen=True, slots=True, kw_only=True, repr=False, init=False)
+@dataclass(frozen=True, slots=True, kw_only=True, repr=False)
 class FinalOutputFact(PrivateValue):
+    _key: InitVar[object]
     target: DatumId
     outcome: str
     port: str
     candidate: CandidateRef
     producer: ProvenanceKey
 
-    def __init__(self, *, _key: object, **values: object) -> None:
-        _init_fact(self, _key, values)
+    def __post_init__(self, _key: object) -> None:
+        require_owner(_key, _FACT_KEY)
 
 
-@dataclass(frozen=True, slots=True, kw_only=True, repr=False, init=False)
+@dataclass(frozen=True, slots=True, kw_only=True, repr=False)
 class ArtifactProvenanceFact(PrivateValue):
+    _key: InitVar[object]
     key: ProvenanceKey
     artifact: ArtifactRef
     parents: frozenset[ProvenanceKey]
 
-    def __init__(self, *, _key: object, **values: object) -> None:
-        _init_fact(self, _key, values)
-
-
-def _init_fact(value: object, key: object, fields: dict[str, object]) -> None:
-    if key is not _FACT_KEY:
-        raise TypeError("execution facts are created by the executor")
-    for name, fact_value in fields.items():
-        object.__setattr__(value, name, fact_value)
+    def __post_init__(self, _key: object) -> None:
+        require_owner(_key, _FACT_KEY)
 
 
 _PLAN_KEY = object()

@@ -138,3 +138,8 @@ def require_literal(value: object, allowed: frozenset[str]) -> str:
 def require_instance(value: object, expected: type[Any] | tuple[type[Any], ...]) -> None:
     if not isinstance(value, expected):
         reject(EffectCode.INVALID_TYPE)
+
+
+def require_owner(key: object, expected: object) -> None:
+    if key is not expected:
+        raise TypeError("engine-owned values are created by their owner")
