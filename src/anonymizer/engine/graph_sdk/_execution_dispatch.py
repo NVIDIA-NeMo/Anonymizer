@@ -13,18 +13,14 @@ from anonymizer.engine.graph_sdk._effect_values import (
     EffectCode,
     reject,
 )
-from anonymizer.engine.graph_sdk._execution_publication import _identity_input, _validate_output_shape
+from anonymizer.engine.graph_sdk._execution_publication import _validate_output_shape
 from anonymizer.engine.graph_sdk._execution_state import _ExecutionControl
 from anonymizer.engine.graph_sdk._execution_values import (
     AdmittedExecutionPlan,
-    DecisionWait,
-    DecisionWaitId,
     ExecutionLimits,
-    ExecutionServices,
     ImplementationHandle,
     LocalAssessmentResult,
     LocalCompleted,
-    LocalDecisionWait,
     LocalFailure,
     OperationExecutionPolicy,
     RuntimeOutcome,
@@ -91,9 +87,6 @@ from anonymizer.engine.graph_sdk.resources import (
     ResourceId,
     ResourceLease,
 )
-from anonymizer.graph._values import (
-    ActivationKey,
-)
 from anonymizer.graph.workflow import (
     OperationSpec,
 )
@@ -137,8 +130,6 @@ async def _run_local(
         return result
     if type(result) is LocalFailure:
         return _mapping(policy, "failure", None, inspect_failure(result.failure)), (), ()
-    if type(result) is LocalDecisionWait:
-        return _mapping(policy, "failure", None, "implementation_exception"), (), ()
     if (
         type(result) is not LocalCompleted
         or getattr(result, "frame", False) is not None
@@ -158,113 +149,6 @@ async def _immediate_execution_result(
     mapping: RuntimeOutcome,
 ) -> tuple[RuntimeOutcome, tuple[AssociationResult, ...], tuple[LocalAssessmentResult, ...]]:
     return mapping, (), ()
-
-
-async def _run_decision(
-    admitted: AdmittedExecutionPlan,
-    policy: OperationExecutionPolicy,
-    handle: ImplementationHandle,
-    association: SemanticAssociation,
-    inputs: tuple[AssociationInput, ...],
-    activation: ActivationKey,
-    services: ExecutionServices,
-    control: _ExecutionControl,
-) -> tuple[RuntimeOutcome, tuple[AssociationResult, ...], tuple[LocalAssessmentResult, ...]]:
-    if handle.local is None:
-        reject(EffectCode.MISSING)
-    declaration = next(item for item in admitted.decisions if item.node == policy.node)
-    artifact = next((item.artifact for item in inputs[0].inputs if item.port == declaration.artifact_port), None)
-    if artifact is None:
-        reject(EffectCode.MISSING)
-    operation = asyncio.create_task(handle.local.run(inputs))
-    try:
-        while not operation.done():
-            if control.cancelled:
-                operation.cancel()
-                with suppress(asyncio.CancelledError):
-                    await operation
-                return _mapping(policy, "cancel_after_start", None, None), (), ()
-            await asyncio.sleep(0)
-        result = operation.result()
-    except Exception:
-        return _mapping(policy, "failure", None, "implementation_exception"), (), ()
-    if type(result) is LocalFailure:
-        failure: FailureClass = (
-            result.failure
-            if result.failure in {"permanent", "implementation_exception"}
-            else ("implementation_exception")
-        )
-        return _mapping(policy, "failure", None, failure), (), ()
-    if type(result) is not LocalDecisionWait:
-        return _mapping(policy, "failure", None, "implementation_exception"), (), ()
-    if result.association != association or result.artifact != artifact:
-        return _mapping(policy, "failure", None, "implementation_exception"), (), ()
-    wait = DecisionWait(
-        wait=DecisionWaitId.new(invocation=activation.invocation),
-        activation=activation,
-        workflow=admitted.context.prepared.workflow.workflow,
-        artifact=artifact,
-        allowed_decisions=frozenset(item.decision for item in declaration.outcomes),
-        deadline_ns=services.clock.now_ns() + declaration.max_lifetime_ns,
-    )
-    pending = control.pending
-    responses = control.responses
-    closed = control.closed
-    with _Span("decision_wait") as span:
-        pending[wait.wait] = wait
-        control.scheduler_changed.set()
-        while True:
-            if control.cancelled:
-                mapping = _mapping(policy, "cancel_after_start", None, None)
-                break
-            response = responses.pop(wait.wait, None)
-            if response is not None:
-                selected = next(item for item in declaration.outcomes if item.decision == response.decision)
-                outcome = next(item for item in handle.operation.outcomes if item.name == selected.outcome)
-                category = outcome.category
-                mapping = RuntimeOutcome(
-                    condition="result",
-                    reported_outcome=selected.outcome,
-                    failure=None,
-                    outcome=selected.outcome,
-                    category=category,
-                )
-                available = {item.port: item for item in inputs[0].inputs}
-                dependencies = {item.output: item for item in handle.operation.output_dependencies}
-                output_types = {item.name: item.artifact_type for item in handle.operation.outputs}
-                outputs = tuple(
-                    PortArtifact(
-                        port=port,
-                        artifact_type=output_types[port],
-                        artifact=None,
-                        value=available[_identity_input(dependencies[port])].value,
-                    )
-                    for port in sorted(outcome.produced_ports)
-                )
-                break
-            if services.clock.now_ns() >= wait.deadline_ns:
-                mapping = _mapping(policy, "deadline_exhausted", None, None)
-                break
-            await asyncio.sleep(0)
-        del pending[wait.wait]
-        closed.add(wait.wait)
-        span.outcome = mapping.category
-        if mapping.condition == "deadline_exhausted":
-            span.reasons = frozenset({"deadline"})
-    if mapping.condition != "result":
-        return mapping, (), ()
-    return (
-        mapping,
-        (
-            AssociationResult(
-                association=association,
-                outcome=mapping.outcome or "",
-                outputs=outputs,
-                consumed_context_ports=frozenset(use.port for use in outcome.context if use.port in available),
-            ),
-        ),
-        (),
-    )
 
 
 @dataclass(frozen=True, slots=True)

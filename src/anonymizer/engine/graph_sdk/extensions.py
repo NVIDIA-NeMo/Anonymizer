@@ -12,7 +12,7 @@ from anonymizer.engine.graph_sdk._effect_values import EffectCode, PrivateValue,
 from anonymizer.engine.graph_sdk.context import ContextProvider, ContextSelector, RetrievalBounds, SourceResult
 from anonymizer.engine.graph_sdk.executor import ExecutionResult
 from anonymizer.engine.graph_sdk.qualification import QualificationResult
-from anonymizer.engine.graph_sdk.records import CandidateRef, CanonicalRecord, DecisionRef, EvidenceRef, TargetStatus
+from anonymizer.engine.graph_sdk.records import CandidateRef, CanonicalRecord, EvidenceRef, TargetStatus
 from anonymizer.engine.graph_sdk.requests import (
     ArtifactValue,
     PhysicalRequestId,
@@ -69,7 +69,6 @@ class ProtectedProjectionItem(PrivateValue):
     candidate: CandidateRef
     content: str
     evidence: frozenset[EvidenceRef]
-    required_decisions: frozenset[DecisionRef]
 
     def __init__(self, *, _key: object, **values: object) -> None:
         _initialize(self, _key, values)
@@ -124,8 +123,6 @@ def bind_projection_source(*, execution: ExecutionResult, qualification: Qualifi
         or qualification.record.invocation != execution.record.invocation
     ):
         reject(EffectCode.FOREIGN_OWNER)
-    if qualification.required_decisions:
-        reject(EffectCode.MISSING)
     return ProjectionSource(
         _key=_PROJECTION_KEY,
         execution=execution,
@@ -158,7 +155,6 @@ def project_protected(*, source: ProjectionSource) -> ProtectedProjection:
                 candidate=output.candidate,
                 content=value.text,
                 evidence=output.evidence,
-                required_decisions=output.required_decisions,
             )
         )
     return ProtectedProjection(_key=_PROJECTION_KEY, record=source.record, items=tuple(items))

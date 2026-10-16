@@ -25,7 +25,7 @@ from anonymizer.engine.graph_sdk.executor import (
     ExecutionResult,
     admit_execution_plan,
 )
-from anonymizer.engine.graph_sdk.records import CandidateRef, DecisionRef
+from anonymizer.engine.graph_sdk.records import CandidateRef
 from anonymizer.graph import EffectCode, EffectRejected
 from anonymizer.graph._values import ArtifactRef
 from anonymizer.graph.workflow import (
@@ -217,7 +217,6 @@ def test_same_prepared_plan_does_not_authenticate_a_different_execution(
         context=execution.context,
         capabilities=execution.capabilities,
         policies=tuple(execution.policies),
-        decisions=tuple(execution.decisions),
         assessment_productions=execution.assessment_productions,
         assessment_limits=execution.assessment_limits,
         map_expansions=execution.map_expansions,
@@ -396,22 +395,23 @@ def test_fixed_point_outer_bound_precedes_missing_production() -> None:
     assert error.value.code is EffectCode.LIMIT_EXCEEDED
 
 
-def test_consumed_decision_is_derived_from_an_actual_resumed_producer() -> None:
-    execution, result = asyncio.run(_execute_assessment(decision_input=True))
+def test_consumed_artifact_is_derived_from_an_actual_predecessor_producer() -> None:
+    execution, result = asyncio.run(_execute_assessment(predecessor_input=True))
     admitted = admit_qualification(
         execution=execution, productions=execution.assessment_productions, limits=_qualification_limits()
     )
     fact = result.assessments[0]
     (verified,) = verify_evidence(admitted=admitted, result=result, submissions=(AssessmentSubmission(fact=fact),))
-    ((port, decision),) = verified.consumed_by_port
-    assert port == "input" and isinstance(decision, DecisionRef)
-    producers = [item for item in result.provenance if item.decision]
-    assert len(producers) == 1 and producers[0].artifact == decision.artifact
+    ((port, consumed),) = verified.consumed_by_port
+    assert port == "input" and isinstance(consumed, ArtifactRef)
+    roots = {item.key for item in result.provenance if not item.parents}
+    producers = [item for item in result.provenance if item.parents and item.parents <= roots]
+    assert len(producers) == 1 and producers[0].artifact == consumed
     assert len(result.record.terminals) == 2
     assert all(item.category == "success" for item in result.record.terminals)
     artifacts = tuple(reference for reference, _ in result.artifacts)
     for missing in (False, True):
-        selected = tuple(item for item in artifacts if not missing or item != decision.artifact)
+        selected = tuple(item for item in artifacts if not missing or item != consumed)
         current = evidence_revision_view(
             admitted=admitted,
             result=result,
@@ -422,8 +422,7 @@ def test_consumed_decision_is_derived_from_an_actual_resumed_producer() -> None:
 
 
 @pytest.mark.parametrize("nested", [False, True])
-@pytest.mark.parametrize("role", ["artifact", "decision"])
-def test_evidence_occurrence_authenticates_executor_role_precedence(nested: bool, role: str) -> None:
+def test_evidence_occurrence_authenticates_executor_role_precedence(nested: bool) -> None:
     execution, result = asyncio.run(_execute_assessment(candidate_input=True, nested=nested))
     admitted = admit_qualification(
         execution=execution, productions=execution.assessment_productions, limits=_qualification_limits()
@@ -434,7 +433,7 @@ def test_evidence_occurrence_authenticates_executor_role_precedence(nested: bool
     submissions = (AssessmentSubmission(fact=fact),)
     assert len(verify_evidence(admitted=admitted, result=result, submissions=submissions)) == 1
     original = evidence.role
-    object.__setattr__(evidence, "role", role)
+    object.__setattr__(evidence, "role", "artifact")
     try:
         with pytest.raises(EffectRejected) as error:
             verify_evidence(admitted=admitted, result=result, submissions=submissions)

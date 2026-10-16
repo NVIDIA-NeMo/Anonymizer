@@ -28,10 +28,6 @@ from anonymizer.engine.graph_sdk.executor import (
     AdmittedExecutionPlan,
     AssessmentFinding,
     AssessmentLimits,
-    DecisionDeclaration,
-    DecisionLimits,
-    DecisionOutcome,
-    DecisionResponse,
     EvidenceProductionDecl,
     ExecutionLimits,
     ExecutionResult,
@@ -82,7 +78,6 @@ from anonymizer.graph.workflow import (
 from tests.graph_sdk.effects_admission_fixtures import _valid_runtime_rows, _ZeroClock
 from tests.graph_sdk.implementation_fixtures import _execution_implementation, _selection
 from tests.graph_sdk.test_adaptive_executor import _adaptive_workflow, _AssessingLocal
-from tests.graph_sdk.test_decision_scheduling import _Callback
 from tests.graph_sdk.test_preparation import _capability, _data, _limits
 from tests.graph_sdk.workflow_construction import DynamicScope, admit_activation_workflow, admit_static_workflow
 
@@ -171,9 +166,8 @@ async def _execute_assessment(
     auxiliary_output: bool = False,
     partial_assessment: bool = False,
     root_passthrough: bool = False,
-    decision_input: bool = False,
-    decision_hop: bool = False,
-    separate_decision_subject: bool = False,
+    predecessor_input: bool = False,
+    predecessor_hop: bool = False,
     external_failover: bool = False,
     external_shared: bool = False,
     adaptive_resource: ContextResource | None = None,
@@ -198,15 +192,14 @@ async def _execute_assessment(
     depth = nested_depth or int(nested)
     nested = depth > 0
     assert not root_passthrough or candidate_input
-    assert not (decision_input and external is not None)
-    assert not (auxiliary_output and (rename_ports or nested or decision_input or external is not None))
-    assert not initial_resources or not (nested or rename_ports or decision_input or external or root_passthrough)
-    assert not separate_decision_subject or (decision_input and candidate_input and root_passthrough)
-    assert not decision_hop or decision_input
+    assert not (predecessor_input and external is not None)
+    assert not (auxiliary_output and (rename_ports or nested or predecessor_input or external is not None))
+    assert not initial_resources or not (nested or rename_ports or predecessor_input or external or root_passthrough)
+    assert not predecessor_hop or predecessor_input
     assert adaptive_resource is None or (external is not None and not external_shared)
     assert not external_shared or external is not None
     assert not external_failover or external is not None
-    predecessor = decision_input or external is not None
+    predecessor = predecessor_input or external is not None
     request_policy = (
         PhysicalRequestPolicy(
             visibility="dispatch_and_settlement",
@@ -256,14 +249,14 @@ async def _execute_assessment(
                 for outcome in operation.outcomes
             ),
         )
-    decision_node = NodeId.new(workflow=raw.workflow)
+    predecessor_node = NodeId.new(workflow=raw.workflow)
     nodes = (OperationNode(id=node, operation=operation),)
     bindings = tuple(
         replace(item, source=ContextInputRef(port="input")) if initial_resources else item
         for item in raw.input_bindings
     )
     if predecessor:
-        decision_operation = replace(
+        predecessor_operation = replace(
             operation,
             name="approve-input",
             outcomes=tuple(
@@ -278,42 +271,25 @@ async def _execute_assessment(
                 replace(dependency, identity_input="input") for dependency in operation.output_dependencies
             ),
         )
-        nodes = (OperationNode(id=decision_node, operation=decision_operation), *nodes)
+        nodes = (OperationNode(id=predecessor_node, operation=predecessor_operation), *nodes)
         bindings = (
             InputBinding(
-                source=WorkflowInputRef(port="input"), destination=NodeInputRef(node=decision_node, port="input")
+                source=WorkflowInputRef(port="input"), destination=NodeInputRef(node=predecessor_node, port="input")
             ),
             InputBinding(
-                source=NodeOutputRef(node=decision_node, port=evidence_port),
+                source=NodeOutputRef(node=predecessor_node, port=evidence_port),
                 destination=NodeInputRef(node=node, port="input"),
             ),
         )
     hop = NodeId.new(workflow=raw.workflow)
-    if decision_hop:
-        nodes = (nodes[0], OperationNode(id=hop, operation=decision_operation), *nodes[1:])
+    if predecessor_hop:
+        nodes = (nodes[0], OperationNode(id=hop, operation=predecessor_operation), *nodes[1:])
         bindings = (
             bindings[0],
             replace(bindings[1], destination=NodeInputRef(node=hop, port="input")),
             InputBinding(
                 source=NodeOutputRef(node=hop, port=evidence_port), destination=NodeInputRef(node=node, port="input")
             ),
-        )
-    if separate_decision_subject:
-        assessment_operation = replace(
-            operation,
-            inputs=(*operation.inputs, replace(operation.inputs[0], name="subject")),
-            outcomes=tuple(
-                replace(
-                    outcome,
-                    evidence=frozenset(replace(promise, subject_port="subject") for promise in outcome.evidence),
-                )
-                for outcome in operation.outcomes
-            ),
-        )
-        nodes = tuple(replace(item, operation=assessment_operation) if item.id == node else item for item in nodes)
-        bindings = (
-            *bindings,
-            InputBinding(source=WorkflowInputRef(port="input"), destination=NodeInputRef(node=node, port="subject")),
         )
     interface = replace(
         operation,
@@ -392,9 +368,9 @@ async def _execute_assessment(
             else ()
         ),
         outcome_bindings=tuple(raw.outcome_bindings),
-        sequence=(SequenceEdge(before=decision_node, after=hop), SequenceEdge(before=hop, after=node))
-        if decision_hop
-        else (SequenceEdge(before=decision_node, after=node),)
+        sequence=(SequenceEdge(before=predecessor_node, after=hop), SequenceEdge(before=hop, after=node))
+        if predecessor_hop
+        else (SequenceEdge(before=predecessor_node, after=node),)
         if predecessor
         else (),
         choices=tuple(raw.choices),
@@ -410,8 +386,8 @@ async def _execute_assessment(
         limits=replace(
             raw.limits,
             max_nodes=len(nodes),
-            max_bindings=4 + int(decision_hop) + int(separate_decision_subject),
-            max_sequence_edges=1 + int(decision_hop),
+            max_bindings=4 + int(predecessor_hop),
+            max_sequence_edges=1 + int(predecessor_hop),
         ),
     )
     scopes = (DynamicScope(workflow=static, maps=(), loops=(), joins=()),)
@@ -503,11 +479,11 @@ async def _execute_assessment(
         bound_context = binding.context
     capabilities = tuple(
         replace(
-            _capability(workflow, external=external is not None and item.id == decision_node),
+            _capability(workflow, external=external is not None and item.id == predecessor_node),
             operation=item.operation,
-            max_physical_requests_per_activation=2 if external is not None and item.id == decision_node else 0,
+            max_physical_requests_per_activation=2 if external is not None and item.id == predecessor_node else 0,
             resource_lifetime=("caller_owned" if external[1].owner == "caller" else "executor_owned")
-            if external is not None and item.id == decision_node
+            if external is not None and item.id == predecessor_node
             else "stateless"
             if resource is None
             else "caller_owned"
@@ -559,7 +535,7 @@ async def _execute_assessment(
             bound_context=bound_context,
             adaptive_retrievals=(
                 AdaptiveRetrievalDecl(
-                    node=decision_node,
+                    node=predecessor_node,
                     source=adaptive_resource.source,
                     selector_ports=("input",),
                     output_port=evidence_port,
@@ -575,35 +551,27 @@ async def _execute_assessment(
         policies=tuple(
             OperationExecutionPolicy(
                 node=item.id,
-                kind=("external" if external is not None else "decision") if item.id == decision_node else "local",
-                request=request_policy if item.id == decision_node else None,
+                kind="external" if external is not None and item.id == predecessor_node else "local",
+                request=request_policy if item.id == predecessor_node else None,
                 safe_detachment="forbidden",
                 implementations=(
-                    _execution_implementation(capability, request=request_policy if item.id == decision_node else None),
+                    _execution_implementation(
+                        capability, request=request_policy if item.id == predecessor_node else None
+                    ),
                 )
                 + (
                     (_execution_implementation(fallback, request=request_policy),)
-                    if external_failover and item.id == decision_node
+                    if external_failover and item.id == predecessor_node
                     else ()
                 ),
-                result_outcomes=frozenset() if item.id == decision_node and decision_input else frozenset({"ok"}),
+                result_outcomes=frozenset({"ok"}),
                 runtime_outcomes=_valid_runtime_rows(
-                    ("external" if external is not None else "decision") if item.id == decision_node else "local",
-                    frozenset() if item.id == decision_node and decision_input else frozenset({"ok"}),
+                    "external" if external is not None and item.id == predecessor_node else "local",
+                    frozenset({"ok"}),
                 ),
             )
             for item, capability in zip(nodes, capabilities, strict=True)
         ),
-        decisions=(
-            DecisionDeclaration(
-                node=decision_node,
-                artifact_port="input",
-                outcomes=(DecisionOutcome(decision="approve", outcome="ok"),),
-                max_lifetime_ns=10,
-            ),
-        )
-        if decision_input
-        else (),
         assessment_productions=(declaration, replace(declaration, promise="partial", evidence_port="metadata"))
         if partial_assessment
         else (declaration,),
@@ -612,16 +580,9 @@ async def _execute_assessment(
             max_findings_per_production=1,
             max_finding_code_bytes=20,
             max_assessment_facts=(1 + int(partial_assessment)) * target_count,
-            max_port_facts=(
-                3
-                + 2 * int(predecessor)
-                + 2 * int(decision_hop)
-                + int(separate_decision_subject)
-                + depth
-                + int(auxiliary_output)
-            )
+            max_port_facts=(3 + 2 * int(predecessor) + 2 * int(predecessor_hop) + depth + int(auxiliary_output))
             * target_count,
-            max_provenance_edges=(2 + int(predecessor) + int(decision_hop) + depth + int(auxiliary_output))
+            max_provenance_edges=(2 + int(predecessor) + int(predecessor_hop) + depth + int(auxiliary_output))
             * target_count
             if assessment_edge_limit is None
             else assessment_edge_limit,
@@ -634,11 +595,9 @@ async def _execute_assessment(
                 operation=capability.operation,
                 configuration=capability.configuration,
                 local=None
-                if external is not None and item.id == decision_node
-                else _Callback(decision=True)
-                if item.id == decision_node
+                if external is not None and item.id == predecessor_node
                 else _IdentityHop(evidence_port)
-                if decision_hop and item.id == hop
+                if item.id == predecessor_node or predecessor_hop and item.id == hop
                 else _AssessmentWithContext(
                     _AssessingLocal(
                         finding=finding, evidence_port=evidence_port, alias_evidence=candidate_input or alias_output
@@ -655,8 +614,8 @@ async def _execute_assessment(
                 else _AssessingLocal(
                     finding=finding, evidence_port=evidence_port, alias_evidence=candidate_input or alias_output
                 ),
-                transport=external[0] if external is not None and item.id == decision_node else None,
-                resource=external[1] if external is not None and item.id == decision_node else resource,
+                transport=external[0] if external is not None and item.id == predecessor_node else None,
+                resource=external[1] if external is not None and item.id == predecessor_node else resource,
             )
             for item, capability in zip(nodes, capabilities, strict=True)
         ),
@@ -669,9 +628,6 @@ async def _execute_assessment(
             * target_count,
             max_runtime_artifact_bytes=100,
             max_collection_items=0,
-        ),
-        decision_limits=DecisionLimits(
-            max_pending=target_count if decision_input else 0, max_lifetime_ns=10 if decision_input else 0
         ),
         clock=_ZeroClock(),
     )
@@ -687,17 +643,4 @@ async def _execute_assessment(
             ),
         )
     running = await start_execution(admitted=admitted, capabilities=all_capabilities, services=services)
-    if decision_input:
-        async with asyncio.timeout(2):
-            submitted = set()
-            while len(submitted) < target_count:
-                for wait in running.pending_decisions():
-                    if wait.wait not in submitted:
-                        running.submit_decision(
-                            DecisionResponse(
-                                wait=wait.wait, workflow=wait.workflow, artifact=wait.artifact, decision="approve"
-                            )
-                        )
-                        submitted.add(wait.wait)
-                await asyncio.sleep(0)
     return admitted, await asyncio.wait_for(running.wait(), 2)

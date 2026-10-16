@@ -163,7 +163,7 @@ def _assert_rollback(
     assert result.requests.dispatched_count == 0  # These are local callbacks, not physical requests.
     assert not result.requests.dispatches and not result.requests.terminals and not result.requests.settlements
     assert not result.requests.local_in_flight and not result.requests.remote_outstanding
-    assert not result.requests.defects and not result.cleanup and not result.pending_decisions
+    assert not result.requests.defects and not result.cleanup
 
 
 def test_rejected_assessment_delta_preserves_accepted_peer(monkeypatch: pytest.MonkeyPatch) -> None:

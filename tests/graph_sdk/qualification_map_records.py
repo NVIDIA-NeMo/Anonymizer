@@ -25,7 +25,7 @@ from anonymizer.engine.graph_sdk.executor import (
     RootInputKey,
 )
 from anonymizer.engine.graph_sdk.qualification import QualificationResult, qualify
-from anonymizer.engine.graph_sdk.records import CandidateRef, DecisionRef
+from anonymizer.engine.graph_sdk.records import CandidateRef
 from anonymizer.graph._values import ActivationKey, ArtifactRef
 from anonymizer.graph.workflow import (
     NodeId,
@@ -41,13 +41,24 @@ def _retained_environment(environment: dict[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in environment.items() if key not in _UNMODELED_ENVIRONMENT}
 
 
+def _without_decisions(row: dict[str, Any]) -> dict[str, Any]:
+    # The independent corpus also models required decisions; the SDK has no decision waits.
+    return {key: value for key, value in row.items() if key != "required_decisions"}
+
+
 def _retained_expectation(expected: dict[str, Any]) -> dict[str, Any]:
-    """Project a frozen expectation onto the environment dimensions the SDK retains."""
+    """Project a frozen expectation onto the dimensions the SDK retains."""
     if "verified" not in expected:
         return expected
     return {
-        **expected,
+        **_without_decisions(expected),
+        "targets": [_without_decisions(row) for row in expected["targets"]],
+        "qualified": [_without_decisions(row) for row in expected["qualified"]],
         "verified": [{**row, "environment": _retained_environment(row["environment"])} for row in expected["verified"]],
+        "record": {
+            **expected["record"],
+            "targets": [_without_decisions(row) for row in expected["record"]["targets"]],
+        },
     }
 
 
@@ -387,15 +398,15 @@ class _MapRecordNames:
             producers[fact.key]: {
                 "artifact": self.artifact(fact.artifact),
                 "parents": sorted(producers[parent] for parent in fact.parents),
-                "decision": fact.decision,
             }
             for fact in self.result.provenance
         }
+        # The corpus also flags decision producers; the SDK has none, so none may be expected.
+        assert not any(event["decision"] for event in events if event["kind"] == "provenance")
         expected_provenance = {
             event["key"]: {
                 "artifact": event["artifact"],
                 "parents": sorted(event["parents"]),
-                "decision": event["decision"],
             }
             for event in events
             if event["kind"] == "provenance"
@@ -488,7 +499,6 @@ class _MapRecordNames:
             "target": "A",
             "candidate": None if target.candidate is None else self.artifact(target.candidate.artifact),
             "verified": sorted(self.artifact(ref.artifact) for ref in target.verified),
-            "required_decisions": sorted(self.artifact(ref.artifact) for ref in target.required_decisions),
             "withholding": sorted(target.withholding),
             "completion": status.completion,
             "qualification": status.qualification,
@@ -508,14 +518,8 @@ class _MapRecordNames:
             consumed = {}
             roles = {}
             for port, ref in item.consumed_by_port:
-                consumed[port] = self.artifact(ref.artifact if isinstance(ref, (CandidateRef, DecisionRef)) else ref)
-                roles[port] = (
-                    "candidate"
-                    if isinstance(ref, CandidateRef)
-                    else "decision"
-                    if isinstance(ref, DecisionRef)
-                    else "artifact"
-                )
+                consumed[port] = self.artifact(ref.artifact if isinstance(ref, CandidateRef) else ref)
+                roles[port] = "candidate" if isinstance(ref, CandidateRef) else "artifact"
             row = {
                 "activation": self.activation(item.activation),
                 "authenticated_factory": "EXEC:I0",
@@ -589,12 +593,10 @@ class _MapRecordNames:
                     "target": "A",
                     "candidate": self.artifact(item.candidate.artifact),
                     "evidence": sorted(self.artifact(ref.artifact) for ref in item.evidence),
-                    "required_decisions": sorted(self.artifact(ref.artifact) for ref in item.required_decisions),
                 }
                 for item in output.qualified
             ],
             "verified": sorted(verified, key=lambda row: (row["target"], row["activation"], row["evidence_artifact"])),
-            "required_decisions": sorted(self.artifact(ref.artifact) for ref in output.required_decisions),
             "record": {
                 "execution": {"factory": "EXEC:I0", "graph": "G0", "invocation": "I0", "plan": "P0"},
                 "artifacts": sorted(self.artifact(ref) for ref in output.record.artifacts),

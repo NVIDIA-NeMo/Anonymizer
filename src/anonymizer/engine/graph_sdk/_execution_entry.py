@@ -17,8 +17,6 @@ from anonymizer.engine.graph_sdk._execution_runtime import _InvocationRuntime
 from anonymizer.engine.graph_sdk._execution_state import _ExecutionControl
 from anonymizer.engine.graph_sdk._execution_values import (
     AdmittedExecutionPlan,
-    DecisionResponse,
-    DecisionWait,
     ExecutionResult,
     ExecutionServices,
     NestedEventLoopError,
@@ -58,24 +56,6 @@ class RunningExecution:
 
     def request_cancel(self) -> None:
         self._control.cancelled = True
-
-    def pending_decisions(self) -> tuple[DecisionWait, ...]:
-        return tuple(self._control.pending.values())
-
-    def submit_decision(self, decision: DecisionResponse) -> None:
-        require_instance(decision, DecisionResponse)
-        if decision.wait.invocation != self.invocation:
-            reject(EffectCode.FOREIGN_OWNER)
-        wait = self._control.pending.get(decision.wait)
-        if wait is None:
-            reject(EffectCode.DUPLICATE if decision.wait in self._control.closed else EffectCode.MISSING)
-        if decision.workflow != wait.workflow or decision.artifact != wait.artifact:
-            reject(EffectCode.FOREIGN_OWNER)
-        if decision.decision not in wait.allowed_decisions:
-            reject(EffectCode.UNSUPPORTED)
-        if decision.wait in self._control.responses:
-            reject(EffectCode.DUPLICATE)
-        self._control.responses[decision.wait] = decision
 
     async def wait(self) -> ExecutionResult:
         return await asyncio.shield(self._task)

@@ -24,7 +24,6 @@ from anonymizer.engine.graph_sdk.context import admit_context_plan
 from anonymizer.engine.graph_sdk.data import DataGraph, DataLimits
 from anonymizer.engine.graph_sdk.executor import (
     AssessmentLimits,
-    DecisionLimits,
     ExecutionImplementation,
     ExecutionLimits,
     ExecutionServices,
@@ -197,7 +196,6 @@ def run_transform(callback: Callable[[], dict[str, Any]], *, name: str, column: 
         ),
         capabilities=(capability,),
         policies=(policy,),
-        decisions=(),
         assessment_productions=(),
         ingress_limits=IngressLimits(
             max_associations=1,
@@ -249,7 +247,6 @@ def run_transform(callback: Callable[[], dict[str, Any]], *, name: str, column: 
                         max_runtime_artifact_bytes=None,
                         max_collection_items=0,
                     ),
-                    decision_limits=DecisionLimits(max_pending=0, max_lifetime_ns=0),
                     clock=_Clock(),
                 ),
             )

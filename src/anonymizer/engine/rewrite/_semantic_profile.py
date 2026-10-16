@@ -777,7 +777,6 @@ async def execute_initial_evaluation(
             max_consumed_per_assessment=8,
             max_coverage_atoms=0,
             max_verified_evidence=size,
-            max_required_decisions=0,
             max_fixed_point_steps=max(1, size),
             max_revision_entries=(8 + 6 * allowance) * 20 * size,
             max_provenance_edges=((8 + 6 * allowance) * 64 + (100 if map_ids else 0)) * size,

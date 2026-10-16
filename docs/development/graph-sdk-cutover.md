@@ -16,7 +16,7 @@ The reference revision is `9f824d95b1cc74e71eb4a152a033afabbfd84ac0`. Normative 
 | M1 | Typed domain artifacts, backend capabilities, private correlation, physical request admission and settlement |
 | M2 | Detection, exports/plugins and local Redact/Annotate/Hash migration |
 | M3 | Informational evaluation, result projections and saved-result compatibility |
-| M4 | Substitute, evidence-based identity, replacement slots and continuity |
+| M4 | Substitute, evidence-based identity and replacement slots; explicit continuity is deferred to a later PR |
 | M5 | Rewrite, grouped assessment, bounded repair and both DataDesigner schedules |
 | M6 | Switch every production entry point and retire displaced orchestration |
 | M7 | Integrated compatibility, lifecycle, privacy, packaging and cutover evidence; separate publication review |
@@ -64,7 +64,7 @@ Source and test paths in this inventory are relative to the repository root.
 | --- | --- | --- |
 | `run()` and `preview()` | `src/anonymizer/interface/anonymizer.py`, `tests/interface/test_anonymizer_interface.py`, `tests/graph_sdk/test_production_contracts.py` | M6: preserve record selection, text-column renaming, public result types and failure aggregation |
 | Redact / Annotate / Hash | `src/anonymizer/engine/replace/replace_runner.py`, `src/anonymizer/engine/replace/strategies.py`, `tests/engine/test_replace_strategies.py` | M2: preserve configured markers, sensitive-text annotation and deterministic text-based hashing; do not infer subject identity |
-| Substitute | `src/anonymizer/engine/replace/llm_replace_workflow.py`, `tests/engine/test_llm_replace_workflow.py` | M4: preserve instructions, parsing, collisions, per-row maps and failures while adding explicit identity/slot continuity |
+| Substitute | `src/anonymizer/engine/replace/llm_replace_workflow.py`, `tests/engine/test_llm_replace_workflow.py` | M4: preserve instructions, parsing, collisions, per-row maps and failures while adding evidence-based identity and replacement slots; explicit continuity is deferred to a later PR |
 | Sequential Rewrite | `src/anonymizer/engine/rewrite/rewrite_workflow.py`, `tests/engine/test_rewrite_workflow.py` | M5: preserve prompts, initial evaluation, repair, review flags and unchanged zero-entity output; separately qualify related-text/latent risks |
 | Combined DD Rewrite | `src/anonymizer/engine/rewrite/combined_rewrite_workflow.py`, `tests/engine/test_combined_rewrite_workflow.py` | M5: independent request/correlation conformance for `Rewrite.use_combined_graph`; physical consolidation cannot change release semantics |
 | Detection and plugins | `src/anonymizer/engine/detection/detection_workflow.py`, `tests/engine/test_detection_workflow.py` | M2: preserve validation-before-augmentation, filters, chunking, latent detection and plugin transforms; M7: fresh-process installed-wheel discovery |

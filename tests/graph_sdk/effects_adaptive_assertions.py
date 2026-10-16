@@ -18,7 +18,6 @@ from anonymizer.engine.graph_sdk.context import (
 )
 from anonymizer.engine.graph_sdk.executor import (
     AssessmentLimits,
-    DecisionLimits,
     ExecutionLimits,
     ExecutionServices,
     ImplementationHandle,
@@ -158,7 +157,6 @@ async def _assert_adaptive_materialization_case(case: dict[str, Any], *, late_mo
         context=context,
         capabilities=(capability,),
         policies=(policy,),
-        decisions=(),
         assessment_productions=(),
         assessment_limits=AssessmentLimits(
             max_productions=0,
@@ -223,7 +221,6 @@ async def _assert_adaptive_materialization_case(case: dict[str, Any], *, late_mo
                 max_runtime_artifact_bytes=materialization_limits["max_artifact_bytes"],
                 max_collection_items=materialization_limits["max_collection_items"],
             ),
-            decision_limits=DecisionLimits(max_pending=0, max_lifetime_ns=0),
             clock=_Clock(),
         ),
     )

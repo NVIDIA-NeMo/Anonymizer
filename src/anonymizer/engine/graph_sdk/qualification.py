@@ -29,7 +29,7 @@ from anonymizer.engine.graph_sdk.executor import (
     OperationOutputKey,
     ProvenanceKey,
 )
-from anonymizer.engine.graph_sdk.records import CandidateRef, CanonicalRecord, DecisionRef, EvidenceRef, TargetStatus
+from anonymizer.engine.graph_sdk.records import CandidateRef, CanonicalRecord, EvidenceRef, TargetStatus
 from anonymizer.engine.graph_sdk.requests import (
     BindingRequestScope,
     ChildEvidence,
@@ -122,7 +122,6 @@ class TargetQualification(PrivateValue):
     target: DatumId
     candidate: CandidateRef | None
     verified: frozenset[EvidenceRef]
-    required_decisions: frozenset[DecisionRef]
     withholding: frozenset[WithholdingCode]
 
     def __post_init__(self) -> None:
@@ -130,12 +129,9 @@ class TargetQualification(PrivateValue):
         if self.candidate is not None:
             require_instance(self.candidate, CandidateRef)
         require_instance(self.verified, frozenset)
-        require_instance(self.required_decisions, frozenset)
         require_instance(self.withholding, frozenset)
-        if (
-            any(not isinstance(item, EvidenceRef) for item in self.verified)
-            or any(not isinstance(item, DecisionRef) for item in self.required_decisions)
-            or any(not isinstance(item, str) for item in self.withholding)
+        if any(not isinstance(item, EvidenceRef) for item in self.verified) or any(
+            not isinstance(item, str) for item in self.withholding
         ):
             reject(EffectCode.INVALID_TYPE)
         if not self.withholding <= _CODES:
@@ -143,8 +139,7 @@ class TargetQualification(PrivateValue):
         if self.candidate is not None and self.candidate.target != self.target:
             reject(EffectCode.FOREIGN_OWNER)
         if self.candidate is not None and any(
-            item.artifact.invocation != self.candidate.artifact.invocation
-            for item in (*self.verified, *self.required_decisions)
+            item.artifact.invocation != self.candidate.artifact.invocation for item in self.verified
         ):
             reject(EffectCode.FOREIGN_OWNER)
 
@@ -154,7 +149,6 @@ class QualifiedOutput(PrivateValue):
     target: DatumId
     candidate: CandidateRef
     evidence: frozenset[EvidenceRef]
-    required_decisions: frozenset[DecisionRef]
 
     def __post_init__(self) -> None:
         require_instance(self.candidate, CandidateRef)
@@ -162,7 +156,6 @@ class QualifiedOutput(PrivateValue):
             target=self.target,
             candidate=self.candidate,
             verified=self.evidence,
-            required_decisions=self.required_decisions,
             withholding=frozenset(),
         )
 
@@ -173,7 +166,6 @@ class QualificationResult(PrivateValue):
     verified: tuple[VerifiedEvidence, ...]
     targets: tuple[TargetQualification, ...]
     qualified: tuple[QualifiedOutput, ...]
-    required_decisions: frozenset[DecisionRef]
     _admitted: AdmittedQualification
     _result: ExecutionResult
     _current: EvidenceRevisionView
@@ -297,11 +289,6 @@ class _Qualification:
         for key in self.failed_terminals - recovered_leaves:
             for target in self.affected(key):
                 self.withholding[target].add("terminal_failure")
-        for pending in self.result.pending_decisions:
-            target = self.facts.owners.get(pending.activation)
-            if target is None:
-                reject(EffectCode.FOREIGN_OWNER)
-            self.incomplete(target)
         if {item.target for item in record.statuses} != set(self.order):
             reject(EffectCode.MISSING)
 
@@ -1595,30 +1582,6 @@ class _Qualification:
                 for target in group:
                     self.withholding[target].add("atomic_group")
 
-    def decisions(self, target: DatumId) -> frozenset[DecisionRef]:
-        required = {
-            reference
-            for item in self.supporting[target]
-            for reference in item.reference.consumed
-            if isinstance(reference, DecisionRef)
-        }
-        pending = [item.producer for item in self.outputs[target]]
-        visited: set[ProvenanceKey] = set()
-        while pending:
-            key = pending.pop()
-            if key in visited:
-                continue
-            visited.add(key)
-            fact = self.facts.provenance[key]
-            if fact.decision:
-                required.add(DecisionRef(artifact=fact.artifact))
-            pending.extend(fact.parents)
-        if len(required) > self.admitted.limits.max_required_decisions:
-            reject(EffectCode.LIMIT_EXCEEDED)
-        if any(item.artifact not in self.result.record.artifacts for item in required):
-            reject(EffectCode.MISSING)
-        return frozenset(required)
-
     def finish(self, verified: tuple[VerifiedEvidence, ...]) -> QualificationResult:
         targets: list[TargetQualification] = []
         qualified: list[QualifiedOutput] = []
@@ -1628,20 +1591,16 @@ class _Qualification:
             candidate = self.candidates.get(target)
             codes = frozenset(self.withholding[target])
             evidence = frozenset(item.reference for item in self.supporting[target])
-            decisions = self.decisions(target) if not codes else frozenset()
             targets.append(
                 TargetQualification(
                     target=target,
                     candidate=candidate,
                     verified=evidence,
-                    required_decisions=decisions,
                     withholding=codes,
                 )
             )
             if candidate is not None and not codes:
-                qualified.append(
-                    QualifiedOutput(target=target, candidate=candidate, evidence=evidence, required_decisions=decisions)
-                )
+                qualified.append(QualifiedOutput(target=target, candidate=candidate, evidence=evidence))
             if execution_only:
                 status = "not_assessed"
                 available = any(
@@ -1669,9 +1628,6 @@ class _Qualification:
                     protection_available=not codes and not execution_only,
                 )
             )
-        required_decisions = frozenset(item for target in qualified for item in target.required_decisions)
-        if len(required_decisions) > self.admitted.limits.max_required_decisions:
-            reject(EffectCode.LIMIT_EXCEEDED)
         return QualificationResult(
             _key=_QUALIFICATION_KEY,
             record=replace(
@@ -1680,7 +1636,6 @@ class _Qualification:
             verified=verified,
             targets=tuple(targets),
             qualified=tuple(qualified),
-            required_decisions=required_decisions,
             _admitted=self.admitted,
             _result=self.result,
             _current=self.current,

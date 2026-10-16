@@ -15,7 +15,6 @@ import pytest
 from anonymizer.engine.graph_sdk._execution_values import DelegatedRequests
 from anonymizer.engine.graph_sdk.executor import (
     AssessmentFinding,
-    DecisionLimits,
     ExecutionLimits,
     ExecutionServices,
     ImplementationHandle,
@@ -156,7 +155,6 @@ def _fixture(
         context=execution.context,
         capabilities=execution.capabilities,
         policies=tuple(owner if item.node == owner.node else item for item in execution.policies),
-        decisions=(),
         assessment_productions=execution.assessment_productions,
         assessment_limits=execution.assessment_limits,
     )
@@ -202,7 +200,6 @@ def _fixture(
             max_runtime_artifact_bytes=100,
             max_collection_items=0,
         ),
-        decision_limits=DecisionLimits(max_pending=0, max_lifetime_ns=0),
         clock=_ZeroClock(),
     )
     return execution, services, submit, transports
@@ -355,7 +352,6 @@ def test_unsupported_delegation_rejects_before_invocation(monkeypatch, defect: s
             context=execution.context,
             capabilities=execution.capabilities,
             policies=tuple(owner if item.node == owner.node else item for item in execution.policies),
-            decisions=(),
             assessment_productions=execution.assessment_productions,
             assessment_limits=execution.assessment_limits,
         )

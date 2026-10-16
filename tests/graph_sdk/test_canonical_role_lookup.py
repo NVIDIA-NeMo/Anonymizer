@@ -50,9 +50,6 @@ def test_real_map_parent_roles_use_canonical_identity_without_global_scans() -> 
     member = next(fact.key for fact in result.provenance if isinstance(fact.key, MapItemKey))
     assert _inherited_artifact_role(member, _KeyedFacts(provenance), _KeyedFacts(ports)) == "artifact"
     assert _inherited_artifact_role(None, _KeyedFacts(provenance), _KeyedFacts(ports)) == "artifact"
-    decision = copy(provenance[parent])
-    object.__setattr__(decision, "decision", True)
-    assert _inherited_artifact_role(parent, _KeyedFacts({parent: decision}), _KeyedFacts(ports)) == "decision"
 
 
 @pytest.mark.parametrize("coordinate", ["target", "activation", "port", "producer"])

@@ -27,7 +27,6 @@ from anonymizer.engine.graph_sdk.context import (
 from anonymizer.engine.graph_sdk.executor import (
     AssessmentFinding,
     AssessmentLimits,
-    DecisionLimits,
     EvidenceProductionDecl,
     ExecutionLimits,
     ExecutionServices,
@@ -368,7 +367,6 @@ def _adaptive_fixture(provider, *, capability_limit=1):
         context=context,
         capabilities=(capability,),
         policies=(policy,),
-        decisions=(),
         assessment_productions=(),
         assessment_limits=AssessmentLimits(
             max_productions=0,
@@ -406,7 +404,6 @@ def _adaptive_fixture(provider, *, capability_limit=1):
             max_runtime_artifact_bytes=100,
             max_collection_items=1,
         ),
-        decision_limits=DecisionLimits(max_pending=0, max_lifetime_ns=0),
         clock=_Clock(),
     )
     return admitted, services, target
@@ -480,7 +477,6 @@ async def _external_running(transport):
         context=context,
         capabilities=(capability,),
         policies=(policy,),
-        decisions=(),
         assessment_productions=(),
         assessment_limits=AssessmentLimits(
             max_productions=0,
@@ -510,7 +506,6 @@ async def _external_running(transport):
             max_runtime_artifact_bytes=100,
             max_collection_items=1,
         ),
-        decision_limits=DecisionLimits(max_pending=0, max_lifetime_ns=0),
         clock=_Clock(),
     )
     running = await start_execution(admitted=admitted, capabilities=(capability,), services=services)
@@ -627,7 +622,6 @@ async def _assert_local_assessment(*, distinct_subject: bool, alias_evidence: bo
                 context=context,
                 capabilities=(capability,),
                 policies=(policy,),
-                decisions=(),
                 assessment_productions=(
                     EvidenceProductionDecl(
                         node=node,
@@ -644,7 +638,6 @@ async def _assert_local_assessment(*, distinct_subject: bool, alias_evidence: bo
         context=context,
         capabilities=(capability,),
         policies=(policy,),
-        decisions=(),
         assessment_productions=(
             EvidenceProductionDecl(
                 node=node,
@@ -671,7 +664,6 @@ async def _assert_local_assessment(*, distinct_subject: bool, alias_evidence: bo
             max_runtime_artifact_bytes=100,
             max_collection_items=1,
         ),
-        decision_limits=DecisionLimits(max_pending=0, max_lifetime_ns=0),
         clock=_Clock(),
     )
     running = await start_execution(admitted=admitted, capabilities=(capability,), services=services)
@@ -831,7 +823,6 @@ async def _assert_nested_assessment() -> None:
         context=context,
         capabilities=(capability,),
         policies=(policy,),
-        decisions=(),
         assessment_productions=(
             EvidenceProductionDecl(
                 node=inner,
@@ -877,7 +868,6 @@ async def _assert_nested_assessment() -> None:
                     max_runtime_artifact_bytes=100,
                     max_collection_items=1,
                 ),
-                decision_limits=DecisionLimits(max_pending=0, max_lifetime_ns=0),
                 clock=_Clock(),
             ),
         )

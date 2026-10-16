@@ -100,7 +100,7 @@ def test_compact_evidence_snapshot(snapshot: tuple[Any, ...], executions: dict[s
     output = qualify(admitted=admitted, result=result, current=changed, submissions=chosen)
     expected_verified, _, expected_released, expected_decisions = reference["expected"]
     assert {labels[item.target] for item in output.qualified} == set(expected_released)
-    assert not output.required_decisions and expected_decisions == []
+    assert expected_decisions == []  # The reference models required decisions; the SDK has none.
     actual = {}
     for verified in output.verified:
         assert isinstance(verified.subject, CandidateRef)

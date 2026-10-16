@@ -73,7 +73,7 @@ def test_retained_map_scalars_precede_lookup_and_relations(
         if other == "owner":
             object.__setattr__(result.record, "invocation", InvocationId.new(plan=result.record.plan))
         elif other == "contradiction":
-            object.__setattr__(fact, "decision", True)
+            object.__setattr__(fact, "parents", frozenset())
         with pytest.raises((EffectRejected, ContractViolation)) as error:
             original(**kwargs)
         assert error.value.code.value == ("foreign_owner" if expected == "missing" and other == "owner" else expected)

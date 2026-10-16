@@ -90,7 +90,6 @@ async def _assert_resource_eligibility(case: dict[str, Any]) -> None:
                 runtime_outcomes=_valid_runtime_rows("external", frozenset({"ok"})),
             ),
         ),
-        decisions=(),
         assessment_productions=(),
         assessment_limits=_assessment_limits(),
     )

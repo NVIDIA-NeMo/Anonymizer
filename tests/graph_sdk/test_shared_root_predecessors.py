@@ -13,10 +13,9 @@ from anonymizer.engine.graph_sdk.executor import ExecutionLimits, RootInputKey
 from anonymizer.engine.graph_sdk.qualification import qualify
 from anonymizer.graph import EffectCode, EffectRejected
 from anonymizer.graph.workflow import ArtifactType
-from tests.graph_sdk.evidence_fixtures import _execute_assessment
+from tests.graph_sdk.evidence_fixtures import _execute_assessment, _IdentityHop
 from tests.graph_sdk.qualification_fixtures import _inputs
 from tests.graph_sdk.test_adaptive_executor import _AssessingLocal
-from tests.graph_sdk.test_decision_scheduling import _Callback
 from tests.graph_sdk.test_qualification_subject_context import _execute_separate_subject_context
 
 
@@ -38,7 +37,7 @@ def _sources():
 
 
 @pytest.mark.parametrize("shared", [False, True])
-def test_two_target_decisions_share_only_actual_source_identity(shared: bool) -> None:
+def test_two_target_predecessors_share_only_actual_source_identity(shared: bool) -> None:
     data, source = _sources()
     unique = 1 if shared else 2
     execution, result = asyncio.run(
@@ -46,7 +45,7 @@ def test_two_target_decisions_share_only_actual_source_identity(shared: bool) ->
             data=data,
             target_count=2,
             bound_input_source=source if shared else None,
-            decision_input=True,
+            predecessor_input=True,
             execution_limits=ExecutionLimits(
                 max_local_in_flight=1,
                 max_remote_outstanding=0,
@@ -57,25 +56,20 @@ def test_two_target_decisions_share_only_actual_source_identity(shared: bool) ->
         )
     )
     roots = [fact for fact in result.provenance if isinstance(fact.key, RootInputKey)]
-    decisions = [fact for fact in result.provenance if fact.decision]
-    assert len(roots) == len(decisions) == 2
-    assert len({fact.key.target for fact in roots}) == len({fact.key.target for fact in decisions}) == 2
-    assert len({fact.artifact for fact in roots}) == len({fact.artifact for fact in decisions}) == unique
+    hops = [fact for fact in result.provenance if any(parent in fact.parents for parent in (r.key for r in roots))]
+    assert len(roots) == len(hops) == 2
+    assert len({fact.key.target for fact in roots}) == len({fact.key.target for fact in hops}) == 2
+    assert len({fact.artifact for fact in roots}) == len({fact.artifact for fact in hops}) == unique
     assert len(result.artifacts) == unique + 2
     assert len(result.ports) == 8 and len(result.provenance) == 6
-    admitted, current, submissions = _inputs(execution, result, decisions=unique)
+    admitted, current, submissions = _inputs(execution, result)
     output = qualify(admitted=admitted, result=result, current=current, submissions=submissions)
-    assert len(output.qualified) == 2 and len(output.required_decisions) == unique
-    assert all(len(item.required_decisions) == 1 for item in output.qualified)
+    assert len(output.qualified) == 2
     assert len(result.record.terminals) == 4
-    admitted, current, submissions = _inputs(execution, result, decisions=unique - 1)
-    with pytest.raises(EffectRejected) as error:
-        qualify(admitted=admitted, result=result, current=current, submissions=submissions)
-    assert error.value.code is EffectCode.LIMIT_EXCEEDED
-    admitted, current, submissions = _inputs(execution, result, decisions=unique, port_facts=8)
+    admitted, current, submissions = _inputs(execution, result, port_facts=8)
     assert len(qualify(admitted=admitted, result=result, current=current, submissions=submissions).qualified) == 2
     with pytest.raises(EffectRejected) as error:
-        _inputs(execution, result, decisions=unique, port_facts=7)
+        _inputs(execution, result, port_facts=7)
     assert error.value.code is EffectCode.LIMIT_EXCEEDED
 
 
@@ -87,7 +81,7 @@ def test_shared_initial_capacity_one_less_rejects_before_callbacks(bound: str, m
         calls.append((args, kwargs))
         raise AssertionError("initial capacity rejection must precede callbacks")
 
-    monkeypatch.setattr(_Callback, "run", unexpected)
+    monkeypatch.setattr(_IdentityHop, "run", unexpected)
     monkeypatch.setattr(_AssessingLocal, "run", unexpected)
     data, source = _sources()
     with pytest.raises(EffectRejected) as error:
@@ -96,7 +90,7 @@ def test_shared_initial_capacity_one_less_rejects_before_callbacks(bound: str, m
                 data=data,
                 target_count=2,
                 bound_input_source=source,
-                decision_input=True,
+                predecessor_input=True,
                 alias_output=True,
                 execution_limits=ExecutionLimits(
                     max_local_in_flight=1,
@@ -131,12 +125,13 @@ def test_same_source_through_distinct_ports_preserves_type_and_occurrence(differ
 def test_shared_artifact_does_not_erase_target_owned_producer_checks() -> None:
     data, source = _sources()
     execution, result = asyncio.run(
-        _execute_assessment(data=data, target_count=2, bound_input_source=source, decision_input=True)
+        _execute_assessment(data=data, target_count=2, bound_input_source=source, predecessor_input=True)
     )
     admitted, current, submissions = _inputs(execution, result)
     baseline = qualify(admitted=admitted, result=result, current=current, submissions=submissions)
-    assert len(baseline.qualified) == 2 and len(baseline.required_decisions) == 1
-    first, second = (fact for fact in result.provenance if fact.decision)
+    assert len(baseline.qualified) == 2
+    roots = {fact.key for fact in result.provenance if isinstance(fact.key, RootInputKey)}
+    first, second = (fact for fact in result.provenance if fact.parents & roots)
     assert first.artifact == second.artifact and first.key.target != second.key.target
     output = next(fact for fact in result.provenance if first.key in fact.parents)
     original = output.parents
@@ -157,7 +152,7 @@ def test_exact_shared_initial_capacity_preserves_all_root_occurrences() -> None:
             data=data,
             target_count=2,
             bound_input_source=source,
-            decision_input=True,
+            predecessor_input=True,
             alias_output=True,
             execution_only=True,
             execution_limits=ExecutionLimits(

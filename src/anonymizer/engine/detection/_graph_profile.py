@@ -49,7 +49,6 @@ from anonymizer.engine.graph_sdk.data import DataGraph, DataLimits
 from anonymizer.engine.graph_sdk.evidence import QualificationLimits, admit_qualification, evidence_revision_view
 from anonymizer.engine.graph_sdk.executor import (
     AssessmentLimits,
-    DecisionLimits,
     DelegatedGenerationSelection,
     DelegatedReadiness,
     DelegatedRequestContract,
@@ -828,7 +827,6 @@ async def execute_detection_redact(
         ),
         capabilities=all_capabilities,
         policies=tuple(policies),
-        decisions=(),
         assessment_productions=()
         if not targets
         else (
@@ -964,7 +962,6 @@ async def execute_detection_redact(
             handles=handles,
             context_resources=(),
             limits=limits,
-            decision_limits=DecisionLimits(max_pending=0, max_lifetime_ns=0),
             clock=_Clock(),
         )
         running = await start_execution(admitted=admitted, capabilities=all_capabilities, services=services)
@@ -1006,7 +1003,6 @@ def qualify_detection_redact(result: ExecutionResult) -> QualificationResult:
             max_consumed_per_assessment=3,
             max_coverage_atoms=0,
             max_verified_evidence=limits.max_assessment_facts,
-            max_required_decisions=0,
             max_fixed_point_steps=len(prepared.target_occurrences) + 1,
             max_revision_entries=limits.max_port_facts + prepared.limits.max_capabilities,
             max_provenance_edges=limits.max_provenance_edges,

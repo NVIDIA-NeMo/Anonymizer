@@ -21,7 +21,6 @@ import pytest
 
 from anonymizer.engine.graph_sdk._ingress import _IngressBudget
 from anonymizer.engine.graph_sdk.executor import (
-    DecisionLimits,
     ExecutionLimits,
     ExecutionServices,
     ImplementationHandle,
@@ -188,7 +187,6 @@ async def _compare(case: TextCase) -> None:
                 max_runtime_artifact_bytes=32,
                 max_collection_items=0,
             ),
-            decision_limits=DecisionLimits(max_pending=0, max_lifetime_ns=0),
             clock=_Clock(),
         ),
     )

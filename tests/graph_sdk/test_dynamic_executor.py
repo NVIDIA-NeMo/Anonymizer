@@ -17,7 +17,6 @@ from anonymizer.engine.graph_sdk.context import admit_context_plan
 from anonymizer.engine.graph_sdk.evidence import admit_qualification, evidence_revision_view
 from anonymizer.engine.graph_sdk.executor import (
     AssessmentLimits,
-    DecisionLimits,
     ExecutionLimits,
     ExecutionServices,
     ImplementationHandle,
@@ -516,7 +515,6 @@ async def _assert_nested_two_by_two(*, same_key_versions: bool = False) -> None:
         context=context,
         capabilities=capabilities,
         policies=policies,
-        decisions=(),
         assessment_productions=(),
         assessment_limits=AssessmentLimits(
             max_productions=0,
@@ -577,7 +575,6 @@ async def _assert_nested_two_by_two(*, same_key_versions: bool = False) -> None:
                     max_runtime_artifact_bytes=300,
                     max_collection_items=2,
                 ),
-                decision_limits=DecisionLimits(max_pending=0, max_lifetime_ns=0),
                 clock=_Clock(),
             ),
         )

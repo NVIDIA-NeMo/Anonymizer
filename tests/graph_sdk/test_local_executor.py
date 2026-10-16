@@ -10,15 +10,10 @@ from dataclasses import dataclass, field, replace
 from anonymizer.engine.graph_sdk.context import admit_context_plan
 from anonymizer.engine.graph_sdk.executor import (
     AssessmentLimits,
-    DecisionDeclaration,
-    DecisionLimits,
-    DecisionOutcome,
-    DecisionResponse,
     ExecutionLimits,
     ExecutionServices,
     ImplementationHandle,
     LocalCompleted,
-    LocalDecisionWait,
     OperationExecutionPolicy,
     RuntimeOutcome,
     admit_execution_plan,
@@ -29,20 +24,13 @@ from anonymizer.engine.graph_sdk.preparation import (
     PreparationConfiguration,
     prepare,
 )
-from anonymizer.engine.graph_sdk.requests import AssociationInput, AssociationResult, SemanticAssociation
+from anonymizer.engine.graph_sdk.requests import AssociationInput, AssociationResult
 from anonymizer.graph.activation import ActivationLimits
 from anonymizer.graph.workflow import (
     InputPort,
-    NodeOutputRef,
-    OperationNode,
-    OutputBinding,
-    OutputDependency,
-    OutputPort,
-    WorkflowOutputRef,
 )
 from tests.graph_sdk.implementation_fixtures import _execution_implementation, _implementation_handle, _selection
 from tests.graph_sdk.test_preparation import _capability, _data, _limits, _prepare, _workflow
-from tests.graph_sdk.workflow_construction import DynamicScope, admit_activation_workflow, admit_static_workflow
 from tests.graph_sdk.workflow_fixtures import _shared_body_workflow
 
 
@@ -94,23 +82,6 @@ class _Immediate:
                 ),
             )
         )
-
-
-@dataclass
-class _Decision:
-    calls: int = 0
-    block_before_wait: bool = False
-    started: asyncio.Event = field(default_factory=asyncio.Event)
-
-    async def run(self, request: tuple[AssociationInput, ...]) -> LocalDecisionWait:
-        self.calls += 1
-        self.started.set()
-        if self.block_before_wait:
-            await asyncio.Event().wait()
-        artifact = request[0].inputs[0].artifact
-        assert artifact is not None
-        assert isinstance(request[0].association, SemanticAssociation)
-        return LocalDecisionWait(association=request[0].association, artifact=artifact)
 
 
 def _runtime_rows() -> tuple[RuntimeOutcome, ...]:
@@ -177,7 +148,6 @@ async def _assert_local_execution() -> None:
         context=context,
         capabilities=(selected.capability,),
         policies=(policy,),
-        decisions=(),
         assessment_productions=(),
         assessment_limits=AssessmentLimits(
             max_productions=0,
@@ -208,7 +178,6 @@ async def _assert_local_execution() -> None:
             max_runtime_artifact_bytes=100,
             max_collection_items=10,
         ),
-        decision_limits=DecisionLimits(max_pending=0, max_lifetime_ns=0),
         clock=_Clock(),
     )
     running = await start_execution(
@@ -222,149 +191,6 @@ async def _assert_local_execution() -> None:
     assert all(state.complete for state in result.states)
     assert all(item.category == "success" for item in result.record.terminals)
     assert all(item.qualification == "not_assessed" for item in result.record.statuses)
-
-
-def test_decision_execution_exposes_exact_wait_and_resumes_one_activation() -> None:
-    asyncio.run(_assert_decision_execution())
-
-
-def test_decision_callback_can_be_cancelled_before_it_returns_a_wait() -> None:
-    asyncio.run(_assert_decision_execution(cancel_before_wait=True))
-
-
-async def _assert_decision_execution(*, cancel_before_wait: bool = False) -> None:
-    workflow, node, artifact_type = _workflow(with_input=True)
-    static = workflow
-    raw_node = next(item for item in static.operations if isinstance(item, OperationNode))
-    decision_operation = replace(
-        raw_node.operation,
-        outputs=(OutputPort(name="decision", artifact_type=artifact_type),),
-        output_dependencies=(OutputDependency(output="decision", inputs=frozenset({"input"}), identity_input="input"),),
-        outcomes=(replace(raw_node.operation.outcomes[0], produced_ports=frozenset({"decision"})),),
-    )
-    rebuilt = admit_static_workflow(
-        workflow=static.workflow,
-        interface=decision_operation,
-        nodes=(OperationNode(id=node, operation=decision_operation),),
-        input_bindings=tuple(static.input_bindings),
-        output_bindings=(
-            OutputBinding(
-                source=NodeOutputRef(node=node, port="decision"),
-                destination=WorkflowOutputRef(port="decision"),
-            ),
-        ),
-        outcome_bindings=tuple(static.outcome_bindings),
-        sequence=(),
-        choices=(),
-        protection=(),
-        limits=replace(static.limits, max_bindings=3),
-    )
-    workflow = admit_activation_workflow(
-        workflow=rebuilt,
-        scopes=(DynamicScope(workflow=rebuilt, maps=(), joins=(), loops=()),),
-        limits=workflow.dynamic_limits,
-    )
-    data = _data(1)
-    target = next(iter(data.targets))
-    capability = _capability(workflow)
-    prepared = _prepare(
-        data=data,
-        workflow=workflow,
-        capability=capability,
-        bound_inputs=(BoundInput(target=target, source=target, port="input", artifact_type=artifact_type),),
-    )
-    context = admit_context_plan(
-        prepared=prepared,
-        bound_context=None,
-        adaptive_retrievals=(),
-        context_capabilities=(),
-    )
-    implementation = _execution_implementation(capability, request=None)
-    rows = tuple(
-        RuntimeOutcome(
-            condition=condition,
-            reported_outcome=None,
-            failure=failure,
-            outcome=None,
-            category=category,
-        )
-        for condition, failure, category in (
-            ("failure", "permanent", "failure"),
-            ("failure", "implementation_exception", "failure"),
-            ("cancel_before_start", None, "blocked"),
-            ("cancel_after_start", None, "cancelled"),
-            ("artifact_limit_exhausted", None, "blocked"),
-            ("deadline_exhausted", None, "blocked"),
-        )
-    )
-    policy = OperationExecutionPolicy(
-        node=node,
-        kind="decision",
-        request=None,
-        safe_detachment="forbidden",
-        implementations=(implementation,),
-        result_outcomes=frozenset(),
-        runtime_outcomes=rows,
-    )
-    admitted = admit_execution_plan(
-        context=context,
-        capabilities=(capability,),
-        policies=(policy,),
-        decisions=(
-            DecisionDeclaration(
-                node=node,
-                artifact_port="input",
-                outcomes=(DecisionOutcome(decision="approve", outcome="ok"),),
-                max_lifetime_ns=10,
-            ),
-        ),
-        assessment_productions=(),
-        assessment_limits=AssessmentLimits(
-            max_productions=0,
-            max_findings_per_production=0,
-            max_finding_code_bytes=0,
-            max_assessment_facts=0,
-            max_port_facts=2,
-            max_provenance_edges=1,
-        ),
-    )
-    callback = _Decision(block_before_wait=cancel_before_wait)
-    services = ExecutionServices(
-        handles=(_implementation_handle(capability, local=callback, transport=None, resource=None),),
-        context_resources=(),
-        limits=ExecutionLimits(
-            max_local_in_flight=1,
-            max_remote_outstanding=0,
-            max_runtime_artifacts=2,
-            max_runtime_artifact_bytes=100,
-            max_collection_items=1,
-        ),
-        decision_limits=DecisionLimits(max_pending=1, max_lifetime_ns=10),
-        clock=_Clock(),
-    )
-    running = await start_execution(admitted=admitted, capabilities=(capability,), services=services)
-    if cancel_before_wait:
-        await callback.started.wait()
-        running.request_cancel()
-        result = await running.wait()
-        assert callback.calls == 1
-        assert result.states[0].complete
-        assert result.record.terminals[0].category == "cancelled"
-        assert not result.pending_decisions
-        return
-    while not running.pending_decisions():
-        await asyncio.sleep(0)
-    wait = running.pending_decisions()[0]
-    running.submit_decision(
-        DecisionResponse(wait=wait.wait, workflow=wait.workflow, artifact=wait.artifact, decision="approve")
-    )
-    result = await running.wait()
-    assert callback.calls == 1
-    assert result.states[0].complete
-    assert result.record.terminals[0].category == "success"
-    assert not result.pending_decisions
-    assert result.final_outputs[0].candidate.artifact == result.provenance[-1].artifact
-    assert result.provenance[-1].decision
 
 
 def test_shared_nested_body_executes_each_real_occurrence() -> None:
@@ -414,7 +240,6 @@ async def _assert_shared_nested_body() -> None:
                 runtime_outcomes=_runtime_rows(),
             ),
         ),
-        decisions=(),
         assessment_productions=(),
         assessment_limits=AssessmentLimits(
             max_productions=0,
@@ -440,7 +265,6 @@ async def _assert_shared_nested_body() -> None:
                     max_runtime_artifact_bytes=100,
                     max_collection_items=0,
                 ),
-                decision_limits=DecisionLimits(max_pending=0, max_lifetime_ns=0),
                 clock=_Clock(),
             ),
         )

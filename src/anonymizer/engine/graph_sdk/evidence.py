@@ -38,7 +38,6 @@ from anonymizer.engine.graph_sdk.preparation import PreparedPlan
 from anonymizer.engine.graph_sdk.records import (
     CandidateRef,
     ConsumedRef,
-    DecisionRef,
     EvidenceRef,
     ExpectedMembership,
     TerminalFact,
@@ -75,7 +74,6 @@ class QualificationLimits(PrivateValue):
     max_consumed_per_assessment: int
     max_coverage_atoms: int
     max_verified_evidence: int
-    max_required_decisions: int
     max_fixed_point_steps: int
     max_revision_entries: int
     max_provenance_edges: int
@@ -534,8 +532,6 @@ class _RunFacts(_ExecutionFacts):
             reference: ConsumedRef
             if port.role == "candidate":
                 reference = CandidateRef(artifact=port.artifact, target=target)
-            elif port.role == "decision":
-                reference = DecisionRef(artifact=port.artifact)
             elif port.role in ("artifact", "evidence"):
                 reference = port.artifact
             else:
@@ -603,7 +599,7 @@ class _RunFacts(_ExecutionFacts):
         if _lexical_path(key.expander, entries, self.admitted.execution.nodes) != endpoint.path:
             return None
         provenance = self.provenance.get(key)
-        if provenance is None or provenance.artifact != input_fact.artifact or provenance.decision:
+        if provenance is None or provenance.artifact != input_fact.artifact:
             reject(EffectCode.CONTRADICTORY)
         expected = OperationOutputKey(activation=key.expander, target=key.target, port=endpoint.membership_port)
         if provenance.parents != frozenset({expected}):
@@ -710,7 +706,6 @@ def verify_evidence(
 class EvidenceRevisionView(PrivateValue):
     candidates: frozenset[CandidateRef]
     artifacts: frozenset[ArtifactRef]
-    decisions: frozenset[DecisionRef]
     configurations: tuple[tuple[NodeId, FrozenConfig], ...]
     _admitted: AdmittedQualification
     _result: ExecutionResult
@@ -765,11 +760,6 @@ def evidence_revision_view(
         _key=_EVIDENCE_KEY,
         candidates=candidates,
         artifacts=selected,
-        decisions=frozenset(
-            DecisionRef(artifact=item.artifact)
-            for item in result.ports
-            if item.role == "decision" and item.artifact in selected
-        ),
         configurations=tuple(sorted(configurations, key=lambda item: order[item[0]])),
         _admitted=admitted,
         _result=result,
@@ -812,7 +802,6 @@ def evidence_validity(*, evidence: VerifiedEvidence, current: EvidenceRevisionVi
         reject(EffectCode.FOREIGN_OWNER)
     artifacts = {(item.invocation, item.key): item for item in current.artifacts}
     candidates = {item.target: item for item in current.candidates}
-    decisions = {(item.artifact.invocation, item.artifact.key): item for item in current.decisions}
     configurations = dict(current.configurations)
     comparisons: list[tuple[object, object | None]] = [
         (
@@ -834,13 +823,6 @@ def evidence_validity(*, evidence: VerifiedEvidence, current: EvidenceRevisionVi
             comparisons.append(
                 (reference.artifact, artifacts.get((reference.artifact.invocation, reference.artifact.key)))
             )
-        elif isinstance(reference, DecisionRef):
-            key = (reference.artifact.invocation, reference.artifact.key)
-            selected = artifacts.get(key)
-            if selected != reference.artifact:
-                comparisons.append((reference.artifact, selected))
-            else:
-                comparisons.append((reference, decisions.get(key)))
         else:
             comparisons.append((reference, artifacts.get((reference.invocation, reference.key))))
     if any(actual is not None and actual != expected for expected, actual in comparisons):

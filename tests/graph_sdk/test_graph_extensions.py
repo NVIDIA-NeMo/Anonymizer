@@ -23,7 +23,6 @@ from anonymizer.engine.graph_sdk.requests import TextArtifactValue, TextCollecti
 from anonymizer.graph import EffectCode, EffectRejected
 from tests.graph_sdk.context_source_assertions import _assert_context_execution
 from tests.graph_sdk.context_source_fixtures import _ContextProvider
-from tests.graph_sdk.evidence_fixtures import _execute_assessment
 from tests.graph_sdk.qualification_fixtures import _inputs
 from tests.graph_sdk.test_qualification_subject_context import _execute_separate_subject_context
 
@@ -32,16 +31,6 @@ def _qualified_subject_context(labels: tuple[str, ...] = ("A", "B")):
     execution, result = asyncio.run(_execute_separate_subject_context(target_labels=labels))
     admitted, current, submissions = _inputs(execution, result)
     return result, qualify(admitted=admitted, result=result, current=current, submissions=submissions)
-
-
-def test_projection_source_requires_settled_decisions() -> None:
-    execution, result = asyncio.run(_execute_assessment(decision_input=True))
-    admitted, current, submissions = _inputs(execution, result, decisions=1)
-    qualified = qualify(admitted=admitted, result=result, current=current, submissions=submissions)
-    assert qualified.required_decisions
-    with pytest.raises(EffectRejected) as missing:
-        bind_projection_source(execution=result, qualification=qualified)
-    assert missing.value.code is EffectCode.MISSING
 
 
 def test_all_projection_kinds_keep_one_record_and_do_no_work() -> None:

@@ -23,7 +23,6 @@ from anonymizer.engine.graph_sdk.context import (
 from anonymizer.engine.graph_sdk.data import DataGraph, DataLimits
 from anonymizer.engine.graph_sdk.executor import (
     AssessmentLimits,
-    DecisionLimits,
     ExecutionLimits,
     ExecutionResult,
     ExecutionServices,
@@ -350,7 +349,6 @@ async def _execute_case(
             )
             for node, cap in zip(nodes.values(), capabilities, strict=True)
         ),
-        decisions=(),
         assessment_productions=(),
         assessment_limits=AssessmentLimits(
             max_productions=0,
@@ -402,7 +400,6 @@ async def _execute_case(
                     max_runtime_artifact_bytes=raw["materialization_limits"]["max_artifact_bytes"],
                     max_collection_items=raw["materialization_limits"]["max_collection_items"],
                 ),
-                decision_limits=DecisionLimits(max_pending=0, max_lifetime_ns=0),
                 clock=_Clock(),
             ),
         )

@@ -77,9 +77,6 @@ from tests.graph_sdk.effects_admission_fixtures import (
     RESOURCE_CASES,
     _admit_case,
 )
-from tests.graph_sdk.effects_admission_fixtures import (
-    _assert_decision_submission as _assert_decision_submission,
-)
 from tests.graph_sdk.effects_admission_fixtures import _assessment_limits as _assessment_limits
 from tests.graph_sdk.effects_admission_fixtures import _valid_runtime_rows as _valid_runtime_rows
 from tests.graph_sdk.effects_admission_fixtures import _ZeroClock as _ZeroClock
@@ -102,20 +99,6 @@ from tests.graph_sdk.effects_request_fixtures import _policy as _policy
 from tests.graph_sdk.implementation_fixtures import _execution_implementation
 from tests.graph_sdk.reference.corpora import load_cases
 from tests.graph_sdk.test_preparation import _capability, _data, _limits, _prepare, _workflow
-
-
-@pytest.mark.parametrize(
-    ("case_id", "expected"),
-    (
-        ("decisions/stale_artifact", "foreign_owner"),
-        ("decisions/foreign_workflow", "foreign_owner"),
-        ("decisions/foreign_wait", "foreign_owner"),
-        ("decisions/unknown_decision", "unsupported"),
-        ("decisions/duplicate_response", "duplicate"),
-    ),
-)
-def test_decision_submission_rejections_use_public_running_execution(case_id: str, expected: str) -> None:
-    asyncio.run(_assert_decision_submission(case_id, expected))
 
 
 @pytest.mark.parametrize(
@@ -336,7 +319,6 @@ def test_admission_capability_identity_survives_a_raised_limit(duplicate: bool, 
             context=context,
             capabilities=(primary, alternate),
             policies=(policy,),
-            decisions=(),
             assessment_productions=(),
             assessment_limits=_assessment_limits(),
         )
@@ -605,18 +587,6 @@ def test_request_corpus_case_through_production(case: dict[str, Any]) -> None:
         "association_requests",
     ):
         assert actual[key] == expected_state[key], (case["case_id"], key)
-
-
-@pytest.mark.parametrize(
-    "case_id", ["decisions/cancel_condition", "decisions/implementation_failure", "decisions/deadline"]
-)
-def test_decision_runtime_terminal_cases(case_id: str) -> None:
-    asyncio.run(_assert_decision_submission(case_id, ""))
-
-
-@pytest.mark.parametrize("pending_limit", [1, 2])
-def test_decision_capacity_includes_callbacks_before_wait_publication(pending_limit: int) -> None:
-    asyncio.run(_assert_decision_submission("capacity", "", pending_limit=pending_limit))
 
 
 @pytest.mark.parametrize(

@@ -664,7 +664,6 @@ def test_pure_validation_rejection_still_closes_entered_boundary(boundary: str) 
                 context=None,
                 capabilities=(),
                 policies=(),
-                decisions=(),
                 assessment_productions=(),
                 assessment_limits=None,
             ),

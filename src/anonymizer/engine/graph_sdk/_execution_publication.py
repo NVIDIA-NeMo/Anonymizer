@@ -266,7 +266,7 @@ def _capture_assessments(
         if not isinstance(port, str):
             reject(EffectCode.CONTRADICTORY)
         fact = facts.ports.get((activation, port))
-        if fact is None or fact.node != node or fact.target != target or fact.role == "decision":
+        if fact is None or fact.node != node or fact.target != target:
             reject(EffectCode.CONTRADICTORY)
         item_subject = isinstance(job.input_parents.get(port), MapItemKey)
         facts.ports[activation, port] = replace(fact, _key=_FACT_KEY, role="artifact" if item_subject else "candidate")

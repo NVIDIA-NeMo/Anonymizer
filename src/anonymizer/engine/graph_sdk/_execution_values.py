@@ -12,7 +12,6 @@ from typing import TYPE_CHECKING, Literal, Protocol, TypeAlias, runtime_checkabl
 from anonymizer.engine.graph_sdk._effect_values import (
     EffectCode,
     EffectRejected,
-    OpaqueIdentity,
     PrivateValue,
     reject,
     require_count,
@@ -84,7 +83,6 @@ from anonymizer.graph.workflow import (
     OperationSpec,
     OutcomeClass,
     OutcomeSpec,
-    WorkflowId,
     WorkflowInputRef,
 )
 
@@ -95,10 +93,10 @@ if TYPE_CHECKING:
     from anonymizer.engine.ndd._source_frame import WorkflowSourceFrame
 
 
-ExecutionKind: TypeAlias = Literal["local", "external", "decision", "delegated"]
+ExecutionKind: TypeAlias = Literal["local", "external", "delegated"]
 
 
-ArtifactRole: TypeAlias = Literal["artifact", "candidate", "decision", "evidence"]
+ArtifactRole: TypeAlias = Literal["artifact", "candidate", "evidence"]
 
 
 AssessmentStatus: TypeAlias = Literal["satisfied", "unsatisfied", "unknown"]
@@ -161,34 +159,6 @@ class RuntimeOutcome(PrivateValue):
             self.category,
             frozenset({"success", "failure", "cancelled", "lost", "blocked", "inconsistent"}),
         )
-
-
-@dataclass(frozen=True, slots=True, kw_only=True, repr=False)
-class DecisionOutcome(PrivateValue):
-    decision: str
-    outcome: str
-
-    def __post_init__(self) -> None:
-        require_text(self.decision)
-        require_text(self.outcome)
-
-
-@dataclass(frozen=True, slots=True, kw_only=True, repr=False)
-class DecisionDeclaration(PrivateValue):
-    node: NodeId
-    artifact_port: str
-    outcomes: tuple[DecisionOutcome, ...]
-    max_lifetime_ns: int
-
-    def __post_init__(self) -> None:
-        require_instance(self.node, NodeId)
-        require_text(self.artifact_port)
-        if not isinstance(self.outcomes, tuple) or any(not isinstance(item, DecisionOutcome) for item in self.outcomes):
-            reject(EffectCode.INVALID_TYPE)
-        decisions = [item.decision for item in self.outcomes]
-        if not decisions or len(decisions) != len(set(decisions)):
-            reject(EffectCode.DUPLICATE)
-        require_count(self.max_lifetime_ns, positive=True)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True, repr=False)
@@ -434,7 +404,7 @@ class OperationExecutionPolicy(PrivateValue):
 
     def __post_init__(self) -> None:
         require_instance(self.node, NodeId)
-        require_literal(self.kind, frozenset({"local", "external", "decision", "delegated"}))
+        require_literal(self.kind, frozenset({"local", "external", "delegated"}))
         if self.delegated is not None:
             require_instance(self.delegated, DelegatedRequestContract)
             self.delegated.__post_init__()
@@ -672,7 +642,6 @@ class ArtifactProvenanceFact(PrivateValue):
     key: ProvenanceKey
     artifact: ArtifactRef
     parents: frozenset[ProvenanceKey]
-    decision: bool
 
     def __init__(self, *, _key: object, **values: object) -> None:
         _init_fact(self, _key, values)
@@ -695,7 +664,6 @@ class AdmittedExecutionPlan(PrivateValue):
     context: AdmittedContextPlan
     capabilities: tuple[ImplementationCapability, ...]
     policies: frozenset[OperationExecutionPolicy]
-    decisions: frozenset[DecisionDeclaration]
     map_expansions: tuple[MapExpansionDecl, ...]
     assessment_productions: tuple[EvidenceProductionDecl, ...]
     assessment_limits: AssessmentLimits
@@ -797,8 +765,6 @@ class AdmittedExecutionPlan(PrivateValue):
 
     def _output_role(self, node: NodeId, outcome: OutcomeSpec, port: str) -> ArtifactRole:
         """Apply admitted occurrence-role precedence to an operation output."""
-        if any(item.node == node for item in self.decisions):
-            return "decision"
         productions = [
             item for item in self.assessment_productions if item.node == node and item.outcome == outcome.name
         ]
@@ -827,17 +793,11 @@ class LocalCompleted(PrivateValue):
 
 
 @dataclass(frozen=True, slots=True, kw_only=True, repr=False)
-class LocalDecisionWait(PrivateValue):
-    association: SemanticAssociation
-    artifact: ArtifactRef
-
-
-@dataclass(frozen=True, slots=True, kw_only=True, repr=False)
 class LocalFailure(PrivateValue):
     failure: FailureClass
 
 
-LocalResult: TypeAlias = LocalCompleted | LocalDecisionWait | LocalFailure
+LocalResult: TypeAlias = LocalCompleted | LocalFailure
 
 
 @runtime_checkable
@@ -938,16 +898,6 @@ class ExecutionLimits(PrivateValue):
 
 
 @dataclass(frozen=True, slots=True, kw_only=True, repr=False)
-class DecisionLimits(PrivateValue):
-    max_pending: int
-    max_lifetime_ns: int
-
-    def __post_init__(self) -> None:
-        require_count(self.max_pending)
-        require_count(self.max_lifetime_ns)
-
-
-@dataclass(frozen=True, slots=True, kw_only=True, repr=False)
 class ImplementationHandle(PrivateValue):
     implementation: ImplementationRef
     operation: OperationSpec
@@ -1013,57 +963,7 @@ class ExecutionServices(PrivateValue):
     handles: tuple[ImplementationHandle, ...]
     context_resources: tuple[ContextResource, ...]
     limits: ExecutionLimits
-    decision_limits: DecisionLimits
     clock: MonotonicClock
-
-
-class DecisionWaitId(OpaqueIdentity):
-    __slots__ = ("invocation",)
-    invocation: InvocationId
-
-    @classmethod
-    def new(cls, *, invocation: InvocationId) -> DecisionWaitId:
-        require_instance(invocation, InvocationId)
-        return cls._new(invocation=invocation)  # type: ignore[return-value]
-
-
-@dataclass(frozen=True, slots=True, kw_only=True, repr=False)
-class DecisionWait(PrivateValue):
-    wait: DecisionWaitId
-    activation: ActivationKey
-    workflow: WorkflowId
-    artifact: ArtifactRef
-    allowed_decisions: frozenset[str]
-    deadline_ns: int
-
-    def __post_init__(self) -> None:
-        require_instance(self.wait, DecisionWaitId)
-        require_instance(self.activation, ActivationKey)
-        require_instance(self.workflow, WorkflowId)
-        require_instance(self.artifact, ArtifactRef)
-        if self.wait.invocation != self.activation.invocation:
-            reject(EffectCode.FOREIGN_OWNER)
-        if not isinstance(self.allowed_decisions, frozenset) or any(
-            not isinstance(item, str) or not item for item in self.allowed_decisions
-        ):
-            reject(EffectCode.INVALID_TYPE)
-        if not self.allowed_decisions:
-            reject(EffectCode.INVALID_VALUE)
-        require_count(self.deadline_ns)
-
-
-@dataclass(frozen=True, slots=True, kw_only=True, repr=False)
-class DecisionResponse(PrivateValue):
-    wait: DecisionWaitId
-    workflow: WorkflowId
-    artifact: ArtifactRef
-    decision: str
-
-    def __post_init__(self) -> None:
-        require_instance(self.wait, DecisionWaitId)
-        require_instance(self.workflow, WorkflowId)
-        require_instance(self.artifact, ArtifactRef)
-        require_text(self.decision)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True, repr=False)
@@ -1090,7 +990,6 @@ class ExecutionResult(PrivateValue):
     invocation_state: ActivationState | None
     requests: RequestReceipt
     cleanup: tuple[CleanupFact, ...]
-    pending_decisions: tuple[DecisionWait, ...]
     artifacts: tuple[tuple[ArtifactRef, ArtifactValue], ...]
     assessments: tuple[ExecutionAssessmentFact, ...]
     ports: tuple[ExecutionPortFact, ...]

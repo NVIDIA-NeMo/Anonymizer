@@ -570,7 +570,7 @@ def test_map_item_can_be_consumed_while_subject_is_the_final_scalar_candidate(co
 @pytest.mark.parametrize("consumed_only", [False, True])
 @pytest.mark.parametrize(
     "mutation",
-    ["sibling", "default", "item_version", "coordinated_item_key", "equal_value_sibling", "decision_provenance"],
+    ["sibling", "default", "item_version", "coordinated_item_key", "equal_value_sibling"],
 )
 def test_item_authentication_rejects_substituted_captured_input_owner(consumed_only: bool, mutation: str) -> None:
     fixture = _consumed_item_fixture() if consumed_only else _direct_item_fixture()
@@ -606,10 +606,6 @@ def test_item_authentication_rejects_substituted_captured_input_owner(consumed_o
         replacement = next(item.key for item in result.provenance if isinstance(item.key, RootInputKey))
     elif mutation == "item_version":
         replacement = replace(original, item_version=original.item_version + 1)
-    elif mutation == "decision_provenance":
-        replacement = original
-        provenance = next(item for item in result.provenance if item.key == original)
-        object.__setattr__(provenance, "decision", True)
     else:
         if mutation == "equal_value_sibling":
             sibling = next(

@@ -173,7 +173,6 @@ async def fixture(
             )
             for p in execution.policies
         ),
-        decisions=(),
         assessment_productions=execution.assessment_productions,
         assessment_limits=execution.assessment_limits,
     )

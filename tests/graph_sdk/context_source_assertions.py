@@ -25,7 +25,6 @@ from anonymizer.engine.graph_sdk.evidence import admit_qualification, evidence_r
 from anonymizer.engine.graph_sdk.executor import (
     AssessmentLimits,
     BoundInputKey,
-    DecisionLimits,
     ExecutionLimits,
     ExecutionServices,
     InitialCollectionKey,
@@ -250,7 +249,6 @@ async def _assert_special_fixture_execution(case_id: str) -> None:
                 ),
             ),
         ),
-        decisions=(),
         assessment_productions=(),
         assessment_limits=AssessmentLimits(
             max_productions=0,
@@ -275,7 +273,6 @@ async def _assert_special_fixture_execution(case_id: str) -> None:
                     max_runtime_artifact_bytes=32,
                     max_collection_items=2,
                 ),
-                decision_limits=DecisionLimits(max_pending=0, max_lifetime_ns=0),
                 clock=_Clock(),
             ),
         )
@@ -594,7 +591,6 @@ async def _assert_context_execution(
                 runtime_outcomes=_runtime_rows(),
             ),
         ),
-        decisions=(),
         assessment_productions=(),
         assessment_limits=AssessmentLimits(
             max_productions=0,
@@ -620,7 +616,6 @@ async def _assert_context_execution(
                     max_runtime_artifact_bytes=32,
                     max_collection_items=2,
                 ),
-                decision_limits=DecisionLimits(max_pending=0, max_lifetime_ns=0),
                 clock=_Clock(),
             ),
         )

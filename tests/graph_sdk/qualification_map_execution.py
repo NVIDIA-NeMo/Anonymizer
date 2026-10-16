@@ -13,7 +13,6 @@ from anonymizer.engine.graph_sdk.executor import (
     AdmittedExecutionPlan,
     AssessmentFinding,
     AssessmentLimits,
-    DecisionLimits,
     EvidenceProductionDecl,
     ExecutionLimits,
     ExecutionResult,
@@ -576,7 +575,6 @@ async def _execute_reference_map(
         ),
         capabilities=capabilities,
         policies=_local_policies(by_node),
-        decisions=(),
         assessment_productions=tuple(
             EvidenceProductionDecl(
                 node=nodes[name],
@@ -641,7 +639,6 @@ async def _execute_reference_map(
                 max_runtime_artifact_bytes=64,
                 max_collection_items=2,
             ),
-            decision_limits=DecisionLimits(max_pending=0, max_lifetime_ns=0),
             clock=_Clock(),
         ),
     )

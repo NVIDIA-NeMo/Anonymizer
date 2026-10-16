@@ -15,9 +15,6 @@ from anonymizer.engine.graph_sdk._execution_values import (
     ArtifactProvenanceFact,
     ArtifactRole,
     BoundInputKey,
-    DecisionResponse,
-    DecisionWait,
-    DecisionWaitId,
     ExecutionAssessmentFact,
     ExecutionImplementation,
     ExecutionPortFact,
@@ -57,9 +54,6 @@ _Value = TypeVar("_Value")
 class _ExecutionControl:
     cancelled: bool = False
     scheduler_changed: asyncio.Event = field(default_factory=asyncio.Event)
-    pending: dict[DecisionWaitId, DecisionWait] = field(default_factory=dict)
-    responses: dict[DecisionWaitId, DecisionResponse] = field(default_factory=dict)
-    closed: set[DecisionWaitId] = field(default_factory=set)
     measured_handles: dict[SemanticAssociation, ImplementationHandle] = field(default_factory=dict)
 
 
@@ -150,7 +144,6 @@ class _ExecutionFacts:
                 key=key,
                 artifact=artifact,
                 parents=parents,
-                decision=role == "decision",
             )
         )
         self.ports[key.activation, key.port] = ExecutionPortFact(

@@ -25,7 +25,7 @@ from anonymizer.engine.graph_sdk.evidence import (
 )
 from anonymizer.engine.graph_sdk.executor import AdmittedExecutionPlan, AssessmentFinding, ExecutionResult
 from anonymizer.engine.graph_sdk.qualification import QualificationResult, qualify
-from anonymizer.engine.graph_sdk.records import CandidateRef, DecisionRef
+from anonymizer.engine.graph_sdk.records import CandidateRef
 from anonymizer.graph import EffectRejected
 from anonymizer.graph._values import ActivationKey, ArtifactRef, ContractViolation, DatumId
 from anonymizer.graph.workflow import CoverageAtom, NodeId
@@ -140,7 +140,6 @@ class _BaselineNames:
                     "target": self.target_name(target.target),
                     "candidate": None if target.candidate is None else self.artifact(target.candidate.artifact),
                     "verified": sorted(self.artifact(item.artifact) for item in target.verified),
-                    "required_decisions": sorted(self.artifact(item.artifact) for item in target.required_decisions),
                     "withholding": sorted(target.withholding),
                     "completion": status.completion,
                     "qualification": status.qualification,
@@ -184,14 +183,8 @@ class _BaselineNames:
             consumed = {}
             roles = {}
             for port, ref in item.consumed_by_port:
-                consumed[port] = self.artifact(ref.artifact if isinstance(ref, (CandidateRef, DecisionRef)) else ref)
-                roles[port] = (
-                    "candidate"
-                    if isinstance(ref, CandidateRef)
-                    else "decision"
-                    if isinstance(ref, DecisionRef)
-                    else "artifact"
-                )
+                consumed[port] = self.artifact(ref.artifact if isinstance(ref, CandidateRef) else ref)
+                roles[port] = "candidate" if isinstance(ref, CandidateRef) else "artifact"
             verified.append(
                 {
                     "activation": self.activation(item.activation),
@@ -250,12 +243,10 @@ class _BaselineNames:
                     "target": self.target_name(item.target),
                     "candidate": self.artifact(item.candidate.artifact),
                     "evidence": sorted(self.artifact(ref.artifact) for ref in item.evidence),
-                    "required_decisions": sorted(self.artifact(ref.artifact) for ref in item.required_decisions),
                 }
                 for item in sorted(output.qualified, key=lambda item: self.target_name(item.target))
             ],
             "verified": verified,
-            "required_decisions": sorted(self.artifact(ref.artifact) for ref in output.required_decisions),
             "record": {
                 "execution": {"factory": "EXEC:I0", "graph": "G0", "invocation": "I0", "plan": "P0"},
                 "artifacts": sorted(self.artifact(ref) for ref in output.record.artifacts),
@@ -270,13 +261,21 @@ class _BaselineNames:
 def _comparison_order(value: dict[str, Any]) -> dict[str, Any]:
     """Compare opaque identities after each model checks its own ordinal order.
 
-    The independent corpus also models absence and state-revision environments;
-    the SDK retains only selected configurations, so rows compare on that dimension.
+    The independent corpus also models absence and state-revision environments
+    and required decisions; the SDK retains only selected configurations and has
+    no decision waits, so rows compare without those dimensions.
     """
     if "verified" not in value:
         return value
+
+    def without_decisions(row: dict[str, Any]) -> dict[str, Any]:
+        return {key: item for key, item in row.items() if key != "required_decisions"}
+
     return {
-        **value,
+        **without_decisions(value),
+        "targets": [without_decisions(row) for row in value["targets"]],
+        "qualified": [without_decisions(row) for row in value["qualified"]],
+        "record": {**value["record"], "targets": [without_decisions(row) for row in value["record"]["targets"]]},
         "verified": sorted(
             (
                 {

@@ -17,11 +17,11 @@ from tests.graph_sdk.qualification_fixtures import _inputs
 from tests.graph_sdk.test_qualification_subject_context import _execute_separate_subject_context
 
 
-@pytest.mark.parametrize("decision_context", [False, True])
-def test_bound_declarations_join_their_exact_node_port_and_versions(decision_context: bool) -> None:
+@pytest.mark.parametrize("ordinary_context_hop", [False, True])
+def test_bound_declarations_join_their_exact_node_port_and_versions(ordinary_context_hop: bool) -> None:
     execution, result = asyncio.run(
         _execute_separate_subject_context(
-            versioned_context_dependencies=frozenset({"a", "b"}), decision_context=decision_context
+            versioned_context_dependencies=frozenset({"a", "b"}), ordinary_context_hop=ordinary_context_hop
         )
     )
     bound = execution.context.bound_context
@@ -29,7 +29,7 @@ def test_bound_declarations_join_their_exact_node_port_and_versions(decision_con
     facts = tuple(item for item in result.provenance if isinstance(item.key, BoundInputKey))
     assert len(facts) == 4
     nodes = {cast(BoundInputKey, item.key).node for item in facts}
-    assert len(nodes) == (2 if decision_context else 1)
+    assert len(nodes) == (2 if ordinary_context_hop else 1)
     assert {item.key.port for item in facts} == {"a", "b"}
     for port in ("a", "b"):
         group = [item for item in facts if item.key.port == port]
@@ -43,7 +43,7 @@ def test_bound_declarations_join_their_exact_node_port_and_versions(decision_con
             assert retained.port == fact.key.port
             assert retained.target == fact.key.target
             assert retained.reference.version == fact.artifact.version
-            assert not fact.parents and not fact.decision
+            assert not fact.parents
         selected = next(
             item for item in result.ports if item.node == cast(BoundInputKey, group[0].key).node and item.port == port
         )

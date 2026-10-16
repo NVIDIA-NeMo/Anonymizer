@@ -73,9 +73,9 @@ ObservationReason = Literal[
     "internal_failure",
 ]
 
-RouteKind = Literal["none", "local", "external", "decision", "context"]
+RouteKind = Literal["none", "local", "external", "context"]
 
-OperationRole = Literal["ordinary", "assessment", "repair", "context", "decision"]
+OperationRole = Literal["ordinary", "assessment", "repair", "context"]
 
 ObservationDelivery = Literal["not_configured", "complete", "failed"]
 
@@ -268,7 +268,7 @@ def execution_observation_requirements(
     from anonymizer.engine.graph_sdk.preparation import _recipe_depth
 
     prepared = execution.context.prepared
-    # Each slot may enter an adaptive or decision boundary; every selected
+    # Each slot may enter an adaptive boundary; every selected
     # resource may need cleanup, including a failed factory's retained lease.
     resources = sum(len(policy.implementations) for policy in execution.policies)
     resources += len(execution.context.context_capabilities)
@@ -663,7 +663,6 @@ def observed_execution_admission(
     context: AdmittedContextPlan,
     capabilities: tuple[ImplementationCapability, ...],
     policies: tuple[OperationExecutionPolicy, ...],
-    decisions: tuple[DecisionDeclaration, ...],
     assessment_productions: tuple[EvidenceProductionDecl, ...],
     assessment_limits: AssessmentLimits,
     map_expansions: tuple[MapExpansionDecl, ...] = (),
@@ -687,7 +686,6 @@ def observed_execution_admission(
             context=context,
             capabilities=capabilities,
             policies=policies,
-            decisions=decisions,
             assessment_productions=assessment_productions,
             assessment_limits=assessment_limits,
             map_expansions=map_expansions,
@@ -775,7 +773,6 @@ if TYPE_CHECKING:
         AdmittedContextPlan,
         AdmittedExecutionPlan,
         AssessmentLimits,
-        DecisionDeclaration,
         EvidenceProductionDecl,
         ImplementationCapability,
         IngressLimits,

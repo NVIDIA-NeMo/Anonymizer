@@ -153,7 +153,6 @@ def _worker_services(execution, services, loop, pool, callback):
         ),
         capabilities=capabilities,
         policies=policies,
-        decisions=(),
         assessment_productions=execution.assessment_productions,
         assessment_limits=execution.assessment_limits,
     )

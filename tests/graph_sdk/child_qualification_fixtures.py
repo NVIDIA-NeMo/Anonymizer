@@ -244,7 +244,6 @@ def child_fixture(
         ),
         capabilities=capabilities,
         policies=tuple(policies),
-        decisions=(),
         assessment_productions=(
             EvidenceProductionDecl(
                 node=assessor,
@@ -424,7 +423,6 @@ def child_fixture(
         states=(state,),
         requests=request_receipt(state=requests),
         cleanup=tuple(CleanupFact(resource=row.resource, owner="sdk", disposition="closed") for row in registrations),
-        pending_decisions=(),
         artifacts=((root, TextArtifactValue(text="source")), (output, TextArtifactValue(text="candidate"))),
         assessments=(
             ExecutionAssessmentFact(
@@ -471,10 +469,8 @@ def child_fixture(
             ),
         ),
         provenance=(
-            ArtifactProvenanceFact(_key=_FACT_KEY, key=root_key, artifact=root, parents=frozenset(), decision=False),
-            ArtifactProvenanceFact(
-                _key=_FACT_KEY, key=output_key, artifact=output, parents=frozenset({root_key}), decision=False
-            ),
+            ArtifactProvenanceFact(_key=_FACT_KEY, key=root_key, artifact=root, parents=frozenset()),
+            ArtifactProvenanceFact(_key=_FACT_KEY, key=output_key, artifact=output, parents=frozenset({root_key})),
         ),
         _input_parents=((target, keys[assessor], "input", root_key),),
         _passthrough_parents=(),

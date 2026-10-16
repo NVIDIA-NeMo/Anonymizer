@@ -36,11 +36,8 @@ def test_invocation_artifact_cannot_replace_typed_binding_artifact() -> None:
         ("key", None),
         ("version", None),
         ("key", "parents"),
-        ("key", "decision"),
         ("version", "parents"),
-        ("version", "decision"),
         (None, "parents"),
-        (None, "decision"),
         ("key", "foreign"),
         ("version", "foreign"),
     ],
@@ -85,8 +82,6 @@ def test_binding_reference_checks_preserve_missing_and_owner_precedence(
     )
     if contradiction == "parents":
         object.__setattr__(fact, "parents", frozenset({next(p.key for p in result.provenance if p is not fact)}))
-    elif contradiction == "decision":
-        object.__setattr__(fact, "decision", True)
     with pytest.raises(EffectRejected) as error:
         qualify(admitted=admitted, result=result, current=current, submissions=submissions)
     expected = (

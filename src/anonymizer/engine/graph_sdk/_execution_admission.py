@@ -23,8 +23,6 @@ from anonymizer.engine.graph_sdk._execution_values import (
     _PLAN_KEY,
     AdmittedExecutionPlan,
     AssessmentLimits,
-    DecisionDeclaration,
-    DecisionLimits,
     DelegatedCallable,
     EvidenceProductionDecl,
     ExecutionKind,
@@ -73,7 +71,6 @@ def admit_execution_plan(
     context: AdmittedContextPlan,
     capabilities: tuple[ImplementationCapability, ...],
     policies: tuple[OperationExecutionPolicy, ...],
-    decisions: tuple[DecisionDeclaration, ...],
     assessment_productions: tuple[EvidenceProductionDecl, ...],
     assessment_limits: AssessmentLimits,
     map_expansions: tuple[MapExpansionDecl, ...] = (),
@@ -96,8 +93,6 @@ def admit_execution_plan(
         validate_capability(capability)
     if not isinstance(policies, tuple) or any(not isinstance(item, OperationExecutionPolicy) for item in policies):
         reject(EffectCode.INVALID_TYPE)
-    if not isinstance(decisions, tuple) or any(not isinstance(item, DecisionDeclaration) for item in decisions):
-        reject(EffectCode.INVALID_TYPE)
     # Candidate spans are transient values, never text context or map membership.
     prepared_workflows = prepared.workflow.bodies()
     for body in prepared_workflows:
@@ -116,28 +111,6 @@ def admit_execution_plan(
         reject(EffectCode.MISSING)
     if len(policies) != len({item.node for item in policies}):
         reject(EffectCode.DUPLICATE)
-    decision_nodes = {item.node for item in decisions}
-    if len(decisions) != len(decision_nodes):
-        reject(EffectCode.DUPLICATE)
-    policy_by_node = {item.node: item for item in policies}
-    for declaration in decisions:
-        policy = policy_by_node.get(declaration.node)
-        if policy is None or policy.kind != "decision":
-            reject(EffectCode.UNSUPPORTED)
-        operation = policy.implementations[0].capability.operation
-        if declaration.artifact_port not in {item.name for item in operation.inputs}:
-            reject(EffectCode.MISSING)
-        declared_outcomes = {item.name for item in operation.outcomes}
-        if any(item.outcome not in declared_outcomes for item in declaration.outcomes):
-            reject(EffectCode.UNSUPPORTED)
-        dependencies = {item.output: item for item in operation.output_dependencies}
-        for decision_outcome in declaration.outcomes:
-            outcome = next(item for item in operation.outcomes if item.name == decision_outcome.outcome)
-            if any(
-                dependencies.get(port) is None or dependencies[port].identity_input != declaration.artifact_port
-                for port in outcome.produced_ports
-            ):
-                reject(EffectCode.UNSUPPORTED)
     for policy in policies:
         if not policy.implementations:
             reject(EffectCode.IMPLEMENTATION_COUNT)
@@ -146,7 +119,7 @@ def admit_execution_plan(
             reject(EffectCode.UNSUPPORTED)
         if any(item.capability not in capabilities for item in policy.implementations):
             reject(EffectCode.UNSUPPORTED)
-        _validate_policy(policy, policy.node in decision_nodes)
+        _validate_policy(policy)
         adaptive = next((item for item in context.adaptive_retrievals if item.node == policy.node), None)
         if adaptive is not None:
             source = next(
@@ -173,7 +146,6 @@ def admit_execution_plan(
         invocation_workflow=invocation_workflow,
         capabilities=capabilities,
         policies=frozenset(policies),
-        decisions=frozenset(decisions),
         map_expansions=map_expansions,
         assessment_productions=assessment_productions,
         assessment_limits=assessment_limits,
@@ -341,7 +313,7 @@ def _add_materialization_schema(
     schemas[output_type] = candidate
 
 
-def _validate_policy(policy: OperationExecutionPolicy, has_decision: bool) -> None:
+def _validate_policy(policy: OperationExecutionPolicy) -> None:
     require_literal(policy.initial_request_purpose, frozenset({"initial", "repair"}))
     if policy.initial_request_purpose == "repair" and (policy.kind != "external" or policy.request is None):
         reject(EffectCode.CONTRADICTORY)
@@ -367,7 +339,7 @@ def _validate_policy(policy: OperationExecutionPolicy, has_decision: bool) -> No
             or policy.implementations[0].request is not None
         ):
             reject(EffectCode.CONTRADICTORY)
-    elif policy.kind in {"local", "decision"}:
+    elif policy.kind == "local":
         if len(policy.implementations) != 1 or policy.request is not None:
             reject(EffectCode.IMPLEMENTATION_COUNT)
         if capabilities[0].effect != "local" or policy.implementations[0].request is not None:
@@ -385,10 +357,8 @@ def _validate_policy(policy: OperationExecutionPolicy, has_decision: bool) -> No
         reject(EffectCode.CONTRADICTORY)
     if policy.kind != "external" and policy.safe_detachment != "forbidden":
         reject(EffectCode.CONTRADICTORY)
-    if (policy.kind == "decision") != has_decision:
-        reject(EffectCode.CONTRADICTORY)
     outcomes = {item.name: item.category for item in operation.outcomes}
-    if policy.kind != "decision" and (not policy.result_outcomes or not policy.result_outcomes <= outcomes.keys()):
+    if not policy.result_outcomes or not policy.result_outcomes <= outcomes.keys():
         reject(EffectCode.UNSUPPORTED)
     if any(item.outcome is not None and item.outcome not in outcomes for item in policy.runtime_outcomes):
         reject(EffectCode.UNSUPPORTED)
@@ -584,18 +554,14 @@ def _validate_delegated_recipes(prepared: PreparedPlan, policies: tuple[Operatio
 
 def _expected_runtime_keys(kind: ExecutionKind, results: frozenset[str]) -> set[tuple[str, str | None, str | None]]:
     keys: set[tuple[str, str | None, str | None]] = {("result", item, None) for item in results}
-    failures = (
-        {"permanent", "implementation_exception"}
-        if kind == "decision"
-        else {
-            "rejected_before_acceptance",
-            "retryable",
-            "malformed_response",
-            "permanent",
-            "transport_unknown",
-            "implementation_exception",
-        }
-    )
+    failures = {
+        "rejected_before_acceptance",
+        "retryable",
+        "malformed_response",
+        "permanent",
+        "transport_unknown",
+        "implementation_exception",
+    }
     keys.update(("failure", None, item) for item in failures)
     conditions = {"cancel_before_start", "cancel_after_start", "artifact_limit_exhausted", "deadline_exhausted"}
     if kind in {"external", "delegated"}:
@@ -811,9 +777,6 @@ def _validate_services(admitted: AdmittedExecutionPlan, services: ExecutionServi
         services.limits.max_remote_outstanding is not None or services.limits.max_runtime_artifact_bytes is not None
     ) and any(policy.delegated is not None and policy.delegated.mode == "opaque" for policy in admitted.policies):
         reject(EffectCode.UNSUPPORTED)
-    require_instance(services.decision_limits, DecisionLimits)
-    if any(item.max_lifetime_ns > services.decision_limits.max_lifetime_ns for item in admitted.decisions):
-        reject(EffectCode.LIMIT_EXCEEDED)
     if any(
         services.limits.max_collection_items is not None
         and item.materialization.kind == "collection"

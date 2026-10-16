@@ -18,7 +18,6 @@ from anonymizer.engine.graph_sdk.data import DataGraph, DataLimits
 from anonymizer.engine.graph_sdk.executor import (
     AdmittedExecutionPlan,
     AssessmentLimits,
-    DecisionLimits,
     ExecutionLimits,
     ExecutionResult,
     ExecutionServices,
@@ -251,7 +250,6 @@ def span_graph(
         ),
         capabilities=capabilities,
         policies=policies,
-        decisions=(),
         assessment_productions=(),
         ingress_limits=ingress,
         assessment_limits=AssessmentLimits(
@@ -283,7 +281,6 @@ def span_graph(
             max_runtime_artifact_bytes=1000,
             max_collection_items=10,
         ),
-        decision_limits=DecisionLimits(max_pending=0, max_lifetime_ns=0),
         clock=_ZeroClock(),
     )
     return admitted, capabilities, services, nodes

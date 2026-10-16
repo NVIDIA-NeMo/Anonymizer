@@ -85,16 +85,7 @@ class CandidateRef(_PrivateRepr):
             raise ContractViolation(ValidationCode.INVALID_TYPE)
 
 
-@dataclass(frozen=True, slots=True, kw_only=True, repr=False)
-class DecisionRef(_PrivateRepr):
-    artifact: ArtifactRef
-
-    def __post_init__(self) -> None:
-        if not isinstance(self.artifact, ArtifactRef):
-            raise ContractViolation(ValidationCode.INVALID_TYPE)
-
-
-ConsumedRef: TypeAlias = ArtifactRef | CandidateRef | DecisionRef
+ConsumedRef: TypeAlias = ArtifactRef | CandidateRef
 
 
 @dataclass(frozen=True, slots=True, kw_only=True, repr=False)
@@ -105,7 +96,7 @@ class EvidenceRef(_PrivateRepr):
     def __post_init__(self) -> None:
         if not isinstance(self.artifact, ArtifactRef):
             raise ContractViolation(ValidationCode.INVALID_TYPE)
-        _require_frozenset(self.consumed, (ArtifactRef, CandidateRef, DecisionRef))
+        _require_frozenset(self.consumed, (ArtifactRef, CandidateRef))
         if any(_consumed_artifact(item).invocation != self.artifact.invocation for item in self.consumed):
             raise ContractViolation(ValidationCode.FOREIGN_OWNER)
 

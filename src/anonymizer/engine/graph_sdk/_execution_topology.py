@@ -144,8 +144,6 @@ def _inherited_artifact_role(
     source = provenance.get(parent)
     if source is None or source.key != parent:
         return "artifact"
-    if source.decision:
-        return "decision"
     if isinstance(parent, OperationOutputKey):
         occurrence = ports.get((parent.activation, parent.port))
         if (

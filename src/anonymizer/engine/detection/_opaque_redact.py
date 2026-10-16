@@ -36,7 +36,6 @@ from anonymizer.engine.graph_sdk.context import admit_context_plan
 from anonymizer.engine.graph_sdk.data import DataGraph, DataLimits, ValidatedDataGraph
 from anonymizer.engine.graph_sdk.executor import (
     AssessmentLimits,
-    DecisionLimits,
     DelegatedRequestContract,
     EvidenceProductionDecl,
     ExecutionImplementation,
@@ -1004,7 +1003,6 @@ async def _execute_frame_plan_owned(
         ),
         capabilities=capabilities,
         policies=policies,
-        decisions=(),
         assessment_productions=assessment_productions,
         ingress_limits=ingress_limits,
         assessment_limits=assessment_limits,
@@ -1066,7 +1064,6 @@ async def _execute_frame_plan_owned(
                 handles=handles,
                 context_resources=(),
                 limits=limits,
-                decision_limits=DecisionLimits(max_pending=0, max_lifetime_ns=0),
                 clock=_Clock(),
             ),
         )

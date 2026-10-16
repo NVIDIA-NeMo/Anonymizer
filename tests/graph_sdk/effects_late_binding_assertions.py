@@ -73,7 +73,7 @@ def _assert_latest_publication(
     context_port = source.declaration.port
     assert entry.template == node and state.complete
     assert execution.record.targets == frozenset({target})
-    assert not execution.assessments and not execution.pending_decisions
+    assert not execution.assessments
     assert not execution.requests.dispatches and not execution.cleanup
     values = dict(execution.artifacts)
     assert len(values) == len(execution.artifacts) == len(execution.provenance)

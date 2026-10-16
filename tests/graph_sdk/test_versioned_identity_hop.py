@@ -27,10 +27,9 @@ def test_versioned_context_crosses_an_ordinary_identity_hop(corruption: str) -> 
     )
     admitted, current, submissions = _inputs(execution, result, latest=True)
     baseline = qualify(admitted=admitted, result=result, current=current, submissions=submissions)
-    assert len(baseline.qualified) == 1 and not baseline.required_decisions
+    assert len(baseline.qualified) == 1
     assert len(result.record.terminals) == 2
     assert all(terminal.category == "success" for terminal in result.record.terminals)
-    assert not result.pending_decisions and not any(fact.decision for fact in result.provenance)
     bound = sorted(
         (fact for fact in result.provenance if isinstance(fact.key, BoundInputKey)),
         key=lambda fact: fact.artifact.version,

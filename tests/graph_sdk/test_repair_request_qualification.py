@@ -16,7 +16,6 @@ from anonymizer.engine.graph_sdk.data import DataGraph, DataLimits
 from anonymizer.engine.graph_sdk.executor import (
     AssessmentFinding,
     AssessmentLimits,
-    DecisionLimits,
     EvidenceProductionDecl,
     ExecutionLimits,
     ExecutionServices,
@@ -153,7 +152,7 @@ async def _execute_repair(
     transport: _RepairTransport,
     purpose: Literal["initial", "repair"],
     *,
-    kind: Literal["external", "local", "decision"] = "external",
+    kind: Literal["external", "local"] = "external",
     tamper: str | None = None,
 ):
     base, assessor, artifact = _adaptive_workflow(assessment=True, distinct_subject=True, requests=0)
@@ -339,7 +338,6 @@ async def _execute_repair(
         ),
         capabilities=capabilities,
         policies=policies,
-        decisions=(),
         assessment_productions=(
             EvidenceProductionDecl(
                 node=assessor,
@@ -384,7 +382,6 @@ async def _execute_repair(
             max_runtime_artifact_bytes=100,
             max_collection_items=0,
         ),
-        decision_limits=DecisionLimits(max_pending=0, max_lifetime_ns=0),
         clock=_ZeroClock(),
     )
     return admitted, await (
@@ -430,11 +427,10 @@ def test_invalid_initial_request_purpose_rejects_before_effects(purpose: str) ->
     assert transport.calls == transport.closes == 0
 
 
-@pytest.mark.parametrize("kind", ["local", "decision"])
-def test_repair_requires_an_external_policy_before_effects(kind: Literal["local", "decision"]) -> None:
+def test_repair_requires_an_external_policy_before_effects() -> None:
     transport = _RepairTransport()
     with pytest.raises(EffectRejected) as error:
-        asyncio.run(_execute_repair(transport, "repair", kind=kind))
+        asyncio.run(_execute_repair(transport, "repair", kind="local"))
     assert error.value.code is EffectCode.CONTRADICTORY
     assert transport.calls == transport.closes == 0
 

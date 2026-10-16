@@ -108,7 +108,6 @@ def test_missing_delegated_fields_reject_at_raw_admission(missing):
             context=execution.context,
             capabilities=execution.capabilities,
             policies=tuple(raw if policy is owner else policy for policy in execution.policies),
-            decisions=(),
             assessment_productions=execution.assessment_productions,
             assessment_limits=execution.assessment_limits,
         )

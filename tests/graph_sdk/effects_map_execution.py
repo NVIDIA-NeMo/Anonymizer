@@ -24,7 +24,6 @@ from anonymizer.engine.graph_sdk.context import (
 from anonymizer.engine.graph_sdk.executor import (
     AssessmentFinding,
     AssessmentLimits,
-    DecisionLimits,
     EvidenceProductionDecl,
     ExecutionLimits,
     ExecutionServices,
@@ -124,7 +123,6 @@ def _admit_fixture(
         context=context,
         capabilities=fixture.capabilities,
         policies=policies,
-        decisions=(),
         assessment_productions=assessment_productions
         if assessment_productions is not None
         else (
@@ -351,7 +349,6 @@ async def _execute_membership(
                 max_runtime_artifact_bytes=baseline_bytes + artifact_byte_headroom,
                 max_collection_items=max_collection_items,
             ),
-            decision_limits=DecisionLimits(max_pending=0, max_lifetime_ns=0),
             clock=_Clock(),
         ),
     )
@@ -549,7 +546,6 @@ async def _execute_loop_resolution(mode: str):
             )
             for policy in _local_policies(by_node)
         ),
-        decisions=(),
         assessment_productions=(),
         assessment_limits=AssessmentLimits(
             max_productions=0,
@@ -583,7 +579,6 @@ async def _execute_loop_resolution(mode: str):
                     max_runtime_artifact_bytes=128,
                     max_collection_items=1,
                 ),
-                decision_limits=DecisionLimits(max_pending=0, max_lifetime_ns=0),
                 clock=_Clock(),
             ),
         )

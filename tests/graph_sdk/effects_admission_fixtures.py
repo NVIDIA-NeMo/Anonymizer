@@ -1,14 +1,12 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Effects corpus selection and admission and decision execution fixtures."""
+"""Effects corpus selection and admission fixtures."""
 
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass, field, replace
+from dataclasses import replace
 from typing import Any, cast
-
-import pytest
 
 from anonymizer.engine.graph_sdk.capabilities import ImplementationCapability, ImplementationRef
 from anonymizer.engine.graph_sdk.context import (
@@ -18,34 +16,23 @@ from anonymizer.engine.graph_sdk.data import DataGraph, DataLimits
 from anonymizer.engine.graph_sdk.executor import (
     AdmittedExecutionPlan,
     AssessmentLimits,
-    DecisionDeclaration,
-    DecisionLimits,
-    DecisionOutcome,
-    DecisionResponse,
-    DecisionWaitId,
     ExecutionImplementation,
     ExecutionLimits,
     ExecutionServices,
-    LocalDecisionWait,
     OperationExecutionPolicy,
-    RootInputKey,
     RuntimeOutcome,
     admit_execution_plan,
     start_execution,
 )
-from anonymizer.engine.graph_sdk.preparation import BoundInput, PreparedPlan
+from anonymizer.engine.graph_sdk.preparation import PreparedPlan
 from anonymizer.engine.graph_sdk.requests import (
-    AssociationInput,
     PhysicalRequestPolicy,
-    SemanticAssociation,
 )
-from anonymizer.graph import EffectRejected
-from anonymizer.graph._values import ArtifactRef, InvocationId
 from anonymizer.graph.workflow import (
     NodeId,
     WorkflowId,
 )
-from tests.graph_sdk.implementation_fixtures import _execution_implementation, _implementation_handle
+from tests.graph_sdk.implementation_fixtures import _execution_implementation
 from tests.graph_sdk.reference.corpora import load_cases
 from tests.graph_sdk.test_preparation import _capability, _data, _limits, _prepare, _workflow
 
@@ -128,10 +115,12 @@ BINDING_RESULT_SHAPE_CASES = tuple(
     }
 )
 
+# Decision waits are outside the SDK; their single admission case is excluded.
 ADMISSION_CASES = tuple(
     case
     for case in load_cases("effects")
-    if case["family"] == "admission" or case["case_id"] == "retry/implementation_owner_rejected"
+    if (case["family"] == "admission" or case["case_id"] == "retry/implementation_owner_rejected")
+    and case["case_id"] != "admission/valid_decision_runtime_product"
 )
 
 REAL_BINDING_CASE_IDS = {
@@ -284,7 +273,6 @@ def _admit_unbound_execution(
     prepared: PreparedPlan,
     capabilities: tuple[ImplementationCapability, ...],
     policies: tuple[OperationExecutionPolicy, ...],
-    decisions: tuple[DecisionDeclaration, ...],
 ) -> AdmittedExecutionPlan:
     return admit_execution_plan(
         context=admit_context_plan(
@@ -295,7 +283,6 @@ def _admit_unbound_execution(
         ),
         capabilities=capabilities,
         policies=policies,
-        decisions=decisions,
         assessment_productions=(),
         assessment_limits=_assessment_limits(),
     )
@@ -323,16 +310,12 @@ def _valid_runtime_rows(kind: str, outcomes: frozenset[str]) -> tuple[RuntimeOut
         for outcome in outcomes
     ]
     failures = (
-        ("permanent", "implementation_exception")
-        if kind == "decision"
-        else (
-            "rejected_before_acceptance",
-            "retryable",
-            "malformed_response",
-            "permanent",
-            "transport_unknown",
-            "implementation_exception",
-        )
+        "rejected_before_acceptance",
+        "retryable",
+        "malformed_response",
+        "permanent",
+        "transport_unknown",
+        "implementation_exception",
     )
     rows.extend(
         RuntimeOutcome(
@@ -381,21 +364,16 @@ def _admit_case(case: dict[str, Any]) -> None:
     if isinstance(execution_policies, list) and execution_policies and isinstance(execution_policies[0], dict):
         kind = cast(str, execution_policies[0].get("kind", "local"))
     external = kind == "external"
-    workflow, node, artifact_type = _workflow(requests=3 if external else 0, with_input=kind == "decision")
+    workflow, node, _ = _workflow(requests=3 if external else 0)
     primary = _capability(workflow, external=external)
     if external:
         primary = replace(primary, max_physical_requests_per_activation=2)
-    bound_inputs = ()
-    data = _data(1 if kind == "decision" else 2)
-    if kind == "decision":
-        target = next(iter(data.targets))
-        bound_inputs = (BoundInput(target=target, source=target, port="input", artifact_type=artifact_type),)
+    data = _data(2)
     capability_maximum = cast(dict[str, int], declaration.get("admission_limits", {})).get("max_capabilities", 2)
     prepared = _prepare(
         data=data,
         workflow=workflow,
         capability=primary,
-        bound_inputs=bound_inputs,
         limits=_limits(capabilities=capability_maximum),
     )
     physical = PhysicalRequestPolicy(
@@ -489,21 +467,10 @@ def _admit_case(case: dict[str, Any]) -> None:
                 )
             )
         policies = tuple(built)
-    decisions = ()
-    if kind == "decision":
-        decisions = (
-            DecisionDeclaration(
-                node=node,
-                artifact_port="input",
-                outcomes=(DecisionOutcome(decision="approve", outcome="ok"),),
-                max_lifetime_ns=1,
-            ),
-        )
     admitted = _admit_unbound_execution(
         prepared=prepared,
         capabilities=tuple(capabilities),
         policies=cast(Any, policies),
-        decisions=decisions,
     )
     if case["boundary"] == "pre_execution":
         changed = replace(capabilities[-1], max_physical_requests_per_activation=3)
@@ -521,7 +488,6 @@ def _admit_case(case: dict[str, Any]) -> None:
                         max_runtime_artifact_bytes=1,
                         max_collection_items=1,
                     ),
-                    decision_limits=DecisionLimits(max_pending=0, max_lifetime_ns=0),
                     clock=_ZeroClock(),
                 ),
             )
@@ -531,184 +497,3 @@ def _admit_case(case: dict[str, Any]) -> None:
 class _ZeroClock:
     def now_ns(self) -> int:
         return 0
-
-
-@dataclass
-class _DecisionProvider:
-    mode: str = "wait"
-    started: asyncio.Event = field(default_factory=asyncio.Event)
-    calls: int = 0
-
-    async def run(self, request: tuple[AssociationInput, ...]) -> LocalDecisionWait:
-        self.calls += 1
-        self.started.set()
-        if self.mode == "cancel":
-            await asyncio.Event().wait()
-        if self.mode == "failure":
-            raise RuntimeError("decision implementation failed")
-        artifact = request[0].inputs[0].artifact
-        assert artifact is not None
-        assert isinstance(request[0].association, SemanticAssociation)
-        return LocalDecisionWait(association=request[0].association, artifact=artifact)
-
-
-@dataclass
-class _DecisionClock:
-    now: int = 0
-
-    def now_ns(self) -> int:
-        return self.now
-
-
-async def _assert_decision_submission(case_id: str, expected: str, *, pending_limit: int | None = None) -> None:
-    workflow, node, artifact_type = _workflow(with_input=True)
-    data = _data(2 if pending_limit is not None else 1)
-    capability = _capability(workflow)
-    prepared = _prepare(
-        data=data,
-        workflow=workflow,
-        capability=capability,
-        bound_inputs=tuple(
-            BoundInput(target=target, source=target, port="input", artifact_type=artifact_type)
-            for target in data.targets
-        ),
-    )
-    implementation = _execution_implementation(capability, request=None)
-    policy = OperationExecutionPolicy(
-        node=node,
-        kind="decision",
-        request=None,
-        safe_detachment="forbidden",
-        implementations=(implementation,),
-        result_outcomes=frozenset(),
-        runtime_outcomes=_valid_runtime_rows("decision", frozenset()),
-    )
-    admitted = _admit_unbound_execution(
-        prepared=prepared,
-        capabilities=(capability,),
-        policies=(policy,),
-        decisions=(
-            DecisionDeclaration(
-                node=node,
-                artifact_port="input",
-                outcomes=(
-                    DecisionOutcome(decision="approve", outcome="ok"),
-                    DecisionOutcome(decision="reject", outcome="ok"),
-                ),
-                max_lifetime_ns=10,
-            ),
-        ),
-    )
-    callback = _DecisionProvider(
-        mode={
-            "decisions/cancel_condition": "cancel",
-            "decisions/implementation_failure": "failure",
-        }.get(case_id, "wait")
-    )
-    clock = _DecisionClock()
-    running = await start_execution(
-        admitted=admitted,
-        capabilities=(capability,),
-        services=ExecutionServices(
-            handles=(_implementation_handle(capability, local=callback, transport=None, resource=None),),
-            context_resources=(),
-            limits=ExecutionLimits(
-                max_local_in_flight=2,
-                max_remote_outstanding=0,
-                max_runtime_artifacts=2,
-                max_runtime_artifact_bytes=100,
-                max_collection_items=1,
-            ),
-            decision_limits=DecisionLimits(
-                max_pending=pending_limit if pending_limit is not None else 1, max_lifetime_ns=10
-            ),
-            clock=clock,
-        ),
-    )
-    if pending_limit is not None:
-        await callback.started.wait()
-        for _ in range(20):
-            await asyncio.sleep(0)
-        assert len(running.pending_decisions()) == pending_limit
-        assert callback.calls == pending_limit
-        first = running.pending_decisions()
-        for wait in first:
-            running.submit_decision(
-                DecisionResponse(wait=wait.wait, workflow=wait.workflow, artifact=wait.artifact, decision="approve")
-            )
-        if pending_limit == 1:
-            while not running.pending_decisions() or running.pending_decisions()[0].wait == first[0].wait:
-                await asyncio.sleep(0)
-            assert callback.calls == 2
-            wait = running.pending_decisions()[0]
-            assert wait.wait != first[0].wait and wait.artifact != first[0].artifact
-            running.submit_decision(
-                DecisionResponse(wait=wait.wait, workflow=wait.workflow, artifact=wait.artifact, decision="approve")
-            )
-        result = await running.wait()
-        assert len(result.record.terminals) == 2
-        assert all(item.category == "success" for item in result.record.terminals)
-        assert not result.pending_decisions
-        return
-    if case_id in {"decisions/cancel_condition", "decisions/implementation_failure", "decisions/deadline"}:
-        case = next(item for item in load_cases("effects") if item["case_id"] == case_id)
-        if case_id == "decisions/cancel_condition":
-            await callback.started.wait()
-            running.request_cancel()
-        elif case_id == "decisions/deadline":
-            while not running.pending_decisions():
-                await asyncio.sleep(0)
-            wait = running.pending_decisions()[0]
-            assert wait.allowed_decisions == frozenset(case["events"][1]["allowed"])
-            clock.now = wait.deadline_ns
-        result = await running.wait()
-        assert callback.calls == 1
-        assert [item.category for item in result.record.terminals] == list(case["expected"]["state"]["tasks"].values())
-        assert not result.pending_decisions
-        assert result.requests.dispatched_count == 0
-        assert not result.final_outputs and not result.assessments
-        assert len(result.artifacts) == len(result.ports) == len(result.provenance) == 1
-        assert isinstance(result.provenance[0].key, RootInputKey)
-        assert not result.provenance[0].parents and not result.provenance[0].decision
-        assert result.provenance[0].artifact == result.artifacts[0][0]
-        assert all(state.complete for state in result.states)
-        return
-    while not running.pending_decisions():
-        await asyncio.sleep(0)
-    wait = running.pending_decisions()[0]
-    response = DecisionResponse(
-        wait=wait.wait,
-        workflow=wait.workflow,
-        artifact=wait.artifact,
-        decision="approve",
-    )
-    if case_id == "decisions/stale_artifact":
-        response = replace(response, artifact=ArtifactRef(invocation=wait.artifact.invocation, key=1, version=1))
-    elif case_id == "decisions/foreign_workflow":
-        response = replace(response, workflow=WorkflowId.new())
-    elif case_id == "decisions/foreign_wait":
-        response = replace(
-            response,
-            wait=DecisionWaitId.new(invocation=InvocationId.new(plan=wait.activation.invocation.plan)),
-        )
-    elif case_id == "decisions/unknown_decision":
-        response = replace(response, decision="deny")
-    elif case_id == "decisions/duplicate_response":
-        running.submit_decision(response)
-    before = running.pending_decisions()
-    with pytest.raises(EffectRejected) as rejected:
-        running.submit_decision(response)
-    assert rejected.value.code.value == expected
-    assert running.pending_decisions() == before
-    if case_id != "decisions/duplicate_response":
-        running.submit_decision(
-            DecisionResponse(
-                wait=wait.wait,
-                workflow=wait.workflow,
-                artifact=wait.artifact,
-                decision="approve",
-            )
-        )
-    result = await running.wait()
-    assert result.record.terminals[0].category == "success"
-    assert not result.pending_decisions

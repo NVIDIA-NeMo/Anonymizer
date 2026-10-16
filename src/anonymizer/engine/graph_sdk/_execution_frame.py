@@ -194,7 +194,6 @@ class _InvocationFrame:
                     key=RootInputKey(target=bound.target, port=bound.port),
                     artifact=reference,
                     parents=frozenset(),
-                    decision=False,
                 )
             )
 

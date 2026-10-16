@@ -20,7 +20,6 @@ from anonymizer.engine.graph_sdk._execution_dispatch import (
     _immediate_execution_result,
     _mapping,
     _run_adaptive,
-    _run_decision,
     _run_external_batch,
     _run_local,
 )
@@ -265,14 +264,9 @@ class _InvocationRuntime:
         # A frontier consumes capacity once per physical batch. No work runs until
         # this synchronous traversal has bound inputs and committed its entries.
         batches: dict[NodeId | ActivationKey, list[_OperationJob[DatumId]]] = {}
-        waiting = {wait.activation for wait in self.control.pending.values()}
         pending_activations = {job.activation for jobs in self.submissions.values() for job in jobs}
-        local = sum(
-            any(job.policy.kind != "external" and job.activation not in waiting for job in jobs)
-            for jobs in self.submissions.values()
-        )
+        local = sum(any(job.policy.kind != "external" for job in jobs) for jobs in self.submissions.values())
         remote = sum(jobs[0].policy.kind == "external" for jobs in self.submissions.values())
-        decisions = sum(job.policy.kind == "decision" for jobs in self.submissions.values() for job in jobs)
         scopes = tuple(self.frame.sources) or ((self.invocation,) if self.frame.invocation_source is not None else ())
         successors: dict[NodeId, list[NodeId]] = {}
         for edge in self.prepared.workflow.sequence:
@@ -341,10 +335,6 @@ class _InvocationRuntime:
                     ):
                         continue
                 if not blocked and policy is not None:
-                    if policy.kind == "decision" and decisions >= self.services.decision_limits.max_pending:
-                        if self.services.decision_limits.max_pending == 0:
-                            reject(EffectCode.PENDING_LIMIT)
-                        continue
                     if isinstance(scope, DatumId) and _operation_has_omitted_context(
                         self.admitted, scope, entry.template
                     ):
@@ -449,7 +439,6 @@ class _InvocationRuntime:
                 if group is None:
                     local += policy.kind != "external"
                     remote += policy.kind == "external"
-                decisions += policy.kind == "decision"
                 scheduled = True
                 if isinstance(scope, InvocationId):
                     return True
@@ -502,11 +491,7 @@ class _InvocationRuntime:
                 port=input_artifact.port,
                 artifact=input_artifact.artifact,
                 artifact_type=input_artifact.artifact_type,
-                role="decision"
-                if job.policy.kind == "decision"
-                and input_artifact.port
-                == next((item.artifact_port for item in self.admitted.decisions if item.node == job.node))
-                else _inherited_artifact_role(
+                role=_inherited_artifact_role(
                     job.input_parents.get(input_artifact.port),
                     self.facts.provenance,
                     self.facts.ports,
@@ -558,10 +543,6 @@ class _InvocationRuntime:
                     self.services.limits,
                     self.request_resources,
                 )
-        elif policy.kind == "decision":
-            coroutine = _run_decision(
-                self.admitted, policy, handle, job.association, job.inputs, job.activation, self.services, self.control
-            )
         else:
             coroutine = _run_local(
                 policy,
@@ -845,15 +826,6 @@ class _InvocationRuntime:
         staged = False
         membership = None
         if mapping.condition == "result":
-            if job.policy.kind == "decision" and not results:
-                results = (
-                    AssociationResult(
-                        association=job.association,
-                        outcome=mapping.outcome or "",
-                        outputs=(),
-                        consumed_context_ports=frozenset(),
-                    ),
-                )
             assessed = _assessment_results(self.admitted, job.node, mapping, job.association, assessments)
             try:
                 membership = _membership_value(self.admitted, job.node, mapping.outcome, results)
@@ -993,7 +965,6 @@ class _InvocationRuntime:
             invocation_state=None if self.frame.invocation_source is None else self.frame.invocation_source.state,
             requests=request_receipt(self.request_authority.state),
             cleanup=cleanup,
-            pending_decisions=(),
             artifacts=tuple(self.facts.values.items()),
             assessments=tuple(self.facts.assessments.values()),
             ports=tuple(self.facts.ports.values()),

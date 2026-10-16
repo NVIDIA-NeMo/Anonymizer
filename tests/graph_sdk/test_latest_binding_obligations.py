@@ -222,7 +222,7 @@ def test_latest_binding_obligation(case: dict[str, Any]) -> None:
             t.attempt for t in result.record.terminals if t.activation == failure.association.task.activation
         )
     assert not result.cleanup and not result.cleanup_associations
-    assert not result.assessments and not result.pending_decisions
+    assert not result.assessments
     assert result.requests.dispatched_count == 0
     assert not result.requests.dispatches and not result.requests.terminals and not result.requests.bindings
     assert (

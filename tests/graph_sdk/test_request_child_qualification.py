@@ -13,7 +13,6 @@ from pathlib import Path
 import pytest
 
 from anonymizer.engine.graph_sdk.executor import (
-    DecisionLimits,
     ExecutionLimits,
     ExecutionServices,
     admit_execution_plan,
@@ -154,7 +153,6 @@ def readmit(execution, policy):
         context=execution.context,
         capabilities=execution.capabilities,
         policies=tuple(policy if item.node == policy.node else item for item in execution.policies),
-        decisions=(),
         assessment_productions=execution.assessment_productions,
         assessment_limits=execution.assessment_limits,
     )
@@ -205,7 +203,6 @@ def test_delegated_service_gate_precedes_identity_and_tasks(monkeypatch: pytest.
             max_runtime_artifact_bytes=100,
             max_collection_items=0,
         ),
-        decision_limits=DecisionLimits(max_pending=0, max_lifetime_ns=0),
         clock=_ZeroClock(),
     )
 

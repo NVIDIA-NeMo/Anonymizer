@@ -18,7 +18,7 @@ It runs a custom text transform, then a separate transform-and-verifier workflow
 | Custom transform | Transform: 1 | `not_assessed` | 0 |
 | Transform with separate verifier | Transform: 1, verifier: 1 | `met` | 1 |
 
-Both examples project the saved result twice and assert that callback counts do not increase. The same file exercises synchronous execution, rejection inside an existing event loop, admission failure before callbacks, a same-process decision wait/resume, and two calls to a `RemoteContext` subclass.
+Both examples project the saved result twice and assert that callback counts do not increase. The same file exercises synchronous execution, rejection inside an existing event loop, admission failure before callbacks, and two calls to a `RemoteContext` subclass.
 
 ## Declare and execute
 
@@ -206,9 +206,9 @@ Ordinary public `qualify` consumes all retained accepted assessments. There is n
 
 A `CandidateRef` identifies an exact final artifact. Replacing it with a newer artifact is a different claim. A numerical version comparison cannot establish external freshness or transfer evidence to a different candidate.
 
-## Decisions
+## Running executions
 
-`RunningExecution.pending_decisions()` exposes installed waits. Submit a `DecisionResponse` containing that wait's identity, workflow and artifact through `submit_decision()`, then await `wait()`. `request_cancel()` requests cancellation. These operations belong to one process-local running task; the handle is not serializable and does not provide durable task resumption.
+`start_execution()` returns a `RunningExecution`. Await `wait()` for the result; `request_cancel()` requests cancellation. These operations belong to one process-local running task; the handle is not serializable and does not provide durable task resumption. Operations cannot pause for an external decision.
 
 ## Context providers and blocking callbacks
 

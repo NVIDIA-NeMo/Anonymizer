@@ -33,7 +33,6 @@ from anonymizer.engine.graph_sdk.context import (
 from anonymizer.engine.graph_sdk.data import ValidatedDataGraph
 from anonymizer.engine.graph_sdk.executor import (
     BoundInputKey,
-    DecisionLimits,
     ExecutionLimits,
     ExecutionResult,
     ExecutionServices,
@@ -479,7 +478,6 @@ async def _execute_distinct_sites(
             )
             for node, cap in zip(nodes, capabilities, strict=True)
         ),
-        decisions=(),
         assessment_productions=(),
         assessment_limits=_assessment_limits(),
         ingress_limits=ingress_limits,
@@ -503,7 +501,6 @@ async def _execute_distinct_sites(
                     max_runtime_artifact_bytes=limits["max_artifact_bytes"],
                     max_collection_items=limits["max_collection_items"],
                 ),
-                decision_limits=DecisionLimits(max_pending=0, max_lifetime_ns=0),
                 clock=_ZeroClock(),
             ),
         )

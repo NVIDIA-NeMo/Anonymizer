@@ -258,7 +258,7 @@ class _ProvenanceValidator:
                         or parent.key.port != source.port
                     ):
                         reject(EffectCode.CONTRADICTORY)
-                if parent.artifact != fact.artifact or fact.decision != parent.decision:
+                if parent.artifact != fact.artifact:
                     reject(EffectCode.CONTRADICTORY)
             else:
                 dependency = next(item for item in node.operation.output_dependencies if item.output == key.port)
@@ -272,17 +272,11 @@ class _ProvenanceValidator:
                     ]
                     if fact.artifact != self.context.facts.provenance[identity_parent].artifact:
                         reject(EffectCode.CONTRADICTORY)
-                if fact.parents != expected or fact.decision != any(
-                    item.node == entry.template for item in self.context.admitted.execution.decisions
-                ):
+                if fact.parents != expected:
                     reject(EffectCode.CONTRADICTORY)
         elif isinstance(key, RootInputKey):
-            if (
-                fact.parents
-                or fact.decision
-                or not any(
-                    item.target == key.target and item.port == key.port for item in self.context.prepared.bound_inputs
-                )
+            if fact.parents or not any(
+                item.target == key.target and item.port == key.port for item in self.context.prepared.bound_inputs
             ):
                 reject(EffectCode.CONTRADICTORY)
         elif isinstance(key, (BoundInputKey, InitialCollectionKey)):
@@ -311,10 +305,8 @@ class _ProvenanceValidator:
             matches = [item for item in items if item.reference == key.binding_artifact]
             if not matches:
                 reject(EffectCode.MISSING)
-            if (
-                fact.parents
-                or fact.decision
-                or not any((item.target, item.node, item.port) == (key.target, key.node, key.port) for item in matches)
+            if fact.parents or not any(
+                (item.target, item.node, item.port) == (key.target, key.node, key.port) for item in matches
             ):
                 reject(EffectCode.CONTRADICTORY)
         else:
@@ -322,7 +314,7 @@ class _ProvenanceValidator:
                 BoundInputKey(target=key.target, node=key.node, port=key.port, binding_artifact=item.reference)
                 for item in items
             )
-            if fact.decision or source.declaration.materialization.kind != "collection" or fact.parents != expected:
+            if source.declaration.materialization.kind != "collection" or fact.parents != expected:
                 reject(EffectCode.CONTRADICTORY)
             value = self.context.facts.values[fact.artifact]
             if not isinstance(value, TextCollectionValue) or {(item.key, item.version) for item in value.items} != {
@@ -360,7 +352,7 @@ class _ProvenanceValidator:
         )
         if declaration is None or publication is None:
             reject(EffectCode.MISSING)
-        if declaration.member != member.template or declaration.item_input != key.port or fact.decision:
+        if declaration.member != member.template or declaration.item_input != key.port:
             reject(EffectCode.CONTRADICTORY)
         parent = OperationOutputKey(activation=key.expander, target=key.target, port=publication.membership_port)
         if fact.parents != frozenset({parent}):

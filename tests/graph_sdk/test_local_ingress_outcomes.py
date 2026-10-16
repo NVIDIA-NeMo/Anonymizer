@@ -13,7 +13,6 @@ import pytest
 from anonymizer.engine.graph_sdk.context import admit_context_plan
 from anonymizer.engine.graph_sdk.executor import (
     AssessmentLimits,
-    DecisionLimits,
     ExecutionLimits,
     ExecutionServices,
     ImplementationHandle,
@@ -130,7 +129,6 @@ async def _execute(mode: str, expected: str) -> None:
                 runtime_outcomes=rows,
             ),
         ),
-        decisions=(),
         assessment_productions=(),
         assessment_limits=AssessmentLimits(
             max_productions=0,
@@ -164,7 +162,6 @@ async def _execute(mode: str, expected: str) -> None:
                 max_runtime_artifact_bytes=0,
                 max_collection_items=0,
             ),
-            decision_limits=DecisionLimits(max_pending=0, max_lifetime_ns=0),
             clock=_Clock(),
         ),
     )

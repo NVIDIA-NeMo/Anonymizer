@@ -15,7 +15,6 @@ from anonymizer.engine.graph_sdk.records import (
     CandidateRef,
     CanonicalRecord,
     Completion,
-    DecisionRef,
     EvidenceRef,
     ExpectedMembership,
     Qualification,
@@ -96,7 +95,7 @@ class _RecordAdapter:
             version=cast(int, value["version"]),
         )
 
-    def _consumed(self, value: data_shapes.JsonValue) -> ArtifactRef | CandidateRef | DecisionRef:
+    def _consumed(self, value: data_shapes.JsonValue) -> ArtifactRef | CandidateRef:
         raw = _object(value)
         kind = cast(str, raw["kind"])
         reference = _object(raw["ref"])
@@ -105,8 +104,6 @@ class _RecordAdapter:
             return artifact
         if kind == "candidate":
             return CandidateRef(artifact=artifact, target=self._datum(raw["target"]))
-        if kind == "decision":
-            return DecisionRef(artifact=artifact)
         raise AssertionError("reference corpus admitted an unknown consumed reference")
 
     def _evidence(self, value: dict[str, data_shapes.JsonValue]) -> EvidenceRef:

@@ -17,7 +17,6 @@ from anonymizer.engine.graph_sdk.context import (
     SourceResponse,
 )
 from anonymizer.engine.graph_sdk.executor import (
-    DecisionLimits,
     ExecutionLimits,
     ExecutionServices,
     LocalCompleted,
@@ -188,7 +187,6 @@ async def _assert_local_bridge_case(case: dict[str, Any]) -> None:
         prepared=prepared,
         capabilities=(selected.capability,),
         policies=(policy,),
-        decisions=(),
     )
     condition = (
         next(
@@ -216,7 +214,6 @@ async def _assert_local_bridge_case(case: dict[str, Any]) -> None:
                 max_runtime_artifact_bytes=64,
                 max_collection_items=1,
             ),
-            decision_limits=DecisionLimits(max_pending=0, max_lifetime_ns=0),
             clock=_ZeroClock(),
         ),
     )

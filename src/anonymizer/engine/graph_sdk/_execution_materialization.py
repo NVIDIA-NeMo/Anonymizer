@@ -200,7 +200,6 @@ def _observe_dynamic_membership(
                     key=key,
                     artifact=reference,
                     parents=frozenset({parent_key}),
-                    decision=False,
                 )
             )
     return advance_activation(
@@ -317,9 +316,7 @@ def _materialize_structure(
                     output_type,
                     frozenset({source_key}),
                     (
-                        "decision"
-                        if source_fact.decision
-                        else "candidate"
+                        "candidate"
                         if any(
                             isinstance(output.source, NodeOutputRef)
                             and output.source.node == entry.template
@@ -401,7 +398,7 @@ def _materialize_bound_context(
                 binding_artifact=item.reference,
             )
             facts.add_provenance(
-                ArtifactProvenanceFact(_key=_FACT_KEY, key=key, artifact=reference, parents=frozenset(), decision=False)
+                ArtifactProvenanceFact(_key=_FACT_KEY, key=key, artifact=reference, parents=frozenset())
             )
             item_refs.append(reference)
             parents.add(key)
@@ -429,9 +426,7 @@ def _materialize_bound_context(
                 declaration=identity,
             )
             facts.add_provenance(
-                ArtifactProvenanceFact(
-                    _key=_FACT_KEY, key=key, artifact=reference, parents=frozenset(parents), decision=False
-                )
+                ArtifactProvenanceFact(_key=_FACT_KEY, key=key, artifact=reference, parents=frozenset(parents))
             )
 
     if facts.artifact_count > limits.max_runtime_artifacts or (

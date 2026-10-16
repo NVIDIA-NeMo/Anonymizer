@@ -231,7 +231,6 @@ def with_parent_publication(execution: AdmittedExecutionPlan, *, readiness: bool
         ),
         capabilities=capabilities,
         policies=policies,
-        decisions=(),
         assessment_productions=tuple(
             replace(item, evidence_port="assessment") for item in execution.assessment_productions
         ),
@@ -277,7 +276,6 @@ def with_multiple_sources(execution: AdmittedExecutionPlan, count: int = 2, *, d
         ),
         capabilities=execution.capabilities,
         policies=tuple(execution.policies),
-        decisions=(),
         assessment_productions=execution.assessment_productions,
         assessment_limits=replace(
             execution.assessment_limits,

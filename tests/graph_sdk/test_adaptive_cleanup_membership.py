@@ -63,7 +63,6 @@ def with_context(execution, services, capabilities, resources):
         context=context,
         capabilities=execution.capabilities,
         policies=tuple(execution.policies),
-        decisions=tuple(execution.decisions),
         assessment_productions=execution.assessment_productions,
         assessment_limits=execution.assessment_limits,
         ingress_limits=execution.ingress_limits,
@@ -340,7 +339,6 @@ def test_two_declared_artifact_types_share_source_without_sharing_provider(rever
             context=context,
             capabilities=capabilities,
             policies=(policy, policy_b),
-            decisions=(),
             assessment_productions=(),
             assessment_limits=replace(old.assessment_limits, max_port_facts=4, max_provenance_edges=2),
         )

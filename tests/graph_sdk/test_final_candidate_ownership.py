@@ -19,7 +19,7 @@ def test_ordinary_shared_context_preserves_distinct_candidates() -> None:
     execution, result = asyncio.run(fixture._execute_separate_subject_context(target_labels=("A", "B")))
     admitted, current, submissions = _inputs(execution, result)
     output = qualify(admitted=admitted, result=result, current=current, submissions=submissions)
-    assert len(output.qualified) == 2 and not output.required_decisions
+    assert len(output.qualified) == 2
     contexts = [fact for fact in result.provenance if isinstance(fact.key, RootInputKey) and fact.key.port == "context"]
     assert len(contexts) == 2 and contexts[0].artifact == contexts[1].artifact and contexts[0].key != contexts[1].key
     finals = [
@@ -81,7 +81,7 @@ def test_new_final_cannot_use_old_subject_assessment(monkeypatch: pytest.MonkeyP
     assert status.completion == "closed" and status.qualification == "unmet"
     assert status.artifact_available and not status.protection_available
     assert target.withholding == frozenset({"missing_assessment"})
-    assert not target.verified and not target.required_decisions
+    assert not target.verified
     assert evidence_validity(evidence=verified, current=current) == "stale"
     assert all(terminal.category == "success" for terminal in result.record.terminals)
     assert not output.qualified
@@ -135,7 +135,7 @@ def test_distinct_evidence_cannot_replace_assessed_subject(monkeypatch: pytest.M
     assert status.completion == "closed" and status.qualification == "unmet"
     assert status.artifact_available and not status.protection_available
     assert target.withholding == frozenset({"missing_assessment"})
-    assert not target.verified and not target.required_decisions
+    assert not target.verified
     assert evidence_validity(evidence=verified, current=current) == "stale"
     assert all(terminal.category == "success" for terminal in result.record.terminals)
     assert target.candidate.artifact == verified.reference.artifact

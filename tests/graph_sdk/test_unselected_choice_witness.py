@@ -83,7 +83,7 @@ def test_unselected_choice_retains_reservation_without_terminal(monkeypatch: pyt
         return admit_static_workflow(**kwargs)
 
     monkeypatch.setattr(fixture, "admit_static_workflow", admit)
-    execution, result = asyncio.run(fixture._execute_assessment(decision_input=True, decision_hop=True))
+    execution, result = asyncio.run(fixture._execute_assessment(predecessor_input=True, predecessor_hop=True))
     state = result.states[0]
     admitted, current, submissions = _inputs(execution, result)
     assert len(state.entries) == 2

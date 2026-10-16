@@ -12,7 +12,6 @@ import pytest
 
 from anonymizer.engine.graph_sdk.context import admit_context_plan
 from anonymizer.engine.graph_sdk.executor import (
-    DecisionLimits,
     ExecutionLimits,
     ExecutionServices,
     OperationExecutionPolicy,
@@ -153,7 +152,6 @@ async def _assert_shared_case(case: dict[str, Any]) -> None:
                 runtime_outcomes=_valid_runtime_rows("external", frozenset({"ok"})),
             ),
         ),
-        decisions=(),
         assessment_productions=(),
         assessment_limits=_assessment_limits(),
     )
@@ -174,7 +172,6 @@ async def _assert_shared_case(case: dict[str, Any]) -> None:
                     max_runtime_artifact_bytes=0,
                     max_collection_items=0,
                 ),
-                decision_limits=DecisionLimits(max_pending=0, max_lifetime_ns=0),
                 clock=_ZeroClock(),
             ),
         )
@@ -226,7 +223,7 @@ async def _assert_shared_case(case: dict[str, Any]) -> None:
     assert not result.ports and not result.final_outputs and not result.assessments and not result.provenance
     assert not result.cleanup and expected["cleanup"] == {}
     assert not result.cleanup_associations and expected["resources"] == {} and expected["resource_count"] == 0
-    assert not result.pending_decisions and expected["decisions"] == {}
+    assert expected["decisions"] == {}  # The reference models decision waits; these cases have none.
     assert context.bound_context is None
     assert expected["binding_declarations"] == expected["binding_sources"] == {}
     assert expected["binding_terminal"] is None

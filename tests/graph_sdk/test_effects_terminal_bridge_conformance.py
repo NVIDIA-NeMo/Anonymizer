@@ -12,7 +12,6 @@ import pytest
 
 from anonymizer.engine.graph_sdk.context import admit_context_plan
 from anonymizer.engine.graph_sdk.executor import (
-    DecisionLimits,
     ExecutionLimits,
     ExecutionServices,
     OperationExecutionPolicy,
@@ -42,7 +41,6 @@ from anonymizer.graph.workflow import (
 from tests.graph_sdk.implementation_fixtures import _execution_implementation, _implementation_handle
 from tests.graph_sdk.reference.corpora import load_cases
 from tests.graph_sdk.test_effects_production_conformance import (
-    _assert_decision_submission,
     _assessment_limits,
     _valid_runtime_rows,
     _ZeroClock,
@@ -179,7 +177,6 @@ async def _assert_terminal(case: dict[str, Any]) -> None:
                 runtime_outcomes=_valid_runtime_rows("external", frozenset({"ok"})),
             ),
         ),
-        decisions=(),
         assessment_productions=(),
         assessment_limits=_assessment_limits(),
     )
@@ -197,7 +194,6 @@ async def _assert_terminal(case: dict[str, Any]) -> None:
                 max_runtime_artifact_bytes=0,
                 max_collection_items=0,
             ),
-            decision_limits=DecisionLimits(max_pending=0, max_lifetime_ns=0),
             clock=_ZeroClock(),
         ),
     )
@@ -218,7 +214,7 @@ async def _assert_terminal(case: dict[str, Any]) -> None:
         and not result.assessments
         and not result.provenance
     )
-    assert not result.pending_decisions and not result.cleanup
+    assert not result.cleanup
     assert transport.calls == (0 if condition in {"budget_exhausted", "request_limit_exhausted"} else 1)
     assert result.requests.dispatched_count == transport.calls
     if condition == "budget_exhausted":
@@ -239,11 +235,3 @@ async def _assert_terminal(case: dict[str, Any]) -> None:
             assert not request_terminal.results[0].artifacts
         else:
             assert request_terminal.category == terminal.category
-
-
-def test_deadline_bridge_uses_real_decision_deadline() -> None:
-    corpus = load_cases("effects")
-    bridge = next(case for case in corpus if case["case_id"] == "bridges/deadline_exhausted")
-    decision = next(case for case in corpus if case["case_id"] == "decisions/deadline")
-    assert bridge["expected"]["state"]["tasks"] == decision["expected"]["state"]["tasks"]
-    asyncio.run(_assert_decision_submission("decisions/deadline", ""))

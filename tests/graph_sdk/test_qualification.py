@@ -81,21 +81,6 @@ def test_execution_only_never_consumes_submitted_assessments() -> None:
     assert output.record.memberships is result.record.memberships
 
 
-def test_required_decision_is_the_executed_transitive_producer_and_bound_is_exact() -> None:
-    execution, result = asyncio.run(_execute_assessment(decision_input=True))
-    admitted, current, submissions = _inputs(execution, result, decisions=1)
-    output = qualify(admitted=admitted, result=result, current=current, submissions=submissions)
-    assert len(output.required_decisions) == 1
-    assert output.qualified[0].required_decisions == output.required_decisions
-    assert next(iter(output.required_decisions)).artifact == next(
-        item.artifact for item in result.provenance if item.decision
-    )
-    admitted, current, submissions = _inputs(execution, result, decisions=0)
-    with pytest.raises(EffectRejected) as error:
-        qualify(admitted=admitted, result=result, current=current, submissions=submissions)
-    assert error.value.code is EffectCode.LIMIT_EXCEEDED
-
-
 @pytest.mark.parametrize("defect", ["root", "terminal"])
 def test_missing_canonical_accounting_withholds_actual_success(defect: str) -> None:
     execution, result = asyncio.run(_execute_assessment())
@@ -145,34 +130,22 @@ def test_withholding_propagates_only_along_dependencies_and_atomic_groups(relati
 
 
 @pytest.mark.parametrize(
-    ("nested", "rename_ports", "decision"),
+    ("nested", "rename_ports", "predecessor"),
     [(False, True, False), (True, False, False), (True, True, False), (True, True, True)],
 )
 def test_requirement_projection_and_provenance_through_real_nested_execution(
-    nested: bool, rename_ports: bool, decision: bool
+    nested: bool, rename_ports: bool, predecessor: bool
 ) -> None:
     execution, result = asyncio.run(
-        _execute_assessment(nested=nested, rename_ports=rename_ports, decision_input=decision)
+        _execute_assessment(nested=nested, rename_ports=rename_ports, predecessor_input=predecessor)
     )
     admitted, current, submissions = _inputs(execution, result)
     output = qualify(admitted=admitted, result=result, current=current, submissions=submissions)
     assert len(output.qualified) == 1
     assert output.record.statuses[0].qualification == "met"
     assert any(item.structural for item in output.record.terminals) == nested
-    assert len(output.required_decisions) == int(decision)
     assert output.verified[0].promise.subject_port == "context"
     assert result.final_outputs[0].port == ("protected" if rename_ports else "context")
-
-
-def test_distinct_candidate_and_decision_occurrences_preserve_identity_alias() -> None:
-    execution, result = asyncio.run(_execute_assessment(decision_input=True, alias_output=True))
-    admitted, current, submissions = _inputs(execution, result)
-    output = qualify(admitted=admitted, result=result, current=current, submissions=submissions)
-    assert len(output.qualified) == 1
-    candidate = output.qualified[0].candidate
-    assert next(iter(output.required_decisions)).artifact == candidate.artifact
-    assert {item.role for item in result.ports if item.artifact == candidate.artifact} >= {"decision", "candidate"}
-    assert output.verified[0].subject == candidate
 
 
 def test_caller_owned_resource_stays_open_without_withholding_release() -> None:
@@ -246,19 +219,6 @@ def test_provenance_cannot_add_a_causal_cycle_to_a_real_output() -> None:
         object.__setattr__(producer, "parents", original)
 
 
-def test_required_decision_bound_applies_to_union_across_released_targets() -> None:
-    execution, result = asyncio.run(_execute_assessment(decision_input=True, target_count=2))
-    admitted, current, submissions = _inputs(execution, result, decisions=2)
-    output = qualify(admitted=admitted, result=result, current=current, submissions=submissions)
-    assert len(output.qualified) == 2
-    assert all(len(item.required_decisions) == 1 for item in output.qualified)
-    assert len(output.required_decisions) == 2
-    admitted, current, submissions = _inputs(execution, result, decisions=1)
-    with pytest.raises(EffectRejected) as error:
-        qualify(admitted=admitted, result=result, current=current, submissions=submissions)
-    assert error.value.code is EffectCode.LIMIT_EXCEEDED
-
-
 @pytest.mark.parametrize(
     ("failure", "purpose"), [(None, None), ("retryable", "retry"), ("malformed_response", "correction")]
 )
@@ -276,7 +236,6 @@ def test_settled_external_recovery_can_qualify_after_local_verification(failure,
     assert transport.calls == (1 if purpose is None else 2)
     assert transport.closes == 1
     assert result.cleanup[0].disposition == "closed"
-    assert not output.required_decisions
 
 
 @pytest.mark.parametrize("defect", ["unknown-usage", "cleanup"])
@@ -331,12 +290,12 @@ def test_transport_only_cleanup_can_have_no_affected_targets() -> None:
 
 @pytest.mark.parametrize("mutation", ["missing", "extra", "aliased-occurrence"])
 def test_output_provenance_requires_exact_executed_input_occurrences(mutation: str) -> None:
-    execution, result = asyncio.run(_execute_assessment(decision_input=True))
+    execution, result = asyncio.run(_execute_assessment(predecessor_input=True))
     admitted, current, submissions = _inputs(execution, result)
     output = next(item for item in result.provenance if item.key == result.final_outputs[0].producer)
-    decision = next(item for item in result.provenance if item.decision)
     root = next(item for item in result.provenance if not item.parents)
-    assert root.artifact == decision.artifact and root.key != decision.key
+    predecessor = next(item for item in result.provenance if item.parents == frozenset({root.key}))
+    assert root.artifact == predecessor.artifact and root.key != predecessor.key
     original = output.parents
     changed = (
         frozenset()
@@ -408,7 +367,6 @@ def test_direct_root_input_output_retains_its_actual_producer_and_qualifies(nest
     output = qualify(admitted=admitted, result=result, current=current, submissions=submissions)
     assert len(output.qualified) == 1
     assert output.qualified[0].candidate == result.final_outputs[0].candidate
-    assert not output.required_decisions
     assert output.record.statuses[0].qualification == "met"
 
 

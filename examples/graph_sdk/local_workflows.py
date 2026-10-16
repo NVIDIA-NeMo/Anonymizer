@@ -45,15 +45,6 @@ class Transform:
         )
 
 
-class Decision(Transform):
-    async def run(self, request: tuple[g.AssociationInput, ...]) -> g.LocalDecisionWait:
-        self.calls += 1
-        item = request[0]
-        assert isinstance(item.association, g.SemanticAssociation)
-        assert item.inputs[0].artifact is not None
-        return g.LocalDecisionWait(association=item.association, artifact=item.inputs[0].artifact)
-
-
 @dataclass
 class Verifier:
     calls: int = 0
@@ -126,10 +117,9 @@ def runtime_outcomes() -> tuple[g.RuntimeOutcome, ...]:
 
 
 def build(
-    *, verified: bool, decision: bool = False, texts: tuple[str, ...] = ("Alice uses alice@example.test",)
+    *, verified: bool, texts: tuple[str, ...] = ("Alice uses alice@example.test",)
 ) -> tuple[g.AdmittedExecutionPlan, g.ExecutionServices, Transform, Verifier]:
     """Declare a transform and, optionally, a separate verifier with exact candidate evidence."""
-    assert not (verified and decision)
     data = g.DataGraph.new()
     targets = []
     for text_value in texts:
@@ -168,11 +158,7 @@ def build(
         name="custom-redaction",
         inputs=(g.InputPort(name="input", artifact_type=text),),
         outputs=(g.OutputPort(name="candidate", artifact_type=text),),
-        output_dependencies=(
-            g.OutputDependency(
-                output="candidate", inputs=frozenset({"input"}), identity_input="input" if decision else None
-            ),
-        ),
+        output_dependencies=(g.OutputDependency(output="candidate", inputs=frozenset({"input"}), identity_input=None),),
         outcomes=(outcome,),
     )
     verifier = replace(
@@ -315,7 +301,7 @@ def build(
     policies = tuple(
         g.OperationExecutionPolicy(
             node=node.id,
-            kind="decision" if decision else "local",
+            kind="local",
             request=None,
             safe_detachment="forbidden",
             implementations=(
@@ -323,14 +309,8 @@ def build(
                     implementation=capability.implementation, configuration=config, capability=capability, request=None
                 ),
             ),
-            result_outcomes=frozenset() if decision else frozenset({"ok"}),
-            runtime_outcomes=tuple(
-                row
-                for row in runtime_outcomes()
-                if row.condition != "result" and row.failure in {None, "permanent", "implementation_exception"}
-            )
-            if decision
-            else runtime_outcomes(),
+            result_outcomes=frozenset({"ok"}),
+            runtime_outcomes=runtime_outcomes(),
         )
         for node, capability in zip(nodes, capabilities, strict=True)
     )
@@ -356,16 +336,6 @@ def build(
         context=context,
         capabilities=capabilities,
         policies=policies,
-        decisions=(
-            g.DecisionDeclaration(
-                node=transform_node,
-                artifact_port="input",
-                outcomes=(g.DecisionOutcome(decision="approve", outcome="ok"),),
-                max_lifetime_ns=30_000_000_000,
-            ),
-        )
-        if decision
-        else (),
         assessment_productions=productions,
         assessment_limits=g.AssessmentLimits(
             max_productions=1,
@@ -376,7 +346,7 @@ def build(
             max_provenance_edges=8 * count,
         ),
     )
-    transform_callback, verifier_callback = Decision() if decision else Transform(), Verifier()
+    transform_callback, verifier_callback = Transform(), Verifier()
     callbacks = (transform_callback, verifier_callback) if verified else (transform_callback,)
     services = g.ExecutionServices(
         handles=tuple(
@@ -398,9 +368,6 @@ def build(
             max_runtime_artifact_bytes=8192 * count,
             max_collection_items=0,
         ),
-        decision_limits=g.DecisionLimits(
-            max_pending=1 if decision else 0, max_lifetime_ns=30_000_000_000 if decision else 0
-        ),
         clock=Clock(),
     )
     return admitted, services, transform_callback, verifier_callback
@@ -418,7 +385,6 @@ def qualification_inputs(admitted: g.AdmittedExecutionPlan, result: g.ExecutionR
             max_consumed_per_assessment=8,
             max_coverage_atoms=4,
             max_verified_evidence=count,
-            max_required_decisions=0,
             max_fixed_point_steps=8,
             max_revision_entries=16 * count,
             max_provenance_edges=16 * count,
@@ -479,26 +445,10 @@ async def run_controls() -> dict[str, object]:
     else:
         raise AssertionError("execute_sync must reject an active event loop")
     assert transform.calls == 0
-    decision_plan, decision_services, callback, _ = build(verified=False, decision=True)
-    running = await g.start_execution(
-        admitted=decision_plan, capabilities=decision_plan.capabilities, services=decision_services
-    )
-    async with asyncio.timeout(5):
-        while not running.pending_decisions():
-            await asyncio.sleep(0)
-        wait = running.pending_decisions()[0]
-        running.submit_decision(
-            g.DecisionResponse(wait=wait.wait, workflow=wait.workflow, artifact=wait.artifact, decision="approve")
-        )
-        result = await running.wait()
-    assert callback.calls == 1 and not result.pending_decisions
-    assert all(item.category == "success" for item in result.record.terminals)
     return {
         "negative_admission": negative,
         "negative_callbacks": transform.calls,
         "nested_loop_rejected": True,
-        "decision_callbacks": callback.calls,
-        "same_process_resume": True,
     }
 
 

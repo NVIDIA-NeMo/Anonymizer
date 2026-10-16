@@ -23,7 +23,6 @@ from anonymizer.engine.graph_sdk.requests import (
 from anonymizer.graph import EffectRejected
 from anonymizer.graph._values import InvocationId, PlanId
 from tests.graph_sdk import test_binding_lifecycle_owners as lifecycle
-from tests.graph_sdk.effects_admission_fixtures import _assert_decision_submission
 from tests.graph_sdk.reference.corpora import load_cases
 from tests.graph_sdk.test_cleanup_attribution_amendment import (
     test_cleanup_attribution_corruption_withholds_successful_peer as check_cleanup,
@@ -116,20 +115,6 @@ def test_adaptive_late_publication_uses_actual_owner(case_id: str) -> None:
 @pytest.mark.parametrize("case_id", ["binding/exact_item_byte_bounds", "binding/wrong_source"])
 def test_binding_finish_and_wrong_source(case_id: str) -> None:
     check_binding(next(row for row in load_cases("effects") if row["case_id"] == case_id))
-
-
-@pytest.mark.parametrize(
-    "case_id,code",
-    [
-        ("decisions/stale_artifact", "foreign_owner"),
-        ("decisions/foreign_workflow", "foreign_owner"),
-        ("decisions/foreign_wait", "foreign_owner"),
-        ("decisions/unknown_decision", "unsupported"),
-        ("decisions/duplicate_response", "duplicate"),
-    ],
-)
-def test_rejected_decision_preserves_exact_wait(case_id: str, code: str) -> None:
-    asyncio.run(_assert_decision_submission(case_id, code))
 
 
 def test_callback_cannot_supply_runtime_category_or_producer_node() -> None:

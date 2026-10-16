@@ -178,7 +178,6 @@ def test_readiness_descriptor_rejects_foreign_roles(bad):
             context=execution.context,
             capabilities=execution.capabilities,
             policies=tuple(changed if item.node == owner.node else item for item in execution.policies),
-            decisions=(),
             assessment_productions=execution.assessment_productions,
             assessment_limits=execution.assessment_limits,
         )
@@ -446,7 +445,6 @@ def test_probe_success_outside_declared_continuations_stops_generation():
         context=execution.context,
         capabilities=execution.capabilities,
         policies=tuple(changed if item.node == owner.node else item for item in execution.policies),
-        decisions=(),
         assessment_productions=execution.assessment_productions,
         assessment_limits=execution.assessment_limits,
     )

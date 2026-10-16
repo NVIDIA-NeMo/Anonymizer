@@ -14,7 +14,6 @@ from anonymizer.engine.graph_sdk.context import admit_context_plan
 from anonymizer.engine.graph_sdk.executor import (
     AdmittedExecutionPlan,
     AssessmentLimits,
-    DecisionLimits,
     ExecutionLimits,
     ExecutionServices,
     ImplementationHandle,
@@ -203,7 +202,6 @@ async def _assert_remote_capacity() -> None:
         context=context,
         capabilities=(capability,),
         policies=(policy,),
-        decisions=(),
         assessment_productions=(),
         assessment_limits=AssessmentLimits(
             max_productions=0,
@@ -242,7 +240,6 @@ async def _assert_remote_capacity() -> None:
                     max_runtime_artifact_bytes=0,
                     max_collection_items=0,
                 ),
-                decision_limits=DecisionLimits(max_pending=0, max_lifetime_ns=0),
                 clock=_Clock(),
             ),
         )
@@ -337,7 +334,6 @@ def _capacity_plan(
                 runtime_outcomes=_adaptive_rows(),
             ),
         ),
-        decisions=(),
         assessment_productions=(),
         assessment_limits=AssessmentLimits(
             max_productions=0,
@@ -382,7 +378,6 @@ async def _assert_transient_remote_capacity(*, shared: bool = False, mode: str =
                 max_runtime_artifact_bytes=2,
                 max_collection_items=0,
             ),
-            decision_limits=DecisionLimits(max_pending=0, max_lifetime_ns=0),
             clock=_Clock(),
         ),
     )

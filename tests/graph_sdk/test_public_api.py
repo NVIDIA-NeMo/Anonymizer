@@ -30,7 +30,6 @@ def test_public_examples_and_controls() -> None:
     assert [item["protected_items"] for item in results["examples"]] == [0, 1]
     assert all(not item["projection_reexecuted"] for item in results["examples"])
     assert results["controls"]["negative_callbacks"] == 0
-    assert results["controls"]["same_process_resume"]
     assert results["controls"]["nested_loop_rejected"]
     assert results["context"]["remote_context_calls"] == 2
     assert results["sync"]["sync_callbacks"] == 1

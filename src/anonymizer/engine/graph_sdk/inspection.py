@@ -300,7 +300,6 @@ class TerminalCounts(PrivateValue):
 class RouteCounts(PrivateValue):
     local: int
     external: int
-    decision: int
     context: int
 
 
@@ -860,7 +859,6 @@ def _forecast_split(execution: AdmittedExecutionPlan) -> tuple[CountEstimate, Co
     if (
         prepared.workflow.dynamic_depth
         or execution.context.adaptive_retrievals
-        or execution.decisions
         or any(policy.initial_request_purpose == "repair" for policy in execution.policies)
         or any(workflow.choices for workflow in workflows)
         or any(isinstance(node, SubgraphNode) for workflow in workflows for node in workflow.operations)
@@ -971,7 +969,7 @@ def inspect(*, source: InspectionSource) -> InspectionSummary:
                 for name in ("success", "failure", "cancelled", "lost", "blocked", "inconsistent")
             }
         )
-        kinds = dict.fromkeys(("local", "external", "decision", "context"), 0)
+        kinds = dict.fromkeys(("local", "external", "context"), 0)
         policies = {policy.node: policy.kind for policy in execution._execution.policies}
         adaptive = {item.node for item in execution._execution.context.adaptive_retrievals}
         states = execution.states + (() if execution.invocation_state is None else (execution.invocation_state,))
