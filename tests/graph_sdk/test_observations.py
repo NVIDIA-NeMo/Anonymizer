@@ -760,3 +760,48 @@ def test_cleanup_of_sdk_resource_with_active_worker_reports_unknown() -> None:
             await pool.close()
 
     asyncio.run(run())
+
+
+def _three_pair_receipt_with_reason() -> ObservationReceipt:
+    observer = session()
+    with _Span("execution", session=observer):
+        with _Span("operation"):
+            pass
+        with pytest.raises(EffectRejected):
+            with _Span("cleanup"):
+                raise EffectRejected(EffectCode.LIMIT_EXCEEDED)
+    receipt = observer.close()
+    assert isinstance(receipt, ObservationReceipt)
+    assert len(receipt.pairs) == 3 and sum(len(pair.terminal.reasons) for pair in receipt.pairs) == 1
+    return receipt
+
+
+def _largest_count(encoded: bytes) -> int:
+    def ints(value, key=""):
+        if isinstance(value, dict):
+            for name, child in value.items():
+                yield from ints(child, name)
+        elif isinstance(value, list):
+            for child in value:
+                yield from ints(child)
+        elif type(value) is int and key != "schema_version":
+            yield value
+
+    return max(ints(json.loads(encoded)))
+
+
+@pytest.mark.parametrize("field", ["max_pairs", "max_events", "max_reason_counts", "max_count"])
+def test_public_encoding_accepts_each_count_limit_exactly_and_rejects_one_over(field: str) -> None:
+    receipt = _three_pair_receipt_with_reason()
+    raw = encode_inspection(value=receipt, limits=inspection_limits(max_count=10**6))
+    exact = {
+        "max_pairs": len(receipt.pairs),
+        "max_events": 2 * len(receipt.pairs),
+        "max_reason_counts": max(len(pair.terminal.reasons) for pair in receipt.pairs),
+        "max_count": _largest_count(raw),
+    }[field]
+    generous = inspection_limits(max_count=10**6)
+    assert encode_inspection(value=receipt, limits=replace(generous, **{field: exact})) == raw
+    with pytest.raises(EffectRejected) as caught:
+        encode_inspection(value=receipt, limits=replace(generous, **{field: exact - 1}))
+    assert caught.value.code == EffectCode.LIMIT_EXCEEDED
