@@ -472,6 +472,12 @@ FROZEN_VALUE_TAMPER_IDS = frozenset(
         "structural/operation_lost_missing_attempt",
         "structural/operation_success_missing_attempt",
         "structural/structural_on_operation",
+        # Replaced by legitimate two-run mixing in test_cross_run_mixing.py (U1.6b).
+        "assessment/caller_copy",
+        "assessment/caller_replacement",
+        "record/plan",
+        "record/graph",
+        "record/invocation",
     }
 )
 CORRUPTION_IDS = frozenset(
@@ -526,7 +532,6 @@ CORRUPTION_IDS = frozenset(
 
 def _run_retained_corruption(case: dict[str, Any], events: list[dict[str, Any]]) -> dict[str, Any]:
     """Mutate a real retained negative witness, never construct a positive result."""
-    from anonymizer.graph._values import GraphId, InvocationId, PlanId
     from tests.graph_sdk.test_qualification import _inputs
 
     baseline = CORPUS[0]
@@ -543,34 +548,15 @@ def _run_retained_corruption(case: dict[str, Any], events: list[dict[str, Any]])
     admitted, current, submissions = _inputs(execution, result)
     removed = [event for event in baseline["events"] if event not in events]
     added = [event for event in events if event not in baseline["events"]]
-    if added and added[0]["kind"] == "result_owner":
-        assert not removed and len(added) == 1
-        owner = added[0]
-        assert owner["factory"] == "EXEC:I0"
-        replacements = {
-            "plan": PlanId.new(),
-            "graph": GraphId.new(),
-            "invocation": InvocationId.new(plan=result.record.plan),
-        }
-        changed = [field for field in replacements if owner[field] != baseline["declaration"]["execution"][field]]
-        assert len(changed) == 1
-        object.__setattr__(result.record, changed[0], replacements[changed[0]])
+    # The remaining retained corruptions change one caller-supplied assessment member.
+    assert len(removed) == len(added) == 1 and removed[0]["kind"] == "assessment" and names.fact is not None
+    (field,) = [field for field in removed[0] if removed[0][field] != added[0][field]]
+    assert field in {"environment", "finding"}
+    if field == "finding":
+        object.__setattr__(names.fact.finding, "status", added[0][field])
     else:
-        # The remaining retained corruptions change one caller-supplied assessment member.
-        assert len(removed) == len(added) == 1 and removed[0]["kind"] == "assessment" and names.fact is not None
-        (field,) = [field for field in removed[0] if removed[0][field] != added[0][field]]
-        assert field in {"environment", "authenticated_factory", "finding"}
-        if field == "finding":
-            object.__setattr__(names.fact.finding, "status", added[0][field])
-        elif field == "authenticated_factory":
-            assert added[0][field] == "CALLER"
-            copied = object.__new__(type(names.fact))
-            for member in fields(names.fact):
-                object.__setattr__(copied, member.name, getattr(names.fact, member.name))
-            submissions = (AssessmentSubmission(fact=copied),)
-        else:
-            assert added[0][field]["configurations"] == {}
-            object.__setattr__(names.fact.environment, "configuration", None)
+        assert added[0][field]["configurations"] == {}
+        object.__setattr__(names.fact.environment, "configuration", None)
     output = qualify(admitted=admitted, result=result, current=current, submissions=submissions)
     return names.normalize(output)
 

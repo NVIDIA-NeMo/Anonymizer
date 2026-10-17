@@ -75,3 +75,27 @@ def test_delegated_recipes_are_admitted_only_as_exact_immutable_types(member: st
     with pytest.raises(EffectRejected) as error:
         _readmit(execution, policies=policies)
     assert error.value.code is EffectCode.INVALID_TYPE
+
+
+def test_captured_presentation_dtypes_are_detached_from_the_callers_mapping() -> None:
+    import pandas as pd
+
+    from anonymizer.engine.detection._frame_publication import FramePublication
+    from anonymizer.engine.graph_sdk.requests import SemanticAssociation
+    from anonymizer.graph._values import ActivationKey, InvocationId, PlanId, TaskAttemptId
+
+    activation = ActivationKey(
+        invocation=InvocationId.new(plan=PlanId.new()), occurrence=0, parent=None, iteration=None
+    )
+    frame = pd.DataFrame({"text": ["Alice"]})
+    dtypes: dict[str, pd.api.extensions.ExtensionDtype] = {"text": pd.StringDtype()}
+    captured = FramePublication.capture(
+        frame,
+        associations=(SemanticAssociation(task=TaskAttemptId.new(activation=activation)),),
+        text_ports=(("text", "out"),),
+        failed_records=(),
+        opaque_source=frame,
+        observation_dtypes=dtypes,
+    )
+    dtypes["text"] = pd.Int64Dtype()  # the caller's own mapping, after capture
+    assert captured._observation_dtypes == (("text", pd.StringDtype()),)
