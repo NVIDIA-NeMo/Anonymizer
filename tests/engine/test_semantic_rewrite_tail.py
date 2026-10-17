@@ -282,25 +282,6 @@ def _assert_final_evidence(result):
         with pytest.raises(EffectRejected):
             admit_qualification(execution=execution, productions=productions, limits=limits)
 
-    def clone(value):
-        copied = object.__new__(type(value))
-        for field in fields(value):
-            object.__setattr__(copied, field.name, getattr(value, field.name))
-        return copied
-
-    foreign = evidence_revision_view(
-        admitted=admitted,
-        result=clone(result),
-        artifacts=tuple(reference for reference, _ in result.artifacts),
-        configurations=tuple(dict((fact.node, fact.environment.configuration) for fact in result.assessments).items()),
-    )
-    with pytest.raises(EffectRejected):
-        evidence_validity(evidence=verified[0], current=foreign)
-    with pytest.raises(EffectRejected):
-        verify_evidence(
-            admitted=admitted, result=result, submissions=(AssessmentSubmission(fact=clone(result.assessments[0])),)
-        )
-
 
 @pytest.mark.parametrize("combined", [False, True])
 @pytest.mark.parametrize("damage", ["container", "arity", "instance", "binding"])

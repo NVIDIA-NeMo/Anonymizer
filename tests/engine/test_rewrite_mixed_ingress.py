@@ -192,23 +192,6 @@ def test_inherited_receiver_uses_its_actual_schedule(mixed_run: Callable[..., An
     assert adapter.run_workflow.call_count == (2 if combined else 1)
 
 
-@pytest.mark.parametrize("combined", [False, True])
-@pytest.mark.parametrize("mutation", ["dtype", "shape"])
-def test_retained_observation_mutation_rejects(mixed_run: Callable[..., Any], combined: bool, mutation: str) -> None:
-    result, _, _, _, _ = mixed_run("mock_detection", combined, candidate="123")
-    execution = result._execution
-    published = execution.frames[0]
-    if mutation == "shape":
-        from anonymizer.engine.graph_sdk._artifact_shape import ArtifactShape
-
-        ref = dict(published._text)[COL_REWRITTEN_TEXT][0]
-        object.__setattr__(dict(execution.artifacts)[ref], "shape", ArtifactShape(content_bytes=0, items=1))
-    else:
-        object.__setattr__(published, "_observation_dtypes", ((COL_REWRITTEN_TEXT, np.dtype("int64")),))
-    with pytest.raises((ValueError, RuntimeError)):
-        published.project(execution)
-
-
 def test_published_presentation_dtypes_are_detached_from_the_publisher(mixed_run: Callable[..., Any]) -> None:
     class Presentation(pd.api.extensions.ExtensionDtype):
         name = "u1-presentation"

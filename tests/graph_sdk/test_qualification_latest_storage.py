@@ -13,59 +13,10 @@ from anonymizer.engine.graph_sdk.context import (
     ContextSourceRef,
     SourceItem,
 )
-from anonymizer.engine.graph_sdk.evidence import AssessmentSubmission, admit_qualification, evidence_revision_view
 from anonymizer.engine.graph_sdk.qualification import qualify
 from anonymizer.graph import EffectCode, EffectRejected
-from tests.graph_sdk.evidence_fixtures import _execute_assessment, _qualification_limits
+from tests.graph_sdk.evidence_fixtures import _execute_assessment
 from tests.graph_sdk.qualification_fixtures import _BindingProvider, _initial_resource, _inputs
-
-
-def test_latest_candidate_sibling_is_unavailable_and_cannot_replace_final_output() -> None:
-    from anonymizer.engine.graph_sdk.executor import BoundInputKey
-    from anonymizer.engine.graph_sdk.records import CandidateRef
-
-    provider = _BindingProvider(source=ContextSourceRef(name="version-owner", revision=1), versions=(1, 2))
-    execution, result = asyncio.run(
-        _execute_assessment(
-            initial_resources=(_initial_resource(provider),),
-            initial_item_limit=2,
-            initial_version_selection="latest",
-            alias_output=True,
-        )
-    )
-    older = next(
-        fact.artifact
-        for fact in result.provenance
-        if isinstance(fact.key, BoundInputKey) and fact.artifact.version == 1
-    )
-    admitted = admit_qualification(
-        execution=execution, productions=execution.assessment_productions, limits=_qualification_limits()
-    )
-    current = evidence_revision_view(
-        admitted=admitted,
-        result=result,
-        artifacts=(older,),
-        configurations=((result.assessments[0].node, result.assessments[0].environment.configuration),),
-    )
-    assert not current.candidates
-    submissions = (AssessmentSubmission(fact=result.assessments[0]),)
-    output = qualify(admitted=admitted, result=result, current=current, submissions=submissions)
-    assert not output.qualified
-    assert "missing_candidate" in output.targets[0].withholding
-    assert output.record.statuses[0].qualification == "unknown"
-    assert not output.record.statuses[0].artifact_available
-    without_assessment = qualify(admitted=admitted, result=result, current=current, submissions=())
-    assert without_assessment.record.statuses[0].qualification == "unknown"
-    assert not without_assessment.record.statuses[0].artifact_available
-    final = result.final_outputs[0]
-    original = final.candidate
-    object.__setattr__(final, "candidate", CandidateRef(artifact=older, target=original.target))
-    try:
-        with pytest.raises(EffectRejected) as error:
-            qualify(admitted=admitted, result=result, current=current, submissions=submissions)
-        assert error.value.code is EffectCode.CONTRADICTORY
-    finally:
-        object.__setattr__(final, "candidate", original)
 
 
 def test_source_versions_reject_at_typed_constructor() -> None:

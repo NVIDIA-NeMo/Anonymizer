@@ -247,7 +247,7 @@ def test_borrowed_owner_cannot_escape_its_loop_or_lifetime() -> None:
         asyncio.run(submit.borrowed.request(submit.slots[0]))
 
 
-@pytest.mark.parametrize("mutation", ["task_object", "task_none", "activation_object", "activation_list"])
+@pytest.mark.parametrize("mutation", ["task_object", "task_none"])
 def test_borrowed_completion_rejects_malformed_nested_identity(mutation: str) -> None:
     execution, services, original, transports = _fixture(simple=True, parent_io=True)
 
@@ -258,10 +258,7 @@ def test_borrowed_completion_rejects_malformed_nested_identity(mutation: str) ->
             association = inputs[0].association
             assert isinstance(association, SemanticAssociation)
             bad = SemanticAssociation(task=TaskAttemptId.new(activation=association.task.activation))
-            if mutation.startswith("task_"):
-                object.__setattr__(bad, "task", None if mutation == "task_none" else object())
-            else:
-                object.__setattr__(bad.task, "activation", [] if mutation == "activation_list" else object())
+            object.__setattr__(bad, "task", None if mutation == "task_none" else object())
             with pytest.raises(EffectRejected) as caught:
                 await requests.complete_operation(bad, LocalCompleted(results=()))
             assert caught.value.code == EffectCode.FOREIGN_OWNER

@@ -153,15 +153,6 @@ def test_nested_collection_cannot_hide_forged_child_metrics() -> None:
     assert not inspect_artifact(collection, IngressLimits())
 
 
-@pytest.mark.parametrize("key,version", [(True, 1), (-1, 1), (0, False), (0, 0)])
-def test_source_reference_requires_closed_positive_revision(key: int, version: int) -> None:
-    source = ArtifactRef(invocation=InvocationId.new(plan=PlanId.new()), key=0, version=1)
-    object.__setattr__(source, "key", key)
-    object.__setattr__(source, "version", version)
-    with pytest.raises(EffectRejected):
-        EntitySpansValue(source=source, entities=ENTITIES)
-
-
 def test_unqualified_candidate_revision_is_rejected_before_execution() -> None:
     with pytest.raises(EffectRejected) as error:
         span_graph(span_type=ArtifactType(name=ENTITY_SPANS_TYPE.name, revision=2))

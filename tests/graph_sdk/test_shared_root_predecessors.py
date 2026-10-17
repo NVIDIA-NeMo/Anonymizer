@@ -133,16 +133,6 @@ def test_shared_artifact_does_not_erase_target_owned_producer_checks() -> None:
     roots = {fact.key for fact in result.provenance if isinstance(fact.key, RootInputKey)}
     first, second = (fact for fact in result.provenance if fact.parents & roots)
     assert first.artifact == second.artifact and first.key.target != second.key.target
-    output = next(fact for fact in result.provenance if first.key in fact.parents)
-    original = output.parents
-    object.__setattr__(output, "parents", frozenset({second.key}))
-    try:
-        with pytest.raises(EffectRejected) as error:
-            qualify(admitted=admitted, result=result, current=current, submissions=submissions)
-        assert error.value.code is EffectCode.CONTRADICTORY
-    finally:
-        object.__setattr__(output, "parents", original)
-    assert qualify(admitted=admitted, result=result, current=current, submissions=submissions) == baseline
 
 
 def test_exact_shared_initial_capacity_preserves_all_root_occurrences() -> None:

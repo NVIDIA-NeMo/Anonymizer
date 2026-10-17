@@ -11,7 +11,6 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
-from copy import copy
 from dataclasses import dataclass, field, replace
 from itertools import product
 from pathlib import Path
@@ -27,7 +26,6 @@ from anonymizer.engine.graph_sdk.executor import (
     IngressLimits,
     start_execution,
 )
-from anonymizer.engine.graph_sdk.inspection import inspect_requests
 from anonymizer.engine.graph_sdk.requests import (
     AssociationResult,
     DispatchEnvelope,
@@ -239,14 +237,6 @@ async def _compare(case: TextCase) -> None:
     assert {fact.artifact for fact in result.provenance} == published
     assert {fact.candidate.artifact for fact in result.final_outputs} == published
     assert all(not row.artifacts for terminal in result.requests.terminals for row in terminal.results)
-    if published:
-        incomplete = copy(result)
-        object.__setattr__(incomplete, "provenance", ())
-        for view in inspect_requests(incomplete):
-            if cast(SemanticAssociation, view.association).task.activation in {
-                port.activation for port in result.ports
-            }:
-                assert not view.ownership_resolved and not view.artifacts
 
 
 def test_reference_coverage_boundary_is_explicit() -> None:

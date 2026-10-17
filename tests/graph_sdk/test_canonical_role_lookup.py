@@ -6,10 +6,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Iterator, Mapping
-from copy import copy
 from typing import TypeVar
-
-import pytest
 
 from anonymizer.engine.graph_sdk._execution_state import _ExecutionFacts
 from anonymizer.engine.graph_sdk._execution_topology import _inherited_artifact_role
@@ -50,32 +47,6 @@ def test_real_map_parent_roles_use_canonical_identity_without_global_scans() -> 
     member = next(fact.key for fact in result.provenance if isinstance(fact.key, MapItemKey))
     assert _inherited_artifact_role(member, _KeyedFacts(provenance), _KeyedFacts(ports)) == "artifact"
     assert _inherited_artifact_role(None, _KeyedFacts(provenance), _KeyedFacts(ports)) == "artifact"
-
-
-@pytest.mark.parametrize("coordinate", ["target", "activation", "port"])
-def test_keyed_role_lookup_rejects_a_foreign_retained_coordinate(coordinate: str) -> None:
-    result = _result()
-    parent = result.final_outputs[0].producer
-    assert isinstance(parent, OperationOutputKey)
-    provenance = {fact.key: fact for fact in result.provenance}
-    ports = {(fact.activation, fact.port): fact for fact in result.ports}
-    port = ports[parent.activation, parent.port]
-    other = next(fact for fact in result.ports if fact.activation != parent.activation)
-    foreign = copy(port)
-    if coordinate == "target":
-        # Another valid datum identity cannot claim this canonical producer.
-        object.__setattr__(foreign, "target", _result().final_outputs[0].target)
-    elif coordinate == "activation":
-        object.__setattr__(foreign, "activation", other.activation)
-    elif coordinate == "port":
-        object.__setattr__(foreign, "port", "foreign")
-    else:
-        producer = copy(provenance[parent])
-        object.__setattr__(producer, "key", next(key for key in provenance if key != parent))
-        provenance[parent] = producer
-        foreign = port
-    ports[parent.activation, parent.port] = foreign
-    assert _inherited_artifact_role(parent, provenance, ports) == "artifact"
 
 
 def test_role_lookup_uses_staged_facts_without_retaining_a_discarded_delta() -> None:

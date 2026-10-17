@@ -12,7 +12,6 @@ import pytest
 from anonymizer.engine.graph_sdk.capabilities import PreparationCode, PreparationRejected
 from anonymizer.engine.graph_sdk.evidence import AssessmentSubmission
 from anonymizer.engine.graph_sdk.qualification import qualify
-from anonymizer.graph import EffectCode, EffectRejected
 from anonymizer.graph._values import ContractViolation, ValidationCode
 from anonymizer.graph.workflow import CoverageAtom, CoverageKind, EvidencePromise
 from tests.graph_sdk.test_qualification import _inputs
@@ -49,18 +48,6 @@ def test_coverage_is_a_closed_set_owned_by_the_admitted_promise() -> None:
     assert error.value.code is ValidationCode.INVALID_VALUE
 
 
-@pytest.mark.parametrize("port_name", ["subject", "context"])
-def test_retained_subject_and_consumed_ports_require_exact_provenance(port_name: str) -> None:
-    execution, result = asyncio.run(_execute_separate_subject_context())
-    admitted, current, submissions = _inputs(execution, result)
-    port = next(item for item in result.ports if item.port == port_name)
-    evidence = next(item.artifact for item in result.ports if item.port == "evidence")
-    object.__setattr__(port, "artifact", evidence)
-    with pytest.raises(EffectRejected) as error:
-        qualify(admitted=admitted, result=result, current=current, submissions=submissions)
-    assert error.value.code is EffectCode.CONTRADICTORY
-
-
 @pytest.mark.parametrize("kind", ["field", "source_view"])
 def test_coverage_matching_preserves_atom_kind(kind: CoverageKind) -> None:
     promised = frozenset({CoverageAtom(kind=kind, name="person")})
@@ -76,13 +63,3 @@ def test_coverage_matching_preserves_atom_kind(kind: CoverageKind) -> None:
     assert output.verified[0].coverage == promised
     assert len(output.qualified) == 1
     assert not output.targets[0].withholding
-
-
-def test_consumed_port_cannot_introduce_an_unsupported_role() -> None:
-    execution, result = asyncio.run(_execute_separate_subject_context())
-    admitted, current, submissions = _inputs(execution, result)
-    port = next(item for item in result.ports if item.port == "context")
-    object.__setattr__(port, "role", "other")
-    with pytest.raises(EffectRejected) as error:
-        qualify(admitted=admitted, result=result, current=current, submissions=submissions)
-    assert error.value.code is EffectCode.UNSUPPORTED

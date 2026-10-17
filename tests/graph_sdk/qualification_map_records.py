@@ -5,7 +5,6 @@
 from __future__ import annotations
 
 import json
-from copy import copy
 from dataclasses import fields
 from typing import Any
 
@@ -64,21 +63,6 @@ def _retained_expectation(expected: dict[str, Any]) -> dict[str, Any]:
 
 async def _run_reference_map_case(case: dict[str, Any]) -> dict[str, Any]:
     events = case["events"]
-    injected = case["case_id"] in {
-        "assessment/dynamic_unreached_failed_expansion_injected",
-        "assessment/dynamic_blocked_unreached_injected",
-        "assessment/dynamic_started_failure_injected",
-    }
-    injected_fact = (
-        next((event for event in events if event["kind"] == "assessment" and event["node"] == "MN"), None)
-        if injected
-        else None
-    )
-    if injected:
-        # Authenticate the real failure record before corrupting its retained inventory.
-        events = [event for event in events if event is not injected_fact]
-        case = {**case, "events": events, "case_id": case["case_id"].removesuffix("_injected")}
-
     dynamic = case["case_id"].startswith("assessment/dynamic_")
     member_promise = "P_MEMBER" if dynamic else "P_ITEM"
     count = sum(event["kind"] == "entry" and event["node"] == "MN" for event in events)
@@ -113,19 +97,6 @@ async def _run_reference_map_case(case: dict[str, Any]) -> dict[str, Any]:
     if dynamic:
         # The dynamic family names the same member promise differently.
         baseline = json.loads(json.dumps(baseline).replace("P_ITEM", member_promise))
-    missing_terminal = case["case_id"] in {
-        "assessment/dynamic_missing_terminal_unsubmitted",
-        "assessment/dynamic_missing_terminal_submitted",
-    }
-    if missing_terminal:
-        baseline = {
-            **baseline,
-            "events": [
-                event
-                for event in baseline["events"]
-                if not (event["kind"] == "terminal" and event["activation"] == "M0")
-            ],
-        }
     mutable_events = {"assessment_submission", "assessment", "revision"}
     actual_immutable = [event for event in events if event["kind"] not in mutable_events]
     baseline_immutable = [event for event in baseline["events"] if event["kind"] not in mutable_events]
@@ -167,17 +138,6 @@ async def _run_reference_map_case(case: dict[str, Any]) -> dict[str, Any]:
         == len(result.record.terminals)
         == count + 3 + int(nested) + int(blocked_member) + (count + 2 if two_maps else 0)
     )
-    if missing_terminal:
-        (member_activation,) = (entry.activation for entry in result.states[0].entries if entry.template == nodes["MN"])
-        member_terminals = [
-            terminal for terminal in result.record.terminals if terminal.activation == member_activation
-        ]
-        assert len(member_terminals) == 1
-        object.__setattr__(
-            result.record,
-            "terminals",
-            tuple(terminal for terminal in result.record.terminals if terminal != member_terminals[0]),
-        )
     names = _MapRecordNames(execution, result, nodes)
     names.assert_retained_facts(events)
     names.assert_assessments(baseline["events"])
@@ -185,21 +145,7 @@ async def _run_reference_map_case(case: dict[str, Any]) -> dict[str, Any]:
         ("F:A:P" if fact.node == nodes["N"] else f"F:{names.activation(fact.activation)}:{fact.promise}"): fact
         for fact in result.assessments
     }
-    if case["case_id"] == "assessment/dynamic_occurrence_duplicate":
-        # Fact labels are reference aliases; the retained owner tuple is duplicated.
-        events = [
-            {**event, "fact": event["fact"].removesuffix(":DUPLICATE")} if event["kind"] == "assessment" else event
-            for event in events
-        ]
-    retained = {event["fact"] for event in events if event["kind"] == "assessment"}
-    assert retained <= set(facts)
-    if retained != set(facts):
-        assert case["case_id"] in {"map_item_evidence/missing_fact", "assessment/dynamic_occurrence_missing"}
-        object.__setattr__(result, "assessments", tuple(fact for name, fact in facts.items() if name in retained))
-    if case["case_id"] == "assessment/dynamic_occurrence_duplicate":
-        retained_order = [event["fact"] for event in events if event["kind"] == "assessment"]
-        assert len(retained_order) == len(facts) + 1
-        object.__setattr__(result, "assessments", tuple(facts[name] for name in retained_order))
+    assert {event["fact"] for event in events if event["kind"] == "assessment"} == set(facts)
     names.assert_assessments(events)
     if any(event["kind"] == "assessment_submission" and event["fact"] not in facts for event in events):
         assert case["case_id"] in {"map_item_evidence/foreign_submission", "assessment/dynamic_submission_foreign"}
@@ -232,31 +178,6 @@ async def _run_reference_map_case(case: dict[str, Any]) -> dict[str, Any]:
     submissions = tuple(
         AssessmentSubmission(fact=facts[event["fact"]]) for event in events if event["kind"] == "assessment_submission"
     )
-    if injected_fact is not None:
-        _, successful, successful_nodes = await _execute_reference_map(1, member_promise=member_promise)
-        original = next(fact for fact in successful.assessments if fact.node == successful_nodes["MN"])
-        corrupted = copy(original)
-        member = min(
-            (
-                reservation.activation
-                for state in result.states
-                for reservation in state.reservations
-                if reservation.template == nodes["MN"]
-            ),
-            key=lambda activation: activation.occurrence,
-        )
-        object.__setattr__(corrupted, "activation", member)
-        object.__setattr__(corrupted, "node", nodes["MN"])
-        assert (
-            injected_fact["activation"],
-            injected_fact["node"],
-            injected_fact["outcome"],
-            injected_fact["promise"],
-        ) == ("M0", "MN", corrupted.outcome, corrupted.promise)
-        assert corrupted.finding.status == injected_fact["finding"]
-        assert corrupted.activation.invocation == result.record.invocation
-        assert not any(fact.activation == member for fact in result.assessments)
-        object.__setattr__(result, "assessments", (*result.assessments, corrupted))
     output = qualify(admitted=admitted, result=result, current=current, submissions=submissions)
     return names.normalize(output)
 

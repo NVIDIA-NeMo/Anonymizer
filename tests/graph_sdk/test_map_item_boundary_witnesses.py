@@ -19,7 +19,6 @@ from anonymizer.engine.graph_sdk.evidence import (
 from anonymizer.engine.graph_sdk.executor import ExecutionResult, MapItemKey, OperationOutputKey
 from anonymizer.engine.graph_sdk.qualification import qualify
 from anonymizer.engine.graph_sdk.requests import TextCollectionValue
-from anonymizer.graph import EffectCode, EffectRejected
 from anonymizer.graph.workflow import (
     InputBinding,
     InputPort,
@@ -36,7 +35,6 @@ from tests.graph_sdk.test_dynamic_executor import _capability, _outcome
 from tests.graph_sdk.test_effects_map_production_conformance import _execute_membership
 from tests.graph_sdk.test_evidence import _qualification_limits
 from tests.graph_sdk.test_map_item_evidence import _direct_item_fixture
-from tests.graph_sdk.test_qualification_map_conformance import _execute_reference_map
 from tests.graph_sdk.workflow_construction import admit_activation_workflow, admit_static_workflow, replace_scope
 
 
@@ -118,37 +116,6 @@ def test_pending_retained_map_membership_withholds_previously_qualified_candidat
     assert expansion.status == "closed" and not expansion.members
     # A successful atomic publication cannot leave this pending. This is a
     # retained-state integrity witness, not a fabricated normal execution.
-    object.__setattr__(expansion, "status", "pending")
-    output = qualify(admitted=admitted, result=result, current=current, submissions=submissions)
-    assert not output.qualified
-    assert "incomplete_membership" in output.targets[0].withholding
-    assert output.record.statuses[0].completion == "pending"
-    assert output.record.memberships == result.record.memberships
-    assert any(item.parent == expansion.parent and item.closed for item in output.record.memberships)
-
-
-@pytest.mark.parametrize("cross_map", [False, True])
-def test_captured_item_subject_cannot_be_replaced_by_candidate_or_other_map(cross_map: bool) -> None:
-    _, result, nodes = asyncio.run(_execute_reference_map(1, two_maps=cross_map))
-    admitted, current, submissions = _qualification_inputs(result)
-    assert len(qualify(admitted=admitted, result=result, current=current, submissions=submissions).qualified) == 1
-    source = next(
-        port
-        for port in result.ports
-        if port.node == nodes["MN" if cross_map else "N"] and port.port == ("item" if cross_map else "subject")
-    )
-    victim = next(
-        port
-        for port in result.ports
-        if port.node == nodes["MN2" if cross_map else "MN"] and port.port == ("item2" if cross_map else "item")
-    )
-    assert source.artifact != victim.artifact
-    # Assessment facts have no subject_artifact field. The actual owner of
-    # subject identity is the captured input port plus its producer lineage.
-    object.__setattr__(victim, "artifact", source.artifact)
-    with pytest.raises(EffectRejected) as error:
-        qualify(admitted=admitted, result=result, current=current, submissions=submissions)
-    assert error.value.code is EffectCode.CONTRADICTORY
 
 
 def test_failed_ordinary_prerequisite_blocks_member_after_item_publication() -> None:

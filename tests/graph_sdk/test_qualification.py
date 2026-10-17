@@ -5,7 +5,6 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import replace
 from typing import cast
 
 import pytest
@@ -17,7 +16,7 @@ from anonymizer.engine.graph_sdk.data import AtomicGroup, CoherenceScope, DataGr
 from anonymizer.engine.graph_sdk.evidence import AssessmentSubmission, admit_qualification, evidence_revision_view
 from anonymizer.engine.graph_sdk.executor import AssessmentFinding
 from anonymizer.engine.graph_sdk.qualification import qualify
-from anonymizer.engine.graph_sdk.resources import ResourceId, ResourceLease
+from anonymizer.engine.graph_sdk.resources import ResourceLease
 from anonymizer.graph import EffectCode, EffectRejected
 from tests.graph_sdk.evidence_fixtures import _execute_assessment, _qualification_limits
 from tests.graph_sdk.qualification_fixtures import (
@@ -79,26 +78,6 @@ def test_execution_only_never_consumes_submitted_assessments() -> None:
     assert output.record.statuses[0].qualification == "not_assessed"
     assert not output.record.statuses[0].protection_available
     assert output.record.memberships is result.record.memberships
-
-
-@pytest.mark.parametrize("defect", ["root", "terminal"])
-def test_missing_canonical_accounting_withholds_actual_success(defect: str) -> None:
-    execution, result = asyncio.run(_execute_assessment())
-    original = result.record
-    corrupted = replace(
-        original,
-        memberships=() if defect == "root" else original.memberships,
-        terminals=(),
-    )
-    object.__setattr__(result, "record", corrupted)
-    try:
-        admitted, current, _ = _inputs(execution, result)
-        output = qualify(admitted=admitted, result=result, current=current, submissions=())
-        assert not output.qualified
-        assert "incomplete_membership" in output.targets[0].withholding
-        assert output.record.statuses[0].completion == "pending"
-    finally:
-        object.__setattr__(result, "record", original)
 
 
 @pytest.mark.parametrize("relation", ["none", "dependency", "atomic", "coherence"])
@@ -205,20 +184,6 @@ def test_protection_submission_member_type_precedes_foreign_current_view() -> No
     assert error.value.code is EffectCode.INVALID_TYPE
 
 
-def test_provenance_cannot_add_a_causal_cycle_to_a_real_output() -> None:
-    execution, result = asyncio.run(_execute_assessment())
-    admitted, current, submissions = _inputs(execution, result)
-    producer = next(item for item in result.provenance if item.key == result.final_outputs[0].producer)
-    original = producer.parents
-    object.__setattr__(producer, "parents", frozenset({producer.key}))
-    try:
-        with pytest.raises(EffectRejected) as error:
-            qualify(admitted=admitted, result=result, current=current, submissions=submissions)
-        assert error.value.code is EffectCode.CONTRADICTORY
-    finally:
-        object.__setattr__(producer, "parents", original)
-
-
 @pytest.mark.parametrize(
     ("failure", "purpose"), [(None, None), ("retryable", "retry"), ("malformed_response", "correction")]
 )
@@ -269,50 +234,6 @@ def test_auxiliary_final_output_does_not_replace_the_assessed_candidate(input_su
     assert output.record.statuses[0].qualification == "met"
 
 
-def test_transport_only_cleanup_can_have_no_affected_targets() -> None:
-    transport = _RecoveringTransport(fail_close=True)
-    lease = ResourceLease.create(owner="sdk", safe_detachment="forbidden", handle=transport)
-    execution, result = asyncio.run(_execute_assessment(external=(transport, lease)))
-    admitted, current, submissions = _inputs(execution, result)
-    association = result.cleanup_associations[0]
-    original = association.targets, association.purpose
-    # Exercise the D08 transport-only extension point; current P5 emits accounting here.
-    object.__setattr__(association, "targets", frozenset())
-    object.__setattr__(association, "purpose", "transport_only")
-    try:
-        output = qualify(admitted=admitted, result=result, current=current, submissions=submissions)
-        assert len(output.qualified) == 1
-        assert output.record.statuses[0].qualification == "met"
-    finally:
-        object.__setattr__(association, "targets", original[0])
-        object.__setattr__(association, "purpose", original[1])
-
-
-@pytest.mark.parametrize("mutation", ["missing", "extra", "aliased-occurrence"])
-def test_output_provenance_requires_exact_executed_input_occurrences(mutation: str) -> None:
-    execution, result = asyncio.run(_execute_assessment(predecessor_input=True))
-    admitted, current, submissions = _inputs(execution, result)
-    output = next(item for item in result.provenance if item.key == result.final_outputs[0].producer)
-    root = next(item for item in result.provenance if not item.parents)
-    predecessor = next(item for item in result.provenance if item.parents == frozenset({root.key}))
-    assert root.artifact == predecessor.artifact and root.key != predecessor.key
-    original = output.parents
-    changed = (
-        frozenset()
-        if mutation == "missing"
-        else original | {root.key}
-        if mutation == "extra"
-        else frozenset({root.key})
-    )
-    object.__setattr__(output, "parents", changed)
-    try:
-        with pytest.raises(EffectRejected) as error:
-            qualify(admitted=admitted, result=result, current=current, submissions=submissions)
-        assert error.value.code is EffectCode.CONTRADICTORY
-    finally:
-        object.__setattr__(output, "parents", original)
-
-
 def test_fully_settled_exhausted_failure_is_unmet_not_unknown() -> None:
     transport = _RecoveringTransport(failure="permanent")
     lease = ResourceLease.create(owner="sdk", safe_detachment="forbidden", handle=transport)
@@ -323,37 +244,6 @@ def test_fully_settled_exhausted_failure_is_unmet_not_unknown() -> None:
     assert not output.qualified
     assert output.record.statuses[0].qualification == "unmet"
     assert "request_accounting" in output.targets[0].withholding
-
-
-@pytest.mark.parametrize(("count", "mode", "status"), [(2, "valid", "overflow"), (1, "missing", "failed")])
-def test_failed_expansion_reconciles_actual_members(count: int, mode: str, status: str) -> None:
-    from anonymizer.graph._values import ActivationKey
-    from tests.graph_sdk.test_effects_map_production_conformance import _execute_membership
-
-    _, result, _ = asyncio.run(_execute_membership(count, response_mode=mode, max_children=1, outward_scalar="join"))
-    execution = result._execution
-    admitted = admit_qualification(execution=execution, productions=(), limits=_qualification_limits())
-    current = evidence_revision_view(
-        admitted=admitted,
-        result=result,
-        artifacts=(),
-        configurations=(),
-    )
-    expansion = next(iter(result.states[0].expansions))
-    assert expansion.status == status and not expansion.members
-    output = qualify(admitted=admitted, result=result, current=current, submissions=())
-    assert output.record.statuses[0].completion == "closed"
-    original = expansion.members
-    missing = ActivationKey(
-        invocation=result.record.invocation, occurrence=100, parent=expansion.parent, iteration=None
-    )
-    object.__setattr__(expansion, "members", frozenset({missing}))
-    try:
-        output = qualify(admitted=admitted, result=result, current=current, submissions=())
-        assert output.record.statuses[0].completion == "pending"
-        assert "incomplete_membership" in output.targets[0].withholding
-    finally:
-        object.__setattr__(expansion, "members", original)
 
 
 @pytest.mark.parametrize("nested", [False, True])
@@ -368,31 +258,6 @@ def test_direct_root_input_output_retains_its_actual_producer_and_qualifies(nest
     assert len(output.qualified) == 1
     assert output.qualified[0].candidate == result.final_outputs[0].candidate
     assert output.record.statuses[0].qualification == "met"
-
-
-@pytest.mark.parametrize("mutation", ["missing", "aliased-occurrence"])
-def test_nested_passthrough_provenance_preserves_the_resolved_input_source(mutation: str) -> None:
-    from anonymizer.engine.graph_sdk.executor import OperationOutputKey
-
-    execution, result = asyncio.run(_execute_assessment(candidate_input=True, root_passthrough=True, nested=True))
-    admitted, current, submissions = _inputs(execution, result)
-    output = next(item for item in result.provenance if item.key == result.final_outputs[0].producer)
-    assessment = result.assessments[0]
-    alias = next(
-        item
-        for item in result.provenance
-        if isinstance(item.key, OperationOutputKey) and item.key.activation == assessment.activation
-    )
-    assert alias.artifact == output.artifact
-    assert alias.key not in output.parents
-    original = output.parents
-    object.__setattr__(output, "parents", frozenset() if mutation == "missing" else frozenset({alias.key}))
-    try:
-        with pytest.raises(EffectRejected) as error:
-            qualify(admitted=admitted, result=result, current=current, submissions=submissions)
-        assert error.value.code is EffectCode.CONTRADICTORY
-    finally:
-        object.__setattr__(output, "parents", original)
 
 
 @pytest.mark.parametrize("depth", [2, 3, 4])
@@ -472,42 +337,6 @@ def test_initial_binding_cleanup_withholds_only_its_admitted_targets(disposition
     )
 
 
-@pytest.mark.parametrize("mutation", ["missing", "extra", "duplicate", "foreign", "empty", "purpose"])
-def test_initial_binding_cleanup_rejects_inconsistent_associations(mutation: str) -> None:
-    provider = _BindingProvider(ContextSourceRef(name="initial", revision=1))
-    execution, result = asyncio.run(_execute_assessment(initial_resources=(_initial_resource(provider),)))
-    bound = execution.context.bound_context
-    assert bound is not None
-    original = bound.receipt.cleanup_associations
-    cleanup = bound.receipt.cleanup
-    association = original[0]
-    field = "resource" if mutation == "foreign" else "targets" if mutation == "empty" else "purpose"
-    old = getattr(association, field)
-    if mutation in {"foreign", "empty", "purpose"}:
-        object.__setattr__(
-            association,
-            field,
-            ResourceId.new() if mutation == "foreign" else frozenset() if mutation == "empty" else "transport_only",
-        )
-    else:
-        object.__setattr__(
-            bound.receipt,
-            "cleanup_associations",
-            () if mutation == "missing" else original if mutation == "extra" else (*original, association),
-        )
-        if mutation == "extra":
-            object.__setattr__(bound.receipt, "cleanup", ())
-    try:
-        admitted, current, submissions = _inputs(execution, result)
-        output = qualify(admitted=admitted, result=result, current=current, submissions=submissions)
-        assert not output.qualified
-        assert all("inconsistent_attribution" in item.withholding for item in output.targets)
-    finally:
-        object.__setattr__(association, field, old)
-        object.__setattr__(bound.receipt, "cleanup_associations", original)
-        object.__setattr__(bound.receipt, "cleanup", cleanup)
-
-
 def test_binding_cleanup_shared_source_retains_union_before_close() -> None:
     provider = _BindingProvider(ContextSourceRef(name="shared", revision=1), fail_close=True)
     execution, result = asyncio.run(
@@ -532,27 +361,6 @@ def test_bound_input_identity_alias_requires_exact_reference(alias: bool) -> Non
     )
     admitted, current, submissions = _inputs(execution, result)
     assert qualify(admitted=admitted, result=result, current=current, submissions=submissions).qualified
-
-
-@pytest.mark.parametrize("version", [1])
-def test_fresh_output_cannot_reuse_bound_input_runtime_key(version: int) -> None:
-    from anonymizer.engine.graph_sdk.executor import BoundInputKey, OperationOutputKey
-
-    provider = _BindingProvider(source=ContextSourceRef(name="version-owner", revision=1))
-    execution, result = asyncio.run(_execute_assessment(initial_resources=(_initial_resource(provider),)))
-    source = next(item.artifact for item in result.provenance if isinstance(item.key, BoundInputKey))
-    output = next(item.artifact for item in result.provenance if isinstance(item.key, OperationOutputKey))
-    original = (output.key, output.version)
-    object.__setattr__(output, "key", source.key)
-    object.__setattr__(output, "version", version)
-    try:
-        with pytest.raises(EffectRejected) as error:
-            admitted, current, submissions = _inputs(execution, result)
-            qualify(admitted=admitted, result=result, current=current, submissions=submissions)
-        assert error.value.code is (EffectCode.DUPLICATE if version == 1 else EffectCode.CONTRADICTORY)
-    finally:
-        object.__setattr__(output, "key", original[0])
-        object.__setattr__(output, "version", original[1])
 
 
 @pytest.mark.parametrize("versions", [(1,), (1, 2), (2, 1), (7, 2)])
@@ -602,94 +410,3 @@ def test_latest_initial_scalar_has_real_versioned_evidence(versions: tuple[int, 
         assert bool(qualified.qualified) == (expected == "current")
     assert provider.calls == 1
     assert provider.closes == 1
-
-
-@pytest.mark.parametrize("mutation", ["source-version"])
-def test_qualification_rejects_corrupted_materialized_lineage(mutation: str) -> None:
-    from anonymizer.engine.graph_sdk.executor import BoundInputKey
-
-    provider = _BindingProvider(source=ContextSourceRef(name="version-owner", revision=1), versions=(1, 2))
-    execution, result = asyncio.run(
-        _execute_assessment(
-            initial_resources=(_initial_resource(provider),),
-            initial_item_limit=2,
-            initial_version_selection="latest",
-            target_count=2,
-        )
-    )
-    sources = sorted(
-        (item.artifact for item in result.provenance if isinstance(item.key, BoundInputKey)),
-        key=lambda item: (item.key, item.version),
-    )
-    changed = sources[0]
-    original = (changed.key, changed.version)
-    if mutation == "split-lineage":
-        object.__setattr__(changed, "key", max(ref.key for ref, _ in result.artifacts) + 1)
-    elif mutation == "cross-lineage":
-        object.__setattr__(changed, "key", sources[2].key)
-    else:
-        object.__setattr__(changed, "version", 3)
-    try:
-        with pytest.raises(EffectRejected) as error:
-            admitted = admit_qualification(
-                execution=execution, productions=execution.assessment_productions, limits=_qualification_limits()
-            )
-            current = evidence_revision_view(
-                admitted=admitted,
-                result=result,
-                artifacts=(),
-                configurations=(),
-            )
-            qualify(admitted=admitted, result=result, current=current, submissions=())
-        assert error.value.code is (EffectCode.DUPLICATE if mutation == "cross-lineage" else EffectCode.CONTRADICTORY)
-    finally:
-        object.__setattr__(changed, "key", original[0])
-        object.__setattr__(changed, "version", original[1])
-
-
-def test_latest_selection_cannot_be_rewritten_to_an_older_retained_version() -> None:
-    from anonymizer.engine.graph_sdk.executor import BoundInputKey, OperationOutputKey
-
-    provider = _BindingProvider(source=ContextSourceRef(name="version-owner", revision=1), versions=(7, 2))
-    execution, result = asyncio.run(
-        _execute_assessment(
-            initial_resources=(_initial_resource(provider),),
-            initial_item_limit=2,
-            initial_version_selection="latest",
-        )
-    )
-    older = next(
-        fact for fact in result.provenance if isinstance(fact.key, BoundInputKey) and fact.artifact.version == 2
-    )
-    port = next(fact for fact in result.ports if fact.port == "input")
-    output = next(fact for fact in result.provenance if isinstance(fact.key, OperationOutputKey))
-    original = (port.artifact, result._input_parents, output.parents)
-    object.__setattr__(port, "artifact", older.artifact)
-    object.__setattr__(
-        result,
-        "_input_parents",
-        tuple((t, a, p, older.key if p == "input" else parent) for t, a, p, parent in result._input_parents),
-    )
-    object.__setattr__(output, "parents", frozenset({older.key}))
-    try:
-        admitted = admit_qualification(
-            execution=execution, productions=execution.assessment_productions, limits=_qualification_limits()
-        )
-        current = evidence_revision_view(
-            admitted=admitted,
-            result=result,
-            artifacts=tuple(ref for ref, _ in result.artifacts if ref.key != older.artifact.key or ref.version == 2),
-            configurations=((result.assessments[0].node, result.assessments[0].environment.configuration),),
-        )
-        with pytest.raises(EffectRejected) as error:
-            qualify(
-                admitted=admitted,
-                result=result,
-                current=current,
-                submissions=(AssessmentSubmission(fact=result.assessments[0]),),
-            )
-        assert error.value.code is EffectCode.CONTRADICTORY
-    finally:
-        object.__setattr__(port, "artifact", original[0])
-        object.__setattr__(result, "_input_parents", original[1])
-        object.__setattr__(output, "parents", original[2])

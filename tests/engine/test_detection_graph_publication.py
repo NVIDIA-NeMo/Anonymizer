@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import fields, replace
+from dataclasses import replace
 from typing import Any
 
 import httpx
@@ -448,53 +448,6 @@ def test_completed_response_without_usage_is_settled_but_never_fabricated(script
     assert not result._retained_resources
 
 
-@pytest.mark.parametrize(
-    "fault", ["membership", "source_port", "omission_reason", "missing_provenance", "missing_all_provenance"]
-)
-def test_retained_chunk_closure_rejects_changed_membership_or_authority(scripted_detection, fault):
-    from anonymizer.engine.detection._graph_profile import qualify_detection_redact
-    from anonymizer.engine.graph_sdk.requests import TextCollectionValue
-    from anonymizer.graph._values import ContractViolation
-
-    source = pd.DataFrame({COL_TEXT: ["Alice travels.", "Alice Bob stays."]})
-    result = asyncio.run(
-        run_graph_profile(scripted_detection, source, {**_options(), "validation_max_entities_per_call": 1}, chunks=2)
-    )
-    assert len(qualify_detection_redact(result).qualified) == 2
-    plans = [port for port in result.ports if port.port == "validation_chunks"]
-    plans.sort(key=lambda port: len(dict(result.artifacts)[port.artifact].items))
-    first, second = plans
-    updates = {}
-    if fault == "membership":
-        updates["artifacts"] = tuple(
-            (reference, TextCollectionValue(items=()) if reference == first.artifact else value)
-            for reference, value in result.artifacts
-        )
-    elif fault in {"missing_provenance", "missing_all_provenance"}:
-        removed = {first.artifact} if fault == "missing_provenance" else {first.artifact, second.artifact}
-        updates["provenance"] = tuple(fact for fact in result.provenance if fact.artifact not in removed)
-    elif fault == "source_port":
-        raw = object.__new__(type(first))
-        for field in fields(first):
-            object.__setattr__(
-                raw, field.name, second.artifact if field.name == "artifact" else getattr(first, field.name)
-            )
-        updates["ports"] = tuple(raw if port is first else port for port in result.ports)
-    else:
-        updates["record"] = replace(
-            result.record,
-            terminals=tuple(
-                replace(row, reasons=frozenset({"prerequisite"})) if row.reasons == {"omitted_optional"} else row
-                for row in result.record.terminals
-            ),
-        )
-    retained = object.__new__(type(result))
-    for field in fields(result):
-        object.__setattr__(retained, field.name, updates.get(field.name, getattr(result, field.name)))
-    with pytest.raises((EffectRejected, ContractViolation)):
-        qualify_detection_redact(retained)
-
-
 def test_default_augmenter_restart_preserves_legacy_and_qualifies(scripted_detection, monkeypatch):
     import json
 
@@ -667,83 +620,6 @@ def test_admission_derives_validator_capacity_without_input_cap(scripted_detecti
     assert len(contract.selection.slots) == (len("Alice Bob stays.") + chunk_size - 1) // chunk_size
     assert result.requests.dispatched_count == expected
     assert len(result.final_outputs) == len(qualify_detection_redact(result).qualified) == 2
-
-
-def test_unknown_remote_source_retains_resource_and_qualifies_independent_peer(scripted_detection, monkeypatch):
-    import json
-
-    from anonymizer.engine.detection._graph_profile import qualify_detection_redact
-
-    physicals = []
-    initialize = NddPhysicalTransport.__init__
-
-    def initialized(self):
-        initialize(self)
-        physicals.append(self)
-
-    def response(request, answer):
-        messages = json.dumps(json.loads(request.content)["messages"])
-        if "Find untagged sensitive entities" in messages and "travels." in messages:
-            raise httpx.ReadError("scripted uncertain source", request=request)
-        return answer
-
-    monkeypatch.setattr(NddPhysicalTransport, "__init__", initialized)
-    _modify_dd_responses(scripted_detection, monkeypatch, response)
-    try:
-        result = asyncio.run(run_graph_profile(scripted_detection, _source(), _options(), remote_limit=2))
-        assert result.requests.dispatched_count == 7
-        assert len(result.requests.remote_outstanding) == 1
-        assert len(result.final_outputs) == 1
-        # Lost remains charged and uncertain; an authenticated retained lease
-        # does not invalidate the independently verified successful source.
-        assert len(qualify_detection_redact(result).qualified) == 1
-        assert result.frames[0].project(result)[COL_TEXT].tolist() == ["Alice stays."]
-        assert len(result._retained_resources) == 1 and not physicals[0].closed
-        from anonymizer.engine.detection._graph_profile import project_detection_redact
-
-        projected = project_detection_redact(result)
-        assert projected._execution is result
-        assert projected.dataframe[COL_TEXT].tolist() == ["Alice stays."]
-        missing_lease = object.__new__(type(result))
-        for field in fields(result):
-            object.__setattr__(
-                missing_lease, field.name, () if field.name == "_retained_resources" else getattr(result, field.name)
-            )
-        assert not qualify_detection_redact(missing_lease).qualified
-        from anonymizer.engine.graph_sdk.resources import ResourceLease
-
-        lease = result._retained_resources[0]
-
-        def copied_lease(handle):
-            raw = object.__new__(type(lease))
-            for field in fields(lease):
-                object.__setattr__(raw, field.name, handle if field.name == "handle" else getattr(lease, field.name))
-            return raw
-
-        object.__setattr__(missing_lease, "_retained_resources", (copied_lease(lease.handle),))
-        assert len(qualify_detection_redact(missing_lease).qualified) == 1
-        for retained in (
-            result._retained_resources * 2,
-            (ResourceLease.create(owner="sdk", safe_detachment="forbidden", handle=physicals[0]),),
-            (copied_lease(object()),),
-            (copied_lease(ResourceLease.create(owner="sdk", safe_detachment="forbidden", handle=object())),),
-        ):
-            object.__setattr__(missing_lease, "_retained_resources", retained)
-            assert not qualify_detection_redact(missing_lease).qualified
-        missing = object.__new__(type(result))
-        for field in fields(result):
-            object.__setattr__(
-                missing,
-                field.name,
-                replace(result.requests, remote_outstanding=frozenset())
-                if field.name == "requests"
-                else getattr(result, field.name),
-            )
-        with pytest.raises(EffectRejected):
-            qualify_detection_redact(missing)
-    finally:
-        for physical in physicals:
-            asyncio.run_coroutine_threadsafe(physical.close(), physical.loop).result(timeout=10)
 
 
 @pytest.mark.parametrize("failed", [False, True])

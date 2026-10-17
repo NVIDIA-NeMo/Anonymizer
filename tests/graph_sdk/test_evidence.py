@@ -286,23 +286,6 @@ def test_missing_current_artifact_is_rejected(
     assert error.value.code is EffectCode.MISSING
 
 
-def test_unselected_environment_configuration_is_contradictory() -> None:
-    execution, result = asyncio.run(_execute_assessment())
-    admitted = admit_qualification(
-        execution=execution, productions=execution.assessment_productions, limits=_qualification_limits()
-    )
-    fact = result.assessments[0]
-    original = fact.environment
-    # Corrupt the retained fact solely to exercise environment validation.
-    object.__setattr__(fact, "environment", replace(original, configuration=FrozenConfig(fields=())))
-    try:
-        with pytest.raises(EffectRejected) as error:
-            verify_evidence(admitted=admitted, result=result, submissions=(AssessmentSubmission(fact=fact),))
-        assert error.value.code is EffectCode.CONTRADICTORY
-    finally:
-        object.__setattr__(fact, "environment", original)
-
-
 @pytest.mark.parametrize("bound", ["max_port_facts", "max_provenance_edges"])
 def test_result_bounds_are_exact_and_count_actual_edges(
     bound: str, assessment_execution: tuple[AdmittedExecutionPlan, ExecutionResult]
@@ -398,27 +381,6 @@ def test_consumed_artifact_is_derived_from_an_actual_predecessor_producer() -> N
             configurations=((fact.node, fact.environment.configuration),),
         )
         assert evidence_validity(evidence=verified, current=current) == ("unknown" if missing else "current")
-
-
-@pytest.mark.parametrize("nested", [False, True])
-def test_evidence_occurrence_authenticates_executor_role_precedence(nested: bool) -> None:
-    execution, result = asyncio.run(_execute_assessment(candidate_input=True, nested=nested))
-    admitted = admit_qualification(
-        execution=execution, productions=execution.assessment_productions, limits=_qualification_limits()
-    )
-    fact = result.assessments[0]
-    evidence = next(item for item in result.ports if item.activation == fact.activation and item.port == "assessment")
-    assert evidence.role == ("evidence" if nested else "candidate")
-    submissions = (AssessmentSubmission(fact=fact),)
-    assert len(verify_evidence(admitted=admitted, result=result, submissions=submissions)) == 1
-    original = evidence.role
-    object.__setattr__(evidence, "role", "artifact")
-    try:
-        with pytest.raises(EffectRejected) as error:
-            verify_evidence(admitted=admitted, result=result, submissions=submissions)
-        assert error.value.code is EffectCode.CONTRADICTORY
-    finally:
-        object.__setattr__(evidence, "role", original)
 
 
 @pytest.mark.parametrize(

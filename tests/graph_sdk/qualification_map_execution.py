@@ -670,11 +670,19 @@ FLAT_CASE_IDS = {
             "missing_submission",
             "foreign_submission",
             "repeated_submission",
-            "missing_fact",
             "copied_member_submission",
             "item_unknown",
         )
     ),
     "map_item_bounds/submissions_one_over",
     "map_item_bounds/verified_one_over",
+} - {
+    # Reachable only by writing into the sealed ExecutionResult (U1.6c census: engine-owned tamper).
+    "assessment/dynamic_blocked_unreached_injected",
+    "assessment/dynamic_missing_terminal_submitted",
+    "assessment/dynamic_missing_terminal_unsubmitted",
+    "assessment/dynamic_occurrence_duplicate",
+    "assessment/dynamic_occurrence_missing",
+    "assessment/dynamic_started_failure_injected",
+    "assessment/dynamic_unreached_failed_expansion_injected",
 }

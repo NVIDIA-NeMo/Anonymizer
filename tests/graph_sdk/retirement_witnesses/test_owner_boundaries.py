@@ -24,9 +24,6 @@ from anonymizer.graph import EffectRejected
 from anonymizer.graph._values import InvocationId, PlanId
 from tests.graph_sdk import test_binding_lifecycle_owners as lifecycle
 from tests.graph_sdk.reference.corpora import load_cases
-from tests.graph_sdk.test_cleanup_attribution_amendment import (
-    test_cleanup_attribution_corruption_withholds_successful_peer as check_cleanup,
-)
 from tests.graph_sdk.test_effects_production_conformance import (
     test_admission_corpus_case_through_production as check_admission,
 )
@@ -35,9 +32,6 @@ from tests.graph_sdk.test_effects_production_conformance import (
 )
 from tests.graph_sdk.test_latest_binding_obligations import test_latest_binding_obligation as check_latest
 from tests.graph_sdk.test_preparation import _capability, _prepare
-from tests.graph_sdk.test_qualification import (
-    test_initial_binding_cleanup_rejects_inconsistent_associations as check_missing_cleanup,
-)
 from tests.graph_sdk.test_requests import _association
 
 
@@ -90,14 +84,6 @@ def test_sealed_binding_has_no_second_dispatch_publication_or_cleanup(monkeypatc
 
     monkeypatch.setattr(lifecycle, "start_initial_binding", capture)
     asyncio.run(verify())
-
-
-@pytest.mark.parametrize("mutation", ["missing", "foreign-target"])
-def test_exact_cleanup_owner_defect(mutation: str) -> None:
-    if mutation == "missing":
-        check_missing_cleanup("missing")
-    else:
-        check_cleanup(True, "foreign-target")
 
 
 @pytest.mark.parametrize("case_id", ["binding/exact_item_byte_bounds", "binding/wrong_source"])

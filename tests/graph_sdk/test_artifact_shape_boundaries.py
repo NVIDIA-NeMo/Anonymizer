@@ -40,16 +40,6 @@ def _inspection_source(result: ExecutionResult) -> InspectionSource:
     )
 
 
-def _assert_rejected_at_retained_crossings(result: ExecutionResult, source: InspectionSource) -> None:
-    with pytest.raises(EffectRejected):
-        _inputs(result._execution, result)
-    with pytest.raises(EffectRejected):
-        _inspection_source(result)
-    # Recheck at consumption too: the source may have been bound before mutation.
-    with pytest.raises(EffectRejected):
-        inspect(source=source)
-
-
 def test_valid_root_larger_than_callback_budget_remains_inspectable() -> None:
     # Root data uses its own 100-byte budget. Rendering is correctly denied by the
     # smaller callback budget, leaving a valid result with the larger root retained.

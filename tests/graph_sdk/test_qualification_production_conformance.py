@@ -437,7 +437,6 @@ FROZEN_VALUE_TAMPER_IDS = frozenset(
     {
         "structural/non_bool_flag",
         "structural/success_with_reason",
-        # U1.4: re-joins of the executor's own retained inventory were removed (one index per revision view).
         "joins/missing_candidate_artifact",
         "provenance/swapped_dependency_parents",
         "provenance/extra_input_producer",
@@ -448,6 +447,31 @@ FROZEN_VALUE_TAMPER_IDS = frozenset(
         "provenance/duplicate_producer",
         "final_output/producer_activation",
         "provenance/missing_parent_artifact",
+        "assessment/foreign_evidence",
+        "authentication/evidence_port_node",
+        "authentication/evidence_port_target",
+        "authentication/missing_consumed_port_fact",
+        "authentication/terminal_outcome",
+        "final_output/producer_node",
+        "final_output/wrong_outcome",
+        "final_output/wrong_target",
+        "joins/invocation_mismatch",
+        "joins/missing_evidence_artifact",
+        "joins/node_mismatch",
+        "joins/outcome_mismatch",
+        "joins/producer_artifact_mismatch",
+        "joins/producer_target_mismatch",
+        "joins/promise_mismatch",
+        "membership/missing_root",
+        "provenance/mismatched_source_artifact",
+        "provenance/parent_order_invariant",
+        "roles/consumed_unsupported_role",
+        "roles/distinct_evidence_wrong_role",
+        "structural/operation_cancelled_missing_attempt",
+        "structural/operation_failed_missing_attempt",
+        "structural/operation_lost_missing_attempt",
+        "structural/operation_success_missing_attempt",
+        "structural/structural_on_operation",
     }
 )
 CORRUPTION_IDS = frozenset(
@@ -503,7 +527,6 @@ CORRUPTION_IDS = frozenset(
 def _run_retained_corruption(case: dict[str, Any], events: list[dict[str, Any]]) -> dict[str, Any]:
     """Mutate a real retained negative witness, never construct a positive result."""
     from anonymizer.graph._values import GraphId, InvocationId, PlanId
-    from anonymizer.graph.workflow import NodeId
     from tests.graph_sdk.test_qualification import _inputs
 
     baseline = CORPUS[0]
@@ -520,62 +543,7 @@ def _run_retained_corruption(case: dict[str, Any], events: list[dict[str, Any]])
     admitted, current, submissions = _inputs(execution, result)
     removed = [event for event in baseline["events"] if event not in events]
     added = [event for event in events if event not in baseline["events"]]
-    if case["case_id"] in {
-        "assessment/root_missing_terminal_unsubmitted",
-        "assessment/root_missing_terminal_submitted",
-    }:
-        assert not added
-        assert {event["kind"] for event in removed} == (
-            {"terminal", "assessment_submission"} if case["case_id"].endswith("_unsubmitted") else {"terminal"}
-        )
-        object.__setattr__(result.record, "terminals", ())
-        if case["case_id"].endswith("_unsubmitted"):
-            submissions = ()
-    elif case["case_id"] == "membership/missing_root":
-        assert not added and len(removed) == 1 and removed[0]["kind"] == "membership" and removed[0]["parent"] is None
-        object.__setattr__(result.record, "memberships", ())
-    elif case["case_id"] in {
-        "structural/operation_failed_missing_attempt",
-        "structural/operation_cancelled_missing_attempt",
-        "structural/operation_lost_missing_attempt",
-    }:
-        assert len(removed) == len(added) == 2
-        changed = {event["kind"]: event for event in added}
-        assert set(changed) == {"entry", "terminal"}
-        terminal_event = changed["terminal"]
-        assert terminal_event["attempt"] is None and terminal_event["structural"] is False
-        (terminal,) = result.record.terminals
-        object.__setattr__(names.entry, "status", changed["entry"]["state_category"])
-        object.__setattr__(names.entry, "outcome", changed["entry"]["state_outcome"])
-        object.__setattr__(terminal, "category", terminal_event["category"])
-        object.__setattr__(terminal, "reasons", frozenset(terminal_event["reasons"]))
-        object.__setattr__(terminal, "attempt", None)
-    elif case["case_id"] == "provenance/duplicate_producer":
-        assert not removed and not added and len(events) == len(baseline["events"]) + 1
-        duplicated = next(event for event in events if events.count(event) == 2)
-        assert duplicated["kind"] == "provenance" and duplicated["key"] == "OUT:A"
-        fact = next(item for item in result.provenance if item.key == result.final_outputs[0].producer)
-        object.__setattr__(result, "provenance", (*result.provenance, fact))
-    elif case["case_id"] == "provenance/swapped_dependency_parents":
-        assert len(removed) == len(added) == 2
-        assert {event["kind"] for event in (*removed, *added)} == {"input_producer"}
-        parents = {port: key for _, _, port, key in result._input_parents}
-        assert set(parents) == {"subject", "context"}
-        object.__setattr__(
-            result,
-            "_input_parents",
-            tuple(
-                (target, activation, port, parents["context" if port == "subject" else "subject"])
-                for target, activation, port, _ in result._input_parents
-            ),
-        )
-    elif case["case_id"] == "provenance/extra_input_producer":
-        assert not removed and len(added) == 1 and added[0]["kind"] == "input_producer"
-        target, activation, _, key = next(item for item in result._input_parents if item[2] == "subject")
-        object.__setattr__(
-            result, "_input_parents", (*result._input_parents, (target, activation, added[0]["port"], key))
-        )
-    elif added and added[0]["kind"] == "result_owner":
+    if added and added[0]["kind"] == "result_owner":
         assert not removed and len(added) == 1
         owner = added[0]
         assert owner["factory"] == "EXEC:I0"
@@ -588,125 +556,21 @@ def _run_retained_corruption(case: dict[str, Any], events: list[dict[str, Any]])
         assert len(changed) == 1
         object.__setattr__(result.record, changed[0], replacements[changed[0]])
     else:
-        assert len(removed) == 1 and len(added) <= 1
-        original = removed[0]
-        if original["kind"] == "assessment":
-            assert len(added) == 1 and names.fact is not None
-            changed = [field for field in original if original[field] != added[0][field]]
-            assert len(changed) == 1
-            field = changed[0]
-            assert field in {
-                "node",
-                "outcome",
-                "promise",
-                "environment",
-                "evidence_artifact",
-                "authenticated_factory",
-                "finding",
-            }
-            if field == "finding":
-                object.__setattr__(names.fact.finding, "status", added[0][field])
-            elif field == "authenticated_factory":
-                assert added[0][field] == "CALLER"
-                copied = object.__new__(type(names.fact))
-                for member in fields(names.fact):
-                    object.__setattr__(copied, member.name, getattr(names.fact, member.name))
-                submissions = (AssessmentSubmission(fact=copied),)
-            elif field == "evidence_artifact":
-                assert added[0][field] not in names.names.values()
-                foreign = ArtifactRef(
-                    invocation=result.record.invocation, key=max(ref.key for ref, _ in result.artifacts) + 1, version=1
-                )
-                object.__setattr__(names.fact, "evidence_artifact", foreign)
-            elif field == "environment":
-                assert added[0][field]["configurations"] == {}
-                object.__setattr__(names.fact.environment, "configuration", None)
-            else:
-                value = NodeId.new(workflow=names.entry.template.workflow) if field == "node" else added[0][field]
-                object.__setattr__(names.fact, field, value)
-        elif original["kind"] == "terminal":
-            assert len(added) == 1
-            changed = [field for field in original if original[field] != added[0][field]]
-            assert set(changed) <= {"structural", "reasons", "attempt"}
-            (terminal,) = result.record.terminals
-            for field in changed:
-                value = frozenset(added[0][field]) if field == "reasons" else added[0][field]
-                assert field != "attempt" or value is None
-                object.__setattr__(terminal, field, value)
-        elif original["kind"] == "artifact":
-            ref = next(ref for ref, name in names.names.items() if name == original["ref"])
-            if added:
-                assert {key: value for key, value in original.items() if key != "invocation"} == {
-                    key: value for key, value in added[0].items() if key != "invocation"
-                }
-                assert added[0]["invocation"] != original["invocation"]
-                replacement = replace(ref, invocation=InvocationId.new(plan=result.record.plan))
-                artifacts = tuple((replacement if key == ref else key, value) for key, value in result.artifacts)
-            else:
-                artifacts = tuple((key, value) for key, value in result.artifacts if key != ref)
-            object.__setattr__(result, "artifacts", artifacts)
-            object.__setattr__(result.record, "artifacts", frozenset(ref for ref, _ in artifacts))
-        elif original["kind"] == "entry":
-            assert len(added) == 1
-            changed = [field for field in original if original[field] != added[0][field]]
-            assert len(changed) == 1 and changed[0] in {"node", "state_outcome"}
-            if changed[0] == "node":
-                object.__setattr__(names.entry, "template", NodeId.new(workflow=names.entry.template.workflow))
-            else:
-                object.__setattr__(names.entry, "outcome", added[0]["state_outcome"])
-        elif original["kind"] == "final":
-            assert len(added) == 1
-            changed = [field for field in original if original[field] != added[0][field]]
-            assert len(changed) == 1 and changed[0] in {"target", "outcome"}
-            field = changed[0]
-            value = DatumId.new(graph=result.record.graph) if field == "target" else added[0][field]
-            object.__setattr__(result.final_outputs[0], field, value)
-        elif original["kind"] == "provenance":
-            provenance = next(fact for fact in result.provenance if fact.key.port == original["port"])
-            if not added:
-                object.__setattr__(
-                    result, "provenance", tuple(fact for fact in result.provenance if fact is not provenance)
-                )
-            else:
-                changed = [field for field in original if original[field] != added[0][field]]
-                assert len(changed) == 1 and changed[0] in {"artifact", "target", "parents"}
-                if changed[0] == "parents":
-                    assert set(original["parents"]) == set(added[0]["parents"])
-                    object.__setattr__(provenance, "parents", frozenset(reversed(tuple(provenance.parents))))
-                elif changed[0] == "target":
-                    object.__setattr__(
-                        provenance, "key", replace(provenance.key, target=DatumId.new(graph=result.record.graph))
-                    )
-                else:
-                    refs = {name: ref for ref, name in names.names.items()}
-                    if added[0]["artifact"] == "MISSINGv0":
-                        ref = ArtifactRef(
-                            invocation=result.record.invocation,
-                            key=max(ref.key for ref in refs.values()) + 1,
-                            version=1,
-                        )
-                    else:
-                        ref = refs[added[0]["artifact"]]
-                    object.__setattr__(provenance, "artifact", ref)
+        # The remaining retained corruptions change one caller-supplied assessment member.
+        assert len(removed) == len(added) == 1 and removed[0]["kind"] == "assessment" and names.fact is not None
+        (field,) = [field for field in removed[0] if removed[0][field] != added[0][field]]
+        assert field in {"environment", "authenticated_factory", "finding"}
+        if field == "finding":
+            object.__setattr__(names.fact.finding, "status", added[0][field])
+        elif field == "authenticated_factory":
+            assert added[0][field] == "CALLER"
+            copied = object.__new__(type(names.fact))
+            for member in fields(names.fact):
+                object.__setattr__(copied, member.name, getattr(names.fact, member.name))
+            submissions = (AssessmentSubmission(fact=copied),)
         else:
-            assert original["kind"] == "port"
-            port = next(fact for fact in result.ports if fact.port == original["port"])
-            if not added:
-                object.__setattr__(result, "ports", tuple(fact for fact in result.ports if fact is not port))
-            else:
-                assert added[0]["kind"] == "port"
-                changed = [field for field in original if original[field] != added[0][field]]
-                assert len(changed) == 1 and changed[0] in {"node", "target", "activation", "role"}
-                field = changed[0]
-                if field == "role":
-                    value = added[0][field]
-                elif field == "activation":
-                    value = replace(port.activation, occurrence=port.activation.occurrence + 100)
-                elif field == "node":
-                    value = NodeId.new(workflow=names.entry.template.workflow)
-                else:
-                    value = DatumId.new(graph=result.record.graph)
-                object.__setattr__(port, field, value)
+            assert added[0][field]["configurations"] == {}
+            object.__setattr__(names.fact.environment, "configuration", None)
     output = qualify(admitted=admitted, result=result, current=current, submissions=submissions)
     return names.normalize(output)
 

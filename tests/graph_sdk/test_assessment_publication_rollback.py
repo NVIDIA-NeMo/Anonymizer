@@ -52,7 +52,7 @@ def test_rejected_membership_leaves_exact_capacity_for_a_later_peer() -> None:
 
 
 def _execute(
-    monkeypatch: pytest.MonkeyPatch, *, retain_rejected: bool = False
+    monkeypatch: pytest.MonkeyPatch,
 ) -> tuple[_MapFixture, ExecutionResult, dict[NodeId, _MapCallback], _Discard]:
     deltas: list[_ExecutionFacts] = []
     create_delta = _ExecutionFacts.delta
@@ -84,9 +84,6 @@ def _execute(
     assert isinstance(staged, TextCollectionValue) and len(staged.items) == 2
     assert any(port.artifact == rejected.evidence_artifact for port in delta.ports.values())
     assert any(producer.artifact == rejected.evidence_artifact for producer in delta.provenance.values())
-    if retain_rejected:
-        # Corrupt the valid fixture by retaining the real rejected delta's fact.
-        object.__setattr__(result, "assessments", (*result.assessments, rejected))
     return fixture, result, callbacks, _Discard(prior, rejected)
 
 
@@ -168,9 +165,3 @@ def _assert_rollback(
 
 def test_rejected_assessment_delta_preserves_accepted_peer(monkeypatch: pytest.MonkeyPatch) -> None:
     _assert_rollback(*_execute(monkeypatch))
-
-
-def test_witness_detects_suppressed_assessment_discard(monkeypatch: pytest.MonkeyPatch) -> None:
-    observed = _execute(monkeypatch, retain_rejected=True)
-    with pytest.raises(AssertionError, match="rejected staged assessment survived rollback"):
-        _assert_rollback(*observed)

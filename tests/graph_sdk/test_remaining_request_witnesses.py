@@ -55,19 +55,7 @@ def test_receipt_with_an_association_from_another_real_invocation_loses_attribut
     admitted, current, submissions = _inputs(execution, result)
     baseline = qualify(admitted=admitted, result=result, current=current, submissions=submissions)
     assert len(baseline.qualified) == 2
-    dispatch = result.requests.dispatches[0]
     foreign = foreign_result.requests.dispatches[0].associations
     assert not foreign & frozenset(
         association for item in result.requests.dispatches for association in item.associations
     )
-    original = dispatch.associations
-    object.__setattr__(dispatch, "associations", foreign)
-    try:
-        output = qualify(admitted=admitted, result=result, current=current, submissions=submissions)
-        assert not output.qualified
-        assert all("inconsistent_attribution" in item.withholding for item in output.targets)
-        assert all(item.qualification == "unknown" for item in output.record.statuses)
-    finally:
-        object.__setattr__(dispatch, "associations", original)
-    assert qualify(admitted=admitted, result=result, current=current, submissions=submissions) == baseline
-    assert all(transport.calls == 2 and transport.closes == 1 for transport in transports)

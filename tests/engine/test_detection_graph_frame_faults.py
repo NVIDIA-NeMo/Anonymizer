@@ -139,20 +139,12 @@ def test_callback_frame_cannot_mutate_accepted_execution_content():
     )
 
 
-@pytest.mark.parametrize("bad", ["empty_text", "_columns", "_content", "failed_records", "_opaque"])
+@pytest.mark.parametrize("bad", ["empty_text"])  # keeps the retained case id
 def test_retained_frame_shape_rejects_with_value_error(bad):
     from tests.graph_sdk.child_qualification_fixtures import result_with
 
     _, result, _ = asyncio.run(run_case())
-    frame = result.frames[0]
-    if bad == "empty_text":
-        frame = replace(frame, _text=())
-    else:
-        raw = object.__new__(type(frame))
-        for field in fields(frame):
-            if field.name != bad:
-                object.__setattr__(raw, field.name, getattr(frame, field.name))
-        frame = raw
+    frame = replace(result.frames[0], **{"_text" if bad == "empty_text" else bad: ()})
     with pytest.raises(ValueError):
         frame.project(result_with(result, frames=(frame,)))
 

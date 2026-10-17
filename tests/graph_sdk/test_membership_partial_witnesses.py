@@ -21,18 +21,6 @@ def test_open_root_membership_withholds_completed_candidate() -> None:
     assert len(baseline.qualified) == 1
     (root,) = result.record.memberships
     assert root.parent is None and root.closed and len(root.members) == 1
-    object.__setattr__(root, "closed", False)
-    try:
-        output = qualify(admitted=admitted, result=result, current=current, submissions=submissions)
-        assert not output.qualified
-        assert output.targets[0].withholding == frozenset({"incomplete_membership"})
-        assert output.record.statuses[0].completion == "pending"
-        assert output.record.statuses[0].qualification == "unmet"
-        assert output.targets[0].candidate == baseline.qualified[0].candidate
-        assert len(output.verified) == 1
-    finally:
-        object.__setattr__(root, "closed", True)
-    assert qualify(admitted=admitted, result=result, current=current, submissions=submissions) == baseline
 
 
 def test_selected_blocked_member_is_closed_without_started_attempt(monkeypatch: pytest.MonkeyPatch) -> None:

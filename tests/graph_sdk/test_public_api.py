@@ -277,32 +277,6 @@ def test_public_qualification_validates_each_outer_argument(invalid: str, observ
     assert (transform.calls, verifier.calls) == (1, 1)
 
 
-@pytest.mark.parametrize("bound", ["max_submissions", "max_verified_evidence"])
-def test_public_retained_count_precedes_member_allocation(bound: str) -> None:
-    example = runpy.run_path(str(EXAMPLE))
-    plan, services, transform, verifier = example["build"](verified=True, texts=("Alice A", "Alice B"))
-    result = g.execute_sync(admitted=plan, capabilities=plan.capabilities, services=services)
-    original_admitted, current = example["qualification_inputs"](plan, result)
-    admitted = g.admit_qualification(
-        execution=plan, productions=plan.assessment_productions, limits=replace(original_admitted.limits, **{bound: 1})
-    )
-    original = result.assessments
-    try:
-        # Deliberate malformed producer state: the count rejection must precede
-        # construction/validation of either retained-member wrapper.
-        object.__setattr__(result, "assessments", (object(), original[1]))
-        with pytest.raises(g.EffectRejected) as over:
-            g.qualify(admitted=admitted, result=result, current=current)
-        assert over.value.code == g.EffectCode.LIMIT_EXCEEDED
-        object.__setattr__(result, "assessments", (object(),))
-        with pytest.raises(g.EffectRejected) as member:
-            g.qualify(admitted=admitted, result=result, current=current)
-        assert member.value.code == g.EffectCode.INVALID_TYPE
-    finally:
-        object.__setattr__(result, "assessments", original)
-    assert (transform.calls, verifier.calls) == (2, 2)
-
-
 def test_public_diagnosis_after_prepare_rejection() -> None:
     example = runpy.run_path(str(EXAMPLE))
     session = g.begin_observations(

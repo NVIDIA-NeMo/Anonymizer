@@ -165,26 +165,12 @@ def test_resource_inventories_are_bounded_before_indexes(field):
     asyncio.run(run())
 
 
-@pytest.mark.parametrize("shape", ["list", "object"])
-def test_registration_container_cannot_be_removed_or_retyped(shape):
-    async def run():
-        async with _loop_and_pool() as (loop, pool):
-            execution, result, _ = await executed(loop, pool, optional=True, failed=False)
-            changed = result_with(result)
-            object.__setattr__(changed, "implementation_resources", [] if shape == "list" else object())
-            with pytest.raises(EffectRejected) as caught:
-                _qualify(execution, changed)
-            assert caught.value.code == EffectCode.INVALID_TYPE
-
-    asyncio.run(run())
-
-
 @pytest.mark.parametrize(
     "mutation",
     ["equivalent", "foreign"],
 )
 def test_retained_keys_resolve_before_untrusted_hashing(mutation):
-    from anonymizer.engine.graph_sdk.capabilities import ConfigField, ConfigNull, ConfigSequence, FrozenConfig
+    from anonymizer.engine.graph_sdk.capabilities import ConfigField, ConfigNull, FrozenConfig
 
     async def run():
         async with _loop_and_pool() as (loop, pool):
@@ -200,21 +186,6 @@ def test_retained_keys_resolve_before_untrusted_hashing(mutation):
                 row = replace(
                     row, configuration=FrozenConfig(fields=(ConfigField(name="foreign", value=ConfigNull()),))
                 )
-            elif mutation in {"deep_configuration", "deep_operation"}:
-                value = ConfigNull()
-                for _ in range(1500):
-                    value = ConfigSequence(items=(value,))
-                assert execution.context.prepared.limits.max_config_depth == 10
-                if mutation == "deep_configuration":
-                    row = replace(row, configuration=FrozenConfig(fields=(ConfigField(name="oversize", value=value),)))
-                else:
-                    object.__setattr__(row.operation, "name", value)
-            elif mutation == "raw_fields":
-                object.__setattr__(row.configuration, "fields", [])
-            elif mutation == "raw_implementation":
-                object.__setattr__(row.implementation, "name", [])
-            elif mutation == "raw_operation":
-                object.__setattr__(row.operation, "outcomes", [])
             changed = result_with(
                 result,
                 implementation_resources=tuple(row if r is original else r for r in result.implementation_resources),

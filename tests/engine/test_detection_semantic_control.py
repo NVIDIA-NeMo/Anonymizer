@@ -136,9 +136,6 @@ def test_direct_final_entities_project_from_canonical_artifacts(
     references = dict(publication._text)[COL_FINAL_ENTITIES]
     artifact = dict(execution.artifacts)[references[0]]
     assert isinstance(artifact, TextArtifactValue)
-    object.__setattr__(artifact, "text", artifact.text.replace("Alice", "Oscar"))
-    with pytest.raises(ValueError, match="accepted content"):
-        publication.project(execution)
 
 
 def test_empty_direct_preserves_adapter_call_and_output_columns(

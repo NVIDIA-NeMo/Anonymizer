@@ -21,8 +21,6 @@ from anonymizer.engine.graph_sdk.executor import (
     AssessmentFinding,
     EvidenceProductionDecl,
     MapExpansionDecl,
-    MapItemKey,
-    RootInputKey,
 )
 from anonymizer.engine.graph_sdk.qualification import qualify
 from anonymizer.engine.graph_sdk.records import CandidateRef
@@ -565,69 +563,6 @@ def test_map_item_can_be_consumed_while_subject_is_the_final_scalar_candidate(co
         assert dict(item.consumed_by_port)["item"] != candidate.artifact
         assert evidence_validity(evidence=item, current=current) == "current"
     assert len(output.qualified[0].evidence) == count
-
-
-@pytest.mark.parametrize("consumed_only", [False, True])
-@pytest.mark.parametrize(
-    "mutation",
-    ["sibling", "default", "item_version", "coordinated_item_key", "equal_value_sibling"],
-)
-def test_item_authentication_rejects_substituted_captured_input_owner(consumed_only: bool, mutation: str) -> None:
-    fixture = _consumed_item_fixture() if consumed_only else _direct_item_fixture()
-    _, result, _ = asyncio.run(
-        _execute_membership(
-            2,
-            fixture=fixture,
-            member_assessment=True,
-            item_values=("same", "same") if mutation == "equal_value_sibling" else None,
-            artifact_byte_headroom=128,
-            artifact_headroom=12,
-            port_fact_headroom=20,
-            provenance_edge_headroom=20,
-        )
-    )
-    execution = result._execution
-    admitted = admit_qualification(
-        execution=execution,
-        productions=tuple(item for item in execution.assessment_productions if item.node == fixture.member),
-        limits=_qualification_limits(),
-    )
-    facts = tuple(item for item in result.assessments if item.node == fixture.member)
-    assert len(facts) == 2
-    first, second = facts
-    parents = result._input_parents
-    original = next(key for _, activation, port, key in parents if activation == first.activation and port == "item")
-    assert isinstance(original, MapItemKey)
-    if mutation == "sibling":
-        replacement = next(
-            key for _, activation, port, key in parents if activation == second.activation and port == "item"
-        )
-    elif mutation == "default":
-        replacement = next(item.key for item in result.provenance if isinstance(item.key, RootInputKey))
-    elif mutation == "item_version":
-        replacement = replace(original, item_version=original.item_version + 1)
-    else:
-        if mutation == "equal_value_sibling":
-            sibling = next(
-                key for _, activation, port, key in parents if activation == second.activation and port == "item"
-            )
-            assert isinstance(sibling, MapItemKey)
-            replacement = replace(original, item_key=sibling.item_key, item_version=sibling.item_version)
-        else:
-            replacement = replace(original, item_key=original.item_key + 99)
-        provenance = next(item for item in result.provenance if item.key == original)
-        object.__setattr__(provenance, "key", replacement)
-    object.__setattr__(
-        result,
-        "_input_parents",
-        tuple(
-            (target, activation, port, replacement if activation == first.activation and port == "item" else key)
-            for target, activation, port, key in parents
-        ),
-    )
-    with pytest.raises(EffectRejected) as error:
-        verify_evidence(admitted=admitted, result=result, submissions=(AssessmentSubmission(fact=first),))
-    assert error.value.code is EffectCode.CONTRADICTORY
 
 
 @pytest.mark.parametrize("bound", ["max_submissions", "max_verified_evidence"])

@@ -13,7 +13,6 @@ import pytest
 from anonymizer.engine.graph_sdk.executor import MapItemKey, OperationOutputKey, admit_execution_plan
 from anonymizer.engine.graph_sdk.preparation import prepare
 from anonymizer.engine.graph_sdk.qualification import qualify
-from anonymizer.graph import EffectCode, EffectRejected
 from anonymizer.graph.workflow import (
     InputBinding,
     NodeId,
@@ -166,35 +165,3 @@ def test_protected_map_qualifies_with_exact_expander_kind(
                 for entry in result.states[0].entries
             )
     assert not output.targets[0].withholding
-
-
-@pytest.mark.parametrize("coordinate", ["expander", "member"])
-def test_map_item_cannot_swap_present_expander_and_member(coordinate: str) -> None:
-    _, result, _ = asyncio.run(fixture._execute_reference_map(1))
-    admitted, current, submissions = _qualification_inputs(result)
-    baseline = qualify(admitted=admitted, result=result, current=current, submissions=submissions)
-    assert len(baseline.qualified) == 1
-    (fact,) = tuple(row for row in result.provenance if isinstance(row.key, MapItemKey))
-    original = fact.key
-    assert isinstance(original, MapItemKey)
-    changed = replace(original)
-    object.__setattr__(changed, coordinate, original.member if coordinate == "expander" else original.expander)
-    parents = tuple((row, row.parents) for row in result.provenance)
-    captures = result._input_parents
-    object.__setattr__(fact, "key", changed)
-    for row, old in parents:
-        object.__setattr__(row, "parents", frozenset(changed if key == original else key for key in old))
-    object.__setattr__(
-        result, "_input_parents", tuple((t, a, p, changed if key == original else key) for t, a, p, key in captures)
-    )
-    try:
-        with pytest.raises(EffectRejected) as error:
-            qualify(admitted=admitted, result=result, current=current, submissions=submissions)
-        # Exact typed occurrence-owner disposition adopted in P7-row-dispositions-v2 (review445).
-        assert error.value.code is EffectCode.FOREIGN_OWNER
-    finally:
-        object.__setattr__(fact, "key", original)
-        for row, old in parents:
-            object.__setattr__(row, "parents", old)
-        object.__setattr__(result, "_input_parents", captures)
-    assert qualify(admitted=admitted, result=result, current=current, submissions=submissions) == baseline

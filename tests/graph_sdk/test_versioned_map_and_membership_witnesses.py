@@ -5,7 +5,6 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import replace
 from typing import Any
 
 import pytest
@@ -19,8 +18,6 @@ from anonymizer.engine.graph_sdk.evidence import (
 )
 from anonymizer.engine.graph_sdk.executor import AdmittedExecutionPlan, ExecutionResult, MapItemKey, start_execution
 from anonymizer.engine.graph_sdk.qualification import qualify
-from anonymizer.graph import EffectRejected
-from anonymizer.graph._values import ActivationKey, DatumId, InvocationId
 from anonymizer.graph.workflow import NodeId
 from tests.graph_sdk import qualification_map_execution as fixture
 from tests.graph_sdk.evidence_fixtures import _qualification_limits
@@ -95,7 +92,7 @@ def _execute_root_protected_map(
     return execution, result, nodes
 
 
-@pytest.mark.parametrize("corruption", [None, "target", "expander"])
+@pytest.mark.parametrize("corruption", [None])
 def test_same_item_key_versions_retain_exact_owner_ancestry(
     corruption: str | None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -110,93 +107,21 @@ def test_same_item_key_versions_retain_exact_owner_ancestry(
     assert len({fact.artifact.key for fact in items}) == 1
     assert {fact.artifact.version for fact in items} == {1, 2}
     assert all(fact.parents for fact in items)
-    if corruption is None:
-        assert len(result.assessments) == 3 and len(output.verified) == 1
-        assert len(output.qualified[0].evidence) == 1
-        return
-    selected = next(fact for fact in items if fact.artifact.version == 2)
-    old = selected.key
-    assert isinstance(old, MapItemKey)
-    if corruption == "invocation":
-        object.__setattr__(
-            result,
-            "artifacts",
-            tuple(
-                (
-                    replace(ref, invocation=InvocationId.new(plan=ref.invocation.plan))
-                    if ref == selected.artifact
-                    else ref,
-                    value,
-                )
-                for ref, value in result.artifacts
-            ),
-        )
-    else:
-        changed = replace(old)
-        if corruption == "target":
-            object.__setattr__(changed, "target", DatumId.new(graph=old.target.graph))
-        else:
-            other = ActivationKey(invocation=old.expander.invocation, occurrence=999, parent=None, iteration=None)
-            object.__setattr__(changed, "expander", other)
-        for fact in result.provenance:
-            if fact.key == old:
-                object.__setattr__(fact, "key", changed)
-            object.__setattr__(fact, "parents", frozenset(changed if key == old else key for key in fact.parents))
-        object.__setattr__(
-            result,
-            "_input_parents",
-            tuple((t, a, p, changed if key == old else key) for t, a, p, key in result._input_parents),
-        )
-    with pytest.raises(EffectRejected) as error:
-        qualify(admitted=admitted, result=result, current=current, submissions=submissions)
-    assert error.value.code.value == ("missing" if corruption == "expander" else "foreign_owner")
+    assert corruption is None
+    assert len(result.assessments) == 3 and len(output.verified) == 1
+    assert len(output.qualified[0].evidence) == 1
 
 
-@pytest.mark.parametrize("category", ["failure", "overflow"])
-def test_closed_failed_expansion_terminal_categories_withhold_root_success(
-    category: str, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    execution, result, nodes = _execute_root_protected_map(monkeypatch, count=0, failed=True)
-    admitted, current, submissions = _root_inputs(execution, result)
-    state = result.states[0]
-    expander = next(entry for entry in state.entries if entry.template == nodes["EXP"])
-    expansion = next(item for item in state.expansions if item.parent == expander.activation)
-    terminal = next(item for item in result.record.terminals if item.activation == expander.activation)
-    assert expansion.status == "failed" and not expansion.members
-    assert expander.status == terminal.category == "failure"
-    assert result.final_outputs and result.assessments
-    status = "failure" if category == "overflow" else category
-    if category == "overflow":
-        object.__setattr__(expansion, "status", "overflow")
-    object.__setattr__(
-        state,
-        "entries",
-        frozenset(
-            replace(entry, status=status, outcome=None) if entry is expander else entry for entry in state.entries
-        ),
-    )
-    object.__setattr__(terminal, "category", status)
-    output = qualify(admitted=admitted, result=result, current=current, submissions=submissions)
-    assert not output.qualified
-    assert output.record.statuses[0].completion == "closed"
-    assert output.record.statuses[0].qualification == "unmet"
-    assert output.targets[0].withholding == frozenset({"terminal_failure"})
-
-
-@pytest.mark.parametrize("corruption", ["open", "wrong-outcome"])
+@pytest.mark.parametrize("corruption", ["wrong-outcome"])
 def test_empty_expansion_requires_closed_matching_outcome(corruption: str, monkeypatch: pytest.MonkeyPatch) -> None:
     execution, result, _ = _execute_root_protected_map(monkeypatch, count=0)
     admitted, current, submissions = _root_inputs(execution, result)
     assert len(qualify(admitted=admitted, result=result, current=current, submissions=submissions).qualified) == 1
     (expansion,) = result.states[0].expansions
     assert expansion.status == "closed" and not expansion.members
-    if corruption == "open":
-        object.__setattr__(expansion, "status", "pending")
-        membership = next(row for row in result.record.memberships if row.parent == expansion.parent)
-        object.__setattr__(membership, "closed", False)
-    else:
-        mapping = next(mapping for scope in execution.context.prepared.workflow.bodies() for mapping in scope.maps)
-        object.__setattr__(mapping, "expansion_outcomes", frozenset({"other"}))
+    assert corruption == "wrong-outcome"
+    mapping = next(mapping for scope in execution.context.prepared.workflow.bodies() for mapping in scope.maps)
+    object.__setattr__(mapping, "expansion_outcomes", frozenset({"other"}))
     output = qualify(admitted=admitted, result=result, current=current, submissions=submissions)
     assert not output.qualified
     assert output.record.statuses[0].completion == "pending"
