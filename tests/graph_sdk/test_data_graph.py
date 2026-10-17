@@ -420,3 +420,21 @@ def test_foreign_equal_text_identity_is_not_local_membership() -> None:
         _validate(graph, (foreign,))
     assert rejected.value.code is ValidationCode.FOREIGN_OWNER
     assert local != foreign
+
+
+class _TextSubclass(str):
+    pass
+
+
+class _UnderreportingText(str):
+    def encode(self, encoding: str = "utf-8", errors: str = "strict") -> bytes:
+        del encoding, errors
+        return b""
+
+
+@pytest.mark.parametrize("text", [_TextSubclass("Alice"), _UnderreportingText("A" * 50)], ids=["subclass", "encoder"])
+def test_root_text_must_be_exact_str_at_ingress(text: str) -> None:
+    graph, _ = DataGraph.new().add_text("Alice")
+    with pytest.raises(ContractViolation) as error:
+        graph.add_text(text)
+    assert error.value.code is ValidationCode.INVALID_TYPE

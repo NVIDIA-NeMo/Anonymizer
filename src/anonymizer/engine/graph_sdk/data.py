@@ -36,7 +36,9 @@ class Datum(_PrivateRepr):
     text: str
 
     def __post_init__(self) -> None:
-        if not isinstance(self.id, DatumId) or not isinstance(self.text, str):
+        # Exact str: root text is ingress, and a str subclass could override encode()/__len__ and bypass the
+        # byte budget that is now checked only here (retained root values are not re-inspected).
+        if not isinstance(self.id, DatumId) or type(self.text) is not str:
             _reject(ValidationCode.INVALID_TYPE)
 
 
