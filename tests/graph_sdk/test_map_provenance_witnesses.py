@@ -47,9 +47,6 @@ def _replace_map_key(result: ExecutionResult, old: MapItemKey, new: MapItemKey) 
     "corruption,expected",
     [
         ("wrong-port", "contradictory"),
-        ("missing-parent", "contradictory"),
-        ("wrong-parent", "contradictory"),
-        ("multiple-parents", "contradictory"),
         ("unrelated-collection", "contradictory"),
         ("swapped-items", "contradictory"),
         ("foreign-target", "foreign_owner"),

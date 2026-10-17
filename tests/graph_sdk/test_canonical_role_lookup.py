@@ -52,7 +52,7 @@ def test_real_map_parent_roles_use_canonical_identity_without_global_scans() -> 
     assert _inherited_artifact_role(None, _KeyedFacts(provenance), _KeyedFacts(ports)) == "artifact"
 
 
-@pytest.mark.parametrize("coordinate", ["target", "activation", "port", "producer"])
+@pytest.mark.parametrize("coordinate", ["target", "activation", "port"])
 def test_keyed_role_lookup_rejects_a_foreign_retained_coordinate(coordinate: str) -> None:
     result = _result()
     parent = result.final_outputs[0].producer

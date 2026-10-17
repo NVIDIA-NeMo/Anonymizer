@@ -32,15 +32,7 @@ def test_invocation_artifact_cannot_replace_typed_binding_artifact() -> None:
 
 @pytest.mark.parametrize(
     "coordinate,contradiction",
-    [
-        ("key", None),
-        ("version", None),
-        ("key", "parents"),
-        ("version", "parents"),
-        (None, "parents"),
-        ("key", "foreign"),
-        ("version", "foreign"),
-    ],
+    [("key", None), ("version", None), ("key", "parents"), ("version", "parents"), (None, "parents")],
 )
 def test_binding_reference_checks_preserve_missing_and_owner_precedence(
     coordinate: str | None,

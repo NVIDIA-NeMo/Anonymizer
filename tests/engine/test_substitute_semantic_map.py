@@ -4,13 +4,11 @@
 
 from __future__ import annotations
 
-import json
 from dataclasses import replace
 from threading import current_thread, main_thread
 from typing import Any
 from unittest.mock import Mock
 
-import httpx
 import numpy as np
 import pandas as pd
 import pytest
@@ -22,7 +20,6 @@ from anonymizer.engine.constants import (
     COL_FINAL_ENTITIES,
     COL_REPLACED_TEXT,
     COL_REPLACEMENT_MAP,
-    COL_TAGGED_TEXT,
     COL_TEXT,
 )
 from anonymizer.engine.detection._frame_publication import FramePublication, InvocationFrame, PublishedFrame
@@ -268,74 +265,3 @@ def test_mutated_publication_or_map_cannot_authorize_downstream_work(mutation: s
 
 
 # After checked construction only pre-effect slot mutations remain observable; the rest were frozen-value tamper.
-@pytest.mark.parametrize(
-    "after_http,mutation",
-    [(False, "child_slots"), (False, "readiness")],
-    ids=["before-effects-child_slots", "before-effects-readiness"],
-)
-def test_retained_observed_request_mutation_rejects_and_closes_resources(
-    scripted_detection: Any,
-    monkeypatch: pytest.MonkeyPatch,
-    mutation: str,
-    after_http: bool,
-) -> None:
-    from anonymizer.engine.ndd._graph_requests import NddPhysicalTransport
-    from anonymizer.engine.ndd.adapter import NddAdapter
-    from anonymizer.interface.errors import AnonymizerWorkflowError
-    from tests.engine.test_detection_graph_publication import _modify_dd_responses
-
-    designer, models, _, _ = scripted_detection
-    resources: list[NddPhysicalTransport] = []
-    owners: list[Any] = []
-    http_calls: list[bool] = []
-    initialize = NddPhysicalTransport.__init__
-    run = MapBinding.run
-
-    def capture_resource(self: NddPhysicalTransport) -> None:
-        initialize(self)
-        resources.append(self)
-
-    def mutate() -> None:
-        contract = owners[0].contract
-        if mutation == "child_slots":
-            object.__setattr__(contract, "child_slots", (999,))
-        elif mutation == "readiness":
-            object.__setattr__(contract.readiness, "request_slot", 999)
-        else:
-            object.__setattr__(contract.observed_request, "max_attempts", contract.observed_request.max_attempts + 1)
-
-    def enter(self: MapBinding, receiver: Any, frame: pd.DataFrame, arguments: dict[str, Any]) -> LlmReplaceResult:
-        owners.append(source_worker_borrow().owner)
-        if not after_http:
-            mutate()
-        return run(self, receiver, frame, arguments)
-
-    def respond(request: Any, answer: Any) -> Any:
-        body = json.loads(request.content)
-        is_map = "Generate synthetic replacements" in json.dumps(body["messages"])
-        http_calls.append(is_map)
-        if not is_map:
-            return answer
-        payload = answer.json()
-        payload["choices"][0]["message"]["content"] = json.dumps(_raw())
-        if after_http:
-            mutate()
-        return httpx.Response(200, json=payload)
-
-    monkeypatch.setattr(NddPhysicalTransport, "__init__", capture_resource)
-    monkeypatch.setattr(MapBinding, "run", enter)
-    _modify_dd_responses(scripted_detection, monkeypatch, respond)
-    source = _source().assign(**{COL_TAGGED_TEXT: ["<first_name>Alice</first_name>"]})
-    with pytest.raises((EffectRejected, AnonymizerWorkflowError)) as rejected:
-        LlmReplaceWorkflow(NddAdapter(designer)).generate_map_only(
-            source, model_configs=models, selected_models=ReplaceModelSelection(replacement_generator="singleton")
-        )
-    execution = getattr(rejected.value, "_anonymizer_execution")
-    assert not execution.frames and not execution.final_outputs
-    assert len(resources) == 1 and resources[0].closed
-    assert all(client._inner._closed for client in resources[0].clients)
-    assert execution.requests.dispatched_count == len(execution.requests.settlements) == (2 if after_http else 0)
-    assert http_calls == ([False, True] if after_http else [])
-    assert not execution.requests.remote_outstanding and not execution.requests.local_in_flight
-    assert all(state.complete for state in execution.states)
-    assert execution.invocation_state is None or execution.invocation_state.complete

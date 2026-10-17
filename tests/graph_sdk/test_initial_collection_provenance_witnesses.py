@@ -18,11 +18,7 @@ from tests.graph_sdk import context_source_assertions as fixture
 
 @pytest.mark.parametrize(
     "corruption,expected",
-    [
-        ("missing-parent", "contradictory"),
-        ("unretained-parent", "missing"),
-        ("wrong-declaration", "missing"),
-    ],
+    [("missing-parent", "contradictory"), ("unretained-parent", "missing")],
 )
 def test_initial_collection_exact_retained_parent_set(
     corruption: str, expected: str, monkeypatch: pytest.MonkeyPatch

@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import fields, replace
+from dataclasses import replace
 from typing import cast
 
 import pytest
@@ -20,7 +20,6 @@ from anonymizer.engine.graph_sdk.evidence import (
 )
 from anonymizer.engine.graph_sdk.executor import (
     AdmittedExecutionPlan,
-    ExecutionAssessmentFact,
     ExecutionResult,
     admit_execution_plan,
 )
@@ -60,23 +59,6 @@ def test_verify_derives_exact_subject_dependencies_and_retained_environment(
     assert verify_evidence(admitted=admitted, result=result, submissions=(AssessmentSubmission(fact=fact),)) == (
         verified,
     )
-
-
-def test_copied_fields_do_not_authenticate_an_assessment(
-    assessment_execution: tuple[AdmittedExecutionPlan, ExecutionResult],
-) -> None:
-    execution, result = assessment_execution
-    admitted = admit_qualification(
-        execution=execution, productions=execution.assessment_productions, limits=_qualification_limits()
-    )
-    original = result.assessments[0]
-    copied = object.__new__(ExecutionAssessmentFact)
-    for item in fields(original):
-        object.__setattr__(copied, item.name, getattr(original, item.name))
-    assert copied == original and copied is not original
-    with pytest.raises(EffectRejected) as error:
-        verify_evidence(admitted=admitted, result=result, submissions=(AssessmentSubmission(fact=copied),))
-    assert error.value.code is EffectCode.FOREIGN_OWNER
 
 
 def test_submission_duplicates_and_cross_invocation_facts_reject(

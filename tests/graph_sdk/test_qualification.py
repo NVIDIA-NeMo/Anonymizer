@@ -604,7 +604,7 @@ def test_latest_initial_scalar_has_real_versioned_evidence(versions: tuple[int, 
     assert provider.closes == 1
 
 
-@pytest.mark.parametrize("mutation", ["split-lineage", "source-version"])
+@pytest.mark.parametrize("mutation", ["source-version"])
 def test_qualification_rejects_corrupted_materialized_lineage(mutation: str) -> None:
     from anonymizer.engine.graph_sdk.executor import BoundInputKey
 

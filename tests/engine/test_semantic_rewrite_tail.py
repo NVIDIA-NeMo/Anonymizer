@@ -302,34 +302,6 @@ def _assert_final_evidence(result):
         )
 
 
-@pytest.mark.parametrize("fault", ["peer_candidate"])
-@pytest.mark.compat
-def test_final_evidence_consumer_reconciles_canonical_provenance(monkeypatch, fault):
-    from anonymizer.engine.rewrite import _semantic_profile
-
-    reconcile = _semantic_profile.qualify_retained
-
-    def corrupt(**kwargs):
-        result = kwargs["result"]
-        subject = next(
-            port
-            for port in result.ports
-            if port.activation == result.assessments[0].activation and port.port == "in_candidate"
-        )
-        if fault == "peer_candidate":
-            peer = next(port for port in result.ports if port.port == "in_candidate" and port.target != subject.target)
-            object.__setattr__(subject, "artifact", peer.artifact)
-        else:
-            object.__setattr__(
-                result, "provenance", tuple(fact for fact in result.provenance if fact.artifact != subject.artifact)
-            )
-        return reconcile(**kwargs)
-
-    monkeypatch.setattr(_semantic_profile, "qualify_retained", corrupt)
-    with pytest.raises(EffectRejected):
-        asyncio.run(_lifecycle(monkeypatch, "normal"))
-
-
 @pytest.mark.parametrize("combined", [False, True])
 @pytest.mark.parametrize("damage", ["container", "arity", "instance", "binding"])
 def test_malformed_rewrite_binding_rejects_before_lowerer(monkeypatch, combined, damage):

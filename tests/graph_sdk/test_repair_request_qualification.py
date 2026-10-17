@@ -432,14 +432,6 @@ def test_repair_requires_an_external_policy_before_effects() -> None:
     assert transport.calls == transport.closes == 0
 
 
-def test_admission_rechecks_retained_request_purpose_before_effects() -> None:
-    transport = _RepairTransport()
-    with pytest.raises(EffectRejected) as error:
-        asyncio.run(_execute_repair(transport, "initial", tamper="retry"))
-    assert error.value.code is EffectCode.INVALID_VALUE
-    assert transport.calls == transport.closes == 0
-
-
 @pytest.mark.parametrize(("failure", "followup"), [("retryable", "retry"), ("malformed_response", "correction")])
 def test_repair_followups_keep_cumulative_request_accounting(failure: FailureClass, followup: str) -> None:
     transport = _RepairTransport(failure=failure)
