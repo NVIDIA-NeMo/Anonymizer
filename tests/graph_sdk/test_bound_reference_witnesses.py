@@ -27,3 +27,16 @@ def test_invocation_artifact_cannot_replace_typed_binding_artifact() -> None:
     with pytest.raises(EffectRejected) as error:
         replace(cast(Any, fact.key), binding_artifact=fact.artifact)
     assert error.value.code is EffectCode.INVALID_TYPE
+
+
+def test_bound_input_producer_names_a_retained_bound_artifact() -> None:
+    provider = _BindingProvider(source=ContextSourceRef(name="source", revision=1))
+    execution, result = asyncio.run(_execute_assessment(initial_resources=(_initial_resource(provider),)))
+    admitted, current, submissions = _inputs(execution, result)
+    assert len(qualify(admitted=admitted, result=result, current=current, submissions=submissions).qualified) == 1
+    fact = next(item for item in result.provenance if isinstance(item.key, BoundInputKey))
+    old = cast(BoundInputKey, fact.key)
+    bound = execution.context.bound_context
+    assert bound is not None
+    assert any(item.reference == old.binding_artifact for item in bound.artifacts)
+    assert provider.calls == provider.closes == 1

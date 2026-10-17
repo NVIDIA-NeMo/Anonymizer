@@ -59,3 +59,4 @@ def test_receipt_with_an_association_from_another_real_invocation_loses_attribut
     assert not foreign & frozenset(
         association for item in result.requests.dispatches for association in item.associations
     )
+    assert all(transport.calls == 2 and transport.closes == 1 for transport in transports)

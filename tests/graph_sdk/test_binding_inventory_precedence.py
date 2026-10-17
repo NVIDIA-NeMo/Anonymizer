@@ -23,3 +23,4 @@ def test_source_join_refactor_preserves_existing_context_admission_diagnostic() 
     context = execution.context
     bound = context.bound_context
     assert bound is not None
+    assert provider.calls == provider.closes == 1

@@ -77,6 +77,17 @@ def test_callback_cannot_widen_issued_ingress_or_selected_retention(monkeypatch,
     asyncio.run(run())
 
 
+def test_narrower_explicit_retention_remains_valid() -> None:
+    async def run():
+        execution, capabilities, services, _ = span_graph(ingress=IngressLimits(max_text_bytes=100))
+        services = replace(services, limits=replace(services.limits, max_runtime_artifact_bytes=98))
+        result = await (await start_execution(admitted=execution, capabilities=capabilities, services=services)).wait()
+        assert result.final_outputs
+        _inputs(execution, result)
+
+    asyncio.run(run())
+
+
 @pytest.mark.parametrize(
     "parent,child,accepted", [(None, None, True), (None, 2, True), (2, None, False), (2, 3, False)]
 )

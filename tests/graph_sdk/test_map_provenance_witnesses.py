@@ -8,10 +8,22 @@ import asyncio
 
 import pytest
 
+from anonymizer.engine.graph_sdk.executor import MapItemKey
 from anonymizer.engine.graph_sdk.qualification import qualify
 from anonymizer.graph import EffectRejected
 from tests.graph_sdk.qualification_fixtures import _inputs
 from tests.graph_sdk.qualification_map_execution import _execute_reference_map
+
+
+@pytest.mark.parametrize("two_maps", [False, True])
+def test_map_items_retain_map_item_producers(two_maps: bool) -> None:
+    execution, result, _ = asyncio.run(_execute_reference_map(1 if two_maps else 2, two_maps=two_maps))
+    admitted, current, submissions = _inputs(execution, result, port_facts=64, provenance_edges=64)
+    baseline = qualify(admitted=admitted, result=result, current=current, submissions=submissions)
+    assert len(baseline.qualified) == 1
+    items = [fact for fact in result.provenance if isinstance(fact.key, MapItemKey)]
+    first, second = items[:2]
+    assert isinstance(first.key, MapItemKey) and isinstance(second.key, MapItemKey)
 
 
 @pytest.mark.parametrize(

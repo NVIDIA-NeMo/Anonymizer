@@ -112,6 +112,23 @@ def test_same_item_key_versions_retain_exact_owner_ancestry(
     assert len(output.qualified[0].evidence) == 1
 
 
+def test_failed_expansion_withholds_root_success_as_terminal_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    execution, result, nodes = _execute_root_protected_map(monkeypatch, count=0, failed=True)
+    admitted, current, submissions = _root_inputs(execution, result)
+    state = result.states[0]
+    expander = next(entry for entry in state.entries if entry.template == nodes["EXP"])
+    expansion = next(item for item in state.expansions if item.parent == expander.activation)
+    terminal = next(item for item in result.record.terminals if item.activation == expander.activation)
+    assert expansion.status == "failed" and not expansion.members
+    assert expander.status == terminal.category == "failure"
+    assert result.final_outputs and result.assessments
+    output = qualify(admitted=admitted, result=result, current=current, submissions=submissions)
+    assert not output.qualified
+    assert output.record.statuses[0].completion == "closed"
+    assert output.record.statuses[0].qualification == "unmet"
+    assert output.targets[0].withholding == frozenset({"terminal_failure"})
+
+
 @pytest.mark.parametrize("corruption", ["wrong-outcome"])
 def test_empty_expansion_requires_closed_matching_outcome(corruption: str, monkeypatch: pytest.MonkeyPatch) -> None:
     execution, result, _ = _execute_root_protected_map(monkeypatch, count=0)

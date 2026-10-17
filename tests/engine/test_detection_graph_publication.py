@@ -448,6 +448,16 @@ def test_completed_response_without_usage_is_settled_but_never_fabricated(script
     assert not result._retained_resources
 
 
+def test_chunked_validation_qualifies_every_source(scripted_detection):
+    from anonymizer.engine.detection._graph_profile import qualify_detection_redact
+
+    source = pd.DataFrame({COL_TEXT: ["Alice travels.", "Alice Bob stays."]})
+    result = asyncio.run(
+        run_graph_profile(scripted_detection, source, {**_options(), "validation_max_entities_per_call": 1}, chunks=2)
+    )
+    assert len(qualify_detection_redact(result).qualified) == 2
+
+
 def test_default_augmenter_restart_preserves_legacy_and_qualifies(scripted_detection, monkeypatch):
     import json
 
@@ -620,6 +630,46 @@ def test_admission_derives_validator_capacity_without_input_cap(scripted_detecti
     assert len(contract.selection.slots) == (len("Alice Bob stays.") + chunk_size - 1) // chunk_size
     assert result.requests.dispatched_count == expected
     assert len(result.final_outputs) == len(qualify_detection_redact(result).qualified) == 2
+
+
+def test_unknown_remote_source_retains_resource_and_qualifies_independent_peer(scripted_detection, monkeypatch):
+    import json
+
+    from anonymizer.engine.detection._graph_profile import qualify_detection_redact
+
+    physicals = []
+    initialize = NddPhysicalTransport.__init__
+
+    def initialized(self):
+        initialize(self)
+        physicals.append(self)
+
+    def response(request, answer):
+        messages = json.dumps(json.loads(request.content)["messages"])
+        if "Find untagged sensitive entities" in messages and "travels." in messages:
+            raise httpx.ReadError("scripted uncertain source", request=request)
+        return answer
+
+    monkeypatch.setattr(NddPhysicalTransport, "__init__", initialized)
+    _modify_dd_responses(scripted_detection, monkeypatch, response)
+    try:
+        result = asyncio.run(run_graph_profile(scripted_detection, _source(), _options(), remote_limit=2))
+        assert result.requests.dispatched_count == 7
+        assert len(result.requests.remote_outstanding) == 1
+        assert len(result.final_outputs) == 1
+        # Lost remains charged and uncertain; an authenticated retained lease
+        # does not invalidate the independently verified successful source.
+        assert len(qualify_detection_redact(result).qualified) == 1
+        assert result.frames[0].project(result)[COL_TEXT].tolist() == ["Alice stays."]
+        assert len(result._retained_resources) == 1 and not physicals[0].closed
+        from anonymizer.engine.detection._graph_profile import project_detection_redact
+
+        projected = project_detection_redact(result)
+        assert projected._execution is result
+        assert projected.dataframe[COL_TEXT].tolist() == ["Alice stays."]
+    finally:
+        for physical in physicals:
+            asyncio.run_coroutine_threadsafe(physical.close(), physical.loop).result(timeout=10)
 
 
 @pytest.mark.parametrize("failed", [False, True])

@@ -21,6 +21,7 @@ from anonymizer.engine.graph_sdk.executor import (
     AssessmentFinding,
     EvidenceProductionDecl,
     MapExpansionDecl,
+    MapItemKey,
 )
 from anonymizer.engine.graph_sdk.qualification import qualify
 from anonymizer.engine.graph_sdk.records import CandidateRef
@@ -563,6 +564,28 @@ def test_map_item_can_be_consumed_while_subject_is_the_final_scalar_candidate(co
         assert dict(item.consumed_by_port)["item"] != candidate.artifact
         assert evidence_validity(evidence=item, current=current) == "current"
     assert len(output.qualified[0].evidence) == count
+
+
+@pytest.mark.parametrize("consumed_only", [False, True])
+def test_member_assessments_capture_their_map_item_inputs(consumed_only: bool) -> None:
+    fixture = _consumed_item_fixture() if consumed_only else _direct_item_fixture()
+    _, result, _ = asyncio.run(
+        _execute_membership(
+            2,
+            fixture=fixture,
+            member_assessment=True,
+            artifact_byte_headroom=128,
+            artifact_headroom=12,
+            port_fact_headroom=20,
+            provenance_edge_headroom=20,
+        )
+    )
+    facts = tuple(item for item in result.assessments if item.node == fixture.member)
+    assert len(facts) == 2
+    first, _ = facts
+    parents = result._input_parents
+    original = next(key for _, activation, port, key in parents if activation == first.activation and port == "item")
+    assert isinstance(original, MapItemKey)
 
 
 @pytest.mark.parametrize("bound", ["max_submissions", "max_verified_evidence"])

@@ -234,6 +234,13 @@ def test_auxiliary_final_output_does_not_replace_the_assessed_candidate(input_su
     assert output.record.statuses[0].qualification == "met"
 
 
+def test_predecessor_passthrough_is_a_distinct_occurrence_of_the_root_artifact() -> None:
+    _, result = asyncio.run(_execute_assessment(predecessor_input=True))
+    root = next(item for item in result.provenance if not item.parents)
+    predecessor = next(item for item in result.provenance if item.parents == frozenset({root.key}))
+    assert root.artifact == predecessor.artifact and root.key != predecessor.key
+
+
 def test_fully_settled_exhausted_failure_is_unmet_not_unknown() -> None:
     transport = _RecoveringTransport(failure="permanent")
     lease = ResourceLease.create(owner="sdk", safe_detachment="forbidden", handle=transport)
@@ -244,6 +251,25 @@ def test_fully_settled_exhausted_failure_is_unmet_not_unknown() -> None:
     assert not output.qualified
     assert output.record.statuses[0].qualification == "unmet"
     assert "request_accounting" in output.targets[0].withholding
+
+
+@pytest.mark.parametrize(("count", "mode", "status"), [(2, "valid", "overflow"), (1, "missing", "failed")])
+def test_failed_expansion_reconciles_actual_members(count: int, mode: str, status: str) -> None:
+    from tests.graph_sdk.test_effects_map_production_conformance import _execute_membership
+
+    _, result, _ = asyncio.run(_execute_membership(count, response_mode=mode, max_children=1, outward_scalar="join"))
+    execution = result._execution
+    admitted = admit_qualification(execution=execution, productions=(), limits=_qualification_limits())
+    current = evidence_revision_view(
+        admitted=admitted,
+        result=result,
+        artifacts=(),
+        configurations=(),
+    )
+    expansion = next(iter(result.states[0].expansions))
+    assert expansion.status == status and not expansion.members
+    output = qualify(admitted=admitted, result=result, current=current, submissions=())
+    assert output.record.statuses[0].completion == "closed"
 
 
 @pytest.mark.parametrize("nested", [False, True])
@@ -258,6 +284,22 @@ def test_direct_root_input_output_retains_its_actual_producer_and_qualifies(nest
     assert len(output.qualified) == 1
     assert output.qualified[0].candidate == result.final_outputs[0].candidate
     assert output.record.statuses[0].qualification == "met"
+
+
+def test_nested_passthrough_provenance_preserves_the_resolved_input_source() -> None:
+    from anonymizer.engine.graph_sdk.executor import OperationOutputKey
+
+    execution, result = asyncio.run(_execute_assessment(candidate_input=True, root_passthrough=True, nested=True))
+    admitted, current, submissions = _inputs(execution, result)
+    output = next(item for item in result.provenance if item.key == result.final_outputs[0].producer)
+    assessment = result.assessments[0]
+    alias = next(
+        item
+        for item in result.provenance
+        if isinstance(item.key, OperationOutputKey) and item.key.activation == assessment.activation
+    )
+    assert alias.artifact == output.artifact
+    assert alias.key not in output.parents
 
 
 @pytest.mark.parametrize("depth", [2, 3, 4])

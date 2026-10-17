@@ -383,6 +383,19 @@ def test_consumed_artifact_is_derived_from_an_actual_predecessor_producer() -> N
         assert evidence_validity(evidence=verified, current=current) == ("unknown" if missing else "current")
 
 
+@pytest.mark.parametrize("nested", [False, True])
+def test_evidence_occurrence_role_follows_the_executor(nested: bool) -> None:
+    execution, result = asyncio.run(_execute_assessment(candidate_input=True, nested=nested))
+    admitted = admit_qualification(
+        execution=execution, productions=execution.assessment_productions, limits=_qualification_limits()
+    )
+    fact = result.assessments[0]
+    evidence = next(item for item in result.ports if item.activation == fact.activation and item.port == "assessment")
+    assert evidence.role == ("evidence" if nested else "candidate")
+    submissions = (AssessmentSubmission(fact=fact),)
+    assert len(verify_evidence(admitted=admitted, result=result, submissions=submissions)) == 1
+
+
 @pytest.mark.parametrize(
     ("bound", "boundary"),
     [

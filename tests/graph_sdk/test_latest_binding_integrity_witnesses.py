@@ -9,6 +9,7 @@ import asyncio
 import pytest
 
 from anonymizer.engine.graph_sdk.context import ContextSourceRef
+from anonymizer.engine.graph_sdk.executor import BoundInputKey
 from anonymizer.engine.graph_sdk.qualification import qualify
 from anonymizer.graph import EffectRejected
 from tests.graph_sdk.evidence_fixtures import _execute_assessment
@@ -17,6 +18,35 @@ from tests.graph_sdk.qualification_fixtures import (
     _initial_resource,
     _inputs,
 )
+
+
+@pytest.mark.parametrize("target_count", [1, 2])
+def test_latest_binding_retains_every_bound_version(target_count: int) -> None:
+    provider = _BindingProvider(source=ContextSourceRef(name="source", revision=1), versions=(1, 2))
+    execution, result = asyncio.run(
+        _execute_assessment(
+            target_count=target_count,
+            initial_resources=(_initial_resource(provider),),
+            initial_item_limit=2,
+            initial_version_selection="latest",
+        )
+    )
+    admitted, current, submissions = _inputs(execution, result, latest=True)
+    assert (
+        len(
+            qualify(
+                admitted=admitted,
+                result=result,
+                current=current,
+                submissions=submissions,
+            ).qualified
+        )
+        == target_count
+    )
+    bound = execution.context.bound_context
+    assert bound is not None
+    assert len([fact for fact in result.provenance if isinstance(fact.key, BoundInputKey)]) == 2 * target_count
+    assert provider.calls == target_count and provider.closes == 1
 
 
 def test_latest_revision_view_cannot_select_two_versions_of_one_key() -> None:

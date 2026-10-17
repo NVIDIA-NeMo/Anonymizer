@@ -37,6 +37,54 @@ def test_real_failover_to_distinct_implementation_qualifies() -> None:
     assert transport.calls == 2 and transport.closes == 1
 
 
+def test_three_attempt_history_releases_only_the_recovered_target() -> None:
+    transport = _RecoveringTransport(failures=("retryable", None, "permanent"))
+    lease = ResourceLease.create(owner="sdk", safe_detachment="forbidden", handle=transport)
+    execution, result = asyncio.run(_execute_assessment(external=(transport, lease), target_count=2))
+    admitted, current, submissions = _inputs(execution, result)
+    baseline = qualify(admitted=admitted, result=result, current=current, submissions=submissions)
+    assert len(baseline.qualified) == 1
+    first, recovered, last = result.requests.dispatches
+    assert first.associations == recovered.associations != last.associations
+    assert [item.category for item in result.requests.terminals] == ["failure", "success", "failure"]
+    assert len(result.requests.settlements) == 3
+    assert transport.calls == 3 and transport.closes == 1
+
+
+def test_single_dispatch_is_recorded_with_the_initial_purpose() -> None:
+    transport = _RecoveringTransport()
+    lease = ResourceLease.create(owner="sdk", safe_detachment="forbidden", handle=transport)
+    execution, result = asyncio.run(_execute_assessment(external=(transport, lease)))
+    admitted, current, submissions = _inputs(execution, result)
+    baseline = qualify(admitted=admitted, result=result, current=current, submissions=submissions)
+    (dispatch,) = result.requests.dispatches
+    assert dispatch.purpose == "initial"
+    assert len(baseline.qualified) == 1
+    assert transport.calls == transport.closes == 1
+
+
+def test_retryable_failure_recovers_and_qualifies() -> None:
+    transport = _RecoveringTransport(failure="retryable")
+    lease = ResourceLease.create(owner="sdk", safe_detachment="forbidden", handle=transport)
+    execution, result = asyncio.run(_execute_assessment(external=(transport, lease)))
+    admitted, current, submissions = _inputs(execution, result)
+    baseline = qualify(admitted=admitted, result=result, current=current, submissions=submissions)
+    assert len(baseline.qualified) == 1
+    assert transport.calls == 2 and transport.closes == 1
+
+
+def test_retry_keeps_the_initial_target_association() -> None:
+    transport = _RecoveringTransport(failure="retryable")
+    lease = ResourceLease.create(owner="sdk", safe_detachment="forbidden", handle=transport)
+    execution, result = asyncio.run(_execute_assessment(external=(transport, lease), target_count=2))
+    admitted, current, submissions = _inputs(execution, result)
+    baseline = qualify(admitted=admitted, result=result, current=current, submissions=submissions)
+    assert len(baseline.qualified) == 2
+    initial, retry, other = result.requests.dispatches
+    assert initial.associations == retry.associations != other.associations
+    assert transport.calls == 3 and transport.closes == 1
+
+
 def test_real_fresh_initial_binding_request_qualifies_with_exact_accounting() -> None:
     provider = _BindingProvider(source=ContextSourceRef(name="fresh-binding", revision=1))
     execution, result = asyncio.run(_execute_assessment(initial_resources=(_initial_resource(provider),)))

@@ -25,6 +25,12 @@ def test_candidate_and_evidence_can_identify_the_same_artifact() -> None:
     assert output.verified[0].subject == candidate
 
 
+def test_subject_occurrence_keeps_the_candidate_role() -> None:
+    execution, result = asyncio.run(_execute_separate_subject_context())
+    subject = next(port for port in result.ports if port.port == "subject")
+    assert subject.role == "candidate"
+
+
 def test_distinct_predecessor_and_candidate_occurrences_preserve_identity_alias() -> None:
     execution, result = asyncio.run(_execute_assessment(predecessor_input=True, alias_output=True))
     admitted, current, submissions = _inputs(execution, result)

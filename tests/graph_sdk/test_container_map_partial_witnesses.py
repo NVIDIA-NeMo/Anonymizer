@@ -165,3 +165,13 @@ def test_protected_map_qualifies_with_exact_expander_kind(
                 for entry in result.states[0].entries
             )
     assert not output.targets[0].withholding
+
+
+def test_single_item_map_qualifies_with_one_map_item_producer() -> None:
+    _, result, _ = asyncio.run(fixture._execute_reference_map(1))
+    admitted, current, submissions = _qualification_inputs(result)
+    baseline = qualify(admitted=admitted, result=result, current=current, submissions=submissions)
+    assert len(baseline.qualified) == 1
+    (fact,) = tuple(row for row in result.provenance if isinstance(row.key, MapItemKey))
+    original = fact.key
+    assert isinstance(original, MapItemKey)

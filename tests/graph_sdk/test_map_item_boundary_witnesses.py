@@ -35,6 +35,7 @@ from tests.graph_sdk.test_dynamic_executor import _capability, _outcome
 from tests.graph_sdk.test_effects_map_production_conformance import _execute_membership
 from tests.graph_sdk.test_evidence import _qualification_limits
 from tests.graph_sdk.test_map_item_evidence import _direct_item_fixture
+from tests.graph_sdk.test_qualification_map_conformance import _execute_reference_map
 from tests.graph_sdk.workflow_construction import admit_activation_workflow, admit_static_workflow, replace_scope
 
 
@@ -116,6 +117,24 @@ def test_pending_retained_map_membership_withholds_previously_qualified_candidat
     assert expansion.status == "closed" and not expansion.members
     # A successful atomic publication cannot leave this pending. This is a
     # retained-state integrity witness, not a fabricated normal execution.
+
+
+@pytest.mark.parametrize("cross_map", [False, True])
+def test_captured_item_subject_is_distinct_from_candidate_and_other_map(cross_map: bool) -> None:
+    _, result, nodes = asyncio.run(_execute_reference_map(1, two_maps=cross_map))
+    admitted, current, submissions = _qualification_inputs(result)
+    assert len(qualify(admitted=admitted, result=result, current=current, submissions=submissions).qualified) == 1
+    source = next(
+        port
+        for port in result.ports
+        if port.node == nodes["MN" if cross_map else "N"] and port.port == ("item" if cross_map else "subject")
+    )
+    victim = next(
+        port
+        for port in result.ports
+        if port.node == nodes["MN2" if cross_map else "MN"] and port.port == ("item2" if cross_map else "item")
+    )
+    assert source.artifact != victim.artifact
 
 
 def test_failed_ordinary_prerequisite_blocks_member_after_item_publication() -> None:
