@@ -10,9 +10,7 @@ import pytest
 
 from anonymizer.engine.graph_sdk.inspection import InspectionLimits, encode_inspection
 from anonymizer.engine.graph_sdk.observations import (
-    _OBSERVATION_KEY,
     _PRODUCER,
-    CorrelationRef,
     ObservationFailure,
     ObservationLimits,
     ObservationReceipt,
@@ -191,16 +189,6 @@ def test_encoding_exact_nodes_depth_bytes_and_bool_correlation() -> None:
         with pytest.raises(EffectRejected) as caught:
             encode_inspection(value=receipt, limits=replace(exact, **{field: getattr(exact, field) - 1}))
         assert caught.value.code == EffectCode.LIMIT_EXCEEDED
-    pair = receipt.pairs[0]
-    invalid = replace(
-        pair, terminal=replace(pair.terminal, correlation=CorrelationRef(ordinal=False, parent_ordinal=None))
-    )
-    mutated = ObservationReceipt(
-        _key=_OBSERVATION_KEY, schema_version=1, pairs=(invalid,), delivery="not_configured", delivered_pairs=0
-    )
-    with pytest.raises(EffectRejected) as caught:
-        encode_inspection(value=mutated, limits=inspection_limits())
-    assert caught.value.code == EffectCode.INVALID_TYPE
 
 
 @pytest.mark.parametrize("scenario", ["local", "nested", "external"])

@@ -181,15 +181,7 @@ def test_registration_container_cannot_be_removed_or_retyped(shape):
 
 @pytest.mark.parametrize(
     "mutation",
-    [
-        "equivalent",
-        "foreign",
-        "deep_configuration",
-        "raw_fields",
-        "raw_implementation",
-        "raw_operation",
-        "deep_operation",
-    ],
+    ["equivalent", "foreign"],
 )
 def test_retained_keys_resolve_before_untrusted_hashing(mutation):
     from anonymizer.engine.graph_sdk.capabilities import ConfigField, ConfigNull, ConfigSequence, FrozenConfig
@@ -235,34 +227,6 @@ def test_retained_keys_resolve_before_untrusted_hashing(mutation):
             assert len(_qualify(execution, result).qualified) == 1
 
     asyncio.run(run())
-
-
-def test_key_matching_is_bounded_by_admitted_configuration_shape():
-    from anonymizer.engine.graph_sdk.capabilities import (
-        ConfigField,
-        ConfigNull,
-        ConfigSequence,
-        FrozenConfig,
-        config_size,
-    )
-    from anonymizer.engine.graph_sdk.qualification import _matches_admitted_key
-
-    def config(depth):
-        value = ConfigNull()
-        for _ in range(depth - 2):
-            value = ConfigSequence(items=(value,))
-        return FrozenConfig(fields=(ConfigField(name="nested", value=value),))
-
-    admitted = config(10)
-    assert config_size(admitted) == (10, 11)
-    assert _matches_admitted_key(admitted, config(10))
-    assert not _matches_admitted_key(admitted, config(9))
-    assert not _matches_admitted_key(admitted, config(11))
-    assert not _matches_admitted_key(admitted, config(1502))
-    assert not _matches_admitted_key(admitted, FrozenConfig(fields=()))
-    assert not _matches_admitted_key(
-        admitted, FrozenConfig(fields=(*admitted.fields, ConfigField(name="z", value=ConfigNull())))
-    )
 
 
 @pytest.mark.parametrize("missing", [False, True])

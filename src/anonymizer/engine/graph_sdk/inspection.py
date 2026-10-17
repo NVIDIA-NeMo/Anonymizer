@@ -6,11 +6,16 @@ from __future__ import annotations
 
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, fields, is_dataclass
-from functools import cache
-from types import UnionType
-from typing import Literal, TypeVar, get_args, get_origin, get_type_hints
+from typing import Literal, TypeVar, get_args
 
-from anonymizer.engine.graph_sdk._effect_values import EffectCode, PrivateValue, reject, require_count, require_instance
+from anonymizer.engine.graph_sdk._effect_values import (
+    EffectCode,
+    PrivateValue,
+    reject,
+    require_count,
+    require_instance,
+    require_owner,
+)
 from anonymizer.engine.graph_sdk._execution_values import (
     AdmittedExecutionPlan,
     ExecutionResult,
@@ -41,7 +46,6 @@ from anonymizer.engine.graph_sdk.observations import (
     ObservationTerminal,
     WorkMeasurement,
     _FactoryValue,
-    _width,
 )
 from anonymizer.engine.graph_sdk.preparation import PreparedPlan
 from anonymizer.engine.graph_sdk.qualification import QualificationResult
@@ -250,6 +254,10 @@ class CountEstimate(PrivateValue):
     knowledge: CountKnowledge
     value: int | None
 
+    def __post_init__(self) -> None:
+        if (self.knowledge == "unknown") != (self.value is None):
+            reject(EffectCode.CONTRADICTORY)
+
 
 @dataclass(frozen=True, slots=True, kw_only=True, repr=False)
 class GraphShapeSummary(PrivateValue):
@@ -277,12 +285,31 @@ class ActualRequestCounts(PrivateValue):
     repair: CountEstimate
     failover: CountEstimate
 
+    def __post_init__(self) -> None:
+        counts = [getattr(self, field.name) for field in fields(self) if field.name != "total"]
+        if any(count.knowledge == "known_upper" for count in (*counts, self.total)):
+            reject(EffectCode.CONTRADICTORY)
+        if all(count.knowledge == "exact" for count in counts) and self.total.knowledge != "exact":
+            reject(EffectCode.CONTRADICTORY)
+        if self.total.knowledge == "exact" and (
+            any(count.knowledge != "exact" for count in counts)
+            or self.total.value != sum(count.value for count in counts)
+        ):
+            reject(EffectCode.CONTRADICTORY)
+
 
 @dataclass(frozen=True, slots=True, kw_only=True, repr=False)
 class UsageSummary(PrivateValue):
     input_units: CountEstimate
     output_units: CountEstimate
     requests_with_unknown_usage: CountEstimate
+
+    def __post_init__(self) -> None:
+        if self.input_units.knowledge != self.output_units.knowledge or any(
+            count.knowledge == "known_upper"
+            for count in (self.input_units, self.output_units, self.requests_with_unknown_usage)
+        ):
+            reject(EffectCode.CONTRADICTORY)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True, repr=False)
@@ -322,6 +349,10 @@ class QualificationProxy(PrivateValue):
     verified_evidence: int
     withheld_targets: int
 
+    def __post_init__(self) -> None:
+        if self.assessed_targets != self.met + self.unmet + self.unknown:
+            reject(EffectCode.CONTRADICTORY)
+
 
 @dataclass(frozen=True, slots=True, kw_only=True, repr=False)
 class ReasonCount(PrivateValue):
@@ -358,6 +389,11 @@ class DiagnosisSummary(_FactoryValue):
     usage_unknown: bool
     remote_work_unknown: bool
     observation_failed: bool
+
+    def __post_init__(self, _key: object) -> None:
+        require_owner(_key, _OBSERVATION_KEY)
+        if len({item.reason for item in self.reasons}) != len(self.reasons):
+            reject(EffectCode.DUPLICATE)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True, repr=False)
@@ -440,174 +476,11 @@ _MEMBERS = (
 )
 
 
-@cache
-def _schema(kind: type) -> dict[str, object]:
-    assert is_dataclass(kind)
-    hints = get_type_hints(kind)
-    return {field.name: hints[field.name] for field in fields(kind)}
-
-
 def _members(value: object) -> tuple[tuple[str, object], ...]:
     if type(value) not in _MEMBERS:
         return ()
     assert is_dataclass(value)
     return tuple((field.name, getattr(value, field.name)) for field in fields(value))
-
-
-def _string_size(value: str) -> int:
-    # Size only: no arbitrary caller string enters an allocated JSON buffer.
-    return 2 + sum(
-        2
-        if char in {'"', "\\", "\b", "\f", "\n", "\r", "\t"}
-        else 6
-        if ord(char) < 32
-        else 1
-        if ord(char) < 128
-        else 2
-        if ord(char) < 2048
-        else 3
-        if ord(char) < 65536
-        else 4
-        for char in value
-    )
-
-
-def _bounds(value: InspectionValue, limits: InspectionLimits) -> None:
-    nodes = size = 0
-    pending: list[tuple[object, int, str]] = [(value, 1, "")]
-    while pending:
-        item, depth, name = pending.pop()
-        nodes += 1
-        if nodes > limits.max_nodes or depth > limits.max_depth:
-            reject(EffectCode.LIMIT_EXCEEDED)
-        members = _members(item)
-        if members:
-            size += 2 + max(0, len(members) - 1) + sum(_string_size(key) + 1 for key, _ in members)
-            pending.extend((child, depth + 1, key) for key, child in members)
-        elif type(item) in (tuple, frozenset):
-            assert isinstance(item, (tuple, frozenset))
-            if name == "pairs" and (len(item) > limits.max_pairs or 2 * len(item) > limits.max_events):
-                reject(EffectCode.LIMIT_EXCEEDED)
-            if name == "reasons" and len(item) > limits.max_reason_counts:
-                reject(EffectCode.LIMIT_EXCEEDED)
-            if len(item) > limits.max_nodes - nodes:
-                reject(EffectCode.LIMIT_EXCEEDED)
-            size += 2 + max(0, len(item) - 1)
-            pending.extend((child, depth + 1, "") for child in item)
-        elif type(item) is int:
-            assert isinstance(item, int)
-            if name != "schema_version" and (item < 0 or item > limits.max_count):
-                reject(EffectCode.LIMIT_EXCEEDED)
-            size += _width(abs(item)) + int(item < 0)
-        elif type(item) is str:
-            assert isinstance(item, str)
-            size += _string_size(item)
-        elif item is None or type(item) is bool:
-            size += 4 if item is None or item is True else 5
-        if size > limits.max_encoded_bytes:
-            reject(EffectCode.LIMIT_EXCEEDED)
-
-
-def _member_types(value: object, expected: object) -> None:
-    origin, args = get_origin(expected), get_args(expected)
-    if origin is UnionType:
-        choices = [
-            kind for kind in args if kind is type(value) or get_origin(kind) is Literal and value in get_args(kind)
-        ]
-        if not choices:
-            reject(EffectCode.INVALID_TYPE)
-        _member_types(value, choices[0])
-    elif origin is Literal:
-        if not any(type(value) is type(option) for option in args):
-            reject(EffectCode.INVALID_TYPE)
-        # Version validation is deliberately later than duplicate/missing facts.
-        if args != (1,) and value not in args:
-            reject(EffectCode.INVALID_VALUE)
-    elif origin in (tuple, frozenset):
-        if type(value) is not origin:
-            reject(EffectCode.INVALID_TYPE)
-        assert isinstance(value, (tuple, frozenset))
-        for item in value:
-            _member_types(item, args[0])
-    elif type(value) is not expected:
-        reject(EffectCode.INVALID_TYPE)
-    elif type(value) in _MEMBERS:
-        for name, annotation in _schema(type(value)).items():
-            _member_types(getattr(value, name), annotation)
-
-
-def _all_values(value: object) -> Iterator[object]:
-    yield value
-    for _, child in _members(value):
-        if type(child) in (tuple, frozenset):
-            assert isinstance(child, (tuple, frozenset))
-            for item in child:
-                yield from _all_values(item)
-        else:
-            yield from _all_values(child)
-
-
-def _duplicates(value: InspectionValue) -> None:
-    for item in _all_values(value):
-        if type(item) is ObservationReceipt:
-            ordinals = [pair.start.correlation.ordinal for pair in item.pairs]
-            if len(set(ordinals)) != len(ordinals):
-                reject(EffectCode.DUPLICATE)
-        elif type(item) is DiagnosisSummary:
-            reasons = [reason.reason for reason in item.reasons]
-            if len(set(reasons)) != len(reasons):
-                reject(EffectCode.DUPLICATE)
-
-
-def _consistency(value: InspectionValue) -> None:
-    _duplicates(value)
-    values = tuple(_all_values(value))
-    for item in values:
-        if type(item) in _VALUES and getattr(item, "schema_version") != 1:
-            reject(EffectCode.UNSUPPORTED)
-    for item in values:
-        if type(item) is CountEstimate:
-            if (item.knowledge == "unknown") != (item.value is None):
-                reject(EffectCode.CONTRADICTORY)
-        elif type(item) is ObservationReceipt:
-            if (
-                item.delivered_pairs > len(item.pairs)
-                or item.delivery == "complete"
-                and item.delivered_pairs != len(item.pairs)
-                or item.delivery == "not_configured"
-                and item.delivered_pairs != 0
-            ):
-                reject(EffectCode.CONTRADICTORY)
-            for index, pair in enumerate(item.pairs):
-                correlation = pair.start.correlation
-                if (
-                    correlation.ordinal != index
-                    or correlation.parent_ordinal is not None
-                    and not 0 <= correlation.parent_ordinal < index
-                    or pair.start.correlation != pair.terminal.correlation
-                    or pair.start.boundary != pair.terminal.boundary
-                ):
-                    reject(EffectCode.CONTRADICTORY)
-        elif type(item) is ActualRequestCounts:
-            counts = [getattr(item, field.name) for field in fields(item) if field.name != "total"]
-            if any(count.knowledge == "known_upper" for count in (*counts, item.total)):
-                reject(EffectCode.CONTRADICTORY)
-            if all(count.knowledge == "exact" for count in counts) and item.total.knowledge != "exact":
-                reject(EffectCode.CONTRADICTORY)
-            if item.total.knowledge == "exact" and (
-                any(count.knowledge != "exact" for count in counts)
-                or item.total.value != sum(count.value for count in counts)
-            ):
-                reject(EffectCode.CONTRADICTORY)
-        elif type(item) is UsageSummary:
-            if item.input_units.knowledge != item.output_units.knowledge or any(
-                count.knowledge == "known_upper"
-                for count in (item.input_units, item.output_units, item.requests_with_unknown_usage)
-            ):
-                reject(EffectCode.CONTRADICTORY)
-        elif type(item) is QualificationProxy:
-            if item.assessed_targets != item.met + item.unmet + item.unknown:
-                reject(EffectCode.CONTRADICTORY)
 
 
 def _decimal(value: int) -> bytes:
@@ -618,9 +491,15 @@ def _decimal(value: int) -> bytes:
     return (str(value) + "".join(f"{part:09d}" for part in reversed(parts))).encode("ascii")
 
 
-def _chunks(value: object) -> Iterator[bytes]:
+def _chunks(
+    value: object, limits: InspectionLimits, nodes: list[int], depth: int = 1, name: str = ""
+) -> Iterator[bytes]:
+    """Closed-schema JSON chunks, checking node, depth, count, pairs and reasons limits as it walks."""
     import json
 
+    nodes[0] += 1
+    if nodes[0] > limits.max_nodes or depth > limits.max_depth:
+        reject(EffectCode.LIMIT_EXCEEDED)
     members = _members(value)
     if members:
         yield b"{"
@@ -628,10 +507,16 @@ def _chunks(value: object) -> Iterator[bytes]:
             if index:
                 yield b","
             yield json.dumps(key).encode("ascii") + b":"
-            yield from _chunks(child)
+            yield from _chunks(child, limits, nodes, depth + 1, key)
         yield b"}"
     elif type(value) in (tuple, frozenset):
         assert isinstance(value, (tuple, frozenset))
+        if name == "pairs" and (len(value) > limits.max_pairs or 2 * len(value) > limits.max_events):
+            reject(EffectCode.LIMIT_EXCEEDED)
+        if name == "reasons" and len(value) > limits.max_reason_counts:
+            reject(EffectCode.LIMIT_EXCEEDED)
+        if len(value) > limits.max_nodes - nodes[0]:
+            reject(EffectCode.LIMIT_EXCEEDED)
         ordered = (
             tuple(reason for reason in get_args(ObservationReason) if reason in value)
             if type(value) is frozenset
@@ -643,26 +528,32 @@ def _chunks(value: object) -> Iterator[bytes]:
         for index, item in enumerate(ordered):
             if index:
                 yield b","
-            yield from _chunks(item)
+            yield from _chunks(item, limits, nodes, depth + 1)
         yield b"]"
     elif type(value) is int:
+        if name != "schema_version" and (value < 0 or value > limits.max_count):
+            reject(EffectCode.LIMIT_EXCEEDED)
         yield _decimal(value)
     else:
         yield json.dumps(value, ensure_ascii=False, separators=(",", ":"), allow_nan=False).encode("utf-8")
 
 
+def _encode(value: InspectionValue, limits: InspectionLimits) -> bytes:
+    """One bounded pass: abort before any chunk would take the output past ``max_encoded_bytes``."""
+    encoded = bytearray()
+    for chunk in _chunks(value, limits, [0]):
+        if len(encoded) + len(chunk) > limits.max_encoded_bytes:
+            reject(EffectCode.LIMIT_EXCEEDED)
+        encoded += chunk
+    return bytes(encoded)
+
+
 def encode_inspection(*, value: InspectionValue, limits: InspectionLimits) -> bytes:
-    """Validate the closed schema and all bounds before allocating JSON output."""
+    """Encode a closed inspection value within all bounds, never buffering past the byte limit."""
     if type(value) not in _VALUES:
         reject(EffectCode.INVALID_TYPE)
     require_instance(limits, InspectionLimits)
-    _bounds(value, limits)
-    _member_types(value, type(value))
-    _consistency(value)
-    encoded = b"".join(_chunks(value))
-    if len(encoded) > limits.max_encoded_bytes:
-        reject(EffectCode.LIMIT_EXCEEDED)
-    return encoded
+    return _encode(value, limits)
 
 
 def bind_inspection_source(
@@ -692,8 +583,7 @@ def bind_inspection_source(
         if item is not None:
             require_instance(item, kind)
     if observations is not None:
-        _bounds(observations, limits)
-        _member_types(observations, type(observations))
+        _encode(observations, limits)
     if context is not None and context.prepared is not prepared:
         reject(EffectCode.FOREIGN_OWNER)
     if binding is not None and (
@@ -726,8 +616,6 @@ def bind_inspection_source(
             reject(EffectCode.FOREIGN_OWNER)
         if any(value is not owners.get(name) for name, value in observation_session._owner.items()):
             reject(EffectCode.FOREIGN_OWNER)
-    if observations is not None:
-        _duplicates(observations)
     if (
         execution_plan is not None
         and context is None
@@ -737,8 +625,6 @@ def bind_inspection_source(
         and execution is None
     ):
         reject(EffectCode.MISSING)
-    if observations is not None:
-        _consistency(observations)
     if execution is not None:
         if len(execution.artifacts) > limits.max_count:
             reject(EffectCode.LIMIT_EXCEEDED)
@@ -793,9 +679,7 @@ _Inspection = TypeVar("_Inspection", bound=InspectionValue)
 
 
 def _validated(value: _Inspection, limits: InspectionLimits) -> _Inspection:
-    _bounds(value, limits)
-    _member_types(value, type(value))
-    _consistency(value)
+    _encode(value, limits)
     return value
 
 

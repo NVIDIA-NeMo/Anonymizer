@@ -7,7 +7,7 @@ from __future__ import annotations
 from dataclasses import InitVar, dataclass, fields
 from typing import TYPE_CHECKING, Literal, Protocol, get_args
 
-from anonymizer.engine.graph_sdk._effect_values import PrivateValue, require_count, require_owner
+from anonymizer.engine.graph_sdk._effect_values import EffectCode, PrivateValue, reject, require_count, require_owner
 from anonymizer.engine.graph_sdk._ingress_values import IngressLimits
 
 if TYPE_CHECKING:
@@ -142,11 +142,44 @@ class ObservationReceipt(_FactoryValue):
     delivery: ObservationDelivery
     delivered_pairs: int
 
+    def __post_init__(self, _key: object) -> None:
+        require_owner(_key, _OBSERVATION_KEY)
+        ordinals = [pair.start.correlation.ordinal for pair in self.pairs]
+        if len(set(ordinals)) != len(ordinals):
+            reject(EffectCode.DUPLICATE)
+        if (
+            self.delivered_pairs > len(self.pairs)
+            or self.delivery == "complete"
+            and self.delivered_pairs != len(self.pairs)
+            or self.delivery == "not_configured"
+            and self.delivered_pairs != 0
+        ):
+            reject(EffectCode.CONTRADICTORY)
+        for index, pair in enumerate(self.pairs):
+            correlation = pair.start.correlation
+            if (
+                correlation.ordinal != index
+                or correlation.parent_ordinal is not None
+                and not 0 <= correlation.parent_ordinal < index
+                or pair.start.correlation != pair.terminal.correlation
+                or pair.start.boundary != pair.terminal.boundary
+            ):
+                reject(EffectCode.CONTRADICTORY)
+
 
 @dataclass(frozen=True, slots=True, kw_only=True, repr=False)
 class ObservationFailure(PrivateValue):
     schema_version: Literal[1]
     code: ObservationFailureCode
+
+    def __post_init__(self) -> None:
+        # Caller-constructible: the only inspection value that is ingress, so it is checked here, once.
+        if type(self.schema_version) is not int or type(self.code) is not str:
+            reject(EffectCode.INVALID_TYPE)
+        if self.code not in get_args(ObservationFailureCode):
+            reject(EffectCode.INVALID_VALUE)
+        if self.schema_version != 1:
+            reject(EffectCode.UNSUPPORTED)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True, repr=False)
@@ -448,15 +481,20 @@ class ObservationSession(PrivateValue):
             if self._closed is None:
                 if self._open and self._failure is None:
                     self._disable("producer_contract")
-                self._closed = self._failure or ObservationReceipt(
-                    _key=_OBSERVATION_KEY,
-                    schema_version=1,
-                    pairs=tuple(self._pairs[index] for index in sorted(self._pairs)),
-                    delivery=self._delivery,
-                    delivered_pairs=self._delivered,
-                )
+                from anonymizer.engine.graph_sdk._effect_values import EffectRejected
+
+                try:
+                    self._closed = self._failure or ObservationReceipt(
+                        _key=_OBSERVATION_KEY,
+                        schema_version=1,
+                        pairs=tuple(self._pairs[index] for index in sorted(self._pairs)),
+                        delivery=self._delivery,
+                        delivered_pairs=self._delivered,
+                    )
+                except EffectRejected:
+                    # Receipt consistency is checked at construction; a contradictory one is a producer defect.
+                    self._closed = self._disable("producer_contract")
                 if isinstance(self._closed, ObservationReceipt):
-                    from anonymizer.engine.graph_sdk._effect_values import EffectCode, EffectRejected
                     from anonymizer.engine.graph_sdk.inspection import InspectionLimits, _validated
 
                     bounds = InspectionLimits(

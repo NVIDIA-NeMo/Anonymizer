@@ -86,7 +86,12 @@ def _valid(kind: type[Any]) -> Any:
         return RequestPolicyBinding.create(
             association=BindingAssociation(declaration=declaration), policies=frozenset({policy})
         )
-    return kind(_key=_owner_key(kind), **_arguments(kind))
+    arguments = _arguments(kind)
+    if kind.__name__ == "ObservationReceipt":  # consistency is checked at construction
+        arguments.update(schema_version=1, pairs=(), delivery="not_configured", delivered_pairs=0)
+    elif kind.__name__ == "DiagnosisSummary":
+        arguments.update(reasons=())
+    return kind(_key=_owner_key(kind), **arguments)
 
 
 def test_owner_keyed_inventory_is_pinned() -> None:

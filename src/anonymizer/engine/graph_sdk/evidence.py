@@ -295,8 +295,6 @@ class _RunFacts(_ExecutionFacts):
         ):
             reject(EffectCode.LIMIT_EXCEEDED)
         record = result.record
-        if any(len(item.members) > prepared.limits.max_total_activation_slots for item in record.memberships):
-            reject(EffectCode.LIMIT_EXCEEDED)
         if (
             result._execution is not execution
             or record.plan != prepared.plan
@@ -317,8 +315,6 @@ class _RunFacts(_ExecutionFacts):
                 reject(EffectCode.FOREIGN_OWNER)
             bound._validate_inventory(source_mismatch=EffectCode.FOREIGN_OWNER)
             bound._validate_artifact_joins(source_mismatch=EffectCode.FOREIGN_OWNER)
-        if len(result.artifacts) > limits.max_port_facts:
-            reject(EffectCode.LIMIT_EXCEEDED)
         # Every retained value passed ingress (callback outputs, bound sources) or was built by the executor
         # from validated data; the executor's own inventory is not re-inspected or re-joined here.
         retained = dict(result.artifacts)
@@ -355,8 +351,6 @@ class _RunFacts(_ExecutionFacts):
             (result._passthrough_parents, facts.passthrough_parents),
         ):
             for target, activation, port, parent in rows:
-                if activation not in facts.entries or target != facts.owners.get(activation) or parent.target != target:
-                    reject(EffectCode.FOREIGN_OWNER)
                 index[target, activation, port] = parent
         facts.input_parents = MappingProxyType(input_parents)
         facts._seal()

@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from dataclasses import InitVar, dataclass, fields, is_dataclass, replace
+from dataclasses import InitVar, dataclass, replace
 from typing import Literal, get_args
 
 from anonymizer.engine.graph_sdk._effect_values import EffectCode, PrivateValue, reject, require_instance, require_owner
@@ -75,43 +75,6 @@ WithholdingCode = Literal[
 _CODES = frozenset(get_args(WithholdingCode))
 _TERMINAL = frozenset({"success", "failure", "cancelled", "lost", "blocked", "inconsistent"})
 _QUALIFICATION_KEY = object()
-
-
-def _matches_admitted_key(admitted: object, retained: object) -> bool:
-    """Resolve a registration against admitted structure without hashing raw values.
-
-    Only the admitted declaration supplies schema and collection bounds. Config
-    descent is iterative; set matching recurses only through the fixed operation
-    schema. A foreign shape is rejected before visiting its additional contents.
-    """
-    pending = [(admitted, retained)]
-    while pending:
-        expected, actual = pending.pop()
-        if type(expected) is not type(actual):
-            return False
-        if isinstance(expected, tuple):
-            assert isinstance(actual, tuple)
-            if len(expected) != len(actual):
-                return False
-            pending.extend(zip(expected, actual, strict=True))
-        elif isinstance(expected, frozenset):
-            assert isinstance(actual, frozenset)
-            if len(expected) != len(actual):
-                return False
-            unmatched = list(actual)
-            for item in expected:
-                index = next((i for i, value in enumerate(unmatched) if _matches_admitted_key(item, value)), None)
-                if index is None:
-                    return False
-                unmatched.pop(index)
-        elif is_dataclass(expected) and not isinstance(expected, type):
-            for field in fields(expected):
-                if not hasattr(actual, field.name):
-                    return False
-                pending.append((getattr(expected, field.name), getattr(actual, field.name)))
-        elif expected != actual:
-            return False
-    return True
 
 
 @dataclass(frozen=True, slots=True, kw_only=True, repr=False)
@@ -1149,9 +1112,9 @@ class _Qualification:
         }
         observed = {}
         for row in rows:
-            retained = (row.implementation, row.operation, row.configuration)
-            key = next((key for key in expected if _matches_admitted_key(key, retained)), None)
-            if key is None or key in observed:
+            # Rows carry the very handle objects admission matched to these keys (set equality, U1.5 probe 4).
+            key = (row.implementation, row.operation, row.configuration)
+            if key not in expected or key in observed:
                 return None
             observed[key] = row
         if observed.keys() != expected.keys():
@@ -1213,13 +1176,11 @@ class _Qualification:
                     and issued.handle is matching[0].handle
                     and row.owner == "sdk"
                     and row.safe_detachment == "forbidden"
-                    and _matches_admitted_key(
-                        (
-                            implementation.implementation,
-                            implementation.capability.operation,
-                            implementation.configuration,
-                        ),
-                        (row.implementation, row.operation, row.configuration),
+                    and (row.implementation, row.operation, row.configuration)
+                    == (
+                        implementation.implementation,
+                        implementation.capability.operation,
+                        implementation.configuration,
                     )
                     for row in self.result.implementation_resources
                 ):
