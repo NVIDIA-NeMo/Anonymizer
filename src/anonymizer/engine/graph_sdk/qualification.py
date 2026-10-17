@@ -574,10 +574,14 @@ class _Qualification:
                 settlements = [item for item in receipt.settlements if item.request == dispatch.request]
                 if len(facts) != 1 or terminals[leaf].category != facts[0].category:
                     reject(EffectCode.CONTRADICTORY)
-                unsettled_loss = (
-                    facts[0].category == "lost" and not settlements and dispatch.request in receipt.remote_outstanding
+                # Lost work stays remotely outstanding; a confirmed stop clears it
+                # without settling usage. Request accounting withholds both.
+                outstanding = dispatch.request in receipt.remote_outstanding
+                unsettled = not settlements and (
+                    (facts[0].category == "lost" and outstanding)
+                    or (facts[0].category == "cancelled" and not outstanding)
                 )
-                if len(settlements) != 1 and not unsettled_loss:
+                if len(settlements) != 1 and not unsettled:
                     reject(EffectCode.CONTRADICTORY)
                 for summary in facts[0].results:
                     if summary.category == "success" and (

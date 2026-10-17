@@ -241,3 +241,71 @@ def test_retention_does_not_admit_other_task_requests():
         assert all(state.complete for state in result.states)
 
     asyncio.run(run())
+
+
+async def _confirmed_stop_without_settlement(outcome):
+    execution, services, submit, _ = _fixture(simple=True, parent_io=True)
+    holder = {}
+    release, stopping = asyncio.Event(), asyncio.Event()
+
+    class Parent:
+        execution = "same_loop"
+
+        async def submit(self, inputs, requests):
+            holder["parent"] = asyncio.current_task()
+            try:
+                await requests.request(submit.slots[0])
+            except asyncio.CancelledError:
+                return LocalFailure(failure="implementation_exception")
+            raise AssertionError("expected submission cancellation")
+
+    class Transport:
+        async def dispatch(self, envelope):
+            holder["parent"].cancel()
+            await release.wait()
+            if outcome == "raise":
+                raise RuntimeError("connection reset")
+            return None
+
+        async def cancel(self, request):
+            stopping.set()
+            return StopConfirmed(usage=ExactUsage(input_units=1, output_units=1))
+
+    services = replace(
+        services,
+        handles=tuple(
+            replace(handle, delegated=Parent())
+            if handle.delegated
+            else replace(handle, transport=Transport())
+            if handle.transport
+            else handle
+            for handle in services.handles
+        ),
+    )
+    running = await start_execution(admitted=execution, capabilities=execution.capabilities, services=services)
+    waiter = asyncio.create_task(running.wait())
+    await asyncio.wait_for(stopping.wait(), 2)
+    release.set()
+    return execution, await asyncio.wait_for(waiter, 2)
+
+
+@pytest.mark.parametrize("outcome", ["raise", "none"])
+def test_confirmed_stop_without_settlement_withholds(outcome):
+    execution, result = asyncio.run(_confirmed_stop_without_settlement(outcome))
+    assert [item.category for item in result.requests.terminals] == ["cancelled"]
+    assert not result.requests.settlements and not result.requests.remote_outstanding
+    assert not result.requests.defects
+    admitted, current, submissions = _inputs(execution, result)
+    qualified = qualify(admitted=admitted, result=result, current=current, submissions=submissions)
+    assert not qualified.qualified
+    assert qualified.record.statuses[0].qualification == "unknown"
+    assert "request_accounting" in qualified.targets[0].withholding
+
+
+def test_cancelled_child_still_outstanding_without_settlement_rejects():
+    execution, result = asyncio.run(_confirmed_stop_without_settlement("none"))
+    request = result.requests.dispatches[0].request
+    admitted, current, submissions = _inputs(execution, result)
+    object.__setattr__(result.requests, "remote_outstanding", frozenset({request}))
+    with pytest.raises(EffectRejected, match="contradictory"):
+        qualify(admitted=admitted, result=result, current=current, submissions=submissions)
