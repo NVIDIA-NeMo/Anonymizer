@@ -111,9 +111,16 @@ being compared itself errored.
 - **`leakage_mass` / `needs_human_review`** (rewrite mode) — `compare.py` prints their min/max and
   value counts for both sides; large deltas on the same input are worth a closer look at individual
   rows via `trace.csv`.
-- **The DEBUG console log (`log.txt`)** — `dogfood_run.py` configures `anonymizer_level="DEBUG"` so
-  entity values that leak into logging are visible; grep `log.txt` for entity text from your input to
-  spot-check that detected PII values aren't being logged in the clear.
+- **The DEBUG console log (`log.txt`)** — `dogfood_run.py` configures `anonymizer_level="DEBUG"` and
+  attaches a `FileHandler` directly to the `"anonymizer"` and `"data_designer"` loggers (the ones
+  `configure_logging` itself configures; both have `propagate=False`, so a handler on the root logger
+  would never see these records), with the same formatter the console uses — `log.txt` is a verbatim
+  copy of what prints to stderr. At DEBUG, library logging reports counts, labels, and workflow
+  status (e.g. "chunked validation: N candidate(s) in M chunks", "Replacement map: requested=N
+  raw=N filtered=N …") — it does **not** log entity text values or other record content, so do not
+  grep `log.txt` for entity values from your input; that check will always come up empty by design.
+  To see what entities Anonymizer detected or how they were replaced, use `result.dataframe`'s
+  `final_entities` column and `trace.csv` instead.
 
 ## Known noise, not bugs
 

@@ -72,11 +72,16 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     configure_logging(LoggingConfig(anonymizer_level="DEBUG", data_designer_level="INFO"))
+    # `configure_logging` attaches its console handler directly to the
+    # "anonymizer" and "data_designer" loggers and sets propagate=False on
+    # both (src/anonymizer/logging.py), so a handler on the root logger never
+    # sees these records. Attach the file handler to the same two loggers,
+    # with the same formatter, so log.txt mirrors what the console prints.
     file_handler = logging.FileHandler(out_dir / "log.txt", mode="w", encoding="utf-8")
     file_handler.setLevel(logging.DEBUG)
-    file_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
-    logging.getLogger().addHandler(file_handler)
-    logging.getLogger().setLevel(logging.DEBUG)
+    file_handler.setFormatter(logging.Formatter("[%(asctime)s] [%(levelname)s] %(message)s", "%H:%M:%S"))
+    logging.getLogger("anonymizer").addHandler(file_handler)
+    logging.getLogger("data_designer").addHandler(file_handler)
 
     meta: dict[str, object] = {
         "anonymizer_version": anonymizer.__version__,
