@@ -114,8 +114,8 @@ being compared itself errored.
 - **The DEBUG console log (`log.txt`)** — `dogfood_run.py` configures `anonymizer_level="DEBUG"` and
   attaches a `FileHandler` directly to the `"anonymizer"` and `"data_designer"` loggers (the ones
   `configure_logging` itself configures; both have `propagate=False`, so a handler on the root logger
-  would never see these records), with the same formatter the console uses — `log.txt` is a verbatim
-  copy of what prints to stderr. At DEBUG, library logging reports counts, labels, and workflow
+  would never see these records), with the same formatter the console uses — `log.txt` holds the
+  `anonymizer` and `data_designer` log records shown on stderr (not prints, tracebacks, or other loggers). At DEBUG, library logging reports counts, labels, and workflow
   status (e.g. "chunked validation: N candidate(s) in M chunks", "Replacement map: requested=N
   raw=N filtered=N …") — it does **not** log entity text values or other record content, so do not
   grep `log.txt` for entity values from your input; that check will always come up empty by design.
