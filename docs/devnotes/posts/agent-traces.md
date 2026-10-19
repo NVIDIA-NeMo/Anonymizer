@@ -19,7 +19,7 @@ You don't need to anonymize all of them. In this note we take a **small subset, 
 
 <div style="text-align: center;" markdown>
 
-![Two traces side by side. On the left, a redacted seed trace in which the customer's email, name and zip code are replaced by tokens such as [REDACTED_EMAIL] and [REDACTED_POSTCODE]. On the right, one of the synthetic traces generated from it, in OpenAI chat format, for a new fictional customer with a matching email, user ID and address in the tool results.](assets/agent-traces-cli-seed-vs-synthetic.png){ loading=lazy }
+![Two traces side by side. On the left, a redacted seed trace in which the customer's email, name and zip code are replaced by tokens such as [REDACTED_EMAIL] and [REDACTED_POSTCODE]. On the right, one of the synthetic traces generated from it, in OpenAI chat format, for a new fictional customer with a matching email, user ID and address in the tool results.](assets/agent-traces-seed-vs-synthetic.png){ loading=lazy }
 
 </div>
 
@@ -49,7 +49,7 @@ flowchart LR
 ```
 
 The pipeline is one bash script, `run.sh`, plus a small `jq` filter and three YAML files: the model endpoints, the Anonymizer model roles, and the Data Designer recipe. They live in
-[`docs/devnotes/posts/assets/agent-traces-cli/`](https://github.com/NVIDIA-NeMo/Anonymizer/tree/main/docs/devnotes/posts/assets/agent-traces-cli).
+[`docs/devnotes/posts/assets/agent-traces/`](https://github.com/NVIDIA-NeMo/Anonymizer/tree/main/docs/devnotes/posts/assets/agent-traces).
 Both sizes are environment variables, `N_TRACES` (default 10) and `N_SYNTHETIC` (default 1,000). Each step prints a timestamped line, and the whole run is saved to `run_<date>_<time>.log` next to the script.
 
 The excerpts below come from one run on a single GPU serving `openai/gpt-oss-120b` with vLLM: 10 traces anonymized in about 4 minutes, 986 synthetic traces generated in 43 minutes, 911 kept.
@@ -124,7 +124,7 @@ The label line is the quickest sanity check on a new dataset. Here the IDs in th
 
 <div style="text-align: center;" markdown>
 
-![Bar chart of detected entities by label, top 12 of 27: account_number 320, device_identifier 259, credit_debit_card 108, street_address 99, user_name 83, postcode 71, state 68, city 66, order_id 59, email 52, nationality 48, unique_id 42.](assets/agent-traces-cli-entity-labels.png){ loading=lazy }
+![Bar chart of detected entities by label, top 12 of 27: account_number 320, device_identifier 259, credit_debit_card 108, street_address 99, user_name 83, postcode 71, state 68, city 66, order_id 59, email 52, nationality 48, unique_id 42.](assets/agent-traces-entity-labels.png){ loading=lazy }
 
 </div>
 
@@ -265,7 +265,7 @@ Each line of `synthetic.jsonl` is one trace in the same OpenAI `messages` format
 ## Try It
 
 You need `curl`, `jq`, Python with `nemo-anonymizer[notebooks]` (which brings `data-designer`), and an OpenAI-compatible LLM endpoint; point `model_providers.yaml` at it. `run.sh` starts the local GLiNER2 detector that ships with Anonymizer if nothing is listening on `:8001`. Then, from the
-[`agent-traces-cli`](https://github.com/NVIDIA-NeMo/Anonymizer/tree/main/docs/devnotes/posts/assets/agent-traces-cli) folder:
+[`agent-traces`](https://github.com/NVIDIA-NeMo/Anonymizer/tree/main/docs/devnotes/posts/assets/agent-traces) folder:
 
 ```bash
 ./run.sh                                    # 10 traces anonymized, 1,000 generated
