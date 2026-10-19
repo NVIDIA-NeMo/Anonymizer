@@ -3,7 +3,14 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+from typing import Any
+
+import pandas as pd
+import pytest
+from data_designer.config import custom_column_generator
 from data_designer.config.column_configs import CustomColumnConfig, LLMStructuredColumnConfig
+from data_designer.interface.data_designer import DataDesigner
 
 from anonymizer.config.models import RewriteModelSelection
 from anonymizer.engine.constants import (
@@ -15,6 +22,7 @@ from anonymizer.engine.constants import (
     DEFAULT_ENTITY_LABEL_CATEGORY,
     _jinja,
 )
+from anonymizer.engine.ndd.adapter import NddAdapter
 from anonymizer.engine.rewrite.entity_classification import (
     EntityClassificationWorkflow,
     _classify_labels_locally,
@@ -101,6 +109,7 @@ def test_classify_labels_locally_generator_handles_missing_entities_column() -> 
 def test_merge_entity_classifications_combines_local_and_llm_results() -> None:
     row = {
         COL_ENTITY_CLASSIFICATION_LOCAL: {"first_name": "direct_identifier", "city": "quasi_identifier"},
+        COL_ENTITY_CLASSIFICATION_UNMAPPED_LABELS: ["custom_widget_id"],
         COL_ENTITY_CLASSIFICATION_LLM: {
             "classifications": [{"label": "custom_widget_id", "category": "direct_identifier"}]
         },
@@ -111,6 +120,30 @@ def test_merge_entity_classifications_combines_local_and_llm_results() -> None:
         "city": "quasi_identifier",
         "custom_widget_id": "direct_identifier",
     }
+
+
+def test_merge_entity_classifications_ignores_unrequested_and_default_labels(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    row = {
+        COL_ENTITY_CLASSIFICATION_LOCAL: {"email": "direct_identifier"},
+        COL_ENTITY_CLASSIFICATION_UNMAPPED_LABELS: ["custom_widget_id"],
+        COL_ENTITY_CLASSIFICATION_LLM: {
+            "classifications": [
+                {"label": "email", "category": "quasi_identifier"},
+                {"label": "city", "category": "direct_identifier"},
+                {"label": "invented_label", "category": "direct_identifier"},
+                {"label": "custom_widget_id", "category": "direct_identifier"},
+            ]
+        },
+    }
+    result = _merge_entity_classifications(row)
+    assert result[COL_ENTITY_CLASSIFICATION] == {
+        "email": "direct_identifier",
+        "custom_widget_id": "direct_identifier",
+    }
+    for label in ("email", "city", "invented_label"):
+        assert f"Ignoring classification for unrequested or locally resolved label {label!r}" in caplog.text
 
 
 def test_merge_entity_classifications_handles_empty_llm_result() -> None:
@@ -126,3 +159,53 @@ def test_merge_entity_classifications_handles_missing_llm_column() -> None:
     row = {COL_ENTITY_CLASSIFICATION_LOCAL: {"first_name": "direct_identifier"}, COL_ENTITY_CLASSIFICATION_LLM: None}
     result = _merge_entity_classifications(row)
     assert result[COL_ENTITY_CLASSIFICATION] == {"first_name": "direct_identifier"}
+
+
+@custom_column_generator(required_columns=[COL_ENTITY_CLASSIFICATION_UNMAPPED_LABELS])
+def _classify_custom_labels(row: dict[str, Any]) -> dict[str, Any]:
+    labels = row[COL_ENTITY_CLASSIFICATION_UNMAPPED_LABELS]
+    if not labels:
+        raise ValueError("Classifier must not run without custom labels")
+    row[COL_ENTITY_CLASSIFICATION_LLM] = {
+        "classifications": [{"label": label, "category": "direct_identifier"} for label in labels]
+    }
+    return row
+
+
+def test_classification_skips_only_rows_without_custom_labels(
+    tmp_path: Path, stub_rewrite_model_selection: RewriteModelSelection
+) -> None:
+    columns = EntityClassificationWorkflow().columns(selected_models=stub_rewrite_model_selection)
+    classifier = columns[1]
+    columns[1] = CustomColumnConfig(
+        name=classifier.name,
+        generator_function=_classify_custom_labels,
+        skip=classifier.skip,
+    )
+    adapter = NddAdapter(DataDesigner(artifact_path=tmp_path / "artifacts", auto_configure_logging=False))
+    result = adapter.run_workflow(
+        pd.DataFrame(
+            {
+                COL_ENTITIES_BY_VALUE: [
+                    {"entities_by_value": [{"value": "Alice", "labels": ["first_name"]}]},
+                    {
+                        "entities_by_value": [
+                            {"value": "Alice", "labels": ["first_name"]},
+                            {"value": "XZ99", "labels": ["custom_widget_id"]},
+                        ]
+                    },
+                    {"entities_by_value": []},
+                ]
+            }
+        ),
+        model_configs=[],
+        columns=columns,
+        workflow_name="entity-classification",
+        preview_num_records=3,
+    )
+    assert result.failed_records == []
+    assert result.dataframe[COL_ENTITY_CLASSIFICATION].tolist() == [
+        {"first_name": "direct_identifier"},
+        {"first_name": "direct_identifier", "custom_widget_id": "direct_identifier"},
+        {},
+    ]

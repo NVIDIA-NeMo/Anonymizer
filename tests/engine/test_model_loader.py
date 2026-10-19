@@ -10,6 +10,7 @@ from anonymizer.config.models import (
     DetectionModelSelection,
     ModelSelection,
     ReplaceModelSelection,
+    RewriteModelSelection,
 )
 from anonymizer.engine.ndd.model_loader import (
     DEFAULT_CONFIG_DIR,
@@ -257,6 +258,35 @@ model_configs:
 # them, so the three DetectionModelSelection.normalize_entity_validator checks
 # (non-empty, deduped, whitespace-stripped) would be bypassed on override
 # unless _merge_selections re-validates.
+
+
+@pytest.mark.parametrize("classifier", [None, "custom-classifier"])
+def test_rewrite_model_selection_defaults_classifier_to_disposition(
+    classifier: str | None, stub_rewrite_model_selection: RewriteModelSelection
+) -> None:
+    payload = stub_rewrite_model_selection.model_dump(exclude={"entity_classifier"})
+    payload["disposition_analyzer"] = "custom-disposition"
+    if classifier is not None:
+        payload["entity_classifier"] = classifier
+    selection = RewriteModelSelection.model_validate(payload)
+    assert selection.entity_classifier == (classifier or "custom-disposition")
+
+
+@pytest.mark.parametrize("classifier", [None, "custom-classifier"])
+def test_parse_model_configs_rewrite_classifier_fallback(classifier: str | None) -> None:
+    classifier_override = f"    entity_classifier: {classifier}\n" if classifier is not None else ""
+    yaml_str = (
+        "selected_models:\n"
+        "  rewrite:\n"
+        "    disposition_analyzer: custom-disposition\n"
+        f"{classifier_override}"
+        "model_configs:\n"
+        "  - alias: custom-disposition\n"
+        "    model: test/disposition\n"
+        "    provider: nvidia\n"
+    )
+    result = parse_model_configs(yaml_str)
+    assert result.selected_models.rewrite.entity_classifier == (classifier or "custom-disposition")
 
 
 def test_parse_model_configs_rejects_empty_entity_validator_override() -> None:

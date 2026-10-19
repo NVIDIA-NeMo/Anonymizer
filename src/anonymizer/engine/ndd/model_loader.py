@@ -257,6 +257,11 @@ def _merge_selections(user_selections: dict[str, dict[str, str]] | None) -> Mode
     detection_overrides = user_selections.get(WorkflowName.detection.value, {})
     replace_overrides = user_selections.get(WorkflowName.replace.value, {})
     rewrite_overrides = user_selections.get(WorkflowName.rewrite.value, {})
+    if "entity_classifier" not in rewrite_overrides:
+        rewrite_overrides = {
+            **rewrite_overrides,
+            "entity_classifier": rewrite_overrides.get("disposition_analyzer", defaults.rewrite.disposition_analyzer),
+        }
     evaluate_overrides = user_selections.get(WorkflowName.evaluate.value, {})
 
     return ModelSelection(

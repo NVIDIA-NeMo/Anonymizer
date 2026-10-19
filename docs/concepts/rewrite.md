@@ -9,7 +9,7 @@ Instead of replacing individual entities, rewrite mode transforms the entire tex
 
 ## How it works
 
-[Detection](detection.md) runs first (same as [Replace mode](replace.md), plus latent entity detection for context-inferable information). This includes identifying signals that may not be explicitly tagged but can be deduced from combinations of details (e.g., location inferred from contextual cues). The text is then classified by domain, and each entity or attribute is assigned a sensitivity disposition based on contextual risk, recognizing that quasi-identifiers can emerge from any aspect of the text. 
+[Detection](detection.md) runs first (same as [Replace mode](replace.md), plus latent entity detection for context-inferable information). This includes identifying signals that may not be explicitly tagged but can be deduced from combinations of details (e.g., location inferred from contextual cues). The text is then classified by domain, and each entity or attribute is assigned a sensitivity disposition based on contextual risk, recognizing that quasi-identifiers can emerge from any aspect of the text.
 
 The text is then rewritten to reduce identifiability, applying targeted transformations that disrupt inference (e.g., weakening or removing linking details) rather than simply rewording content. The rewritten output is evaluated for both quality and privacy leakage using adversarial testing. If thresholds are exceeded, the system automatically refines the rewrite. Any records that failed to meet standards are tagged for human review.
 
@@ -168,7 +168,7 @@ flagged[["utility_score", "leakage_mass", "any_high_leaked"]].head()
 - Lower `risk_tolerance` (e.g. `minimal`) to trigger more aggressive repair.
 - Enable `strict_entity_protection=True` to ensure no detected entity is left unchanged in the output regardless of risk.
 
-**Last resort:** Manually edit or exclude records that resist automated repair — some text is inherently difficult to rewrite without losing utility or leaking identifiers, and requires your judgement as the expert. 
+**Last resort:** Manually edit or exclude records that resist automated repair — some text is inherently difficult to rewrite without losing utility or leaking identifiers, and requires your judgement as the expert.
 
 ---
 
@@ -179,12 +179,17 @@ Rewrite uses multiple LLM roles. All default to models in the [default config](m
 | Role | Default | Purpose |
 |------|---------|---------|
 | `domain_classifier` | `gpt-oss-120b` | Classifies text domain. |
+| `entity_classifier` | Uses `disposition_analyzer` unless explicitly selected | Classifies custom explicit entity labels as direct or quasi-identifiers. Default labels are classified locally. |
 | `disposition_analyzer` | `gpt-oss-120b` | Assigns sensitivity levels. |
 | `meaning_extractor` | `gpt-oss-120b` | Extracts meaning units. |
 | `qa_generator` | `gpt-oss-120b` | Generates QA pairs for evaluation. |
 | `rewriter` | `gpt-oss-120b` | Generates the rewritten text. |
 | `evaluator` | `nemotron-30b-thinking` | Evaluates quality and leakage. |
 | `repairer` | `gpt-oss-120b` | Repairs high-leakage rewrites. |
+
+The entity-classification LLM runs only for records containing labels outside the default
+category table. If you omit `selected_models.rewrite.entity_classifier`, it uses the effective
+`disposition_analyzer` alias, including your override. Set it explicitly to use a separate model.
 
 ---
 
