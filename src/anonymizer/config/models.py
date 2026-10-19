@@ -6,7 +6,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 
 logger = logging.getLogger(__name__)
 
@@ -81,11 +81,11 @@ class ReplaceModelSelection(BaseModel):
 
 
 class RewriteModelSelection(BaseModel):
-    """Model aliases for the rewrite pipeline."""
+    """Model aliases for rewrite; an omitted entity classifier reuses the disposition analyzer."""
 
     domain_classifier: str
-    entity_classifier: str
     disposition_analyzer: str
+    entity_classifier: str = Field(default_factory=lambda data: data["disposition_analyzer"])
     meaning_extractor: str
     qa_generator: str
     rewriter: str

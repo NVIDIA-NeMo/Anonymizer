@@ -276,11 +276,12 @@ def verify_disposition_coverage(
     latent_entities: object,
     entity_classifications: dict[str, str],
 ) -> None:
-    """Validate coverage and normalize source/category and direct-identifier protection.
+    """Validate coverage and normalize identity, categories, and required protection methods.
 
     The schema guarantees IDs run 1..N but cannot know the supplied count, so a model that
     stops early would otherwise leave trailing entities silently unprotected. A label/value
-    that differs from the supplied entity only warns: the ID still identifies the entity.
+    that differs from the supplied entity is restored from the inventory with a warning:
+    the ID identifies the entity, not the model's echoed label/value.
     """
     explicit = _parse_numbered_lines(explicit_entities)
     expected = explicit + _parse_numbered_lines(latent_entities)
@@ -298,11 +299,15 @@ def verify_disposition_coverage(
                 f"Entity {entry.id}: missing or invalid supplied category {category!r} for {supplied['label']!r}"
             )
         corrected = entry.model_dump(mode="json")
-        corrected.update(source=source, category=category)
+        corrected.update(
+            source=source, category=category, entity_label=supplied["label"], entity_value=supplied["value"]
+        )
         if category == "direct_identifier":
             corrected["sensitivity"] = "high"
             if entry.protection_method_suggestion == "leave_as_is":
                 corrected["protection_method_suggestion"] = "replace"
+        elif source == "latent" and entry.needs_protection:
+            corrected["protection_method_suggestion"] = "suppress_inference"
         if corrected != entry.model_dump(mode="json"):
             logger.warning(
                 "Normalizing disposition entity %d: source/category/sensitivity/method %r -> %r.",
@@ -313,7 +318,7 @@ def verify_disposition_coverage(
             returned[index] = type(entry).model_validate(corrected)
         if (supplied["label"], supplied["value"]) != (entry.entity_label, entry.entity_value):
             logger.warning(
-                "Disposition entry %d (%r, %r) does not match supplied entity (%r, %r).",
+                "Disposition entry %d (%r, %r) does not match supplied entity (%r, %r); restoring supplied identity.",
                 entry.id,
                 entry.entity_label,
                 entry.entity_value,

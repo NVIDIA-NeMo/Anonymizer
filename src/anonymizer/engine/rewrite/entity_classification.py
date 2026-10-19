@@ -6,7 +6,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from data_designer.config import custom_column_generator
+from data_designer.config import SkipConfig, custom_column_generator
 from data_designer.config.column_configs import CustomColumnConfig, LLMStructuredColumnConfig
 from data_designer.config.column_types import ColumnConfigT
 
@@ -113,16 +113,26 @@ If <labels_to_classify> is empty, return an empty classifications list."""
 # ---------------------------------------------------------------------------
 
 
-@custom_column_generator(required_columns=[COL_ENTITY_CLASSIFICATION_LOCAL, COL_ENTITY_CLASSIFICATION_LLM])
+@custom_column_generator(
+    required_columns=[
+        COL_ENTITY_CLASSIFICATION_LOCAL,
+        COL_ENTITY_CLASSIFICATION_LLM,
+        COL_ENTITY_CLASSIFICATION_UNMAPPED_LABELS,
+    ]
+)
 def _merge_entity_classifications(row: dict[str, Any]) -> dict[str, Any]:
-    """Merge the local (default-table) and LLM (unmapped-label) classifications into one map."""
+    """Add only requested unmapped classifications, preserving authoritative local categories."""
     local = normalize_payload(row.get(COL_ENTITY_CLASSIFICATION_LOCAL)) or {}
     llm_raw = normalize_payload(row.get(COL_ENTITY_CLASSIFICATION_LLM))
     llm_result = (
         EntityLabelClassificationsSchema.model_validate(llm_raw) if llm_raw else EntityLabelClassificationsSchema()
     )
     merged = dict(local)
+    requested_labels = set(row.get(COL_ENTITY_CLASSIFICATION_UNMAPPED_LABELS) or [])
     for item in llm_result.classifications:
+        if item.label in local or item.label in DEFAULT_ENTITY_LABEL_CATEGORY or item.label not in requested_labels:
+            logger.warning("Ignoring classification for unrequested or locally resolved label %r.", item.label)
+            continue
         merged[item.label] = item.category
     row[COL_ENTITY_CLASSIFICATION] = merged
     return row
@@ -157,9 +167,17 @@ class EntityClassificationWorkflow:
                 prompt=_get_entity_classification_prompt(),
                 model_alias=classifier_alias,
                 output_format=EntityLabelClassificationsSchema,
+                skip=SkipConfig(
+                    when=substitute_placeholders(
+                        "{{ not <<UNMAPPED_LABELS>> }}",
+                        {"<<UNMAPPED_LABELS>>": COL_ENTITY_CLASSIFICATION_UNMAPPED_LABELS},
+                    ),
+                    value='{"classifications": []}',
+                ),
             ),
             CustomColumnConfig(
                 name=COL_ENTITY_CLASSIFICATION,
                 generator_function=_merge_entity_classifications,
+                propagate_skip=False,
             ),
         ]

@@ -246,13 +246,27 @@ def test_verify_disposition_coverage_rejects_extra_entries() -> None:
         verify_disposition_coverage(_disposition((1, "city", "Portland")), explicit, latent, _CLASSIFICATIONS)
 
 
-def test_verify_disposition_coverage_warns_on_label_value_mismatch(caplog: pytest.LogCaptureFixture) -> None:
-    explicit, latent = build_numbered_entities(_TWO_ENTITIES, None)
+@pytest.mark.parametrize("source", ["tagged", "latent"])
+def test_verify_disposition_coverage_restores_identity_on_mismatch(
+    caplog: pytest.LogCaptureFixture, source: str
+) -> None:
+    supplied = json.dumps({"id": 1, "label": "occupation", "value": "teacher"})
+    disposition = _disposition((1, "city", "Portland"))
+    original = disposition.sensitivity_disposition[0].model_dump()
     with caplog.at_level("WARNING", logger="anonymizer.rewrite.sensitivity_disposition"):
         verify_disposition_coverage(
-            _disposition((1, "first_name", "Alicia"), (2, "city", "Portland")), explicit, latent, _CLASSIFICATIONS
+            disposition,
+            supplied if source == "tagged" else "(none)",
+            supplied if source == "latent" else "(none)",
+            {"occupation": "quasi_identifier"},
         )
+    entry = disposition.sensitivity_disposition[0]
+    assert entry.entity_label == "occupation"
+    assert entry.entity_value == "teacher"
+    assert entry.sensitivity == original["sensitivity"]
+    assert entry.protection_method_suggestion == original["protection_method_suggestion"]
     assert "does not match supplied entity" in caplog.text
+    assert "restoring supplied identity" in caplog.text
 
 
 def test_verify_disposition_column_marks_row_verified() -> None:
@@ -314,6 +328,31 @@ def test_verify_disposition_normalizes_latent_source_and_category() -> None:
     assert entry.source == "latent"
     assert entry.category == "latent_identifier"
     assert entry.sensitivity == "low"
+    assert entry.protection_method_suggestion == "leave_as_is"
+
+
+@pytest.mark.parametrize("sensitivity", ["medium", "high"])
+@pytest.mark.parametrize("method", ["replace", "generalize", "remove", "suppress_inference"])
+@pytest.mark.parametrize("reported_source", ["tagged", "latent"])
+def test_verify_disposition_normalizes_protected_latent_method(
+    sensitivity: str, method: str, reported_source: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    payload = _disposition((1, "first_name", "Alice")).model_dump(mode="json")
+    payload["sensitivity_disposition"][0].update(
+        source=reported_source, sensitivity=sensitivity, protection_method_suggestion=method
+    )
+    disposition = SensitivityDispositionSchema.model_validate(payload)
+    latent = json.dumps({"id": 1, "label": "first_name", "value": "Alice"})
+
+    verify_disposition_coverage(disposition, "(none)", latent, {})
+
+    entry = disposition.sensitivity_disposition[0]
+    assert entry.source == "latent"
+    assert entry.category == "latent_identifier"
+    assert entry.sensitivity == sensitivity
+    assert entry.protection_method_suggestion == "suppress_inference"
+    if method != "suppress_inference":
+        assert "Normalizing disposition entity 1" in caplog.text
 
 
 @custom_column_generator(required_columns=[COL_DISPOSITION_EXPLICIT_ENTITIES])
