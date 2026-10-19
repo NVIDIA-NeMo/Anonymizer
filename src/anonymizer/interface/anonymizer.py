@@ -3,12 +3,14 @@
 
 from __future__ import annotations
 
+import inspect
 import logging
 import os
 import re
 import time
 import uuid
 from collections import Counter
+from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol, TypeGuard, cast
 
@@ -143,6 +145,35 @@ def _initialize_logging() -> None:
     if _logging_mod._configured:
         return
     configure_logging()
+
+
+def _accepts_entity_label_examples(method: Callable[..., object]) -> bool:
+    """True if a detection_workflow method's signature accepts entity_label_examples.
+
+    entity_label_examples was added in #275 (after v0.4.0); a caller-supplied
+    detection_workflow written against v0.4.0's exact method signatures (no
+    entity_label_examples parameter, no **kwargs) raises TypeError if the kwarg is
+    passed unconditionally. Inspection failures (e.g. a non-introspectable callable)
+    fail open and keep passing the kwarg, matching this module's behavior before this
+    check existed.
+    """
+    try:
+        parameters = inspect.signature(method).parameters
+    except (TypeError, ValueError):
+        return True
+    return "entity_label_examples" in parameters or any(
+        parameter.kind is inspect.Parameter.VAR_KEYWORD for parameter in parameters.values()
+    )
+
+
+def _warn_entity_label_examples_withheld(entity_label_examples: dict[str, list[str]] | None) -> None:
+    """Counts-only warning when configured examples are dropped for a legacy detection_workflow."""
+    if entity_label_examples:
+        logger.warning(
+            "entity_label_examples configured for %d label(s) but withheld: the configured "
+            "detection_workflow does not accept this keyword argument",
+            len(entity_label_examples),
+        )
 
 
 class Anonymizer:
@@ -297,6 +328,23 @@ class Anonymizer:
         """
         self._validate_preflight_config(config)
         context = read_input(data)
+        if _accepts_entity_label_examples(self._detection_workflow.build_detection_config):
+            return self._detection_workflow.build_detection_config(
+                context.dataframe,
+                seed_path=seed_path,
+                model_configs=self._model_configs,
+                selected_models=self._selected_models.detection,
+                gliner_detection_threshold=config.detect.gliner_threshold,
+                validation_max_entities_per_call=config.detect.validation_max_entities_per_call,
+                validation_excerpt_window_chars=config.detect.validation_excerpt_window_chars,
+                entity_labels=config.detect.entity_labels,
+                excluded_entity_labels=config.detect.excluded_entity_labels,
+                entity_label_examples=config.detect.entity_label_examples,
+                data_summary=data.data_summary,
+            )
+        # Caller-supplied detection_workflow with a pre-#275 (v0.4.0) signature: no
+        # entity_label_examples parameter and no **kwargs to swallow it.
+        _warn_entity_label_examples_withheld(config.detect.entity_label_examples)
         return self._detection_workflow.build_detection_config(
             context.dataframe,
             seed_path=seed_path,
@@ -307,7 +355,6 @@ class Anonymizer:
             validation_excerpt_window_chars=config.detect.validation_excerpt_window_chars,
             entity_labels=config.detect.entity_labels,
             excluded_entity_labels=config.detect.excluded_entity_labels,
-            entity_label_examples=config.detect.entity_label_examples,
             data_summary=data.data_summary,
         )
 
@@ -332,6 +379,24 @@ class Anonymizer:
         the config. Runtime model providers remain external to the serialized config.
         """
         self._validate_preflight_config(config)
+        if _accepts_entity_label_examples(self._detection_workflow.build_detection_builder_for_seed):
+            return self._detection_workflow.build_detection_builder_for_seed(
+                seed_path=seed_path,
+                model_configs=self._model_configs,
+                selected_models=self._selected_models.detection,
+                gliner_detection_threshold=config.detect.gliner_threshold,
+                validation_max_entities_per_call=config.detect.validation_max_entities_per_call,
+                validation_excerpt_window_chars=config.detect.validation_excerpt_window_chars,
+                entity_labels=config.detect.entity_labels,
+                excluded_entity_labels=config.detect.excluded_entity_labels,
+                entity_label_examples=config.detect.entity_label_examples,
+                data_summary=data_summary,
+                job_index=job_index,
+                num_jobs=num_jobs,
+            )
+        # Caller-supplied detection_workflow with a pre-#275 (v0.4.0) signature: no
+        # entity_label_examples parameter and no **kwargs to swallow it.
+        _warn_entity_label_examples_withheld(config.detect.entity_label_examples)
         return self._detection_workflow.build_detection_builder_for_seed(
             seed_path=seed_path,
             model_configs=self._model_configs,
@@ -341,7 +406,6 @@ class Anonymizer:
             validation_excerpt_window_chars=config.detect.validation_excerpt_window_chars,
             entity_labels=config.detect.entity_labels,
             excluded_entity_labels=config.detect.excluded_entity_labels,
-            entity_label_examples=config.detect.entity_label_examples,
             data_summary=data_summary,
             job_index=job_index,
             num_jobs=num_jobs,
@@ -738,22 +802,42 @@ class Anonymizer:
             )
 
         t0 = time.perf_counter()
-        detection_result = self._detection_workflow.run(
-            input_df,
-            model_configs=self._model_configs,
-            selected_models=self._selected_models.detection,
-            gliner_detection_threshold=config.detect.gliner_threshold,
-            validation_max_entities_per_call=config.detect.validation_max_entities_per_call,
-            validation_excerpt_window_chars=config.detect.validation_excerpt_window_chars,
-            entity_labels=config.detect.entity_labels,
-            excluded_entity_labels=config.detect.excluded_entity_labels,
-            entity_label_examples=config.detect.entity_label_examples,
-            privacy_goal=config.rewrite.privacy_goal if config.rewrite else None,
-            data_summary=data.data_summary,
-            tag_latent_entities=config.rewrite is not None,
-            compute_grouped_entities=config.replace is not None or config.rewrite is not None,
-            preview_num_records=preview_num_records,
-        )
+        if _accepts_entity_label_examples(self._detection_workflow.run):
+            detection_result = self._detection_workflow.run(
+                input_df,
+                model_configs=self._model_configs,
+                selected_models=self._selected_models.detection,
+                gliner_detection_threshold=config.detect.gliner_threshold,
+                validation_max_entities_per_call=config.detect.validation_max_entities_per_call,
+                validation_excerpt_window_chars=config.detect.validation_excerpt_window_chars,
+                entity_labels=config.detect.entity_labels,
+                excluded_entity_labels=config.detect.excluded_entity_labels,
+                entity_label_examples=config.detect.entity_label_examples,
+                privacy_goal=config.rewrite.privacy_goal if config.rewrite else None,
+                data_summary=data.data_summary,
+                tag_latent_entities=config.rewrite is not None,
+                compute_grouped_entities=config.replace is not None or config.rewrite is not None,
+                preview_num_records=preview_num_records,
+            )
+        else:
+            # Caller-supplied detection_workflow with a pre-#275 (v0.4.0) signature: no
+            # entity_label_examples parameter and no **kwargs to swallow it.
+            _warn_entity_label_examples_withheld(config.detect.entity_label_examples)
+            detection_result = self._detection_workflow.run(
+                input_df,
+                model_configs=self._model_configs,
+                selected_models=self._selected_models.detection,
+                gliner_detection_threshold=config.detect.gliner_threshold,
+                validation_max_entities_per_call=config.detect.validation_max_entities_per_call,
+                validation_excerpt_window_chars=config.detect.validation_excerpt_window_chars,
+                entity_labels=config.detect.entity_labels,
+                excluded_entity_labels=config.detect.excluded_entity_labels,
+                privacy_goal=config.rewrite.privacy_goal if config.rewrite else None,
+                data_summary=data.data_summary,
+                tag_latent_entities=config.rewrite is not None,
+                compute_grouped_entities=config.replace is not None or config.rewrite is not None,
+                preview_num_records=preview_num_records,
+            )
         detection_elapsed = time.perf_counter() - t0
         entity_count = _count_entities(detection_result.dataframe)
         detection_failed = len(detection_result.failed_records)
