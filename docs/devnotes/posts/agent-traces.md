@@ -211,9 +211,6 @@ The log shows the scale-up directly: 1,000 rows drawn from a seed dataset of 10,
 [12:17:21] [INFO]   |-- sampling strategy: shuffle
 ```
 
-!!! warning "Dropped is not deleted"
-    The config drops the pre-redaction columns that Anonymizer's output carries, but Data Designer still saves dropped columns to `artifacts/<dataset>/dropped-columns-parquet-files/`. `run.sh` deletes that folder right after generation, so the original traces don't sit next to the synthetic ones.
-
 ---
 
 ## The Result
