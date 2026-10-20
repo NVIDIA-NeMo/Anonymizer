@@ -185,10 +185,18 @@ class WorkflowSourceFrame:
         self, designer: Any, columns: frozenset[str], rewrite_binding: StageBinding | None = None
     ) -> Iterator[set[int]]:
         """Bind real DD row generators to issued associations, without exposing transport keys."""
+        from anonymizer.engine.ndd._graph_requests import (
+            require_dataset_builder_capabilities,
+            require_source_frame_capabilities,
+        )
+
         failed: set[int] = set()
-        if not self.associations and not self.invocation_bound and not hasattr(designer, "_create_dataset_builder"):
-            yield failed
-            return
+        if not self.associations and not self.invocation_bound and not _is_data_designer(designer):
+            # A caller's stand-in designer without DD's builder: nothing to bind.
+            if not hasattr(designer, "_create_dataset_builder"):
+                yield failed
+                return
+        require_source_frame_capabilities(designer)
         storage_bindings = ExitStack()
         original_builder = designer._create_dataset_builder
         sources = {
@@ -200,7 +208,7 @@ class WorkflowSourceFrame:
 
         def builder(*args: Any, **kwargs: Any) -> Any:
             result = original_builder(*args, **kwargs)
-            storage_bindings.enter_context(self._bind_storage(result.artifact_storage))
+            storage_bindings.enter_context(self._bind_storage(require_dataset_builder_capabilities(result)))
             original_initialize = result._initialize_generators_and_graph
 
             def write_config() -> None:
@@ -330,3 +338,10 @@ class WorkflowSourceFrame:
             object.__setattr__(storage, "write_parquet_file", write)
             object.__setattr__(storage, "write_metadata", write_metadata)
             object.__setattr__(storage, "load_dataset", load)
+
+
+def _is_data_designer(designer: Any) -> bool:
+    """Whether ``designer`` is a real DataDesigner, whose source-frame hooks are then required."""
+    from data_designer.interface.data_designer import DataDesigner
+
+    return isinstance(designer, DataDesigner)

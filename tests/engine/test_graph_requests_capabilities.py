@@ -93,6 +93,9 @@ def fake_dd(monkeypatch: pytest.MonkeyPatch) -> types.SimpleNamespace:
             pass
 
     setattr(scheduler, "AsyncTaskScheduler", AsyncTaskScheduler)
+    storage = types.ModuleType("fake_artifact_storage")
+    setattr(storage, "BatchStage", SimpleNamespace(PARTIAL_RESULT="partial", FINAL_RESULT="final"))
+    setattr(storage, "SDG_CONFIG_FILENAME", "sdg.json")
     for name, module in (
         (_graph_requests._REGISTRY_MODULE, registry),
         (_graph_requests._FACADE_MODULE, facade),
@@ -100,11 +103,18 @@ def fake_dd(monkeypatch: pytest.MonkeyPatch) -> types.SimpleNamespace:
         (_graph_requests._PARSER_ERRORS_MODULE, parsers),
         (_graph_requests._READINESS_MODULE, readiness),
         (_graph_requests._SCHEDULER_MODULE, scheduler),
+        (_graph_requests._ARTIFACT_STORAGE_MODULE, storage),
     ):
         monkeypatch.setitem(sys.modules, name, module)
     monkeypatch.setattr(_graph_requests, "version", lambda _name: "0.9.9")
     return types.SimpleNamespace(
-        registry=registry, facade=facade, retry=retry, parsers=parsers, readiness=readiness, scheduler=scheduler
+        registry=registry,
+        facade=facade,
+        retry=retry,
+        parsers=parsers,
+        readiness=readiness,
+        scheduler=scheduler,
+        storage=storage,
     )
 
 
@@ -121,7 +131,7 @@ def _provider(factory: Callable[..., Any]) -> SimpleNamespace:
 def _assert_capability_message(error: BaseException, attribute: str) -> None:
     message = str(error)
     assert message == (
-        f"DD graph request binding requires DataDesigner's private `{attribute}`, which the installed "
+        f"Anonymizer's DataDesigner binding requires DataDesigner's private `{attribute}`, which the installed "
         f"data-designer 0.9.9 does not provide (supported: data-designer {SUPPORTED_DATA_DESIGNER_RANGE})"
     )
     assert _SECRET not in message
@@ -333,3 +343,86 @@ def test_single_attempt_errors_keep_the_released_retry_classification(error: Exc
     from data_designer.engine.models.clients.errors import ProviderErrorKind, infer_error_kind_from_exception
 
     assert infer_error_kind_from_exception(seen) is ProviderErrorKind.API_ERROR
+
+
+class _BuilderDesigner:
+    def _create_dataset_builder(self) -> None:
+        pass
+
+
+def test_source_frame_hooks_resolve(fake_dd: types.SimpleNamespace) -> None:
+    _graph_requests.require_source_frame_capabilities(_BuilderDesigner())
+
+
+def test_designer_without_dataset_builder_hook_fails_before_any_work(fake_dd: types.SimpleNamespace) -> None:
+    with pytest.raises(AnonymizerWorkflowError) as raised:
+        _graph_requests.require_source_frame_capabilities(SimpleNamespace())
+    _assert_capability_message(raised.value, "DataDesigner._create_dataset_builder")
+
+
+@pytest.mark.parametrize(
+    ("change", "attribute"),
+    [
+        ("stage", "BatchStage.FINAL_RESULT"),
+        ("filename", f"{_graph_requests._ARTIFACT_STORAGE_MODULE}.SDG_CONFIG_FILENAME"),
+    ],
+)
+def test_artifact_storage_module_hooks_fail_before_any_work(
+    fake_dd: types.SimpleNamespace, change: str, attribute: str
+) -> None:
+    if change == "stage":
+        setattr(fake_dd.storage, "BatchStage", SimpleNamespace(PARTIAL_RESULT="partial"))
+    else:
+        delattr(fake_dd.storage, "SDG_CONFIG_FILENAME")
+    with pytest.raises(AnonymizerWorkflowError) as raised:
+        _graph_requests.require_source_frame_capabilities(_BuilderDesigner())
+    _assert_capability_message(raised.value, attribute)
+
+
+def _builder(**overrides: Any) -> SimpleNamespace:
+    storage = {
+        "write_parquet_file": lambda *args, **kwargs: None,
+        "load_dataset": lambda *args, **kwargs: None,
+        "write_metadata": lambda *args, **kwargs: None,
+        "mkdir_if_needed": lambda *args, **kwargs: None,
+        "base_dataset_path": "base",
+        "final_dataset_path": "final",
+    }
+    builder = {
+        "_initialize_generators_and_graph": lambda: ([], None),
+        "_write_builder_config": lambda: None,
+        "_data_designer_config": object(),
+    }
+    for key, value in overrides.items():
+        target = storage if key in storage else builder
+        if value is _MISSING:
+            del target[key]
+        else:
+            target[key] = value
+    return SimpleNamespace(**builder, artifact_storage=SimpleNamespace(**storage))
+
+
+def test_complete_dataset_builder_passes(fake_dd: types.SimpleNamespace) -> None:
+    builder = _builder()
+    assert _graph_requests.require_dataset_builder_capabilities(builder) is builder.artifact_storage
+
+
+@pytest.mark.parametrize(
+    ("missing", "attribute"),
+    [
+        ("_initialize_generators_and_graph", "DatasetBuilder._initialize_generators_and_graph"),
+        ("_write_builder_config", "DatasetBuilder._write_builder_config"),
+        ("_data_designer_config", "DatasetBuilder._data_designer_config"),
+        ("write_parquet_file", "ArtifactStorage.write_parquet_file"),
+        ("load_dataset", "ArtifactStorage.load_dataset"),
+        ("write_metadata", "ArtifactStorage.write_metadata"),
+        ("mkdir_if_needed", "ArtifactStorage.mkdir_if_needed"),
+        ("final_dataset_path", "ArtifactStorage.final_dataset_path"),
+    ],
+)
+def test_dataset_builder_without_hook_fails_at_creation(
+    fake_dd: types.SimpleNamespace, missing: str, attribute: str
+) -> None:
+    with pytest.raises(AnonymizerWorkflowError) as raised:
+        _graph_requests.require_dataset_builder_capabilities(_builder(**{missing: _MISSING}))
+    _assert_capability_message(raised.value, attribute)

@@ -55,6 +55,7 @@ _RETRY_MODULE = "data_designer.engine.models.clients.retry"
 _PARSER_ERRORS_MODULE = "data_designer.engine.models.parsers.errors"
 _READINESS_MODULE = "data_designer.engine.readiness"
 _SCHEDULER_MODULE = "data_designer.engine.dataset_builders.async_scheduler"
+_ARTIFACT_STORAGE_MODULE = "data_designer.engine.storage.artifact_storage"
 _HTTP_CLIENT_FIELDS = ("_retry_config", "_aclient", "_client", "_transport", "_limits")
 
 
@@ -67,7 +68,7 @@ def _installed_data_designer() -> str:
 
 def _missing_capability(attribute: str) -> AnonymizerWorkflowError:
     return AnonymizerWorkflowError(
-        f"DD graph request binding requires DataDesigner's private `{attribute}`, which the installed "
+        f"Anonymizer's DataDesigner binding requires DataDesigner's private `{attribute}`, which the installed "
         f"data-designer {_installed_data_designer()} does not provide (supported: data-designer "
         f"{SUPPORTED_DATA_DESIGNER_RANGE})"
     )
@@ -107,6 +108,33 @@ def require_binding_capabilities(designer: Any) -> None:
         raise _missing_capability(f"{_RETRY_MODULE}.create_retry_transport")
     if not isinstance(_module_attribute(_PARSER_ERRORS_MODULE, "ParserException"), type):
         raise _missing_capability(f"{_PARSER_ERRORS_MODULE}.ParserException")
+
+
+def require_source_frame_capabilities(designer: Any) -> None:
+    """Check, before any DD work runs, the hooks the source-frame binding resolves on classes and modules."""
+    if not callable(getattr(designer, "_create_dataset_builder", None)):
+        raise _missing_capability("DataDesigner._create_dataset_builder")
+    stage = _module_attribute(_ARTIFACT_STORAGE_MODULE, "BatchStage")
+    for member in ("PARTIAL_RESULT", "FINAL_RESULT"):
+        if not hasattr(stage, member):
+            raise _missing_capability(f"BatchStage.{member}")
+    if not isinstance(_module_attribute(_ARTIFACT_STORAGE_MODULE, "SDG_CONFIG_FILENAME"), str):
+        raise _missing_capability(f"{_ARTIFACT_STORAGE_MODULE}.SDG_CONFIG_FILENAME")
+
+
+def require_dataset_builder_capabilities(builder: Any) -> Any:
+    """Check a freshly created dataset builder's instance hooks before it runs; return its artifact storage."""
+    for name in ("_initialize_generators_and_graph", "_write_builder_config"):
+        if not callable(_require_attribute(builder, name, f"DatasetBuilder.{name}")):
+            raise _missing_capability(f"DatasetBuilder.{name}")
+    _require_attribute(builder, "_data_designer_config", "DatasetBuilder._data_designer_config")
+    storage = _require_attribute(builder, "artifact_storage", "DatasetBuilder.artifact_storage")
+    for name in ("write_parquet_file", "load_dataset", "write_metadata", "mkdir_if_needed"):
+        if not callable(_require_attribute(storage, name, f"ArtifactStorage.{name}")):
+            raise _missing_capability(f"ArtifactStorage.{name}")
+    for name in ("base_dataset_path", "final_dataset_path"):
+        _require_attribute(storage, name, f"ArtifactStorage.{name}")
+    return storage
 
 
 def skip_health_checks_env() -> str:

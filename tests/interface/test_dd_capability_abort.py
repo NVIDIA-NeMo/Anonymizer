@@ -218,3 +218,61 @@ def test_rewrite_does_not_depend_on_the_bridge_hooks(
     assert not sent
     assert len(result.dataframe) == len(_RECORDS)
     assert not result.failed_records
+
+
+@pytest.mark.parametrize("fault", ["designer", "builder"])
+@pytest.mark.parametrize("preview", [False, True], ids=["run", "preview"])
+@pytest.mark.parametrize("mode", ["substitute", "rewrite"])
+def test_missing_source_frame_hook_aborts_every_route_before_any_request(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str, preview: bool, fault: str
+) -> None:
+    """Every route runs DD through ``NddAdapter.run_workflow``, which binds the source frame to DD's builder."""
+    sent: list[httpx.Request] = []
+    designer, clients = _designer(tmp_path, "facade", sent, [])
+    if fault == "designer":
+        monkeypatch.setattr(designer, "_create_dataset_builder", None)
+    else:
+        original = designer._create_dataset_builder
+
+        def builder(*args: Any, **kwargs: Any) -> Any:
+            result = original(*args, **kwargs)
+            setattr(result, "_initialize_generators_and_graph", None)
+            return result
+
+        monkeypatch.setattr(designer, "_create_dataset_builder", builder)
+    source = tmp_path / "input.csv"
+    pd.DataFrame({"text": _RECORDS}).to_csv(source, index=False)
+    anonymizer = Anonymizer(data_designer=designer, model_configs=_model_configs())
+    config = (
+        AnonymizerConfig(replace=Substitute(), emit_telemetry=False)
+        if mode == "substitute"
+        else AnonymizerConfig(rewrite=Rewrite(), emit_telemetry=False)
+    )
+    data = AnonymizerInput(source=str(source), text_column="text")
+    result: Any = None
+    try:
+        with pytest.raises(AnonymizerWorkflowError) as raised:
+            if preview:
+                result = anonymizer.preview(config=config, data=data, num_records=len(_RECORDS))
+            else:
+                result = anonymizer.run(config=config, data=data)
+    finally:
+
+        async def close() -> None:
+            for client in clients:
+                await client.aclose()
+
+        asyncio.run_coroutine_threadsafe(close(), ensure_async_engine_loop()).result(timeout=30)
+
+    assert result is None
+    assert not clients and not sent
+    message = str(raised.value)
+    attribute = (
+        "DataDesigner._create_dataset_builder"
+        if fault == "designer"
+        else "DatasetBuilder._initialize_generators_and_graph"
+    )
+    assert f"private `{attribute}`" in message
+    assert SUPPORTED_DATA_DESIGNER_RANGE in message
+    assert "installed data-designer" in message
+    assert "Alice" not in message
