@@ -19,6 +19,7 @@ from anonymizer.engine.constants import (
     COL_REPLACEMENT_MAP,
     COL_TEXT,
 )
+from anonymizer.engine.detection.postprocess import EntitySpan
 from anonymizer.engine.schemas import EntitiesSchema
 from anonymizer.logging import ProgressTracker
 
@@ -184,25 +185,43 @@ def apply_replacements_to_spans(
     entity value.  Tuple matches are label-aware.  The legacy value-only fallback
     is available only when the value has one unambiguous synthetic value.
     """
-    targeted = len(entities.entities)
-    if not entities.entities:
-        return text, ReplacementApplication(0, 0, 0, {})
-
-    by_value_label, by_value = _index_replacements(replacements)
-
-    spans = sorted(
-        ((entity.start_position, entity.end_position, entity.value, entity.label) for entity in entities.entities),
-        key=lambda item: item[0],
+    spans = tuple(
+        (entity.start_position, entity.end_position, entity.value, entity.label) for entity in entities.entities
     )
+    return _apply_span_entries(text, spans, replacements, allow_value_fallback=allow_value_fallback)
+
+
+def apply_entity_spans(
+    text: str,
+    entities: tuple[EntitySpan, ...],
+    replacements: list[ReplacementEntry],
+    *,
+    allow_value_fallback: bool,
+) -> tuple[str, ReplacementApplication]:
+    """Apply immutable graph detections through the canonical replacement algorithm."""
+    spans = tuple((e.start_position, e.end_position, e.value, e.label) for e in entities)
+    return _apply_span_entries(text, spans, replacements, allow_value_fallback=allow_value_fallback)
+
+
+def _apply_span_entries(
+    text: str,
+    spans: tuple[tuple[int, int, str, str], ...],
+    replacements: list[ReplacementEntry],
+    *,
+    allow_value_fallback: bool,
+) -> tuple[str, ReplacementApplication]:
+    if not spans:
+        return text, ReplacementApplication(0, 0, 0, {})
+    by_value_label, by_value = _index_replacements(replacements)
     replaced, applied, skipped = _apply_indexed_replacements(
         text,
-        spans,
+        sorted(spans, key=lambda item: item[0]),
         by_value_label=by_value_label,
         by_value=by_value,
         allow_value_fallback=allow_value_fallback,
     )
     return replaced, ReplacementApplication(
-        targeted_span_count=targeted,
+        targeted_span_count=len(spans),
         applied_span_count=applied,
         skipped_span_count=sum(skipped.values()),
         skipped_span_label_counts=dict(sorted(skipped.items())),
