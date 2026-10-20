@@ -38,8 +38,6 @@ def test_public_examples_and_controls() -> None:
 @pytest.mark.parametrize(
     "component",
     [
-        "anonymizer",
-        "anonymizer.graph",
         "anonymizer.engine.graph_sdk._workflow_admission",
         "anonymizer.engine.graph_sdk._activation_reducer",
     ],

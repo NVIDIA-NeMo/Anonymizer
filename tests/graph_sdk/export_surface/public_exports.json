@@ -1,84 +1,4 @@
 {
- "diagnose_observations": {
-  "kind": "function",
-  "qualname": "diagnose_observations",
-  "signature": "(*, observations: 'ObservationClose', limits: 'InspectionLimits') -> 'DiagnosisSummary'",
-  "pickle": "identity"
- },
- "BindingRejected": {
-  "kind": "type",
-  "qualname": "BindingRejected",
-  "signature": "<none>",
-  "pickle": "identity",
-  "mro": [
-   "BindingRejected",
-   "EffectRejected",
-   "ValueError",
-   "Exception",
-   "BaseException",
-   "object"
-  ],
-  "repr_owner": "EffectRejected",
-  "eq_owner": "object",
-  "instance_pickle": "equal"
- },
- "MapItemKey": {
-  "kind": "type",
-  "qualname": "MapItemKey",
-  "signature": "(*, expander: 'ActivationKey', member: 'ActivationKey', target: 'DatumId', port: 'str', item_key: 'int', item_version: 'int') -> None",
-  "pickle": "identity",
-  "mro": [
-   "MapItemKey",
-   "PrivateValue",
-   "_PrivateValue",
-   "_PrivateRepr",
-   "object"
-  ],
-  "repr_owner": "_PrivateRepr",
-  "eq_owner": "MapItemKey"
- },
- "MapExpansionDecl": {
-  "kind": "type",
-  "qualname": "MapExpansionDecl",
-  "signature": "(*, expander: 'NodeId', outcome: 'str', membership_port: 'str', item_type: 'ArtifactType') -> None",
-  "pickle": "identity",
-  "mro": [
-   "MapExpansionDecl",
-   "PrivateValue",
-   "_PrivateValue",
-   "_PrivateRepr",
-   "object"
-  ],
-  "repr_owner": "_PrivateRepr",
-  "eq_owner": "MapExpansionDecl"
- },
- "BlockingAffinity": {
-  "kind": "type",
-  "qualname": "BlockingAffinity",
-  "signature": "(*, cross_thread: 'bool', concurrency_safe: 'bool', close_on_event_loop: 'bool') -> None",
-  "pickle": "identity",
-  "mro": [
-   "BlockingAffinity",
-   "PrivateValue",
-   "_PrivateValue",
-   "_PrivateRepr",
-   "object"
-  ],
-  "repr_owner": "_PrivateRepr",
-  "eq_owner": "BlockingAffinity"
- },
- "qualify": {
-  "kind": "function",
-  "qualname": "qualify_retained",
-  "signature": "(*, admitted: 'AdmittedQualification', result: 'ExecutionResult', current: 'EvidenceRevisionView') -> 'QualificationResult'",
-  "pickle": "identity"
- },
- "observed_qualify": {
-  "kind": "function",
-  "qualname": "observed_qualify_retained",
-  "signature": "(*, observations: 'ObservationSession', admitted: 'AdmittedQualification', result: 'ExecutionResult', current: 'EvidenceRevisionView') -> 'QualificationResult'",
-  "pickle": "identity"
- },
  "ActivationKey": {
   "kind": "type",
   "qualname": "ActivationKey",
@@ -106,21 +26,6 @@
   ],
   "repr_owner": "_PrivateRepr",
   "eq_owner": "ActivationLimits"
- },
- "Graph": {
-  "kind": "type",
-  "qualname": "Graph",
-  "signature": "(*, _key: 'object', workflow: 'WorkflowId', interface: 'OperationSpec', nodes: 'tuple[Node, ...]', input_bindings: 'frozenset[InputBinding]', output_bindings: 'frozenset[OutputBinding]', outcome_bindings: 'frozenset[OutcomeBinding]', sequence: 'frozenset[SequenceEdge]', protection_requirements: 'frozenset[ProtectionRequirement]', protection_eligible_outcomes: 'frozenset[str]', unmet_protection: 'frozenset[ProtectionRequirement]', limits: 'WorkflowLimits', expanded_node_count: 'int', dynamic_limits: 'DynamicLimits') -> 'None'",
-  "pickle": "identity",
-  "mro": [
-   "Graph",
-   "_PrivateValue",
-   "_PrivateValue",
-   "_PrivateRepr",
-   "object"
-  ],
-  "repr_owner": "_PrivateRepr",
-  "eq_owner": "Graph"
  },
  "AdmittedContextPlan": {
   "kind": "type",
@@ -365,6 +270,23 @@
   "repr_owner": "_PrivateRepr",
   "eq_owner": "BindingReceipt"
  },
+ "BindingRejected": {
+  "kind": "type",
+  "qualname": "BindingRejected",
+  "signature": "<none>",
+  "pickle": "identity",
+  "mro": [
+   "BindingRejected",
+   "EffectRejected",
+   "ValueError",
+   "Exception",
+   "BaseException",
+   "object"
+  ],
+  "repr_owner": "EffectRejected",
+  "eq_owner": "object",
+  "instance_pickle": "equal"
+ },
  "BindingResult": {
   "kind": "type",
   "qualname": "BindingResult",
@@ -379,6 +301,21 @@
   ],
   "repr_owner": "_PrivateRepr",
   "eq_owner": "BindingResult"
+ },
+ "BlockingAffinity": {
+  "kind": "type",
+  "qualname": "BlockingAffinity",
+  "signature": "(*, cross_thread: 'bool', concurrency_safe: 'bool', close_on_event_loop: 'bool') -> None",
+  "pickle": "identity",
+  "mro": [
+   "BlockingAffinity",
+   "PrivateValue",
+   "_PrivateValue",
+   "_PrivateRepr",
+   "object"
+  ],
+  "repr_owner": "_PrivateRepr",
+  "eq_owner": "BlockingAffinity"
  },
  "BlockingContextProvider": {
   "kind": "type",
@@ -1285,6 +1222,21 @@
   "repr_owner": "_PrivateRepr",
   "eq_owner": "FrozenConfig"
  },
+ "Graph": {
+  "kind": "type",
+  "qualname": "Graph",
+  "signature": "(*, _key: 'object', workflow: 'WorkflowId', interface: 'OperationSpec', nodes: 'tuple[Node, ...]', input_bindings: 'frozenset[InputBinding]', output_bindings: 'frozenset[OutputBinding]', outcome_bindings: 'frozenset[OutcomeBinding]', sequence: 'frozenset[SequenceEdge]', protection_requirements: 'frozenset[ProtectionRequirement]', protection_eligible_outcomes: 'frozenset[str]', unmet_protection: 'frozenset[ProtectionRequirement]', limits: 'WorkflowLimits', expanded_node_count: 'int', dynamic_limits: 'DynamicLimits') -> 'None'",
+  "pickle": "identity",
+  "mro": [
+   "Graph",
+   "_PrivateValue",
+   "_PrivateValue",
+   "_PrivateRepr",
+   "object"
+  ],
+  "repr_owner": "_PrivateRepr",
+  "eq_owner": "Graph"
+ },
  "ImplementationCapability": {
   "kind": "type",
   "qualname": "ImplementationCapability",
@@ -1611,6 +1563,36 @@
   ],
   "repr_owner": "_PrivateRepr",
   "eq_owner": "MapDecl"
+ },
+ "MapExpansionDecl": {
+  "kind": "type",
+  "qualname": "MapExpansionDecl",
+  "signature": "(*, expander: 'NodeId', outcome: 'str', membership_port: 'str', item_type: 'ArtifactType') -> None",
+  "pickle": "identity",
+  "mro": [
+   "MapExpansionDecl",
+   "PrivateValue",
+   "_PrivateValue",
+   "_PrivateRepr",
+   "object"
+  ],
+  "repr_owner": "_PrivateRepr",
+  "eq_owner": "MapExpansionDecl"
+ },
+ "MapItemKey": {
+  "kind": "type",
+  "qualname": "MapItemKey",
+  "signature": "(*, expander: 'ActivationKey', member: 'ActivationKey', target: 'DatumId', port: 'str', item_key: 'int', item_version: 'int') -> None",
+  "pickle": "identity",
+  "mro": [
+   "MapItemKey",
+   "PrivateValue",
+   "_PrivateValue",
+   "_PrivateRepr",
+   "object"
+  ],
+  "repr_owner": "_PrivateRepr",
+  "eq_owner": "MapItemKey"
  },
  "MapItemPort": {
   "kind": "type",
@@ -2997,12 +2979,6 @@
   "signature": "(*, execution: 'AdmittedExecutionPlan', productions: 'tuple[EvidenceProductionDecl, ...]', limits: 'QualificationLimits') -> 'AdmittedQualification'",
   "pickle": "identity"
  },
- "compile_graph": {
-  "kind": "function",
-  "qualname": "compile_graph",
-  "signature": "(*, workflow: 'WorkflowId', interface: 'OperationSpec', nodes: 'tuple[Node, ...]', input_bindings: 'tuple[InputBinding, ...]', output_bindings: 'tuple[OutputBinding, ...]', outcome_bindings: 'tuple[OutcomeBinding, ...]', sequence: 'tuple[SequenceEdge, ...]', protection: 'tuple[ProtectionRequirement, ...]', limits: 'WorkflowLimits', dynamic_limits: 'DynamicLimits | None' = None) -> 'Graph'",
-  "pickle": "identity"
- },
  "begin_observations": {
   "kind": "function",
   "qualname": "begin_observations",
@@ -3033,6 +3009,12 @@
   "signature": "(*, data: 'ValidatedDataGraph', workflow: 'Graph', declarations: 'tuple[InitialContextDecl, ...]', capabilities: 'tuple[ContextSourceCapability, ...]', binding_limits: 'BindingLimits', limits: 'ObservationLimits') -> 'ObservationRequirements'",
   "pickle": "identity"
  },
+ "compile_graph": {
+  "kind": "function",
+  "qualname": "compile_graph",
+  "signature": "(*, workflow: 'WorkflowId', interface: 'OperationSpec', nodes: 'tuple[Node, ...]', input_bindings: 'tuple[InputBinding, ...]', output_bindings: 'tuple[OutputBinding, ...]', outcome_bindings: 'tuple[OutcomeBinding, ...]', sequence: 'tuple[SequenceEdge, ...]', protection: 'tuple[ProtectionRequirement, ...]', limits: 'WorkflowLimits', dynamic_limits: 'DynamicLimits | None' = None) -> 'Graph'",
+  "pickle": "identity"
+ },
  "diagnose": {
   "kind": "function",
   "qualname": "diagnose",
@@ -3043,6 +3025,12 @@
   "kind": "function",
   "qualname": "diagnose_binding",
   "signature": "(*, source: 'BindingInspectionSource') -> 'DiagnosisSummary'",
+  "pickle": "identity"
+ },
+ "diagnose_observations": {
+  "kind": "function",
+  "qualname": "diagnose_observations",
+  "signature": "(*, observations: 'ObservationClose', limits: 'InspectionLimits') -> 'DiagnosisSummary'",
   "pickle": "identity"
  },
  "encode_inspection": {
@@ -3123,6 +3111,12 @@
   "signature": "(*, observations: 'ObservationSession', source: 'ProjectionSource') -> 'ProtectedProjection'",
   "pickle": "identity"
  },
+ "observed_qualify": {
+  "kind": "function",
+  "qualname": "observed_qualify_retained",
+  "signature": "(*, observations: 'ObservationSession', admitted: 'AdmittedQualification', result: 'ExecutionResult', current: 'EvidenceRevisionView') -> 'QualificationResult'",
+  "pickle": "identity"
+ },
  "post_execution_observation_requirements": {
   "kind": "function",
   "qualname": "post_execution_observation_requirements",
@@ -3151,6 +3145,12 @@
   "kind": "function",
   "qualname": "project_protected",
   "signature": "(*, source: 'ProjectionSource') -> 'ProtectedProjection'",
+  "pickle": "identity"
+ },
+ "qualify": {
+  "kind": "function",
+  "qualname": "qualify_retained",
+  "signature": "(*, admitted: 'AdmittedQualification', result: 'ExecutionResult', current: 'EvidenceRevisionView') -> 'QualificationResult'",
   "pickle": "identity"
  },
  "recheck_capabilities": {
