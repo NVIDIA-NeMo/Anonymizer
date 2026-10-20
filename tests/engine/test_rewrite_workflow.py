@@ -164,7 +164,9 @@ def _standard_side_effect(
 
 def _mock_replace(mock_cls: Mock, replace_df: pd.DataFrame) -> None:
     """Configure a patched LlmReplaceWorkflow class to return replace_df."""
-    mock_cls.return_value.generate_map_only.return_value = Mock(dataframe=replace_df, failed_records=[])
+    mock_cls.return_value.generate_map_only.return_value = Mock(
+        dataframe=replace_df, failed_records=[], source_positions=None
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -305,6 +307,7 @@ def test_failed_records_accumulated_across_steps(
     with patch(_REPLACE_PATCH) as mock_replace_cls:
         mock_replace_cls.return_value.generate_map_only.return_value = Mock(
             dataframe=stub_replace_df,
+            source_positions=None,
             failed_records=[FailedRecord(record_id="d", step="replace-map-generation", reason="timeout")],
         )
         wf = RewriteWorkflow(adapter=adapter)
@@ -434,6 +437,7 @@ def test_detection_judge_partial_row_loss_preserves_all_rows(
     wf._detection_judge_wf.evaluate.return_value = Mock(
         dataframe=det_df,
         failed_records=[FailedRecord(record_id="rec-1", step="rewrite-detection-judge", reason="timeout")],
+        source_positions=None,
     )
     adapter.run_workflow.return_value = WorkflowRunResult(dataframe=judge_df, failed_records=[])
 
@@ -1187,3 +1191,208 @@ def test_run_needs_human_review_not_overwritten_by_evaluate(
     )
 
     assert bool(result.dataframe[COL_NEEDS_HUMAN_REVIEW].iloc[0]) is True
+
+
+@pytest.mark.parametrize("combined", [False, True])
+def test_lowering_runs_once_on_caller_thread_and_detaches_publication(
+    monkeypatch: pytest.MonkeyPatch,
+    stub_df_with_entities: pd.DataFrame,
+    stub_pipeline_df: pd.DataFrame,
+    stub_eval_df: pd.DataFrame,
+    stub_rewrite_model_selection: RewriteModelSelection,
+    stub_replace_model_selection: ReplaceModelSelection,
+    combined: bool,
+) -> None:
+    from threading import get_ident
+    from types import SimpleNamespace
+    from typing import cast
+
+    from anonymizer.engine.graph_sdk.executor import ExecutionResult
+    from anonymizer.engine.harness.frames import PublishedFrame
+    from anonymizer.engine.rewrite.combined_rewrite_workflow import CombinedRewriteWorkflow
+
+    adapter = Mock()
+    adapter.run_workflow.side_effect = (
+        [WorkflowRunResult(stub_eval_df, [])] if combined else _standard_side_effect(stub_pipeline_df, stub_eval_df)
+    )
+    kind = CombinedRewriteWorkflow if combined else RewriteWorkflow
+    runner = kind(adapter)
+    lower = kind._run_lowering
+    caller = get_ident()
+    observations = []
+
+    def checked(self, frame, *, binding, **arguments):
+        # The graph calls the lowering directly, once, on the caller thread (H1.2: no re-entry claims).
+        assert get_ident() == caller
+        observations.append(True)
+        return lower(self, frame, binding=binding, **arguments)
+
+    monkeypatch.setattr(kind, "_run_lowering", checked)
+    with patch(_REPLACE_PATCH) as replacement:
+        _mock_replace(replacement, stub_df_with_entities)
+        result = runner.run(
+            stub_df_with_entities,
+            model_configs=[],
+            selected_models=stub_rewrite_model_selection,
+            replace_model_selection=stub_replace_model_selection,
+            privacy_goal=_PRIVACY_GOAL,
+            evaluation=EvaluationCriteria(max_repair_iterations=0),
+        )
+    assert observations == [True]
+    assert result.dataframe[COL_REWRITTEN_TEXT].tolist() == ["Maria works"]
+    execution = result._execution
+    assert execution is not None
+    published = execution.frames[0]
+    assert isinstance(published, PublishedFrame)
+    assert COL_REWRITTEN_TEXT not in published._content
+    with pytest.raises(ValueError, match="different execution"):
+        published.project(cast(ExecutionResult, SimpleNamespace(frames=())))
+
+
+def test_combined_runner_overriding_build_graph_with_release_signature_runs(
+    stub_df_with_entities: pd.DataFrame,
+    stub_eval_df: pd.DataFrame,
+    stub_rewrite_model_selection: RewriteModelSelection,
+    stub_replace_model_selection: ReplaceModelSelection,
+) -> None:
+    """A caller's CombinedRewriteWorkflow may override build_graph with 0.4.0's six keyword arguments."""
+    from anonymizer.engine.rewrite.combined_rewrite_workflow import CombinedRewriteGraph, CombinedRewriteWorkflow
+
+    calls = []
+
+    class GraphOverride(CombinedRewriteWorkflow):
+        def build_graph(  # 0.4.0 public signature
+            self,
+            *,
+            selected_models: RewriteModelSelection,
+            replace_model_selection: ReplaceModelSelection,
+            privacy_goal: PrivacyGoal,
+            evaluation: EvaluationCriteria,
+            data_summary: str | None = None,
+            strict_entity_protection: bool = False,
+        ) -> CombinedRewriteGraph:
+            calls.append(True)
+            return super().build_graph(
+                selected_models=selected_models,
+                replace_model_selection=replace_model_selection,
+                privacy_goal=privacy_goal,
+                evaluation=evaluation,
+                data_summary=data_summary,
+                strict_entity_protection=strict_entity_protection,
+            )
+
+    from data_designer.config.column_configs import CustomColumnConfig
+
+    from anonymizer.engine.rewrite.combined_rewrite_workflow import _FinalizationParams
+
+    def run(kind: type[CombinedRewriteWorkflow]) -> tuple[pd.DataFrame, CustomColumnConfig]:
+        adapter = Mock()
+        adapter.run_workflow.side_effect = [WorkflowRunResult(stub_eval_df, [])]
+        with patch(_REPLACE_PATCH) as replacement:
+            _mock_replace(replacement, stub_df_with_entities)
+            result = kind(adapter).run(
+                stub_df_with_entities,
+                model_configs=[],
+                selected_models=stub_rewrite_model_selection,
+                replace_model_selection=stub_replace_model_selection,
+                privacy_goal=_PRIVACY_GOAL,
+                evaluation=EvaluationCriteria(max_repair_iterations=0),
+            )
+        (finalizer,) = [
+            column
+            for column in adapter.run_workflow.call_args.kwargs["columns"]
+            if isinstance(column, CustomColumnConfig) and isinstance(column.generator_params, _FinalizationParams)
+        ]
+        return result.dataframe, finalizer
+
+    expected, builtin_finalizer = run(CombinedRewriteWorkflow)
+    observed, override_finalizer = run(GraphOverride)
+    assert calls == [True]
+    pd.testing.assert_frame_equal(observed, expected)
+    assert observed[COL_REWRITTEN_TEXT].tolist() == ["Maria works"]
+    # Both runs are opaque here (a Mock adapter); the override's finalizer projects exactly like the builtin's.
+    graph = CombinedRewriteWorkflow(Mock()).build_graph(
+        selected_models=stub_rewrite_model_selection,
+        replace_model_selection=stub_replace_model_selection,
+        privacy_goal=_PRIVACY_GOAL,
+        evaluation=EvaluationCriteria(max_repair_iterations=0),
+    )
+    state = graph.evaluation_states[0]
+    row = {
+        state.rewritten_text: "observed",
+        state.quality_reanswer: {"answers": []},
+        state.privacy_reanswer: {"answers": []},
+        state.quality_compare: {"per_item": []},
+        state.utility_score: 0.9,
+        state.leakage_mass: 0.0,
+        state.weighted_leakage_rate: 0.0,
+        state.any_high_leaked: False,
+        state.needs_repair: False,
+    }
+    assert builtin_finalizer.generator_function(dict(row), builtin_finalizer.generator_params) == (
+        override_finalizer.generator_function(dict(row), override_finalizer.generator_params)
+    )
+
+
+def test_admitted_finalization_applies_to_builtin_and_release_signature_overrides(
+    stub_rewrite_model_selection: RewriteModelSelection,
+    stub_replace_model_selection: ReplaceModelSelection,
+) -> None:
+    """Under an admitted (non-opaque) lowering the binding finalizes rows, so the graph's finalizer passes them
+    through, whether the graph came from the builtin build_graph or a caller override delegating to it."""
+    from data_designer.config.column_configs import CustomColumnConfig
+
+    from anonymizer.engine.rewrite.combined_rewrite_workflow import (
+        CombinedRewriteWorkflow,
+        _FinalizationParams,
+        admitted_finalization,
+    )
+
+    class GraphOverride(CombinedRewriteWorkflow):
+        def build_graph(self, **kwargs):  # type: ignore[override]
+            return super().build_graph(**kwargs)
+
+    evaluation = EvaluationCriteria(max_repair_iterations=1)
+    for kind in (CombinedRewriteWorkflow, GraphOverride):
+        graph = admitted_finalization(
+            kind(Mock()).build_graph(
+                selected_models=stub_rewrite_model_selection,
+                replace_model_selection=stub_replace_model_selection,
+                privacy_goal=_PRIVACY_GOAL,
+                evaluation=evaluation,
+            ),
+            evaluation,
+        )
+        (finalizer,) = [
+            column
+            for column in graph.columns
+            if isinstance(column, CustomColumnConfig) and isinstance(column.generator_params, _FinalizationParams)
+        ]
+        row = {"marker": "unchanged"}
+        assert finalizer.generator_function(dict(row), finalizer.generator_params) == row
+
+
+def test_stage_results_keep_execution_off_the_dataclass_surface() -> None:
+    """H1.3: engine stage results carry their execution beside them, never in fields, vars, pickle, repr or ==."""
+    import dataclasses
+    import gc
+    import pickle
+
+    from anonymizer.engine.detection.detection_workflow import EntityDetectionResult
+    from anonymizer.engine.harness import retention
+    from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceResult
+    from anonymizer.engine.rewrite.rewrite_workflow import RewriteResult
+
+    execution = object()
+    for kind in (RewriteResult, EntityDetectionResult, LlmReplaceResult):
+        result = kind(pd.DataFrame({"a": [1]}), [])
+        retention.attach_execution(result, execution)
+        assert result._execution is execution
+        assert "_execution" not in {item.name for item in dataclasses.fields(result)}
+        assert "_execution" not in vars(result) and "_execution" not in repr(result)
+        restored = pickle.loads(pickle.dumps(result))
+        assert restored._execution is None and vars(restored).keys() == vars(result).keys()
+        key = id(result)
+        del result, restored
+        gc.collect()
+        assert key not in retention._EXECUTIONS

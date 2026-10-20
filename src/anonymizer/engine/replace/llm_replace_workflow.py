@@ -7,6 +7,7 @@ import json
 import logging
 from collections import Counter
 from dataclasses import dataclass
+from typing import Any
 
 import pandas as pd
 from data_designer.config.column_configs import LLMStructuredColumnConfig
@@ -20,13 +21,12 @@ from anonymizer.engine.constants import (
     COL_ENTITIES_FOR_REPLACE_JSON,
     COL_ENTITY_EXAMPLES,
     COL_REPLACEMENT_MAP,
-    COL_REPLACEMENT_MAP_SOURCE,
     ENTITY_LABEL_EXAMPLES,
 )
-from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter
+from anonymizer.engine.harness.retention import RetainsExecution
+from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter, WorkflowRunResult
 from anonymizer.engine.ndd.model_loader import resolve_model_alias
 from anonymizer.engine.prompt_utils import substitute_placeholders
-from anonymizer.engine.row_partitioning import merge_and_reorder, split_rows
 from anonymizer.engine.schemas import EntitiesByValueSchema, EntityReplacementMapSchema
 
 logger = logging.getLogger("anonymizer.replace.llm_workflow")
@@ -40,9 +40,10 @@ _INTERNAL_COLUMNS = (COL_ENTITY_EXAMPLES, COL_ENTITIES_FOR_REPLACE, COL_ENTITIES
 
 
 @dataclass(frozen=True)
-class LlmReplaceResult:
+class LlmReplaceResult(RetainsExecution):
     dataframe: pd.DataFrame
     failed_records: list[FailedRecord]
+    source_positions: tuple[int, ...] | None = None
 
 
 class LlmReplaceWorkflow:
@@ -61,65 +62,47 @@ class LlmReplaceWorkflow:
         entities_column: str = COL_ENTITIES_BY_VALUE,
         preview_num_records: int | None = None,
     ) -> LlmReplaceResult:
-        replace_alias = resolve_model_alias("replacement_generator", selected_models)
+        from anonymizer.engine.replace._semantic_map import run_map
 
-        working_df = dataframe.copy()
-
-        # Parse the per-row entity payload once, then reuse it for prompt inputs.
-        parsed_entities = working_df[entities_column].apply(EntitiesByValueSchema.from_raw)
-        working_df[COL_ENTITY_EXAMPLES] = parsed_entities.apply(_create_entity_examples)
-        working_df[COL_ENTITIES_FOR_REPLACE] = parsed_entities.apply(_enrich_entities_for_template)
-        working_df[COL_ENTITIES_FOR_REPLACE_JSON] = working_df[COL_ENTITIES_FOR_REPLACE].apply(json.dumps)
-
-        # Partition: rows with an empty entity list bypass replacement-map generation.
-        entity_rows, passthrough_rows = split_rows(working_df, column=COL_ENTITIES_FOR_REPLACE, predicate=bool)
-        passthrough_rows[COL_REPLACEMENT_MAP] = [{"replacements": []} for _ in range(len(passthrough_rows))]
-        passthrough_rows[COL_REPLACEMENT_MAP_SOURCE] = REPLACEMENT_MAP_SOURCE_LLM
-
-        if entity_rows.empty:
-            passthrough_only = merge_and_reorder(passthrough_rows)
-            return LlmReplaceResult(
-                dataframe=passthrough_only.drop(columns=list(_INTERNAL_COLUMNS), errors="ignore"),
-                failed_records=[],
-            )
-
-        # Only rows with actual entities are sent to the LLM.
-        effective_preview_num_records = (
-            min(preview_num_records, len(entity_rows)) if preview_num_records is not None else None
+        return run_map(
+            self,
+            dataframe,
+            dict(
+                model_configs=model_configs,
+                selected_models=selected_models,
+                instructions=instructions,
+                entities_column=entities_column,
+                preview_num_records=preview_num_records,
+            ),
         )
-        run_result = self._adapter.run_workflow(
-            entity_rows,
+
+    def _generate_columns(
+        self,
+        dataframe: pd.DataFrame,
+        *,
+        model_configs: list[ModelConfig],
+        selected_models: ReplaceModelSelection,
+        instructions: str | None,
+        preview_num_records: int | None,
+        **binding: Any,
+    ) -> WorkflowRunResult:
+        """Lower one admitted generation batch to DataDesigner columns."""
+        return self._adapter.run_workflow(
+            dataframe,
             model_configs=model_configs,
             columns=[
                 LLMStructuredColumnConfig(
                     name=COL_REPLACEMENT_MAP,
                     prompt=_get_replacement_mapping_prompt(
-                        entities_column=COL_ENTITIES_FOR_REPLACE,
-                        instructions=instructions,
+                        entities_column=COL_ENTITIES_FOR_REPLACE, instructions=instructions
                     ),
-                    model_alias=replace_alias,
+                    model_alias=resolve_model_alias("replacement_generator", selected_models),
                     output_format=EntityReplacementMapSchema,
                 )
             ],
             workflow_name="replace-map-generation",
-            preview_num_records=effective_preview_num_records,
-        )
-        output_df = run_result.dataframe.copy()
-        # Drop any LLM-returned replacements that were not requested for this row.
-        output_df[COL_REPLACEMENT_MAP] = output_df.apply(
-            lambda row: _filter_replacement_map_to_input_entities(
-                raw_map=row.get(COL_REPLACEMENT_MAP, {"replacements": []}),
-                parsed_entities=EntitiesByValueSchema.from_raw(row.get(entities_column, {})),
-                record_id=str(row.get("_anonymizer_record_id", "")),
-            ),
-            axis=1,
-        )
-        output_df[COL_REPLACEMENT_MAP_SOURCE] = REPLACEMENT_MAP_SOURCE_LLM
-
-        combined = merge_and_reorder(output_df, passthrough_rows)
-        return LlmReplaceResult(
-            dataframe=combined.drop(columns=list(_INTERNAL_COLUMNS), errors="ignore"),
-            failed_records=run_result.failed_records,
+            preview_num_records=preview_num_records,
+            **binding,
         )
 
 
@@ -319,3 +302,7 @@ Before generating replacements, verify:
 _EXAMPLE_LOOKUP: dict[str, str] = {
     label: f"(e.g. {', '.join(examples)})" for label, examples in ENTITY_LABEL_EXAMPLES.items()
 }
+
+
+# Pin library entry identity so a patched or overriding helper is classified as the caller's own.
+_GENERATE_MAP_ONLY = LlmReplaceWorkflow.generate_map_only
