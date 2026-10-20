@@ -14,6 +14,7 @@ from collections.abc import Callable
 from types import SimpleNamespace
 from typing import Any, cast
 
+import httpx
 import pytest
 
 from anonymizer.engine.ndd import _graph_requests
@@ -79,10 +80,32 @@ def fake_dd(monkeypatch: pytest.MonkeyPatch) -> types.SimpleNamespace:
     setattr(registry, "ModelRegistry", _Registry)
     facade = types.ModuleType("fake_facade")
     setattr(facade, "ModelFacade", _Facade)
-    monkeypatch.setitem(sys.modules, _graph_requests._REGISTRY_MODULE, registry)
-    monkeypatch.setitem(sys.modules, _graph_requests._FACADE_MODULE, facade)
+    retry = types.ModuleType("fake_retry")
+    setattr(retry, "create_retry_transport", lambda *args, **kwargs: None)
+    parsers = types.ModuleType("fake_parser_errors")
+    setattr(parsers, "ParserException", type("ParserException", (Exception,), {}))
+    readiness = types.ModuleType("fake_readiness")
+    setattr(readiness, "_SKIP_MODEL_HEALTH_CHECKS_ENV", "FAKE_SKIP_HEALTH_CHECKS")
+    scheduler = types.ModuleType("fake_scheduler")
+
+    class AsyncTaskScheduler:
+        def __init__(self, *, salvage_max_rounds: int = 7) -> None:
+            pass
+
+    setattr(scheduler, "AsyncTaskScheduler", AsyncTaskScheduler)
+    for name, module in (
+        (_graph_requests._REGISTRY_MODULE, registry),
+        (_graph_requests._FACADE_MODULE, facade),
+        (_graph_requests._RETRY_MODULE, retry),
+        (_graph_requests._PARSER_ERRORS_MODULE, parsers),
+        (_graph_requests._READINESS_MODULE, readiness),
+        (_graph_requests._SCHEDULER_MODULE, scheduler),
+    ):
+        monkeypatch.setitem(sys.modules, name, module)
     monkeypatch.setattr(_graph_requests, "version", lambda _name: "0.9.9")
-    return types.SimpleNamespace(registry=registry, facade=facade)
+    return types.SimpleNamespace(
+        registry=registry, facade=facade, retry=retry, parsers=parsers, readiness=readiness, scheduler=scheduler
+    )
 
 
 def _bridge() -> tuple[NddRequestBridge, _Physical]:
@@ -216,3 +239,97 @@ def test_facade_without_client_fails_at_creation(fake_dd: types.SimpleNamespace)
     with pytest.raises(AnonymizerWorkflowError) as raised, bridge.bind(designer):
         designer._create_resource_provider().model_registry._model_facade_factory()
     _assert_capability_message(raised.value, "ModelFacade._client")
+
+
+@pytest.mark.parametrize(
+    ("module", "name"),
+    [("retry", "create_retry_transport"), ("parsers", "ParserException")],
+)
+def test_missing_module_hook_fails_at_bind(fake_dd: types.SimpleNamespace, module: str, name: str) -> None:
+    delattr(getattr(fake_dd, module), name)
+    designer = _Designer(_provider(lambda: None))
+    bridge, _ = _bridge()
+    with pytest.raises(AnonymizerWorkflowError) as raised, bridge.bind(designer):
+        pytest.fail("bind must not yield")
+    path = {"retry": _graph_requests._RETRY_MODULE, "parsers": _graph_requests._PARSER_ERRORS_MODULE}[module]
+    _assert_capability_message(raised.value, f"{path}.{name}")
+    assert designer.created == 0
+
+
+def test_native_map_lookups_resolve_from_the_installed_release(fake_dd: types.SimpleNamespace) -> None:
+    assert _graph_requests.skip_health_checks_env() == "FAKE_SKIP_HEALTH_CHECKS"
+    assert _graph_requests.scheduler_salvage_rounds() == 7
+
+
+def test_missing_health_check_switch_fails_with_capability_error(fake_dd: types.SimpleNamespace) -> None:
+    delattr(fake_dd.readiness, "_SKIP_MODEL_HEALTH_CHECKS_ENV")
+    with pytest.raises(AnonymizerWorkflowError) as raised:
+        _graph_requests.skip_health_checks_env()
+    _assert_capability_message(raised.value, f"{_graph_requests._READINESS_MODULE}._SKIP_MODEL_HEALTH_CHECKS_ENV")
+
+
+def test_scheduler_without_salvage_rounds_fails_with_capability_error(fake_dd: types.SimpleNamespace) -> None:
+    class AsyncTaskScheduler:
+        def __init__(self) -> None:
+            pass
+
+    setattr(fake_dd.scheduler, "AsyncTaskScheduler", AsyncTaskScheduler)
+    with pytest.raises(AnonymizerWorkflowError) as raised:
+        _graph_requests.scheduler_salvage_rounds()
+    _assert_capability_message(raised.value, "AsyncTaskScheduler(salvage_max_rounds=...)")
+
+
+def test_bridge_modules_import_no_data_designer_internals_at_module_scope() -> None:
+    """Importing ``anonymizer`` must not fail on a release that moves a hook the bridge checks at bind time."""
+    import ast
+    from pathlib import Path
+
+    src = Path(__file__).resolve().parents[2] / "src" / "anonymizer"
+    lazy = {
+        "engine/ndd/_graph_requests.py",
+        "engine/replace/_native_map_requests.py",
+        "engine/harness/kernel.py",
+        "engine/detection/_graph_profile.py",
+    }
+    offenders = []
+    for path in sorted(src.rglob("*.py")):
+        relative = path.relative_to(src).as_posix()
+        for node in ast.parse(path.read_text()).body:
+            if (
+                not isinstance(node, ast.ImportFrom)
+                or node.module is None
+                or not node.module.startswith("data_designer")
+            ):
+                continue
+            names = [alias.name for alias in node.names]
+            if any(name.startswith("_") for name in names) or (
+                relative in lazy and node.module.startswith("data_designer.engine")
+            ):
+                offenders.append(f"{relative}: from {node.module} import {', '.join(names)}")
+    assert offenders == []
+
+
+@pytest.mark.parametrize(
+    ("error", "wrapped"),
+    [
+        (httpx.ReadError("read failed"), True),
+        (httpx.WriteError("write failed"), True),
+        (httpx.RemoteProtocolError("peer closed"), True),
+        (httpx.ConnectError("refused"), False),
+        (httpx.ReadTimeout("slow"), False),
+        (httpx.LocalProtocolError("bad request"), False),
+    ],
+    ids=lambda value: type(value).__name__ if isinstance(value, Exception) else str(value),
+)
+def test_single_attempt_errors_keep_the_released_retry_classification(error: Exception, wrapped: bool) -> None:
+    """DD sees the same retry decision on every supported release: only errors 0.9.4 retried stay retryable."""
+    seen = _graph_requests._single_attempt_error(cast(Any, error))
+    if not wrapped:
+        assert seen is error
+        return
+    assert isinstance(seen, _graph_requests.SingleAttemptTransportError)
+    assert seen.__cause__ is error
+    assert str(seen) == str(error)
+    from data_designer.engine.models.clients.errors import ProviderErrorKind, infer_error_kind_from_exception
+
+    assert infer_error_kind_from_exception(seen) is ProviderErrorKind.API_ERROR

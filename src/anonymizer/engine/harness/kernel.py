@@ -19,8 +19,6 @@ from threading import Event, Thread, get_ident
 from time import monotonic_ns
 from typing import TYPE_CHECKING, Any, cast
 
-from data_designer.engine.dataset_builders.utils.async_concurrency import ensure_async_engine_loop
-
 from anonymizer.engine.constants import COL_REPLACEMENT_MAP
 from anonymizer.engine.graph_sdk._activation_values import ActivationLimits
 from anonymizer.engine.graph_sdk._execution_delegated import WorkerDelegatedSubmitter
@@ -646,3 +644,10 @@ def project_detection_redact(result: ExecutionResult) -> ReplacementResult:
     return ReplacementResult(
         dataframe=frame.project(result), failed_records=list(frame.failed_records), _execution=result
     )
+
+
+def ensure_async_engine_loop() -> asyncio.AbstractEventLoop:
+    """DataDesigner's shared async engine loop, imported on first use so importing this module needs no engine."""
+    from data_designer.engine.dataset_builders.utils.async_concurrency import ensure_async_engine_loop as engine_loop
+
+    return engine_loop()

@@ -24,8 +24,6 @@ from threading import Lock
 from typing import Any
 
 import httpx
-from data_designer.engine.models.clients.retry import create_retry_transport
-from data_designer.engine.models.parsers.errors import ParserException
 
 from anonymizer.engine.graph_sdk._execution_values import DelegatedRequests
 from anonymizer.engine.graph_sdk.requests import (
@@ -48,11 +46,15 @@ SUPPORTED_DATA_DESIGNER_RANGE = ">=0.9.4,<0.10"
 
 The binding relies on private DataDesigner hooks, so it checks for them instead of an exact version (see
 ``require_binding_capabilities``). Must stay in sync with the ``data-designer`` specifier in
-``pyproject.toml``; ``tests/engine/test_graph_requests_version_pin.py`` checks this.
+``pyproject.toml``; ``tests/engine/test_graph_requests_capabilities.py`` checks this.
 """
 
 _REGISTRY_MODULE = "data_designer.engine.models.registry"
 _FACADE_MODULE = "data_designer.engine.models.facade"
+_RETRY_MODULE = "data_designer.engine.models.clients.retry"
+_PARSER_ERRORS_MODULE = "data_designer.engine.models.parsers.errors"
+_READINESS_MODULE = "data_designer.engine.readiness"
+_SCHEDULER_MODULE = "data_designer.engine.dataset_builders.async_scheduler"
 _HTTP_CLIENT_FIELDS = ("_retry_config", "_aclient", "_client", "_transport", "_limits")
 
 
@@ -69,6 +71,14 @@ def _missing_capability(attribute: str) -> AnonymizerWorkflowError:
         f"data-designer {_installed_data_designer()} does not provide (supported: data-designer "
         f"{SUPPORTED_DATA_DESIGNER_RANGE})"
     )
+
+
+def _module_attribute(module: str, name: str) -> Any:
+    """Resolve a private DataDesigner module attribute, or raise the standard capability error."""
+    try:
+        return getattr(importlib.import_module(module), name)
+    except (ImportError, AttributeError) as error:
+        raise _missing_capability(f"{module}.{name}") from error
 
 
 def require_binding_capabilities(designer: Any) -> None:
@@ -93,6 +103,30 @@ def require_binding_capabilities(designer: Any) -> None:
         raise _missing_capability("ModelRegistry(model_facade_factory=...)")
     if not inspect.iscoroutinefunction(getattr(facade, "agenerate", None)):
         raise _missing_capability("ModelFacade.agenerate")
+    if not callable(_module_attribute(_RETRY_MODULE, "create_retry_transport")):
+        raise _missing_capability(f"{_RETRY_MODULE}.create_retry_transport")
+    if not isinstance(_module_attribute(_PARSER_ERRORS_MODULE, "ParserException"), type):
+        raise _missing_capability(f"{_PARSER_ERRORS_MODULE}.ParserException")
+
+
+def skip_health_checks_env() -> str:
+    """Name of DataDesigner's environment switch that skips model health checks (Substitute's native map)."""
+    name = _module_attribute(_READINESS_MODULE, "_SKIP_MODEL_HEALTH_CHECKS_ENV")
+    if not isinstance(name, str):
+        raise _missing_capability(f"{_READINESS_MODULE}._SKIP_MODEL_HEALTH_CHECKS_ENV")
+    return name
+
+
+def scheduler_salvage_rounds() -> int:
+    """DataDesigner's default ``AsyncTaskScheduler`` salvage rounds (Substitute's native map retry allowance)."""
+    scheduler = _module_attribute(_SCHEDULER_MODULE, "AsyncTaskScheduler")
+    try:
+        rounds = inspect.signature(scheduler).parameters["salvage_max_rounds"].default
+    except (KeyError, TypeError, ValueError):
+        rounds = None
+    if type(rounds) is not int:
+        raise _missing_capability("AsyncTaskScheduler(salvage_max_rounds=...)")
+    return rounds
 
 
 def _require_attribute(owner: Any, name: str, label: str) -> Any:
@@ -111,6 +145,30 @@ class _Exchange:
     error: Exception | None = None
     failure: str | None = None
     retries: bool = False
+
+
+class SingleAttemptTransportError(Exception):
+    """A transport failure DataDesigner must not retry within a bridge that admits one physical attempt.
+
+    Through 0.9.4, DataDesigner retried a transport error only when its class name mentions a connection
+    (``ConnectError``); from 0.9.5 it also retries every ``httpx.NetworkError`` and ``RemoteProtocolError``,
+    such as a ``ReadError`` after the request may have reached the provider. A bridge without ``retries``
+    admits one attempt per chain, so DD receives those errors as this type instead. It is not an httpx
+    type and its name names no retryable kind, so every supported release classifies it as a non-retryable
+    API error and the record keeps its unknown outcome, as on 0.9.4.
+    """
+
+
+def _single_attempt_error(error: httpx.TransportError) -> Exception:
+    """The error DD sees for a single-attempt exchange: unchanged when every supported release treats it alike."""
+    if (
+        isinstance(error, (httpx.NetworkError, httpx.RemoteProtocolError))
+        and "connect" not in type(error).__name__.lower()
+    ):
+        wrapped = SingleAttemptTransportError(str(error) or type(error).__name__)
+        wrapped.__cause__ = error
+        return wrapped
+    return error
 
 
 _RETRY_FAILURES = frozenset({"retryable", "transport_unknown", "rejected_before_acceptance"})
@@ -137,7 +195,8 @@ def _observe_generation(generation: _Generation, payload: Any) -> FailureClass |
         generation.value = generation.parser(content)
     except Exception as error:
         generation.error = error
-        return "malformed_response" if isinstance(error, ParserException) else "permanent"
+        parser_exception = _module_attribute(_PARSER_ERRORS_MODULE, "ParserException")
+        return "malformed_response" if isinstance(error, parser_exception) else "permanent"
     return None
 
 
@@ -214,7 +273,7 @@ class NddPhysicalTransport:
             await response.aread()
         except httpx.TransportError as error:
             if not exchange.retries:
-                exchange.error = error
+                exchange.error = _single_attempt_error(error)
                 raise
             # DD sees the same error and may retry it. A refused connection never sent the request;
             # any other transport error leaves the provider's side unknown.
@@ -319,6 +378,7 @@ class NddRequestBridge:
     def bind(self, designer: Any) -> Iterator[None]:
         self.requests.require_transport(self.physical)
         require_binding_capabilities(designer)
+        create_retry_transport = _module_attribute(_RETRY_MODULE, "create_retry_transport")
         original = designer._create_resource_provider
         bridge = self
 

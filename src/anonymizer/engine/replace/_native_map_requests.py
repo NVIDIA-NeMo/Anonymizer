@@ -10,8 +10,6 @@ from contextvars import ContextVar
 from dataclasses import replace
 from typing import Any
 
-from data_designer.engine.readiness import _SKIP_MODEL_HEALTH_CHECKS_ENV
-
 from anonymizer.engine.graph_sdk._authoring_defaults import _compile_graph, _operation_spec, _outcome_spec
 from anonymizer.engine.graph_sdk._workflow_values import (
     NodeId,
@@ -22,7 +20,7 @@ from anonymizer.engine.graph_sdk._workflow_values import (
 from anonymizer.engine.graph_sdk.capabilities import FrozenConfig, ImplementationCapability, ImplementationRef
 from anonymizer.engine.graph_sdk.executor import DelegatedReadiness, ExecutionImplementation, OperationExecutionPolicy
 from anonymizer.engine.graph_sdk.requests import ChildRoute, PhysicalRequestPolicy
-from anonymizer.engine.ndd._graph_requests import NddRequestBridge
+from anonymizer.engine.ndd._graph_requests import NddRequestBridge, scheduler_salvage_rounds, skip_health_checks_env
 from anonymizer.engine.ndd._route import native_map_columns
 from anonymizer.engine.ndd.model_loader import resolve_model_alias
 
@@ -59,18 +57,15 @@ def dd_retry_allowance() -> int:
     accounting (``NddRequestBridge`` logs the count); the invocation declares no request upper bound and admits no
     hard request budget, so no bound is claimed for them.
     """
-    import inspect
-
-    from data_designer.engine.dataset_builders.async_scheduler import AsyncTaskScheduler
     from data_designer.engine.models.clients.retry import RetryConfig
 
-    rounds = inspect.signature(AsyncTaskScheduler).parameters["salvage_max_rounds"].default
+    rounds = scheduler_salvage_rounds()
     return (RetryConfig().max_retries + 1) * (rounds + 1) - 1
 
 
 def _health_checked(arguments: Mapping[str, Any]) -> bool:
     """Mirror DD's readiness skip rules (``data_designer.engine.readiness`` and ``ModelRegistry``) for the map model."""
-    if os.environ.get(_SKIP_MODEL_HEALTH_CHECKS_ENV) == "1":
+    if os.environ.get(skip_health_checks_env()) == "1":
         return False
     alias = resolve_model_alias("replacement_generator", arguments["selected_models"])
     return not any(model.alias == alias and model.skip_health_check for model in arguments["model_configs"])

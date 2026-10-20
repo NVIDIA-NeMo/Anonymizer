@@ -17,7 +17,6 @@ from typing import Any, cast
 
 import pandas as pd
 from data_designer.config import ModelConfig
-from data_designer.engine.dataset_builders.utils.async_concurrency import ensure_async_engine_loop
 
 from anonymizer.config.models import DetectionModelSelection, ReplaceModelSelection
 from anonymizer.config.replace_strategies import Annotate, Hash, Redact, ReplaceMethod
@@ -731,3 +730,10 @@ async def execute_detection_redact(
     finally:
         if not handed_to_runtime and transport is not None:
             await transport.close()
+
+
+def ensure_async_engine_loop() -> asyncio.AbstractEventLoop:
+    """DataDesigner's shared async engine loop, imported on first use so importing this module needs no engine."""
+    from data_designer.engine.dataset_builders.utils.async_concurrency import ensure_async_engine_loop as engine_loop
+
+    return engine_loop()
