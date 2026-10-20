@@ -3,12 +3,15 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import dataclass, field
+from typing import Self
 
 import pandas as pd
 
 from anonymizer.config.replace_strategies import ReplaceMethod
 from anonymizer.config.rewrite import PrivacyGoal
+from anonymizer.engine.harness.retention import attach_execution, attached_execution
 from anonymizer.engine.ndd.adapter import FailedRecord
 from anonymizer.interface.display import render_record_html
 
@@ -19,6 +22,28 @@ class _DisplayMixin:
     trace_dataframe: pd.DataFrame
     resolved_text_column: str
     _display_cycle_index: int
+
+    @property
+    def _execution(self) -> object | None:
+        """The live execution behind this result in this process (kept off the instance; see harness.retention)."""
+        return attached_execution(self)
+
+    @_execution.setter
+    def _execution(self, execution: object | None) -> None:
+        attach_execution(self, execution)
+
+    def __copy__(self) -> Self:
+        copied = object.__new__(type(self))
+        copied.__dict__.update(self.__dict__)
+        copied._execution = self._execution
+        return copied
+
+    def __deepcopy__(self, memo: dict[int, object]) -> Self:
+        copied = object.__new__(type(self))
+        memo[id(self)] = copied
+        copied.__dict__.update(deepcopy(self.__dict__, memo))
+        copied._execution = self._execution
+        return copied
 
     def display_record(self, index: int | None = None) -> None:
         """Render a record with entity highlights and replacement map in a notebook.

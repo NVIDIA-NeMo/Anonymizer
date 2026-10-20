@@ -151,9 +151,14 @@ def test_graph_unrolls_conditional_repairs(
 
 
 def test_finalizer_selects_last_executed_iteration(
+    monkeypatch: pytest.MonkeyPatch,
     stub_rewrite_model_selection: RewriteModelSelection,
     stub_replace_model_selection: ReplaceModelSelection,
 ) -> None:
+    from anonymizer.graph import InvocationId
+
+    # H1.5: standalone finalization is a pure row projection; it starts no graph invocation.
+    monkeypatch.setattr(InvocationId, "new", lambda **kwargs: pytest.fail("standalone finalize started a graph"))
     graph = CombinedRewriteWorkflow(adapter=Mock()).build_graph(
         selected_models=stub_rewrite_model_selection,
         replace_model_selection=stub_replace_model_selection,
@@ -181,6 +186,8 @@ def test_finalizer_selects_last_executed_iteration(
         repaired.any_high_leaked: False,
         repaired.needs_repair: False,
         skipped.needs_repair: None,
+        COL_REWRITTEN_TEXT: "forged preexisting terminal",
+        COL_UTILITY_SCORE: 0.123,
     }
     finalizer = graph.columns[-1]
     assert isinstance(finalizer, CustomColumnConfig)
@@ -654,3 +661,37 @@ def test_graph_validates_with_data_designer(
     )
 
     data_designer.validate(builder)
+
+
+@pytest.mark.parametrize("decision", [None, "missing"])
+def test_standalone_finalizer_rejects_unobserved_initial_decision(
+    stub_rewrite_model_selection: RewriteModelSelection,
+    stub_replace_model_selection: ReplaceModelSelection,
+    decision: str | None,
+) -> None:
+    from anonymizer.graph import EffectRejected
+
+    graph = CombinedRewriteWorkflow(adapter=Mock()).build_graph(
+        selected_models=stub_rewrite_model_selection,
+        replace_model_selection=stub_replace_model_selection,
+        privacy_goal=_PRIVACY_GOAL,
+        evaluation=EvaluationCriteria(max_repair_iterations=0),
+    )
+    state = graph.evaluation_states[0]
+    row = {
+        state.rewritten_text: "observed candidate",
+        state.quality_reanswer: {"answers": []},
+        state.privacy_reanswer: {"answers": []},
+        state.quality_compare: {"per_item": []},
+        state.utility_score: 1.0,
+        state.leakage_mass: 0.0,
+        state.weighted_leakage_rate: 0.0,
+        state.any_high_leaked: False,
+    }
+    if decision is None:
+        row[state.needs_repair] = None
+    finalizer = graph.columns[-1]
+    assert isinstance(finalizer, CustomColumnConfig)
+    with pytest.raises(EffectRejected, match="invalid_type" if decision is None else "missing"):
+        finalizer.generator_function(row, finalizer.generator_params)
+    assert COL_REWRITTEN_TEXT not in row

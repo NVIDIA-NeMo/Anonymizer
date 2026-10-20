@@ -3,8 +3,11 @@
 
 from __future__ import annotations
 
+import dataclasses
+import logging
 from pathlib import Path
 from types import SimpleNamespace
+from typing import cast
 from unittest.mock import Mock, patch
 
 import pandas as pd
@@ -176,6 +179,147 @@ def test_preview_passes_entity_label_examples_to_detection_workflow(stub_input: 
     anonymizer.preview(config=config, data=stub_input, num_records=1)
 
     assert detection_wf.run.call_args.kwargs["entity_label_examples"] == examples
+
+
+class _Replay040DetectionWorkflow:
+    """Duck-types v0.4.0's EntityDetectionWorkflow.run()/build_* signatures exactly: no
+    entity_label_examples parameter, no **kwargs to swallow it (added in #275, after v0.4.0)."""
+
+    def __init__(self, result: EntityDetectionResult) -> None:
+        self._result = result
+        self.config_sentinel = Mock(name="config_sentinel")
+        self.builder_sentinel = Mock(name="builder_sentinel")
+
+    def run(
+        self,
+        dataframe: pd.DataFrame,
+        *,
+        model_configs: list[ModelConfig],
+        selected_models: object,
+        gliner_detection_threshold: float,
+        validation_max_entities_per_call: int = 20,
+        validation_excerpt_window_chars: int = 200,
+        validation_single_chunk_full_text: bool = True,
+        entity_labels: list[str] | None = None,
+        excluded_entity_labels: list[str] | None = None,
+        privacy_goal: object | None = None,
+        data_summary: str | None = None,
+        tag_latent_entities: bool = True,
+        compute_grouped_entities: bool | None = None,
+        preview_num_records: int | None = None,
+    ) -> EntityDetectionResult:
+        return self._result
+
+    def build_detection_config(
+        self,
+        dataframe: pd.DataFrame,
+        *,
+        seed_path: str | Path,
+        model_configs: list[ModelConfig],
+        selected_models: object,
+        gliner_detection_threshold: float,
+        validation_max_entities_per_call: int = 100,
+        validation_excerpt_window_chars: int = 500,
+        validation_single_chunk_full_text: bool = True,
+        entity_labels: list[str] | None = None,
+        excluded_entity_labels: list[str] | None = None,
+        data_summary: str | None = None,
+    ) -> Mock:
+        return self.config_sentinel
+
+    def build_detection_builder_for_seed(
+        self,
+        *,
+        seed_path: str | Path,
+        model_configs: list[ModelConfig],
+        selected_models: object,
+        gliner_detection_threshold: float,
+        validation_max_entities_per_call: int = 100,
+        validation_excerpt_window_chars: int = 500,
+        validation_single_chunk_full_text: bool = True,
+        entity_labels: list[str] | None = None,
+        excluded_entity_labels: list[str] | None = None,
+        data_summary: str | None = None,
+        job_index: int = 0,
+        num_jobs: int = 1,
+    ) -> Mock:
+        return self.builder_sentinel
+
+
+def test_run_withholds_entity_label_examples_from_a_pre_275_detection_workflow(
+    stub_input: AnonymizerInput,
+) -> None:
+    """A caller-supplied detection_workflow with v0.4.0's exact signature must not get a TypeError."""
+    examples = {"vendor_api_key": ["acme_live_abc123"]}
+    config = AnonymizerConfig(
+        detect={"entity_labels": ["vendor_api_key"], "entity_label_examples": examples},
+        replace=Redact(),
+    )
+    detection_result = EntityDetectionResult(
+        dataframe=pd.DataFrame({COL_TEXT: ["Alice works at Acme"], COL_FINAL_ENTITIES: [{"entities": []}]}),
+        failed_records=[],
+    )
+    stub = cast(EntityDetectionWorkflow, _Replay040DetectionWorkflow(detection_result))
+    anonymizer = Anonymizer(detection_workflow=stub)
+
+    result = anonymizer.run(config=config, data=stub_input)
+
+    assert result is not None
+
+
+def test_run_warns_once_when_entity_label_examples_withheld(
+    stub_input: AnonymizerInput, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A counts-only WARNING fires when configured examples are dropped for a legacy detection_workflow."""
+    config = AnonymizerConfig(
+        detect={"entity_labels": ["vendor_api_key"], "entity_label_examples": {"vendor_api_key": ["acme_live_x"]}},
+        replace=Redact(),
+    )
+    detection_result = EntityDetectionResult(
+        dataframe=pd.DataFrame({COL_TEXT: ["Alice works at Acme"], COL_FINAL_ENTITIES: [{"entities": []}]}),
+        failed_records=[],
+    )
+    stub = cast(EntityDetectionWorkflow, _Replay040DetectionWorkflow(detection_result))
+    anonymizer = Anonymizer(detection_workflow=stub)
+
+    with caplog.at_level(logging.WARNING, logger="anonymizer"):
+        anonymizer.run(config=config, data=stub_input)
+
+    messages = {r.getMessage() for r in caplog.records if "entity_label_examples configured" in r.getMessage()}
+    assert messages == {
+        "entity_label_examples configured for 1 label(s) but withheld: the configured detection_workflow "
+        "does not accept this keyword argument"
+    }
+    assert "acme_live_x" not in next(iter(messages))
+
+
+def test_export_detection_paths_withhold_entity_label_examples_from_a_pre_275_detection_workflow(
+    stub_input: AnonymizerInput,
+    tmp_path: Path,
+) -> None:
+    """A caller-supplied detection_workflow with v0.4.0's exact build_* signatures must not get a TypeError.
+
+    Asserts on the stub's returned sentinels (not just "no exception") so this test actually exercises
+    the withholding branch: a stub whose build_* methods accept ``**kwargs`` would pass
+    ``entity_label_examples`` through unnoticed and still return *something*, but it would not be this
+    stub's sentinel unless the call actually reached the stub body with a signature it accepts.
+    """
+    config = AnonymizerConfig(
+        detect={"entity_labels": ["vendor_api_key"], "entity_label_examples": {"vendor_api_key": ["x"]}},
+        replace=Redact(),
+    )
+    detection_result = EntityDetectionResult(dataframe=pd.DataFrame({COL_TEXT: []}), failed_records=[])
+    stub_impl = _Replay040DetectionWorkflow(detection_result)
+    stub = cast(EntityDetectionWorkflow, stub_impl)
+    anonymizer = Anonymizer(detection_workflow=stub)
+    seed_path = tmp_path / "seed.parquet"
+
+    assert anonymizer.export_detection_config(config=config, data=stub_input, seed_path=seed_path) is (
+        stub_impl.config_sentinel
+    )
+    assert anonymizer.export_detection_builder_for_seed(config=config, seed_path=seed_path) is (
+        stub_impl.builder_sentinel
+    )
 
 
 def test_export_detection_paths_pass_entity_label_examples(
@@ -1178,3 +1322,47 @@ def test_evaluate_passes_detection_context_to_coverage_judge(stub_input: Anonymi
     assert mock_coverage_wf.call_args.kwargs["excluded_entity_labels"] == ["email"]
     assert evaluated.data_summary == "Customer support transcripts."
     assert evaluated.excluded_entity_labels == ["email"]
+
+
+@pytest.mark.parametrize("preview", [False, True])
+def test_public_projection_retains_live_owner_without_saving_it(stub_input, preview):
+    import pickle
+    from copy import copy, deepcopy
+
+    class LiveOwner:
+        def __reduce__(self):
+            raise AssertionError("live runtime resources must not be serialized")
+
+    owner = LiveOwner()
+    replacement = ReplacementResult(
+        dataframe=pd.DataFrame({COL_TEXT: ["Alice"], COL_REPLACED_TEXT: ["[first_name]"]}), failed_records=[]
+    )
+    object.__setattr__(replacement, "_execution", owner)
+    anonymizer, detector, runner, _ = _make_anonymizer(replace_return=replacement)
+    config = AnonymizerConfig(replace=Redact())
+    result = (
+        anonymizer.preview(config=config, data=stub_input, num_records=1)
+        if preview
+        else anonymizer.run(config=config, data=stub_input)
+    )
+    from anonymizer.engine.graph_sdk.executor import ExecutionResult
+    from anonymizer.engine.harness.frames import InvocationFrame
+
+    execution = result._execution
+    assert isinstance(execution, ExecutionResult)
+    frame = execution.frames[0]
+    assert isinstance(frame, InvocationFrame) and frame.retained_owner is owner
+    assert copy(result)._execution is execution
+    cloned = deepcopy(result)
+    assert cloned._execution is execution and cloned.dataframe is not result.dataframe
+    pd.testing.assert_frame_equal(cloned.dataframe, result.dataframe)
+    assert detector.run.call_count == runner.run.call_count == 1
+    restored = pickle.loads(pickle.dumps(result))
+    assert restored._execution is None
+    pd.testing.assert_frame_equal(restored.dataframe, result.dataframe)
+    pd.testing.assert_frame_equal(restored.trace_dataframe, result.trace_dataframe)
+    assert restored.replace_method == result.replace_method
+    assert restored.failed_records == result.failed_records
+    assert "_execution" not in vars(result) and "_execution" not in {item.name for item in dataclasses.fields(result)}
+    if preview:
+        assert restored.preview_num_records == 1
