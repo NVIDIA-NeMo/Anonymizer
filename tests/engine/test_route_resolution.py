@@ -2,8 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """Native vs opaque routing per runner shape, observed at each entry's executor boundary.
 
-Each row pins how the entry classifies its runner (``opaque`` or native) and that every entry hands
-its synchronous body to the caller's thread, whatever the route: a caller's code, or a caller's
+Each row pins how the entry classifies its runner (``opaque`` or native) and that every entry is hosted
+by the kernel with its handoff, whatever the route: a caller's code, or a caller's
 adapter, runs opaque; builtin code on a builtin adapter is lowered natively. Where each body actually
 runs is pinned end to end in ``tests/interface/test_thread_placement.py``.
 """
@@ -117,8 +117,8 @@ def _observe(monkeypatch: pytest.MonkeyPatch, module: Any, name: str) -> dict[st
 
     seen: dict[str, Any] = {}
 
-    def run_sync_profile(operation: Any, *, caller_callbacks: bool) -> Any:
-        seen["caller_callbacks"] = caller_callbacks
+    def run_sync_profile(operation: Any) -> Any:
+        seen["hosted"] = True
         try:
             asyncio.run(operation(None, _HANDOFF))
         except _Stop:
@@ -149,7 +149,7 @@ def test_builtin_detection_entry(monkeypatch: pytest.MonkeyPatch, adapter: Any, 
     with pytest.raises(_Stop):
         _semantic_detection.run_direct_detection(EntityDetectionWorkflow(adapter()), _SOURCE, {})
     assert native_adapter(adapter()) is not opaque
-    assert seen["caller_callbacks"] is True
+    assert seen["hosted"]
     assert seen["args"][5] is _HANDOFF
 
 
@@ -167,8 +167,8 @@ def test_direct_map_entry(monkeypatch: pytest.MonkeyPatch, receiver: Any, opaque
 
     seen: dict[str, Any] = {}
 
-    def run_sync_profile(operation: Any, *, caller_callbacks: bool) -> Any:
-        seen["caller_callbacks"] = caller_callbacks
+    def run_sync_profile(operation: Any) -> Any:
+        seen["hosted"] = True
         raise _Stop
 
     monkeypatch.setattr(_semantic_map_profile, "_run_sync_profile", run_sync_profile)
@@ -176,7 +176,7 @@ def test_direct_map_entry(monkeypatch: pytest.MonkeyPatch, receiver: Any, opaque
     with pytest.raises(_Stop):
         _semantic_map_profile.run_direct_map(receiver(), _SOURCE, {})
     assert native_map(receiver()) is not opaque
-    assert seen["caller_callbacks"] is True
+    assert seen["hosted"]
 
 
 _ARGUMENTS: Any = {"evaluation": SimpleNamespace(max_repair_iterations=1), "preview_num_records": None}
@@ -198,7 +198,7 @@ def test_builtin_rewrite_entry(monkeypatch: pytest.MonkeyPatch, runner: Any, opa
     seen = _observe(monkeypatch, _semantic_profile, "execute_initial_evaluation")
     with pytest.raises(_Stop):
         _semantic_profile.run_builtin_rewrite(runner(), _SOURCE, _ARGUMENTS)
-    assert seen["caller_callbacks"] is True
+    assert seen["hosted"]
     assert seen["kwargs"]["opaque"] is opaque
     assert seen["kwargs"]["handoff"] is _HANDOFF
 
@@ -222,7 +222,7 @@ def test_semantic_rewrite_entry(monkeypatch: pytest.MonkeyPatch, adapter: Any, o
             arguments=_ARGUMENTS,
             detection_arguments={},
         )
-    assert seen["caller_callbacks"] is True
+    assert seen["hosted"]
     assert seen["kwargs"]["opaque"] is opaque
     assert seen["kwargs"]["handoff"] is _HANDOFF
 
@@ -257,7 +257,7 @@ def test_detection_redact_entry_opaque(
             opaque=True,
         )
     assert builtin_detection(detector()) is builtin
-    assert seen["caller_callbacks"] is True
+    assert seen["hosted"]
     assert seen["args"][0].handoff is _HANDOFF
 
 
@@ -275,7 +275,7 @@ def test_detection_redact_entry_native(monkeypatch: pytest.MonkeyPatch, detector
             detection_options={},
         )
     assert builtin_detection(detector()) is builtin
-    assert seen["caller_callbacks"] is True
+    assert seen["hosted"]
     assert "handoff" not in seen["kwargs"]
 
 
@@ -300,7 +300,7 @@ def test_detection_substitute_entry(
             replacement=replacement(llm_workflow=LlmReplaceWorkflow(_native())),
             replacement_models=_any(SimpleNamespace()),
         )
-    assert seen["caller_callbacks"] is True
+    assert seen["hosted"]
     assert seen["args"][0].handoff is _HANDOFF
 
 
@@ -387,8 +387,8 @@ def test_direct_map_entry_method_shapes(
 
     seen: dict[str, Any] = {}
 
-    def run_sync_profile(operation: Any, *, caller_callbacks: bool) -> Any:
-        seen["caller_callbacks"] = caller_callbacks
+    def run_sync_profile(operation: Any) -> Any:
+        seen["hosted"] = True
         raise _Stop
 
     if patch_class:
@@ -398,7 +398,7 @@ def test_direct_map_entry_method_shapes(
     with pytest.raises(_Stop):
         _semantic_map_profile.run_direct_map(receiver(), _SOURCE, {})
     assert native_map(receiver()) is not opaque
-    assert seen["caller_callbacks"] is True
+    assert seen["hosted"]
 
 
 def _designer_stub() -> Any:
@@ -455,7 +455,7 @@ def test_injected_redact_map_gate(
             seen["semantic_map"] = sys._getframe(1).f_locals["semantic_map"]
             raise _GateSeen
 
-    def run_sync_profile(operation: Any, *, caller_callbacks: bool) -> Any:
+    def run_sync_profile(operation: Any) -> Any:
         asyncio.run(operation(None, _HANDOFF))
 
     if patch_class:

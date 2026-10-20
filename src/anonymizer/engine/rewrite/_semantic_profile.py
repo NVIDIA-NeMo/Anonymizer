@@ -30,6 +30,7 @@ from anonymizer.engine.graph_sdk._authoring_defaults import (
     _validate_targets,
 )
 from anonymizer.engine.graph_sdk._effect_values import EffectCode, reject
+from anonymizer.engine.graph_sdk._execution_delegated import SubmitterPool
 from anonymizer.engine.graph_sdk._execution_values import DelegatedRequests
 from anonymizer.engine.graph_sdk._workflow_values import (
     ArtifactType,
@@ -61,7 +62,6 @@ from anonymizer.engine.graph_sdk._workflow_values import (
     WorkflowOutcomeRef,
     WorkflowOutputRef,
 )
-from anonymizer.engine.graph_sdk.blocking import BlockingPool
 from anonymizer.engine.graph_sdk.capabilities import (
     ConfigField,
     ConfigText,
@@ -147,7 +147,7 @@ def run_builtin_rewrite(runner: RewriteWorkflow, source: pd.DataFrame, arguments
     opaque = not native_adapter(runner._adapter)
 
     async def operation(
-        pool: BlockingPool,
+        pool: SubmitterPool,
         handoff: Callable[[Callable[[], LocalCompleted | LocalFailure]], LocalCompleted | LocalFailure],
     ) -> ReplacementResult:
         result = await execute_initial_evaluation(
@@ -168,7 +168,7 @@ def run_builtin_rewrite(runner: RewriteWorkflow, source: pd.DataFrame, arguments
         projected = project_detection_redact(result)
         return projected
 
-    projected = _run_sync_profile(operation, caller_callbacks=True)
+    projected = _run_sync_profile(operation)
     result = RewriteResult(projected.dataframe, projected.failed_records, captured[0].source_positions)
     attach_execution(result, projected._execution)
     return result
@@ -207,7 +207,7 @@ def run_semantic_rewrite(
     opaque = not native_adapter(adapter)
 
     async def operation(
-        pool: BlockingPool,
+        pool: SubmitterPool,
         handoff: Callable[[Callable[[], LocalCompleted | LocalFailure]], LocalCompleted | LocalFailure],
     ) -> ReplacementResult:
         result = await execute_initial_evaluation(
@@ -226,14 +226,14 @@ def run_semantic_rewrite(
         return project_detection_redact(result)
 
     try:
-        return _run_sync_profile(operation, caller_callbacks=True)
+        return _run_sync_profile(operation)
     except _UnalignedDetection as unaligned:
         # 0.4.0 rewrites whatever rows the caller's detector returns, dropped or duplicated. Without source
         # correspondence those rows are their own sources: rewrite the caller's frame as returned.
         detected = unaligned.detected
 
     async def rewrite_detected(
-        pool: BlockingPool,
+        pool: SubmitterPool,
         handoff: Callable[[Callable[[], LocalCompleted | LocalFailure]], LocalCompleted | LocalFailure],
     ) -> ReplacementResult:
         result = await execute_initial_evaluation(
@@ -253,7 +253,7 @@ def run_semantic_rewrite(
         )
         return project_detection_redact(result)
 
-    return _run_sync_profile(rewrite_detected, caller_callbacks=True)
+    return _run_sync_profile(rewrite_detected)
 
 
 async def execute_initial_evaluation(
@@ -262,7 +262,7 @@ async def execute_initial_evaluation(
     adapter: NddAdapter,
     combined: bool,
     arguments: RewriteArguments,
-    pool: BlockingPool,
+    pool: SubmitterPool,
     limits: ExecutionLimits,
     detection: EntityDetectionWorkflow | None = None,
     detection_arguments: dict[str, Any] | None = None,

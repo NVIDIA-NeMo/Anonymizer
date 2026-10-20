@@ -16,7 +16,7 @@ from anonymizer.engine.graph_sdk._effect_values import (
     require_instance,
     require_literal,
 )
-from anonymizer.engine.graph_sdk._execution_delegated import WorkerDelegatedSubmitter
+from anonymizer.engine.graph_sdk._execution_delegated import delegated_submitter_of
 from anonymizer.engine.graph_sdk._execution_frame import _invocation_workflows
 from anonymizer.engine.graph_sdk._execution_topology import _node_operation, _workflow_owners
 from anonymizer.engine.graph_sdk._execution_values import (
@@ -618,11 +618,10 @@ def _validate_delegated_services(admitted: AdmittedExecutionPlan, services: Exec
             if len(handles) != 1:
                 reject(EffectCode.MISSING)
             handle = handles[0]
-            worker = handle.delegated
+            worker = delegated_submitter_of(handle.delegated)
             if (
-                type(worker) is not WorkerDelegatedSubmitter
-                or worker.closed
-                or worker.pool.closed
+                worker is None
+                or worker.released
                 or worker.borrowed_loop is not asyncio.get_running_loop()
                 or handle.resource is None
                 or handle.resource.owner != "caller"
@@ -702,8 +701,7 @@ def _validate_delegated_services(admitted: AdmittedExecutionPlan, services: Exec
             )
             if handle is None:
                 reject(EffectCode.UNSUPPORTED)
-            worker = type(handle.delegated) is WorkerDelegatedSubmitter
-            if worker:
+            if delegated_submitter_of(handle.delegated) is not None:
                 if (
                     implementation.capability.resource_lifetime != "caller_owned"
                     or handle.resource is None
@@ -713,7 +711,9 @@ def _validate_delegated_services(admitted: AdmittedExecutionPlan, services: Exec
                     reject(EffectCode.UNSUPPORTED)
             elif type(handle.transport) is ForeignLoopTransport:
                 parents = [
-                    item.delegated for item in services.handles if type(item.delegated) is WorkerDelegatedSubmitter
+                    parent
+                    for item in services.handles
+                    if (parent := delegated_submitter_of(item.delegated)) is not None
                 ]
                 if len(parents) != 1 or owned.node == policy.node or owned.kind != "external":
                     reject(EffectCode.UNSUPPORTED)
@@ -736,13 +736,13 @@ def _validate_delegated_services(admitted: AdmittedExecutionPlan, services: Exec
                     else None
                 )
             )
-            if type(handle.delegated) is WorkerDelegatedSubmitter:
-                loop = handle.delegated.borrowed_loop
+            borrowing = delegated_submitter_of(handle.delegated)
+            if borrowing is not None:
+                loop = borrowing.borrowed_loop
                 # Pool/loop are live caller-owned execution resources, not stateless
                 # provider handles. Their unrelated users do not belong to this invocation.
                 if (
-                    handle.delegated.closed
-                    or handle.delegated.pool.closed
+                    borrowing.released
                     or not loop.is_running()
                     or loop.is_closed()
                     or loop is asyncio.get_running_loop()

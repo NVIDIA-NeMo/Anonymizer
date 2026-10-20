@@ -21,10 +21,15 @@ from typing import TYPE_CHECKING, Any, cast
 
 from anonymizer.engine.constants import COL_REPLACEMENT_MAP
 from anonymizer.engine.graph_sdk._activation_values import ActivationLimits
-from anonymizer.engine.graph_sdk._execution_delegated import WorkerDelegatedSubmitter
+from anonymizer.engine.graph_sdk._execution_delegated import (
+    CallerChannel,
+    CallerThreadSubmitter,
+    SubmitterPool,
+    WorkerDelegatedSubmitter,
+)
 from anonymizer.engine.graph_sdk._execution_values import DelegatedRequests
 from anonymizer.engine.graph_sdk._workflow_values import Graph, NodeId, OperationNode, OperationSpec
-from anonymizer.engine.graph_sdk.blocking import BlockingAffinity, BlockingPool
+from anonymizer.engine.graph_sdk.blocking import BlockingAffinity
 from anonymizer.engine.graph_sdk.capabilities import (
     FrozenConfig,
     ImplementationCapability,
@@ -147,35 +152,51 @@ def _runtime_rows(names: tuple[str, ...], external: bool) -> tuple[RuntimeOutcom
     return tuple(rows)
 
 
-def _run_sync_profile(
-    operation: Callable[
-        [BlockingPool, Callable[[Callable[[], LocalCompleted | LocalFailure]], LocalCompleted | LocalFailure]],
-        Awaitable[ReplacementResult],
-    ],
-    *,
-    caller_callbacks: bool,
-) -> ReplacementResult:
-    """Host one graph invocation while preserving synchronous caller-thread callbacks."""
-    started = Event()
-    cancellation: list[tuple[asyncio.AbstractEventLoop, asyncio.Task[Any]]] = []
-    callbacks: Queue[tuple[Callable[[], LocalCompleted | LocalFailure], Future[LocalCompleted | LocalFailure]]] = Queue(
-        maxsize=1
+def delegated_submitter(
+    callback: Callable[..., Any], pool: SubmitterPool, borrowed_loop: asyncio.AbstractEventLoop
+) -> WorkerDelegatedSubmitter | CallerThreadSubmitter:
+    """Run the delegated body on the synchronous caller (kernel-hosted) or on ``pool`` (standalone use)."""
+    if isinstance(pool, CallerChannel):
+        return CallerThreadSubmitter(callback=callback, channel=pool, borrowed_loop=borrowed_loop)
+    return WorkerDelegatedSubmitter(
+        callback=callback,
+        pool=pool,
+        affinity=BlockingAffinity(cross_thread=True, concurrency_safe=False, close_on_event_loop=False),
+        borrowed_loop=borrowed_loop,
     )
 
+
+def _run_sync_profile(
+    operation: Callable[
+        [CallerChannel, Callable[[Callable[[], LocalCompleted | LocalFailure]], LocalCompleted | LocalFailure]],
+        Awaitable[ReplacementResult],
+    ],
+) -> ReplacementResult:
+    """Host one graph invocation on a private loop thread; every synchronous body runs on the caller's thread."""
+    started = Event()
+    cancellation: list[tuple[asyncio.AbstractEventLoop, asyncio.Task[Any]]] = []
+    # (call, future) pairs for the caller's thread; (None, None) marks the host's completion.
+    calls: Queue[tuple[Callable[[], Any], Future[Any]] | tuple[None, None]] = Queue()
     serving = get_ident()
+
+    def put(call: Callable[[], Any]) -> Future[Any]:
+        returned: Future[Any] = Future()
+        calls.put((call, returned))
+        return returned
 
     def handoff(callback: Callable[[], LocalCompleted | LocalFailure]) -> LocalCompleted | LocalFailure:
         if get_ident() == serving:
-            # Already on the thread that serves the queue (a body handed off earlier): run inline.
+            # Already on the caller's thread (inside a body it is running): run inline.
             return callback()
-        returned: Future[LocalCompleted | LocalFailure] = Future()
-        callbacks.put((callback, returned))
-        return returned.result()
+        return put(callback).result()
 
     def serve_callback() -> None:
         try:
-            callback, returned = callbacks.get(timeout=0.01)
+            # The timeout only keeps Ctrl-C responsive where a blocking get is not interruptible.
+            callback, returned = calls.get(timeout=0.1)
         except Empty:
+            return
+        if callback is None or returned is None:
             return
         if interrupted is not None:
             returned.set_result(LocalFailure(failure="implementation_exception"))
@@ -188,7 +209,9 @@ def _run_sync_profile(
             if cancellation:
                 loop, task = cancellation[0]
                 loop.call_soon_threadsafe(task.cancel)
-            returned.set_result(LocalFailure(failure="implementation_exception"))
+            if not returned.done():
+                # Ctrl-C can land after the body's result was already set.
+                returned.set_result(LocalFailure(failure="implementation_exception"))
             raise
 
     async def run() -> ReplacementResult:
@@ -196,13 +219,10 @@ def _run_sync_profile(
         assert task is not None
         cancellation.append((asyncio.get_running_loop(), task))
         started.set()
-        pool = BlockingPool(max_workers=1)
-        try:
-            return await operation(pool, handoff)
-        finally:
-            await pool.close()
+        return await operation(CallerChannel(put), handoff)
 
     completion: Future[ReplacementResult] = Future()
+    completion.add_done_callback(lambda _: calls.put((None, None)))
 
     def host() -> None:
         try:
@@ -217,16 +237,15 @@ def _run_sync_profile(
     thread.start()
     interrupted: BaseException | None = None
     try:
-        if caller_callbacks:
-            while not completion.done():
-                serve_callback()
+        while not completion.done():
+            serve_callback()
         return completion.result()
     except BaseException as error:
         interrupted = error
         raise
     finally:
-        # Cancellation only requests a stop. Keep the host and pool alive until
-        # the existing executor has drained the actual callback and client work.
+        # Cancellation only requests a stop. Keep serving until the host has drained
+        # every queued body and the client work it started.
         while thread.is_alive():
             try:
                 if interrupted is not None:
@@ -390,7 +409,7 @@ async def _execute_frame_plan(
     capabilities: tuple[ImplementationCapability, ...],
     policies: tuple[OperationExecutionPolicy, ...],
     callback: Callable[[tuple[AssociationInput, ...], DelegatedRequests], LocalCompleted | LocalFailure],
-    pool: BlockingPool,
+    pool: SubmitterPool,
     borrowed_loop: asyncio.AbstractEventLoop,
     limits: ExecutionLimits,
     ingress_limits: IngressLimits,
@@ -434,7 +453,7 @@ async def _execute_frame_plan_owned(
     capabilities: tuple[ImplementationCapability, ...],
     policies: tuple[OperationExecutionPolicy, ...],
     callback: Callable[..., Any],
-    pool: BlockingPool,
+    pool: SubmitterPool,
     borrowed_loop: asyncio.AbstractEventLoop,
     limits: ExecutionLimits,
     ingress_limits: IngressLimits,
@@ -470,12 +489,7 @@ async def _execute_frame_plan_owned(
         finally:
             _BRIDGE.reset(token)
 
-    worker = WorkerDelegatedSubmitter(
-        callback=dispatch,
-        pool=pool,
-        affinity=BlockingAffinity(cross_thread=True, concurrency_safe=False, close_on_event_loop=False),
-        borrowed_loop=borrowed_loop,
-    )
+    worker = delegated_submitter(dispatch, pool, borrowed_loop)
     handles = tuple(
         ImplementationHandle(
             implementation=cap.implementation,

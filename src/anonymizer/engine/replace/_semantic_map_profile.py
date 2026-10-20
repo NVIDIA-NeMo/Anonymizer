@@ -22,6 +22,7 @@ from anonymizer.engine.graph_sdk._authoring_defaults import (
     _validate_targets,
 )
 from anonymizer.engine.graph_sdk._effect_values import EffectCode, reject
+from anonymizer.engine.graph_sdk._execution_delegated import SubmitterPool
 from anonymizer.engine.graph_sdk._execution_values import DelegatedRequests
 from anonymizer.engine.graph_sdk._workflow_values import (
     InputBinding,
@@ -38,7 +39,6 @@ from anonymizer.engine.graph_sdk._workflow_values import (
     WorkflowLimits,
     WorkflowOutcomeRef,
 )
-from anonymizer.engine.graph_sdk.blocking import BlockingPool
 from anonymizer.engine.graph_sdk.data import DataGraph, DataLimits
 from anonymizer.engine.graph_sdk.executor import (
     AssessmentLimits,
@@ -81,7 +81,7 @@ def run_direct_map(
     captured = []
     configuration = map_configuration(arguments)
 
-    async def execute(pool: BlockingPool, handoff: Any) -> ReplacementResult:
+    async def execute(pool: SubmitterPool, handoff: Any) -> ReplacementResult:
         graph = DataGraph.new()
         targets = []
         texts = dataframe[COL_TEXT] if COL_TEXT in dataframe else [""] * len(dataframe)
@@ -306,7 +306,7 @@ def run_direct_map(
         )
         return project_detection_redact(result)
 
-    projected = _run_sync_profile(execute, caller_callbacks=True)
+    projected = _run_sync_profile(execute)
     result = LlmReplaceResult(projected.dataframe, projected.failed_records, captured[0].source_positions)
     attach_execution(result, projected._execution)
     return result

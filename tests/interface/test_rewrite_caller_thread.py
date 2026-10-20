@@ -247,5 +247,5 @@ def test_nested_handoff_from_the_serving_thread_runs_inline_on_the_caller_thread
 
         return await asyncio.to_thread(handoff, body)
 
-    assert _run_sync_profile(operation, caller_callbacks=True) == "inner"
+    assert _run_sync_profile(operation) == "inner"
     assert seen == [caller, caller]

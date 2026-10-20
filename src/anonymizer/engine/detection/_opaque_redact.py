@@ -30,6 +30,7 @@ from anonymizer.engine.graph_sdk._authoring_defaults import (
     _validate_targets,
 )
 from anonymizer.engine.graph_sdk._effect_values import EffectCode, reject
+from anonymizer.engine.graph_sdk._execution_delegated import SubmitterPool
 from anonymizer.engine.graph_sdk._execution_values import DelegatedRequests
 from anonymizer.engine.graph_sdk._workflow_values import (
     ArtifactType,
@@ -51,7 +52,6 @@ from anonymizer.engine.graph_sdk._workflow_values import (
     WorkflowOutcomeRef,
     WorkflowOutputRef,
 )
-from anonymizer.engine.graph_sdk.blocking import BlockingPool
 from anonymizer.engine.graph_sdk.capabilities import (
     FrozenConfig,
 )
@@ -330,7 +330,7 @@ def run_detection_rewrite(
         )
 
     async def operation(
-        pool: BlockingPool,
+        pool: SubmitterPool,
         handoff: Callable[[Callable[[], LocalCompleted | LocalFailure]], LocalCompleted | LocalFailure],
     ) -> ReplacementResult:
         result = await execute_injected_redact(
@@ -348,7 +348,7 @@ def run_detection_rewrite(
         )
         return project_detection_redact(result)
 
-    return _run_sync_profile(operation, caller_callbacks=True)
+    return _run_sync_profile(operation)
 
 
 def run_evaluation(
@@ -362,7 +362,7 @@ def run_evaluation(
     from anonymizer.engine.harness.kernel import _run_sync_profile, project_detection_redact
 
     async def operation(
-        pool: BlockingPool,
+        pool: SubmitterPool,
         handoff: Callable[[Callable[[], LocalCompleted | LocalFailure]], LocalCompleted | LocalFailure],
     ) -> ReplacementResult:
         result = await execute_injected_redact(
@@ -370,11 +370,11 @@ def run_evaluation(
         )
         return project_detection_redact(result)
 
-    return _run_sync_profile(operation, caller_callbacks=True)
+    return _run_sync_profile(operation)
 
 
 async def execute_injected_redact(
-    callback: _DetectionInvocation | DetectionRedactInvocation | _EvaluationInvocation, pool: BlockingPool
+    callback: _DetectionInvocation | DetectionRedactInvocation | _EvaluationInvocation, pool: SubmitterPool
 ) -> ExecutionResult:
     from anonymizer.config.replace_strategies import Substitute
     from anonymizer.engine.ndd._route import builtin_detection, builtin_map, builtin_replacement

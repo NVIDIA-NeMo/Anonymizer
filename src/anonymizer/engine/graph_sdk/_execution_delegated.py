@@ -5,10 +5,12 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 from collections.abc import Callable, Coroutine
+from concurrent.futures import Future
 from contextvars import ContextVar, copy_context
 from dataclasses import replace
-from typing import TYPE_CHECKING, ClassVar, Literal, TypeVar, cast
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, TypeVar, cast
 
 from anonymizer.engine.graph_sdk._activation_reducer import advance_activation
 from anonymizer.engine.graph_sdk._activation_values import CloseUnstarted
@@ -41,7 +43,13 @@ from anonymizer.engine.graph_sdk._graph_values import DatumId, InvocationId
 from anonymizer.engine.graph_sdk._ingress import inspect_associations, inspect_failure
 from anonymizer.engine.graph_sdk._request_driver import await_completion_or_cancel, drive_request
 from anonymizer.engine.graph_sdk._workflow_values import SubgraphNode
-from anonymizer.engine.graph_sdk.blocking import BlockingAffinity, BlockingPool, _BlockingAdapter, _BlockingInvocation
+from anonymizer.engine.graph_sdk.blocking import (
+    _NOT_STARTED,
+    BlockingAffinity,
+    BlockingPool,
+    _BlockingAdapter,
+    _BlockingInvocation,
+)
 from anonymizer.engine.graph_sdk.requests import (
     AcceptChildEvidence,
     AcceptFailure,
@@ -142,13 +150,95 @@ class WorkerDelegatedSubmitter(_BlockingAdapter):
     def borrowed_loop(self) -> asyncio.AbstractEventLoop:
         return self._borrowed_loop
 
+    @property
+    def released(self) -> bool:
+        """Whether this submitter or its pool has stopped admitting work."""
+        return self.closed or self.pool.closed
+
     async def submit(self, inputs: tuple[AssociationInput, ...], requests: DelegatedRequests) -> LocalResult:
         # Only the invocation owner may issue the authenticated worker borrow.
         reject(EffectCode.UNSUPPORTED)
 
 
+class CallerChannel:
+    """The synchronous caller's queue, seen from the host loop: ``channel(call)`` runs ``call`` on that thread."""
+
+    __slots__ = ("_put",)
+
+    def __init__(self, put: Callable[[Callable[[], Any]], Future[Any]]) -> None:
+        self._put = put
+
+    def __call__(self, call: Callable[[], Any]) -> Future[Any]:
+        return self._put(call)
+
+
+SubmitterPool = BlockingPool | CallerChannel
+
+
+class CallerThreadSubmitter(PrivateValue):
+    """Run the synchronous body on the thread that serves ``channel``, with the borrowed loop as host loop.
+
+    ``channel(call)`` queues ``call`` for that thread and returns a future for its result. The submission
+    keeps ownership until the queued call has actually returned, also when the observer is cancelled.
+    """
+
+    execution: ClassVar[Literal["worker"]] = "worker"
+
+    def __init__(
+        self,
+        *,
+        callback: Callable[[tuple[AssociationInput, ...], DelegatedRequests], LocalResult],
+        channel: CallerChannel,
+        borrowed_loop: asyncio.AbstractEventLoop,
+    ) -> None:
+        if not callable(callback) or inspect.iscoroutinefunction(callback) or not isinstance(channel, CallerChannel):
+            reject(EffectCode.INVALID_TYPE)
+        if not isinstance(borrowed_loop, asyncio.AbstractEventLoop):
+            reject(EffectCode.INVALID_TYPE)
+        self._callback = callback
+        self._channel = channel
+        self._borrowed_loop = borrowed_loop
+        self.closed = False
+
+    @property
+    def borrowed_loop(self) -> asyncio.AbstractEventLoop:
+        return self._borrowed_loop
+
+    @property
+    def released(self) -> bool:
+        return self.closed
+
+    async def submit(self, inputs: tuple[AssociationInput, ...], requests: DelegatedRequests) -> LocalResult:
+        # Only the invocation owner may issue the authenticated worker borrow.
+        reject(EffectCode.UNSUPPORTED)
+
+    async def _run(self, callback: Callable[[], object], before: Callable[[], bool]) -> object:
+        completion = asyncio.wrap_future(self._channel(lambda: callback() if before() else _NOT_STARTED))
+        try:
+            return await asyncio.shield(completion)
+        except asyncio.CancelledError:
+            while not completion.done():
+                try:
+                    await asyncio.shield(completion)
+                except asyncio.CancelledError:
+                    continue
+                except Exception:
+                    break
+            return completion.result()
+
+
+DELEGATED_SUBMITTERS = (WorkerDelegatedSubmitter, CallerThreadSubmitter)
+
+
+def delegated_submitter_of(value: object) -> WorkerDelegatedSubmitter | CallerThreadSubmitter | None:
+    """``value`` when it is exactly one of the owner-borrowing submitters, else None."""
+    return (
+        cast(WorkerDelegatedSubmitter | CallerThreadSubmitter, value) if type(value) in DELEGATED_SUBMITTERS else None
+    )
+
+
 class _WorkerBorrow(PrivateValue):
-    def __init__(self, owner: _DelegatedOwner, adapter: WorkerDelegatedSubmitter) -> None:
+    def __init__(self, owner: _DelegatedOwner, adapter: WorkerDelegatedSubmitter | CallerThreadSubmitter) -> None:
         self.owner = owner
         self.adapter = adapter
         self.loop = adapter.borrowed_loop
@@ -796,14 +886,20 @@ class _DelegatedOwner(PrivateValue):
         finally:
             self.worker_calls.discard(task)
 
-    async def _submit_worker(self, adapter: WorkerDelegatedSubmitter) -> LocalResult:
+    async def _submit_worker(self, adapter: WorkerDelegatedSubmitter | CallerThreadSubmitter) -> LocalResult:
         borrow = _WorkerBorrow(self, adapter)
         self.worker_borrow = borrow
         context = copy_context()
         context.run(_WORKER_BORROW.set, borrow)
-        invocation = _BlockingInvocation(adapter, lambda: context.run(adapter._callback, self.inputs, borrow))
+
+        def call() -> object:
+            return context.run(adapter._callback, self.inputs, borrow)
+
         try:
-            value = await invocation.run(lambda: not self.cancelled, self)
+            if isinstance(adapter, CallerThreadSubmitter):
+                value = await adapter._run(call, lambda: not self.cancelled)
+            else:
+                value = await _BlockingInvocation(adapter, call).run(lambda: not self.cancelled, self)
             return (
                 value
                 if isinstance(value, (LocalCompleted, LocalFailure))
@@ -1220,10 +1316,9 @@ class _DelegatedOwner(PrivateValue):
 
     async def _settle(self, handle: ImplementationHandle) -> tuple[LocalResult, frozenset[SemanticAssociation]]:
         assert handle.delegated is not None
+        borrowing = delegated_submitter_of(handle.delegated)
         task = asyncio.create_task(
-            self._submit_worker(handle.delegated)
-            if type(handle.delegated) is WorkerDelegatedSubmitter
-            else handle.delegated.submit(self.inputs, self)
+            self._submit_worker(borrowing) if borrowing is not None else handle.delegated.submit(self.inputs, self)
         )
         self.submission = task
         try:

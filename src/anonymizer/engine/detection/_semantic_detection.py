@@ -33,6 +33,7 @@ from anonymizer.engine.graph_sdk._authoring_defaults import (
     _validate_targets,
 )
 from anonymizer.engine.graph_sdk._effect_values import EffectCode, reject
+from anonymizer.engine.graph_sdk._execution_delegated import SubmitterPool
 from anonymizer.engine.graph_sdk._execution_values import DelegatedRequests
 from anonymizer.engine.graph_sdk._workflow_values import (
     ArtifactType,
@@ -56,7 +57,6 @@ from anonymizer.engine.graph_sdk._workflow_values import (
     WorkflowOutcomeRef,
     WorkflowOutputRef,
 )
-from anonymizer.engine.graph_sdk.blocking import BlockingPool
 from anonymizer.engine.graph_sdk.capabilities import FrozenConfig, ImplementationCapability
 from anonymizer.engine.graph_sdk.data import DataGraph, DataLimits
 from anonymizer.engine.graph_sdk.executor import (
@@ -608,11 +608,11 @@ def run_direct_detection(
         return run_empty_detection(receiver, frame, arguments)
     captured = []
 
-    async def operation(pool: BlockingPool, handoff: Callable[..., Any]) -> ReplacementResult:
+    async def operation(pool: SubmitterPool, handoff: Callable[..., Any]) -> ReplacementResult:
         result = await execute_detection(receiver, frame, arguments, pool, captured, handoff)
         return project_detection_redact(result)
 
-    projected = _run_sync_profile(operation, caller_callbacks=True)
+    projected = _run_sync_profile(operation)
     result = EntityDetectionResult(projected.dataframe, projected.failed_records, captured[0].source_positions)
     attach_execution(result, projected._execution)
     return result
@@ -622,7 +622,7 @@ async def execute_detection(
     receiver: EntityDetectionWorkflow,
     frame: pd.DataFrame,
     arguments: dict[str, Any],
-    pool: BlockingPool,
+    pool: SubmitterPool,
     captured: list[EntityDetectionResult],
     handoff: Callable[..., Any] | None,
 ) -> ExecutionResult:
@@ -960,7 +960,7 @@ def run_empty_detection(
             ),
         )
 
-    async def execute(pool: BlockingPool, handoff: Callable[..., Any]) -> ReplacementResult:
+    async def execute(pool: SubmitterPool, handoff: Callable[..., Any]) -> ReplacementResult:
         nonlocal loop
         loop = asyncio.get_running_loop()
 
@@ -996,7 +996,7 @@ def run_empty_detection(
         )
         return project_detection_redact(result)
 
-    projected = _run_sync_profile(execute, caller_callbacks=True)
+    projected = _run_sync_profile(execute)
     result = EntityDetectionResult(projected.dataframe, projected.failed_records, ())
     attach_execution(result, projected._execution)
     return result

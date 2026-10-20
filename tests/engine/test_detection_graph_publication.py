@@ -856,23 +856,26 @@ def test_invocation_owned_preparation_rejects_before_dd_effects(scripted_detecti
 
 
 @pytest.mark.parametrize("active_loop", [False, True])
-def test_synchronous_graph_profile_owns_pool_and_reuses_dd_loop(scripted_detection, monkeypatch, active_loop):
+def test_synchronous_graph_profile_hosts_one_loop_thread_and_reuses_dd_loop(
+    scripted_detection, monkeypatch, active_loop
+):
+    import threading
+
     from anonymizer.engine.detection._graph_profile import run_detection_redact
-    from anonymizer.engine.graph_sdk.blocking import BlockingPool
     from anonymizer.engine.graph_sdk.executor import ExecutionLimits
     from anonymizer.engine.replace.replace_runner import ReplacementWorkflow
 
-    pools = []
-    original = BlockingPool.__init__
+    started = []
+    original = threading.Thread.start
 
-    def capture(self, **kwargs):
-        original(self, **kwargs)
-        pools.append(self)
+    def capture(self):
+        started.append(self.name)
+        original(self)
 
     def retired(*args, **kwargs):
         raise AssertionError("graph Redact must not construct the generic replacement dispatcher")
 
-    monkeypatch.setattr(BlockingPool, "__init__", capture)
+    monkeypatch.setattr(threading.Thread, "start", capture)
     monkeypatch.setattr(ReplacementWorkflow, "run", retired)
     designer, models, selected, calls = scripted_detection
 
@@ -906,8 +909,9 @@ def test_synchronous_graph_profile_owns_pool_and_reuses_dd_loop(scripted_detecti
     assert projected._execution is not None
     assert projected._execution.requests.dispatched_count == 7
     assert calls == {"readiness": 1, "detector": 2, "validator": 2, "augmenter": 2}
-    # The validator rows borrow the one outer profile and its pool.
-    assert len(pools) == 1 and all(pool.closed and pool.occupied == 0 for pool in pools)
+    # The validator rows borrow the one outer profile; its body runs on the caller, so no worker thread starts.
+    assert started.count("anonymizer-graph-host") == 1
+    assert [name for name in started if name.startswith("anonymizer-graph_")] == []
     assert not projected._execution._retained_resources
 
 

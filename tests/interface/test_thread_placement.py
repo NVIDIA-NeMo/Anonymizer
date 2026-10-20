@@ -181,7 +181,6 @@ def test_placement_from_inside_a_running_event_loop(tmp_path: Path, method: str)
     assert _off_caller(caller, seen) == []
 
 
-@pytest.mark.xfail(reason="the kernel still borrows a worker thread for the body", strict=True)
 def test_threads_started_per_run(tmp_path: Path) -> None:
     started: list[str] = []
     original = threading.Thread.start

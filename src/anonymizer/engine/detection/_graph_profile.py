@@ -37,7 +37,7 @@ from anonymizer.engine.graph_sdk._authoring_defaults import (
     _outcome_spec,
     _validate_targets,
 )
-from anonymizer.engine.graph_sdk._execution_delegated import WorkerDelegatedSubmitter
+from anonymizer.engine.graph_sdk._execution_delegated import SubmitterPool
 from anonymizer.engine.graph_sdk._workflow_values import (
     ArtifactType,
     EvidencePromise,
@@ -62,7 +62,6 @@ from anonymizer.engine.graph_sdk._workflow_values import (
     WorkflowOutcomeRef,
     WorkflowOutputRef,
 )
-from anonymizer.engine.graph_sdk.blocking import BlockingAffinity, BlockingPool
 from anonymizer.engine.graph_sdk.capabilities import (
     FrozenConfig,
     ImplementationCapability,
@@ -144,7 +143,7 @@ def run_detection_redact(
     selected_limits = replace(limits) if limits is not None else None
 
     async def operation(
-        pool: BlockingPool,
+        pool: SubmitterPool,
         handoff: Callable[[Callable[[], LocalCompleted | LocalFailure]], LocalCompleted | LocalFailure],
     ) -> ReplacementResult:
         if replacement is not None:
@@ -211,10 +210,7 @@ def run_detection_redact(
         )
         return kernel.project_detection_redact(result)
 
-    return kernel._run_sync_profile(
-        operation,
-        caller_callbacks=True,
-    )
+    return kernel._run_sync_profile(operation)
 
 
 async def execute_detection_redact(
@@ -226,7 +222,7 @@ async def execute_detection_redact(
     detection_options: Mapping[str, Any],
     validation_chunks: int | None = None,
     replace_method: Redact | None = None,
-    pool: BlockingPool,
+    pool: SubmitterPool,
     limits: ExecutionLimits | None = None,
 ) -> ExecutionResult:
     """Admit and execute the named real-DD profile without a second workflow runner."""
@@ -677,12 +673,7 @@ async def execute_detection_redact(
             semantic_slots={name: slots[node] for name, node in detection_ids.items()} if builtin else None,
             semantic_loop=asyncio.get_running_loop(),
         )
-        worker = WorkerDelegatedSubmitter(
-            callback=consumer._run,
-            pool=pool,
-            affinity=BlockingAffinity(cross_thread=True, concurrency_safe=False, close_on_event_loop=False),
-            borrowed_loop=loop,
-        )
+        worker = kernel.delegated_submitter(consumer._run, pool, loop)
         lease = ResourceLease.create(owner="caller", safe_detachment="forbidden", handle=worker)
         handles = tuple(
             ImplementationHandle(
