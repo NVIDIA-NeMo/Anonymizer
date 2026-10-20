@@ -1,0 +1,16 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# Provider definitions for the dogfood kit. Names env vars only — never put a
+# real API key in this file. Export the named variable before running
+# dogfood_run.py. See ../../docs/concepts/self-hosting-gliner.md for the
+# local GLiNER2 server this file points at by default.
+providers:
+  - name: local-gliner2
+    endpoint: http://127.0.0.1:8001/v1
+    provider_type: openai
+    api_key: ANONYMIZER_LOCAL_GLINER2_TOKEN
+  - name: nvidia-gateway
+    endpoint: https://inference-api.nvidia.com/v1
+    provider_type: openai
+    api_key: NVIDIA_INFERENCE_API_KEY
