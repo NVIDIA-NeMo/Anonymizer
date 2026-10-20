@@ -230,7 +230,8 @@ def test_entity_label_examples_exclusion_wins_over_explicit_mismatch(
 
     assert detect.entity_labels == ["email"]
     assert detect.entity_label_examples == {"vendor_api_key": ["acme_live_abc123"]}
-    assert "vendor_api_key" in caplog.text
+    assert "vendor_api_key" not in caplog.text
+    assert "ignored (1 labels)" in caplog.text
     assert "acme_live_abc123" not in caplog.text
 
 
@@ -363,11 +364,14 @@ def test_excluded_entity_labels_whitespace_only_raises() -> None:
 
 def test_excluded_entity_labels_overlap_with_entity_labels_warns(caplog: pytest.LogCaptureFixture) -> None:
     with caplog.at_level(logging.WARNING, logger="anonymizer"):
-        AnonymizerConfig(
+        config = AnonymizerConfig(
             detect={"entity_labels": ["email", "city"], "excluded_entity_labels": ["email"]},
             replace=Redact(),
         )
-    assert "email" in caplog.text
+    assert config.detect.entity_labels == ["city", "email"]
+    assert config.detect.excluded_entity_labels == ["email"]
+    assert "email" not in caplog.text
+    assert "share 1 labels" in caplog.text
     assert "will never be detected" in caplog.text
 
 

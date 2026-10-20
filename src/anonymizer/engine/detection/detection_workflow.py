@@ -201,10 +201,8 @@ class EntityDetectionWorkflow:
         validator_aliases = resolve_model_aliases("entity_validator", selected_models)
         augmenter_alias = resolve_model_alias("entity_augmenter", selected_models)
         logger.debug(
-            "detection aliases: detector=%s, validator_pool=%s, augmenter=%s",
-            detection_alias,
-            validator_aliases,
-            augmenter_alias,
+            "detection models configured: validator_pool_size=%d",
+            len(validator_aliases),
         )
         # ModelConfig.max_parallel_requests caps concurrency *per alias*. When
         # the pool has multiple validators each gets its own cap, so total
@@ -213,12 +211,11 @@ class EntityDetectionWorkflow:
         # alias's cap accordingly.
         if len(validator_aliases) > 1:
             logger.warning(
-                "entity validation runs across a pool of %d aliases (%s). "
+                "entity validation runs across a pool of %d aliases. "
                 "max_parallel_requests is enforced per alias, so the pool "
                 "multiplies total in-flight validator calls; budget provider "
                 "TPM/RPM accordingly.",
                 len(validator_aliases),
-                validator_aliases,
             )
 
         columns = cast(

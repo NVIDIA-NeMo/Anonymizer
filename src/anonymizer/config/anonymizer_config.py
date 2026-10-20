@@ -162,13 +162,13 @@ class Detect(BaseModel):
         if duplicate_keys:
             logger.warning(
                 "entity_label_examples contained label names that normalize to the same label; "
-                "merged automatically: %s",
-                duplicate_keys,
+                "merged automatically (%d labels).",
+                len(duplicate_keys),
             )
         if duplicate_value_labels:
             logger.warning(
-                "entity_label_examples contained duplicate examples; removed automatically for labels: %s",
-                duplicate_value_labels,
+                "entity_label_examples contained duplicate examples; removed automatically for %d labels.",
+                len(duplicate_value_labels),
             )
         return normalized
 
@@ -179,8 +179,8 @@ class Detect(BaseModel):
         excluded_examples = sorted(example_labels & excluded_set)
         if excluded_examples:
             logger.warning(
-                "entity_label_examples configured excluded labels; their examples will be ignored: %s",
-                excluded_examples,
+                "entity_label_examples configured excluded labels; their examples will be ignored (%d labels).",
+                len(excluded_examples),
             )
 
         active_example_labels = example_labels - excluded_set
@@ -190,8 +190,8 @@ class Detect(BaseModel):
             effective_labels = entity_labels_set - excluded_set
             if overlap:
                 logger.warning(
-                    "entity_labels and excluded_entity_labels share labels that will never be detected: %s",
-                    overlap,
+                    "entity_labels and excluded_entity_labels share %d labels that will never be detected.",
+                    len(overlap),
                 )
         else:
             entity_labels_set = set(DEFAULT_ENTITY_LABELS)

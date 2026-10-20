@@ -343,9 +343,8 @@ def _dispatch_chunk(
             )
             if attempt_index > 0:
                 logger.info(
-                    "validator chunk %d: recovered on failover alias=%s (attempt %d of %d)",
+                    "validator chunk %d: recovered on failover (attempt %d of %d)",
                     chunk_index,
-                    alias,
                     attempt_index + 1,
                     len(facades),
                 )
@@ -355,20 +354,14 @@ def _dispatch_chunk(
             remaining = len(facades) - attempt_index - 1
             if remaining > 0:
                 logger.warning(
-                    "validator chunk %d: alias=%s raised %s (%s); failing over to next pool member (%d remaining)",
+                    "validator chunk %d: request failed; failing over to next pool member (%d remaining)",
                     chunk_index,
-                    alias,
-                    type(exc).__name__,
-                    exc,
                     remaining,
                 )
             else:
                 logger.error(
-                    "validator chunk %d: alias=%s raised %s (%s); pool exhausted — row will be dropped",
+                    "validator chunk %d: request failed; pool exhausted — row will be dropped",
                     chunk_index,
-                    alias,
-                    type(exc).__name__,
-                    exc,
                 )
 
     # ``facades`` is non-empty by caller contract: ``chunked_validate_row``
@@ -410,9 +403,8 @@ async def _dispatch_chunk_async(
             )
             if attempt_index > 0:
                 logger.info(
-                    "validator chunk %d: recovered on failover alias=%s (attempt %d of %d)",
+                    "validator chunk %d: recovered on failover (attempt %d of %d)",
                     chunk_index,
-                    alias,
                     attempt_index + 1,
                     len(facades),
                 )
@@ -422,20 +414,14 @@ async def _dispatch_chunk_async(
             remaining = len(facades) - attempt_index - 1
             if remaining > 0:
                 logger.warning(
-                    "validator chunk %d: alias=%s raised %s (%s); failing over to next pool member (%d remaining)",
+                    "validator chunk %d: request failed; failing over to next pool member (%d remaining)",
                     chunk_index,
-                    alias,
-                    type(exc).__name__,
-                    exc,
                     remaining,
                 )
             else:
                 logger.error(
-                    "validator chunk %d: alias=%s raised %s (%s); pool exhausted — row will be dropped",
+                    "validator chunk %d: request failed; pool exhausted — row will be dropped",
                     chunk_index,
-                    alias,
-                    type(exc).__name__,
-                    exc,
                 )
 
     if last_exc is None:
@@ -496,18 +482,18 @@ def _build_dispatch_kwargs_per_chunk(
 
     if len(chunks) == 1:
         logger.debug(
-            "chunked validation: %d candidate(s) in 1 chunk (full-text excerpt), pool=%s",
+            "chunked validation: %d candidate(s) in 1 chunk (full-text excerpt), pool_size=%d",
             len(candidates.candidates),
-            params.pool,
+            len(params.pool),
         )
     else:
         logger.debug(
-            "chunked validation: %d candidate(s) in %d chunks (max=%d per chunk, window=%d chars), pool=%s",
+            "chunked validation: %d candidate(s) in %d chunks (max=%d per chunk, window=%d chars), pool_size=%d",
             len(candidates.candidates),
             len(chunks),
             params.max_entities_per_call,
             params.excerpt_window_chars,
-            params.pool,
+            len(params.pool),
         )
 
     # Single-chunk rows preserve parity with the pre-chunking

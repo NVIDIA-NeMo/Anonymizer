@@ -286,8 +286,9 @@ def test_read_input_output_column_collision_renames_all(tmp_path: Path, caplog: 
     warning = next(
         rec.message for rec in caplog.records if "collide with Anonymizer output column names" in rec.message
     )
+    assert "Renamed 3 input column(s)" in warning
     for original in ("bio_replaced", "bio_rewritten", "final_entities"):
-        assert f"'{original}'" in warning
+        assert original not in warning
 
 
 def test_read_input_output_column_collision_disambiguates_when_input_suffix_taken(
