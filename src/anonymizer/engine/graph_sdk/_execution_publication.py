@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import replace
-from typing import Literal, TypeGuard, cast
+from typing import TYPE_CHECKING, Literal, TypeGuard, cast
 
 from anonymizer.engine.detection.artifacts import ENTITY_SPANS_TYPE, EntitySpansValue
 from anonymizer.engine.graph_sdk._activation_topology import _publication_outcome
@@ -54,8 +54,10 @@ from anonymizer.engine.graph_sdk.requests import (
     TextArtifactValue,
     TextCollectionValue,
 )
-from anonymizer.engine.harness.frames import AggregateFramePublication, FramePublication, InvocationFrame
 from anonymizer.engine.rewrite.artifacts import REWRITE_TYPES
+
+if TYPE_CHECKING:
+    from anonymizer.engine.harness.frames import AggregateFramePublication, FramePublication, InvocationFrame
 
 
 def _accept_outputs(
@@ -418,10 +420,14 @@ def _canonical_record(
 
 # The SDK's only dispatch on concrete detection frame types.
 def _is_invocation_frame(frame: object) -> TypeGuard[InvocationFrame]:
+    from anonymizer.engine.harness.frames import InvocationFrame
+
     return type(frame) is InvocationFrame
 
 
 def _is_publication_frame(frame: object) -> TypeGuard[FramePublication]:
+    from anonymizer.engine.harness.frames import FramePublication
+
     return type(frame) is FramePublication
 
 
@@ -447,5 +453,7 @@ def _accept_invocation_frame(result: object) -> InvocationFrame | None:
 
 def _aggregate_frame(frame: object, internal: frozenset[ActivationKey]) -> AggregateFramePublication | None:
     """Keep an accepted owner frame apart from the owner's internal observations."""
+    from anonymizer.engine.harness.frames import AggregateFramePublication
+
     accepted = _accept_invocation_frame(LocalCompleted(results=(), frame=cast("InvocationFrame", frame)))
     return None if accepted is None else AggregateFramePublication(accepted, internal)

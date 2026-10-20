@@ -33,12 +33,12 @@ from anonymizer.engine.graph_sdk._workflow_values import (
 )
 from anonymizer.engine.graph_sdk.preparation import PreparedPlan
 from anonymizer.engine.graph_sdk.requests import TextArtifactValue
-from anonymizer.engine.harness.frames import AggregateFramePublication, FramePublication, InvocationFrame
-from anonymizer.engine.ndd._source_frame import WorkflowSourceFrame
-from anonymizer.engine.source_text import source_text
 
 if TYPE_CHECKING:
     import pandas as pd
+
+    from anonymizer.engine.harness.frames import AggregateFramePublication, FramePublication, InvocationFrame
+    from anonymizer.engine.ndd._source_frame import WorkflowSourceFrame
 
 
 @dataclass(slots=True)
@@ -148,6 +148,9 @@ class _InvocationFrame:
         source_limit: int | None = None,
     ) -> WorkflowSourceFrame:
         """Authenticate the whole submitted frame against this invocation's source jobs."""
+        from anonymizer.engine.ndd._source_frame import WorkflowSourceFrame
+        from anonymizer.engine.source_text import source_text
+
         if targets is not None:
             by_target = {job.scope: job for job in jobs}
             if (

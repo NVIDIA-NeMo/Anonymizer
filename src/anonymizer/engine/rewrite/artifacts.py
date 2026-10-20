@@ -8,9 +8,6 @@ import math
 from dataclasses import dataclass, field
 from typing import NamedTuple, TypeAlias, cast
 
-import numpy as np
-import pandas as pd
-
 from anonymizer.engine.graph_sdk._artifact_shape import ArtifactShape, content_bytes
 from anonymizer.engine.graph_sdk._effect_values import EffectCode, PrivateValue, reject
 from anonymizer.engine.graph_sdk._workflow_values import ArtifactType
@@ -136,6 +133,9 @@ class RewriteCandidateValue(_RewriteValue):
 
     @classmethod
     def capture(cls, value: object) -> RewriteCandidateValue:
+        import numpy as np
+        import pandas as pd
+
         if isinstance(value, (np.integer, np.floating, np.bool_)):
             value = value.item()
         if value is pd.NA or type(value) is float and math.isnan(value):

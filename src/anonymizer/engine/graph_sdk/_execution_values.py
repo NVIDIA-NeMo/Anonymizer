@@ -78,11 +78,11 @@ from anonymizer.engine.graph_sdk.resources import (
     ResourceOwner,
     SafeDetachment,
 )
-from anonymizer.engine.harness.frames import FramePublication, InvocationFrame, PublishedFrame
 
 if TYPE_CHECKING:
     import pandas as pd
 
+    from anonymizer.engine.harness.frames import FramePublication, InvocationFrame, PublishedFrame
     from anonymizer.engine.ndd._source_frame import WorkflowSourceFrame
 
 
