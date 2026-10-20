@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Version-qualified DD HTTP entry borrowed from the invocation request owner.
+"""Capability-checked DD HTTP entry borrowed from the invocation request owner.
 
 This development binding observes each actual parser attempt in its generation chain.
 The caller registers NddPhysicalTransport with ForeignLoopTransport before
@@ -12,12 +12,14 @@ declares ``retries`` accounts each retry as its own retry child.
 from __future__ import annotations
 
 import asyncio
+import importlib
+import inspect
 import logging
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
-from importlib.metadata import version
+from importlib.metadata import PackageNotFoundError, version
 from threading import Lock
 from typing import Any
 
@@ -41,12 +43,63 @@ from anonymizer.engine.graph_sdk.requests import (
 from anonymizer.engine.ndd._source_frame import current_source_work
 from anonymizer.interface.errors import AnonymizerWorkflowError
 
-REQUIRED_DATA_DESIGNER_VERSION = "0.9.4"
-"""Exact DataDesigner version this graph request binding is compatible with.
+SUPPORTED_DATA_DESIGNER_RANGE = ">=0.9.4,<0.10"
+"""DataDesigner releases this graph request binding supports.
 
-Must stay in sync with the ``data-designer`` pin in ``pyproject.toml``; see
-``tests/engine/test_graph_requests_version_pin.py`` for the sync check.
+The binding relies on private DataDesigner hooks, so it checks for them instead of an exact version (see
+``require_binding_capabilities``). Must stay in sync with the ``data-designer`` specifier in
+``pyproject.toml``; ``tests/engine/test_graph_requests_version_pin.py`` checks this.
 """
+
+_REGISTRY_MODULE = "data_designer.engine.models.registry"
+_FACADE_MODULE = "data_designer.engine.models.facade"
+_HTTP_CLIENT_FIELDS = ("_retry_config", "_aclient", "_client", "_transport", "_limits")
+
+
+def _installed_data_designer() -> str:
+    try:
+        return version("data-designer")
+    except PackageNotFoundError:
+        return "unknown"
+
+
+def _missing_capability(attribute: str) -> AnonymizerWorkflowError:
+    return AnonymizerWorkflowError(
+        f"DD graph request binding requires DataDesigner's private `{attribute}`, which the installed "
+        f"data-designer {_installed_data_designer()} does not provide (supported: data-designer "
+        f"{SUPPORTED_DATA_DESIGNER_RANGE})"
+    )
+
+
+def require_binding_capabilities(designer: Any) -> None:
+    """Check, before any DD work runs, every private hook resolvable without a live DD resource.
+
+    Instance attributes that DataDesigner assigns in constructors (the registry's facade factory, the
+    facade's client and the HTTP client's fields) are checked when each object is first created, still
+    before any request is sent.
+    """
+    if not callable(getattr(type(designer), "_create_resource_provider", None)):
+        raise _missing_capability("DataDesigner._create_resource_provider")
+    try:
+        registry = importlib.import_module(_REGISTRY_MODULE).ModelRegistry
+        facade = importlib.import_module(_FACADE_MODULE).ModelFacade
+    except (ImportError, AttributeError) as error:
+        raise _missing_capability(f"{_REGISTRY_MODULE}.ModelRegistry / {_FACADE_MODULE}.ModelFacade") from error
+    try:
+        parameters = inspect.signature(registry.__init__).parameters
+    except (TypeError, ValueError):
+        parameters = {}
+    if "model_facade_factory" not in parameters:
+        raise _missing_capability("ModelRegistry(model_facade_factory=...)")
+    if not inspect.iscoroutinefunction(getattr(facade, "agenerate", None)):
+        raise _missing_capability("ModelFacade.agenerate")
+
+
+def _require_attribute(owner: Any, name: str, label: str) -> Any:
+    try:
+        return getattr(owner, name)
+    except AttributeError:
+        raise _missing_capability(label) from None
 
 
 @dataclass
@@ -253,14 +306,19 @@ class NddRequestBridge:
         self.slots = dict(slots)
         self.chains: dict[Any, _Chain] = {}
         self.rejected = False
+        self.capability_error: AnonymizerWorkflowError | None = None
+
+    def _capability(self, error: AnonymizerWorkflowError) -> AnonymizerWorkflowError:
+        """Record a capability failure so it aborts the run even if DD absorbs the raise per row."""
+        self.rejected = True
+        if self.capability_error is None:
+            self.capability_error = error
+        return error
 
     @contextmanager
     def bind(self, designer: Any) -> Iterator[None]:
         self.requests.require_transport(self.physical)
-        if version("data-designer") != REQUIRED_DATA_DESIGNER_VERSION:
-            raise AnonymizerWorkflowError(
-                f"DD graph request binding requires DataDesigner {REQUIRED_DATA_DESIGNER_VERSION}"
-            )
+        require_binding_capabilities(designer)
         original = designer._create_resource_provider
         bridge = self
 
@@ -352,12 +410,25 @@ class NddRequestBridge:
 
         def resources(*args: Any, **kwargs: Any) -> Any:
             provider = original(*args, **kwargs)
-            factory = provider.model_registry._model_facade_factory
+            try:
+                registry = _require_attribute(provider, "model_registry", "ResourceProvider.model_registry")
+                factory = _require_attribute(registry, "_model_facade_factory", "ModelRegistry._model_facade_factory")
+                if not callable(factory):
+                    raise _missing_capability("ModelRegistry._model_facade_factory")
+            except AnonymizerWorkflowError as error:
+                raise bridge._capability(error) from None
 
             def facade(*args: Any, **kwargs: Any) -> Any:
                 result = factory(*args, **kwargs)
-                bridge.physical.register(result._client)
-                inner = result._client._inner
+                try:
+                    client = _require_attribute(result, "_client", "ModelFacade._client")
+                    inner = _require_attribute(client, "_inner", "ModelRequestExecutor._inner")
+                    for field in _HTTP_CLIENT_FIELDS:
+                        _require_attribute(inner, field, f"HttpModelClient.{field}")
+                    _require_attribute(inner._retry_config, "max_retries", "RetryConfig.max_retries")
+                except AnonymizerWorkflowError as error:
+                    raise bridge._capability(error) from None
+                bridge.physical.register(client)
                 if inner._retry_config.max_retries != 0 or inner._aclient is not None or inner._client is not None:
                     bridge.rejected = True
                     raise AnonymizerWorkflowError("DD client is not eligible for graph request binding")
@@ -413,3 +484,5 @@ class NddRequestBridge:
                     "request accounting; this invocation declares no request upper bound.",
                     beyond,
                 )
+            if self.capability_error is not None:
+                raise self.capability_error
