@@ -1,0 +1,12 @@
+{
+  "schema": 1,
+  "candidate": "candidate:target-0",
+  "cases": [
+    {"name":"G_success_Q_unused","submits":1,"starts":3,"terminals":4,"chains":1,"sends":1,"request_terminals":1,"settlements":1,"parent_charges":0,"unused":1,"protected":1,"physical_categories":["success"]},
+    {"name":"G_malformed_Q_correction","submits":1,"starts":4,"terminals":4,"chains":1,"sends":2,"request_terminals":2,"settlements":2,"parent_charges":0,"unused":0,"protected":1,"physical_categories":["failure","success"]},
+    {"name":"ready_available_G_success_Q_unused","submits":1,"starts":6,"terminals":7,"chains":2,"sends":2,"request_terminals":2,"settlements":2,"parent_charges":0,"unused":1,"protected":1,"physical_categories":["success","success"]},
+    {"name":"ready_async_required_G_success_Q_unused","submits":1,"starts":6,"terminals":7,"chains":2,"sends":2,"request_terminals":2,"settlements":2,"parent_charges":0,"unused":1,"protected":1,"physical_categories":["success","success"]},
+    {"name":"ready_available_G_malformed_Q_correction","submits":1,"starts":7,"terminals":7,"chains":2,"sends":3,"request_terminals":3,"settlements":3,"parent_charges":0,"unused":0,"protected":1,"physical_categories":["success","failure","success"]},
+    {"name":"ready_async_required_G_malformed_Q_correction","submits":1,"starts":7,"terminals":7,"chains":2,"sends":3,"request_terminals":3,"settlements":3,"parent_charges":0,"unused":0,"protected":1,"physical_categories":["success","failure","success"]}
+  ]
+}

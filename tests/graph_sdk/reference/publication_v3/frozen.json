@@ -1,0 +1,12 @@
+{
+  "README.md": "40f660c3c520ebba2ddb4141cb12aff3c5934c359955475801abd5746bf32f23",
+  "evidence.json": "8e6a464310e8edac91d03f36d14bc64401936abe45dd512b9769db1243ef1af1",
+  "full-six/cases.jsonl": "78043fbf233052cb049dc61ee6022ce885a5df41675ef7670192e3cb3c377e7d",
+  "full-six/manifest.json": "9c88f4d1702f7f6262b4de1fcee3339b13c6ab0ce2ce7f61906c132de0e23a0d",
+  "manifest.json": "6e3eccfcd2cceb2e5a410f032b4c4389a36bf8834cb3a4338d0e78fa6c4602c9",
+  "publication_reference/__init__.py": "c7de873048c83f4b436900955e7ebd13cfe5473ea0a6002c84b09df99d0e5353",
+  "publication_reference/reference.py": "60a45240af56e35acb1546393a2ba0ff39d018eca9cd439e828b681af55ce1f2",
+  "publication_reference/test_reference.py": "d64b1d1f679854022c385d067b2324c33289cc81324434425b1c46f92fcb0f06",
+  "simple-text/cases.jsonl": "10647ee490c7c530a3c2c9e879d2f274a0159aad49d790a291b5ef9ec29407e4",
+  "simple-text/manifest.json": "11b2dac699a9180d9b26bfedea876acea3c4db1adb27dcae4c7cbb51e46f5c3b"
+}
