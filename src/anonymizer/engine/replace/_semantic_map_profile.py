@@ -56,7 +56,6 @@ from anonymizer.engine.harness.kernel import (
     project_detection_redact,
 )
 from anonymizer.engine.harness.retention import attach_execution
-from anonymizer.engine.ndd._route import native_map
 from anonymizer.engine.ndd._source_frame import WorkflowSourceFrame
 from anonymizer.engine.ndd._stage_binding import completed
 from anonymizer.engine.replace._semantic_map import _TEXT, MapBinding, extend_map_graph, map_configuration
@@ -81,7 +80,6 @@ def run_direct_map(
 ) -> LlmReplaceResult:
     captured = []
     configuration = map_configuration(arguments)
-    opaque = not native_map(receiver)
 
     async def execute(pool: BlockingPool, handoff: Any) -> ReplacementResult:
         graph = DataGraph.new()
@@ -277,7 +275,7 @@ def run_direct_map(
 
         def dispatch(inputs: tuple[AssociationInput, ...], requests: DelegatedRequests) -> LocalCompleted:
             context = copy_context()
-            return handoff(lambda: context.run(callback, inputs, requests)) if opaque else callback(inputs, requests)
+            return handoff(lambda: context.run(callback, inputs, requests))
 
         result = await _execute_frame_plan(
             prepared=prepared,
@@ -308,7 +306,7 @@ def run_direct_map(
         )
         return project_detection_redact(result)
 
-    projected = _run_sync_profile(execute, caller_callbacks=opaque)
+    projected = _run_sync_profile(execute, caller_callbacks=True)
     result = LlmReplaceResult(projected.dataframe, projected.failed_records, captured[0].source_positions)
     attach_execution(result, projected._execution)
     return result

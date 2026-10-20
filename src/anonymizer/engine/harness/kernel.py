@@ -166,8 +166,8 @@ def _run_sync_profile(
 
     def handoff(callback: Callable[[], LocalCompleted | LocalFailure]) -> LocalCompleted | LocalFailure:
         if get_ident() == serving:
-            # Only this thread drains the queue: waiting on it from here would never return.
-            raise RuntimeError("nested caller-thread handoff")
+            # Already on the thread that serves the queue (a body handed off earlier): run inline.
+            return callback()
         returned: Future[LocalCompleted | LocalFailure] = Future()
         callbacks.put((callback, returned))
         return returned.result()

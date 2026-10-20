@@ -607,13 +607,12 @@ def run_direct_detection(
     if frame.empty or arguments.get("preview_num_records") == 0:
         return run_empty_detection(receiver, frame, arguments)
     captured = []
-    opaque = not native_adapter(receiver._adapter)
 
     async def operation(pool: BlockingPool, handoff: Callable[..., Any]) -> ReplacementResult:
-        result = await execute_detection(receiver, frame, arguments, pool, captured, handoff if opaque else None)
+        result = await execute_detection(receiver, frame, arguments, pool, captured, handoff)
         return project_detection_redact(result)
 
-    projected = _run_sync_profile(operation, caller_callbacks=opaque)
+    projected = _run_sync_profile(operation, caller_callbacks=True)
     result = EntityDetectionResult(projected.dataframe, projected.failed_records, captured[0].source_positions)
     attach_execution(result, projected._execution)
     return result

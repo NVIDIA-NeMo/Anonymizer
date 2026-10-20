@@ -142,7 +142,6 @@ def run_detection_redact(
         else None
     )
     selected_limits = replace(limits) if limits is not None else None
-    builtin = builtin_detection(detection)
 
     async def operation(
         pool: BlockingPool,
@@ -195,7 +194,7 @@ def run_detection_redact(
                     detection_options,
                     "redacted",
                     "ok",
-                    handoff=None if builtin else handoff,
+                    handoff=handoff,
                 ),
                 pool,
             )
@@ -214,7 +213,7 @@ def run_detection_redact(
 
     return kernel._run_sync_profile(
         operation,
-        caller_callbacks=replacement is not None or (opaque and not builtin),
+        caller_callbacks=True,
     )
 
 

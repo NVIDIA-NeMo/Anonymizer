@@ -2,9 +2,10 @@
 # SPDX-License-Identifier: Apache-2.0
 """Native vs opaque routing per runner shape, observed at each entry's executor boundary.
 
-Each row pins what the entry hands the kernel (``caller_callbacks``) and its executor (``handoff``,
-``opaque``): a caller's code, or a caller's adapter, runs opaque on its own callback thread; builtin
-code on a builtin adapter is lowered natively.
+Each row pins how the entry classifies its runner (``opaque`` or native) and that every entry hands
+its synchronous body to the caller's thread, whatever the route: a caller's code, or a caller's
+adapter, runs opaque; builtin code on a builtin adapter is lowered natively. Where each body actually
+runs is pinned end to end in ``tests/interface/test_thread_placement.py``.
 """
 
 from __future__ import annotations
@@ -19,6 +20,7 @@ import pytest
 from anonymizer.config.replace_strategies import Annotate, Hash, Redact, Substitute
 from anonymizer.engine.constants import COL_TEXT
 from anonymizer.engine.detection.detection_workflow import EntityDetectionWorkflow
+from anonymizer.engine.ndd._route import builtin_detection, native_adapter, native_map
 from anonymizer.engine.ndd.adapter import NddAdapter
 from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceWorkflow
 from anonymizer.engine.replace.replace_runner import ReplacementWorkflow
@@ -146,9 +148,9 @@ def test_builtin_detection_entry(monkeypatch: pytest.MonkeyPatch, adapter: Any, 
     seen = _observe(monkeypatch, _semantic_detection, "execute_detection")
     with pytest.raises(_Stop):
         _semantic_detection.run_direct_detection(EntityDetectionWorkflow(adapter()), _SOURCE, {})
-    assert seen["caller_callbacks"] is opaque
-    assert (seen["args"][5] is _HANDOFF) is opaque
-    assert (seen["args"][5] is None) is not opaque
+    assert native_adapter(adapter()) is not opaque
+    assert seen["caller_callbacks"] is True
+    assert seen["args"][5] is _HANDOFF
 
 
 @pytest.mark.parametrize(
@@ -173,7 +175,8 @@ def test_direct_map_entry(monkeypatch: pytest.MonkeyPatch, receiver: Any, opaque
     monkeypatch.setattr(_semantic_map_profile, "map_configuration", lambda arguments: None)
     with pytest.raises(_Stop):
         _semantic_map_profile.run_direct_map(receiver(), _SOURCE, {})
-    assert seen["caller_callbacks"] is opaque
+    assert native_map(receiver()) is not opaque
+    assert seen["caller_callbacks"] is True
 
 
 _ARGUMENTS: Any = {"evaluation": SimpleNamespace(max_repair_iterations=1), "preview_num_records": None}
@@ -253,9 +256,9 @@ def test_detection_redact_entry_opaque(
             replace_method=method,
             opaque=True,
         )
-    assert seen["caller_callbacks"] is not builtin
-    assert (seen["args"][0].handoff is None) is builtin
-    assert seen["args"][0].handoff in (None, _HANDOFF)
+    assert builtin_detection(detector()) is builtin
+    assert seen["caller_callbacks"] is True
+    assert seen["args"][0].handoff is _HANDOFF
 
 
 @pytest.mark.parametrize(("detector", "builtin"), _DETECTORS, ids=_DETECTOR_IDS)
@@ -271,7 +274,8 @@ def test_detection_redact_entry_native(monkeypatch: pytest.MonkeyPatch, detector
             selected_models=_any(None),
             detection_options={},
         )
-    assert seen["caller_callbacks"] is False
+    assert builtin_detection(detector()) is builtin
+    assert seen["caller_callbacks"] is True
     assert "handoff" not in seen["kwargs"]
 
 
@@ -393,7 +397,8 @@ def test_direct_map_entry_method_shapes(
     monkeypatch.setattr(_semantic_map_profile, "map_configuration", lambda arguments: None)
     with pytest.raises(_Stop):
         _semantic_map_profile.run_direct_map(receiver(), _SOURCE, {})
-    assert seen["caller_callbacks"] is opaque
+    assert native_map(receiver()) is not opaque
+    assert seen["caller_callbacks"] is True
 
 
 def _designer_stub() -> Any:

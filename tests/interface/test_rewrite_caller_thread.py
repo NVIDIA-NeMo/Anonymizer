@@ -230,15 +230,22 @@ def test_native_rewrite_runs_from_inside_a_running_event_loop(tmp_path: Path) ->
     assert all(ident == caller for _, ident, _ in seen)
 
 
-def test_nested_handoff_from_the_serving_thread_fails_instead_of_deadlocking() -> None:
-    from anonymizer.engine.graph_sdk._execution_values import LocalFailure
+def test_nested_handoff_from_the_serving_thread_runs_inline_on_the_caller_thread() -> None:
     from anonymizer.engine.harness.kernel import _run_sync_profile
+
+    caller = threading.get_ident()
+    seen: list[int] = []
+
+    def inner() -> Any:
+        seen.append(threading.get_ident())
+        return "inner"
 
     async def operation(pool: Any, handoff: Any) -> Any:
         def body() -> Any:
-            return handoff(lambda: LocalFailure(failure="implementation_exception"))
+            seen.append(threading.get_ident())
+            return handoff(inner)
 
         return await asyncio.to_thread(handoff, body)
 
-    with pytest.raises(RuntimeError, match="nested caller-thread handoff"):
-        _run_sync_profile(operation, caller_callbacks=True)
+    assert _run_sync_profile(operation, caller_callbacks=True) == "inner"
+    assert seen == [caller, caller]

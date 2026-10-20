@@ -913,12 +913,13 @@ def test_synchronous_graph_profile_owns_pool_and_reuses_dd_loop(scripted_detecti
 
 @pytest.mark.parametrize("lost", [False, True])
 def test_synchronous_profile_interrupt_drains_actual_callback(scripted_detection, monkeypatch, lost):
-    from concurrent.futures import Future
+    """A Ctrl-C delivered to the caller while a model request is in flight drains and keeps the owner."""
+    import os
+    import signal
     from threading import Event
 
     import anonymizer.engine.detection._graph_profile as profile
     from anonymizer.engine.graph_sdk.executor import ExecutionLimits, RunningExecution
-    from anonymizer.engine.harness import kernel
 
     entered, release = Event(), Event()
     physicals = []
@@ -929,13 +930,10 @@ def test_synchronous_profile_interrupt_drains_actual_callback(scripted_detection
         if not physicals:
             physicals.append(self)
             entered.set()
+            # A real Ctrl-C: the signal lands on the main thread, wherever the caller is waiting.
+            os.kill(os.getpid(), signal.SIGINT)
             await asyncio.to_thread(release.wait)
         return await dispatch(self, request)
-
-    class InterruptedFuture(Future):
-        def result(self, timeout=None):
-            assert entered.wait(_HANG_GUARD_TIMEOUT)
-            raise KeyboardInterrupt
 
     def stop(self):
         assert not physicals[0].closed
@@ -949,7 +947,6 @@ def test_synchronous_profile_interrupt_drains_actual_callback(scripted_detection
 
         _modify_dd_responses(scripted_detection, monkeypatch, lose)
     monkeypatch.setattr(NddPhysicalTransport, "dispatch", held)
-    monkeypatch.setattr(kernel, "Future", InterruptedFuture)
     monkeypatch.setattr(RunningExecution, "request_cancel", stop)
     designer, models, selected, _ = scripted_detection
     try:
