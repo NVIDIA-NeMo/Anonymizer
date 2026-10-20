@@ -7,7 +7,7 @@ requires-python = ">=3.11"
 license = "Apache-2.0"
 
 dependencies = [
-    "data-designer>=0.9.4,<0.10",
+    "data-designer==0.9.4",
     "pydantic>=2.9,<3",
     "pydantic-settings>=2.12,<3",
     "cyclopts>=3",
@@ -92,6 +92,7 @@ testpaths = ["tests"]
 markers = [
     "e2e: end-to-end tests",
     "integration: integration tests",
+    "compat: decisive compatibility, source ownership, and retained-value regressions",
 ]
 
 [tool.ty.src]
