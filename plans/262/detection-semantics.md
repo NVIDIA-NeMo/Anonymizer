@@ -865,7 +865,14 @@ unchanged in this PR:
 ```
 
 The request skeleton and immutable inventory supply each candidate's value and
-label. The engine resolves each response against its original observation; the
+label. Skeleton `start_position` and `end_position` are zero-based character
+offsets within the untagged source excerpt: start inclusive, end exclusive,
+excluding inserted tag markup. They are calculated by subtracting
+`context_view.start_position` from the inventory's canonical bounds. Inventory
+offsets remain absolute positions in the original source text, including for a
+full-text request over a source view that begins at a nonzero position.
+
+The engine resolves each response against its original observation; the
 model does not supply authoritative value, label, source span, or candidate
 identity beyond its request-local alias. Any extra echoed fields are ignored.
 
@@ -910,17 +917,23 @@ model-response validation.
 
 The connected conflict group is the atomic unit for validation chunking. Build
 groups first, retain deterministic source order, and pack whole groups into
-requests without exceeding `validation_max_entities_per_call`. Every candidate
-in a group therefore appears in one authoritative request, and the model
+requests targeting at most `validation_max_entities_per_call` candidates. Every
+candidate in a group appears in one authoritative request, and the model
 returns decisions for all overlapping alternatives together. A group is never
 split across requests.
 
-`validation_max_entities_per_call` remains a hard request limit. If one conflict
-group alone contains more candidates than the configured limit, fail that
-validation request explicitly and preserve the existing terminal
-`FailedRecord` behavior. Do not split the group, silently omit alternatives, or
-exceed the configured limit. Record the group size and configured limit in
-non-sensitive trace diagnostics.
+`validation_max_entities_per_call` is a batching target. If one conflict group
+alone exceeds it, send that group intact in its own request and log a warning
+containing only the group size and configured target. Do not add other groups
+to that request, split the group, or silently omit alternatives. Provider
+context limits still apply, and a terminal model-call failure retains the
+existing `FailedRecord` behavior.
+
+Tag only the observations assigned to the current request. Other observations
+inside its source excerpt remain plain text, retaining surrounding context
+without presenting unvalidated detector labels as hints or suggesting the
+request can decide those neighboring observations. This differs from the old
+excerpt builder, which tagged every detected entity contained in the window.
 
 Decision-only validation and conditional reclassification change the response
 schema, model roles, cost, latency, and quality behavior. That work is tracked
@@ -1381,11 +1394,11 @@ cases:
 | Detector candidates overlap                                                                       | Every candidate is represented once in the validation template; the source excerpt contains one `NAGROUP_g<id>` tag rendered with the row's active notation rather than duplicated alternative tags |
 | A conflict group is rendered under each supported `TagNotation`                                   | XML, bracket, paren, and sentinel output use the documented `NAGROUP_g<id>` form and preserve the source region exactly once                                                                        |
 | An entity label matches `NAGROUP_g<positive integer>` case-insensitively                          | Configuration or model-response validation rejects the reserved prompt-only label form                                                                                                              |
-| Repeated candidate values occur in one conflict group                                             | Absolute bounds distinguish each occurrence even though values and labels match                                                                                                                     |
-| Validation uses a clipped source excerpt                                                          | Context-window bounds and absolute candidate bounds map every alias unambiguously to the original source                                                                                            |
+| Repeated candidate values occur in one conflict group                                             | Excerpt-relative bounds distinguish occurrences in the prompt; canonical bounds remain authoritative in the inventory                                                                                |
+| Validation uses a clipped source excerpt or a source view with a nonzero start                     | Skeleton offsets index the untagged excerpt; inventory offsets still index the canonical source, and aliases bind responses to that inventory                                                      |
 | A longer overlapping candidate is dropped                                                         | An independently accepted shorter candidate remains eligible for final reconciliation                                                                                                               |
 | Adding the next conflict group would cross a validation chunk boundary                            | The entire group moves to the next request; no group is split and source-order packing is deterministic                                                                                             |
-| One conflict group exceeds `validation_max_entities_per_call`                                     | Validation fails explicitly and follows terminal `FailedRecord` behavior rather than splitting the group or validating incomplete alternatives                                                      |
+| One conflict group exceeds `validation_max_entities_per_call`                                     | Send the group intact in its own request and log its size and the configured target without entity values; no unrelated group joins that request                                                    |
 | Accepted seed candidates still overlap while the current seed-aware augmenter prompt remains      | The augmenter sees one `NAGROUP_g<id>` tag plus every seed in the structured inventory, without duplicated source text; PR #267 can later remove this prompt dependency without changing admission  |
 | Augmented candidate constructs the same label/bounds as a seed                                    | The augmentation observation follows its own admission route; the seed decision is not replayed against it; accepted equivalent claims coalesce afterward                                           |
 | Rejected detector observation and independently accepted exact augmenter observation              | The rejected observation contributes no provenance, while the augmenter observation remains admitted                                                                                                |
@@ -1627,7 +1640,7 @@ settled invariants:
 8. Conflict-group inventories include absolute source geometry and expose only
   candidates assigned to that request. Connected conflict groups are atomic:
    every overlapping alternative is assigned to and decided by the same
-   request, and an oversized group fails explicitly rather than being split.
+   request, and an oversized group is sent alone with a value-free warning.
 9. Eligibility completes before any candidate can suppress another.
 10. Exact claims from independent routes remain separate through admission and
   coalesce only afterward; rejected and disabled origins cannot regain

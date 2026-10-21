@@ -19,7 +19,6 @@ from anonymizer.engine.constants import (
     COL_SEED_ENTITIES,
     COL_SEED_ENTITIES_JSON,
     COL_SEED_TAGGED_TEXT,
-    COL_SEED_VALIDATION_CANDIDATES,
     COL_TAG_NOTATION,
     COL_TAGGED_TEXT,
     COL_TEXT,
@@ -27,6 +26,7 @@ from anonymizer.engine.constants import (
     COL_VALIDATED_SEED_ENTITIES,
     COL_VALIDATION_CANDIDATES,
     COL_VALIDATION_DECISIONS,
+    COL_VALIDATION_INVENTORIES,
     RECORD_ID_COLUMN,
 )
 
@@ -57,7 +57,7 @@ class DetectionTransformConfig(SingleColumnConfig):
         DetectionTransformOperation.PREPARE_VALIDATION_INPUTS: [COL_TEXT, COL_SEED_ENTITIES],
         DetectionTransformOperation.ENRICH_VALIDATION_DECISIONS: [
             COL_VALIDATION_DECISIONS,
-            COL_SEED_VALIDATION_CANDIDATES,
+            COL_VALIDATION_INVENTORIES,
         ],
         DetectionTransformOperation.APPLY_VALIDATION_TO_SEED_ENTITIES: [
             COL_TEXT,
@@ -116,6 +116,8 @@ class ChunkedValidationConfig(SingleColumnConfig):
     single_chunk_full_text: bool = True
     prompt_template: str = Field(repr=False)
     system_prompt: str | None = Field(default=None, repr=False)
+    allowed_entity_labels: list[str] | None = None
+    excluded_entity_labels: list[str] = Field(default_factory=list)
 
     @staticmethod
     def get_column_emoji() -> str:
@@ -125,14 +127,13 @@ class ChunkedValidationConfig(SingleColumnConfig):
     def required_columns(self) -> list[str]:
         return [
             COL_TEXT,
-            COL_SEED_ENTITIES,
-            COL_SEED_VALIDATION_CANDIDATES,
+            COL_SEED_DETECTION_RESULT,
             COL_TAG_NOTATION,
         ]
 
     @property
     def side_effect_columns(self) -> list[str]:
-        return []
+        return [COL_VALIDATION_INVENTORIES]
 
     def get_model_aliases(self) -> list[str]:
         return list(self.pool)

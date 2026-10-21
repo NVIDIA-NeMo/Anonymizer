@@ -35,6 +35,7 @@ from anonymizer.engine.constants import (
     COL_VALIDATED_SEED_ENTITIES,
     COL_VALIDATION_CANDIDATES,
     COL_VALIDATION_DECISIONS,
+    COL_VALIDATION_INVENTORIES,
     RECORD_ID_COLUMN,
 )
 from anonymizer.engine.detection.backend import _GlinerDetectionBackend
@@ -59,6 +60,8 @@ from anonymizer.engine.schemas import (
     ValidatedDecisionSchema,
     ValidatedDecisionsSchema,
     ValidationCandidatesSchema,
+    ValidationRequestDecisionSets,
+    ValidationRequestInventory,
 )
 
 
@@ -168,10 +171,40 @@ def prepare_validation_inputs(row: dict[str, Any]) -> dict[str, Any]:
 
 
 @custom_column_generator(
-    required_columns=[COL_VALIDATION_DECISIONS, COL_SEED_VALIDATION_CANDIDATES],
+    required_columns=[COL_VALIDATION_DECISIONS, COL_VALIDATION_INVENTORIES],
 )
 def enrich_validation_decisions(row: dict[str, Any]) -> dict[str, Any]:
     """Enrich validation decisions with entity value and filter to known candidate IDs only."""
+    if COL_VALIDATION_INVENTORIES in row:
+        inventories = {
+            inventory.request_id: inventory
+            for inventory in (
+                ValidationRequestInventory.model_validate(item) for item in row[COL_VALIDATION_INVENTORIES]
+            )
+        }
+        responses = ValidationRequestDecisionSets.model_validate(row[COL_VALIDATION_DECISIONS]).responses
+        enriched: list[ValidatedDecisionSchema] = []
+        for response in responses:
+            entries = {entry.alias: entry for entry in inventories[response.request_id].entries}
+            seen: set[str] = set()
+            for decision in response.decisions:
+                entry = entries.get(decision.id)
+                if entry is None or decision.id in seen or decision.decision is None:
+                    continue
+                enriched.append(
+                    ValidatedDecisionSchema(
+                        id=f"{entry.label}_{entry.start_position}_{entry.end_position}",
+                        decision=decision.decision,
+                        proposed_label=decision.proposed_label,
+                        reason=decision.reason,
+                        value=entry.value,
+                        label=entry.label,
+                    )
+                )
+                seen.add(decision.id)
+        row[COL_VALIDATED_ENTITIES] = ValidatedDecisionsSchema(decisions=enriched).model_dump(mode="json")
+        return row
+
     raw_decisions = RawValidationDecisionsSchema.from_raw(row.get(COL_VALIDATION_DECISIONS, {}))
     candidates = ValidationCandidatesSchema.from_raw(row.get(COL_SEED_VALIDATION_CANDIDATES, {}))
 

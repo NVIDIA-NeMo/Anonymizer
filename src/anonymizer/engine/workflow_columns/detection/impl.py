@@ -138,6 +138,8 @@ class ChunkedValidationGenerator(ColumnGeneratorWithModelRegistry[ChunkedValidat
             single_chunk_full_text=self.config.single_chunk_full_text,
             prompt_template=self.config.prompt_template,
             system_prompt=self.config.system_prompt,
+            allowed_entity_labels=self.config.allowed_entity_labels,
+            excluded_entity_labels=self.config.excluded_entity_labels,
         )
 
     def generate(self, data: dict[str, Any]) -> dict[str, Any]:  # ty: ignore[invalid-method-override]

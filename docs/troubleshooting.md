@@ -46,7 +46,7 @@ GLiNER candidate set → chunked into validator calls → each call dispatched t
 Fix in this order:
 
 1. **If failures are at `step="detection"`, add aliases to the validator pool** in `models.yaml`. The validator is the only role that supports a pool — set `entity_validator` to a list of aliases and chunked validation will round-robin across them, giving you failover when one provider rate-limits. Every other role (detector, augmenter, rewriter, evaluator, etc.) is a single alias.
-2. **Lower `validation_max_entities_per_call`** (default `100`) on `Detect` if individual validator requests exceed a context or per-request token limit. This creates more calls, each of which repeats the full resolved label/example section, so it can increase total tokens and is not necessarily helpful for a tokens-per-minute limit.
+2. **Lower `validation_max_entities_per_call`** (default `100`) on `Detect` if individual validator requests exceed a context or per-request token limit. This is a batching target: an overlapping group larger than the target stays intact in one request and emits a warning. Smaller batches create more calls, each repeating the full resolved label/example section, so they can increase total tokens and may not help with a tokens-per-minute limit.
 3. **Switch the heavy alias to a different `provider`** in `providers.yaml`. If you're hammering one tenant's quota, moving to a second deployment of the same model helps more than tuning batch sizes. This is the only lever for non-validator stages (rewrite, evaluate, etc.) since they don't have pools.
 4. **Re-run on just the failed records** — filter the input dataframe to those `record_id`s and call `anonymizer.run` again. Failures are usually transient.
 

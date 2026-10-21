@@ -228,6 +228,8 @@ class EntityDetectionWorkflow:
                     max_entities_per_call=validation_max_entities_per_call,
                     excerpt_window_chars=validation_excerpt_window_chars,
                     single_chunk_full_text=validation_single_chunk_full_text,
+                    allowed_entity_labels=labels if label_config.strict_labels else None,
+                    excluded_entity_labels=list(excluded_entity_labels or []),
                     prompt_template=_get_validation_prompt(
                         data_summary=data_summary,
                         labels=labels,
@@ -731,19 +733,21 @@ Additional rules:
 - You MUST fill in a decision for EVERY entry in the template — do not skip any
 - Return ONLY the entries from the template — do not add new entries for entities not already in the template
 - Copy ids exactly as given; never modify entries
+- A tag named NAGROUP_gN marks one region with overlapping alternatives. Use the template's conflict_group_id, value, label, and offsets to decide each alternative independently.
+- Template start_position and end_position are zero-based character offsets within the source excerpt, ignoring inserted tag markup. The start is inclusive and the end is exclusive. Return decisions using the supplied ids; do not generate or modify offsets.
 
 Example:
 {%- if <<TAG_NOTATION>> == "xml" -%}
-Input text: My <first_name>name</first_name> is <first_name>Amy</first_name>, <age>35</age> in <country>San Diego</country>, <state>California</state>.
+Input text: My <first_name>name</first_name> is <first_name>Amy</first_name>, <age>35</age> in <NAGROUP_g1>San Diego</NAGROUP_g1>, <state>California</state>.
 {%- elif <<TAG_NOTATION>> == "bracket" -%}
-Input text: My [[name|first_name]] is [[Amy|first_name]], [[35|age]] in [[San Diego|country]], [[California|state]].
+Input text: My [[name|first_name]] is [[Amy|first_name]], [[35|age]] in [[San Diego|NAGROUP_g1]], [[California|state]].
 {%- elif <<TAG_NOTATION>> == "paren" -%}
-Input text: My ((SENSITIVE:first_name|name)) is ((SENSITIVE:first_name|Amy)), ((SENSITIVE:age|35)) in ((SENSITIVE:country|San Diego)), ((SENSITIVE:state|California)).
+Input text: My ((SENSITIVE:first_name|name)) is ((SENSITIVE:first_name|Amy)), ((SENSITIVE:age|35)) in ((SENSITIVE:NAGROUP_g1|San Diego)), ((SENSITIVE:state|California)).
 {%- else -%}
-Input text: My <<SENSITIVE:first_name>>name<</SENSITIVE:first_name>> is <<SENSITIVE:first_name>>Amy<</SENSITIVE:first_name>>, <<SENSITIVE:age>>35<</SENSITIVE:age>> in <<SENSITIVE:country>>San Diego<</SENSITIVE:country>>, <<SENSITIVE:state>>California<</SENSITIVE:state>>.
+Input text: My <<SENSITIVE:first_name>>name<</SENSITIVE:first_name>> is <<SENSITIVE:first_name>>Amy<</SENSITIVE:first_name>>, <<SENSITIVE:age>>35<</SENSITIVE:age>> in <<SENSITIVE:NAGROUP_g1>>San Diego<</SENSITIVE:NAGROUP_g1>>, <<SENSITIVE:state>>California<</SENSITIVE:state>>.
 {%- endif -%}
-Template: {"decisions": [{"id": "first_name_3_7", "value": "name", "label": "first_name", "decision": null, "proposed_label": null, "reason": null}, {"id": "first_name_11_14", "value": "Amy", "label": "first_name", "decision": null, "proposed_label": null, "reason": null}, {"id": "age_16_18", "value": "35", "label": "age", "decision": null, "proposed_label": null, "reason": null}, {"id": "country_22_31", "value": "San Diego", "label": "country", "decision": null, "proposed_label": null, "reason": null}, {"id": "state_33_43", "value": "California", "label": "state", "decision": null, "proposed_label": null, "reason": null}]}
-Output: {"decisions": [{"id": "first_name_3_7", "value": "name", "label": "first_name", "decision": "drop", "proposed_label": "", "reason": "placeholder not actual name"}, {"id": "first_name_11_14", "value": "Amy", "label": "first_name", "decision": "keep", "proposed_label": "", "reason": "real first name"}, {"id": "age_16_18", "value": "35", "label": "age", "decision": "keep", "proposed_label": "", "reason": "age quasi-identifier"}, {"id": "country_22_31", "value": "San Diego", "label": "country", "decision": "reclass", "proposed_label": "city", "reason": "city not country"}, {"id": "state_33_43", "value": "California", "label": "state", "decision": "keep", "proposed_label": "", "reason": "state quasi-identifier"}]}
+Template: {"decisions": [{"id": "c1", "conflict_group_id": null, "value": "name", "label": "first_name", "start_position": 3, "end_position": 7, "decision": null, "proposed_label": null, "reason": null}, {"id": "c2", "conflict_group_id": null, "value": "Amy", "label": "first_name", "start_position": 11, "end_position": 14, "decision": null, "proposed_label": null, "reason": null}, {"id": "c3", "conflict_group_id": null, "value": "35", "label": "age", "start_position": 16, "end_position": 18, "decision": null, "proposed_label": null, "reason": null}, {"id": "c4", "conflict_group_id": "g1", "value": "San Diego", "label": "country", "start_position": 22, "end_position": 31, "decision": null, "proposed_label": null, "reason": null}, {"id": "c5", "conflict_group_id": "g1", "value": "Diego", "label": "first_name", "start_position": 26, "end_position": 31, "decision": null, "proposed_label": null, "reason": null}, {"id": "c6", "conflict_group_id": null, "value": "California", "label": "state", "start_position": 33, "end_position": 43, "decision": null, "proposed_label": null, "reason": null}]}
+Output: {"decisions": [{"id": "c1", "decision": "drop", "proposed_label": "", "reason": "placeholder not actual name"}, {"id": "c2", "decision": "keep", "proposed_label": "", "reason": "real first name"}, {"id": "c3", "decision": "keep", "proposed_label": "", "reason": "age quasi-identifier"}, {"id": "c4", "decision": "reclass", "proposed_label": "city", "reason": "city not country"}, {"id": "c5", "decision": "drop", "proposed_label": "", "reason": "part of the city name, not a person"}, {"id": "c6", "decision": "keep", "proposed_label": "", "reason": "state quasi-identifier"}]}
 
 ---
 Input text: <<TAGGED_TEXT>>
