@@ -37,6 +37,8 @@ from anonymizer.engine.schemas.detection import (
     ValidationDecisionSchema,
     ValidationDecisionsSchema,
     ValidationInventoryEntry,
+    ValidationRequestDecisionSet,
+    ValidationRequestDecisionSets,
     ValidationRequestInventory,
     ValidationSkeletonDecisionSchema,
     ValidationSkeletonSchema,
@@ -110,6 +112,8 @@ __all__ = [
     "ValidationDecisionSchema",
     "ValidationInventoryEntry",
     "ValidationRequestInventory",
+    "ValidationRequestDecisionSet",
+    "ValidationRequestDecisionSets",
     "ValidationSkeletonDecisionSchema",
     "ValidationSkeletonSchema",
     # Rewrite

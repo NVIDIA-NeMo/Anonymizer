@@ -369,6 +369,19 @@ class RawValidationDecisionsSchema(BaseModel):
         return _parse_raw_wrapper(cls, raw, "decisions")
 
 
+class ValidationRequestDecisionSet(FrozenStrictModel):
+    """Parsed validator response bound to the request that authorized it."""
+
+    request_id: str = Field(min_length=1)
+    decisions: tuple[RawValidationDecisionSchema, ...] = ()
+
+
+class ValidationRequestDecisionSets(FrozenStrictModel):
+    """Ordered validator responses for one row's logical validation pass."""
+
+    responses: tuple[ValidationRequestDecisionSet, ...] = ()
+
+
 class ValidatedDecisionSchema(RawValidationDecisionSchema):
     value: str = Field(default="")
     label: str = Field(default="")

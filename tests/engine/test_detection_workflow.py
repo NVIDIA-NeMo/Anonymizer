@@ -13,6 +13,7 @@ from data_designer.config.column_configs import LLMStructuredColumnConfig
 from data_designer.config.models import ModelConfig
 from data_designer.plugins.plugin import PluginType
 from data_designer.plugins.registry import PluginRegistry
+from jinja2 import Environment, StrictUndefined
 
 from anonymizer.config.models import DetectionModelSelection
 from anonymizer.config.rewrite import PrivacyGoal
@@ -26,12 +27,14 @@ from anonymizer.engine.constants import (
     COL_SEED_DETECTION_RESULT,
     COL_SEED_ENTITIES,
     COL_SEED_ENTITIES_JSON,
+    COL_SEED_TAGGED_TEXT,
     COL_SEED_VALIDATION_CANDIDATES,
     COL_TAG_NOTATION,
     COL_TAGGED_TEXT,
     COL_TEXT,
     COL_VALIDATED_ENTITIES,
     COL_VALIDATION_DECISIONS,
+    COL_VALIDATION_SKELETON,
     DEFAULT_ENTITY_LABELS,
     ENTITY_LABEL_EXAMPLES,
     RECORD_ID_COLUMN,
@@ -46,6 +49,7 @@ from anonymizer.engine.detection.detection_workflow import (
     _materialize_final_entities,
 )
 from anonymizer.engine.detection.entity_label_examples import resolve_entity_label_config
+from anonymizer.engine.detection.postprocess import TagNotation, _format_entity_tag
 from anonymizer.engine.ndd.adapter import FailedRecord, WorkflowRunResult
 from anonymizer.engine.ndd.model_loader import (
     load_default_model_selection,
@@ -548,6 +552,44 @@ def test_validation_prompt_includes_label_examples() -> None:
 def test_validation_prompt_includes_data_summary() -> None:
     prompt = _get_validation_prompt(data_summary="Medical records", labels=["first_name"])
     assert "Data context: Medical records" in prompt
+
+
+@pytest.mark.parametrize("notation", list(TagNotation))
+def test_validation_prompt_example_matches_conflict_skeleton_and_excerpt_offsets(notation: TagNotation) -> None:
+    prompt = _get_validation_prompt(data_summary=None, labels=["first_name", "age", "country", "city", "state"])
+    rendered = (
+        Environment(undefined=StrictUndefined)
+        .from_string(prompt)
+        .render(
+            {
+                COL_TAG_NOTATION: notation.value,
+                COL_SEED_TAGGED_TEXT: "",
+                COL_VALIDATION_SKELETON: "",
+            }
+        )
+    )
+    example = rendered.split("Example:")[-1].split("---")[0]
+    entries = json.loads(example.split("Template: ")[1].split("\nOutput:")[0])["decisions"]
+    output = json.loads(example.split("Output: ")[1].strip())["decisions"]
+    source = "My name is Amy, 35 in San Diego, California."
+
+    for entry in entries:
+        assert source[entry["start_position"] : entry["end_position"]] == entry["value"]
+        if entry["id"] in {"c4", "c5"}:
+            assert entry["conflict_group_id"] == "g1"
+        else:
+            assert entry["conflict_group_id"] is None
+        assert entry["decision"] is None
+    assert [entry["id"] for entry in entries] == [entry["id"] for entry in output]
+    alternatives = [entry for entry in entries if entry["conflict_group_id"] == "g1"]
+    assert [(entry["value"], entry["label"]) for entry in alternatives] == [
+        ("San Diego", "country"),
+        ("Diego", "first_name"),
+    ]
+    assert _format_entity_tag(value="San Diego", label="NAGROUP_g1", notation=notation) in example
+    assert output[3]["decision"] == "reclass"
+    assert output[3]["proposed_label"] == "city"
+    assert output[4]["decision"] == "drop"
 
 
 def test_validation_prompt_adds_configured_examples_to_full_label_config() -> None:
@@ -1100,8 +1142,7 @@ def test_validation_column_is_chunked_validation_plugin(
     assert validation_col.get_model_aliases() == list(stub_detection_model_selection.entity_validator)
     assert set(validation_col.required_columns) == {
         COL_TEXT,
-        COL_SEED_ENTITIES,
-        COL_SEED_VALIDATION_CANDIDATES,
+        COL_SEED_DETECTION_RESULT,
         COL_TAG_NOTATION,
     }
 
