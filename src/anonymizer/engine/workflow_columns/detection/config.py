@@ -15,6 +15,7 @@ from anonymizer.engine.constants import (
     COL_MERGED_ENTITIES,
     COL_MERGED_TAGGED_TEXT,
     COL_RAW_DETECTED,
+    COL_SEED_DETECTION_RESULT,
     COL_SEED_ENTITIES,
     COL_SEED_ENTITIES_JSON,
     COL_SEED_TAGGED_TEXT,
@@ -26,6 +27,7 @@ from anonymizer.engine.constants import (
     COL_VALIDATED_SEED_ENTITIES,
     COL_VALIDATION_CANDIDATES,
     COL_VALIDATION_DECISIONS,
+    RECORD_ID_COLUMN,
 )
 
 
@@ -43,9 +45,15 @@ class DetectionTransformConfig(SingleColumnConfig):
     operation: DetectionTransformOperation
     excluded_entity_labels: list[str] = Field(default_factory=list)
     allowed_entity_labels: list[str] | None = None
+    detection_result_id: str = "r1"
+    source_instance: str = "gliner"
 
     _REQUIRED_COLUMNS: ClassVar[dict[DetectionTransformOperation, list[str]]] = {
-        DetectionTransformOperation.PARSE_DETECTED_ENTITIES: [COL_TEXT, COL_RAW_DETECTED],
+        DetectionTransformOperation.PARSE_DETECTED_ENTITIES: [
+            RECORD_ID_COLUMN,
+            COL_TEXT,
+            COL_RAW_DETECTED,
+        ],
         DetectionTransformOperation.PREPARE_VALIDATION_INPUTS: [COL_TEXT, COL_SEED_ENTITIES],
         DetectionTransformOperation.ENRICH_VALIDATION_DECISIONS: [
             COL_VALIDATION_DECISIONS,
@@ -68,7 +76,10 @@ class DetectionTransformConfig(SingleColumnConfig):
         ],
     }
     _SIDE_EFFECT_COLUMNS: ClassVar[dict[DetectionTransformOperation, list[str]]] = {
-        DetectionTransformOperation.PARSE_DETECTED_ENTITIES: [COL_TAG_NOTATION],
+        DetectionTransformOperation.PARSE_DETECTED_ENTITIES: [
+            COL_SEED_DETECTION_RESULT,
+            COL_TAG_NOTATION,
+        ],
         DetectionTransformOperation.PREPARE_VALIDATION_INPUTS: [COL_SEED_TAGGED_TEXT],
         DetectionTransformOperation.ENRICH_VALIDATION_DECISIONS: [],
         DetectionTransformOperation.APPLY_VALIDATION_TO_SEED_ENTITIES: [

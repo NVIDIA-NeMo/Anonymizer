@@ -23,6 +23,7 @@ from anonymizer.engine.constants import (
     COL_MERGED_ENTITIES,
     COL_MERGED_TAGGED_TEXT,
     COL_RAW_DETECTED,
+    COL_SEED_DETECTION_RESULT,
     COL_SEED_ENTITIES,
     COL_SEED_ENTITIES_JSON,
     COL_SEED_TAGGED_TEXT,
@@ -34,7 +35,9 @@ from anonymizer.engine.constants import (
     COL_VALIDATED_SEED_ENTITIES,
     COL_VALIDATION_CANDIDATES,
     COL_VALIDATION_DECISIONS,
+    RECORD_ID_COLUMN,
 )
+from anonymizer.engine.detection.backend import _GlinerDetectionBackend
 from anonymizer.engine.detection.postprocess import (
     EntitySpan,
     apply_augmented_entities,
@@ -46,11 +49,13 @@ from anonymizer.engine.detection.postprocess import (
     get_tag_notation,
     normalize_label,
     normalize_labels,
-    parse_raw_entities,
+    project_detection_result_to_entity_spans,
 )
 from anonymizer.engine.schemas import (
     EntitiesSchema,
     RawValidationDecisionsSchema,
+    SourceTextRef,
+    SourceView,
     ValidatedDecisionSchema,
     ValidatedDecisionsSchema,
     ValidationCandidatesSchema,
@@ -58,18 +63,35 @@ from anonymizer.engine.schemas import (
 
 
 @custom_column_generator(
-    required_columns=[COL_TEXT, COL_RAW_DETECTED],
-    side_effect_columns=[COL_TAG_NOTATION],
+    required_columns=[RECORD_ID_COLUMN, COL_TEXT, COL_RAW_DETECTED],
+    side_effect_columns=[COL_SEED_DETECTION_RESULT, COL_TAG_NOTATION],
 )
-def parse_detected_entities(row: dict[str, Any]) -> dict[str, Any]:
+def parse_detected_entities(
+    row: dict[str, Any],
+    *,
+    detection_result_id: str,
+    source_instance: str,
+) -> dict[str, Any]:
     """Parse detector payload and produce seed entities."""
     text = str(row.get(COL_TEXT, ""))
-    entities = parse_raw_entities(
-        raw_response=str(row.get(COL_RAW_DETECTED, "")),
-        text=text,
+    source_text_ref = SourceTextRef(
+        record_id=str(row[RECORD_ID_COLUMN]),
+        field_id=COL_TEXT,
     )
+    detection_result = _GlinerDetectionBackend(source_instance=source_instance).to_detection_result(
+        detection_result_id=detection_result_id,
+        source_view=SourceView(
+            source_text_ref=source_text_ref,
+            start_position=0,
+            end_position=len(text),
+        ),
+        canonical_text=text,
+        raw_output=row.get(COL_RAW_DETECTED, ""),
+    )
+    entities = project_detection_result_to_entity_spans(detection_result)
     seed_entities = [entity.as_dict() for entity in entities]
     row[COL_SEED_ENTITIES] = EntitiesSchema(entities=seed_entities).model_dump(mode="json")
+    row[COL_SEED_DETECTION_RESULT] = detection_result.model_dump(mode="json")
     row[COL_TAG_NOTATION] = get_tag_notation(text=text)
     return row
 

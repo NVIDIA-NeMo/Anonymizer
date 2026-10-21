@@ -18,6 +18,7 @@ COL_RAW_DETECTED = "_raw_detected_entities"
 
 # Step 2: parse_detected_entities
 COL_SEED_ENTITIES = "_seed_entities"
+COL_SEED_DETECTION_RESULT = "_seed_detection_result"
 COL_INITIAL_TAGGED_TEXT = "_initial_tagged_text"
 COL_SEED_ENTITIES_JSON = "_seed_entities_json"
 COL_TAG_NOTATION = "_tag_notation"

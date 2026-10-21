@@ -9,7 +9,8 @@ import re
 from collections.abc import Iterable
 from dataclasses import dataclass
 from enum import Enum
-from typing import SupportsFloat, SupportsIndex, SupportsInt
+
+from anonymizer.engine.schemas import DetectionResult
 
 logger = logging.getLogger(__name__)
 
@@ -68,47 +69,24 @@ class TagNotation(str, Enum):
     sentinel = "sentinel"
 
 
-def parse_raw_entities(raw_response: str, text: str) -> list[EntitySpan]:
-    """Parse hosted GLiNER JSON response into canonical standoff entities.
-
-    Threshold filtering is handled server-side by the GLiNER API; this
-    function validates structural and source-offset integrity of the returned spans.
-    """
-    payload = _safe_json_loads(raw_response)
-    raw_entities = payload.get("entities", [])
-    if not isinstance(raw_entities, list):
-        return []
-
-    parsed: list[EntitySpan] = []
-    for idx, raw_entity in enumerate(raw_entities):
-        if not isinstance(raw_entity, dict):
-            continue
-        detector_text = str(raw_entity.get("text", "")).strip()
-        label = str(raw_entity.get("label", "")).strip()
-        start = _coerce_int(raw_entity.get("start"))
-        end = _coerce_int(raw_entity.get("end"))
-        score = _coerce_float(raw_entity.get("score"), default=0.0)
-        if not detector_text or not label:
-            continue
-        if start is None or end is None or start < 0 or end <= start or end > len(text):
-            continue
-        source_value = text[start:end]
-        if detector_text.casefold() != source_value.strip().casefold():
-            raise ValueError(f"Detector entity text does not match the source span at offsets [{start}, {end})")
-        value = source_value
-        entity_id = _build_entity_id(label=label, start=start, end=end)
-        parsed.append(
-            EntitySpan(
-                entity_id=entity_id,
-                value=value,
-                label=label,
-                start_position=start,
-                end_position=end,
-                score=score,
-                source="detector",
-            )
+def project_detection_result_to_entity_spans(result: DetectionResult) -> list[EntitySpan]:
+    """Project lifecycle observations into the legacy seed-entity payload."""
+    return [
+        EntitySpan(
+            entity_id=_build_entity_id(
+                label=observation.label,
+                start=observation.start_position,
+                end=observation.end_position,
+            ),
+            value=observation.value,
+            label=observation.label,
+            start_position=observation.start_position,
+            end_position=observation.end_position,
+            score=observation.native_score or 0.0,
+            source="detector",
         )
-    return resolve_overlaps(parsed, prefer_highest_score=True)
+        for observation in result.observations
+    ]
 
 
 def build_validation_candidates(text: str, entities: list[EntitySpan]) -> list[dict[str, str]]:
@@ -265,21 +243,14 @@ def _split_full_names(text: str, entities: list[EntitySpan]) -> list[EntitySpan]
     return [*entities, *extra]
 
 
-def resolve_overlaps(entities: list[EntitySpan], *, prefer_highest_score: bool = False) -> list[EntitySpan]:
-    """Resolve span conflicts by preferring longer spans, then earlier starts.
-
-    Set ``prefer_highest_score=True`` only when all inputs share the same
-    provenance (e.g. raw GLiNER detections in ``parse_raw_entities``).
-    Mixed-source callers must leave it False so synthetic score-1.0 values
-    from augmenters or propagation cannot displace validated detector spans.
-    """
+def resolve_overlaps(entities: list[EntitySpan]) -> list[EntitySpan]:
+    """Resolve span conflicts by preferring longer spans, then earlier starts and labels."""
     sorted_entities = sorted(
         entities,
         key=lambda item: (
             -(item.end_position - item.start_position),
             item.start_position,
             item.end_position,
-            -item.score if prefer_highest_score else 0.0,
             item.label,
         ),
     )
@@ -404,24 +375,6 @@ def _safe_json_loads(value: dict | str) -> dict:
             len(value),
         )
         return {}
-
-
-def _coerce_int(value: object) -> int | None:
-    if not isinstance(value, (str, bytes, bytearray, SupportsInt, SupportsIndex)):
-        return None
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return None
-
-
-def _coerce_float(value: object, default: float) -> float:
-    if not isinstance(value, (str, bytes, bytearray, SupportsFloat, SupportsIndex)):
-        return default
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return default
 
 
 def _spans_overlap(left: EntitySpan, right: EntitySpan) -> bool:

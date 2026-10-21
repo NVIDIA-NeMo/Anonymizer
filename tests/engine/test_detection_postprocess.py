@@ -4,18 +4,7 @@
 from __future__ import annotations
 
 import json
-import logging
 
-import pandas as pd
-import pytest
-
-from anonymizer.config.replace_strategies import Redact
-from anonymizer.engine.constants import (
-    COL_FINAL_ENTITIES,
-    COL_REPLACED_TEXT,
-    COL_REPLACEMENT_APPLICATION,
-    COL_TEXT,
-)
 from anonymizer.engine.detection.postprocess import (
     EntitySpan,
     apply_augmented_entities,
@@ -27,10 +16,8 @@ from anonymizer.engine.detection.postprocess import (
     group_entities_by_value,
     normalize_label,
     normalize_labels,
-    parse_raw_entities,
     resolve_overlaps,
 )
-from anonymizer.engine.replace.strategies import apply_local_replace_strategy
 
 
 def test_normalize_label_strips_and_casefolds() -> None:
@@ -43,66 +30,6 @@ def test_normalize_labels_dedupes_and_drops_empty_entries() -> None:
 
 def test_normalize_labels_none_returns_empty_set() -> None:
     assert normalize_labels(None) == set()
-
-
-def test_parse_raw_entities_parses_valid_spans() -> None:
-    text = "Call me at (555) 123-4567"
-    raw = '{"entities":[{"text":"(555) 123-4567","label":"phone_number","start":11,"end":25,"score":0.9}]}'
-    entities = parse_raw_entities(raw_response=raw, text=text)
-    assert len(entities) == 1
-    assert entities[0].label == "phone_number"
-
-
-def test_parse_raw_entities_uses_source_slice_for_benign_detector_normalization() -> None:
-    text = "Alice joined Acme"
-    raw = json.dumps(
-        {
-            "entities": [
-                {
-                    "text": "alice",
-                    "label": "first_name",
-                    "start": 0,
-                    "end": 5,
-                    "score": 0.9,
-                }
-            ]
-        }
-    )
-
-    entities = parse_raw_entities(raw_response=raw, text=text)
-
-    assert entities[0].value == "Alice"
-    result = apply_local_replace_strategy(
-        pd.DataFrame({COL_TEXT: [text], COL_FINAL_ENTITIES: [{"entities": [entities[0].as_dict()]}]}),
-        strategy=Redact(),
-    )
-    assert result[COL_REPLACED_TEXT].iloc[0] == "[REDACTED_FIRST_NAME] joined Acme"
-    assert result[COL_REPLACEMENT_APPLICATION].iloc[0] == {
-        "targeted_span_count": 1,
-        "applied_span_count": 1,
-        "skipped_span_count": 0,
-        "skipped_span_label_counts": {},
-    }
-
-
-def test_parse_raw_entities_rejects_material_detector_text_mismatch() -> None:
-    text = "Alice joined Acme"
-    raw = json.dumps(
-        {
-            "entities": [
-                {
-                    "text": "Alice",
-                    "label": "first_name",
-                    "start": 13,
-                    "end": 17,
-                    "score": 0.9,
-                }
-            ]
-        }
-    )
-
-    with pytest.raises(ValueError, match=r"source span at offsets \[13, 17\)"):
-        parse_raw_entities(raw_response=raw, text=text)
 
 
 def test_overlap_resolution_prefers_longer_span() -> None:
@@ -305,138 +232,6 @@ def test_build_tagged_text_avoids_xml_when_input_has_xml() -> None:
     assert "[[Alice|first_name]]" in tagged
 
 
-def test_parse_raw_entities_returns_empty_on_malformed_json() -> None:
-    assert parse_raw_entities(raw_response="not json {{{", text="hello") == []
-
-
-def test_parse_raw_entities_returns_empty_when_entities_not_a_list() -> None:
-    assert parse_raw_entities(raw_response='{"entities": "not a list"}', text="hello") == []
-
-
-def test_parse_raw_entities_drops_non_dict_items() -> None:
-    raw = json.dumps({"entities": ["string_item", 42, None, {"text": "x", "label": "email"}]})
-    result = parse_raw_entities(raw_response=raw, text="has x in it")
-    assert len(result) == 0  # "x" has no valid position
-
-
-def test_parse_raw_entities_drops_entities_with_empty_value() -> None:
-    raw = json.dumps(
-        {
-            "entities": [
-                {"text": "", "label": "email", "start": 0, "end": 5, "score": 0.9},
-            ]
-        }
-    )
-    assert parse_raw_entities(raw_response=raw, text="hello") == []
-
-
-def test_parse_raw_entities_drops_entities_with_empty_label() -> None:
-    raw = json.dumps(
-        {
-            "entities": [
-                {"text": "hello", "label": "", "start": 0, "end": 5, "score": 0.9},
-            ]
-        }
-    )
-    assert parse_raw_entities(raw_response=raw, text="hello") == []
-
-
-def test_parse_raw_entities_drops_negative_start() -> None:
-    raw = json.dumps(
-        {
-            "entities": [
-                {"text": "hello", "label": "email", "start": -1, "end": 5, "score": 0.9},
-            ]
-        }
-    )
-    assert parse_raw_entities(raw_response=raw, text="hello") == []
-
-
-def test_parse_raw_entities_drops_end_equal_to_start() -> None:
-    raw = json.dumps(
-        {
-            "entities": [
-                {"text": "hello", "label": "email", "start": 3, "end": 3, "score": 0.9},
-            ]
-        }
-    )
-    assert parse_raw_entities(raw_response=raw, text="hello") == []
-
-
-def test_parse_raw_entities_drops_end_beyond_text() -> None:
-    raw = json.dumps(
-        {
-            "entities": [
-                {"text": "hello", "label": "email", "start": 0, "end": 999, "score": 0.9},
-            ]
-        }
-    )
-    assert parse_raw_entities(raw_response=raw, text="hello") == []
-
-
-def test_parse_raw_entities_handles_non_numeric_positions() -> None:
-    raw = json.dumps(
-        {
-            "entities": [
-                {
-                    "text": "hello",
-                    "label": "email",
-                    "start": "abc",
-                    "end": 5,
-                    "score": 0.9,
-                },
-            ]
-        }
-    )
-    assert parse_raw_entities(raw_response=raw, text="hello world") == []
-
-
-def test_parse_raw_entities_handles_non_numeric_score() -> None:
-    """Non-numeric score should default to 0.0 instead of crashing."""
-    raw = json.dumps(
-        {
-            "entities": [
-                {
-                    "text": "Alice",
-                    "label": "first_name",
-                    "start": 0,
-                    "end": 5,
-                    "score": "bad",
-                },
-            ]
-        }
-    )
-    result = parse_raw_entities(raw_response=raw, text="Alice")
-    assert len(result) == 1
-    assert result[0].score == 0.0
-
-
-def test_parse_raw_entities_resolves_overlapping_spans() -> None:
-    raw = json.dumps(
-        {
-            "entities": [
-                {
-                    "text": "John",
-                    "label": "first_name",
-                    "start": 0,
-                    "end": 4,
-                    "score": 0.8,
-                },
-                {
-                    "text": "John Doe",
-                    "label": "full_name",
-                    "start": 0,
-                    "end": 8,
-                    "score": 0.9,
-                },
-            ]
-        }
-    )
-    result = parse_raw_entities(raw_response=raw, text="John Doe went home")
-    assert len(result) == 1
-    assert result[0].value == "John Doe"
-
-
 def test_resolve_overlaps_keeps_non_overlapping_spans() -> None:
     a = EntitySpan("a", "Alice", "first_name", 0, 5, 1.0, "detector")
     b = EntitySpan("b", "Acme", "organization", 15, 19, 1.0, "detector")
@@ -465,39 +260,13 @@ def test_resolve_overlaps_empty_input() -> None:
     assert resolve_overlaps([]) == []
 
 
-def test_resolve_overlaps_same_span_keeps_highest_score() -> None:
-    """prefer_highest_score=True: highest-scoring label wins on exact same span."""
-    last_name = EntitySpan("last_name_120_123", "Mum", "last_name", 120, 123, 0.719, "detector")
-    relationship = EntitySpan("relationship_120_123", "Mum", "relationship", 120, 123, 0.941, "detector")
-    resolved = resolve_overlaps([last_name, relationship], prefer_highest_score=True)
-    assert len(resolved) == 1
-    assert resolved[0].label == "relationship"
-
-
 def test_resolve_overlaps_default_uses_label_not_score() -> None:
-    """Default (prefer_highest_score=False): label alphabetical order wins, not score."""
+    """Equal spans use alphabetical label order regardless of score."""
     low_score = EntitySpan("a_0_3", "Mum", "aaa_label", 0, 3, 0.5, "detector")
     high_score = EntitySpan("z_0_3", "Mum", "zzz_label", 0, 3, 1.0, "augmenter")
     resolved = resolve_overlaps([low_score, high_score])
     assert len(resolved) == 1
     assert resolved[0].label == "aaa_label"
-
-
-def test_parse_raw_entities_prefers_higher_score_on_same_gliner_span() -> None:
-    """Regression: relationship (0.941) should beat last_name (0.719) on same span."""
-    text = "She called Mum every day."
-    raw = json.dumps(
-        {
-            "entities": [
-                {"text": "Mum", "label": "last_name", "start": 11, "end": 14, "score": 0.719},
-                {"text": "Mum", "label": "relationship", "start": 11, "end": 14, "score": 0.941},
-            ]
-        }
-    )
-    result = parse_raw_entities(raw_response=raw, text=text)
-    assert len(result) == 1
-    assert result[0].label == "relationship"
-    assert result[0].score == 0.941
 
 
 def test_augmented_entities_does_not_use_synthetic_score_precedence() -> None:
@@ -792,13 +561,3 @@ def test_expand_case_insensitive_matching() -> None:
     entities = [EntitySpan("e1", "Alice", "first_name", 0, 5, 1.0, "detector")]
     expanded = expand_entity_occurrences(text=text, entities=entities)
     assert len(expanded) == 2
-
-
-def test_parse_raw_entities_logs_warning_on_malformed_json(caplog: pytest.LogCaptureFixture) -> None:
-    payload = '{"name":"Alice","ssn":"123-45-6789",invalid}'
-    with caplog.at_level(logging.WARNING, logger="anonymizer.engine.detection.postprocess"):
-        result = parse_raw_entities(raw_response=payload, text="hello")
-    assert result == []
-    assert any("Failed to parse JSON" in m for m in caplog.messages)
-    assert any("length=" in m for m in caplog.messages)
-    assert payload not in "\n".join(caplog.messages)
