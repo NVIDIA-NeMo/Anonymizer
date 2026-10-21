@@ -17,6 +17,9 @@ def _signature(value: object) -> str:
     # Exception constructors are not authoring surface, and test tooling may wrap them to record raises.
     if not callable(value) or (isinstance(value, type) and issubclass(value, BaseException)):
         return "<none>"
+    # An enum class signature is the standard library's functional API, which patch releases have changed.
+    if isinstance(value, type) and issubclass(value, enum.Enum):
+        return "<none>"
     try:
         return str(inspect.signature(value))
     except (TypeError, ValueError):

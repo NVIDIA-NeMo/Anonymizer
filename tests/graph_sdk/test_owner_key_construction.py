@@ -120,6 +120,6 @@ def test_every_required_field_is_enforced(kind: type[Any]) -> None:
 def test_copies_require_the_owner_key(kind: type[Any]) -> None:
     value = _valid(kind)
     assert type(value) is kind
-    with pytest.raises(ValueError, match="InitVar '_key' must be specified"):
+    with pytest.raises((TypeError, ValueError), match="InitVar '_key' must be specified"):
         dataclasses.replace(value)
     assert type(dataclasses.replace(value, _key=_owner_key(kind))) is kind

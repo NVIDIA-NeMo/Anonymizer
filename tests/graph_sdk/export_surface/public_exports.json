@@ -890,7 +890,7 @@
  "EffectCode": {
   "kind": "EnumType",
   "qualname": "EffectCode",
-  "signature": "(value, names=None, *, module=None, qualname=None, type=None, start=1, boundary=None)",
+  "signature": "<none>",
   "pickle": "identity",
   "mro": [
    "EffectCode",
@@ -2047,7 +2047,7 @@
  "PreparationCode": {
   "kind": "EnumType",
   "qualname": "PreparationCode",
-  "signature": "(value, names=None, *, module=None, qualname=None, type=None, start=1, boundary=None)",
+  "signature": "<none>",
   "pickle": "identity",
   "mro": [
    "PreparationCode",
@@ -2794,7 +2794,7 @@
  "ValidationCode": {
   "kind": "EnumType",
   "qualname": "ValidationCode",
-  "signature": "(value, names=None, *, module=None, qualname=None, type=None, start=1, boundary=None)",
+  "signature": "<none>",
   "pickle": "identity",
   "mro": [
    "ValidationCode",
