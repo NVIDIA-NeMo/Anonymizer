@@ -7,6 +7,8 @@ This page preserves historical M0 stage, route and request-seam evidence. [Draft
 
 M0 characterizes a small part of the existing production contract before migration. The graph components and their conformance tests do not yet establish that every production route uses one graph authority. This inventory records evidence and remaining work; it is not a complete RFC audit or publication approval.
 
+Until the SDK is published, its surface is not a compatibility contract. This covers `anonymizer.graph` and the engine modules behind it: names, export order, signatures, defaults, exception constructors, pickles and import cost may all change. Tests that pin them are refactor safety nets and are re-recorded in the same commit as the change they cover. The `Anonymizer` facade keeps its own compatibility promises.
+
 The reference revision is `9f824d95b1cc74e71eb4a152a033afabbfd84ac0`. Normative authority remains the SDK RFC main text and Appendices A–E in the operator's canonical RFC export, `RFC-graph-sdk.md` (SHA256 `040ecea6312890436157ff3b9a43270a53891395c0abea935ac4163859bd4a29`), which supersedes the earlier snapshot with SHA256 `55da6300f42404673fbd94999fc0763390532917403e37b74ac674000bdffc8f`. The requirement summaries below are navigation aids, not replacements for the normative clauses. Before activating a successor unit, bind its exact predecessor revision, relevant normative sections, concrete objective and test selectors. Appendix E's open decisions remain open.
 
 ## Stage ownership

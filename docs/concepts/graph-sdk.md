@@ -5,6 +5,8 @@
 
 Use `anonymizer.graph` to declare a workflow, provide its implementations, execute it locally, and inspect or project saved results. The SDK validates declared relationships and reconciles evidence before Protected release. A successful callback alone does not establish protection.
 
+Until the SDK is published, its surface is not a compatibility contract. This covers `anonymizer.graph` and the engine modules behind it: names, export order, signatures, defaults, exception constructors, pickles and import cost may all change. Tests that pin them are refactor safety nets and are re-recorded in the same commit as the change they cover. The `Anonymizer` facade keeps its own compatibility promises.
+
 The [provider-free example](../examples/graph_sdk/local_workflows.py) uses only public imports. Save the file and run it with an environment containing `nemo-anonymizer`:
 
 ```bash
