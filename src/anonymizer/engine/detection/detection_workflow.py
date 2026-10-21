@@ -40,6 +40,7 @@ from anonymizer.engine.constants import (
     COL_VALIDATION_DECISIONS,
     COL_VALIDATION_SKELETON,
     ENTITY_LABEL_EXAMPLES,
+    SEED_DETECTION_RESULT_ID,
     _jinja,
 )
 from anonymizer.engine.detection.entity_label_examples import ResolvedEntityLabelConfig, resolve_entity_label_config
@@ -53,12 +54,12 @@ from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter
 from anonymizer.engine.ndd.model_loader import resolve_model_alias, resolve_model_aliases
 from anonymizer.engine.prompt_utils import substitute_placeholders
 from anonymizer.engine.schemas import (
-    AugmentedEntitiesSchema,
     EntitiesByValueSchema,
     EntitiesSchema,
     LatentEntitiesSchema,
 )
 from anonymizer.engine.workflow_columns.detection.config import (
+    AugmentationConfig,
     ChunkedValidationConfig,
     DetectionTransformConfig,
     DetectionTransformOperation,
@@ -215,7 +216,7 @@ class EntityDetectionWorkflow:
                 DetectionTransformConfig(
                     name=COL_SEED_ENTITIES,
                     operation=DetectionTransformOperation.PARSE_DETECTED_ENTITIES,
-                    detection_result_id="r1",
+                    detection_result_id=SEED_DETECTION_RESULT_ID,
                     source_instance=detection_alias,
                 ),
                 DetectionTransformConfig(
@@ -248,16 +249,17 @@ class EntityDetectionWorkflow:
                     name=COL_SEED_ENTITIES_JSON,
                     operation=DetectionTransformOperation.APPLY_VALIDATION_TO_SEED_ENTITIES,
                 ),
-                _PrivatePromptLLMStructuredColumnConfig(
+                AugmentationConfig(
                     name=COL_AUGMENTED_ENTITIES,
-                    prompt=_get_augment_prompt(
+                    prompt_template=_get_augment_prompt(
                         data_summary=data_summary,
                         labels=labels,
                         strict_labels=label_config.strict_labels,
                         configured_examples=label_config.augmenter_examples,
                     ),
                     model_alias=augmenter_alias,
-                    output_format=AugmentedEntitiesSchema,
+                    allowed_entity_labels=labels if label_config.strict_labels else None,
+                    excluded_entity_labels=list(excluded_entity_labels or []),
                 ),
                 DetectionTransformConfig(
                     name=COL_MERGED_ENTITIES,
@@ -786,17 +788,18 @@ def _get_augment_prompt(
         )
         example_block = """\
 Example (allowed labels: first_name, last_name, city — note that employment_status is NOT in the allowed list):
+{% set example_seed_label = "NAGROUP_g1" if has_overlap_groups else "city" %}
 {%- if <<TAG_NOTATION>> == "xml" -%}
-Input text: Jane Doe lives in <city>Santa Clara</city>. She works full-time.
+Input text: Jane Doe lives in <{{ example_seed_label }}>Santa Clara</{{ example_seed_label }}>. She works full-time.
 {%- elif <<TAG_NOTATION>> == "bracket" -%}
-Input text: Jane Doe lives in [[Santa Clara|city]]. She works full-time.
+Input text: Jane Doe lives in [[Santa Clara|{{ example_seed_label }}]]. She works full-time.
 {%- elif <<TAG_NOTATION>> == "paren" -%}
-Input text: Jane Doe lives in ((SENSITIVE:city|Santa Clara)). She works full-time.
+Input text: Jane Doe lives in ((SENSITIVE:{{ example_seed_label }}|Santa Clara)). She works full-time.
 {%- else -%}
-Input text: Jane Doe lives in <<SENSITIVE:city>>Santa Clara<</SENSITIVE:city>>. She works full-time.
-{%- endif -%}
-Already-detected entities: [{"value": "Santa Clara", "label": "city"}]
-Output: {"entities": [{"value": "Jane", "label": "first_name", "reason": "first name"}, {"value": "Doe", "label": "last_name", "reason": "last name"}]}"""
+Input text: Jane Doe lives in <<SENSITIVE:{{ example_seed_label }}>>Santa Clara<</SENSITIVE:{{ example_seed_label }}>>. She works full-time.
+{%- endif %}
+Already-detected entities: [{"value": "Santa Clara", "label": "city"}{% if has_overlap_groups %}, {"value": "Clara", "label": "first_name"}{% endif %}]
+Output: {"entities": [{"value": "Jane", "context_before": "", "context_after": " Doe lives in ", "label": "first_name", "reason": "first name"}, {"value": "Doe", "context_before": "Jane ", "context_after": " lives in Santa Clara. ", "label": "last_name", "reason": "last name"}]}"""
 
     else:
         label_block = (
@@ -806,17 +809,18 @@ Output: {"entities": [{"value": "Jane", "label": "first_name", "reason": "first 
         )
         example_block = """\
 Example:
+{% set example_seed_label = "NAGROUP_g1" if has_overlap_groups else "city" %}
 {%- if <<TAG_NOTATION>> == "xml" -%}
-Input text: Jane Doe lives in <city>Santa Clara</city>. She works full-time.
+Input text: Jane Doe lives in <{{ example_seed_label }}>Santa Clara</{{ example_seed_label }}>. She works full-time.
 {%- elif <<TAG_NOTATION>> == "bracket" -%}
-Input text: Jane Doe lives in [[Santa Clara|city]]. She works full-time.
+Input text: Jane Doe lives in [[Santa Clara|{{ example_seed_label }}]]. She works full-time.
 {%- elif <<TAG_NOTATION>> == "paren" -%}
-Input text: Jane Doe lives in ((SENSITIVE:city|Santa Clara)). She works full-time.
+Input text: Jane Doe lives in ((SENSITIVE:{{ example_seed_label }}|Santa Clara)). She works full-time.
 {%- else -%}
-Input text: Jane Doe lives in <<SENSITIVE:city>>Santa Clara<</SENSITIVE:city>>. She works full-time.
-{%- endif -%}
-Already-detected entities: [{"value": "Santa Clara", "label": "city"}]
-Output: {"entities": [{"value": "Jane", "label": "first_name", "reason": "first name"}, {"value": "Doe", "label": "last_name", "reason": "last name"}, {"value": "full-time", "label": "employment_status", "reason": "employment status"}]}"""
+Input text: Jane Doe lives in <<SENSITIVE:{{ example_seed_label }}>>Santa Clara<</SENSITIVE:{{ example_seed_label }}>>. She works full-time.
+{%- endif %}
+Already-detected entities: [{"value": "Santa Clara", "label": "city"}{% if has_overlap_groups %}, {"value": "Clara", "label": "first_name"}{% endif %}]
+Output: {"entities": [{"value": "Jane", "context_before": "", "context_after": " Doe lives in ", "label": "first_name", "reason": "first name"}, {"value": "Doe", "context_before": "Jane ", "context_after": " lives in Santa Clara. ", "label": "last_name", "reason": "last name"}, {"value": "full-time", "context_before": "in Santa Clara. She works ", "context_after": ".", "label": "employment_status", "reason": "employment status"}]}"""
 
     disguised_hints_block = (
         "- Identifiers may be disguised, fragmented, hyphenated, misspelled, obfuscated,\n"
@@ -841,6 +845,12 @@ We have the following type of data: <<DATA_SUMMARY>>
 Rules:
 - Tag actual values, not placeholders
 - Do not repeat already-tagged entities
+{{% if has_overlap_groups %}}
+- A tag named NAGROUP_gN marks a region already covered by overlapping detected
+  entities; the alternatives are listed under Already-detected entities. Treat
+  the whole region as already tagged.
+- NAGROUP_gN is not an entity label; never return it as a label.
+{{% endif %}}
 - In structured formats, distinguish between:
   - Syntax/metadata: field names, column headers, function names, keywords
   - Data: assigned values, cell contents, literals, user input
@@ -860,6 +870,18 @@ Additional extraction requirements:
   the extracted span.
 - Extract only text that is explicitly present in the input.
   Never reconstruct, guess, or generate a value that does not appear verbatim.
+- Return "context_before" and "context_after" as exact, immediately adjacent
+  substrings from the underlying source text. Aim for a few words (two to five)
+  on each side, or a comparably informative phrase for text without whitespace
+  boundaries. Near a source boundary, use whatever context is available.
+- Context does not have to identify a unique occurrence. Do not add extra words
+  just to make it unique; the engine accepts every exact contextual match.
+- The input contains engine-inserted entity tags. Never copy those tags into
+  "value", "context_before", or "context_after"; copy the underlying source
+  characters only.
+- At least one context field must be non-empty unless "value" is the entire
+  source text. Do not return offsets; the engine derives them from the exact
+  value and context.
 {disguised_hints_block}
 <<EXAMPLE_BLOCK>>
 

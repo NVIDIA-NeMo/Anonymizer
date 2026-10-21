@@ -11,6 +11,8 @@ Entity detection is the first stage of every Anonymizer pipeline. Both replace a
 
 Detection combines a lightweight GLiNER2 PII model with LLM-based refinement. GLiNER2 produces an initial set of entity spans, an LLM validates those candidates by keeping, reclassifying, or dropping them based on context, and then an augmenter finds entities GLiNER2 missed. Augmented findings are merged directly and are not independently revalidated.
 
+Augmenter suggestions must match the source text and their supplied context exactly. If some do not, Anonymizer keeps the matching suggestions and asks the augmenter to correct only the others once. Suggestions that still do not match are dropped; the record and its other detections are retained. Transport errors or responses that do not match the required schema still fail the record.
+
 When rewrite is configured, an additional step identifies **latent entities** -- sensitive information inferable from context but not explicitly stated in the text.
 
 ### Example: standard vs. latent entities

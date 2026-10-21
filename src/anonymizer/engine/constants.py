@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 SOURCE_KIND_AUGMENTER = "augmenter"
+SEED_DETECTION_RESULT_ID = "r1"
+AUGMENTATION_DETECTION_RESULT_ID = "r2"
 
 # ---------------------------------------------------------------------------
 # Column names for the anonymizer pipeline
@@ -28,6 +30,11 @@ COL_VALIDATED_SEED_ENTITIES = "_validated_seed_entities"
 
 # Step 3: LLM augmentation
 COL_AUGMENTED_ENTITIES = "_augmented_entities"
+"""Grounded augmenter suggestions only; excludes suggestions dropped during grounding."""
+COL_AUGMENTATION_DETECTION_RESULT = "_augmentation_detection_result"
+COL_AUGMENTATION_ADMISSION_RESULTS = "_augmentation_admission_results"
+COL_AUGMENTATION_ATTEMPTS = "_augmentation_attempts"
+COL_AUGMENTED_CANDIDATES = "_augmented_candidates"
 
 # Step 3b: prepare_validation_inputs (seed-only, pre-augmentation)
 COL_SEED_TAGGED_TEXT = "_seed_tagged_text"
@@ -35,6 +42,7 @@ COL_SEED_VALIDATION_CANDIDATES = "_seed_validation_candidates"
 
 # Step 4: merge_and_build_candidates
 COL_MERGED_ENTITIES = "_merged_entities"
+COL_RECONCILED_CANDIDATES = "_reconciled_candidates"
 COL_MERGED_TAGGED_TEXT = "_merged_tagged_text"
 COL_VALIDATION_CANDIDATES = "_validation_candidates"
 

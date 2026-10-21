@@ -451,13 +451,57 @@ class ValidationDecisionsSchema(BaseModel):
 
 
 class AugmentedEntitySchema(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     value: str = Field(min_length=1)
+    context_before: str = ""
+    context_after: str = ""
     label: str = Field(min_length=1)
     reason: str | None = None
 
 
 class AugmentedEntitiesSchema(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     entities: list[AugmentedEntitySchema] = Field(default_factory=list)
+
+
+class AugmentationAttemptOutcome(str, Enum):
+    success = "success"
+    partial_grounding = "partial_grounding"
+    grounding_failure = "grounding_failure"
+
+
+class AugmentationGroundingFailureCategory(str, Enum):
+    non_verbatim_value = "non_verbatim_value"
+    missing_context = "missing_context"
+    non_verbatim_context = "non_verbatim_context"
+    zero_contextual_matches = "zero_contextual_matches"
+
+
+class AugmentationGroundingFailure(FrozenStrictModel):
+    """Value-free grounding diagnostic with a one-based, attempt-local item index."""
+
+    item_index: int = Field(ge=1)
+    category: AugmentationGroundingFailureCategory
+
+
+class AugmentationAttemptTrace(FrozenStrictModel):
+    """Value-free semantic outcome for one augmenter model response.
+
+    Failed items are retried once; failures on the final attempt are dropped.
+    Item indexes refer only to their own response, not to correction identities.
+    """
+
+    attempt_index: int = Field(ge=0)
+    outcome: AugmentationAttemptOutcome
+    failures: tuple[AugmentationGroundingFailure, ...] = ()
+
+
+class AugmentationAttempts(FrozenStrictModel):
+    """Ordered semantic attempt diagnostics for one augmentation request."""
+
+    attempts: tuple[AugmentationAttemptTrace, ...] = ()
 
 
 class LatentCategory(str, Enum):

@@ -12,7 +12,6 @@ from unittest.mock import Mock
 
 import pandas as pd
 import pytest
-from data_designer.config.column_configs import LLMStructuredColumnConfig
 from data_designer.config.config_builder import DataDesignerConfigBuilder
 from data_designer.config.seed import PartitionBlock, SamplingStrategy
 from data_designer.config.seed_source import LocalFileSeedSource
@@ -31,17 +30,19 @@ from anonymizer.engine.detection.detection_workflow import EntityDetectionWorkfl
 from anonymizer.engine.ndd.adapter import NddAdapter
 from anonymizer.engine.ndd.model_loader import parse_model_configs
 from anonymizer.engine.workflow_columns.detection.config import (
+    AugmentationConfig,
     ChunkedValidationConfig,
     DetectionTransformConfig,
     DetectionTransformOperation,
 )
 from anonymizer.engine.workflow_columns.detection.plugins import (
+    augmentation_plugin,
     chunked_validation_plugin,
     detection_transform_plugin,
 )
 
 
-@pytest.mark.parametrize("plugin", [detection_transform_plugin, chunked_validation_plugin])
+@pytest.mark.parametrize("plugin", [detection_transform_plugin, chunked_validation_plugin, augmentation_plugin])
 def test_detection_plugin_satisfies_data_designer_contract(plugin: Plugin) -> None:
     assert_valid_plugin(plugin)
 
@@ -71,7 +72,7 @@ def test_detection_builder_round_trips_through_native_data_designer_config(tmp_p
     )
 
     direct_augmenter = next(column for column in builder.get_column_configs() if column.name == COL_AUGMENTED_ENTITIES)
-    assert type(direct_augmenter) is LLMStructuredColumnConfig
+    assert isinstance(direct_augmenter, AugmentationConfig)
 
     payload = builder.get_builder_config().to_json()
     assert payload is not None
@@ -127,15 +128,16 @@ def test_detection_builder_round_trips_through_native_data_designer_config(tmp_p
     assert "configured@example.test" not in validation.prompt_template
 
     augmenter = next(column for column in columns if column.name == COL_AUGMENTED_ENTITIES)
-    assert isinstance(augmenter, LLMStructuredColumnConfig)
-    assert "first_name: Alicia" in augmenter.prompt
-    assert "Michael, Isabella, Carlos, Wei" not in augmenter.prompt
-    assert "configured@example.test" not in augmenter.prompt
+    assert isinstance(augmenter, AugmentationConfig)
+    assert "first_name: Alicia" in augmenter.prompt_template
+    assert "Michael, Isabella, Carlos, Wei" not in augmenter.prompt_template
+    assert "configured@example.test" not in augmenter.prompt_template
 
     serialized = json.loads(payload)
     serialized_text = json.dumps(serialized)
     assert "anonymizer-detection-transform" in serialized_text
     assert "anonymizer-chunked-validation" in serialized_text
+    assert "anonymizer-augmentation" in serialized_text
     assert "generator_function" not in serialized_text
     assert "generator_params" not in serialized_text
 
@@ -188,7 +190,7 @@ def test_build_detection_config_respects_excluded_entity_labels(tmp_path: Path) 
     )
 
     augmenter = next(column for column in builder.get_column_configs() if column.name == COL_AUGMENTED_ENTITIES)
-    assert type(augmenter) is LLMStructuredColumnConfig
+    assert isinstance(augmenter, AugmentationConfig)
     labels = _get_gliner_labels_from_builder(builder)
     assert "email" not in labels
     assert "first_name" in labels
@@ -215,7 +217,7 @@ def test_exported_builder_includes_explicit_non_default_example_label(tmp_path: 
     validation = next(column for column in columns if column.name == COL_VALIDATION_DECISIONS)
     augmenter = next(column for column in columns if column.name == COL_AUGMENTED_ENTITIES)
     assert isinstance(validation, ChunkedValidationConfig)
-    assert isinstance(augmenter, LLMStructuredColumnConfig)
+    assert isinstance(augmenter, AugmentationConfig)
     finalize = next(
         column
         for column in columns
@@ -223,8 +225,8 @@ def test_exported_builder_includes_explicit_non_default_example_label(tmp_path: 
         and column.operation == DetectionTransformOperation.FINALIZE_ENTITIES
     )
     assert "- vendor_api_key: acme_live_abc123" in validation.prompt_template
-    assert "vendor_api_key: acme_live_abc123" in augmenter.prompt
-    assert "Use ONLY labels from this list" in augmenter.prompt
+    assert "vendor_api_key: acme_live_abc123" in augmenter.prompt_template
+    assert "Use ONLY labels from this list" in augmenter.prompt_template
     assert finalize.allowed_entity_labels == [*DEFAULT_ENTITY_LABELS, "vendor_api_key"]
 
 
@@ -273,3 +275,4 @@ Path(sys.argv[2]).write_text(json.dumps(columns))
     restored_types = {(column["column_type"], column["class_name"]) for column in restored_columns}
     assert ("anonymizer-detection-transform", "DetectionTransformConfig") in restored_types
     assert ("anonymizer-chunked-validation", "ChunkedValidationConfig") in restored_types
+    assert ("anonymizer-augmentation", "AugmentationConfig") in restored_types

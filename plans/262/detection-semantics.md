@@ -1022,7 +1022,7 @@ class AugmentedEntitySchema(BaseModel):
 `value` is the exact source substring to protect. `context_before` and
 `context_after` are exact, immediately adjacent source substrings. Prompt the
 model to copy enough surrounding text to establish why the label applies:
-approximately five words on each side for whitespace-delimited text, or a
+a few words (two to five) on each side for whitespace-delimited text, or a
 comparably informative phrase for text without whitespace boundaries. Near a
 source boundary, use whatever context is available. The model must not invent,
 normalize, or paraphrase context.
@@ -1079,6 +1079,12 @@ occurrences; for every match, the helper derives the authoritative value from
 `canonical_text[start_position:end_position]` while constructing a frozen
 augmentation `Observation`.
 
+Before grounding, strip leading and trailing whitespace from `value` and move
+it into the adjacent contexts: append leading whitespace to `context_before`
+and prepend trailing whitespace to `context_after`. This preserves the exact
+combined source quote while keeping whitespace outside the protected span.
+A value containing only whitespace is ungroundable.
+
 Multiple contextual matches are valid and do not trigger retry. For example,
 `context_before="told "`, `value="May"`, and
 `context_after=" to stop laughing"` materializes both matching occurrences in
@@ -1086,32 +1092,54 @@ Multiple contextual matches are valid and do not trigger retry. For example,
 different occurrences require different adjacent context to establish the
 label, the augmenter returns separate items.
 
+Include the `NAGROUP_gN` explanation and an example of overlapping retained
+seeds only when the row actually contains overlapping seed spans. Derive that
+flag from retained seed offsets and pass it only to prompt rendering, never
+as a stored row column or from a substring search in source text. Explain that
+the whole marked region is already detected, that the alternatives remain in
+the seed JSON, and that `NAGROUP_gN` is not an entity label to return. The group
+example uses the active tag notation and shows context copied without markup.
+Rows without overlaps keep the ordinary example and omit these group rules.
+
 Missing or non-verbatim values or context, a non-empty-source item with both
-contexts empty, or a combination that matches zero occurrences makes the
-augmentation response semantically invalid. Discard the entire response; do
-not admit the otherwise valid items from that attempt. Retry the same logical
-augmentation request through the existing model alias once; augmentation has
-one configured `entity_augmenter` alias rather than a model pool. The retry
-prompt includes a value-free repair message that identifies each failing item
-by its response index and failure category, restates that `value`,
-`context_before`, and `context_after` must be copied exactly from the canonical
-source, and requires a complete replacement response rather than only the
-corrected items. For example: `Items 1 and 3 could not be grounded
-(non_verbatim_context, zero_contextual_matches). Return the complete entity
-list again, correcting those items and copying all grounding text exactly from
-the source.` It must not echo sensitive values in the repair message. If the
-second semantic attempt also fails, follow the existing terminal
-`FailedRecord` path. Do not fuzzy-match, guess an occurrence, or fall back to
-value-only expansion.
+contexts empty, or a combination that matches zero occurrences invalidates
+that item, not the entire response. Retain successfully grounded items and
+retry only the unsuccessful suggestions once through the same configured
+`entity_augmenter` alias; augmentation has no model pool.
+
+The repair prompt includes the failed suggestions' original `value`,
+`context_before`, `context_after`, and `label`, with their failure categories.
+It asks for corrected suggestions using the same response schema, or omission
+of a suggestion to drop it. An empty `entities` list drops all retry suggestions.
+Do not send observation IDs, response indexes, or other identifiers in the
+repair data. Do not ask for the complete original list again. Values belong
+in the model prompt because it already has the source text, never in grounding
+logs or diagnostic traces. Treat the suggestions as data rather than prompt
+instructions.
+
+Ground the correction response independently and combine its successful items
+with the first attempt's successes. Drop any items that still cannot be
+grounded, without dropping the row or its GLiNER and validation results. If
+neither attempt yields a grounded item, continue with empty augmentation.
+Assign immutable observation IDs only after combining the grounded results.
+Corrections may be reordered or omitted; without identifiers, the engine does
+not claim a correspondence between original items and corrections. Do not
+fuzzy-match, guess an occurrence, or fall back to value-only expansion.
 
 Implement augmentation as a custom column that owns the model call, structured
 schema parsing, exact grounding checks, and the one bounded same-alias semantic
 retry through the existing private model facade. Provider-level transport
-retries remain separate from this semantic retry. Record both semantic attempts
-under the augmenter alias with attempt index, outcome, and a value-free failure
-category in the existing trace path. A terminal schema or grounding failure
-raises from the custom column so `NddAdapter` reports the row through its
-existing `FailedRecord` behavior.
+retries remain separate from this semantic retry. Record each semantic attempt
+under the augmenter alias with its attempt index and outcome: `success` when
+all suggestions ground (including an empty response), `partial_grounding` when
+some ground and others fail, and `grounding_failure` when none ground. Record
+failed item indexes and categories only; indexes are one-based and local to
+that attempt's response, not persistent identities. Failures in the final
+attempt identify dropped suggestions. First-attempt failures remain recorded
+even if the correction response omits those suggestions. Transport errors and
+schema-invalid responses still raise from the custom column, including during
+retry, so `NddAdapter` reports the row through its existing `FailedRecord`
+behavior. Grounding failures alone do not raise from the production workflow.
 
 Each successfully grounded item receives a new immutable observation reference
 and augmenter origin. It then passes exact-value, bounds, label-normalization,
@@ -1410,13 +1438,18 @@ cases:
 | Rejected detector observation and independently accepted exact augmenter observation              | The rejected observation contributes no provenance, while the augmenter observation remains admitted                                                                                                |
 | Rejected detector observation and exact regex observation configured to bypass LLM validation     | The detector decision cannot veto the regex observation; the accepted regex claim remains eligible                                                                                                  |
 | Augmenter returns empty context and `value` is the entire source view                             | The engine accepts the full-view value and derives its canonical offsets                                                                                                                             |
-| Augmenter returns empty context for a value embedded in a larger source view                      | The response is semantically invalid and retried; the engine does not perform value-only expansion                                                                                                  |
+| Augmenter returns empty context for a value embedded in a larger source view                      | Retry only that item; retain other grounded items and never perform value-only expansion |
 | Augmenter returns an exact value with adjacent context that matches one occurrence                | The engine materializes that occurrence and derives canonical offsets from the source                                                                                                                |
 | Augmenter value and adjacent context match several occurrences                                   | Every exact contextual match becomes its own observation; multiple matches do not trigger retry                                                                                                     |
-| Augmenter returns non-verbatim `value`, `context_before`, or `context_after`                      | The response is semantically invalid and retried without fuzzy matching or rewriting model output                                                                                                   |
+| Augmenter returns non-verbatim `value`, `context_before`, or `context_after`                      | Retry only failed suggestions with their original fields and failure categories, without identifiers or fuzzy matching |
 | The same sensitive value appears under different adjacent contexts                                | The augmenter returns separate items for the different contexts; each item materializes all of its exact contextual matches                                                                          |
-| Augmenter value and context match zero occurrences                                                | The response is semantically invalid and retried without fuzzy matching; exhausted attempts follow failed-record behavior                                                                            |
-| Prompt guidance requests surrounding context in whitespace and non-whitespace languages           | It asks for approximately five words per side or a comparably informative phrase, but schema validation imposes no language-specific length minimum                                                   |
+| Augmenter value and context match zero occurrences                                                | Retry the failed item once; drop remaining ungroundable items and continue the row |
+| Retry corrects a suggestion while omitting another | Keep the correction and first-attempt successes; omission drops an unsuccessful suggestion without requiring identity mapping |
+| Retry returns both grounded and ungroundable suggestions | Record partial_grounding, retain successful corrections, and trace dropped items using attempt-local indexes and categories only |
+| Every augmentation suggestion remains ungroundable | Return empty augmentation and preserve GLiNER and validation results; grounding alone never creates a FailedRecord |
+| Retry prompt contains failed suggestions | It contains original values, contexts, labels, and failure categories, but no identifiers or already-grounded suggestions |
+| Augmentation transport or schema failure occurs on either attempt | Preserve the existing FailedRecord behavior rather than treating it as a grounding failure |
+| Prompt guidance requests surrounding context in whitespace and non-whitespace languages           | It asks for a few words (two to five) per side or a comparably informative phrase, but schema validation imposes no language-specific length minimum                                                   |
 | An augmenter response contains many contextual suggestions or matches                             | Benchmark output completeness, materialized-observation count, and token-limit behavior rather than imposing an arbitrary context-length cap                                                         |
 | Augmenter returns duplicate grounded suggestions for the same label/bounds                        | Independently admitted exact identities coalesce deterministically without an augmentation-specific overlap pass                                                                                    |
 | Broader augmentation candidate overlaps an admitted detector candidate                            | The broader candidate wins by protected coverage regardless of source                                                                                                                               |
@@ -1486,10 +1519,16 @@ assigned aliases;
 - successful omissions versus terminal validation-request failures;
 - structured-output call or schema-validation failures at the workflow boundary;
 - augmentation contextual-grounding success, matches materialized per item,
-  semantic retries, and terminal grounding failures;
-- mixed-validity augmentation responses, including whether the bounded repair
-  returns a complete corrected response and whether any item from the rejected
-  first attempt leaks into admission;
+  semantic retries, partial responses, and items dropped after the retry;
+- grounding failures by category, especially `non_verbatim_context`, when
+  comparing context-length guidance and examples that cross inserted tags.
+  Context matching is intentionally exact in this PR; if items dropped after
+  the retry for `non_verbatim_context` exceed a few percent of suggestions on
+  any dataset, add whitespace-insensitive context comparison (the value stays
+  exact);
+- mixed-validity augmentation responses, including retention of first-attempt
+  successes, successful corrections, omitted suggestions, and exclusion of
+  ungroundable items from admission;
 - augmentation output completeness and token usage as requested entity count
 increases;
 - keep/drop/reclass agreement and unresolved-decision handling;
