@@ -195,6 +195,16 @@ def _run_sync_profile(
             return callback()
         return put(callback).result()
 
+    def cancel_host() -> None:
+        # The host loop may already be closed; a stop request then has nothing left to stop.
+        if cancellation:
+            loop, task = cancellation[0]
+            try:
+                loop.call_soon_threadsafe(task.cancel)
+            except RuntimeError:
+                if not loop.is_closed():
+                    raise
+
     def serve_callback() -> None:
         try:
             # The timeout only keeps Ctrl-C responsive where a blocking get is not interruptible.
@@ -211,9 +221,7 @@ def _run_sync_profile(
         except Empty:
             return
         except BaseException:
-            if cancellation:
-                loop, task = cancellation[0]
-                loop.call_soon_threadsafe(task.cancel)
+            cancel_host()
             # Only this thread runs bodies, so nothing is running now: settle whatever the
             # interrupt left waiting, including a body taken from the queue but not yet settled.
             for pending in list(outstanding):
@@ -257,14 +265,7 @@ def _run_sync_profile(
             try:
                 if interrupted is not None:
                     started.wait()
-                    if cancellation:
-                        loop, task = cancellation[0]
-                        if not loop.is_closed():
-                            try:
-                                loop.call_soon_threadsafe(task.cancel)
-                            except RuntimeError:
-                                if not loop.is_closed():
-                                    raise
+                    cancel_host()
                 serve_callback()
                 thread.join(timeout=0.01)
             except KeyboardInterrupt as error:
