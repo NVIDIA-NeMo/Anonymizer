@@ -1,0 +1,141 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# Data Designer: anonymized seed + sampled scenario/temperament/auth/outcome + Faker identity
+# -> structured trace (trace-writer) -> realism/consistency scores (trace-judge)
+data_designer:
+  model_configs:
+    - alias: trace-writer
+      model: openai/gpt-oss-120b
+      provider: vllm
+      inference_parameters: {temperature: 0.9, top_p: 0.95, max_tokens: 8192, max_parallel_requests: 8,
+                             timeout: 600, extra_body: {reasoning_effort: low}}
+    - alias: trace-judge
+      model: openai/gpt-oss-120b
+      provider: vllm
+      inference_parameters: {temperature: 0.2, top_p: 0.95, max_tokens: 8192, max_parallel_requests: 8,
+                             timeout: 600, extra_body: {reasoning_effort: low}}
+
+  seed_config:
+    source: {seed_type: local, path: anonymized.parquet}
+    sampling_strategy: shuffle
+
+  # the seed file also carries the pre-anonymization text; only text_replaced is used, the rest is dropped
+  processors:
+    - {processor_type: drop_columns, name: drop_original, column_names: [text, text_with_spans, final_entities]}
+
+  columns:
+    - name: scenario
+      column_type: sampler
+      sampler_type: category
+      params:
+        values:
+          - cancel a pending order
+          - return some items from a delivered order
+          - exchange a delivered item for a different option of the same product
+          - modify the items of a pending order
+          - change the shipping address of a pending order
+          - update the default address on the user profile
+          - ask for order status and product details, no changes
+    - name: temperament
+      column_type: sampler
+      sampler_type: category
+      params:
+        values: [friendly and concise, impatient, "confused, needs things repeated",
+                 frustrated after a previous bad experience, "chatty, goes off topic"]
+    - name: auth_path
+      column_type: sampler
+      sampler_type: category
+      params: {values: [email, name plus zip code], weights: [0.6, 0.4]}
+    - name: outcome
+      column_type: sampler
+      sampler_type: category
+      params:
+        values: [completed successfully, user changes their mind halfway,
+                 request violates policy and is politely refused, transferred to a human agent]
+        weights: [0.55, 0.15, 0.2, 0.1]
+    - name: customer
+      column_type: sampler
+      sampler_type: person_from_faker
+      params: {locale: en_US}
+
+    - name: trace
+      column_type: llm-structured
+      model_alias: trace-writer
+      output_format:          # OpenAI chat messages, the same format as the source dataset
+        type: object
+        required: [messages]
+        properties:
+          messages:
+            type: array
+            minItems: 6
+            items:
+              type: object
+              required: [role, content]
+              properties:
+                role: {type: string, enum: [user, assistant, tool]}
+                content: {anyOf: [{type: string}, {type: "null"}]}
+                tool_calls:
+                  type: array
+                  items:
+                    type: object
+                    required: [id, type, function]
+                    properties:
+                      id: {type: string}
+                      type: {type: string, enum: [function]}
+                      function:
+                        type: object
+                        required: [name, arguments]
+                        properties:
+                          name: {type: string}
+                          arguments: {type: string, description: JSON-encoded arguments}
+                tool_call_id: {type: string}
+      system_prompt: >-
+        You write realistic, fully fictional customer-service traces for a retail support agent that uses tools.
+        Never reuse any name, email, address, user id, order id, item id or payment id from the example.
+      prompt: |-
+        Here is an example trace. Copy its FORMAT and TOOL-USE PATTERN only, not its content.
+        Turns are marked <|user|>, <|assistant|>, <|tool_call:NAME|> and <|tool_result|>. Personal details in the example
+        are redacted as [REDACTED_<LABEL>] tokens; never output such tokens, use the customer details below instead.
+
+        <example>
+        {{ text_replaced }}
+        </example>
+
+        Write a NEW trace with these properties:
+        - Goal: the customer wants to {{ scenario }}.
+        - Temperament: {{ temperament }}.
+        - The agent authenticates the customer via {{ auth_path }} before doing anything else.
+        - Outcome: {{ outcome }}.
+        - Customer: {{ customer.first_name }} {{ customer.last_name }}, {{ customer.street_number }} {{ customer.street_name }},
+          {{ customer.city }}, {{ customer.state }} {{ customer.postcode }}. Invent a matching email, a user id
+          (firstname_lastname_NNNN), order ids (#W + 7 digits), item ids and payment methods.
+
+        Rules:
+        - Return OpenAI chat messages. The first message is from the user. A tool call is an assistant message with
+          content null and one tool_calls entry (id "call_1", "call_2", ...; arguments is a JSON string). It is
+          followed immediately by a role "tool" message whose tool_call_id matches and whose content is the JSON
+          the tool returns.
+        - Use the same tool names as the example where they fit (e.g. find_user_id_by_email, get_user_details,
+          get_order_details).
+        - Tool results must be consistent with what the agent later says (same items, prices, statuses, ids).
+        - The agent confirms with the user before any action that changes an order or profile.
+        - 10 to 30 messages.
+
+    - name: trace_quality
+      column_type: llm-judge
+      model_alias: trace-judge
+      prompt: |-
+        Evaluate this synthetic retail customer-service agent trace (OpenAI chat messages).
+
+        Intended scenario: {{ scenario }}; intended outcome: {{ outcome }}.
+
+        {{ trace }}
+      scores:
+        - name: realism
+          description: Does this read like a real support session with a plausible customer?
+          options: {1: obviously artificial, 2: stilted, 3: acceptable, 4: realistic, 5: indistinguishable from real}
+        - name: consistency
+          description: >-
+            Do tool results, agent statements and ids stay consistent, and does the trace match the intended
+            scenario and outcome?
+          options: {1: contradictory, 2: several errors, 3: minor slips, 4: consistent, 5: fully consistent and on-spec}

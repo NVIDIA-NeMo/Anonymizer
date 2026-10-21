@@ -1,0 +1,17 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# Anonymizer: local GLiNER2 detects, the self-hosted LLM validates and augments (and writes substitutes in Substitute mode).
+selected_models:
+  detection: {entity_detector: gliner, entity_validator: llm, entity_augmenter: llm, latent_detector: llm}
+  replace: {replacement_generator: llm}
+model_configs:
+  - alias: gliner
+    model: fastino/gliner2-privacy-filter-PII-multi
+    provider: local-gliner2
+    skip_health_check: true
+    inference_parameters: {max_parallel_requests: 8, timeout: 120}
+  - alias: llm
+    model: openai/gpt-oss-120b
+    provider: vllm
+    inference_parameters: {max_parallel_requests: 8, max_tokens: 8192, temperature: 0.3, top_p: 0.95,
+                           timeout: 600, extra_body: {reasoning_effort: low}}
