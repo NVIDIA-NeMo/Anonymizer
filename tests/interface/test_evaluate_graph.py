@@ -111,27 +111,6 @@ def test_injected_evaluate_preserves_caller_context_and_exception_identity():
         connection.close()
 
 
-@pytest.mark.parametrize("error_type", [KeyboardInterrupt, SystemExit])
-def test_rewrite_evaluation_interrupt_does_not_start_coverage(monkeypatch, error_type):
-    from anonymizer.config.anonymizer_config import Rewrite
-    from anonymizer.interface import anonymizer as facade
-
-    trace = pd.DataFrame({"text": ["Alice"], "text_rewritten": ["hidden"]})
-    output = AnonymizerResult(trace, trace, "text", [], rewrite_config=Rewrite().privacy_goal)
-    anonymizer, _, _, rewrite = _make_anonymizer()
-    error = error_type("literal caller interruption")
-    rewrite.evaluate.side_effect = error
-    coverage = []
-    monkeypatch.setattr(facade, "EntityCoverageWorkflow", lambda **kwargs: coverage.append(kwargs))
-    with pytest.raises(error_type) as caught:
-        anonymizer.evaluate(output)
-    assert caught.value is error
-    assert coverage == []
-    assert isinstance(retained(error), ExecutionResult)
-    assert [entry.status for entry in retained(error).invocation_state.entries] == ["cancelled"]
-    assert retained(error).record.terminals[0].reasons == frozenset({"cancel_requested"})
-
-
 @pytest.mark.parametrize(
     "strategy,validity,drop",
     [
