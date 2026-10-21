@@ -10,6 +10,7 @@ from data_designer.config.base import SingleColumnConfig
 from pydantic import Field
 
 from anonymizer.engine.constants import (
+    COL_ADMISSION_RESULTS,
     COL_AUGMENTED_ENTITIES,
     COL_INITIAL_TAGGED_TEXT,
     COL_MERGED_ENTITIES,
@@ -22,7 +23,6 @@ from anonymizer.engine.constants import (
     COL_TAG_NOTATION,
     COL_TAGGED_TEXT,
     COL_TEXT,
-    COL_VALIDATED_ENTITIES,
     COL_VALIDATED_SEED_ENTITIES,
     COL_VALIDATION_CANDIDATES,
     COL_VALIDATION_DECISIONS,
@@ -34,10 +34,10 @@ from anonymizer.engine.constants import (
 class DetectionTransformOperation(str, Enum):
     PARSE_DETECTED_ENTITIES = "parse_detected_entities"
     PREPARE_VALIDATION_INPUTS = "prepare_validation_inputs"
-    ENRICH_VALIDATION_DECISIONS = "enrich_validation_decisions"
+    ADMIT_VALIDATION_DECISIONS = "admit_validation_decisions"
     APPLY_VALIDATION_TO_SEED_ENTITIES = "apply_validation_to_seed_entities"
     MERGE_AND_BUILD_CANDIDATES = "merge_and_build_candidates"
-    APPLY_VALIDATION_AND_FINALIZE = "apply_validation_and_finalize"
+    FINALIZE_ENTITIES = "finalize_entities"
 
 
 class DetectionTransformConfig(SingleColumnConfig):
@@ -55,24 +55,24 @@ class DetectionTransformConfig(SingleColumnConfig):
             COL_RAW_DETECTED,
         ],
         DetectionTransformOperation.PREPARE_VALIDATION_INPUTS: [COL_TEXT, COL_SEED_ENTITIES],
-        DetectionTransformOperation.ENRICH_VALIDATION_DECISIONS: [
+        DetectionTransformOperation.ADMIT_VALIDATION_DECISIONS: [
+            COL_SEED_DETECTION_RESULT,
             COL_VALIDATION_DECISIONS,
             COL_VALIDATION_INVENTORIES,
         ],
         DetectionTransformOperation.APPLY_VALIDATION_TO_SEED_ENTITIES: [
             COL_TEXT,
-            COL_SEED_ENTITIES,
-            COL_VALIDATED_ENTITIES,
+            COL_SEED_DETECTION_RESULT,
+            COL_ADMISSION_RESULTS,
         ],
         DetectionTransformOperation.MERGE_AND_BUILD_CANDIDATES: [
             COL_TEXT,
             COL_VALIDATED_SEED_ENTITIES,
             COL_AUGMENTED_ENTITIES,
         ],
-        DetectionTransformOperation.APPLY_VALIDATION_AND_FINALIZE: [
+        DetectionTransformOperation.FINALIZE_ENTITIES: [
             COL_TEXT,
             COL_MERGED_ENTITIES,
-            COL_VALIDATED_ENTITIES,
         ],
     }
     _SIDE_EFFECT_COLUMNS: ClassVar[dict[DetectionTransformOperation, list[str]]] = {
@@ -81,7 +81,7 @@ class DetectionTransformConfig(SingleColumnConfig):
             COL_TAG_NOTATION,
         ],
         DetectionTransformOperation.PREPARE_VALIDATION_INPUTS: [COL_SEED_TAGGED_TEXT],
-        DetectionTransformOperation.ENRICH_VALIDATION_DECISIONS: [],
+        DetectionTransformOperation.ADMIT_VALIDATION_DECISIONS: [],
         DetectionTransformOperation.APPLY_VALIDATION_TO_SEED_ENTITIES: [
             COL_INITIAL_TAGGED_TEXT,
             COL_SEED_ENTITIES_JSON,
@@ -91,7 +91,7 @@ class DetectionTransformConfig(SingleColumnConfig):
             COL_MERGED_TAGGED_TEXT,
             COL_VALIDATION_CANDIDATES,
         ],
-        DetectionTransformOperation.APPLY_VALIDATION_AND_FINALIZE: [COL_TAGGED_TEXT],
+        DetectionTransformOperation.FINALIZE_ENTITIES: [COL_TAGGED_TEXT],
     }
 
     @staticmethod

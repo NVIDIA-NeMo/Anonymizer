@@ -10,6 +10,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from enum import Enum
 
+from anonymizer.engine.constants import SOURCE_KIND_AUGMENTER
 from anonymizer.engine.schemas import DetectionResult
 
 logger = logging.getLogger(__name__)
@@ -108,58 +109,6 @@ def build_validation_candidates(text: str, entities: list[EntitySpan]) -> list[d
     return candidates
 
 
-def apply_validation_decisions(entities: list[EntitySpan], validation_output: dict | str) -> list[EntitySpan]:
-    """Apply keep/reclass/drop validation decisions to canonical entities.
-
-    - keep: retain entity with its original label
-    - reclass: retain entity but change its label to ``proposed_label``
-    - drop: remove entity entirely
-
-    Entities without a matching decision are kept unchanged.
-    """
-    payload = _safe_json_loads(validation_output) if isinstance(validation_output, str) else validation_output
-    decisions = payload.get("decisions", []) if isinstance(payload, dict) else []
-    if not isinstance(decisions, list):
-        return entities
-
-    decision_map: dict[str, dict[str, str]] = {}
-    for decision in decisions:
-        if not isinstance(decision, dict):
-            continue
-        entity_id = str(decision.get("id", "")).strip()
-        result = str(decision.get("decision", "")).strip().lower()
-        if not entity_id or result not in {"keep", "reclass", "drop"}:
-            continue
-        decision_map[entity_id] = {
-            "decision": result,
-            "proposed_label": str(decision.get("proposed_label", "")).strip(),
-        }
-
-    validated: list[EntitySpan] = []
-    for entity in entities:
-        entry = decision_map.get(entity.entity_id)
-        if entry is None:
-            validated.append(entity)
-            continue
-        if entry["decision"] == "drop":
-            continue
-        if entry["decision"] == "reclass" and entry["proposed_label"]:
-            validated.append(
-                EntitySpan(
-                    entity_id=entity.entity_id,
-                    value=entity.value,
-                    label=entry["proposed_label"],
-                    start_position=entity.start_position,
-                    end_position=entity.end_position,
-                    score=entity.score,
-                    source=entity.source,
-                )
-            )
-        else:
-            validated.append(entity)
-    return validated
-
-
 def apply_augmented_entities(
     text: str,
     entities: list[EntitySpan],
@@ -191,7 +140,7 @@ def apply_augmented_entities(
                     start_position=start,
                     end_position=end,
                     score=1.0,
-                    source="augmenter",
+                    source=SOURCE_KIND_AUGMENTER,
                 )
             )
 

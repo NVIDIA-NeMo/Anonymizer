@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import ast
 import asyncio
+import inspect
 import json
 import logging
 from types import SimpleNamespace
@@ -21,11 +22,11 @@ import pytest
 from data_designer.engine.models.clients.errors import SyncClientUnavailableError
 
 from anonymizer.engine.constants import (
+    COL_ADMISSION_RESULTS,
     COL_MERGED_TAGGED_TEXT,
     COL_SEED_DETECTION_RESULT,
     COL_TAG_NOTATION,
     COL_TEXT,
-    COL_VALIDATED_ENTITIES,
     COL_VALIDATION_CANDIDATES,
     COL_VALIDATION_DECISIONS,
     COL_VALIDATION_INVENTORIES,
@@ -33,6 +34,8 @@ from anonymizer.engine.constants import (
 )
 from anonymizer.engine.detection.chunked_validation import (
     ChunkedValidationParams,
+    _dispatch_chunk,
+    _dispatch_chunk_async,
     build_validation_conflict_groups,
     chunk_validation_conflict_groups,
     chunked_validate_row,
@@ -41,14 +44,12 @@ from anonymizer.engine.detection.chunked_validation import (
     prepare_validation_requests,
     render_chunk_prompt,
 )
-from anonymizer.engine.detection.custom_columns import enrich_validation_decisions
-from anonymizer.engine.detection.postprocess import (
-    TagNotation,
-    apply_validation_decisions,
-    project_detection_result_to_entity_spans,
-)
+from anonymizer.engine.detection.custom_columns import admit_validation_decisions
+from anonymizer.engine.detection.postprocess import TagNotation
 from anonymizer.engine.schemas import (
+    AdmissionResults,
     AdmissionRoute,
+    AdmissionStatus,
     DetectionResult,
     EffectiveLabelPolicy,
     Observation,
@@ -548,6 +549,147 @@ class TestLifecycleValidationRequests:
         responses = ValidationRequestDecisionSets.model_validate(output[COL_VALIDATION_DECISIONS]).responses
         assert [decision.id for decision in responses[0].decisions] == ["c1", "c2"]
 
+    def test_duplicate_assigned_alias_retries_same_single_alias_request(self) -> None:
+        text = "Alice"
+        detection_result = _detection_result(
+            text,
+            [_lifecycle_observation("o1", "Alice", "first_name", 0, 5)],
+        )
+        row = {
+            COL_TEXT: text,
+            COL_SEED_DETECTION_RESULT: detection_result.model_dump(mode="json"),
+            COL_TAG_NOTATION: TagNotation.xml.value,
+        }
+        responses = iter(
+            [
+                {
+                    "decisions": [
+                        {"id": "c1", "decision": "drop"},
+                        {"id": "c1", "decision": "keep"},
+                    ]
+                },
+                {"decisions": [{"id": "c1", "decision": "keep"}]},
+            ]
+        )
+        facade = FakeFacade("v0", response=lambda _prompt: next(responses))
+        params = ChunkedValidationParams(
+            pool=["v0"],
+            max_entities_per_call=5,
+            excerpt_window_chars=20,
+            prompt_template=_MINIMAL_TEMPLATE,
+        )
+
+        output = chunked_validate_row(row, params, {"v0": facade})
+
+        assert len(facade.calls) == 2
+        decision_sets = ValidationRequestDecisionSets.model_validate(output[COL_VALIDATION_DECISIONS])
+        assert [item.decision for item in decision_sets.responses[0].decisions] == [ValidationChoice.keep]
+
+    def test_duplicate_assigned_alias_fails_over_to_next_pool_member(self) -> None:
+        text = "Alice"
+        detection_result = _detection_result(
+            text,
+            [_lifecycle_observation("o1", "Alice", "first_name", 0, 5)],
+        )
+        row = {
+            COL_TEXT: text,
+            COL_SEED_DETECTION_RESULT: detection_result.model_dump(mode="json"),
+            COL_TAG_NOTATION: TagNotation.xml.value,
+        }
+        invalid = FakeFacade(
+            "v0",
+            response={
+                "decisions": [
+                    {"id": "c1", "decision": "drop"},
+                    {"id": "c1", "decision": "keep"},
+                ]
+            },
+        )
+        valid = FakeFacade(
+            "v1",
+            response={"decisions": [{"id": "c1", "decision": "keep"}]},
+        )
+        params = ChunkedValidationParams(
+            pool=["v0", "v1"],
+            max_entities_per_call=5,
+            excerpt_window_chars=20,
+            prompt_template=_MINIMAL_TEMPLATE,
+        )
+
+        output = chunked_validate_row(row, params, {"v0": invalid, "v1": valid})
+
+        assert len(invalid.calls) == 1
+        assert len(valid.calls) == 1
+        decision_sets = ValidationRequestDecisionSets.model_validate(output[COL_VALIDATION_DECISIONS])
+        assert decision_sets.responses[0].decisions[0].decision is ValidationChoice.keep
+
+    def test_duplicate_assigned_alias_exhaustion_fails_the_row(self) -> None:
+        text = "Alice"
+        detection_result = _detection_result(
+            text,
+            [_lifecycle_observation("o1", "Alice", "first_name", 0, 5)],
+        )
+        row = {
+            COL_TEXT: text,
+            COL_SEED_DETECTION_RESULT: detection_result.model_dump(mode="json"),
+            COL_TAG_NOTATION: TagNotation.xml.value,
+        }
+        facade = FakeFacade(
+            "v0",
+            response={
+                "decisions": [
+                    {"id": "c1", "decision": "drop"},
+                    {"id": "c1", "decision": "keep"},
+                ]
+            },
+        )
+        params = ChunkedValidationParams(
+            pool=["v0"],
+            max_entities_per_call=5,
+            excerpt_window_chars=20,
+            prompt_template=_MINIMAL_TEMPLATE,
+        )
+
+        with pytest.raises(RuntimeError, match="duplicate assigned aliases"):
+            chunked_validate_row(row, params, {"v0": facade})
+        assert len(facade.calls) == 2
+
+    def test_async_path_uses_the_same_bounded_semantic_retry(self) -> None:
+        text = "Alice"
+        detection_result = _detection_result(
+            text,
+            [_lifecycle_observation("o1", "Alice", "first_name", 0, 5)],
+        )
+        row = {
+            COL_TEXT: text,
+            COL_SEED_DETECTION_RESULT: detection_result.model_dump(mode="json"),
+            COL_TAG_NOTATION: TagNotation.xml.value,
+        }
+        responses = iter(
+            [
+                {
+                    "decisions": [
+                        {"id": "c1", "decision": "drop"},
+                        {"id": "c1", "decision": "keep"},
+                    ]
+                },
+                {"decisions": [{"id": "c1", "decision": "keep"}]},
+            ]
+        )
+        facade = FakeFacade("v0", response=lambda _prompt: next(responses))
+        params = ChunkedValidationParams(
+            pool=["v0"],
+            max_entities_per_call=5,
+            excerpt_window_chars=20,
+            prompt_template=_MINIMAL_TEMPLATE,
+        )
+
+        output = asyncio.run(chunked_validate_row_async(row, params, {"v0": facade}))
+
+        assert len(facade.calls) == 2
+        decision_sets = ValidationRequestDecisionSets.model_validate(output[COL_VALIDATION_DECISIONS])
+        assert decision_sets.responses[0].decisions[0].decision is ValidationChoice.keep
+
 
 class TestChunkedValidateRowPoolOfOne:
     def test_single_chunk_single_alias_dispatches_once_and_binds_response(self) -> None:
@@ -941,6 +1083,47 @@ class TestChunkedValidateRowFailurePropagation:
             chunked_validate_row(row, params, {"v0": v0, "v1": v1})
 
 
+def test_dispatch_requires_assigned_aliases() -> None:
+    for dispatch in (_dispatch_chunk, _dispatch_chunk_async):
+        assert inspect.signature(dispatch).parameters["assigned_aliases"].default is inspect.Parameter.empty
+
+
+@pytest.mark.parametrize("run_async", [False, True])
+@pytest.mark.parametrize("recover", [False, True])
+def test_failover_logs_exception_type_without_source_text(
+    run_async: bool, recover: bool, caplog: pytest.LogCaptureFixture
+) -> None:
+    secret = "sensitive-exception-message"
+
+    def fail(_prompt: str) -> dict[str, Any]:
+        raise RuntimeError(secret)
+
+    row = _build_row(text="Alice", observations=[_lifecycle_observation("o1", "Alice", "first_name", 0, 5)])
+    pool = ["primary", "secondary"] if recover else ["primary"]
+    models = {
+        "primary": FakeFacade("primary", response=fail),
+        "secondary": FakeFacade("secondary", response={"decisions": [{"id": "c1", "decision": "keep"}]}),
+    }
+    params = ChunkedValidationParams(
+        pool=pool, max_entities_per_call=5, excerpt_window_chars=50, prompt_template=_MINIMAL_TEMPLATE
+    )
+
+    def run() -> dict[str, Any]:
+        if run_async:
+            return asyncio.run(chunked_validate_row_async(row, params, models))
+        return chunked_validate_row(row, params, models)
+
+    with caplog.at_level(logging.WARNING, logger="anonymizer.detection.chunked_validation"):
+        if recover:
+            run()
+        else:
+            with pytest.raises(RuntimeError, match=secret):
+                run()
+
+    assert "RuntimeError" in caplog.text
+    assert secret not in caplog.text
+
+
 class TestChunkedValidateRowCrossAliasFailover:
     def test_primary_alias_failure_falls_over_to_secondary(self) -> None:
         """Primary raises, secondary in pool returns a valid response → chunk succeeds, row does not fail."""
@@ -1208,10 +1391,18 @@ class TestChunkedValidationRegression:
             observation_id: (decision.decision, decision.proposed_label or "")
             for observation_id, decision in _decisions_by_observation(out).items()
         }
-        enriched = enrich_validation_decisions(out)
-        spans = project_detection_result_to_entity_spans(_detection_result(self.SCENARIO_TEXT, observations))
-        validated = apply_validation_decisions(spans, enriched[COL_VALIDATED_ENTITIES])
-        return normalized, [(span.value, span.label) for span in validated], len(facade.calls)
+        admit_validation_decisions(out)
+        admissions = AdmissionResults.model_validate(out[COL_ADMISSION_RESULTS])
+        assert len(admissions.results) == len(observations)
+        assert admissions.results[-1].status is AdmissionStatus.fallback_protected
+        observations_by_ref = {observation.ref: observation for observation in observations}
+        retained: list[tuple[str, str]] = []
+        for result in admissions.results:
+            if result.status is AdmissionStatus.rejected:
+                continue
+            assert result.effective_label is not None
+            retained.append((observations_by_ref[result.observation_ref].value, result.effective_label))
+        return normalized, retained, len(facade.calls)
 
     def test_multi_chunk_matches_single_chunk(self, scenario) -> None:
         observations, decisions_by_value = scenario

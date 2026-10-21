@@ -8,7 +8,6 @@ import json
 from anonymizer.engine.detection.postprocess import (
     EntitySpan,
     apply_augmented_entities,
-    apply_validation_decisions,
     build_tagged_text,
     build_validation_candidates,
     expand_entity_occurrences,
@@ -38,74 +37,6 @@ def test_overlap_resolution_prefers_longer_span() -> None:
     resolved = resolve_overlaps([short, long])
     assert len(resolved) == 1
     assert resolved[0].value == "John Doe"
-
-
-def test_apply_validation_decisions_drops_entities() -> None:
-    entities = [
-        EntitySpan("id1", "Alice", "first_name", 0, 5, 1.0, "detector"),
-        EntitySpan("id2", "Seattle", "city", 10, 17, 1.0, "detector"),
-    ]
-    validated = apply_validation_decisions(
-        entities=entities,
-        validation_output={"decisions": [{"id": "id1", "decision": "keep"}, {"id": "id2", "decision": "drop"}]},
-    )
-    assert [item.entity_id for item in validated] == ["id1"]
-
-
-def test_apply_validation_decisions_reclassifies_label() -> None:
-    entities = [
-        EntitySpan("id1", "San Diego", "country", 5, 14, 1.0, "detector"),
-    ]
-    validated = apply_validation_decisions(
-        entities=entities,
-        validation_output={
-            "decisions": [{"id": "id1", "decision": "reclass", "proposed_label": "city"}],
-        },
-    )
-    assert len(validated) == 1
-    assert validated[0].label == "city"
-    assert validated[0].value == "San Diego"
-    assert validated[0].start_position == 5
-
-
-def test_apply_validation_decisions_reclass_without_label_keeps_original() -> None:
-    """If reclass has empty proposed_label, keep original label."""
-    entities = [
-        EntitySpan("id1", "Portland", "country", 0, 8, 1.0, "detector"),
-    ]
-    validated = apply_validation_decisions(
-        entities=entities,
-        validation_output={
-            "decisions": [{"id": "id1", "decision": "reclass", "proposed_label": ""}],
-        },
-    )
-    assert len(validated) == 1
-    assert validated[0].label == "country"
-
-
-def test_apply_validation_decisions_unknown_id_defaults_to_keep() -> None:
-    entities = [
-        EntitySpan("id1", "Alice", "first_name", 0, 5, 1.0, "detector"),
-    ]
-    validated = apply_validation_decisions(
-        entities=entities,
-        validation_output={"decisions": [{"id": "id_unknown", "decision": "drop"}]},
-    )
-    assert len(validated) == 1
-
-
-def test_apply_validation_decisions_last_decision_wins_for_duplicate_ids() -> None:
-    entities = [EntitySpan("id1", "Alice", "first_name", 0, 5, 1.0, "detector")]
-    validated = apply_validation_decisions(
-        entities=entities,
-        validation_output={
-            "decisions": [
-                {"id": "id1", "decision": "drop"},
-                {"id": "id1", "decision": "keep"},
-            ]
-        },
-    )
-    assert len(validated) == 1
 
 
 def test_apply_augmented_entities_adds_occurrences() -> None:
@@ -281,45 +212,6 @@ def test_augmented_entities_does_not_use_synthetic_score_precedence() -> None:
     assert len(at_span) == 1
     assert at_span[0].label == "email"
     assert at_span[0].source == "detector"
-
-
-def test_validation_decisions_from_json_string() -> None:
-    """Validation output arrives as JSON string after parquet round-trip."""
-    entities = [EntitySpan("id1", "Alice", "first_name", 0, 5, 1.0, "detector")]
-    json_str = json.dumps({"decisions": [{"id": "id1", "decision": "drop"}]})
-    result = apply_validation_decisions(entities=entities, validation_output=json_str)
-    assert len(result) == 0
-
-
-def test_validation_decisions_with_invalid_json_keeps_all() -> None:
-    entities = [EntitySpan("id1", "Alice", "first_name", 0, 5, 1.0, "detector")]
-    result = apply_validation_decisions(entities=entities, validation_output="not valid json {{")
-    assert len(result) == 1
-
-
-def test_validation_decisions_with_non_list_decisions_keeps_all() -> None:
-    entities = [EntitySpan("id1", "Alice", "first_name", 0, 5, 1.0, "detector")]
-    result = apply_validation_decisions(entities=entities, validation_output={"decisions": "not a list"})
-    assert len(result) == 1
-
-
-def test_validation_decisions_skips_invalid_decision_values() -> None:
-    """Unknown decision like 'maybe' should be ignored — entity kept."""
-    entities = [EntitySpan("id1", "Alice", "first_name", 0, 5, 1.0, "detector")]
-    result = apply_validation_decisions(
-        entities=entities,
-        validation_output={"decisions": [{"id": "id1", "decision": "maybe"}]},
-    )
-    assert len(result) == 1
-
-
-def test_validation_decisions_skips_non_dict_decision_items() -> None:
-    entities = [EntitySpan("id1", "Alice", "first_name", 0, 5, 1.0, "detector")]
-    result = apply_validation_decisions(
-        entities=entities,
-        validation_output={"decisions": ["not a dict", {"id": "id1", "decision": "keep"}]},
-    )
-    assert len(result) == 1
 
 
 def test_augmented_entities_from_json_string() -> None:

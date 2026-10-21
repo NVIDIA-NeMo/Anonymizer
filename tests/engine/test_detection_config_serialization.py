@@ -105,7 +105,7 @@ def test_detection_builder_round_trips_through_native_data_designer_config(tmp_p
     finalize_transform = next(
         column
         for column in transforms
-        if DetectionTransformOperation(column.operation) == DetectionTransformOperation.APPLY_VALIDATION_AND_FINALIZE
+        if DetectionTransformOperation(column.operation) == DetectionTransformOperation.FINALIZE_ENTITIES
     )
     assert seed_validation_transform.excluded_entity_labels == ["email"]
     assert merge_transform.excluded_entity_labels == ["email"]
@@ -215,7 +215,7 @@ def test_exported_builder_includes_explicit_non_default_example_label(tmp_path: 
         column
         for column in columns
         if isinstance(column, DetectionTransformConfig)
-        and column.operation == DetectionTransformOperation.APPLY_VALIDATION_AND_FINALIZE
+        and column.operation == DetectionTransformOperation.FINALIZE_ENTITIES
     )
     assert "- vendor_api_key: acme_live_abc123" in validation.prompt_template
     assert "vendor_api_key: acme_live_abc123" in augmenter.prompt

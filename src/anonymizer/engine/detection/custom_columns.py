@@ -17,6 +17,7 @@ from typing import Any
 from data_designer.config import custom_column_generator
 
 from anonymizer.engine.constants import (
+    COL_ADMISSION_RESULTS,
     COL_AUGMENTED_ENTITIES,
     COL_DETECTED_ENTITIES,
     COL_INITIAL_TAGGED_TEXT,
@@ -31,18 +32,17 @@ from anonymizer.engine.constants import (
     COL_TAG_NOTATION,
     COL_TAGGED_TEXT,
     COL_TEXT,
-    COL_VALIDATED_ENTITIES,
     COL_VALIDATED_SEED_ENTITIES,
     COL_VALIDATION_CANDIDATES,
     COL_VALIDATION_DECISIONS,
     COL_VALIDATION_INVENTORIES,
     RECORD_ID_COLUMN,
 )
+from anonymizer.engine.detection.admission import apply_validation_admission
 from anonymizer.engine.detection.backend import _GlinerDetectionBackend
 from anonymizer.engine.detection.postprocess import (
     EntitySpan,
     apply_augmented_entities,
-    apply_validation_decisions,
     build_tagged_text,
     build_validation_candidates,
     expand_entity_occurrences,
@@ -53,12 +53,12 @@ from anonymizer.engine.detection.postprocess import (
     project_detection_result_to_entity_spans,
 )
 from anonymizer.engine.schemas import (
+    AdmissionResults,
+    AdmissionStatus,
+    DetectionResult,
     EntitiesSchema,
-    RawValidationDecisionsSchema,
     SourceTextRef,
     SourceView,
-    ValidatedDecisionSchema,
-    ValidatedDecisionsSchema,
     ValidationCandidatesSchema,
     ValidationRequestDecisionSets,
     ValidationRequestInventory,
@@ -132,7 +132,7 @@ def merge_and_build_candidates(
 
 
 @custom_column_generator(
-    required_columns=[COL_TEXT, COL_SEED_ENTITIES, COL_VALIDATED_ENTITIES],
+    required_columns=[COL_TEXT, COL_SEED_DETECTION_RESULT, COL_ADMISSION_RESULTS],
     side_effect_columns=[COL_INITIAL_TAGGED_TEXT, COL_SEED_ENTITIES_JSON, COL_VALIDATED_SEED_ENTITIES],
 )
 def apply_validation_to_seed_entities(
@@ -140,12 +140,11 @@ def apply_validation_to_seed_entities(
     *,
     excluded_entity_labels: list[str] | None = None,
 ) -> dict[str, Any]:
-    """Apply validation decisions to detector entities before augmentation."""
+    """Materialize retained detector observations from terminal admission state."""
     text = str(row.get(COL_TEXT, ""))
-    seed_spans = _parse_entity_spans(row.get(COL_SEED_ENTITIES, {}))
-    validated_seed = apply_validation_decisions(
-        entities=seed_spans,
-        validation_output=row.get(COL_VALIDATED_ENTITIES, {}),
+    validated_seed = _project_admission_results(
+        detection_result=DetectionResult.model_validate(row[COL_SEED_DETECTION_RESULT]),
+        admission_results=AdmissionResults.model_validate(row[COL_ADMISSION_RESULTS]),
     )
     validated_seed = filter_excluded_entity_spans(validated_seed, excluded_entity_labels)
     seed_entities = [entity.as_dict() for entity in validated_seed]
@@ -171,80 +170,38 @@ def prepare_validation_inputs(row: dict[str, Any]) -> dict[str, Any]:
 
 
 @custom_column_generator(
-    required_columns=[COL_VALIDATION_DECISIONS, COL_VALIDATION_INVENTORIES],
+    required_columns=[
+        COL_SEED_DETECTION_RESULT,
+        COL_VALIDATION_DECISIONS,
+        COL_VALIDATION_INVENTORIES,
+    ],
 )
-def enrich_validation_decisions(row: dict[str, Any]) -> dict[str, Any]:
-    """Enrich validation decisions with entity value and filter to known candidate IDs only."""
-    if COL_VALIDATION_INVENTORIES in row:
-        inventories = {
-            inventory.request_id: inventory
-            for inventory in (
-                ValidationRequestInventory.model_validate(item) for item in row[COL_VALIDATION_INVENTORIES]
-            )
-        }
-        responses = ValidationRequestDecisionSets.model_validate(row[COL_VALIDATION_DECISIONS]).responses
-        enriched: list[ValidatedDecisionSchema] = []
-        for response in responses:
-            entries = {entry.alias: entry for entry in inventories[response.request_id].entries}
-            seen: set[str] = set()
-            for decision in response.decisions:
-                entry = entries.get(decision.id)
-                if entry is None or decision.id in seen or decision.decision is None:
-                    continue
-                enriched.append(
-                    ValidatedDecisionSchema(
-                        id=f"{entry.label}_{entry.start_position}_{entry.end_position}",
-                        decision=decision.decision,
-                        proposed_label=decision.proposed_label,
-                        reason=decision.reason,
-                        value=entry.value,
-                        label=entry.label,
-                    )
-                )
-                seen.add(decision.id)
-        row[COL_VALIDATED_ENTITIES] = ValidatedDecisionsSchema(decisions=enriched).model_dump(mode="json")
-        return row
-
-    raw_decisions = RawValidationDecisionsSchema.from_raw(row.get(COL_VALIDATION_DECISIONS, {}))
-    candidates = ValidationCandidatesSchema.from_raw(row.get(COL_SEED_VALIDATION_CANDIDATES, {}))
-
-    candidate_lookup = {c.id: c for c in candidates.candidates}
-    valid_ids = set(candidate_lookup)
-
-    enriched = [
-        ValidatedDecisionSchema(
-            id=d.id,
-            decision=d.decision,
-            proposed_label=d.proposed_label,
-            reason=d.reason,
-            value=candidate_lookup[d.id].value,
-            label=candidate_lookup[d.id].label,
-        )
-        for d in raw_decisions.decisions
-        if d.id in valid_ids
-    ]
-
-    row[COL_VALIDATED_ENTITIES] = ValidatedDecisionsSchema(decisions=enriched).model_dump(mode="json")
+def admit_validation_decisions(row: dict[str, Any]) -> dict[str, Any]:
+    """Consume request-scoped decisions into one terminal result per observation."""
+    detection_result = DetectionResult.model_validate(row[COL_SEED_DETECTION_RESULT])
+    inventories = tuple(ValidationRequestInventory.model_validate(item) for item in row[COL_VALIDATION_INVENTORIES])
+    admission_results = apply_validation_admission(
+        detection_result=detection_result,
+        inventories=inventories,
+        decision_sets=ValidationRequestDecisionSets.model_validate(row[COL_VALIDATION_DECISIONS]),
+    )
+    row[COL_ADMISSION_RESULTS] = AdmissionResults(results=admission_results).model_dump(mode="json")
     return row
 
 
 @custom_column_generator(
-    required_columns=[COL_TEXT, COL_MERGED_ENTITIES, COL_VALIDATED_ENTITIES],
+    required_columns=[COL_TEXT, COL_MERGED_ENTITIES],
     side_effect_columns=[COL_TAGGED_TEXT],
 )
-def apply_validation_and_finalize(
+def finalize_entities(
     row: dict[str, Any],
     *,
     excluded_entity_labels: list[str] | None = None,
     allowed_entity_labels: list[str] | None = None,
 ) -> dict[str, Any]:
-    """Apply keep/reclass/drop decisions, expand to all occurrences, and produce final outputs."""
+    """Apply label scope, expand retained values, and produce final outputs."""
     text = str(row.get(COL_TEXT, ""))
-    merged = _parse_entity_spans(row.get(COL_MERGED_ENTITIES, {}))
-    validated = apply_validation_decisions(
-        entities=merged,
-        validation_output=row.get(COL_VALIDATED_ENTITIES, {}),
-    )
+    validated = _parse_entity_spans(row.get(COL_MERGED_ENTITIES, {}))
     if allowed_entity_labels is not None:
         allowed = normalize_labels(allowed_entity_labels)
         validated = [entity for entity in validated if normalize_label(entity.label) in allowed]
@@ -271,3 +228,33 @@ def _parse_entity_spans(raw_payload: object) -> list[EntitySpan]:
         )
         for e in parsed.entities
     ]
+
+
+def _project_admission_results(
+    *,
+    detection_result: DetectionResult,
+    admission_results: AdmissionResults,
+) -> list[EntitySpan]:
+    observations_by_ref = {item.ref: item for item in detection_result.observations}
+    projected: list[EntitySpan] = []
+    for result in admission_results.results:
+        if result.status is AdmissionStatus.rejected:
+            continue
+        observation = observations_by_ref.get(result.observation_ref)
+        if observation is None:
+            raise ValueError("admission result references an unknown observation")
+        label = result.effective_label
+        if not label:
+            raise ValueError("retained admission result has no effective label")
+        projected.append(
+            EntitySpan(
+                entity_id=f"{label}_{observation.start_position}_{observation.end_position}",
+                value=observation.value,
+                label=label,
+                start_position=observation.start_position,
+                end_position=observation.end_position,
+                score=observation.native_score or 0.0,
+                source="detector",
+            )
+        )
+    return projected

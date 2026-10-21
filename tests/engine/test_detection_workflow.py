@@ -18,6 +18,7 @@ from jinja2 import Environment, StrictUndefined
 from anonymizer.config.models import DetectionModelSelection
 from anonymizer.config.rewrite import PrivacyGoal
 from anonymizer.engine.constants import (
+    COL_ADMISSION_RESULTS,
     COL_AUGMENTED_ENTITIES,
     COL_DETECTED_ENTITIES,
     COL_ENTITIES_BY_VALUE,
@@ -32,7 +33,6 @@ from anonymizer.engine.constants import (
     COL_TAG_NOTATION,
     COL_TAGGED_TEXT,
     COL_TEXT,
-    COL_VALIDATED_ENTITIES,
     COL_VALIDATION_DECISIONS,
     COL_VALIDATION_SKELETON,
     DEFAULT_ENTITY_LABELS,
@@ -1061,10 +1061,10 @@ def test_detection_workflow_uses_plugin_transform_columns(
     expected_operations = {
         COL_SEED_ENTITIES: DetectionTransformOperation.PARSE_DETECTED_ENTITIES,
         COL_SEED_VALIDATION_CANDIDATES: DetectionTransformOperation.PREPARE_VALIDATION_INPUTS,
-        COL_VALIDATED_ENTITIES: DetectionTransformOperation.ENRICH_VALIDATION_DECISIONS,
+        COL_ADMISSION_RESULTS: DetectionTransformOperation.ADMIT_VALIDATION_DECISIONS,
         COL_SEED_ENTITIES_JSON: DetectionTransformOperation.APPLY_VALIDATION_TO_SEED_ENTITIES,
         COL_MERGED_ENTITIES: DetectionTransformOperation.MERGE_AND_BUILD_CANDIDATES,
-        COL_DETECTED_ENTITIES: DetectionTransformOperation.APPLY_VALIDATION_AND_FINALIZE,
+        COL_DETECTED_ENTITIES: DetectionTransformOperation.FINALIZE_ENTITIES,
     }
     for name, operation in expected_operations.items():
         column = _find_column(columns, name)
@@ -1076,6 +1076,8 @@ def test_detection_workflow_uses_plugin_transform_columns(
     assert parse_column.source_instance == stub_detection_model_selection.entity_detector
     assert RECORD_ID_COLUMN in parse_column.required_columns
     assert COL_SEED_DETECTION_RESULT in parse_column.side_effect_columns
+    assert COL_ADMISSION_RESULTS not in _find_column(columns, COL_ADMISSION_RESULTS).side_effect_columns
+    assert COL_ADMISSION_RESULTS not in _find_column(columns, COL_DETECTED_ENTITIES).required_columns
     assert _find_column(columns, COL_MERGED_ENTITIES).excluded_entity_labels == ["email"]
     assert all(getattr(column, "column_type", None) != "custom" for column in columns)
 

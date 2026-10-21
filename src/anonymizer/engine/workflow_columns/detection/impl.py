@@ -20,9 +20,9 @@ from anonymizer.engine.detection.chunked_validation import (
     chunked_validate_row_async,
 )
 from anonymizer.engine.detection.custom_columns import (
-    apply_validation_and_finalize,
+    admit_validation_decisions,
     apply_validation_to_seed_entities,
-    enrich_validation_decisions,
+    finalize_entities,
     merge_and_build_candidates,
     parse_detected_entities,
     prepare_validation_inputs,
@@ -35,10 +35,10 @@ from anonymizer.engine.workflow_columns.detection.config import (
 
 _TRANSFORMS: dict[DetectionTransformOperation, Callable[[dict[str, Any]], dict[str, Any]]] = {
     DetectionTransformOperation.PREPARE_VALIDATION_INPUTS: prepare_validation_inputs,
-    DetectionTransformOperation.ENRICH_VALIDATION_DECISIONS: enrich_validation_decisions,
+    DetectionTransformOperation.ADMIT_VALIDATION_DECISIONS: admit_validation_decisions,
     DetectionTransformOperation.APPLY_VALIDATION_TO_SEED_ENTITIES: apply_validation_to_seed_entities,
     DetectionTransformOperation.MERGE_AND_BUILD_CANDIDATES: merge_and_build_candidates,
-    DetectionTransformOperation.APPLY_VALIDATION_AND_FINALIZE: apply_validation_and_finalize,
+    DetectionTransformOperation.FINALIZE_ENTITIES: finalize_entities,
 }
 
 
@@ -115,8 +115,8 @@ class DetectionTransformGenerator(ColumnGeneratorCellByCell[DetectionTransformCo
                 data,
                 excluded_entity_labels=self.config.excluded_entity_labels,
             )
-        if operation == DetectionTransformOperation.APPLY_VALIDATION_AND_FINALIZE:
-            return apply_validation_and_finalize(
+        if operation == DetectionTransformOperation.FINALIZE_ENTITIES:
+            return finalize_entities(
                 data,
                 excluded_entity_labels=self.config.excluded_entity_labels,
                 allowed_entity_labels=self.config.allowed_entity_labels,

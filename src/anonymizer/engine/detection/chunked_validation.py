@@ -52,6 +52,7 @@ from anonymizer.engine.constants import (
     COL_VALIDATION_INVENTORIES,
     COL_VALIDATION_SKELETON,
 )
+from anonymizer.engine.detection.admission import find_duplicate_assigned_aliases
 from anonymizer.engine.detection.postprocess import (
     EntitySpan,
     TagNotation,
@@ -71,6 +72,11 @@ from anonymizer.engine.schemas import (
 )
 
 logger = logging.getLogger("anonymizer.detection.chunked_validation")
+
+
+class _SemanticValidationResponseError(RuntimeError):
+    """A parsed response violates its dispatched request inventory."""
+
 
 # Jinja2 environment used to render the per-chunk validation prompt.
 # The template mirrors the production prompt exactly: we substitute the same
@@ -396,6 +402,7 @@ def _dispatch_chunk(
     prompt: str,
     system_prompt: str | None,
     chunk_index: int,
+    assigned_aliases: tuple[str, ...],
 ) -> RawValidationDecisionsSchema:
     """Dispatch a single chunk with cross-alias failover across the pool.
 
@@ -410,57 +417,79 @@ def _dispatch_chunk(
     We use ``PydanticResponseRecipe`` so the facade appends JSON task
     instructions and parses the response into ``RawValidationDecisionsSchema``.
 
-    Single-alias pools run the loop exactly once and re-raise the original
-    exception (no alternate alias to try). Multi-alias pools get
-    ``len(pool)`` total attempts. If every pool member raises, the *last*
-    exception propagates so DataDesigner records the row as a
-    ``FailedRecord`` via ``NddAdapter._detect_missing_records``.
+    Transport failures try each pool member once. A duplicate assigned alias
+    is a semantic response failure: multi-alias pools advance to the next
+    alias, while a single-alias pool receives one bounded same-request retry.
+    If all permitted attempts fail, the last exception propagates so
+    DataDesigner records the row as a ``FailedRecord``.
 
     Each failover attempt is logged at WARNING so operators can correlate
     degraded pool members with run-level failure-rate spikes.
+    Logs include exception types, not messages, because messages may contain
+    source text or model output.
     """
     recipe = PydanticResponseRecipe(data_type=RawValidationDecisionsSchema)
     final_prompt = recipe.apply_recipe_to_user_prompt(prompt)
     final_system = recipe.apply_recipe_to_system_prompt(system_prompt)
 
     last_exc: BaseException | None = None
-    for attempt_index, (alias, facade) in enumerate(facades):
-        try:
-            output, _messages = facade.generate(
-                prompt=final_prompt,
-                parser=recipe.parse,
-                system_prompt=final_system,
-                purpose=f"entity-validation-chunk-{chunk_index}-attempt-{attempt_index}",
+    attempt_index = 0
+    for facade_index, (alias, facade) in enumerate(facades):
+        semantic_attempts = 2 if len(facades) == 1 else 1
+        for semantic_attempt in range(semantic_attempts):
+            try:
+                output, _messages = facade.generate(
+                    prompt=final_prompt,
+                    parser=recipe.parse,
+                    system_prompt=final_system,
+                    purpose=f"entity-validation-chunk-{chunk_index}-attempt-{attempt_index}",
+                )
+            except Exception as exc:  # noqa: BLE001 — failover is based on pool position
+                last_exc = exc
+                break
+            duplicate_aliases = find_duplicate_assigned_aliases(
+                decisions=output.decisions,
+                assigned_aliases=assigned_aliases,
             )
+            if duplicate_aliases:
+                last_exc = _SemanticValidationResponseError(
+                    f"validator response contains duplicate assigned aliases {duplicate_aliases}"
+                )
+                has_same_alias_retry = semantic_attempt + 1 < semantic_attempts
+                if has_same_alias_retry:
+                    logger.warning(
+                        "validator chunk %d: alias=%s returned duplicate assigned aliases; retrying same request",
+                        chunk_index,
+                        alias,
+                    )
+                    attempt_index += 1
+                    continue
+                break
             if attempt_index > 0:
                 logger.info(
-                    "validator chunk %d: recovered on failover alias=%s (attempt %d of %d)",
+                    "validator chunk %d: recovered on alias=%s after %d prior attempt(s)",
                     chunk_index,
                     alias,
-                    attempt_index + 1,
-                    len(facades),
+                    attempt_index,
                 )
             return output
-        except Exception as exc:  # noqa: BLE001 — we classify by failover position, not type
-            last_exc = exc
-            remaining = len(facades) - attempt_index - 1
-            if remaining > 0:
-                logger.warning(
-                    "validator chunk %d: alias=%s raised %s (%s); failing over to next pool member (%d remaining)",
-                    chunk_index,
-                    alias,
-                    type(exc).__name__,
-                    exc,
-                    remaining,
-                )
-            else:
-                logger.error(
-                    "validator chunk %d: alias=%s raised %s (%s); pool exhausted — row will be dropped",
-                    chunk_index,
-                    alias,
-                    type(exc).__name__,
-                    exc,
-                )
+        remaining = len(facades) - facade_index - 1
+        if remaining > 0:
+            logger.warning(
+                "validator chunk %d: alias=%s exhausted (%s); failing over (%d remaining)",
+                chunk_index,
+                alias,
+                type(last_exc).__name__ if last_exc is not None else "unknown error",
+                remaining,
+            )
+        else:
+            logger.error(
+                "validator chunk %d: alias=%s exhausted (%s); pool exhausted — row will be dropped",
+                chunk_index,
+                alias,
+                type(last_exc).__name__ if last_exc is not None else "unknown error",
+            )
+        attempt_index += 1
 
     # ``facades`` is non-empty by caller contract: ``chunked_validate_row``
     # builds it from the configured pool, and the config validator requires
@@ -484,6 +513,7 @@ async def _dispatch_chunk_async(
     prompt: str,
     system_prompt: str | None,
     chunk_index: int,
+    assigned_aliases: tuple[str, ...],
 ) -> RawValidationDecisionsSchema:
     """Async equivalent of :func:`_dispatch_chunk`, preserving failover order."""
     recipe = PydanticResponseRecipe(data_type=RawValidationDecisionsSchema)
@@ -491,43 +521,63 @@ async def _dispatch_chunk_async(
     final_system = recipe.apply_recipe_to_system_prompt(system_prompt)
 
     last_exc: BaseException | None = None
-    for attempt_index, (alias, facade) in enumerate(facades):
-        try:
-            output, _messages = await facade.agenerate(
-                prompt=final_prompt,
-                parser=recipe.parse,
-                system_prompt=final_system,
-                purpose=f"entity-validation-chunk-{chunk_index}-attempt-{attempt_index}",
+    attempt_index = 0
+    for facade_index, (alias, facade) in enumerate(facades):
+        semantic_attempts = 2 if len(facades) == 1 else 1
+        for semantic_attempt in range(semantic_attempts):
+            try:
+                output, _messages = await facade.agenerate(
+                    prompt=final_prompt,
+                    parser=recipe.parse,
+                    system_prompt=final_system,
+                    purpose=f"entity-validation-chunk-{chunk_index}-attempt-{attempt_index}",
+                )
+            except Exception as exc:  # noqa: BLE001 — failover is based on pool position
+                last_exc = exc
+                break
+            duplicate_aliases = find_duplicate_assigned_aliases(
+                decisions=output.decisions,
+                assigned_aliases=assigned_aliases,
             )
+            if duplicate_aliases:
+                last_exc = _SemanticValidationResponseError(
+                    f"validator response contains duplicate assigned aliases {duplicate_aliases}"
+                )
+                has_same_alias_retry = semantic_attempt + 1 < semantic_attempts
+                if has_same_alias_retry:
+                    logger.warning(
+                        "validator chunk %d: alias=%s returned duplicate assigned aliases; retrying same request",
+                        chunk_index,
+                        alias,
+                    )
+                    attempt_index += 1
+                    continue
+                break
             if attempt_index > 0:
                 logger.info(
-                    "validator chunk %d: recovered on failover alias=%s (attempt %d of %d)",
+                    "validator chunk %d: recovered on alias=%s after %d prior attempt(s)",
                     chunk_index,
                     alias,
-                    attempt_index + 1,
-                    len(facades),
+                    attempt_index,
                 )
             return output
-        except Exception as exc:  # noqa: BLE001 — we classify by failover position, not type
-            last_exc = exc
-            remaining = len(facades) - attempt_index - 1
-            if remaining > 0:
-                logger.warning(
-                    "validator chunk %d: alias=%s raised %s (%s); failing over to next pool member (%d remaining)",
-                    chunk_index,
-                    alias,
-                    type(exc).__name__,
-                    exc,
-                    remaining,
-                )
-            else:
-                logger.error(
-                    "validator chunk %d: alias=%s raised %s (%s); pool exhausted — row will be dropped",
-                    chunk_index,
-                    alias,
-                    type(exc).__name__,
-                    exc,
-                )
+        remaining = len(facades) - facade_index - 1
+        if remaining > 0:
+            logger.warning(
+                "validator chunk %d: alias=%s exhausted (%s); failing over (%d remaining)",
+                chunk_index,
+                alias,
+                type(last_exc).__name__ if last_exc is not None else "unknown error",
+                remaining,
+            )
+        else:
+            logger.error(
+                "validator chunk %d: alias=%s exhausted (%s); pool exhausted — row will be dropped",
+                chunk_index,
+                alias,
+                type(last_exc).__name__ if last_exc is not None else "unknown error",
+            )
+        attempt_index += 1
 
     if last_exc is None:
         raise RuntimeError(
@@ -577,6 +627,7 @@ def _build_lifecycle_dispatch_kwargs(
                 "prompt": request.prompt,
                 "system_prompt": params.system_prompt,
                 "chunk_index": chunk_index,
+                "assigned_aliases": tuple(entry.alias for entry in request.inventory.entries),
             }
         )
     return requests, dispatch_kwargs_per_chunk
