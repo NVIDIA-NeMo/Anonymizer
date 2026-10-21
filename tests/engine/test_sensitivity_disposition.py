@@ -280,6 +280,54 @@ def test_verify_disposition_column_marks_row_verified() -> None:
     assert _verify_disposition_coverage(row)[COL_DISPOSITION_COVERAGE] is True
 
 
+@pytest.mark.parametrize(
+    ("supplied_value", "echoed_value"),
+    [
+        ("Southern\u202fPublishing", "Southern Publishing"),
+        ("Southern\u00a0Publishing", "Southern Publishing"),
+        ("40‑year‑old", "40-year-old"),
+        ("master’s degree", "master's degree"),
+        ("Café", "Cafe\u0301"),
+    ],
+)
+def test_verify_disposition_logs_formatting_corrections_only_at_debug(
+    supplied_value: str, echoed_value: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    disposition = _disposition((1, "city", echoed_value))
+    supplied = json.dumps({"id": 1, "label": "city", "value": supplied_value})
+    with caplog.at_level("DEBUG", logger="anonymizer.rewrite.sensitivity_disposition"):
+        verify_disposition_coverage(disposition, supplied, "(none)", _CLASSIFICATIONS)
+    assert disposition.sensitivity_disposition[0].entity_value == supplied_value
+    assert {record.levelname for record in caplog.records} == {"DEBUG"}
+    assert "restoring supplied identity" in caplog.text
+
+
+def test_verify_disposition_warns_once_for_substantive_identity_correction(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    disposition = _disposition((1, "city", "Portland"))
+    supplied = json.dumps({"id": 1, "label": "city", "value": "Seattle"})
+    verify_disposition_coverage(disposition, supplied, "(none)", _CLASSIFICATIONS)
+    assert disposition.sensitivity_disposition[0].entity_value == "Seattle"
+    assert {record.levelname for record in caplog.records} == {"WARNING"}
+    assert "does not match supplied entity" in caplog.text
+    assert "source/category/sensitivity/method" not in caplog.text
+
+
+def test_verify_disposition_warns_for_policy_change_alongside_formatting_correction(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    disposition = _disposition((1, "city", "Southern Publishing"))
+    supplied = json.dumps({"id": 1, "label": "city", "value": "Southern\u202fPublishing"})
+    with caplog.at_level("DEBUG", logger="anonymizer.rewrite.sensitivity_disposition"):
+        verify_disposition_coverage(disposition, supplied, "(none)", {"city": "direct_identifier"})
+    entry = disposition.sensitivity_disposition[0]
+    assert entry.entity_value == "Southern\u202fPublishing"
+    assert entry.sensitivity == "high"
+    assert entry.protection_method_suggestion == "replace"
+    assert {record.levelname for record in caplog.records} == {"WARNING", "DEBUG"}
+
+
 @pytest.mark.parametrize(("value", "method"), [("O.K.", "generalize"), ("Kotu", "replace")])
 def test_verify_disposition_normalizes_surname_and_preserves_method(value: str, method: str) -> None:
     explicit = json.dumps({"id": 1, "label": "last_name", "value": value})

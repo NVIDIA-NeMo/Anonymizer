@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import logging
+import unicodedata
 from typing import Any
 
 from data_designer.config import custom_column_generator
@@ -270,6 +271,12 @@ def _parse_numbered_lines(text: object) -> list[dict[str, Any]]:
     return [json.loads(line) for line in text.splitlines() if line.startswith("{")]
 
 
+def _normalize_identity_format(value: str) -> str:
+    """Compare echoed formatting for logging only; never change authoritative entity identity."""
+    punctuation = str.maketrans({"‑": "-", "‐": "-", "–": "-", "—": "-", "‘": "'", "’": "'", "“": '"', "”": '"'})
+    return " ".join(unicodedata.normalize("NFC", value).translate(punctuation).split())
+
+
 def verify_disposition_coverage(
     disposition: SensitivityDispositionSchema,
     explicit_entities: object,
@@ -280,8 +287,9 @@ def verify_disposition_coverage(
 
     The schema guarantees IDs run 1..N but cannot know the supplied count, so a model that
     stops early would otherwise leave trailing entities silently unprotected. A label/value
-    that differs from the supplied entity is restored from the inventory with a warning:
-    the ID identifies the entity, not the model's echoed label/value.
+    that differs from the supplied entity is restored from the inventory: the ID identifies
+    the entity, not the model's echoed label/value. Formatting-only corrections log at debug;
+    substantive identity and protection-policy corrections log warnings.
     """
     explicit = _parse_numbered_lines(explicit_entities)
     expected = explicit + _parse_numbered_lines(latent_entities)
@@ -308,16 +316,23 @@ def verify_disposition_coverage(
                 corrected["protection_method_suggestion"] = "replace"
         elif source == "latent" and entry.needs_protection:
             corrected["protection_method_suggestion"] = "suppress_inference"
-        if corrected != entry.model_dump(mode="json"):
+        original_policy = (entry.source, entry.category, entry.sensitivity, entry.protection_method_suggestion)
+        corrected_policy = (source, category, corrected["sensitivity"], corrected["protection_method_suggestion"])
+        if original_policy != corrected_policy:
             logger.warning(
                 "Normalizing disposition entity %d: source/category/sensitivity/method %r -> %r.",
                 entry.id,
-                (entry.source, entry.category, entry.sensitivity, entry.protection_method_suggestion),
-                (source, category, corrected["sensitivity"], corrected["protection_method_suggestion"]),
+                original_policy,
+                corrected_policy,
             )
+        if corrected != entry.model_dump(mode="json"):
             returned[index] = type(entry).model_validate(corrected)
         if (supplied["label"], supplied["value"]) != (entry.entity_label, entry.entity_value):
-            logger.warning(
+            formatting_only = _normalize_identity_format(supplied["label"]) == _normalize_identity_format(
+                entry.entity_label
+            ) and _normalize_identity_format(supplied["value"]) == _normalize_identity_format(entry.entity_value)
+            logger.log(
+                logging.DEBUG if formatting_only else logging.WARNING,
                 "Disposition entry %d (%r, %r) does not match supplied entity (%r, %r); restoring supplied identity.",
                 entry.id,
                 entry.entity_label,
