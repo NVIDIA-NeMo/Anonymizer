@@ -3,7 +3,7 @@
 
 # Graph SDK production cutover
 
-This page preserves historical M0 stage, route and request-seam evidence. [Draft PR #302](https://github.com/NVIDIA-NeMo/Anonymizer/pull/302) records the latest checkpoint and remaining work. The full goal remains unchanged and unmet: one graph execution authority for every production workflow, at most 10K repository non-test Python growth followed by pursuit of 5K, and test/helper/reference Python within 1–2×.
+This page preserves historical M0 stage, route and request-seam evidence. [Draft PR #319](https://github.com/NVIDIA-NeMo/Anonymizer/pull/319) (formerly #302) records the latest checkpoint and remaining work. The full goal remains unchanged and unmet: one graph execution authority for every production workflow, at most 10K repository non-test Python growth followed by pursuit of 5K, and test/helper/reference Python within 1–2×.
 
 M0 characterizes a small part of the existing production contract before migration. The graph components and their conformance tests do not yet establish that every production route uses one graph authority. This inventory records evidence and remaining work; it is not a complete RFC audit or publication approval.
 
