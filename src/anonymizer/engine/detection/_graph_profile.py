@@ -8,7 +8,7 @@ request visibility: DataDesigner keeps its own transport, retries and scheduling
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from functools import partial
 from typing import Any
 
@@ -20,7 +20,6 @@ from anonymizer.config.replace_strategies import Annotate, Hash, Redact, Replace
 from anonymizer.engine.detection._graph_invocation import DetectionRedactInvocation
 from anonymizer.engine.detection.detection_workflow import EntityDetectionWorkflow
 from anonymizer.engine.graph_sdk._execution_delegated import SubmitterPool
-from anonymizer.engine.graph_sdk.executor import LocalCompleted, LocalFailure
 from anonymizer.engine.harness import kernel
 from anonymizer.engine.replace._graph_redact import local_configuration
 from anonymizer.engine.replace.replace_runner import ReplacementResult, ReplacementWorkflow
@@ -51,7 +50,6 @@ def run_detection_redact(
 
     async def operation(
         pool: SubmitterPool,
-        handoff: Callable[[Callable[[], LocalCompleted | LocalFailure]], LocalCompleted | LocalFailure],
     ) -> ReplacementResult:
         if replacement is not None:
             from anonymizer.engine.detection._opaque_redact import _DetectionInvocation, execute_injected_redact
@@ -71,7 +69,6 @@ def run_detection_redact(
                     model_configs,
                     selected_models,
                     detection_options,
-                    handoff=handoff,
                     replacement_receiver=replacement,
                     replacement_arguments=dict(
                         replace_method=replace_method,
@@ -97,7 +94,6 @@ def run_detection_redact(
                 detection_options,
                 "redacted",
                 "ok",
-                handoff=handoff,
             ),
             pool,
         )

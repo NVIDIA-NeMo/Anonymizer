@@ -5,7 +5,6 @@
 from __future__ import annotations
 
 import asyncio
-from contextvars import copy_context
 from dataclasses import replace
 from typing import Any, cast
 
@@ -81,7 +80,7 @@ def run_direct_map(
     captured = []
     configuration = map_configuration(arguments)
 
-    async def execute(pool: SubmitterPool, handoff: Any) -> ReplacementResult:
+    async def execute(pool: SubmitterPool) -> ReplacementResult:
         graph = DataGraph.new()
         targets = []
         texts = dataframe[COL_TEXT] if COL_TEXT in dataframe else [""] * len(dataframe)
@@ -260,15 +259,11 @@ def run_direct_map(
                 ),
             )
 
-        def dispatch(inputs: tuple[AssociationInput, ...], requests: DelegatedRequests) -> LocalCompleted:
-            context = copy_context()
-            return handoff(lambda: context.run(callback, inputs, requests))
-
         result = await _execute_frame_plan(
             prepared=prepared,
             capabilities=capabilities,
             policies=policies,
-            callback=dispatch,
+            callback=callback,
             pool=pool,
             borrowed_loop=loop,
             limits=_execution_limits(

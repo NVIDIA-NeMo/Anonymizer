@@ -193,5 +193,5 @@ def test_threads_started_per_run(tmp_path: Path) -> None:
         patch.setattr(threading.Thread, "start", start)
         _run(tmp_path, method="redact")
 
-    # DataDesigner may start its own threads; Anonymizer starts no worker threads for the body.
-    assert [name for name in started if name.startswith("anonymizer-graph_")] == []
+    # DataDesigner may start its own threads; Anonymizer starts none: no body worker and no loop host.
+    assert [name for name in started if name.startswith("anonymizer-graph")] == []

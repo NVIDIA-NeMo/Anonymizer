@@ -6,8 +6,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import Callable
-from contextvars import copy_context
 from dataclasses import dataclass, replace
 from inspect import signature
 from typing import Any, cast
@@ -592,8 +590,8 @@ def run_direct_detection(
         return run_empty_detection(receiver, frame, arguments)
     captured = []
 
-    async def operation(pool: SubmitterPool, handoff: Callable[..., Any]) -> ReplacementResult:
-        result = await execute_detection(receiver, frame, arguments, pool, captured, handoff)
+    async def operation(pool: SubmitterPool) -> ReplacementResult:
+        result = await execute_detection(receiver, frame, arguments, pool, captured)
         return project_detection_redact(result)
 
     projected = _run_sync_profile(operation)
@@ -608,7 +606,6 @@ async def execute_detection(
     arguments: dict[str, Any],
     pool: SubmitterPool,
     captured: list[EntityDetectionResult],
-    handoff: Callable[..., Any],
 ) -> ExecutionResult:
     from anonymizer.engine.harness.kernel import _execute_frame_plan, _frame_implementation, _prepare_frame_plan
 
@@ -820,15 +817,11 @@ async def execute_detection(
             ),
         )
 
-    def dispatch(inputs: tuple[AssociationInput, ...], requests: DelegatedRequests) -> LocalCompleted:
-        context = copy_context()
-        return handoff(lambda: context.run(callback, inputs, requests))
-
     return await _execute_frame_plan(
         prepared=prepared,
         capabilities=capabilities,
         policies=(*parent_policies, *child_policies),
-        callback=dispatch,
+        callback=callback,
         pool=pool,
         borrowed_loop=loop,
         limits=_execution_limits(
@@ -940,16 +933,12 @@ def run_empty_detection(
             ),
         )
 
-    async def execute(pool: SubmitterPool, handoff: Callable[..., Any]) -> ReplacementResult:
-        def dispatch(inputs: tuple[AssociationInput, ...], requests: DelegatedRequests) -> LocalCompleted:
-            context = copy_context()
-            return handoff(lambda: context.run(callback, inputs, requests))
-
+    async def execute(pool: SubmitterPool) -> ReplacementResult:
         result = await _execute_frame_plan(
             prepared=prepared,
             capabilities=capabilities,
             policies=policies,
-            callback=dispatch,
+            callback=callback,
             pool=pool,
             borrowed_loop=asyncio.get_running_loop(),
             limits=_execution_limits(

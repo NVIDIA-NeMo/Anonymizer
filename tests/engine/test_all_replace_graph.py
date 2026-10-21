@@ -37,13 +37,14 @@ def test_public_local_replacement_keeps_authenticated_frame(
     scripted_detection, monkeypatch, tmp_path, strategy, expected
 ):
     original = strategy.model_copy(deep=True)
-    start = kernel.Thread.start
+    enter = kernel.InlineChannel.enter
 
-    def started(thread):
+    def entered(channel):
+        # The caller mutates its strategy once hosting starts; the graph must already hold its snapshot.
         strategy.format_template = "CHANGED"
-        start(thread)
+        enter(channel)
 
-    monkeypatch.setattr(kernel.Thread, "start", started)
+    monkeypatch.setattr(kernel.InlineChannel, "enter", entered)
     path = tmp_path / "local.csv"
     pd.DataFrame({"text": ["Alice travels."], "extra": [17]}).to_csv(path, index=False)
     facade = detection_tests.public_anonymizer(scripted_detection)

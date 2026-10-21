@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable, Mapping
-from contextvars import copy_context
 from dataclasses import dataclass, replace
 from time import perf_counter
 from typing import Any, cast
@@ -89,20 +88,11 @@ class _DetectionInvocation:
     semantic_targets: tuple[Any, ...] = ()
     semantic_transform_slot: int | None = None
     semantic_entry_slot: int | None = None
-    handoff: Callable[[Callable[[], LocalCompleted | LocalFailure]], LocalCompleted | LocalFailure] | None = None
     replacement_receiver: Any | None = None
     replacement_arguments: dict[str, Any] | None = None
     map_slots: Mapping[str, int] | None = None
 
     def run(self, inputs: tuple[AssociationInput, ...], requests: DelegatedRequests) -> LocalCompleted | LocalFailure:
-        context = copy_context()
-        return (
-            self._run(inputs, requests)
-            if self.handoff is None
-            else self.handoff(lambda: context.run(self._run, inputs, requests))
-        )
-
-    def _run(self, inputs: tuple[AssociationInput, ...], requests: DelegatedRequests) -> LocalCompleted | LocalFailure:
         if requests.cancelled:
             return LocalFailure(failure="implementation_exception")
         started = perf_counter()
@@ -257,8 +247,6 @@ class _EvaluationInvocation:
     source: pd.DataFrame
     evaluate: Callable[[DelegatedRequests], ReplacementResult | LocalFailure]
     retained_owner: object | None
-    handoff: Callable[[Callable[[], LocalCompleted | LocalFailure]], LocalCompleted | LocalFailure]
-
     name: str = "opaque-evaluation"
 
     def run(self, inputs: tuple[AssociationInput, ...], requests: DelegatedRequests) -> LocalCompleted | LocalFailure:
@@ -282,7 +270,7 @@ class _EvaluationInvocation:
                 ),
             )
 
-        return self.handoff(evaluate)
+        return evaluate()
 
 
 def run_detection_rewrite(
@@ -324,7 +312,6 @@ def run_detection_rewrite(
 
     async def operation(
         pool: SubmitterPool,
-        handoff: Callable[[Callable[[], LocalCompleted | LocalFailure]], LocalCompleted | LocalFailure],
     ) -> ReplacementResult:
         result = await execute_injected_redact(
             _DetectionInvocation(
@@ -335,7 +322,6 @@ def run_detection_rewrite(
                 selected_models,
                 detection_options,
                 name="opaque-detection-rewrite",
-                handoff=handoff,
             ),
             pool,
         )
@@ -356,11 +342,8 @@ def run_evaluation(
 
     async def operation(
         pool: SubmitterPool,
-        handoff: Callable[[Callable[[], LocalCompleted | LocalFailure]], LocalCompleted | LocalFailure],
     ) -> ReplacementResult:
-        result = await execute_injected_redact(
-            _EvaluationInvocation(source, evaluate, retained_owner, handoff, name), pool
-        )
+        result = await execute_injected_redact(_EvaluationInvocation(source, evaluate, retained_owner, name), pool)
         return project_detection_redact(result)
 
     return _run_sync_profile(operation)

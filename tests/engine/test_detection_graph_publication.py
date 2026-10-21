@@ -37,7 +37,7 @@ def test_delegated_source_partition_rejects_uncorrelated_completion(scripted_det
     from anonymizer.engine.graph_sdk.requests import SemanticAssociation
     from anonymizer.graph import TaskAttemptId
 
-    original = DetectionRedactInvocation._run
+    original = DetectionRedactInvocation.run
 
     def corrupted(self, inputs, requests):
         result = original(self, inputs, requests)
@@ -53,7 +53,7 @@ def test_delegated_source_partition_rejects_uncorrelated_completion(scripted_det
             association = SemanticAssociation(task=TaskAttemptId.new(activation=association.task.activation))
         return replace(result, failed_sources=frozenset({association}))
 
-    monkeypatch.setattr(DetectionRedactInvocation, "_run", corrupted)
+    monkeypatch.setattr(DetectionRedactInvocation, "run", corrupted)
     result = asyncio.run(run_graph_profile(scripted_detection, _source(), _options()))
     assert not result.final_outputs and not result.frames
     assert all(state.complete for state in result.states)

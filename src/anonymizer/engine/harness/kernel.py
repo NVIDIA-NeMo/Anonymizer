@@ -3,25 +3,22 @@
 """Route-neutral execution kernel: plan preparation, admit/start, synchronous hosting and projection.
 
 Every adapter route (detection, replace, rewrite, evaluation, detection transforms) prepares a
-fixed-operation plan, admits and starts it on the single Graph SDK executor, hosts it on a private
-thread while serving caller-thread callbacks, and projects the canonical frame back to a DataFrame.
+fixed-operation plan, admits and starts it on the single Graph SDK executor, runs it on a private
+event loop on the caller's thread with every synchronous body inline, and projects the canonical
+frame back to a DataFrame.
 """
 
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable
-from concurrent.futures import Future, InvalidStateError
-from contextvars import copy_context
-from queue import Empty, Queue
-from threading import Event, Thread, get_ident
+from collections.abc import Callable, Coroutine
 from time import monotonic_ns
 from typing import Any, cast
 
 from anonymizer.engine.graph_sdk._activation_values import ActivationLimits
 from anonymizer.engine.graph_sdk._execution_delegated import (
-    CallerChannel,
-    CallerThreadSubmitter,
+    InlineChannel,
+    InlineSubmitter,
     SubmitterPool,
     WorkerDelegatedSubmitter,
 )
@@ -126,10 +123,10 @@ def _runtime_rows(names: tuple[str, ...], external: bool) -> tuple[RuntimeOutcom
 
 def delegated_submitter(
     callback: Callable[..., Any], pool: SubmitterPool, borrowed_loop: asyncio.AbstractEventLoop
-) -> WorkerDelegatedSubmitter | CallerThreadSubmitter:
-    """Run the delegated body on the synchronous caller (kernel-hosted) or on ``pool`` (standalone use)."""
-    if isinstance(pool, CallerChannel):
-        return CallerThreadSubmitter(callback=callback, channel=pool, borrowed_loop=borrowed_loop)
+) -> WorkerDelegatedSubmitter | InlineSubmitter:
+    """Run the delegated body inline on the synchronous caller (kernel-hosted) or on ``pool`` (standalone use)."""
+    if isinstance(pool, InlineChannel):
+        return InlineSubmitter(callback=callback, channel=pool, borrowed_loop=borrowed_loop)
     return WorkerDelegatedSubmitter(
         callback=callback,
         pool=pool,
@@ -139,127 +136,53 @@ def delegated_submitter(
 
 
 def _run_sync_profile(
-    operation: Callable[
-        [CallerChannel, Callable[[Callable[[], LocalCompleted | LocalFailure]], LocalCompleted | LocalFailure]],
-        Awaitable[ReplacementResult],
-    ],
+    operation: Callable[[InlineChannel], Coroutine[Any, Any, ReplacementResult]],
 ) -> ReplacementResult:
-    """Host one graph invocation on a private loop thread; every synchronous body runs on the caller's thread."""
-    started = Event()
-    cancellation: list[tuple[asyncio.AbstractEventLoop, asyncio.Task[Any]]] = []
-    # (call, future) pairs for the caller's thread; (None, None) marks the host's completion.
-    calls: Queue[tuple[Callable[[], Any], Future[Any]] | tuple[None, None]] = Queue()
-    serving = get_ident()
+    """Run one graph invocation on a private event loop on the caller's thread; bodies run inline.
 
-    # Every queued body's future until it settles, so a Ctrl-C can settle what it interrupted.
-    outstanding: set[Future[Any]] = set()
-
-    def put(call: Callable[[], Any]) -> Future[Any]:
-        returned: Future[Any] = Future()
-        outstanding.add(returned)
-        returned.add_done_callback(outstanding.discard)
-        calls.put((call, returned))
-        return returned
-
-    def handoff(callback: Callable[[], LocalCompleted | LocalFailure]) -> LocalCompleted | LocalFailure:
-        if get_ident() == serving:
-            # Already on the caller's thread (inside a body it is running): run inline.
-            return callback()
-        return put(callback).result()
-
-    def settle_failed(pending: Future[Any]) -> None:
-        if not pending.done():
-            try:
-                pending.set_result(LocalFailure(failure="implementation_exception"))
-            except InvalidStateError:
-                pass
-
-    def settle_outstanding() -> None:
-        # Only this thread runs bodies, so after an interrupt nothing is running: settle whatever
-        # is still waiting, including a body taken from the queue but not yet settled.
-        for pending in list(outstanding):
-            settle_failed(pending)
-
-    def cancel_host() -> None:
-        # The host loop may already be closed; a stop request then has nothing left to stop.
-        if cancellation:
-            loop, task = cancellation[0]
-            try:
-                loop.call_soon_threadsafe(task.cancel)
-            except RuntimeError:
-                if not loop.is_closed():
-                    raise
-
-    def serve_callback() -> None:
-        try:
-            # The timeout only keeps Ctrl-C responsive where a blocking get is not interruptible.
-            callback, returned = calls.get(timeout=0.1)
-            if callback is None or returned is None:
-                return
-            if interrupted is not None:
-                # The interrupt may already have settled it.
-                settle_failed(returned)
-                return
-            try:
-                returned.set_result(callback())
-            except Exception as error:
-                returned.set_exception(error)
-        except Empty:
-            return
-        except BaseException:
-            settle_outstanding()
-            cancel_host()
-            raise
-
-    async def run() -> ReplacementResult:
-        task = asyncio.current_task()
-        assert task is not None
-        cancellation.append((asyncio.get_running_loop(), task))
-        started.set()
-        return await operation(CallerChannel(put), handoff)
-
-    completion: Future[ReplacementResult] = Future()
-    completion.add_done_callback(lambda _: calls.put((None, None)))
-
-    def host() -> None:
-        try:
-            completion.set_result(asyncio.run(run()))
-        except BaseException as error:
-            completion.set_exception(error)
-        finally:
-            started.set()
-
-    context = copy_context()
-    thread = Thread(target=lambda: context.run(host), name="anonymizer-graph-host")
-    thread.start()
-    interrupted: BaseException | None = None
+    No asyncio Runner, so no SIGINT handler: Ctrl-C stays a KeyboardInterrupt and lands where the body is
+    waiting (inside DataDesigner, as in 0.4.0). A caller that already runs a loop (Jupyter, ``asyncio.run``)
+    is blocked by this synchronous call anyway, so its running-loop marker is set aside for the private
+    loop and restored around each body and on return.
+    """
+    channel = InlineChannel()
+    loop = asyncio.new_event_loop()
+    failure: BaseException | None = None
+    channel.enter()
     try:
-        while not completion.done():
-            serve_callback()
-        return completion.result()
-    except BaseException as error:
-        interrupted = error
-        raise
+        root = loop.create_task(operation(channel))
+        channel.root = root
+        try:
+            result = loop.run_until_complete(root)
+        except BaseException as error:
+            if channel.interrupted is None:
+                raise
+            failure = error
     finally:
-        # Cancellation only requests a stop. Keep serving until the host has drained
-        # every queued body and the client work it started.
-        while thread.is_alive():
-            try:
-                if interrupted is not None:
-                    # Repeated every pass, so a further Ctrl-C inside the handler cannot leave a body waiting.
-                    settle_outstanding()
-                    started.wait()
-                    cancel_host()
-                serve_callback()
-                thread.join(timeout=0.01)
-            except KeyboardInterrupt as error:
-                interrupted = error
-        if interrupted is not None:
-            failure = completion.exception()
-            owner = retained_execution(failure) if failure is not None else completion.result()._execution
-            if owner is not None:
-                _retained_execution = owner
-            raise interrupted
+        try:
+            _close_private_loop(loop)
+        finally:
+            channel.exit()
+    if channel.interrupted is not None:
+        owner = retained_execution(failure) if failure is not None else result._execution
+        if owner is not None:
+            _retained_execution = owner
+        raise channel.interrupted
+    return result
+
+
+def _close_private_loop(loop: asyncio.AbstractEventLoop) -> None:
+    """Cancel and settle whatever the invocation left on its loop, then close it (best effort, like a Runner)."""
+    try:
+        pending = [task for task in asyncio.all_tasks(loop) if not task.done()]
+        for task in pending:
+            task.cancel()
+        if pending:
+            loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+        loop.run_until_complete(loop.shutdown_asyncgens())
+        loop.run_until_complete(loop.shutdown_default_executor())
+    finally:
+        loop.close()
 
 
 def retained_execution(error: BaseException) -> ExecutionResult | None:

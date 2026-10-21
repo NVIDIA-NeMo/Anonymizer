@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
-from contextvars import copy_context
 from copy import deepcopy
 from dataclasses import replace
 from time import perf_counter
@@ -148,7 +147,6 @@ def run_builtin_rewrite(runner: RewriteWorkflow, source: pd.DataFrame, arguments
 
     async def operation(
         pool: SubmitterPool,
-        handoff: Callable[[Callable[[], LocalCompleted | LocalFailure]], LocalCompleted | LocalFailure],
     ) -> ReplacementResult:
         result = await execute_initial_evaluation(
             source,
@@ -162,7 +160,6 @@ def run_builtin_rewrite(runner: RewriteWorkflow, source: pd.DataFrame, arguments
             ),
             runner=runner,
             opaque=opaque,
-            handoff=handoff,
             on_result=captured.append,
         )
         projected = project_detection_redact(result)
@@ -208,7 +205,6 @@ def run_semantic_rewrite(
 
     async def operation(
         pool: SubmitterPool,
-        handoff: Callable[[Callable[[], LocalCompleted | LocalFailure]], LocalCompleted | LocalFailure],
     ) -> ReplacementResult:
         result = await execute_initial_evaluation(
             source,
@@ -221,7 +217,6 @@ def run_semantic_rewrite(
             detection_arguments=detection_arguments,
             runner=runner,
             opaque=opaque,
-            handoff=handoff,
         )
         return project_detection_redact(result)
 
@@ -234,7 +229,6 @@ def run_semantic_rewrite(
 
     async def rewrite_detected(
         pool: SubmitterPool,
-        handoff: Callable[[Callable[[], LocalCompleted | LocalFailure]], LocalCompleted | LocalFailure],
     ) -> ReplacementResult:
         result = await execute_initial_evaluation(
             detected.dataframe,
@@ -248,7 +242,6 @@ def run_semantic_rewrite(
             ),
             runner=runner,
             opaque=opaque,
-            handoff=handoff,
             predetected=detected,
         )
         return project_detection_redact(result)
@@ -269,7 +262,6 @@ async def execute_initial_evaluation(
     runner: RewriteWorkflow | None = None,
     opaque: bool = False,
     on_result: Callable[[RewriteResult], None] | None = None,
-    handoff: Callable[[Callable[[], LocalCompleted | LocalFailure]], LocalCompleted | LocalFailure] | None = None,
     predetected: EntityDetectionResult | None = None,
 ) -> ExecutionResult:
     """Execute Rewrite lowerings under one admitted source-bound owner.
@@ -462,7 +454,7 @@ async def execute_initial_evaluation(
         if predetected is not None:
             detected = predetected
         else:
-            # Runs inline in the body, on the caller's thread; a nested handoff from here runs inline too.
+            # Runs inline in the body, on the caller's thread, as does any invocation nested in it.
             detected = detect()
         if requests.cancelled:
             return LocalFailure(failure="implementation_exception")
@@ -601,17 +593,11 @@ async def execute_initial_evaluation(
             frame=publication,
         )
 
-    def dispatch(inputs: tuple[AssociationInput, ...], requests: DelegatedRequests) -> LocalCompleted | LocalFailure:
-        if handoff is None:
-            return callback(inputs, requests)
-        context = copy_context()
-        return handoff(lambda: context.run(callback, inputs, requests))
-
     result = await _execute_frame_plan(
         prepared=prepared,
         capabilities=tuple(capabilities),
         policies=tuple(policies),
-        callback=dispatch,
+        callback=callback,
         pool=pool,
         borrowed_loop=loop,
         limits=replace(limits, max_runtime_artifacts=limits.max_runtime_artifacts + (20 * size if map_ids else 0)),

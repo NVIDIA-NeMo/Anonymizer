@@ -8,8 +8,7 @@ DataDesigner keeps its own transport, retries and scheduling.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
-from contextvars import copy_context
+from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from typing import Any, cast
 
@@ -25,7 +24,7 @@ from anonymizer.engine.detection.detection_workflow import (
 from anonymizer.engine.detection.postprocess import EntitySpan
 from anonymizer.engine.detection.run_arguments import detection_run_arguments
 from anonymizer.engine.graph_sdk._execution_delegated import drive
-from anonymizer.engine.graph_sdk._execution_values import DelegatedRequests, LocalCompleted, LocalFailure
+from anonymizer.engine.graph_sdk._execution_values import DelegatedRequests, LocalCompleted
 from anonymizer.engine.graph_sdk._graph_values import ArtifactRef, DatumId
 from anonymizer.engine.graph_sdk.capabilities import FrozenConfig
 from anonymizer.engine.graph_sdk.requests import (
@@ -58,17 +57,8 @@ class DetectionRedactInvocation:
     semantic_slots: Mapping[str, int] | None = None
     semantic_transform_slot: int | None = None
     semantic_entry_slot: int | None = None
-    handoff: Callable[[Callable[[], LocalCompleted | LocalFailure]], LocalCompleted | LocalFailure] | None = None
 
-    def run(self, inputs: tuple[AssociationInput, ...], requests: DelegatedRequests) -> LocalCompleted | LocalFailure:
-        context = copy_context()
-        return (
-            self._run(inputs, requests)
-            if self.handoff is None
-            else self.handoff(lambda: context.run(self._run, inputs, requests))
-        )
-
-    def _run(self, inputs: tuple[AssociationInput, ...], requests: DelegatedRequests) -> LocalCompleted:
+    def run(self, inputs: tuple[AssociationInput, ...], requests: DelegatedRequests) -> LocalCompleted:
         if any(
             type(item.association) is not SemanticAssociation
             or len(item.inputs) != 1

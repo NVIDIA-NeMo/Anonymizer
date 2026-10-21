@@ -223,11 +223,10 @@ thread that called them, at every depth, including built-in code reached through
 bodies, and every DataDesigner `create()`/`preview()` call and wait, run there too.
 Your code therefore sees that thread's thread-locals and can install signal handlers
 exactly when that thread is the main thread, and Ctrl-C reaches the run as in 0.4.0.
-Some Anonymizer internals still run on other threads: the per-call
-`anonymizer-graph-host` event-loop thread does bookkeeping such as stage completion,
-entity grouping and schema parsing, and DataDesigner's engine threads run
-Anonymizer's column generators and send model requests, as in 0.4.0. None of
-them runs your code. Each call runs in a copy of the caller's
+The graph's own bookkeeping runs on that thread as well, on a private event loop that
+leaves a notebook's or `asyncio.run` caller's running loop untouched; only
+DataDesigner's engine threads run Anonymizer's column generators and send model
+requests, as in 0.4.0, and none of them runs your code. Each call runs in a copy of the caller's
 context variables: values set before the call are visible inside, and values set
 inside are not visible to the caller afterwards.
 

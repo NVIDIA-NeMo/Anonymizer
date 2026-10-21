@@ -6,8 +6,8 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import sys
 from collections.abc import Callable, Coroutine
-from concurrent.futures import Future
 from contextlib import suppress
 from contextvars import ContextVar, copy_context
 from dataclasses import replace
@@ -47,6 +47,7 @@ from anonymizer.engine.graph_sdk._request_driver import await_completion_or_canc
 from anonymizer.engine.graph_sdk._workflow_values import SubgraphNode
 from anonymizer.engine.graph_sdk.blocking import (
     _NOT_STARTED,
+    _WORKER,
     BlockingAffinity,
     BlockingPool,
     _BlockingAdapter,
@@ -176,27 +177,73 @@ class WorkerDelegatedSubmitter(_BlockingAdapter):
         reject(EffectCode.UNSUPPORTED)
 
 
-class CallerChannel:
-    """The synchronous caller's queue, seen from the host loop: ``channel(call)`` runs ``call`` on that thread."""
-
-    __slots__ = ("_put",)
-
-    def __init__(self, put: Callable[[Callable[[], Any]], Future[Any]]) -> None:
-        self._put = put
-
-    def __call__(self, call: Callable[[], Any]) -> Future[Any]:
-        return self._put(call)
+# Python 3.14 tracks the executing task per thread, not per loop: a task of a second loop cannot start while a
+# task of the first is executing on the same thread. Swapping the thread's current task alongside the running-loop
+# marker restores the 3.11-3.13 behaviour; ``_swap_current_task`` only accepts the loop currently marked running.
+_SWAP_TASK = sys.version_info >= (3, 14)
 
 
-SubmitterPool = BlockingPool | CallerChannel
+def _swap_task(loop: asyncio.AbstractEventLoop | None, task: asyncio.Task[Any] | None) -> asyncio.Task[Any] | None:
+    from asyncio import tasks
+
+    return tasks._swap_current_task(loop, task) if _SWAP_TASK and loop is not None else None  # type: ignore[attr-defined]
 
 
-class CallerThreadSubmitter(PrivateValue):
-    """Run the synchronous body on the thread that serves ``channel``, with the borrowed loop as host loop.
+class InlineChannel:
+    """The synchronous caller seen from its private loop: ``run(call)`` runs a body inline on the caller's thread.
 
-    ``channel(call)`` queues ``call`` for that thread and returns a future for its result. The submission
-    keeps ownership until the queued call has actually returned, also when the observer is cancelled.
+    The body sees the caller's own running-loop marker (and current task), never the private loop. A
+    KeyboardInterrupt or SystemExit raised in a body is kept, the invocation is cancelled, and the kernel
+    re-raises that same exception once the private loop has settled.
     """
+
+    __slots__ = ("interrupted", "outer", "outer_task", "root", "worker")
+
+    def __init__(self) -> None:
+        self.outer: asyncio.AbstractEventLoop | None = None
+        self.outer_task: asyncio.Task[Any] | None = None
+        self.root: asyncio.Task[Any] | None = None
+        self.interrupted: BaseException | None = None
+        self.worker = False
+
+    def enter(self) -> None:
+        """Set the caller's loop marker (and, on 3.14, task) aside; the caller's loop is blocked by this call.
+
+        A caller that is itself a ``BlockingPool`` worker may start this invocation: it needs no pool, so it
+        cannot wait on the worker's own pool.
+        """
+        self.outer = asyncio._get_running_loop()
+        self.outer_task = _swap_task(self.outer, None)
+        asyncio._set_running_loop(None)
+        self.worker, _WORKER.active = getattr(_WORKER, "active", False), False
+
+    def exit(self) -> None:
+        _WORKER.active = self.worker
+        asyncio._set_running_loop(self.outer)
+        _swap_task(self.outer, self.outer_task)
+
+    def run(self, call: Callable[[], Any]) -> Any:
+        own = asyncio._get_running_loop()
+        task = _swap_task(own, self.outer_task)
+        asyncio._set_running_loop(self.outer)
+        try:
+            return call()
+        except (KeyboardInterrupt, SystemExit) as error:
+            if self.interrupted is None:
+                self.interrupted = error
+            if self.root is not None:
+                self.root.cancel()
+            return LocalFailure(failure="implementation_exception")
+        finally:
+            asyncio._set_running_loop(own)
+            _swap_task(own, task)
+
+
+SubmitterPool = BlockingPool | InlineChannel
+
+
+class InlineSubmitter(PrivateValue):
+    """Run the synchronous body inline, on the private loop's (the caller's) thread, through ``channel``."""
 
     execution: ClassVar[Literal["worker"]] = "worker"
 
@@ -204,10 +251,10 @@ class CallerThreadSubmitter(PrivateValue):
         self,
         *,
         callback: Callable[[tuple[AssociationInput, ...], DelegatedRequests], LocalResult],
-        channel: CallerChannel,
+        channel: InlineChannel,
         borrowed_loop: asyncio.AbstractEventLoop,
     ) -> None:
-        if not callable(callback) or inspect.iscoroutinefunction(callback) or not isinstance(channel, CallerChannel):
+        if not callable(callback) or inspect.iscoroutinefunction(callback) or not isinstance(channel, InlineChannel):
             reject(EffectCode.INVALID_TYPE)
         if not isinstance(borrowed_loop, asyncio.AbstractEventLoop):
             reject(EffectCode.INVALID_TYPE)
@@ -229,32 +276,19 @@ class CallerThreadSubmitter(PrivateValue):
         reject(EffectCode.UNSUPPORTED)
 
     async def _run(self, callback: Callable[[], object], before: Callable[[], bool]) -> object:
-        completion = asyncio.wrap_future(self._channel(lambda: callback() if before() else _NOT_STARTED))
-        try:
-            return await asyncio.shield(completion)
-        except asyncio.CancelledError:
-            while not completion.done():
-                try:
-                    await asyncio.shield(completion)
-                except asyncio.CancelledError:
-                    continue
-                except Exception:
-                    break
-            return completion.result()
+        return self._channel.run(callback) if before() else _NOT_STARTED
 
 
-DELEGATED_SUBMITTERS = (WorkerDelegatedSubmitter, CallerThreadSubmitter)
+DELEGATED_SUBMITTERS = (WorkerDelegatedSubmitter, InlineSubmitter)
 
 
-def delegated_submitter_of(value: object) -> WorkerDelegatedSubmitter | CallerThreadSubmitter | None:
+def delegated_submitter_of(value: object) -> WorkerDelegatedSubmitter | InlineSubmitter | None:
     """``value`` when it is exactly one of the owner-borrowing submitters, else None."""
-    return (
-        cast(WorkerDelegatedSubmitter | CallerThreadSubmitter, value) if type(value) in DELEGATED_SUBMITTERS else None
-    )
+    return cast(WorkerDelegatedSubmitter | InlineSubmitter, value) if type(value) in DELEGATED_SUBMITTERS else None
 
 
 class _WorkerBorrow(PrivateValue):
-    def __init__(self, owner: _DelegatedOwner, adapter: WorkerDelegatedSubmitter | CallerThreadSubmitter) -> None:
+    def __init__(self, owner: _DelegatedOwner, adapter: WorkerDelegatedSubmitter | InlineSubmitter) -> None:
         self.owner = owner
         self.adapter = adapter
         self.loop = adapter.borrowed_loop
@@ -731,7 +765,7 @@ class _DelegatedOwner(PrivateValue):
         return final
 
     async def ready_operations_many(self, associations: tuple[SemanticAssociation, ...]) -> tuple[tuple[int, ...], ...]:
-        """Coalesce loop handoffs while checking each source against the live owner."""
+        """Coalesce bookkeeping calls while checking each source against the live owner."""
         self._check_submission()
         if type(associations) is not tuple:
             reject(EffectCode.INVALID_TYPE)
@@ -936,7 +970,7 @@ class _DelegatedOwner(PrivateValue):
         finally:
             self.worker_calls.discard(task)
 
-    async def _submit_worker(self, adapter: WorkerDelegatedSubmitter | CallerThreadSubmitter) -> LocalResult:
+    async def _submit_worker(self, adapter: WorkerDelegatedSubmitter | InlineSubmitter) -> LocalResult:
         borrow = _WorkerBorrow(self, adapter)
         self.worker_borrow = borrow
         context = copy_context()
@@ -946,7 +980,7 @@ class _DelegatedOwner(PrivateValue):
             return context.run(adapter._callback, self.inputs, borrow)
 
         try:
-            if isinstance(adapter, CallerThreadSubmitter):
+            if isinstance(adapter, InlineSubmitter):
                 value = await adapter._run(call, lambda: not self.cancelled)
             else:
                 value = await _BlockingInvocation(adapter, call).run(lambda: not self.cancelled, self)
