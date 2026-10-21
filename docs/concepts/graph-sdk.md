@@ -154,9 +154,10 @@ requests; an empty inventory does not mean the callback performed no external
 work. Inspection reports unknown totals and rejects hard-request-budget support.
 A selected hard request budget is rejected before effects. The private profile
 also rejects supplied execution limits it cannot guarantee. Its one callback
-uses existing worker admission and draining. The synchronous facade hands injected
-callbacks back to their original caller thread and context, including when that
-thread already has an event loop; caller-owned thread-affine resources stay valid.
+uses existing worker admission and draining. The synchronous facade runs injected
+callbacks on the thread that called the public entry point, with a copy of its
+context variables, including when that thread already has an event loop;
+caller-owned thread-affine resources stay valid.
 Cancellation does not establish
 that hidden remote work stopped.
 
@@ -193,7 +194,8 @@ semantic lineage or Protected claim; the existing stage controllers remain in us
 When an injected runner delegates to a builtin Rewrite runner (for example
 `super().run(...)` or a wrapper calling a builtin's `run`), that builtin runs as a
 separate, nested invocation with its own owner, as on main, rather than as part of
-the enclosing invocation.
+the enclosing invocation. Its body, including its DataDesigner calls, runs on the
+caller's thread like every other synchronous body.
 
 Public `Anonymizer.evaluate()` admits a fresh execution-only invocation for its
 whole-frame judge sequence, including injected evaluation runners. It preserves
@@ -211,6 +213,20 @@ through passthrough partitions; saved-result evaluation uses the same joins.
 These positions describe host row correspondence, not graph artifact identity.
 Legacy injected results may explicitly omit positions and retain their existing
 unassociated compatibility path.
+
+## Threads and context variables
+
+`Anonymizer.run()`, `preview()` and `evaluate()` run all Anonymizer code on the
+thread that called them: built-in detection, replacement and Rewrite, every
+DataDesigner call they make, and any code you supply (subclass overrides, injected
+runners and detectors, adapter `run_workflow` overrides), at every depth, including
+built-in code reached through `super()`. Your code therefore sees that thread's
+thread-locals and can install signal handlers exactly when that thread is the main
+thread, and Ctrl-C reaches the run as in 0.4.0. The library's own thread only hosts
+an event loop and runs no Anonymizer code; DataDesigner still sends model requests
+from its own engine threads, as in 0.4.0. Each call runs in a copy of the caller's
+context variables: values set before the call are visible inside, and values set
+inside are not visible to the caller afterwards.
 
 ## Saved results and current evidence
 

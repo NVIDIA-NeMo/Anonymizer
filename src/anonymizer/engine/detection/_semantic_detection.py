@@ -624,7 +624,7 @@ async def execute_detection(
     arguments: dict[str, Any],
     pool: SubmitterPool,
     captured: list[EntityDetectionResult],
-    handoff: Callable[..., Any] | None,
+    handoff: Callable[..., Any],
 ) -> ExecutionResult:
     from anonymizer.engine.harness.kernel import _execute_frame_plan, _frame_implementation, _prepare_frame_plan
 
@@ -838,9 +838,7 @@ async def execute_detection(
 
     def dispatch(inputs: tuple[AssociationInput, ...], requests: DelegatedRequests) -> LocalCompleted:
         context = copy_context()
-        return (
-            callback(inputs, requests) if handoff is None else handoff(lambda: context.run(callback, inputs, requests))
-        )
+        return handoff(lambda: context.run(callback, inputs, requests))
 
     return await _execute_frame_plan(
         prepared=prepared,

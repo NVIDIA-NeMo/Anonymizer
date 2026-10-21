@@ -4,7 +4,7 @@
 
 A builtin runner on a builtin adapter is lowered natively into the graph. A caller's runner, or a
 builtin runner on an adapter whose ``run_workflow`` the caller replaced, runs opaque, as in the
-release: on its own callback thread, with no graph claim on its DataDesigner work.
+release: with no graph claim on its DataDesigner work. Either route runs on the caller's thread.
 """
 
 from __future__ import annotations
