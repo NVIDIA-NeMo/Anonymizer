@@ -179,8 +179,13 @@ def _run_sync_profile(
     calls: Queue[tuple[Callable[[], Any], Future[Any]] | tuple[None, None]] = Queue()
     serving = get_ident()
 
+    # Every queued body's future until it settles, so a Ctrl-C can settle what it interrupted.
+    outstanding: set[Future[Any]] = set()
+
     def put(call: Callable[[], Any]) -> Future[Any]:
         returned: Future[Any] = Future()
+        outstanding.add(returned)
+        returned.add_done_callback(outstanding.discard)
         calls.put((call, returned))
         return returned
 
@@ -194,24 +199,26 @@ def _run_sync_profile(
         try:
             # The timeout only keeps Ctrl-C responsive where a blocking get is not interruptible.
             callback, returned = calls.get(timeout=0.1)
+            if callback is None or returned is None:
+                return
+            if interrupted is not None:
+                returned.set_result(LocalFailure(failure="implementation_exception"))
+                return
+            try:
+                returned.set_result(callback())
+            except Exception as error:
+                returned.set_exception(error)
         except Empty:
             return
-        if callback is None or returned is None:
-            return
-        if interrupted is not None:
-            returned.set_result(LocalFailure(failure="implementation_exception"))
-            return
-        try:
-            returned.set_result(callback())
-        except Exception as error:
-            returned.set_exception(error)
         except BaseException:
             if cancellation:
                 loop, task = cancellation[0]
                 loop.call_soon_threadsafe(task.cancel)
-            if not returned.done():
-                # Ctrl-C can land after the body's result was already set.
-                returned.set_result(LocalFailure(failure="implementation_exception"))
+            # Only this thread runs bodies, so nothing is running now: settle whatever the
+            # interrupt left waiting, including a body taken from the queue but not yet settled.
+            for pending in list(outstanding):
+                if not pending.done():
+                    pending.set_result(LocalFailure(failure="implementation_exception"))
             raise
 
     async def run() -> ReplacementResult:
