@@ -84,6 +84,7 @@ def test_interrupt_between_take_and_settle_exits(tmp_path: Path, point: str, met
 def test_interrupt_settles_queued_bodies_once() -> None:
     """A body still queued when an earlier body is interrupted is settled once, as failed."""
     import asyncio
+    from types import SimpleNamespace
     from typing import Any
 
     from anonymizer.engine.graph_sdk._execution_values import LocalFailure
@@ -98,7 +99,10 @@ def test_interrupt_settles_queued_bodies_once() -> None:
         first = channel(interrupted)
         second = channel(lambda: "ran")
         queued.append(second)
-        return await asyncio.gather(asyncio.wrap_future(first), asyncio.wrap_future(second))
+        await asyncio.gather(asyncio.wrap_future(first), asyncio.wrap_future(second))
+        # Settled bodies resolve as failures, so the operation can finish before the stop request
+        # arrives; like every production operation it then returns a result carrying its execution.
+        return SimpleNamespace(_execution=None)
 
     with pytest.raises(KeyboardInterrupt):
         _run_sync_profile(operation)
