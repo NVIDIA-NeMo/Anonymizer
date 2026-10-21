@@ -13,7 +13,10 @@ from __future__ import annotations
 import json
 from typing import Any
 
+import pytest
+
 from anonymizer.engine.constants import (
+    COL_ADMISSION_RESULTS,
     COL_AUGMENTED_ENTITIES,
     COL_DETECTED_ENTITIES,
     COL_INITIAL_TAGGED_TEXT,
@@ -23,25 +26,38 @@ from anonymizer.engine.constants import (
     COL_SEED_DETECTION_RESULT,
     COL_SEED_ENTITIES,
     COL_SEED_ENTITIES_JSON,
-    COL_SEED_VALIDATION_CANDIDATES,
     COL_TAG_NOTATION,
     COL_TAGGED_TEXT,
     COL_TEXT,
-    COL_VALIDATED_ENTITIES,
     COL_VALIDATED_SEED_ENTITIES,
     COL_VALIDATION_CANDIDATES,
     COL_VALIDATION_DECISIONS,
+    COL_VALIDATION_INVENTORIES,
     RECORD_ID_COLUMN,
 )
 from anonymizer.engine.detection.custom_columns import (
     _parse_entity_spans,
-    apply_validation_and_finalize,
+    admit_validation_decisions,
     apply_validation_to_seed_entities,
-    enrich_validation_decisions,
+    finalize_entities,
     merge_and_build_candidates,
     parse_detected_entities,
 )
-from anonymizer.engine.schemas import DetectionResult
+from anonymizer.engine.schemas import (
+    AdmissionResults,
+    AdmissionRoute,
+    DetectionResult,
+    EffectiveLabelPolicy,
+    Observation,
+    RawValidationDecisionSchema,
+    SourceTextRef,
+    SourceView,
+    ValidationChoice,
+    ValidationInventoryEntry,
+    ValidationRequestDecisionSet,
+    ValidationRequestDecisionSets,
+    ValidationRequestInventory,
+)
 
 
 def test_parse_entity_spans_handles_malformed_payload() -> None:
@@ -59,6 +75,67 @@ def test_parse_entity_spans_defaults_missing_keys() -> None:
 
 def _raw(entities: list[dict[str, Any]]) -> str:
     return json.dumps({"entities": entities})
+
+
+def _validation_row(
+    *,
+    text: str,
+    label: str = "first_name",
+    decision: ValidationChoice = ValidationChoice.keep,
+    proposed_label: str = "",
+    label_policy: EffectiveLabelPolicy | None = None,
+) -> dict[str, Any]:
+    source_ref = SourceTextRef(record_id="record-1", field_id=COL_TEXT)
+    observation = Observation(
+        detection_result_id="r1",
+        observation_id="o1",
+        source_text_ref=source_ref,
+        value=text,
+        label=label,
+        start_position=0,
+        end_position=len(text),
+        source_kind="initial_detector",
+        source_instance="gliner-pii-detector",
+        admission_route=AdmissionRoute.llm_validation,
+        native_score=0.9,
+    )
+    detection_result = DetectionResult(
+        detection_result_id="r1",
+        source_view=SourceView(source_text_ref=source_ref, start_position=0, end_position=len(text)),
+        source_kind=observation.source_kind,
+        source_instance=observation.source_instance,
+        observations=(observation,),
+    )
+    inventory = ValidationRequestInventory(
+        request_id="validation-request-1",
+        source_text_ref=source_ref,
+        context_view=detection_result.source_view,
+        source_context=text,
+        effective_label_policy=label_policy or EffectiveLabelPolicy(),
+        entries=(
+            ValidationInventoryEntry(
+                alias="c1",
+                observation_ref=observation.ref,
+                value=text,
+                label=label,
+                start_position=0,
+                end_position=len(text),
+            ),
+        ),
+    )
+    return {
+        COL_TEXT: text,
+        COL_SEED_DETECTION_RESULT: detection_result.model_dump(mode="json"),
+        COL_VALIDATION_INVENTORIES: [inventory.model_dump(mode="json")],
+        COL_VALIDATION_DECISIONS: ValidationRequestDecisionSets(
+            responses=(
+                ValidationRequestDecisionSet(
+                    request_id=inventory.request_id,
+                    decisions=(RawValidationDecisionSchema(id="c1", decision=decision, proposed_label=proposed_label),),
+                ),
+            )
+        ).model_dump(mode="json"),
+    }
 
 
 def test_parse_produces_seed_entities_and_notation() -> None:
@@ -149,34 +226,14 @@ def test_merge_filters_denied_augmentation_before_overlap_resolution() -> None:
 
 
 def test_validation_reclassification_to_excluded_label_is_filtered_before_augmentation() -> None:
-    row: dict[str, Any] = {
-        COL_TEXT: "San Diego",
-        COL_SEED_ENTITIES: {
-            "entities": [
-                {
-                    "id": "country_0_9",
-                    "value": "San Diego",
-                    "label": "country",
-                    "start_position": 0,
-                    "end_position": 9,
-                    "score": 0.95,
-                    "source": "detector",
-                }
-            ]
-        },
-        COL_VALIDATED_ENTITIES: {
-            "decisions": [
-                {
-                    "id": "country_0_9",
-                    "value": "San Diego",
-                    "label": "country",
-                    "decision": "reclass",
-                    "proposed_label": "city",
-                    "reason": "San Diego is a city",
-                }
-            ]
-        },
-    }
+    row = _validation_row(
+        text="San Diego",
+        label="country",
+        decision=ValidationChoice.reclass,
+        proposed_label="city",
+        label_policy=EffectiveLabelPolicy(excluded_labels=(" CITY ",)),
+    )
+    admit_validation_decisions(row)
 
     result = apply_validation_to_seed_entities(row, excluded_entity_labels=[" CITY "])
 
@@ -212,159 +269,93 @@ def test_merge_filters_excluded_validated_seed_entities() -> None:
 
 
 def test_finalize_filters_reclassification_to_excluded_label() -> None:
-    row: dict[str, Any] = {
-        COL_TEXT: "San Diego",
-        COL_MERGED_ENTITIES: {
-            "entities": [
-                {
-                    "id": "country_0_9",
-                    "value": "San Diego",
-                    "label": "country",
-                    "start_position": 0,
-                    "end_position": 9,
-                    "score": 0.95,
-                    "source": "augmenter",
-                }
-            ]
-        },
-        COL_VALIDATED_ENTITIES: {
-            "decisions": [
-                {
-                    "id": "country_0_9",
-                    "value": "San Diego",
-                    "label": "country",
-                    "decision": "reclass",
-                    "proposed_label": "city",
-                    "reason": "San Diego is a city",
-                }
-            ]
-        },
-    }
+    row = _validation_row(text="San Diego", label="country", decision=ValidationChoice.reclass, proposed_label="city")
+    admit_validation_decisions(row)
+    apply_validation_to_seed_entities(row)
+    row[COL_AUGMENTED_ENTITIES] = {"entities": []}
+    merge_and_build_candidates(row)
 
-    result = apply_validation_and_finalize(row, excluded_entity_labels=["city"])
+    result = finalize_entities(row, excluded_entity_labels=["city"])
 
     assert result[COL_DETECTED_ENTITIES]["entities"] == []
     assert result[COL_TAGGED_TEXT] == "San Diego"
 
 
 def test_finalize_filters_reclassification_outside_explicit_label_set() -> None:
-    row: dict[str, Any] = {
-        COL_TEXT: "San Diego",
-        COL_MERGED_ENTITIES: {
-            "entities": [
-                {
-                    "id": "country_0_9",
-                    "value": "San Diego",
-                    "label": "country",
-                    "start_position": 0,
-                    "end_position": 9,
-                    "score": 0.95,
-                    "source": "augmenter",
-                }
-            ]
-        },
-        COL_VALIDATED_ENTITIES: {
-            "decisions": [
-                {
-                    "id": "country_0_9",
-                    "value": "San Diego",
-                    "label": "country",
-                    "decision": "reclass",
-                    "proposed_label": "city",
-                    "reason": "San Diego is a city",
-                }
-            ]
-        },
-    }
+    row = _validation_row(text="San Diego", label="country", decision=ValidationChoice.reclass, proposed_label="city")
+    admit_validation_decisions(row)
+    apply_validation_to_seed_entities(row)
+    row[COL_AUGMENTED_ENTITIES] = {"entities": []}
+    merge_and_build_candidates(row)
 
-    result = apply_validation_and_finalize(row, allowed_entity_labels=["country"])
+    result = finalize_entities(row, allowed_entity_labels=["country"])
 
     assert result[COL_DETECTED_ENTITIES]["entities"] == []
     assert result[COL_TAGGED_TEXT] == "San Diego"
 
 
-def test_enrich_validation_decisions_adds_value_from_candidates() -> None:
-    row = {
-        COL_VALIDATION_DECISIONS: {
-            "decisions": [
-                {"id": "id1", "decision": "keep", "proposed_label": "", "reason": "direct identifier"},
-                {"id": "id2", "decision": "drop", "proposed_label": "", "reason": "placeholder"},
-            ]
-        },
-        COL_SEED_VALIDATION_CANDIDATES: {
-            "candidates": [
-                {"id": "id1", "value": "Alice", "label": "first_name", "context_before": "", "context_after": ""},
-                {"id": "id2", "value": "name", "label": "first_name", "context_before": "", "context_after": ""},
-            ]
-        },
-    }
-    result = enrich_validation_decisions(row)
-    decisions = result[COL_VALIDATED_ENTITIES]["decisions"]
-    assert decisions[0]["value"] == "Alice"
-    assert decisions[1]["value"] == "name"
+def test_validation_rejection_is_not_replayed_against_augmenter_observation() -> None:
+    row = _validation_row(text="Alice", decision=ValidationChoice.drop)
+
+    admit_validation_decisions(row)
+    apply_validation_to_seed_entities(row)
+    assert row[COL_VALIDATED_SEED_ENTITIES] == {"entities": []}
+
+    row[COL_AUGMENTED_ENTITIES] = {"entities": [{"value": "Alice", "label": "first_name"}]}
+    merge_and_build_candidates(row)
+    finalize_entities(row)
+
+    assert [(item["value"], item["source"]) for item in row[COL_DETECTED_ENTITIES]["entities"]] == [
+        ("Alice", "augmenter")
+    ]
+    assert COL_ADMISSION_RESULTS in row
 
 
-def test_enrich_validation_decisions_ignores_numeric_value_echo() -> None:
-    row = {
-        COL_VALIDATION_DECISIONS: {
-            "decisions": [
-                {
-                    "id": "id1",
-                    "value": 42,
-                    "decision": "keep",
-                    "proposed_label": "",
-                    "reason": "numeric identifier",
-                }
-            ]
-        },
-        COL_SEED_VALIDATION_CANDIDATES: {
-            "candidates": [
-                {
-                    "id": "id1",
-                    "value": "42",
-                    "label": "account_number",
-                    "context_before": "",
-                    "context_after": "",
-                }
-            ]
-        },
-    }
+def test_admit_validation_decisions_only_publishes_admission_results() -> None:
+    row = _validation_row(text="Alice")
+    input_columns = set(row)
 
-    result = enrich_validation_decisions(row)
+    result = admit_validation_decisions(row)
 
-    decisions = result[COL_VALIDATED_ENTITIES]["decisions"]
-    assert len(decisions) == 1
-    assert decisions[0]["value"] == "42"
+    assert set(result) - input_columns == {COL_ADMISSION_RESULTS}
+    admissions = AdmissionResults.model_validate(result[COL_ADMISSION_RESULTS])
+    assert len(admissions.results) == 1
+    assert (
+        admissions.results[0].observation_ref
+        == DetectionResult.model_validate(row[COL_SEED_DETECTION_RESULT]).observations[0].ref
+    )
+    assert admissions.results[0].effective_label == "first_name"
 
 
-def test_enrich_validation_decisions_filters_unknown_ids() -> None:
-    row = {
-        COL_VALIDATION_DECISIONS: {"decisions": [{"id": "unknown_id", "decision": "keep", "proposed_label": ""}]},
-        COL_SEED_VALIDATION_CANDIDATES: {"candidates": []},
-    }
-    result = enrich_validation_decisions(row)
-    assert result[COL_VALIDATED_ENTITIES]["decisions"] == []
+@pytest.mark.parametrize("column", [COL_SEED_DETECTION_RESULT, COL_VALIDATION_INVENTORIES, COL_VALIDATION_DECISIONS])
+def test_admit_validation_decisions_requires_lifecycle_columns(column: str) -> None:
+    row = _validation_row(text="Alice")
+    del row[column]
+
+    with pytest.raises(KeyError, match=column):
+        admit_validation_decisions(row)
 
 
-def test_enrich_validation_decisions_ignores_non_dict_validation_payload() -> None:
-    row = {
-        COL_VALIDATION_DECISIONS: "unexpected-string-payload",
-        COL_SEED_VALIDATION_CANDIDATES: {
-            "candidates": [
-                {"id": "id1", "value": "Alice", "label": "first_name", "context_before": "", "context_after": ""}
-            ]
-        },
-    }
-    result = enrich_validation_decisions(row)
-    assert result[COL_VALIDATED_ENTITIES] == {"decisions": []}
+def test_admission_projection_uses_source_value_not_model_echo() -> None:
+    row = _validation_row(text="Alice")
+    row[COL_VALIDATION_DECISIONS]["responses"][0]["decisions"][0]["value"] = 42
+
+    admit_validation_decisions(row)
+    apply_validation_to_seed_entities(row)
+
+    entity = row[COL_VALIDATED_SEED_ENTITIES]["entities"][0]
+    assert (entity["value"], entity["label"], entity["start_position"], entity["end_position"]) == (
+        "Alice",
+        "first_name",
+        0,
+        5,
+    )
 
 
-def test_apply_validation_and_finalize_handles_malformed_merged_entities() -> None:
-    row: dict[str, Any] = {
-        COL_TEXT: "Alice works at Acme.",
-        COL_MERGED_ENTITIES: ["bad-shape"],
-        COL_VALIDATED_ENTITIES: {"decisions": []},
-    }
+def test_finalize_entities_handles_malformed_merged_entities() -> None:
+    row = _validation_row(text="Alice works at Acme.")
+    admit_validation_decisions(row)
+    row[COL_MERGED_ENTITIES] = ["bad-shape"]
 
-    result = apply_validation_and_finalize(row)
+    result = finalize_entities(row)
     assert result[COL_DETECTED_ENTITIES] == {"entities": []}

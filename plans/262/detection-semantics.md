@@ -84,7 +84,7 @@ records, and destructive conflict resolution occurs at several points.
 | Current behavior                                                                                  | Failure it permits                                                                                                                                                                                                                                                                               | Concrete example                                                                                                                                                                                                                                                   | Proposed resolution                                                                                                                                                                                                                                  |
 | ------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | IDs are constructed from label and offsets                                                        | Reclassification or exact-candidate coalescing can change the representative identity used to find a decision                                                                                                                                                                                    | `Seattle` is detected as `country_0_7` and reclassified as `city`; its ID still encodes `country`, while a later reconstructed `city_0_7` cannot correlate to the original decision.                                                                               | Give every original observation an immutable reference within its `DetectionResult`, independent of mutable semantic fields, then use short request-local aliases only for validation.                                                               |
-| The same decision payload is looked up again after augmentation by a constructed entity ID        | A decision can govern an observation that was not included in the validation request when a later origin produces the same constructed ID. This is expected to be an edge case, but it violates a clean lifecycle invariant and becomes important for independently configured detection routes. | A GLiNER observation is dropped by validation. A later regex backend independently emits the same label and bounds under a rule configured to bypass LLM validation. Replaying the GLiNER decision would incorrectly veto the accepted regex observation.          | Consume each decision exactly once into the admission result of the observation in its request. A later observation follows its own admission route. Exact equivalent accepted claims may coalesce only after those independent admission decisions. |
+| The same decision payload is looked up again after augmentation by a constructed entity ID        | A decision can govern an observation that was not included in the validation request when a later origin produces the same constructed ID. Its production frequency is unmeasured; it changes current augmenter behavior as well as independently configured detection routes. | A GLiNER observation is dropped by validation. A later regex backend independently emits the same label and bounds under a rule configured to bypass LLM validation. Replaying the GLiNER decision would incorrectly veto the accepted regex observation.          | Consume each decision exactly once into the admission result of the observation in its request. A later observation follows its own admission route. Exact equivalent accepted claims may coalesce only after those independent admission decisions. |
 | Chunk responses are merged against a row-wide candidate inventory                                 | A response can decide a candidate assigned to a different validation request                                                                                                                                                                                                                     | Chunk A owns `c1` but returns `c2=drop`; chunk B owns `c2` and returns `c2=keep`. Row-wide lookup plus first-wins merging allows chunk A to override chunk B.                                                                                                      | Bind aliases and decisions to the exact dispatched request inventory; wrong-request aliases have no authority, and response ordering is independent of completion order.                                                                             |
 | Raw origins and accepted origins share the same entity representation                             | A rejected or undecided origin can accidentally contribute accepted provenance                                                                                                                                                                                                                   | If the validator omits a detector candidate, the current fallback keeps the same `EntitySpan`; later merging cannot tell that it was retained only as a privacy-safe fallback.                                                                                     | Keep observations, validation results, and admitted candidates as distinct states; fallback protection preserves only the exact observed span and grants no accepted provenance.                                                                     |
 | Exact identity is compared inconsistently                                                         | Equivalent labels may fail to coalesce and lose accepted provenance                                                                                                                                                                                                                              | Detector label `token` and augmenter label `TOKEN` cover the same bounds, but case-sensitive comparison treats them as competing spans and retains only one representative.                                                                                        | Define semantic identity as normalized label plus exact source bounds, then coalesce equivalent eligible claims without discarding accepted origins.                                                                                                 |
@@ -1461,7 +1461,7 @@ rewrite mode, workflow export, and chunked validator pools.
 
 ### Behavioral validation
 
-Run RAT-Bench, Nemotron-PII, and OpenPII before and after the lifecycle change,
+Compare `main` with this branch on RAT-Bench, Nemotron-PII, and OpenPII,
 using the same sampled records, model configuration, prompts except where this
 plan intentionally changes them, and scoring procedure for each comparison.
 For the unresolved augmenter-input decision, run both the seed-tagged and
@@ -1487,13 +1487,35 @@ assigned aliases;
 - augmentation output completeness and token usage as requested entity count
 increases;
 - keep/drop/reclass agreement and unresolved-decision handling;
-- per-label precision and recall;
+- overall and per-label precision and recall;
+- validator-drop rediscovery: count final entities whose only accepted origins
+  are from the augmenter and whose normalized label and exact canonical source
+  bounds match a GLiNER observation rejected with `validator_drop` in the same
+  record field. Count each final entity once, not each supporting observation;
+  fallback lineage does not count as an accepted origin. Report the count and
+  its share of final entities and distinct validator-dropped seed claims;
+- precision of those rediscovered entities against ground truth, alongside the
+  overall precision and recall comparison with `main`;
 - candidate coverage;
 - occurrence-level recall for repeated sensitive values;
 - false positives on ambiguous repeated strings such as person-name and month
 uses of `May`;
 - prompt and completion tokens;
 - latency and failed-record rate.
+
+Validator drops are no longer replayed after augmentation. An independently
+admitted augmenter match of a dropped GLiNER claim can therefore survive
+finalization, subject to label eligibility and final overlap resolution. This
+can recover validator false negatives or reintroduce false positives. Its
+frequency and benchmark impact are not yet measured; do not assume it is rare.
+Use the measurements above to decide whether to show the augmenter rejected
+spans as already reviewed or introduce an explicit policy for exact matches
+between rejected detector claims and accepted augmenter claims. A high count
+alone does not establish a precision problem; score those entities first.
+Changing which source wins such disagreements is a deliberate policy decision,
+not a reason to restore implicit decision replay. Carry this behavior note and
+the benchmark results into PR #305's description when the implementation is
+pushed.
 
 The lifecycle change advances only if privacy quality does not regress
 materially. Any increase in candidates, tokens, or model calls must be

@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+SOURCE_KIND_AUGMENTER = "augmenter"
+
 # ---------------------------------------------------------------------------
 # Column names for the anonymizer pipeline
 #
@@ -39,10 +41,10 @@ COL_VALIDATION_CANDIDATES = "_validation_candidates"
 # Step 5: LLM validation
 COL_VALIDATION_SKELETON = "_validation_skeleton"
 COL_VALIDATION_DECISIONS = "_validation_decisions"
-COL_VALIDATED_ENTITIES = "_validated_entities"
 COL_VALIDATION_INVENTORIES = "_validation_request_inventories"
+COL_ADMISSION_RESULTS = "_admission_results"
 
-# Step 6: apply_validation_and_finalize
+# Step 6: finalize_entities
 COL_DETECTED_ENTITIES = "_detected_entities"
 COL_TAGGED_TEXT = "tagged_text"
 COL_ENTITIES_BY_VALUE = "_entities_by_value"

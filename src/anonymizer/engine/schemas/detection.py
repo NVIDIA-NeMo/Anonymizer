@@ -250,6 +250,19 @@ class AdmissionResult(FrozenStrictModel):
         return self
 
 
+class AdmissionResults(FrozenStrictModel):
+    """Ordered terminal admission outcomes for one detection execution."""
+
+    results: tuple[AdmissionResult, ...] = ()
+
+    @model_validator(mode="after")
+    def validate_unique_observations(self) -> AdmissionResults:
+        references = [item.observation_ref for item in self.results]
+        if len(references) != len(set(references)):
+            raise ValueError("admission results must contain each observation at most once")
+        return self
+
+
 class AcceptedOrigin(FrozenStrictModel):
     """Explicitly accepted origin retained as candidate provenance."""
 
@@ -380,19 +393,6 @@ class ValidationRequestDecisionSets(FrozenStrictModel):
     """Ordered validator responses for one row's logical validation pass."""
 
     responses: tuple[ValidationRequestDecisionSet, ...] = ()
-
-
-class ValidatedDecisionSchema(RawValidationDecisionSchema):
-    value: str = Field(default="")
-    label: str = Field(default="")
-
-
-class ValidatedDecisionsSchema(BaseModel):
-    decisions: list[ValidatedDecisionSchema] = Field(default_factory=list)
-
-    @classmethod
-    def from_raw(cls, raw: object) -> ValidatedDecisionsSchema:
-        return _parse_raw_wrapper(cls, raw, "decisions")
 
 
 class ValidationSkeletonDecisionSchema(BaseModel):

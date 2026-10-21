@@ -21,6 +21,7 @@ from anonymizer.config.anonymizer_config import Detect as AnonymizerDetectConfig
 from anonymizer.config.models import DetectionModelSelection
 from anonymizer.config.rewrite import PrivacyGoal
 from anonymizer.engine.constants import (
+    COL_ADMISSION_RESULTS,
     COL_AUGMENTED_ENTITIES,
     COL_DETECTED_ENTITIES,
     COL_ENTITIES_BY_VALUE,
@@ -36,7 +37,6 @@ from anonymizer.engine.constants import (
     COL_TAG_NOTATION,
     COL_TAGGED_TEXT,
     COL_TEXT,
-    COL_VALIDATED_ENTITIES,
     COL_VALIDATION_DECISIONS,
     COL_VALIDATION_SKELETON,
     ENTITY_LABEL_EXAMPLES,
@@ -239,8 +239,8 @@ class EntityDetectionWorkflow:
                     drop=True,
                 ),
                 DetectionTransformConfig(
-                    name=COL_VALIDATED_ENTITIES,
-                    operation=DetectionTransformOperation.ENRICH_VALIDATION_DECISIONS,
+                    name=COL_ADMISSION_RESULTS,
+                    operation=DetectionTransformOperation.ADMIT_VALIDATION_DECISIONS,
                 ),
                 DetectionTransformConfig(
                     name=COL_SEED_ENTITIES_JSON,
@@ -265,7 +265,7 @@ class EntityDetectionWorkflow:
                 ),
                 DetectionTransformConfig(
                     name=COL_DETECTED_ENTITIES,
-                    operation=DetectionTransformOperation.APPLY_VALIDATION_AND_FINALIZE,
+                    operation=DetectionTransformOperation.FINALIZE_ENTITIES,
                     excluded_entity_labels=list(excluded_entity_labels or []),
                     allowed_entity_labels=labels if label_config.strict_labels else None,
                 ),
