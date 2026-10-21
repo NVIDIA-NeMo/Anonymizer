@@ -463,8 +463,7 @@ async def execute_initial_evaluation(
         if predetected is not None:
             detected = predetected
         else:
-            # Runs inline in the body. When the body was handed off, this is the serving thread, where a nested
-            # handoff raises RuntimeError instead of deadlocking.
+            # Runs inline in the body, on the caller's thread; a nested handoff from here runs inline too.
             detected = detect()
         if requests.cancelled:
             return LocalFailure(failure="implementation_exception")

@@ -216,15 +216,18 @@ unassociated compatibility path.
 
 ## Threads and context variables
 
-`Anonymizer.run()`, `preview()` and `evaluate()` run all Anonymizer code on the
-thread that called them: built-in detection, replacement and Rewrite, every
-DataDesigner call they make, and any code you supply (subclass overrides, injected
-runners and detectors, adapter `run_workflow` overrides), at every depth, including
-built-in code reached through `super()`. Your code therefore sees that thread's
-thread-locals and can install signal handlers exactly when that thread is the main
-thread, and Ctrl-C reaches the run as in 0.4.0. The library's own thread only hosts
-an event loop and runs no Anonymizer code; DataDesigner still sends model requests
-from its own engine threads, as in 0.4.0. Each call runs in a copy of the caller's
+`Anonymizer.run()`, `preview()` and `evaluate()` run any code you supply (subclass
+overrides, injected runners and detectors, adapter `run_workflow` overrides) on the
+thread that called them, at every depth, including built-in code reached through
+`super()` that calls your code again. Built-in detection, replacement and Rewrite
+bodies, and every DataDesigner `create()`/`preview()` call and wait, run there too.
+Your code therefore sees that thread's thread-locals and can install signal handlers
+exactly when that thread is the main thread, and Ctrl-C reaches the run as in 0.4.0.
+Some Anonymizer internals still run on other threads: the per-call
+`anonymizer-graph-host` event-loop thread does bookkeeping such as stage completion,
+entity grouping and schema parsing, and DataDesigner's engine threads run
+Anonymizer's column generators and send model requests, as in 0.4.0. None of
+them runs your code. Each call runs in a copy of the caller's
 context variables: values set before the call are visible inside, and values set
 inside are not visible to the caller afterwards.
 
