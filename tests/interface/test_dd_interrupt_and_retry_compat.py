@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Ctrl-C during Rewrite and transient provider errors during Substitute, compared with 0.4.0.
+"""Ctrl-C during Rewrite, Redact and nested Substitute, and transient provider errors during Substitute, compared with 0.4.0.
 
 Only the HTTP transport is scripted; DataDesigner and the graph run for real. The expected rows, failed
 records and HTTP call counts were recorded by running the same stubs against main (0.4.0 behavior): DataDesigner
@@ -42,11 +42,13 @@ import httpx, pandas as pd, yaml
 from data_designer.config.models import ModelConfig, ModelProvider
 from data_designer.interface.data_designer import DataDesigner
 
-from anonymizer import Anonymizer, AnonymizerConfig, AnonymizerInput, Rewrite
+from anonymizer import Anonymizer, AnonymizerConfig, AnonymizerInput, Redact, Rewrite, Substitute
+from anonymizer.engine.detection.detection_workflow import EntityDetectionWorkflow
+from anonymizer.engine.ndd.adapter import NddAdapter
 
 signal.signal(signal.SIGINT, signal.default_int_handler)
 log = open(sys.argv[1], "a", buffering=1)
-stage, combined = sys.argv[2], sys.argv[3] == "combined"
+stage, schedule = sys.argv[2], sys.argv[3]
 
 
 def emit(**fields):
@@ -81,6 +83,8 @@ async def slow(model):
 async def handler(request):
     body = json.loads(request.content)
     model, messages = body["model"], json.dumps(body["messages"])
+    if model == "detector" and stage == "detect":
+        return await slow(model)
     if model == "detector":
         name = next(name for name in names if name + " waved." in messages)
         entity = {"text": name, "label": "first_name", "start": 0, "end": len(name), "score": 0.9}
@@ -136,8 +140,21 @@ configs = {
 }
 source = root / "input.csv"
 pd.DataFrame({"text": [name + " waved." for name in names]}).to_csv(source, index=False)
-anonymizer = Anonymizer(data_designer=designer, model_configs=yaml.safe_dump(configs))
-config = AnonymizerConfig(rewrite=Rewrite(use_combined_graph=combined))
+
+
+class Delegating(EntityDetectionWorkflow):
+    def run(self, *args, **kwargs):
+        return super().run(*args, **kwargs)
+
+
+extra = {"detection_workflow": Delegating(NddAdapter(designer))} if schedule.endswith("delegating") else {}
+anonymizer = Anonymizer(data_designer=designer, model_configs=yaml.safe_dump(configs), **extra)
+if schedule.startswith("redact"):
+    config = AnonymizerConfig(replace=Redact())
+elif schedule.startswith("substitute"):
+    config = AnonymizerConfig(replace=Substitute())
+else:
+    config = AnonymizerConfig(rewrite=Rewrite(use_combined_graph=schedule == "combined"))
 try:
     anonymizer.run(config=config, data=AnonymizerInput(source=str(source), text_column="text"))
     emit(event="finished")
@@ -156,11 +173,16 @@ except KeyboardInterrupt as error:
 
 @pytest.mark.parametrize(
     "stage,schedule",
-    [("map", "staged"), ("rewrite", "staged"), ("rewrite", "combined")],
+    [
+        ("map", "staged"),
+        ("rewrite", "staged"),
+        ("rewrite", "combined"),
+        ("detect", "redact"),
+        ("detect", "redact-delegating"),
+        ("map", "substitute-delegating"),
+    ],
 )
-def test_interrupt_during_rewrite_cancels_in_flight_requests_promptly(
-    tmp_path: Path, stage: str, schedule: str
-) -> None:
+def test_interrupt_cancels_in_flight_requests_promptly(tmp_path: Path, stage: str, schedule: str) -> None:
     script, log = tmp_path / "interrupted_rewrite.py", tmp_path / "events.jsonl"
     script.write_text(_INTERRUPTED_REWRITE)
     environment = {**os.environ, "NEMO_TELEMETRY_ENABLED": "false"}
@@ -199,7 +221,7 @@ def test_interrupt_during_rewrite_cancels_in_flight_requests_promptly(
     assert names.count("request") >= 1 and names.count("request") == names.count("cancelled")
     assert "answered" not in names and "finished" not in names
     (outcome,) = [item for item in recorded if item["event"] == "interrupted"]
-    if outcome["tasks"] is not None:  # 0.4.0 attaches no execution record
+    if outcome["tasks"] is not None and schedule in ("staged", "combined"):  # 0.4.0 attaches no execution record
         # Rewrite's model requests are DataDesigner-owned, not graph physical requests: none is claimed as
         # settled, and each of the three interrupted records' tasks closes cancelled.
         assert "success" not in outcome["requests"]

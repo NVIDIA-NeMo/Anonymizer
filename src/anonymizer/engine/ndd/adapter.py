@@ -29,7 +29,6 @@ from data_designer.config.seed_source import LocalFileSeedSource
 from data_designer.config.utils.constants import TRACE_COLUMN_POSTFIX
 from data_designer.config.utils.trace_type import TraceType
 
-from anonymizer.engine.ndd._scheduler_cancellation import install as install_scheduler_cancellation
 from anonymizer.engine.ndd._source_frame import WorkflowSourceFrame
 from anonymizer.engine.ndd._stage_binding import StageBinding
 from anonymizer.engine.ndd.failed_record import FailedRecord as FailedRecord
@@ -401,7 +400,6 @@ class NddAdapter:
                 config_builder.add_column(_normalize_column_for_data_designer(column))
 
             task_traces: list[_TaskTrace] = []
-            install_scheduler_cancellation()
             try:
                 with (
                     self._run_lock,
