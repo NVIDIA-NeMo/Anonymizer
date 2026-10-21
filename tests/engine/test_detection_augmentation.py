@@ -18,13 +18,13 @@ from anonymizer.engine.constants import (
     COL_AUGMENTATION_DETECTION_RESULT,
     COL_AUGMENTED_CANDIDATES,
     COL_AUGMENTED_ENTITIES,
+    COL_DETECTED_ENTITIES,
     COL_INITIAL_TAGGED_TEXT,
     COL_MERGED_ENTITIES,
     COL_RECONCILED_CANDIDATES,
     COL_SEED_ENTITIES_JSON,
     COL_TAG_NOTATION,
     COL_TEXT,
-    COL_VALIDATED_SEED_ENTITIES,
     RECORD_ID_COLUMN,
     SEED_DETECTION_RESULT_ID,
 )
@@ -35,7 +35,7 @@ from anonymizer.engine.detection.augmentation import (
     augment_row,
     augment_row_async,
 )
-from anonymizer.engine.detection.custom_columns import merge_and_build_candidates
+from anonymizer.engine.detection.custom_columns import finalize_entities, merge_and_build_candidates
 from anonymizer.engine.detection.detection_workflow import _get_augment_prompt
 from anonymizer.engine.detection.postprocess import EntitySpan, TagNotation, build_conflict_aware_tagged_text
 from anonymizer.engine.schemas import (
@@ -376,7 +376,7 @@ def test_targeted_retry_preserves_grounded_items_and_records_only_safe_diagnosti
     row: dict[str, Any] = {
         RECORD_ID_COLUMN: "record-1",
         COL_TEXT: text,
-        COL_VALIDATED_SEED_ENTITIES: seed_state,
+        COL_SEED_ENTITIES_JSON: json.dumps(seed_state["entities"]),
     }
     kwargs: dict[str, Any] = {
         "row": row,
@@ -387,7 +387,7 @@ def test_targeted_retry_preserves_grounded_items_and_records_only_safe_diagnosti
         "excluded_entity_labels": [],
     }
     result = asyncio.run(augment_row_async(**kwargs)) if use_async else augment_row(**kwargs)
-    assert result[COL_VALIDATED_SEED_ENTITIES] == seed_state
+    assert json.loads(result[COL_SEED_ENTITIES_JSON]) == seed_state["entities"]
     assert len(facade.calls) == 2
     repair_prompt = facade.calls[1]["prompt"]
     correction = repair_prompt[repair_prompt.index("Correction required.") :]
@@ -473,9 +473,6 @@ def test_ungroundable_augmentation_preserves_admitted_gliner_candidates_through_
     row: dict[str, Any] = {
         RECORD_ID_COLUMN: "record-1",
         COL_TEXT: text,
-        COL_VALIDATED_SEED_ENTITIES: {
-            "entities": [{"value": "May", "label": "first_name", "start_position": 4, "end_position": 7}]
-        },
         COL_ADMITTED_CANDIDATES: AdmittedCandidates(candidates=(seed,)).model_dump(mode="json"),
     }
     invalid = _output({"value": "MAY", "context_before": "Ask ", "context_after": " now", "label": "first_name"})
@@ -563,7 +560,6 @@ def test_merge_consumes_grounded_augmentation_candidates() -> None:
     row: dict[str, Any] = {
         RECORD_ID_COLUMN: "record-1",
         COL_TEXT: "Ask May now",
-        COL_VALIDATED_SEED_ENTITIES: {"entities": []},
         COL_ADMITTED_CANDIDATES: {"candidates": []},
     }
     augment_row(
@@ -581,3 +577,36 @@ def test_merge_consumes_grounded_augmentation_candidates() -> None:
         (item["value"], item["start_position"], item["source"]) for item in row[COL_MERGED_ENTITIES]["entities"]
     ] == [("May", 4, "augmenter")]
     assert len(AdmittedCandidates.model_validate(row[COL_RECONCILED_CANDIDATES]).candidates) == 1
+
+
+def test_finalization_does_not_propagate_equal_values_or_split_full_names() -> None:
+    text = "John Smith arrived. Later, John left."
+    output = _output(
+        {
+            "value": "John Smith",
+            "context_before": "",
+            "context_after": " arrived.",
+            "label": "full_name",
+        }
+    )
+    row: dict[str, Any] = {
+        RECORD_ID_COLUMN: "record-1",
+        COL_TEXT: text,
+        COL_ADMITTED_CANDIDATES: {"candidates": []},
+    }
+    augment_row(
+        row=row,
+        prompt_template="Source: {{ __nemo_anonymizer_text_input__ }}",
+        model_alias="augmenter-model",
+        facade=_FakeFacade([output]),
+        allowed_entity_labels=["full_name", "first_name", "last_name"],
+        excluded_entity_labels=[],
+    )
+    merge_and_build_candidates(row)
+
+    finalize_entities(row)
+
+    assert [
+        (item["value"], item["label"], item["start_position"], item["end_position"])
+        for item in row[COL_DETECTED_ENTITIES]["entities"]
+    ] == [("John Smith", "full_name", 0, 10)]

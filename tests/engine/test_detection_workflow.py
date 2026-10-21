@@ -29,7 +29,6 @@ from anonymizer.engine.constants import (
     COL_SEED_DETECTION_RESULT,
     COL_SEED_ENTITIES,
     COL_SEED_ENTITIES_JSON,
-    COL_SEED_TAGGED_TEXT,
     COL_SEED_VALIDATION_CANDIDATES,
     COL_TAG_NOTATION,
     COL_TAGGED_TEXT,
@@ -41,6 +40,7 @@ from anonymizer.engine.constants import (
     RECORD_ID_COLUMN,
 )
 from anonymizer.engine.detection.augmentation import _ground_augmentation_items
+from anonymizer.engine.detection.chunked_validation import VALIDATION_EXCERPT_VAR
 from anonymizer.engine.detection.detection_workflow import (
     EntityDetectionWorkflow,
     _filter_excluded_latent_entities,
@@ -565,7 +565,7 @@ def test_validation_prompt_example_matches_conflict_skeleton_and_excerpt_offsets
         .render(
             {
                 COL_TAG_NOTATION: notation.value,
-                COL_SEED_TAGGED_TEXT: "",
+                VALIDATION_EXCERPT_VAR: "",
                 COL_VALIDATION_SKELETON: "",
             }
         )
@@ -1155,7 +1155,7 @@ def test_detection_workflow_uses_plugin_transform_columns(
     assert _find_column(columns, COL_ADMISSION_RESULTS).excluded_entity_labels == ["email"]
     assert _find_column(columns, COL_ADMISSION_RESULTS).allowed_entity_labels is None
     assert COL_ADMISSION_RESULTS not in _find_column(columns, COL_DETECTED_ENTITIES).required_columns
-    assert _find_column(columns, COL_MERGED_ENTITIES).excluded_entity_labels == ["email"]
+    assert _find_column(columns, COL_MERGED_ENTITIES).excluded_entity_labels == []
     assert all(getattr(column, "column_type", None) != "custom" for column in columns)
 
 

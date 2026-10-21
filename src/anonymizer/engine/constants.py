@@ -26,7 +26,6 @@ COL_SEED_DETECTION_RESULT = "_seed_detection_result"
 COL_INITIAL_TAGGED_TEXT = "_initial_tagged_text"
 COL_SEED_ENTITIES_JSON = "_seed_entities_json"
 COL_TAG_NOTATION = "_tag_notation"
-COL_VALIDATED_SEED_ENTITIES = "_validated_seed_entities"
 
 # Step 3: LLM augmentation
 COL_AUGMENTED_ENTITIES = "_augmented_entities"
@@ -37,13 +36,11 @@ COL_AUGMENTATION_ATTEMPTS = "_augmentation_attempts"
 COL_AUGMENTED_CANDIDATES = "_augmented_candidates"
 
 # Step 3b: prepare_validation_inputs (seed-only, pre-augmentation)
-COL_SEED_TAGGED_TEXT = "_seed_tagged_text"
 COL_SEED_VALIDATION_CANDIDATES = "_seed_validation_candidates"
 
 # Step 4: merge_and_build_candidates
 COL_MERGED_ENTITIES = "_merged_entities"
 COL_RECONCILED_CANDIDATES = "_reconciled_candidates"
-COL_MERGED_TAGGED_TEXT = "_merged_tagged_text"
 COL_VALIDATION_CANDIDATES = "_validation_candidates"
 
 # Step 5: LLM validation

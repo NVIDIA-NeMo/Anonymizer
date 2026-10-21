@@ -39,7 +39,6 @@ from pydantic import BaseModel, Field
 
 from anonymizer.engine.constants import (
     COL_SEED_DETECTION_RESULT,
-    COL_SEED_TAGGED_TEXT,
     COL_TAG_NOTATION,
     COL_TEXT,
     COL_VALIDATION_DECISIONS,
@@ -67,6 +66,9 @@ from anonymizer.engine.schemas import (
 )
 
 logger = logging.getLogger("anonymizer.detection.chunked_validation")
+
+# Prompt variable only; its request-specific excerpt is never stored as a row column.
+VALIDATION_EXCERPT_VAR = "_seed_tagged_text"
 
 
 class _SemanticValidationResponseError(RuntimeError):
@@ -169,7 +171,7 @@ def render_chunk_prompt(
     compiled = _compile_template(template)
     return compiled.render(
         **{
-            COL_SEED_TAGGED_TEXT: excerpt,
+            VALIDATION_EXCERPT_VAR: excerpt,
             COL_VALIDATION_SKELETON: skeleton,
             COL_TAG_NOTATION: notation.value,
         }
