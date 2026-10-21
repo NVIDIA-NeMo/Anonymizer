@@ -57,6 +57,7 @@ from anonymizer.engine.detection.postprocess import (
     EntitySpan,
     TagNotation,
     build_tagged_text,
+    group_overlapping_spans,
 )
 from anonymizer.engine.schemas import (
     AdmissionRoute,
@@ -192,19 +193,11 @@ def build_validation_conflict_groups(
             item.observation_id,
         ),
     )
-    groups: list[list[Observation]] = []
-    current: list[Observation] = []
-    current_end = -1
-    for observation in ordered:
-        if current and observation.start_position >= current_end:
-            groups.append(current)
-            current = []
-            current_end = -1
-        current.append(observation)
-        current_end = max(current_end, observation.end_position)
-    if current:
-        groups.append(current)
-    return [tuple(group) for group in groups]
+    return group_overlapping_spans(
+        ordered,
+        start_position=lambda observation: observation.start_position,
+        end_position=lambda observation: observation.end_position,
+    )
 
 
 def chunk_validation_conflict_groups(

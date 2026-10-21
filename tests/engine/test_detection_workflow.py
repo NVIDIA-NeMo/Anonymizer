@@ -23,6 +23,7 @@ from anonymizer.engine.constants import (
     COL_DETECTED_ENTITIES,
     COL_ENTITIES_BY_VALUE,
     COL_FINAL_ENTITIES,
+    COL_INITIAL_TAGGED_TEXT,
     COL_LATENT_ENTITIES,
     COL_MERGED_ENTITIES,
     COL_SEED_DETECTION_RESULT,
@@ -39,6 +40,7 @@ from anonymizer.engine.constants import (
     ENTITY_LABEL_EXAMPLES,
     RECORD_ID_COLUMN,
 )
+from anonymizer.engine.detection.augmentation import _ground_augmentation_items
 from anonymizer.engine.detection.detection_workflow import (
     EntityDetectionWorkflow,
     _filter_excluded_latent_entities,
@@ -57,7 +59,7 @@ from anonymizer.engine.ndd.model_loader import (
     resolve_model_alias,
     resolve_model_aliases,
 )
-from anonymizer.engine.schemas import EntitiesSchema
+from anonymizer.engine.schemas import AugmentedEntitiesSchema, EntitiesSchema, SourceTextRef, SourceView
 from anonymizer.engine.workflow_columns.detection.config import (
     ChunkedValidationConfig,
     DetectionTransformConfig,
@@ -621,6 +623,10 @@ def test_augment_prompt_permissive_when_using_defaults() -> None:
     assert "phone_number, age" in prompt
     assert "If no known label fits, create a concise snake_case label" in prompt
     assert "employment_status" in prompt
+    assert '"context_before"' in prompt
+    assert '"context_after"' in prompt
+    assert "a few words (two to five)" in prompt
+    assert "Never copy those tags" in prompt
 
 
 def test_augment_prompt_strict_when_explicit_labels_provided() -> None:
@@ -632,6 +638,69 @@ def test_augment_prompt_strict_when_explicit_labels_provided() -> None:
     assert "create a concise snake_case label" not in prompt
     assert "employment_status is NOT in the allowed list" in prompt
     assert "employment_status" not in prompt.split("Output:")[1]
+
+
+@pytest.mark.parametrize("notation", list(TagNotation))
+@pytest.mark.parametrize("strict_labels", [False, True])
+@pytest.mark.parametrize("has_overlap_groups", [False, True])
+def test_augment_prompt_examples_ground_context_across_entity_tags(
+    notation: TagNotation, strict_labels: bool, has_overlap_groups: bool
+) -> None:
+    prompt = _get_augment_prompt(
+        data_summary=None, labels=["first_name", "last_name", "city"], strict_labels=strict_labels
+    )
+    rendered = (
+        Environment(undefined=StrictUndefined)
+        .from_string(prompt)
+        .render(
+            {
+                COL_TAG_NOTATION: notation.value,
+                COL_INITIAL_TAGGED_TEXT: "",
+                COL_SEED_ENTITIES_JSON: "[]",
+                "has_overlap_groups": has_overlap_groups,
+            }
+        )
+    )
+    output_line = next(line for line in rendered.splitlines() if line.startswith("Output: "))
+    output = AugmentedEntitiesSchema.model_validate_json(output_line.removeprefix("Output: "))
+    source = "Jane Doe lives in Santa Clara. She works full-time."
+    result = _ground_augmentation_items(
+        canonical_text=source,
+        source_view=SourceView(
+            source_text_ref=SourceTextRef(record_id="prompt-example", field_id=COL_TEXT),
+            start_position=0,
+            end_position=len(source),
+        ),
+        output=output,
+    )
+
+    assert ("A tag named NAGROUP_gN" in rendered) is has_overlap_groups
+    assert ("the whole region as already tagged" in rendered) is has_overlap_groups
+    assert ("never return it as a label" in rendered) is has_overlap_groups
+    assert "a few words (two to five)" in rendered
+    assert "Context does not have to identify a unique occurrence" in rendered
+    example_label = "NAGROUP_g1" if has_overlap_groups else "city"
+    assert _format_entity_tag(value="Santa Clara", label=example_label, notation=notation) in rendered
+    example_seeds = json.loads(
+        next(line for line in rendered.splitlines() if line.startswith("Already-detected entities: ")).removeprefix(
+            "Already-detected entities: "
+        )
+    )
+    assert example_seeds == (
+        [{"value": "Santa Clara", "label": "city"}, {"value": "Clara", "label": "first_name"}]
+        if has_overlap_groups
+        else [{"value": "Santa Clara", "label": "city"}]
+    )
+    assert output.entities[1].context_after == " lives in Santa Clara. "
+    expected_values = ["Jane", "Doe"] if strict_labels else ["Jane", "Doe", "full-time"]
+    assert result.failures == ()
+    assert [item.value for item in result.grounded_entities.entities] == expected_values
+    assert [
+        (source[item.start_position : item.end_position], item.start_position, item.end_position)
+        for item in result.occurrences
+    ] == [(value, source.index(value), source.index(value) + len(value)) for value in expected_values]
+    if not strict_labels:
+        assert output.entities[2].context_before == "in Santa Clara. She works "
 
 
 def test_augment_prompt_receives_only_configured_examples() -> None:
@@ -806,8 +875,8 @@ def test_defaults_plus_non_default_examples_use_strict_augmentation(
     detector_config = next(config for config in call.kwargs["model_configs"] if config.alias == "gliner-pii-detector")
     assert "vendor_api_key" in detector_config.inference_parameters.extra_body["labels"]
     augmenter = next(column for column in call.kwargs["columns"] if column.name == COL_AUGMENTED_ENTITIES)
-    assert "Use ONLY labels from this list" in augmenter.prompt
-    assert "vendor_api_key: acme_live_abc123" in augmenter.prompt
+    assert "Use ONLY labels from this list" in augmenter.prompt_template
+    assert "vendor_api_key: acme_live_abc123" in augmenter.prompt_template
     assert "acme_live_abc123" not in repr(augmenter)
 
 
@@ -1035,7 +1104,7 @@ def test_detection_workflow_plugins_are_discoverable() -> None:
             for plugin in PluginRegistry().get_plugins(PluginType.COLUMN_GENERATOR)
             if plugin.name.startswith("anonymizer-")
         }
-        assert {"anonymizer-detection-transform", "anonymizer-chunked-validation"} <= names
+        assert {"anonymizer-detection-transform", "anonymizer-chunked-validation", "anonymizer-augmentation"} <= names
     finally:
         PluginRegistry.reset()
 

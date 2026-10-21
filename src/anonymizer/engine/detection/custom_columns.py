@@ -19,12 +19,14 @@ from data_designer.config import custom_column_generator
 from anonymizer.engine.constants import (
     COL_ADMISSION_RESULTS,
     COL_ADMITTED_CANDIDATES,
+    COL_AUGMENTED_CANDIDATES,
     COL_AUGMENTED_ENTITIES,
     COL_DETECTED_ENTITIES,
     COL_INITIAL_TAGGED_TEXT,
     COL_MERGED_ENTITIES,
     COL_MERGED_TAGGED_TEXT,
     COL_RAW_DETECTED,
+    COL_RECONCILED_CANDIDATES,
     COL_SEED_DETECTION_RESULT,
     COL_SEED_ENTITIES,
     COL_SEED_ENTITIES_JSON,
@@ -44,11 +46,13 @@ from anonymizer.engine.detection.backend import _GlinerDetectionBackend
 from anonymizer.engine.detection.candidates import (
     coalesce_exact_candidates,
     materialize_admitted_candidates,
+    reconcile_candidates,
     representative_source,
 )
 from anonymizer.engine.detection.postprocess import (
     EntitySpan,
     apply_augmented_entities,
+    build_conflict_aware_tagged_text,
     build_tagged_text,
     build_validation_candidates,
     expand_entity_occurrences,
@@ -108,8 +112,14 @@ def parse_detected_entities(
 
 
 @custom_column_generator(
-    required_columns=[COL_TEXT, COL_VALIDATED_SEED_ENTITIES, COL_AUGMENTED_ENTITIES],
-    side_effect_columns=[COL_MERGED_TAGGED_TEXT, COL_VALIDATION_CANDIDATES],
+    required_columns=[
+        COL_TEXT,
+        COL_VALIDATED_SEED_ENTITIES,
+        COL_ADMITTED_CANDIDATES,
+        COL_AUGMENTED_ENTITIES,
+        COL_AUGMENTED_CANDIDATES,
+    ],
+    side_effect_columns=[COL_RECONCILED_CANDIDATES, COL_MERGED_TAGGED_TEXT, COL_VALIDATION_CANDIDATES],
 )
 def merge_and_build_candidates(
     row: dict[str, Any],
@@ -123,13 +133,21 @@ def merge_and_build_candidates(
     - ``COL_VALIDATION_CANDIDATES`` stores ``ValidationCandidatesSchema`` payloads.
     """
     text = str(row.get(COL_TEXT, ""))
-    seed_spans = _parse_entity_spans(row.get(COL_VALIDATED_SEED_ENTITIES, {}))
-    merged = apply_augmented_entities(
-        text=text,
-        entities=seed_spans,
-        augmented_output=row.get(COL_AUGMENTED_ENTITIES, {}),
-        excluded_entity_labels=set(excluded_entity_labels or []),
-    )
+    if COL_ADMITTED_CANDIDATES in row and COL_AUGMENTED_CANDIDATES in row:
+        seed_candidates = AdmittedCandidates.model_validate(row[COL_ADMITTED_CANDIDATES]).candidates
+        augmented_candidates = AdmittedCandidates.model_validate(row[COL_AUGMENTED_CANDIDATES]).candidates
+        reconciled = reconcile_candidates(coalesce_exact_candidates((*seed_candidates, *augmented_candidates)))
+        row[COL_RECONCILED_CANDIDATES] = AdmittedCandidates(candidates=reconciled).model_dump(mode="json")
+        merged = _project_admitted_candidates(reconciled)
+    else:
+        seed_spans = _parse_entity_spans(row.get(COL_VALIDATED_SEED_ENTITIES, {}))
+        merged = apply_augmented_entities(
+            text=text,
+            entities=seed_spans,
+            augmented_output=row.get(COL_AUGMENTED_ENTITIES, {}),
+            excluded_entity_labels=set(excluded_entity_labels or []),
+        )
+        row[COL_RECONCILED_CANDIDATES] = AdmittedCandidates().model_dump(mode="json")
     merged_entities = [entity.as_dict() for entity in merged]
     row[COL_MERGED_ENTITIES] = EntitiesSchema(entities=merged_entities).model_dump(mode="json")
     row[COL_MERGED_TAGGED_TEXT] = build_tagged_text(text=text, entities=merged)
@@ -163,7 +181,7 @@ def apply_validation_to_seed_entities(row: dict[str, Any]) -> dict[str, Any]:
     seed_entities = [entity.as_dict() for entity in validated_seed]
     row[COL_VALIDATED_SEED_ENTITIES] = EntitiesSchema(entities=seed_entities).model_dump(mode="json")
     row[COL_SEED_ENTITIES_JSON] = json.dumps(seed_entities)
-    row[COL_INITIAL_TAGGED_TEXT] = build_tagged_text(text=text, entities=validated_seed)
+    row[COL_INITIAL_TAGGED_TEXT] = build_conflict_aware_tagged_text(text=text, entities=validated_seed)
     return row
 
 

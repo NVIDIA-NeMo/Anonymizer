@@ -6,9 +6,10 @@ from __future__ import annotations
 import json
 import logging
 import re
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from enum import Enum
+from typing import TypeVar
 
 from anonymizer.engine.constants import SOURCE_KIND_AUGMENTER
 from anonymizer.engine.schemas import DetectionResult
@@ -16,6 +17,34 @@ from anonymizer.engine.schemas import DetectionResult
 logger = logging.getLogger(__name__)
 
 VALIDATION_CONTEXT_WINDOW = 32
+_SpanT = TypeVar("_SpanT")
+
+
+def group_overlapping_spans(
+    ordered_spans: Iterable[_SpanT],
+    *,
+    start_position: Callable[[_SpanT], int],
+    end_position: Callable[[_SpanT], int],
+) -> list[tuple[_SpanT, ...]]:
+    """Group start-ordered half-open spans into connected overlap components.
+
+    Callers supply spans sorted by start position and choose their own tie
+    ordering. Touching spans remain separate; nested and transitively
+    overlapping spans stay together.
+    """
+    groups: list[tuple[_SpanT, ...]] = []
+    current: list[_SpanT] = []
+    current_end = -1
+    for span in ordered_spans:
+        if current and start_position(span) >= current_end:
+            groups.append(tuple(current))
+            current = []
+            current_end = -1
+        current.append(span)
+        current_end = max(current_end, end_position(span))
+    if current:
+        groups.append(tuple(current))
+    return groups
 
 
 @dataclass(frozen=True)
@@ -256,6 +285,47 @@ def build_tagged_text(
         cursor = entity.end_position
     parts.append(text[cursor:])
     return "".join(parts)
+
+
+def build_conflict_aware_tagged_text(text: str, entities: list[EntitySpan]) -> str:
+    """Render one neutral marker for each connected group of overlapping spans."""
+    ordered = sorted(
+        entities,
+        key=lambda entity: (
+            entity.start_position,
+            entity.end_position,
+            normalize_label(entity.label),
+            entity.entity_id,
+        ),
+    )
+    groups = group_overlapping_spans(
+        ordered,
+        start_position=lambda entity: entity.start_position,
+        end_position=lambda entity: entity.end_position,
+    )
+
+    markers: list[EntitySpan] = []
+    next_group_id = 1
+    for group in groups:
+        if len(group) == 1:
+            markers.append(group[0])
+            continue
+        start = min(entity.start_position for entity in group)
+        end = max(entity.end_position for entity in group)
+        group_id = f"g{next_group_id}"
+        next_group_id += 1
+        markers.append(
+            EntitySpan(
+                entity_id=group_id,
+                value=text[start:end],
+                label=f"NAGROUP_{group_id}",
+                start_position=start,
+                end_position=end,
+                score=0.0,
+                source="prompt_marker",
+            )
+        )
+    return build_tagged_text(text=text, entities=markers)
 
 
 def get_tag_notation(text: str) -> str:
