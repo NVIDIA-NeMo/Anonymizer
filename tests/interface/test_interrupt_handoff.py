@@ -79,3 +79,28 @@ def test_interrupt_between_take_and_settle_exits(tmp_path: Path, point: str, met
         pytest.fail(f"run hung after a Ctrl-C at {point}")
     assert child.returncode == -signal.SIGINT, child.stderr.decode()[-2000:]
     assert b"finished" not in child.stdout
+
+
+def test_interrupt_settles_queued_bodies_once() -> None:
+    """A body still queued when an earlier body is interrupted is settled once, as failed."""
+    import asyncio
+    from typing import Any
+
+    from anonymizer.engine.graph_sdk._execution_values import LocalFailure
+    from anonymizer.engine.harness.kernel import _run_sync_profile
+
+    queued: list[Any] = []
+
+    def interrupted() -> Any:
+        raise KeyboardInterrupt
+
+    async def operation(channel: Any, handoff: Any) -> Any:
+        first = channel(interrupted)
+        second = channel(lambda: "ran")
+        queued.append(second)
+        return await asyncio.gather(asyncio.wrap_future(first), asyncio.wrap_future(second))
+
+    with pytest.raises(KeyboardInterrupt):
+        _run_sync_profile(operation)
+    (second,) = queued
+    assert second.result() == LocalFailure(failure="implementation_exception")

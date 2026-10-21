@@ -225,7 +225,8 @@ def _run_sync_profile(
             if callback is None or returned is None:
                 return
             if interrupted is not None:
-                returned.set_result(LocalFailure(failure="implementation_exception"))
+                # The interrupt may already have settled it.
+                settle_failed(returned)
                 return
             try:
                 returned.set_result(callback())
