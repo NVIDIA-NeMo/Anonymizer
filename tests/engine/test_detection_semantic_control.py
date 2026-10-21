@@ -187,7 +187,6 @@ def test_caller_wrapper_runs_opaque_and_delegation_runs_builtin_standalone(
         model_configs=stub_detector_model_configs,
         selected_models=stub_detection_model_selection,
         detection_options={"gliner_detection_threshold": 0.3, "tag_latent_entities": False},
-        opaque=True,
     )
     from anonymizer.engine.constants import COL_REPLACED_TEXT
 

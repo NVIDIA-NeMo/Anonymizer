@@ -173,17 +173,6 @@ def run_direct_map(
         )
         capabilities = (cap, projection_cap, *child_caps)
         policies = (policy, projection_policy, *child_policies)
-        from anonymizer.engine.replace._native_map_requests import extend_native_map_requests, native_map_capacity
-
-        native_ids = {}
-        capacity = native_map_capacity(receiver, arguments)
-        preview = arguments.get("preview_num_records")
-        # A preview narrower than the frame (a caller detector's extra rows) leaves sources DD never generates;
-        # those run through the opaque DD call, as in the release.
-        if size and capacity is not None and (preview is None or preview >= size):
-            raw, physical_caps, physical_policies, native_ids = extend_native_map_requests(raw, capacity)
-            capabilities = (*capabilities, *physical_caps)
-            policies = (*policies, *physical_policies)
         prepared = _prepare_frame_plan(
             data,
             raw,
@@ -302,7 +291,6 @@ def run_direct_map(
                 max_port_facts=40 * size,
                 max_provenance_edges=80 * size,
             ),
-            native_request_nodes=native_ids,
         )
         return project_detection_redact(result)
 

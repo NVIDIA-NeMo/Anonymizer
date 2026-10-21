@@ -67,7 +67,6 @@ from anonymizer.interface.errors import AnonymizerWorkflowError
 from anonymizer.measurement import stage_timer
 
 if TYPE_CHECKING:
-    from anonymizer.engine.ndd._graph_requests import NddRequestBridge
     from anonymizer.engine.ndd._source_frame import WorkflowSourceFrame
 
 
@@ -121,7 +120,6 @@ class EntityDetectionWorkflow:
         data_summary: str | None = None,
         preview_num_records: int | None = None,
         source_frame: WorkflowSourceFrame | None = None,
-        request_bridge: NddRequestBridge | None = None,
         _resolved_label_config: ResolvedEntityLabelConfig | None = None,
     ) -> EntityDetectionResult:
         """Run the core detection pipeline: GLiNER NER, LLM validation, LLM augmentation, and finalization.
@@ -152,7 +150,6 @@ class EntityDetectionWorkflow:
             workflow_name="entity-detection",
             preview_num_records=preview_num_records,
             **({"source_frame": source_frame} if source_frame is not None else {}),
-            **({"request_bridge": request_bridge} if request_bridge is not None else {}),
         )
         if source_frame is not None and detection_result.source_positions is None:
             raise AnonymizerWorkflowError("Bound detection result is missing source correspondence")
@@ -451,7 +448,6 @@ class EntityDetectionWorkflow:
         compute_grouped_entities: bool | None = None,
         preview_num_records: int | None = None,
         source_frame: WorkflowSourceFrame | None = None,
-        request_bridge: NddRequestBridge | None = None,
     ) -> EntityDetectionResult:
         """Run the full detection pipeline, optionally including latent entity detection.
 
@@ -477,7 +473,6 @@ class EntityDetectionWorkflow:
             "compute_grouped_entities": compute_grouped_entities,
             "preview_num_records": preview_num_records,
             "source_frame": source_frame,
-            "request_bridge": request_bridge,
         }
         with stage_timer(
             "EntityDetectionWorkflow.run",

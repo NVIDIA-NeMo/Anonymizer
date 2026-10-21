@@ -522,14 +522,11 @@ async def execute_injected_redact(
             parent_capabilities, parent_policies, detection_ids["entry"]
         )
     map_ids = {}
-    native_ids = {}
     if semantic_map:
         from anonymizer.engine.constants import COL_ENTITIES_BY_VALUE
-        from anonymizer.engine.replace._native_map_requests import extend_native_map_requests, native_map_capacity
         from anonymizer.engine.replace._semantic_map import extend_map_graph, map_configuration
 
         assert isinstance(callback, _DetectionInvocation) and callback.replacement_arguments is not None
-        helper = cast(Any, callback.replacement_receiver)._llm_workflow
         options = callback.replacement_arguments
         args = dict(
             model_configs=options["model_configs"],
@@ -567,11 +564,6 @@ async def execute_injected_redact(
             else policy
             for policy in child_policies
         )
-        capacity = native_map_capacity(helper, options)
-        if size and capacity is not None:
-            raw, physical_caps, physical_policies, native_ids = extend_native_map_requests(raw, capacity)
-            child_capabilities = (*child_capabilities, *physical_caps)
-            child_policies = (*child_policies, *physical_policies)
     prepared = kernel._prepare_frame_plan(
         data,
         raw,
@@ -631,5 +623,4 @@ async def execute_injected_redact(
             max_port_facts=(48 if map_ids else 20) * size,
             max_provenance_edges=(100 if map_ids else 20) * size,
         ),
-        native_request_nodes=native_ids,
     )

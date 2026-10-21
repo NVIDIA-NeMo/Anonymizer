@@ -17,7 +17,7 @@ from anonymizer.config.models import ReplaceModelSelection
 from anonymizer.engine.graph_sdk.executor import admit_execution_plan
 from anonymizer.graph import EffectCode, EffectRejected
 from tests.engine import test_detection_source_frame as detection_tests
-from tests.engine.test_detection_graph_publication import _modify_dd_responses
+from tests.engine.test_detection_source_frame import _modify_dd_responses
 
 scripted_detection = detection_tests.scripted_detection
 

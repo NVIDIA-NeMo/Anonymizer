@@ -7,7 +7,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Coroutine
 from dataclasses import dataclass, field, replace
-from typing import TYPE_CHECKING, Any, NotRequired, TypedDict, TypeVar, cast
+from typing import TYPE_CHECKING, Any, TypedDict, TypeVar, cast
 
 import pandas as pd
 import pyarrow as pa
@@ -779,7 +779,6 @@ class RewriteEvaluationBinding(StageBinding):
 class _StageArguments(TypedDict):
     source_frame: WorkflowSourceFrame
     rewrite_binding: RewriteEvaluationBinding
-    request_bridge: NotRequired[None]
 
 
 def _replacement_ready(baseline: RewriteCandidateValue) -> bool:

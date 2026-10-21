@@ -254,29 +254,10 @@ def test_detection_redact_entry_opaque(
             selected_models=_any(None),
             detection_options={},
             replace_method=method,
-            opaque=True,
         )
     assert builtin_detection(detector()) is builtin
     assert seen["hosted"]
     assert seen["args"][0].handoff is _HANDOFF
-
-
-@pytest.mark.parametrize(("detector", "builtin"), _DETECTORS, ids=_DETECTOR_IDS)
-def test_detection_redact_entry_native(monkeypatch: pytest.MonkeyPatch, detector: Any, builtin: bool) -> None:
-    from anonymizer.engine.detection import _graph_profile
-
-    seen = _observe(monkeypatch, _graph_profile, "execute_detection_redact")
-    with pytest.raises(_Stop):
-        _graph_profile.run_detection_redact(
-            _SOURCE,
-            detection=detector(),
-            model_configs=[],
-            selected_models=_any(None),
-            detection_options={},
-        )
-    assert builtin_detection(detector()) is builtin
-    assert seen["hosted"]
-    assert "handoff" not in seen["kwargs"]
 
 
 @pytest.mark.parametrize(("detector", "builtin"), _DETECTORS, ids=_DETECTOR_IDS)
@@ -399,30 +380,6 @@ def test_direct_map_entry_method_shapes(
         _semantic_map_profile.run_direct_map(receiver(), _SOURCE, {})
     assert native_map(receiver()) is not opaque
     assert seen["hosted"]
-
-
-def _designer_stub() -> Any:
-    run_config = SimpleNamespace(max_conversation_correction_steps=0, max_conversation_restarts=0)
-    return _any(SimpleNamespace(run_config=run_config))
-
-
-@pytest.mark.parametrize(
-    ("receiver", "native"),
-    [
-        (lambda: LlmReplaceWorkflow(NddAdapter(_designer_stub())), True),
-        (lambda: _SubclassMap(NddAdapter(_designer_stub())), True),
-        (lambda: LlmReplaceWorkflow(_OverriddenAdapter(_designer_stub())), False),
-        (lambda: _SubclassColumns(NddAdapter(_designer_stub())), False),
-        (lambda: SimpleNamespace(_generate_columns=None), False),
-    ],
-    ids=["builtin", "subclass-map-only", "overridden-adapter", "subclass-columns", "adapterless-duck"],
-)
-def test_native_map_columns_gate(receiver: Any, native: bool) -> None:
-    from anonymizer.config.models import ReplaceModelSelection
-    from anonymizer.engine.replace._native_map_requests import native_map_capacity
-
-    arguments = {"selected_models": ReplaceModelSelection(replacement_generator="m"), "model_configs": []}
-    assert (native_map_capacity(receiver(), arguments) is not None) is native
 
 
 class _GateSeen(Exception):

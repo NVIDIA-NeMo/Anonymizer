@@ -394,8 +394,6 @@ class MapBinding(StageBinding):
                     else [(cast(SemanticAssociation, bound[0].association), self.publish(bound[0], outcome="empty"))]
                 )
             elif name == "generate":
-                from anonymizer.engine.replace._native_map_requests import _BRIDGE
-
                 native = native_adapter(self.receiver._adapter)
                 stage_source = (
                     WorkflowSourceFrame.capture(selected, associations=selected_sources, invocation_bound=True)
@@ -410,7 +408,6 @@ class MapBinding(StageBinding):
                     instructions=arguments["instructions"],
                     preview_num_records=min(preview, len(selected)) if preview is not None else None,
                     **({"source_frame": stage_source} if stage_source is not None else {}),
-                    **({"request_bridge": _BRIDGE.get()} if native and _BRIDGE.get() is not None else {}),
                 )
                 generated_sources.update(selected_sources)
                 self.authorize()
@@ -490,10 +487,6 @@ class MapBinding(StageBinding):
                     successful.append(one)
                     terminal.append((position, item.association, name))
             self.call(self.complete_results(results))
-        from anonymizer.engine.replace._native_map_requests import _BRIDGE
-
-        if _BRIDGE.get() is not None:
-            self.call(self.requests.close_observed_requests(self.source.associations, frozenset(generated_sources)))
         combined = (
             merge_and_reorder(*successful, *((empty_partition,) if empty_partition is not None else ()))
             if successful

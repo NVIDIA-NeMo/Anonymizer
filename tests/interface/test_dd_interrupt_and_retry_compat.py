@@ -389,17 +389,6 @@ def test_substitute_map_retries_transient_errors_like_release(
     }
     execution = getattr(result, "_execution", None)
     if execution is not None:
-        # Each attempt is its own dispatch and settlement; a retry follows its failed predecessor on the chain.
-        # Attempts beyond the record's admitted leaves (17) are DataDesigner-owned and unaccounted, which is
-        # honest only because the invocation declares no request upper bound.
-        accounted = min(failures, 17)
-        maps = [
-            item for item in execution.requests.dispatches if item.child is not None and item.child.role == "generation"
-        ]
-        # The two other records' requests, each accounted failure, and the record's successful final attempt
-        # unless that attempt fell past the allowance (DataDesigner-owned) or the record was dropped.
-        assert len(maps) == 2 + accounted + (kept == 3 and failures < 17)
-        assert sorted(item.child.source_kind for item in maps) == sorted(["initial"] * 3 + ["retry"] * (len(maps) - 3))
-        terminals = Counter(item.category for item in execution.requests.terminals)
-        assert terminals["failure"] == accounted and not execution.requests.defects
+        # DataDesigner's own transport retries the map requests; the graph accounts the map as one opaque call.
+        assert not execution.requests.dispatches
         assert execution._execution.context.prepared.declared_request_upper_bound is None

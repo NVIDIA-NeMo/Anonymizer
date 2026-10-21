@@ -229,7 +229,6 @@ def test_release_040_detector_through_graph_invocation_withholds_source_frame(
             "compute_grouped_entities": True,
         },
         replace_method=strategy(),
-        opaque=True,
     )
 
     assert detector.calls == 1

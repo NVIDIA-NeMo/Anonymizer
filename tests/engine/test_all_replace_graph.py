@@ -18,7 +18,7 @@ from anonymizer.engine.harness.frames import PublishedFrame
 from anonymizer.engine.replace._graph_redact import local_strategy
 from anonymizer.interface.errors import AnonymizerWorkflowError
 from tests.engine import test_detection_source_frame as detection_tests
-from tests.engine.test_detection_graph_publication import _modify_dd_responses
+from tests.engine.test_detection_source_frame import _modify_dd_responses
 from tests.retained import retained
 
 scripted_detection = detection_tests.scripted_detection
@@ -134,15 +134,8 @@ def test_public_substitute_runs_actual_dd_and_preserves_map_failures(scripted_de
     assert isinstance(result._execution.frames[0], PublishedFrame)
     assert not result._execution.final_outputs
     receipt = result._execution.requests
-    assert receipt.dispatched_count == (0 if mode == "no_entities" else 3)
-    assert sum(request.child.role == "readiness" for request in receipt.dispatches) == (
-        0 if mode == "no_entities" else 1
-    )
-    generations = [request for request in receipt.dispatches if request.child.role == "generation"]
-    assert len(generations) == (0 if mode == "no_entities" else 2)
-    assert all(len(request.associations) == 1 for request in generations)
-    assert len({next(iter(request.associations)).task.activation for request in generations}) == len(generations)
-    assert len(receipt.settlements) == receipt.dispatched_count
+    # DataDesigner's own transport makes the map requests: the graph accounts the map as one opaque call.
+    assert not receipt.dispatches
     assert not receipt.remote_outstanding and not receipt.local_in_flight
     assert result._execution._execution.context.prepared.configuration.purpose == "execution_only"
     assert result._execution._execution.context.prepared.declared_request_upper_bound is None

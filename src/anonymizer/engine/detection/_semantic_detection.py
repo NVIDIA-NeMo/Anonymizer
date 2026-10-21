@@ -100,7 +100,7 @@ def detection_configuration(arguments: dict[str, Any]) -> FrozenConfig:
         for key, value in normalized.arguments.items()
         # privacy_goal is a Rewrite argument admitted by the facade; a caller detector may mutate its own copy
         # before delegating to builtin detection, so it is not part of the detection configuration.
-        if key not in {"self", "dataframe", "source_frame", "request_bridge", "privacy_goal"}
+        if key not in {"self", "dataframe", "source_frame", "privacy_goal"}
     }
     return FrozenConfig(
         fields=(
@@ -425,11 +425,6 @@ class DetectionBinding(StageBinding):
                         )
                     },
                     **({"source_frame": stage_source} if stage_source is not None else {}),
-                    **(
-                        {"request_bridge": arguments["request_bridge"]}
-                        if arguments["request_bridge"] is not None
-                        else {}
-                    ),
                 )
             else:
                 result = receiver.identify_latent_entities(
@@ -522,12 +517,6 @@ class DetectionBinding(StageBinding):
         if result.condition != "result" or result.category != "success":
             raise AnonymizerWorkflowError(self.rejected)
 
-    def check_outcomes(self, outcomes: tuple[Any, ...]) -> None:
-        if self.arguments["request_bridge"] is not None and any(
-            outcome.condition == "artifact_limit_exhausted" for outcome in outcomes
-        ):
-            raise AnonymizerWorkflowError("Detection/Redact execution did not qualify all returned sources")
-
     def publication(self, item: AssociationInput, port: str, value: str) -> LocalCompleted:
         source = next((port for port in item.inputs if port.port == "in_source"), None)
         return completed(
@@ -535,7 +524,7 @@ class DetectionBinding(StageBinding):
             (
                 *(
                     (PortArtifact(port="source", artifact_type=_TEXT, artifact=None, value=source.value),)
-                    if self.arguments["request_bridge"] is None and source is not None
+                    if source is not None
                     else ()
                 ),
                 PortArtifact(port=port, artifact_type=_ENTITIES, artifact=None, value=TextArtifactValue(text=value)),
@@ -558,8 +547,6 @@ def detection_arguments(
     values = {key: value for key, value in normalized.arguments.items() if key not in {"self", "dataframe"}}
     if values["tag_latent_entities"] and values["privacy_goal"] is None:
         raise ValueError("privacy_goal is required when tag_latent_entities=True (rewrite mode)")
-    if values["request_bridge"] is not None and (values["source_frame"] is None or values["tag_latent_entities"]):
-        raise ValueError("Graph request binding requires a source frame and detection-only workflow")
     if values["source_frame"] is not None and not values["source_frame"].matches(frame):
         raise AnonymizerWorkflowError("Workflow source frame does not match submitted data")
     return values

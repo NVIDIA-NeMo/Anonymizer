@@ -15,15 +15,11 @@ import yaml
 from anonymizer import Anonymizer, AnonymizerConfig, AnonymizerInput
 from anonymizer.config.replace_strategies import Redact
 from anonymizer.engine.constants import COL_REPLACED_TEXT, COL_TEXT
-from anonymizer.engine.detection import _graph_invocation, _graph_profile
-from anonymizer.engine.graph_sdk.executor import ExecutionLimits
 from anonymizer.engine.harness import kernel
-from anonymizer.engine.ndd._graph_requests import NddPhysicalTransport
 from anonymizer.engine.replace._graph_redact import redact_strategy
 from anonymizer.engine.replace.strategies import apply_local_replace_strategy
 from tests.engine import test_detection_source_frame as detection_tests
-from tests.engine.test_detection_graph_publication import _modify_dd_responses
-from tests.engine.test_detection_source_frame import run_graph_profile
+from tests.engine.test_detection_source_frame import _modify_dd_responses, run_graph_profile
 from tests.retained import retained
 
 scripted_detection = detection_tests.scripted_detection
@@ -64,10 +60,13 @@ def test_existing_redact_configuration_matches_legacy_and_literal_output(
     projected = kernel.project_detection_redact(result)
     pd.testing.assert_frame_equal(projected.dataframe, expected)
     assert projected.dataframe[COL_REPLACED_TEXT].tolist() == literal
-    assert len(kernel.qualify_detection_redact(result).qualified) == 2
     assert calls == {"detector": 2, "validator": 2, "augmenter": 2, "readiness": 1}
-    configured = [cap.configuration for cap in result._execution.capabilities if cap.configuration.fields]
-    assert len(configured) == 2
+    configured = [
+        cap.configuration
+        for cap in result._execution.capabilities
+        if {field.name for field in cap.configuration.fields} == {"format_template", "normalize_label"}
+    ]
+    assert len(configured) == 1
     assert all(redact_strategy(configuration) == strategy for configuration in configured)
 
 
@@ -77,75 +76,6 @@ def test_empty_render_configuration_rejects_before_detection(scripted_detection,
         strategy = Redact(format_template=template)
         asyncio.run(run_graph_profile(scripted_detection, _source(), _options(), replace_method=strategy))
     assert scripted_detection[3] == {}
-
-
-@pytest.mark.parametrize(
-    "wrong", [Redact(format_template="WRONG", normalize_label=False), Redact(format_template="<{label}>")]
-)
-def test_wrong_producer_configuration_cannot_satisfy_selected_redact(scripted_detection, monkeypatch, wrong):
-    def changed(frame, *, strategy):
-        return apply_local_replace_strategy(frame, strategy=wrong)
-
-    monkeypatch.setattr(_graph_invocation, "apply_local_replace_strategy", changed)
-    result = asyncio.run(
-        run_graph_profile(
-            scripted_detection,
-            _source(),
-            _options(),
-            replace_method=Redact(format_template="<{label}>", normalize_label=False),
-        )
-    )
-    assert [fact.finding.status for fact in result.assessments] == ["unsatisfied", "unsatisfied"]
-    assert not kernel.qualify_detection_redact(result).qualified
-
-
-def test_async_configuration_snapshot_precedes_resource_acquisition(scripted_detection, monkeypatch):
-    strategy = Redact(format_template="<{label}>", normalize_label=False)
-    initialize = NddPhysicalTransport.__init__
-
-    def initialized(self):
-        strategy.format_template = "WRONG"
-        strategy.normalize_label = True
-        initialize(self)
-
-    monkeypatch.setattr(NddPhysicalTransport, "__init__", initialized)
-    result = asyncio.run(run_graph_profile(scripted_detection, _source(), _options(), replace_method=strategy))
-    assert strategy.format_template == "WRONG"
-    assert kernel.project_detection_redact(result).dataframe[COL_REPLACED_TEXT].tolist() == [
-        "<first_name> travels.",
-        "<first_name> stays.",
-    ]
-
-
-def test_sync_configuration_snapshot_precedes_host_thread(scripted_detection, monkeypatch):
-    strategy = Redact(format_template="<{label}>", normalize_label=False)
-    start = kernel.Thread.start
-
-    def started(self):
-        strategy.format_template = "WRONG"
-        strategy.normalize_label = True
-        start(self)
-
-    monkeypatch.setattr(kernel.Thread, "start", started)
-    designer, models, selected, calls = scripted_detection
-    projected = _graph_profile.run_detection_redact(
-        _source(),
-        detection=detection_tests.EntityDetectionWorkflow(detection_tests.NddAdapter(designer)),
-        model_configs=models,
-        selected_models=selected,
-        detection_options=_options(),
-        replace_method=strategy,
-        limits=ExecutionLimits(
-            max_local_in_flight=1,
-            max_remote_outstanding=1,
-            max_runtime_artifacts=16,
-            max_runtime_artifact_bytes=10000,
-            max_collection_items=16,
-        ),
-    )
-    assert strategy.format_template == "WRONG"
-    assert projected.dataframe[COL_REPLACED_TEXT].tolist() == ["<first_name> travels.", "<first_name> stays."]
-    assert calls == {"detector": 2, "validator": 2, "augmenter": 2, "readiness": 1}
 
 
 @pytest.mark.parametrize("route", ["run", "preview", "graph"])
@@ -196,34 +126,3 @@ def test_label_dependent_empty_render_propagates_without_successful_output(
             else:
                 anonymizer.run(**options)
     assert calls == {"detector": 2, "validator": 2, "augmenter": 2, "readiness": 1}
-
-
-@pytest.mark.parametrize("byte_limit", [0, 10])
-def test_sync_explicit_limits_snapshot_precedes_host_thread(scripted_detection, monkeypatch, byte_limit):
-    from anonymizer.graph import ContractViolation
-
-    limits = ExecutionLimits(
-        max_local_in_flight=1,
-        max_remote_outstanding=8,
-        max_runtime_artifacts=10,
-        max_runtime_artifact_bytes=byte_limit,
-        max_collection_items=32,
-    )
-    start = kernel.Thread.start
-
-    def started(self):
-        object.__setattr__(limits, "max_runtime_artifact_bytes", None)
-        start(self)
-
-    monkeypatch.setattr(kernel.Thread, "start", started)
-    designer, models, selected, calls = scripted_detection
-    with pytest.raises(ContractViolation):
-        _graph_profile.run_detection_redact(
-            _source(),
-            detection=detection_tests.EntityDetectionWorkflow(detection_tests.NddAdapter(designer)),
-            model_configs=models,
-            selected_models=selected,
-            detection_options=_options(),
-            limits=limits,
-        )
-    assert not calls

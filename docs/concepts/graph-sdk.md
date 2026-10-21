@@ -120,9 +120,7 @@ whole frame through `NddAdapter.run_workflow()`, with the existing DataDesigner
 retry, chunk scheduling and provider configuration. Authenticated source positions,
 typed spans and canonical text artifacts support the existing `PublishedFrame`;
 there is no inference from text, indexes or row order. This path makes no
-Protected claim and does not use the incomplete qualified request bridge.
-The qualified development profile remains available for its explicit supported
-controls; public execution does not fall back to it after an error.
+Protected claim.
 
 The ordinary profile reserves at most three semantic artifacts per selected
 source: initial text, final spans and transformed text. Span membership is bounded
@@ -362,29 +360,12 @@ and repeated observer cancellation. Physical transports, classification, Start,
 terminal facts and publication still execute on the invocation loop. A worker
 submission is not a physical request. Cancellation before worker entry submits
 nothing; cancellation after physical entry preserves the first terminal and
-usable late settlement while draining local work. The DataDesigner physical
-transport cancels its in-flight HTTP exchange when asked to stop; the provider
-gives no stop evidence, so such a request is recorded as lost.
+usable late settlement while draining local work.
 
-The Substitute map's DataDesigner bridge declares retry follow-ups. DataDesigner
-0.9.4 keeps its own retry policy: its request executor retries 502/503/504 and
-connection errors with backoff, and its scheduler re-runs a task that failed
-with a 5xx, 429, timeout or connection error in later salvage rounds. Each of
-those attempts is a separate leaf with its own dispatch and settlement, linked to
-the failed predecessor as a `retry` child. A refused connection settles as
-`rejected_before_acceptance`; any other transport error leaves the provider side
-unknown. Each record admits its parser attempts plus
-`(RetryConfig.max_retries + 1) * (salvage_max_rounds + 1) - 1` retries as
-accounted leaves, which covers DataDesigner's bounded 5xx, timeout and
-connection policy: exhausting it drops that record, as in 0.4.0. DataDesigner
-never drops a rate-limited (429) task and keeps retrying it; attempts beyond the
-admitted leaves run as DataDesigner-owned requests outside graph request
-accounting, and the bridge logs their count. This is honest only because the
-Substitute invocation already declares no request upper bound and admits no hard
-request budget; a run that selects one could not use this path. DataDesigner runs that the graph does not
-bridge (for example Rewrite's stages) are cancelled through DataDesigner's own
-scheduler cancellation when the owning invocation is cancelled, as a Ctrl-C does
-in 0.4.0. The caller owns
+The Substitute map, like every other facade stage, runs on DataDesigner's own
+transport, retry policy and scheduling, as in 0.4.0; the graph accounts it as one
+opaque invocation with unknown physical requests. A Ctrl-C cancels DataDesigner's
+runs through DataDesigner's own scheduler cancellation, as in 0.4.0. The caller owns
 the pool and borrowed loop; the executor neither closes nor replaces them. The
 pool must be open at service admission. These are live execution resources, not stateless
 handles: this invocation drains its retained worker and children without waiting

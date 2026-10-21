@@ -38,7 +38,6 @@ from anonymizer.engine.constants import (
 from anonymizer.engine.detection._graph_profile import run_detection_redact
 from anonymizer.engine.detection.detection_workflow import EntityDetectionResult, EntityDetectionWorkflow
 from anonymizer.engine.graph_sdk._execution_delegated import source_worker_borrow
-from anonymizer.engine.ndd._graph_requests import NddPhysicalTransport
 from anonymizer.engine.ndd.adapter import RECORD_ID_COLUMN, FailedRecord, NddAdapter, WorkflowRunResult
 from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceResult, LlmReplaceWorkflow
 from anonymizer.engine.replace.replace_runner import ReplacementWorkflow
@@ -49,7 +48,7 @@ from anonymizer.engine.row_partitioning import ROW_ORDER_COL
 from anonymizer.graph import InvocationId
 from anonymizer.interface.errors import AnonymizerWorkflowError
 from tests.engine import test_detection_source_frame as detection_tests
-from tests.engine.test_detection_graph_publication import _modify_dd_responses
+from tests.engine.test_detection_source_frame import _modify_dd_responses
 
 pytestmark = pytest.mark.compat
 scripted_detection = detection_tests.scripted_detection
@@ -260,7 +259,6 @@ def test_custom_detector_runs_builtin_substitute_as_its_own_invocation(monkeypat
         replace_method=Substitute(),
         replacement=ReplacementWorkflow(llm_workflow=LlmReplaceWorkflow(adapter)),
         replacement_models=ReplaceModelSelection(replacement_generator="test"),
-        opaque=True,
     )
     assert result.dataframe[COL_REPLACED_TEXT].tolist() == ["Maya"]
     # The caller's detector runs opaque; the builtin Substitute it hands off to runs standalone, as in the release.
@@ -268,19 +266,9 @@ def test_custom_detector_runs_builtin_substitute_as_its_own_invocation(monkeypat
     assert result.dataframe[COL_TEXT].tolist() == ["Alice"] and not result.failed_records
 
 
-def test_native_map_accepts_normalized_nested_numpy_source(
-    scripted_detection: Any, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_map_accepts_normalized_nested_numpy_source(scripted_detection: Any, monkeypatch: pytest.MonkeyPatch) -> None:
     designer, models, _, calls = scripted_detection
     map_prompts: list[str] = []
-    resources: list[NddPhysicalTransport] = []
-    initialize = NddPhysicalTransport.__init__
-
-    def capture_resource(self: NddPhysicalTransport) -> None:
-        initialize(self)
-        resources.append(self)
-
-    monkeypatch.setattr(NddPhysicalTransport, "__init__", capture_resource)
 
     def respond(request: httpx.Request, answer: httpx.Response) -> httpx.Response:
         messages = json.dumps(json.loads(request.content)["messages"])
@@ -319,15 +307,9 @@ def test_native_map_accepts_normalized_nested_numpy_source(
     assert nested["entities_by_value"][0]["value"] == "Alice"
     assert nested["entities_by_value"][0]["labels"].tolist() == ["first_name"]
     assert result._execution is not None and len(result._execution.frames) == 1
-    assert result._execution.requests.dispatched_count == len(result._execution.requests.settlements) == 2
+    # DataDesigner's own transport makes the map request: the graph accounts it as one opaque invocation.
+    assert not result._execution.requests.dispatches
     assert not result._execution.requests.remote_outstanding and not result._execution.requests.local_in_flight
-    roles = []
-    for request in result._execution.requests.dispatches:
-        assert request.child is not None
-        roles.append(request.child.role)
-    assert roles == ["readiness", "generation"]
-    assert len(resources) == 1 and resources[0].closed
-    assert resources[0].clients and all(client._inner._closed for client in resources[0].clients)
 
 
 @pytest.mark.parametrize("combined", [False, True])

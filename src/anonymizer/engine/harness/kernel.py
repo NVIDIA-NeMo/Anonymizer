@@ -13,13 +13,11 @@ import asyncio
 from collections.abc import Awaitable, Callable
 from concurrent.futures import Future, InvalidStateError
 from contextvars import copy_context
-from dataclasses import dataclass
 from queue import Empty, Queue
 from threading import Event, Thread, get_ident
 from time import monotonic_ns
-from typing import TYPE_CHECKING, Any, cast
+from typing import Any, cast
 
-from anonymizer.engine.constants import COL_REPLACEMENT_MAP
 from anonymizer.engine.graph_sdk._activation_values import ActivationLimits
 from anonymizer.engine.graph_sdk._execution_delegated import (
     CallerChannel,
@@ -39,7 +37,6 @@ from anonymizer.engine.graph_sdk.capabilities import (
 )
 from anonymizer.engine.graph_sdk.context import admit_context_plan
 from anonymizer.engine.graph_sdk.data import ValidatedDataGraph
-from anonymizer.engine.graph_sdk.evidence import QualificationLimits, admit_qualification, evidence_revision_view
 from anonymizer.engine.graph_sdk.executor import (
     AdmittedExecutionPlan,
     AssessmentLimits,
@@ -66,41 +63,16 @@ from anonymizer.engine.graph_sdk.preparation import (
     PreparedPlan,
     prepare,
 )
-from anonymizer.engine.graph_sdk.qualification import QualificationResult, qualify_retained
-from anonymizer.engine.graph_sdk.requests import AssociationInput, AssociationResult
+from anonymizer.engine.graph_sdk.requests import AssociationInput
 from anonymizer.engine.graph_sdk.resources import ResourceLease
 from anonymizer.engine.harness.frames import InvocationFrame
 from anonymizer.engine.replace.replace_runner import ReplacementResult
 from anonymizer.interface.errors import AnonymizerWorkflowError
 
-if TYPE_CHECKING:
-    from anonymizer.engine.graph_sdk._foreign_transport import ForeignLoopTransport
-    from anonymizer.engine.ndd._graph_requests import NddPhysicalTransport
-
 
 class _Clock:
     def now_ns(self) -> int:
         return monotonic_ns()
-
-
-@dataclass(frozen=True)
-class _ProfileLocal:
-    outcome: str
-
-    async def run(self, request: tuple[AssociationInput, ...]) -> LocalCompleted:
-        if self.outcome == "async_required" and not ensure_async_engine_loop().is_running():
-            raise RuntimeError("DD async engine is not running")
-        return LocalCompleted(
-            results=tuple(
-                AssociationResult(
-                    association=item.association,
-                    outcome=self.outcome,
-                    outputs=(),
-                    consumed_context_ports=frozenset(),
-                )
-                for item in request
-            )
-        )
 
 
 def _runtime_rows(names: tuple[str, ...], external: bool) -> tuple[RuntimeOutcome, ...]:
@@ -371,58 +343,6 @@ def _prepare_frame_plan(
     )
 
 
-# Native transport posture (recorded for DF-6/S8): every invocation that issues DataDesigner native requests
-# acquires exactly one exclusive client, created on DataDesigner's engine loop and leased to every DD stage of
-# that invocation; the per-request gate waits at most 1 s. ``ForeignLoopTransport.create`` refuses non-exclusive
-# clients, so concurrency between stages comes from the runtime's scheduling, not from extra clients.
-NATIVE_TRANSPORT_GATE_TIMEOUT_NS = 1_000_000_000
-
-
-async def acquire_native_transport() -> tuple[NddPhysicalTransport, ForeignLoopTransport]:
-    """Create the invocation's exclusive native client on DataDesigner's engine loop.
-
-    Cancelling this observer never cancels or abandons the foreign factory: the first interruption is kept
-    until the factory settles. A lease that was created anyway is closed before that interruption
-    propagates; a factory failure after an interruption is chained under it; a factory that was itself
-    cancelled propagates at once (no retry loop on a cancelled future).
-    """
-    from anonymizer.engine.graph_sdk._foreign_transport import ForeignLoopTransport
-    from anonymizer.engine.ndd._graph_requests import NddPhysicalTransport
-
-    async def create_resource() -> tuple[NddPhysicalTransport, ForeignLoopTransport]:
-        physical = NddPhysicalTransport()
-        try:
-            return physical, ForeignLoopTransport.create(
-                factory=lambda: physical,
-                owner="sdk",
-                gate_timeout_ns=NATIVE_TRANSPORT_GATE_TIMEOUT_NS,
-                exclusive=True,
-            )
-        except BaseException:
-            await physical.close()
-            raise
-
-    acquisition = asyncio.wrap_future(asyncio.run_coroutine_threadsafe(create_resource(), ensure_async_engine_loop()))
-    interrupted: asyncio.CancelledError | None = None
-    while True:
-        try:
-            physical, transport = await asyncio.shield(acquisition)
-            break
-        except asyncio.CancelledError as error:
-            if acquisition.cancelled():
-                raise
-            if interrupted is None:
-                interrupted = error
-        except BaseException as error:
-            if interrupted is not None:
-                raise interrupted from error
-            raise
-    if interrupted is not None:
-        await transport.close()
-        raise interrupted
-    return physical, transport
-
-
 async def _execute_frame_plan(
     *,
     prepared: PreparedPlan,
@@ -435,54 +355,8 @@ async def _execute_frame_plan(
     ingress_limits: IngressLimits,
     assessment_limits: AssessmentLimits,
     assessment_productions: tuple[EvidenceProductionDecl, ...] = (),
-    native_request_nodes: dict[str, NodeId] | None = None,
 ) -> ExecutionResult:
     """Run a single grouped submission with its admitted observed operations."""
-
-    physical = None
-    transport = None
-    if native_request_nodes:
-        from anonymizer.engine.replace._native_map_requests import bind_native_map_policy
-
-        policies = bind_native_map_policy(prepared, policies, native_request_nodes)
-        physical, transport = await acquire_native_transport()
-    try:
-        return await _execute_frame_plan_owned(
-            prepared=prepared,
-            capabilities=capabilities,
-            policies=policies,
-            callback=callback,
-            pool=pool,
-            borrowed_loop=borrowed_loop,
-            limits=limits,
-            ingress_limits=ingress_limits,
-            assessment_limits=assessment_limits,
-            assessment_productions=assessment_productions,
-            native_request_nodes=native_request_nodes,
-            physical=physical,
-            transport=transport,
-        )
-    finally:
-        if transport is not None and not transport._claimed:
-            await transport.close()
-
-
-async def _execute_frame_plan_owned(
-    *,
-    prepared: PreparedPlan,
-    capabilities: tuple[ImplementationCapability, ...],
-    policies: tuple[OperationExecutionPolicy, ...],
-    callback: Callable[..., Any],
-    pool: SubmitterPool,
-    borrowed_loop: asyncio.AbstractEventLoop,
-    limits: ExecutionLimits,
-    ingress_limits: IngressLimits,
-    assessment_limits: AssessmentLimits,
-    assessment_productions: tuple[EvidenceProductionDecl, ...],
-    native_request_nodes: dict[str, NodeId] | None,
-    physical: Any,
-    transport: Any,
-) -> ExecutionResult:
     execution = admit_execution_plan(
         context=admit_context_plan(prepared=prepared, bound_context=None),
         capabilities=capabilities,
@@ -491,49 +365,20 @@ async def _execute_frame_plan_owned(
         ingress_limits=ingress_limits,
         assessment_limits=assessment_limits,
     )
-
-    def dispatch(inputs: tuple[AssociationInput, ...], requests: DelegatedRequests):
-        if not native_request_nodes:
-            return callback(inputs, requests)
-        from anonymizer.engine.ndd._graph_requests import NddRequestBridge
-        from anonymizer.engine.replace._native_map_requests import _BRIDGE
-
-        leaves = tuple(
-            slot.index
-            for slot in prepared.reservation_recipe
-            if slot.template in {node for name, node in native_request_nodes.items() if name.startswith("leaf-")}
-        )
-        token = _BRIDGE.set(NddRequestBridge(requests, {(COL_REPLACEMENT_MAP, 0): leaves}, physical, retries=True))
-        try:
-            return callback(inputs, requests)
-        finally:
-            _BRIDGE.reset(token)
-
-    worker = delegated_submitter(dispatch, pool, borrowed_loop)
+    worker = delegated_submitter(callback, pool, borrowed_loop)
     handles = tuple(
         ImplementationHandle(
             implementation=cap.implementation,
             operation=cap.operation,
             configuration=cap.configuration,
-            local=_ProfileLocal("async_required")
-            if native_request_nodes and policy.node == native_request_nodes["probe"]
-            else None,
-            transport=transport
-            if native_request_nodes
-            and policy.node
-            in {node for name, node in native_request_nodes.items() if name not in {"readiness", "probe"}}
-            else None,
+            local=None,
+            transport=None,
             delegated=worker if policy.delegated is not None else None,
             resource=ResourceLease.create(owner="caller", safe_detachment="forbidden", handle=worker)
             if policy.delegated is not None
-            else transport.lease
-            if native_request_nodes
-            and policy.node
-            in {node for name, node in native_request_nodes.items() if name not in {"readiness", "probe"}}
             else None,
         )
         for policy, cap in zip(policies, capabilities, strict=True)
-        if not native_request_nodes or policy.node != native_request_nodes["readiness"]
     )
     return await run_admitted(execution, capabilities, handles, limits)
 
@@ -607,39 +452,6 @@ def _frame_implementation(
     return capability, policy
 
 
-def qualify_detection_redact(result: ExecutionResult) -> QualificationResult:
-    """Reconcile this profile's source checks and physical receipts before release."""
-    execution = result._execution
-    prepared = execution.context.prepared
-    limits = execution.assessment_limits
-    admitted = admit_qualification(
-        execution=execution,
-        productions=execution.assessment_productions,
-        limits=QualificationLimits(
-            max_productions=limits.max_productions,
-            max_submissions=limits.max_assessment_facts,
-            max_port_facts=limits.max_port_facts,
-            max_consumed_per_assessment=3,
-            max_coverage_atoms=0,
-            max_verified_evidence=limits.max_assessment_facts,
-            max_fixed_point_steps=len(prepared.target_occurrences) + 1,
-            max_revision_entries=limits.max_port_facts + prepared.limits.max_capabilities,
-            max_provenance_edges=limits.max_provenance_edges,
-        ),
-    )
-    current = evidence_revision_view(
-        admitted=admitted,
-        result=result,
-        artifacts=tuple(reference for reference, _ in result.artifacts),
-        configurations=tuple(
-            (policy.node, policy.implementations[0].configuration)
-            for policy in execution.policies
-            if any(production.node == policy.node for production in execution.assessment_productions)
-        ),
-    )
-    return qualify_retained(admitted=admitted, result=result, current=current)
-
-
 def project_detection_redact(result: ExecutionResult) -> ReplacementResult:
     """Project canonical content under its selected purpose, preserving original errors."""
     for failure in result.submission_failures:
@@ -665,23 +477,10 @@ def project_detection_redact(result: ExecutionResult) -> ReplacementResult:
         return ReplacementResult(
             dataframe=frame.project(result), failed_records=list(frame.failed_records), _execution=result
         )
-    if result._execution.context.prepared.configuration.purpose == "execution_only" and len(result.frames) == 1:
-        frame = result.frames[0]
-        return ReplacementResult(
-            dataframe=frame.project(result), failed_records=list(frame.failed_records), _execution=result
-        )
-    qualified = qualify_detection_redact(result)
-    if len(result.frames) != 1 or len(qualified.qualified) != len(result.final_outputs):
+    if result._execution.context.prepared.configuration.purpose != "execution_only" or len(result.frames) != 1:
         _retained_execution = result
         raise AnonymizerWorkflowError("Detection/Redact execution did not qualify all returned sources")
     frame = result.frames[0]
     return ReplacementResult(
         dataframe=frame.project(result), failed_records=list(frame.failed_records), _execution=result
     )
-
-
-def ensure_async_engine_loop() -> asyncio.AbstractEventLoop:
-    """DataDesigner's shared async engine loop, imported on first use so importing this module needs no engine."""
-    from data_designer.engine.dataset_builders.utils.async_concurrency import ensure_async_engine_loop as engine_loop
-
-    return engine_loop()

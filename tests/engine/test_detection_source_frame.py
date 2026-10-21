@@ -22,7 +22,7 @@ from data_designer.interface import DataDesigner
 from anonymizer import Anonymizer, AnonymizerConfig, AnonymizerInput
 from anonymizer.config.models import DetectionModelSelection, ReplaceModelSelection
 from anonymizer.config.replace_strategies import Redact
-from anonymizer.engine.constants import COL_FINAL_ENTITIES, COL_REPLACED_TEXT, COL_TEXT
+from anonymizer.engine.constants import COL_REPLACED_TEXT, COL_TEXT
 from anonymizer.engine.detection.detection_workflow import EntityDetectionWorkflow
 from anonymizer.engine.ndd.adapter import RECORD_ID_COLUMN, NddAdapter
 from anonymizer.engine.replace.replace_runner import ReplacementWorkflow
@@ -240,7 +240,7 @@ def test_public_source_frame(
     assert len(detections) == 1
     assert len(detections[0][0]) == len(expected)
     assert detections[0][1]["source_frame"] is not None
-    assert detections[0][1]["request_bridge"] is None
+    assert "request_bridge" not in detections[0][1]
     assert result._execution._execution.context.prepared.declared_request_upper_bound is None
     assert not result._execution.requests.dispatches
     assert not any(str(name).startswith("_anonymizer_source_") for name in result.trace_dataframe.columns)
@@ -294,103 +294,55 @@ def test_real_detection_dropped_row_preserves_peer_and_failure(
     assert calls == {"detector": 2, "validator": 1, "augmenter": 1, "readiness": 1}
 
 
-@pytest.mark.parametrize(
-    "preview,unattributed_loss,chunks", [(True, False, 1), (False, False, 1), (True, True, 1), (True, False, 2)]
-)
-def test_real_dd_whole_frame_uses_invocation_readiness_and_source_requests(
-    scripted_detection, monkeypatch, preview, unattributed_loss, chunks
-):
-    designer, models, selected, calls = scripted_detection
-    prefix = "Alice" if chunks == 1 else "Alice Bob"
-    source = pd.DataFrame(
-        {
-            COL_TEXT: [f"{prefix} travels.", f"{prefix} stays."],
-            RECORD_ID_COLUMN: ["duplicate", "duplicate"],
-            "extra": [{"numbers": [17]}, {"numbers": [29]}],
-        },
-        index=pd.Index([4, 4]),
-    )
-    options: dict[str, Any] = {
-        "gliner_detection_threshold": 0.3,
-        "tag_latent_entities": False,
-        "validation_max_entities_per_call": 1,
-        "preview_num_records": 2 if preview else None,
-    }
-    legacy = EntityDetectionWorkflow(NddAdapter(designer)).run(
-        source,
-        model_configs=models,
-        selected_models=selected,
-        **options,
-    )
-    expected = (
-        ReplacementWorkflow()
-        .run(
-            legacy.dataframe,
-            replace_method=Redact(),
-            model_configs=models,
-            selected_models=ReplaceModelSelection(replacement_generator="singleton"),
-        )
-        .dataframe
-    )
-    calls.clear()
-    if unattributed_loss:
-        original = designer.preview
+def _modify_dd_responses(scripted_detection, monkeypatch, modify):
+    designer = scripted_detection[0]
+    original = designer._create_resource_provider
 
-        def lose_output(*args, **kwargs):
-            result = original(*args, **kwargs)
-            result.dataset = result.dataset.iloc[:1]
+    def resources(*args, **kwargs):
+        provider = original(*args, **kwargs)
+        factory = provider.model_registry._model_facade_factory
+
+        def facade(*args, **kwargs):
+            result = factory(*args, **kwargs)
+            prior = result._client._inner._transport
+
+            async def response(request):
+                return modify(request, await prior.handle_async_request(request))
+
+            result._client._inner._transport = httpx.MockTransport(response)
             return result
 
-        monkeypatch.setattr(designer, "preview", lose_output)
+        provider.model_registry._model_facade_factory = facade
+        return provider
 
-    result = asyncio.run(run_graph_profile(scripted_detection, source, options, chunks))
-    assert result._execution.context.prepared.configuration.purpose == "protection"
-    assert result.requests.dispatched_count == 5 + 2 * chunks
-    assert calls == {"detector": 2, "validator": 2 * chunks, "augmenter": 2, "readiness": 1}
-    assert len(result.frames) == (0 if unattributed_loss else 1)
-    assert len(result.final_outputs) == (0 if unattributed_loss else 2)
-    if not unattributed_loss:
-        projected = result.frames[0].project(result)
-        pd.testing.assert_frame_equal(projected, expected)
-        assert result.frames[0].failed_records == ()
-        assert COL_REPLACED_TEXT not in result.frames[0]._content
-        assert COL_FINAL_ENTITIES not in result.frames[0]._content
-        checks = [port for port in result.ports if port.port == "assessment"]
-        assert len(checks) == 2
-        assert [dict(result.artifacts)[port.artifact].text for port in checks] == ["span_redaction_matches"] * 2
-        artifacts = dict(result.artifacts)
-        assert sorted(artifacts[output.candidate.artifact].text for output in result.final_outputs) == sorted(
-            expected[COL_REPLACED_TEXT]
-        )
-    assert any(fact.disposition == "closed" for fact in result.cleanup)
+    monkeypatch.setattr(designer, "_create_resource_provider", resources)
 
 
-async def run_graph_profile(
-    scripted_detection, source, options, chunks=1, artifact_limit=16, remote_limit=1, replace_method=None
-):
-    from anonymizer.engine.detection._graph_profile import execute_detection_redact
+async def run_graph_profile(scripted_detection, source, options, replace_method=None):
+    """The facade's opaque detection/Redact invocation on a one-worker pool; returns its execution."""
+    from anonymizer.config.replace_strategies import Redact
+    from anonymizer.engine.detection._graph_invocation import DetectionRedactInvocation
+    from anonymizer.engine.detection._opaque_redact import execute_injected_redact
     from anonymizer.engine.graph_sdk.blocking import BlockingPool
-    from anonymizer.engine.graph_sdk.executor import ExecutionLimits
+    from anonymizer.engine.replace._graph_redact import local_configuration
 
     designer, models, selected, _ = scripted_detection
+    configuration = local_configuration(replace_method if replace_method is not None else Redact())
     pool = BlockingPool(max_workers=1)
     try:
-        return await execute_detection_redact(
-            source,
-            detection=EntityDetectionWorkflow(NddAdapter(designer)),
-            model_configs=models,
-            selected_models=selected,
-            detection_options=options,
-            replace_method=replace_method,
-            validation_chunks=chunks,
-            pool=pool,
-            limits=ExecutionLimits(
-                max_local_in_flight=1,
-                max_remote_outstanding=remote_limit,
-                max_runtime_artifacts=artifact_limit,
-                max_runtime_artifact_bytes=10000,
-                max_collection_items=16,
+        return await execute_injected_redact(
+            DetectionRedactInvocation(
+                source,
+                (),
+                EntityDetectionWorkflow(NddAdapter(designer)),
+                models,
+                selected,
+                configuration,
+                options,
+                "redacted",
+                "ok",
             ),
+            pool,
         )
     finally:
         await pool.close()
@@ -517,8 +469,6 @@ def test_public_opaque_dd_preserves_backend_retry_and_usage_behavior(scripted_de
 
     from anonymizer import Detect
     from anonymizer.engine.harness.frames import PublishedFrame
-    from anonymizer.engine.harness.kernel import qualify_detection_redact
-    from tests.engine.test_detection_graph_publication import _modify_dd_responses
 
     monkeypatch.setattr(ModelRequestExecutor, "_retry_delay_seconds", lambda self, attempt: 0)
     remaining = [1 if case == "rate_limit" else 4 if case == "second_chunk" else 0]
@@ -567,4 +517,3 @@ def test_public_opaque_dd_preserves_backend_retry_and_usage_behavior(scripted_de
     assert execution._execution.context.prepared.declared_request_upper_bound is None
     assert execution._execution.capabilities[0].attribution == "per_task"
     assert not execution.requests.dispatches
-    assert not qualify_detection_redact(execution).qualified
