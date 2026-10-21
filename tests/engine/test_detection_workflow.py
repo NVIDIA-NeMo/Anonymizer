@@ -23,6 +23,7 @@ from anonymizer.engine.constants import (
     COL_FINAL_ENTITIES,
     COL_LATENT_ENTITIES,
     COL_MERGED_ENTITIES,
+    COL_SEED_DETECTION_RESULT,
     COL_SEED_ENTITIES,
     COL_SEED_ENTITIES_JSON,
     COL_SEED_VALIDATION_CANDIDATES,
@@ -33,6 +34,7 @@ from anonymizer.engine.constants import (
     COL_VALIDATION_DECISIONS,
     DEFAULT_ENTITY_LABELS,
     ENTITY_LABEL_EXAMPLES,
+    RECORD_ID_COLUMN,
 )
 from anonymizer.engine.detection.detection_workflow import (
     EntityDetectionWorkflow,
@@ -1026,6 +1028,12 @@ def test_detection_workflow_uses_plugin_transform_columns(
         column = _find_column(columns, name)
         assert isinstance(column, DetectionTransformConfig)
         assert DetectionTransformOperation(column.operation) == operation
+    parse_column = _find_column(columns, COL_SEED_ENTITIES)
+    assert isinstance(parse_column, DetectionTransformConfig)
+    assert parse_column.detection_result_id == "r1"
+    assert parse_column.source_instance == stub_detection_model_selection.entity_detector
+    assert RECORD_ID_COLUMN in parse_column.required_columns
+    assert COL_SEED_DETECTION_RESULT in parse_column.side_effect_columns
     assert _find_column(columns, COL_MERGED_ENTITIES).excluded_entity_labels == ["email"]
     assert all(getattr(column, "column_type", None) != "custom" for column in columns)
 

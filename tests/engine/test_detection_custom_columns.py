@@ -20,6 +20,7 @@ from anonymizer.engine.constants import (
     COL_MERGED_ENTITIES,
     COL_MERGED_TAGGED_TEXT,
     COL_RAW_DETECTED,
+    COL_SEED_DETECTION_RESULT,
     COL_SEED_ENTITIES,
     COL_SEED_ENTITIES_JSON,
     COL_SEED_VALIDATION_CANDIDATES,
@@ -30,6 +31,7 @@ from anonymizer.engine.constants import (
     COL_VALIDATED_SEED_ENTITIES,
     COL_VALIDATION_CANDIDATES,
     COL_VALIDATION_DECISIONS,
+    RECORD_ID_COLUMN,
 )
 from anonymizer.engine.detection.custom_columns import (
     _parse_entity_spans,
@@ -39,6 +41,7 @@ from anonymizer.engine.detection.custom_columns import (
     merge_and_build_candidates,
     parse_detected_entities,
 )
+from anonymizer.engine.schemas import DetectionResult
 
 
 def test_parse_entity_spans_handles_malformed_payload() -> None:
@@ -71,10 +74,18 @@ def test_parse_produces_seed_entities_and_notation() -> None:
             },
         ]
     )
-    row: dict[str, Any] = {COL_TEXT: text, COL_RAW_DETECTED: raw}
-    result = parse_detected_entities(row)
+    row: dict[str, Any] = {
+        RECORD_ID_COLUMN: "record-1",
+        COL_TEXT: text,
+        COL_RAW_DETECTED: raw,
+    }
+    result = parse_detected_entities(row, detection_result_id="r1", source_instance="gliner")
     assert len(result[COL_SEED_ENTITIES]["entities"]) == 1
     assert result[COL_SEED_ENTITIES]["entities"][0]["value"] == "(555) 123-4567"
+    detection_result = DetectionResult.model_validate(result[COL_SEED_DETECTION_RESULT])
+    assert detection_result.detection_result_id == "r1"
+    assert detection_result.observations[0].observation_id == "o1"
+    assert detection_result.source_view.source_text_ref.record_id == "record-1"
     assert result[COL_TAG_NOTATION] in {"xml", "bracket", "paren", "sentinel"}
 
 

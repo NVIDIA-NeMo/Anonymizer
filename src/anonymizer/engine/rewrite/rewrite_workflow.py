@@ -30,9 +30,10 @@ from anonymizer.engine.constants import (
     COL_TEXT,
     COL_UTILITY_SCORE,
     COL_WEIGHTED_LEAKAGE_RATE,
+    RECORD_ID_COLUMN,
 )
 from anonymizer.engine.evaluation.detection_judge import DetectionJudgeWorkflow
-from anonymizer.engine.ndd.adapter import RECORD_ID_COLUMN, FailedRecord, NddAdapter
+from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter
 from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceWorkflow
 from anonymizer.engine.rewrite.domain_classification import DomainClassificationWorkflow
 from anonymizer.engine.rewrite.evaluate import EvaluateWorkflow

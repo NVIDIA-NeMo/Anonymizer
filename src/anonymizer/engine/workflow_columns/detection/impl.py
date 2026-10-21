@@ -34,7 +34,6 @@ from anonymizer.engine.workflow_columns.detection.config import (
 )
 
 _TRANSFORMS: dict[DetectionTransformOperation, Callable[[dict[str, Any]], dict[str, Any]]] = {
-    DetectionTransformOperation.PARSE_DETECTED_ENTITIES: parse_detected_entities,
     DetectionTransformOperation.PREPARE_VALIDATION_INPUTS: prepare_validation_inputs,
     DetectionTransformOperation.ENRICH_VALIDATION_DECISIONS: enrich_validation_decisions,
     DetectionTransformOperation.APPLY_VALIDATION_TO_SEED_ENTITIES: apply_validation_to_seed_entities,
@@ -100,6 +99,12 @@ class _AsyncBridgedModelFacade:
 class DetectionTransformGenerator(ColumnGeneratorCellByCell[DetectionTransformConfig]):
     def generate(self, data: dict[str, Any]) -> dict[str, Any]:
         operation = DetectionTransformOperation(self.config.operation)
+        if operation == DetectionTransformOperation.PARSE_DETECTED_ENTITIES:
+            return parse_detected_entities(
+                data,
+                detection_result_id=self.config.detection_result_id,
+                source_instance=self.config.source_instance,
+            )
         if operation == DetectionTransformOperation.APPLY_VALIDATION_TO_SEED_ENTITIES:
             return apply_validation_to_seed_entities(
                 data,

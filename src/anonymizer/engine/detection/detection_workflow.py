@@ -215,6 +215,8 @@ class EntityDetectionWorkflow:
                 DetectionTransformConfig(
                     name=COL_SEED_ENTITIES,
                     operation=DetectionTransformOperation.PARSE_DETECTED_ENTITIES,
+                    detection_result_id="r1",
+                    source_instance=detection_alias,
                 ),
                 DetectionTransformConfig(
                     name=COL_SEED_VALIDATION_CANDIDATES,

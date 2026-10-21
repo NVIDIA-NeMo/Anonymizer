@@ -22,11 +22,12 @@ from anonymizer.engine.constants import (
     COL_REPLACEMENT_APPLICATION,
     COL_TEXT,
     DEFAULT_ENTITY_LABELS,
+    RECORD_ID_COLUMN,
     _jinja,
 )
 from anonymizer.engine.detection.postprocess import normalize_label, normalize_labels
 from anonymizer.engine.evaluation.judge_base import JudgeResult, _BaseJudgeWorkflow
-from anonymizer.engine.ndd.adapter import RECORD_ID_COLUMN, FailedRecord, NddAdapter
+from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter
 from anonymizer.engine.ndd.model_loader import resolve_model_alias
 from anonymizer.engine.prompt_utils import substitute_placeholders
 from anonymizer.engine.row_partitioning import ROW_ORDER_COL, merge_and_reorder
