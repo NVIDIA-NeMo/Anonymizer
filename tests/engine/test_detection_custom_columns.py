@@ -12,11 +12,13 @@ from __future__ import annotations
 
 import json
 from typing import Any
+from unittest.mock import Mock
 
 import pytest
 
 from anonymizer.engine.constants import (
     COL_ADMISSION_RESULTS,
+    COL_ADMITTED_CANDIDATES,
     COL_AUGMENTED_ENTITIES,
     COL_DETECTED_ENTITIES,
     COL_INITIAL_TAGGED_TEXT,
@@ -46,6 +48,7 @@ from anonymizer.engine.detection.custom_columns import (
 from anonymizer.engine.schemas import (
     AdmissionResults,
     AdmissionRoute,
+    AdmissionStatus,
     DetectionResult,
     EffectiveLabelPolicy,
     Observation,
@@ -58,6 +61,8 @@ from anonymizer.engine.schemas import (
     ValidationRequestDecisionSets,
     ValidationRequestInventory,
 )
+from anonymizer.engine.workflow_columns.detection.config import DetectionTransformConfig, DetectionTransformOperation
+from anonymizer.engine.workflow_columns.detection.impl import DetectionTransformGenerator
 
 
 def test_parse_entity_spans_handles_malformed_payload() -> None:
@@ -233,9 +238,9 @@ def test_validation_reclassification_to_excluded_label_is_filtered_before_augmen
         proposed_label="city",
         label_policy=EffectiveLabelPolicy(excluded_labels=(" CITY ",)),
     )
-    admit_validation_decisions(row)
+    admit_validation_decisions(row, excluded_entity_labels=[" CITY "])
 
-    result = apply_validation_to_seed_entities(row, excluded_entity_labels=[" CITY "])
+    result = apply_validation_to_seed_entities(row)
 
     assert result[COL_VALIDATED_SEED_ENTITIES]["entities"] == []
     assert json.loads(result[COL_SEED_ENTITIES_JSON]) == []
@@ -300,6 +305,7 @@ def test_validation_rejection_is_not_replayed_against_augmenter_observation() ->
     admit_validation_decisions(row)
     apply_validation_to_seed_entities(row)
     assert row[COL_VALIDATED_SEED_ENTITIES] == {"entities": []}
+    assert row[COL_ADMITTED_CANDIDATES] == {"candidates": []}
 
     row[COL_AUGMENTED_ENTITIES] = {"entities": [{"value": "Alice", "label": "first_name"}]}
     merge_and_build_candidates(row)
@@ -325,6 +331,29 @@ def test_admit_validation_decisions_only_publishes_admission_results() -> None:
         == DetectionResult.model_validate(row[COL_SEED_DETECTION_RESULT]).observations[0].ref
     )
     assert admissions.results[0].effective_label == "first_name"
+
+
+def test_admission_transform_forwards_configured_label_policy() -> None:
+    policy = EffectiveLabelPolicy.from_labels(allowed_labels=["country", "city"], excluded_labels=["city"])
+    row = _validation_row(
+        text="San Diego",
+        label="country",
+        decision=ValidationChoice.reclass,
+        proposed_label="city",
+        label_policy=policy,
+    )
+    config = DetectionTransformConfig(
+        name=COL_ADMISSION_RESULTS,
+        operation=DetectionTransformOperation.ADMIT_VALIDATION_DECISIONS,
+        allowed_entity_labels=["country", "city"],
+        excluded_entity_labels=["city"],
+    )
+    generator = DetectionTransformGenerator(config, resource_provider=Mock())
+
+    result = generator.generate(row)
+
+    admissions = AdmissionResults.model_validate(result[COL_ADMISSION_RESULTS])
+    assert admissions.results[0].status is AdmissionStatus.rejected
 
 
 @pytest.mark.parametrize("column", [COL_SEED_DETECTION_RESULT, COL_VALIDATION_INVENTORIES, COL_VALIDATION_DECISIONS])

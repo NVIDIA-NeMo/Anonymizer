@@ -952,6 +952,12 @@ failure continue through the existing failed-record path instead.
 
 ### Step 4: Apply decisions once and admit candidates
 
+Admission requires the effective label policy explicitly from the detection
+configuration, including when no observation needs LLM validation. Inventory
+copies must match that policy; they are consistency checks, not a policy source
+or a reason to fall back to an unrestricted policy. All routes use the shared
+`EffectiveLabelPolicy.from_labels()` constructor.
+
 The admission transform owns validation consumption. It:
 
 1. resolves the response alias through its authoritative request inventory to

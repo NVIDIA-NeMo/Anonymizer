@@ -611,9 +611,9 @@ def _build_lifecycle_dispatch_kwargs(
         single_chunk_full_text=params.single_chunk_full_text,
         notation=notation,
         prompt_template=params.prompt_template,
-        effective_label_policy=EffectiveLabelPolicy(
-            allowed_labels=tuple(params.allowed_entity_labels) if params.allowed_entity_labels is not None else None,
-            excluded_labels=tuple(params.excluded_entity_labels),
+        effective_label_policy=EffectiveLabelPolicy.from_labels(
+            allowed_labels=params.allowed_entity_labels,
+            excluded_labels=params.excluded_entity_labels,
         ),
     )
 

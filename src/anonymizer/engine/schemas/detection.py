@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from enum import Enum
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -115,6 +116,19 @@ class EffectiveLabelPolicy(FrozenStrictModel):
 
     allowed_labels: tuple[str, ...] | None = None
     excluded_labels: tuple[str, ...] = ()
+
+    @classmethod
+    def from_labels(
+        cls,
+        *,
+        allowed_labels: Sequence[str] | None,
+        excluded_labels: Sequence[str] | None,
+    ) -> EffectiveLabelPolicy:
+        """Build an immutable policy from the detection configuration's label lists."""
+        return cls(
+            allowed_labels=tuple(allowed_labels) if allowed_labels is not None else None,
+            excluded_labels=tuple(excluded_labels or ()),
+        )
 
 
 class ValidationInventoryEntry(FrozenStrictModel):
@@ -315,6 +329,12 @@ class AdmittedCandidate(FrozenStrictModel):
         if not native_score_refs <= accepted_origin_refs:
             raise ValueError("native scores must reference accepted origins")
         return self
+
+
+class AdmittedCandidates(FrozenStrictModel):
+    """Ordered admitted candidates carried between detection stages."""
+
+    candidates: tuple[AdmittedCandidate, ...] = ()
 
 
 class ValidationChoice(str, Enum):

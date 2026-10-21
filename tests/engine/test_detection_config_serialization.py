@@ -21,6 +21,7 @@ from data_designer.interface.data_designer import DataDesigner
 from data_designer.plugins import Plugin
 
 from anonymizer.engine.constants import (
+    COL_ADMISSION_RESULTS,
     COL_AUGMENTED_ENTITIES,
     COL_TEXT,
     COL_VALIDATION_DECISIONS,
@@ -107,7 +108,7 @@ def test_detection_builder_round_trips_through_native_data_designer_config(tmp_p
         for column in transforms
         if DetectionTransformOperation(column.operation) == DetectionTransformOperation.FINALIZE_ENTITIES
     )
-    assert seed_validation_transform.excluded_entity_labels == ["email"]
+    assert seed_validation_transform.excluded_entity_labels == []
     assert merge_transform.excluded_entity_labels == ["email"]
     assert finalize_transform.excluded_entity_labels == ["email"]
     assert finalize_transform.allowed_entity_labels == ["first_name"]
@@ -116,6 +117,10 @@ def test_detection_builder_round_trips_through_native_data_designer_config(tmp_p
     assert isinstance(validation, ChunkedValidationConfig)
     assert validation.max_entities_per_call == 7
     assert validation.excerpt_window_chars == 321
+    admission = next(column for column in columns if column.name == COL_ADMISSION_RESULTS)
+    assert isinstance(admission, DetectionTransformConfig)
+    assert admission.allowed_entity_labels == validation.allowed_entity_labels == ["first_name"]
+    assert admission.excluded_entity_labels == validation.excluded_entity_labels == ["email"]
     assert validation.pool == parsed_models.selected_models.detection.entity_validator
     assert "Customer support messages" in validation.prompt_template
     assert "Alicia" in validation.prompt_template

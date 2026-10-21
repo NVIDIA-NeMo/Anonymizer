@@ -241,11 +241,12 @@ class EntityDetectionWorkflow:
                 DetectionTransformConfig(
                     name=COL_ADMISSION_RESULTS,
                     operation=DetectionTransformOperation.ADMIT_VALIDATION_DECISIONS,
+                    allowed_entity_labels=labels if label_config.strict_labels else None,
+                    excluded_entity_labels=list(excluded_entity_labels or []),
                 ),
                 DetectionTransformConfig(
                     name=COL_SEED_ENTITIES_JSON,
                     operation=DetectionTransformOperation.APPLY_VALIDATION_TO_SEED_ENTITIES,
-                    excluded_entity_labels=list(excluded_entity_labels or []),
                 ),
                 _PrivatePromptLLMStructuredColumnConfig(
                     name=COL_AUGMENTED_ENTITIES,

@@ -35,7 +35,6 @@ from anonymizer.engine.workflow_columns.detection.config import (
 
 _TRANSFORMS: dict[DetectionTransformOperation, Callable[[dict[str, Any]], dict[str, Any]]] = {
     DetectionTransformOperation.PREPARE_VALIDATION_INPUTS: prepare_validation_inputs,
-    DetectionTransformOperation.ADMIT_VALIDATION_DECISIONS: admit_validation_decisions,
     DetectionTransformOperation.APPLY_VALIDATION_TO_SEED_ENTITIES: apply_validation_to_seed_entities,
     DetectionTransformOperation.MERGE_AND_BUILD_CANDIDATES: merge_and_build_candidates,
     DetectionTransformOperation.FINALIZE_ENTITIES: finalize_entities,
@@ -105,9 +104,10 @@ class DetectionTransformGenerator(ColumnGeneratorCellByCell[DetectionTransformCo
                 detection_result_id=self.config.detection_result_id,
                 source_instance=self.config.source_instance,
             )
-        if operation == DetectionTransformOperation.APPLY_VALIDATION_TO_SEED_ENTITIES:
-            return apply_validation_to_seed_entities(
+        if operation == DetectionTransformOperation.ADMIT_VALIDATION_DECISIONS:
+            return admit_validation_decisions(
                 data,
+                allowed_entity_labels=self.config.allowed_entity_labels,
                 excluded_entity_labels=self.config.excluded_entity_labels,
             )
         if operation == DetectionTransformOperation.MERGE_AND_BUILD_CANDIDATES:

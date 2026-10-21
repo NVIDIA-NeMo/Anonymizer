@@ -8,7 +8,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from anonymizer.engine.constants import DEFAULT_ENTITY_LABELS, ENTITY_LABEL_EXAMPLES
-from anonymizer.engine.detection.postprocess import normalize_label, normalize_labels
+from anonymizer.engine.detection.postprocess import is_reserved_entity_label, normalize_label, normalize_labels
 
 
 @dataclass
@@ -43,6 +43,8 @@ def normalize_entity_label_examples(
         label = normalize_label(raw_label)
         if not label:
             raise ValueError("Labels in entity_label_examples must be non-blank strings.")
+        if is_reserved_entity_label(label):
+            raise ValueError(f"Entity label {raw_label!r} is reserved for internal prompt markup.")
         if not isinstance(raw_examples, list) or not raw_examples:
             raise ValueError(f"entity_label_examples[{label!r}] must be a non-empty list of strings.")
 
@@ -77,6 +79,8 @@ def resolve_entity_label_config(
     seen_labels: set[str] = set()
     for raw_label in labels:
         label = normalize_label(raw_label)
+        if is_reserved_entity_label(label):
+            raise ValueError(f"Entity label {raw_label!r} is reserved for internal prompt markup.")
         if label and label not in seen_labels and label not in excluded:
             normalized_labels.append(label)
             seen_labels.add(label)

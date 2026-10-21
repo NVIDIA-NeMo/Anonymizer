@@ -847,6 +847,12 @@ def test_resolve_entity_label_config_empty_result_raises() -> None:
         resolve_entity_label_config(entity_labels=["email"], excluded_entity_labels={"email"})
 
 
+@pytest.mark.parametrize("label", ["NAGROUP_g1", " nagroup_G42 "])
+def test_resolve_entity_label_config_rejects_reserved_prompt_labels(label: str) -> None:
+    with pytest.raises(ValueError, match="reserved for internal prompt markup"):
+        resolve_entity_label_config(entity_labels=["email", label])
+
+
 def test_materialize_final_entities_normalizes_configured_labels() -> None:
     raw = {
         "entities": [
@@ -1077,6 +1083,8 @@ def test_detection_workflow_uses_plugin_transform_columns(
     assert RECORD_ID_COLUMN in parse_column.required_columns
     assert COL_SEED_DETECTION_RESULT in parse_column.side_effect_columns
     assert COL_ADMISSION_RESULTS not in _find_column(columns, COL_ADMISSION_RESULTS).side_effect_columns
+    assert _find_column(columns, COL_ADMISSION_RESULTS).excluded_entity_labels == ["email"]
+    assert _find_column(columns, COL_ADMISSION_RESULTS).allowed_entity_labels is None
     assert COL_ADMISSION_RESULTS not in _find_column(columns, COL_DETECTED_ENTITIES).required_columns
     assert _find_column(columns, COL_MERGED_ENTITIES).excluded_entity_labels == ["email"]
     assert all(getattr(column, "column_type", None) != "custom" for column in columns)
