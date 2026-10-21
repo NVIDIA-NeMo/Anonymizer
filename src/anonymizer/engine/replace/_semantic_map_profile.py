@@ -22,7 +22,7 @@ from anonymizer.engine.graph_sdk._authoring_defaults import (
     _validate_targets,
 )
 from anonymizer.engine.graph_sdk._effect_values import EffectCode, reject
-from anonymizer.engine.graph_sdk._execution_delegated import SubmitterPool
+from anonymizer.engine.graph_sdk._execution_delegated import SubmitterPool, drive
 from anonymizer.engine.graph_sdk._execution_values import DelegatedRequests
 from anonymizer.engine.graph_sdk._workflow_values import (
     InputBinding,
@@ -191,14 +191,13 @@ def run_direct_map(
             bound_frame = dataframe if COL_TEXT in dataframe else dataframe.assign(**{COL_TEXT: [""] * size})
             issued = requests.bind_frame(bound_frame, targets=tuple(targets), source_limit=size)
             source = WorkflowSourceFrame.capture(dataframe, associations=issued.associations, invocation_bound=True)
-            asyncio.run_coroutine_threadsafe(complete_detection_entry(requests, inputs), loop).result()
+            drive(complete_detection_entry(requests, inputs))
             map_entry_slot = slots["entry"]
-            entry_inputs = asyncio.run_coroutine_threadsafe(
+            entry_inputs = drive(
                 requests.enter_operations(map_entry_slot, source.associations)
                 if size
-                else _enter_empty(requests, map_entry_slot),
-                loop,
-            ).result()
+                else _enter_empty(requests, map_entry_slot)
+            )
             if any(item is None for item in entry_inputs):
                 reject(EffectCode.REQUEST_CAUSALITY)
             entry_inputs = cast(tuple[AssociationInput, ...], entry_inputs)
@@ -206,7 +205,6 @@ def run_direct_map(
                 requests,
                 source,
                 {k: v for k, v in slots.items() if k != "entry"},
-                loop,
                 receiver,
                 dataframe,
                 arguments,
@@ -238,7 +236,7 @@ def run_direct_map(
                     )
                 )
 
-            asyncio.run_coroutine_threadsafe(finish(), loop).result()
+            drive(finish())
             return LocalCompleted(
                 results=tuple(
                     AssociationResult(

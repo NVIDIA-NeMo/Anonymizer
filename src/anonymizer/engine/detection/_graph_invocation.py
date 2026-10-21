@@ -8,7 +8,6 @@ DataDesigner keeps its own transport, retries and scheduling.
 
 from __future__ import annotations
 
-import asyncio
 from collections.abc import Callable, Mapping
 from contextvars import copy_context
 from dataclasses import dataclass, replace
@@ -25,6 +24,7 @@ from anonymizer.engine.detection.detection_workflow import (
 )
 from anonymizer.engine.detection.postprocess import EntitySpan
 from anonymizer.engine.detection.run_arguments import detection_run_arguments
+from anonymizer.engine.graph_sdk._execution_delegated import drive
 from anonymizer.engine.graph_sdk._execution_values import DelegatedRequests, LocalCompleted, LocalFailure
 from anonymizer.engine.graph_sdk._graph_values import ArtifactRef, DatumId
 from anonymizer.engine.graph_sdk.capabilities import FrozenConfig
@@ -56,7 +56,6 @@ class DetectionRedactInvocation:
     output_port: str
     outcome: str
     semantic_slots: Mapping[str, int] | None = None
-    semantic_loop: asyncio.AbstractEventLoop | None = None
     semantic_transform_slot: int | None = None
     semantic_entry_slot: int | None = None
     handoff: Callable[[Callable[[], LocalCompleted | LocalFailure]], LocalCompleted | LocalFailure] | None = None
@@ -92,9 +91,7 @@ class DetectionRedactInvocation:
 
         # The submitting profile classified the runner: only a builtin one has detection children.
         if self.semantic_slots is not None:
-            if self.semantic_loop is None:
-                raise AnonymizerWorkflowError("Detection binding has no owning loop")
-            asyncio.run_coroutine_threadsafe(complete_detection_entry(requests, inputs), self.semantic_loop).result()
+            drive(complete_detection_entry(requests, inputs))
             detected = lower_detection(
                 self.detection,
                 self.source,
@@ -102,7 +99,6 @@ class DetectionRedactInvocation:
                 requests,
                 frame,
                 dict(self.semantic_slots),
-                self.semantic_loop,
                 self.semantic_entry_slot,
             )
         else:
@@ -159,8 +155,6 @@ class DetectionRedactInvocation:
             if item.association in rows
         )
         if self.semantic_transform_slot is not None:
-            if self.semantic_loop is None:
-                raise AnonymizerWorkflowError("Detection binding has no owning loop")
             transform_slot = self.semantic_transform_slot
             completed_sources = {}
 
@@ -197,7 +191,7 @@ class DetectionRedactInvocation:
                     await complete_empty_stage(requests, [item])
                 results = accepted
 
-            asyncio.run_coroutine_threadsafe(finish(), self.semantic_loop).result()
+            drive(finish())
             successful = tuple(completed_sources[association] for association in successful)
         results_by_source = {item.association: item for item in results}
         results = tuple(results_by_source[association] for association in successful)

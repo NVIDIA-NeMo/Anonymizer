@@ -33,7 +33,7 @@ from anonymizer.engine.graph_sdk._authoring_defaults import (
     _validate_targets,
 )
 from anonymizer.engine.graph_sdk._effect_values import EffectCode, reject
-from anonymizer.engine.graph_sdk._execution_delegated import SubmitterPool
+from anonymizer.engine.graph_sdk._execution_delegated import SubmitterPool, drive
 from anonymizer.engine.graph_sdk._execution_values import DelegatedRequests
 from anonymizer.engine.graph_sdk._workflow_values import (
     ArtifactType,
@@ -320,7 +320,6 @@ class DetectionBinding(StageBinding):
     requests: DelegatedRequests
     source: WorkflowSourceFrame
     slots: dict[str, int]
-    loop: asyncio.AbstractEventLoop
     receiver: EntityDetectionWorkflow
     arguments: dict[str, Any]
     entry: pd.DataFrame
@@ -456,9 +455,8 @@ class DetectionBinding(StageBinding):
         return EntityDetectionResult(selected, failures, positions)
 
     def call(self, operation: Any) -> Any:
-        from anonymizer.engine.graph_sdk._execution_delegated import source_worker_borrow
 
-        return asyncio.run_coroutine_threadsafe(operation, source_worker_borrow().loop).result()
+        return drive(operation)
 
     async def complete_empty_entry(self) -> None:
         if self.entry_slot is None:
@@ -559,7 +557,6 @@ def lower_detection(
     requests: DelegatedRequests,
     source: WorkflowSourceFrame,
     slots: dict[str, int],
-    loop: asyncio.AbstractEventLoop,
     entry_slot: int | None = None,
 ) -> EntityDetectionResult:
     """Lower builtin detection directly into the admitted graph's detection children."""
@@ -567,7 +564,7 @@ def lower_detection(
     with stage_timer(
         "EntityDetectionWorkflow.run", input_row_count=len(frame), tag_latent_entities=values["tag_latent_entities"]
     ) as measurement:
-        result = DetectionBinding(requests, source, slots, loop, receiver, values, frame, entry_slot).lower()
+        result = DetectionBinding(requests, source, slots, receiver, values, frame, entry_slot).lower()
         measurement.update(output_row_count=len(result.dataframe), failed_record_count=len(result.failed_records))
     return result
 
@@ -746,8 +743,8 @@ async def execute_detection(
 
     def callback(inputs: tuple[AssociationInput, ...], requests: DelegatedRequests) -> LocalCompleted:
         source = requests.bind_frame(frame, targets=tuple(targets), source_limit=size)
-        asyncio.run_coroutine_threadsafe(complete_detection_entry(requests, inputs), loop).result()
-        result = DetectionBinding(requests, source, slots, loop, receiver, arguments, frame).lower()
+        drive(complete_detection_entry(requests, inputs))
+        result = DetectionBinding(requests, source, slots, receiver, arguments, frame).lower()
         captured.append(result)
         successful = tuple(source.associations[index] for index in result.source_positions)
         terminal = []
@@ -801,7 +798,7 @@ async def execute_detection(
                     ),
                 )
 
-        asyncio.run_coroutine_threadsafe(finish(), loop).result()
+        drive(finish())
         return LocalCompleted(
             results=tuple(
                 AssociationResult(
@@ -915,18 +912,16 @@ def run_empty_detection(
         limits=DataLimits(max_datums=0, max_targets=0, max_text_bytes=0, max_declarations=0, max_group_members=0),
     )
     prepared = _prepare_frame_plan(data, raw, capabilities, (), invocation_owned=True)
-    loop = None
 
     def callback(inputs: tuple[AssociationInput, ...], requests: DelegatedRequests) -> LocalCompleted:
         del inputs
-        if loop is None or requests.cancelled:
+        if requests.cancelled:
             reject(EffectCode.FOREIGN_OWNER)
         source = requests.bind_frame(frame, targets=(), source_limit=0)
         binding = DetectionBinding(
             requests,
             source,
             detection_slots(prepared, ids),
-            loop,
             receiver,
             arguments,
             frame,
@@ -934,10 +929,10 @@ def run_empty_detection(
         )
         selected = binding.lower()
         owner_slot = next(slot.index for slot in prepared.reservation_recipe if slot.template == node)
-        item = asyncio.run_coroutine_threadsafe(requests.enter_operation(owner_slot, None), loop).result()
+        item = drive(requests.enter_operation(owner_slot, None))
         if item is None:
             reject(EffectCode.REQUEST_CAUSALITY)
-        asyncio.run_coroutine_threadsafe(complete_empty_stage(requests, [item]), loop).result()
+        drive(complete_empty_stage(requests, [item]))
         return LocalCompleted(
             results=(),
             frame=InvocationFrame(
@@ -946,9 +941,6 @@ def run_empty_detection(
         )
 
     async def execute(pool: SubmitterPool, handoff: Callable[..., Any]) -> ReplacementResult:
-        nonlocal loop
-        loop = asyncio.get_running_loop()
-
         def dispatch(inputs: tuple[AssociationInput, ...], requests: DelegatedRequests) -> LocalCompleted:
             context = copy_context()
             return handoff(lambda: context.run(callback, inputs, requests))

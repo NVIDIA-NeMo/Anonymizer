@@ -4,7 +4,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 from dataclasses import dataclass, field, replace
 from typing import Any, cast
@@ -21,6 +20,7 @@ from anonymizer.engine.constants import (
 )
 from anonymizer.engine.graph_sdk._authoring_defaults import _compile_graph, _operation_spec, _outcome_spec
 from anonymizer.engine.graph_sdk._effect_values import EffectCode, reject
+from anonymizer.engine.graph_sdk._execution_delegated import drive
 from anonymizer.engine.graph_sdk._execution_values import DelegatedRequests, LocalCompleted
 from anonymizer.engine.graph_sdk._workflow_values import (
     ArtifactType,
@@ -252,7 +252,6 @@ class MapBinding(StageBinding):
     requests: DelegatedRequests
     source: WorkflowSourceFrame
     slots: dict[str, int]
-    loop: asyncio.AbstractEventLoop
     receiver: LlmReplaceWorkflow
     entry: pd.DataFrame
     arguments: dict[str, Any]
@@ -300,7 +299,7 @@ class MapBinding(StageBinding):
         source_worker_borrow().authorize_sources_sync(self.source.associations)
 
     def call(self, operation: Any) -> Any:
-        return asyncio.run_coroutine_threadsafe(operation, self.loop).result()
+        return drive(operation)
 
     async def ready(
         self, associations: tuple[Any, ...]

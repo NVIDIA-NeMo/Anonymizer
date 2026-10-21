@@ -8,8 +8,10 @@ import asyncio
 import inspect
 from collections.abc import Callable, Coroutine
 from concurrent.futures import Future
+from contextlib import suppress
 from contextvars import ContextVar, copy_context
 from dataclasses import replace
+from threading import get_ident
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, TypeVar, cast
 
 from anonymizer.engine.graph_sdk._activation_reducer import advance_activation
@@ -113,6 +115,20 @@ _CHILD_PURPOSE: dict[ChildSourceKind, RequestPurpose] = {
     "conversation_restart": "correction",
     "failover": "failover",
 }
+
+
+def drive(operation: Coroutine[object, object, _T]) -> _T:
+    """Run delegated bookkeeping to completion on the calling thread.
+
+    Owner bookkeeping never awaits anything that can suspend; this enforces it at runtime instead of
+    hopping to the owner loop and waiting for it.
+    """
+    try:
+        operation.send(None)
+    except StopIteration as done:
+        return cast(_T, done.value)
+    operation.close()
+    raise RuntimeError("delegated graph bookkeeping suspended")
 
 
 def source_worker_borrow() -> _WorkerBorrow:
@@ -263,7 +279,18 @@ class _WorkerBorrow(PrivateValue):
         if loop is not self.loop and loop is not self.transport_loop:
             reject(EffectCode.UNSUPPORTED)
 
+    def _drive(self, operation: Callable[[], Coroutine[object, object, _T]]) -> _T:
+        """Bookkeeping from synchronous code: driven here, or on the owner loop while physical children may run."""
+        self._require_borrow()
+        if self.owner.direct:
+            return self.owner._drive_call(self, operation)
+        if asyncio._get_running_loop() is self.owner.loop:
+            reject(EffectCode.UNSUPPORTED)  # Waiting here would block the owner loop it waits for.
+        return asyncio.run_coroutine_threadsafe(self.owner._worker_call(self, operation), self.owner.loop).result()
+
     async def _call(self, operation: Callable[[], Coroutine[object, object, _T]], *, concurrent: bool = False) -> _T:
+        if not concurrent and self.owner.direct:
+            return self._drive(operation)
         self._check_origin()
         future = asyncio.run_coroutine_threadsafe(
             self.owner._worker_call(self, operation, concurrent=concurrent), self.owner.loop
@@ -280,6 +307,8 @@ class _WorkerBorrow(PrivateValue):
             raise
 
     async def authorize_source(self, association: SemanticAssociation) -> None:
+        if self.owner.direct:
+            return self.authorize_source_sync(association)
         self._require_borrow()
         future = asyncio.run_coroutine_threadsafe(
             self.owner._worker_call(self, lambda: self.owner._authorize_source(association)), self.owner.loop
@@ -300,21 +329,8 @@ class _WorkerBorrow(PrivateValue):
             raise cancellation
         completion.result()
 
-    def _check_sync_origin(self) -> None:
-        """Sync callbacks block their thread, so they must not run on the owner loop (no loop is fine)."""
-        self._require_borrow()
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            return
-        if loop is self.owner.loop:
-            reject(EffectCode.UNSUPPORTED)
-
     def authorize_source_sync(self, association: SemanticAssociation) -> None:
-        self._check_sync_origin()
-        asyncio.run_coroutine_threadsafe(
-            self.owner._worker_call(self, lambda: self.owner._authorize_source(association)), self.owner.loop
-        ).result()
+        self._drive(lambda: self.owner._authorize_source(association))
 
     def require_transport(self, transport: object) -> None:
         self._require_borrow()
@@ -381,13 +397,11 @@ class _WorkerBorrow(PrivateValue):
         return await self._call(lambda: self.owner.close_observed_requests(associations, generated))
 
     def authorize_sources_sync(self, associations: tuple[SemanticAssociation, ...]) -> None:
-        self._check_sync_origin()
-
         async def authorize() -> None:
             for association in associations:
                 await self.owner._authorize_source(association)
 
-        asyncio.run_coroutine_threadsafe(self.owner._worker_call(self, authorize), self.owner.loop).result()
+        self._drive(authorize)
 
     async def readiness(self) -> PhysicalRequestId:
         return await self._call(self.owner.readiness)
@@ -431,6 +445,10 @@ class _DelegatedOwner(PrivateValue):
         self.inputs = tuple(value for job in jobs for value in job.inputs)
         self.loop = asyncio.get_running_loop()
         self.closed = False
+        # The thread currently driving bookkeeping synchronously under the runtime lock, if any, and whether
+        # that call changed the ledger in a way the scheduler must see.
+        self.driving: int | None = None
+        self.wake_pending = False
         # Borrowed children in flight, each keyed by its request chain (None: readiness or probe).
         self.children: dict[asyncio.Task[PhysicalRequestId | None], RequestChainId | None] = {}
         self.children_idle = asyncio.Event()
@@ -470,6 +488,9 @@ class _DelegatedOwner(PrivateValue):
                 for slot in group:
                     self.chains[job.association, slot] = chain
         self.own_chains = frozenset(chain.chain for chain in self.chains.values())
+        # Without physical children nothing can be in flight beside the body, so its bookkeeping needs no
+        # owner-loop gate: it is driven synchronously on the calling thread (every facade invocation).
+        self.direct = not contract.child_slots and contract.readiness is None
         self.owns_children = any(item.submission_owner == self.policy.node for item in runtime.policies.values())
 
     def require_transport(self, transport: object) -> None:
@@ -518,8 +539,18 @@ class _DelegatedOwner(PrivateValue):
         return self.jobs[association]
 
     def _check(self) -> None:
-        if self.closed or asyncio.get_running_loop() is not self.loop:
+        if self.closed or (self.driving != get_ident() and asyncio._get_running_loop() is not self.loop):
             reject(EffectCode.UNSUPPORTED)
+
+    def _wake(self) -> None:
+        """Wake the scheduler: after a synchronous drive returns, or now on the owner loop, or thread-safely."""
+        if self.driving == get_ident():
+            self.wake_pending = True
+        elif asyncio._get_running_loop() is self.loop:
+            self.runtime.control.scheduler_changed.set()
+        else:
+            with suppress(RuntimeError):  # A closed owner loop has no scheduler left to wake.
+                self.loop.call_soon_threadsafe(self.runtime.control.scheduler_changed.set)
 
     async def aparser_rejected(self, request: PhysicalRequestId) -> ChildEvidence:
         return self.parser_rejected(request)
@@ -696,7 +727,7 @@ class _DelegatedOwner(PrivateValue):
         else:
             mapping = _mapping(job.policy, "failure", None, "malformed_response")
         final = self.runtime._complete_job(job, mapping, results, assessments)
-        self.runtime.control.scheduler_changed.set()
+        self._wake()
         return final
 
     async def ready_operations_many(self, associations: tuple[SemanticAssociation, ...]) -> tuple[tuple[int, ...], ...]:
@@ -714,8 +745,6 @@ class _DelegatedOwner(PrivateValue):
             reject(EffectCode.INVALID_TYPE)
         entered = []
         for index, association in enumerate(associations):
-            if index and index % 64 == 0:
-                await asyncio.sleep(0)
             entered.append(await self.enter_operation(slot, association))
         return tuple(entered)
 
@@ -735,8 +764,6 @@ class _DelegatedOwner(PrivateValue):
             reject(EffectCode.INVALID_TYPE)
         outcomes = []
         for index, item in enumerate(results):
-            if index and index % 64 == 0:
-                await asyncio.sleep(0)
             if type(item) is not tuple or len(item) != 2:
                 reject(EffectCode.INVALID_TYPE)
             association, result = item
@@ -788,8 +815,9 @@ class _DelegatedOwner(PrivateValue):
 
     def _check_submission(self, *, concurrent: bool = False) -> None:
         self._check()
-        task = asyncio.current_task()
-        worker = task in self.entered_calls
+        driven = self.driving == get_ident()
+        task = None if driven else asyncio.current_task()
+        worker = driven or task in self.entered_calls
         # Only worker physical requests overlap borrowed children; same-loop submission keeps one at a time.
         if (task is not self.submission and not worker) or (self.active and not (concurrent and worker)):
             reject(EffectCode.UNSUPPORTED)
@@ -848,6 +876,28 @@ class _DelegatedOwner(PrivateValue):
     def _cancel_worker(self, borrow: _WorkerBorrow) -> None:
         if self.worker_borrow is borrow:
             self.cancel_requested = True
+
+    def _drive_call(self, borrow: _WorkerBorrow, operation: Callable[[], Coroutine[object, object, _T]]) -> _T:
+        """Run one worker bookkeeping call synchronously on the calling thread, under the runtime lock."""
+        with self.runtime.lock:
+            if self.closed:
+                reject(EffectCode.UNSUPPORTED)
+            if self.worker_borrow is not borrow or _WORKER_BORROW.get() is not borrow or borrow.expired:
+                reject(EffectCode.FOREIGN_OWNER)
+            if self.driving is not None or self.active or self.cancelled:
+                reject(EffectCode.REQUEST_CAUSALITY)
+            if len(self.jobs) == 1 and not self.contract.generation_groups and self.entered_calls:
+                reject(EffectCode.REQUEST_CAUSALITY)
+            self.driving = get_ident()
+            try:
+                return drive(operation())
+            finally:
+                self.driving = None
+                if self.wake_pending:
+                    self.wake_pending = False
+                    # The frontier the owner loop would apply before the body's next call; launches stay there.
+                    self.runtime.advance()
+                    self._wake()
 
     async def _worker_call(
         self,
@@ -971,7 +1021,7 @@ class _DelegatedOwner(PrivateValue):
                     source.state = advance_activation(
                         state=source.state, event=CloseUnstarted(activation=key, category="blocked")
                     )
-        self.runtime.control.scheduler_changed.set()
+        self._wake()
 
     async def _readiness(self) -> PhysicalRequestId:
         descriptor = self.contract.readiness
@@ -1201,7 +1251,7 @@ class _DelegatedOwner(PrivateValue):
         assessments: tuple[LocalAssessmentResult, ...] = (),
     ) -> None:
         self.runtime._complete_job(job, mapping, results, assessments)
-        self.runtime.control.scheduler_changed.set()
+        self._wake()
 
     async def _drain(self, task: asyncio.Task[object]) -> None:
         while not task.done():

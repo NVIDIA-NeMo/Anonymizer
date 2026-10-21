@@ -30,7 +30,7 @@ from anonymizer.engine.graph_sdk._authoring_defaults import (
     _validate_targets,
 )
 from anonymizer.engine.graph_sdk._effect_values import EffectCode, reject
-from anonymizer.engine.graph_sdk._execution_delegated import SubmitterPool
+from anonymizer.engine.graph_sdk._execution_delegated import SubmitterPool, drive
 from anonymizer.engine.graph_sdk._execution_values import DelegatedRequests
 from anonymizer.engine.graph_sdk._workflow_values import (
     ArtifactType,
@@ -86,7 +86,6 @@ class _DetectionInvocation:
     detection_options: Mapping[str, Any]
     name: str = "opaque-detection-replace"
     semantic_slots: Mapping[str, int] | None = None
-    semantic_loop: asyncio.AbstractEventLoop | None = None
     semantic_targets: tuple[Any, ...] = ()
     semantic_transform_slot: int | None = None
     semantic_entry_slot: int | None = None
@@ -114,11 +113,9 @@ class _DetectionInvocation:
         }
         # Slots exist only for builtin runners, which the graph lowers directly; caller runners run opaque.
         if self.semantic_slots is not None:
-            if self.semantic_loop is None:
-                raise AnonymizerWorkflowError("Detection binding has no owning loop")
             from anonymizer.engine.detection._semantic_detection import complete_detection_entry, lower_detection
 
-            asyncio.run_coroutine_threadsafe(complete_detection_entry(requests, inputs), self.semantic_loop).result()
+            drive(complete_detection_entry(requests, inputs))
             source = requests.bind_frame(
                 self.source, targets=self.semantic_targets, source_limit=len(self.semantic_targets)
             )
@@ -129,7 +126,6 @@ class _DetectionInvocation:
                 requests,
                 source,
                 dict(self.semantic_slots),
-                self.semantic_loop,
                 self.semantic_entry_slot,
             )
         else:
@@ -145,7 +141,7 @@ class _DetectionInvocation:
             from anonymizer.engine.replace._semantic_map import MapBinding
             from anonymizer.engine.replace.replace_runner import replacement_stage
 
-            if self.replacement_receiver is None or self.replacement_arguments is None or self.semantic_loop is None:
+            if self.replacement_receiver is None or self.replacement_arguments is None:
                 reject(EffectCode.MISSING)
             options = self.replacement_arguments
             map_slots = self.map_slots
@@ -165,7 +161,6 @@ class _DetectionInvocation:
                     requests,
                     WorkflowSourceFrame.capture(detected.dataframe, associations=active, invocation_bound=True),
                     {name: slot for name, slot in map_slots.items() if name != "entry"},
-                    self.semantic_loop,
                     self.replacement_receiver._llm_workflow,
                     detected.dataframe,
                     dict(
@@ -176,7 +171,7 @@ class _DetectionInvocation:
                         preview_num_records=options["preview_num_records"],
                     ),
                     apply=True,
-                    entry_inputs=asyncio.run_coroutine_threadsafe(enter_map(), self.semantic_loop).result(),
+                    entry_inputs=drive(enter_map()),
                 )
                 mapped = map_binding.lower()
                 replaced = ReplacementResult(mapped.dataframe, list(mapped.failed_records))
@@ -191,8 +186,6 @@ class _DetectionInvocation:
             else detected.source_positions
         )
         if self.semantic_transform_slot is not None:
-            if self.semantic_loop is None:
-                raise AnonymizerWorkflowError("Detection binding has no owning loop")
             transform_slot = self.semantic_transform_slot
 
             async def finish() -> None:
@@ -212,7 +205,7 @@ class _DetectionInvocation:
                         completed(item.association),
                     )
 
-            asyncio.run_coroutine_threadsafe(finish(), self.semantic_loop).result()
+            drive(finish())
         succeeded = (
             {source.associations[position] for position in selected_positions}
             if self.semantic_slots is not None
@@ -577,7 +570,6 @@ async def execute_injected_redact(
         callback = replace(
             callback,
             semantic_slots=detection_slots(prepared, detection_ids),
-            semantic_loop=asyncio.get_running_loop(),
             semantic_entry_slot=next(
                 slot.index for slot in prepared.reservation_recipe if slot.template == detection_ids["entry"]
             )

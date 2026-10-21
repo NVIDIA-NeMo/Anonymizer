@@ -30,7 +30,7 @@ from anonymizer.engine.graph_sdk._authoring_defaults import (
     _validate_targets,
 )
 from anonymizer.engine.graph_sdk._effect_values import EffectCode, reject
-from anonymizer.engine.graph_sdk._execution_delegated import SubmitterPool
+from anonymizer.engine.graph_sdk._execution_delegated import SubmitterPool, drive
 from anonymizer.engine.graph_sdk._execution_values import DelegatedRequests
 from anonymizer.engine.graph_sdk._workflow_values import (
     ArtifactType,
@@ -433,11 +433,11 @@ async def execute_initial_evaluation(
         if map_entry is not None:
             from anonymizer.engine.detection._semantic_detection import complete_detection_entry
 
-            asyncio.run_coroutine_threadsafe(complete_detection_entry(requests, inputs), loop).result()
+            drive(complete_detection_entry(requests, inputs))
         if detection_ids:
             from anonymizer.engine.detection._semantic_detection import complete_detection_entry
 
-            asyncio.run_coroutine_threadsafe(complete_detection_entry(requests, inputs), loop).result()
+            drive(complete_detection_entry(requests, inputs))
 
         def detect() -> EntityDetectionResult | None:
             if detection is None:
@@ -456,7 +456,6 @@ async def execute_initial_evaluation(
                     requests,
                     original_frame,
                     detection_slots(prepared, detection_ids),
-                    loop,
                 )
             return detection.run(source, **arguments_for_detection)
 
@@ -497,9 +496,7 @@ async def execute_initial_evaluation(
                 if rows.empty:
                     continue
                 associations = tuple(active[position] for position in rows[ROW_ORDER_COL])
-                entry_inputs = asyncio.run_coroutine_threadsafe(
-                    requests.enter_operations(map_slots["entry"], associations), loop
-                ).result()
+                entry_inputs = drive(requests.enter_operations(map_slots["entry"], associations))
                 helper = LlmReplaceWorkflow(adapter) if passthrough else map_factory(adapter=adapter)
                 # The builtin map helper is lowered by this graph; a caller's helper runs opaque, as in the release.
                 native = builtin_map(helper)
@@ -509,7 +506,6 @@ async def execute_initial_evaluation(
                     requests,
                     WorkflowSourceFrame.capture(rows, associations=associations, invocation_bound=True),
                     {k: v for k, v in map_slots.items() if k != "entry"},
-                    loop,
                     helper if native else LlmReplaceWorkflow(adapter),
                     rows,
                     map_arguments,
@@ -539,15 +535,14 @@ async def execute_initial_evaluation(
                 for association in surviving:
                     await requests.enter_operation(slots["prefix"], association)
 
-            asyncio.run_coroutine_threadsafe(begin_map_prefix(), loop).result()
-            asyncio.run_coroutine_threadsafe(binding.passthrough(detected_frame), loop).result()
+            drive(begin_map_prefix())
+            drive(binding.passthrough(detected_frame))
             return map_result
 
         binding = RewriteEvaluationBinding(
             requests,
             WorkflowSourceFrame.capture(detected_frame, associations=active, invocation_bound=True),
             slots,
-            loop,
             _evaluation_state(0 if combined else None, COL_REWRITTEN_TEXT_INITIAL if combined else COL_REWRITTEN_TEXT),
             iteration_slots=iteration_slots,
             combined=combined,
@@ -564,9 +559,9 @@ async def execute_initial_evaluation(
                 for association in active:
                     await requests.enter_operation(slots["prefix"], association)
 
-            asyncio.run_coroutine_threadsafe(begin_prefix(), loop).result()
+            drive(begin_prefix())
         if not map_ids:
-            asyncio.run_coroutine_threadsafe(binding.passthrough(detected_frame), loop).result()
+            drive(binding.passthrough(detected_frame))
         binding.authorize_entry()
         result = selected_runner._run_lowering(detected_frame, binding=binding, **arguments)
         if on_result is not None:
@@ -575,9 +570,7 @@ async def execute_initial_evaluation(
             reject(EffectCode.MISSING)
         positions = resolve_source_positions(detected_frame, result.dataframe, result.source_positions)
         successful = tuple(binding.source.associations[index] for index in positions)
-        selected, projected = asyncio.run_coroutine_threadsafe(
-            binding.finish(result.dataframe, successful), loop
-        ).result()
+        selected, projected = drive(binding.finish(result.dataframe, successful))
         publication = FramePublication.capture(
             projected,
             associations=tuple(selected[association] for association in successful),
