@@ -99,13 +99,6 @@ ceiling does not claim bounded memory usage or a hard transport-response size.
 Context retrieval, observations and other explicitly bounded contracts retain
 their separate limits.
 
-The qualified development detection/Redact profile derives count capacity from the selected
-source and declared work when no execution limits are supplied. Five retained
-artifacts per source is an upper bound: one root, three producer outputs and one
-assessment output. Final span count is bounded by source character count;
-validation membership is bounded by the admitted chunk capacity. Actual counts
-can be lower. Caller-supplied execution limits remain authoritative. The separate qualified development profile retains this five-artifact inventory.
-
 This counts-first policy records the 2026-10-13 operator clarification that
 ordinary runs should not impose incidental byte or per-string ceilings. It
 qualifies the RFC's earlier mandatory-retained-byte-bound wording; it does not
@@ -223,10 +216,12 @@ thread that called them, at every depth, including built-in code reached through
 bodies, and every DataDesigner `create()`/`preview()` call and wait, run there too.
 Your code therefore sees that thread's thread-locals and can install signal handlers
 exactly when that thread is the main thread, and Ctrl-C reaches the run as in 0.4.0.
-The graph's own bookkeeping runs on that thread as well, on a private event loop that
-leaves a notebook's or `asyncio.run` caller's running loop untouched; only
-DataDesigner's engine threads run Anonymizer's column generators and send model
-requests, as in 0.4.0, and none of them runs your code. Each call runs in a copy of the caller's
+The graph's event loop runs on that thread as well, as a private loop that leaves a
+notebook's or `asyncio.run` caller's running loop untouched, and so does the graph
+bookkeeping those bodies perform. DataDesigner's engine threads run Anonymizer's
+column generators and send model requests, as in 0.4.0; the graph bookkeeping that
+DataDesigner's per-row hooks trigger runs there too, under the invocation's lock.
+None of those threads runs your code. Each call runs in a copy of the caller's
 context variables: values set before the call are visible inside, and values set
 inside are not visible to the caller afterwards.
 

@@ -3,7 +3,7 @@
 """Caller-supplied detectors with v0.4.0's exact ``run`` signature, through every public route.
 
 ``EntityDetectionWorkflow.run()`` gained ``entity_label_examples`` (#275) and the graph-only
-``source_frame``/``request_bridge`` keywords after v0.4.0. A detector written against v0.4.0's
+``source_frame`` keyword after v0.4.0. A detector written against v0.4.0's
 signature (no such parameters, no ``**kwargs``) must keep running, with those keywords withheld and
 one counts-only warning when configured examples are dropped. Expectations are main with #311 applied.
 """
@@ -210,7 +210,7 @@ def test_release_040_detector_without_examples_does_not_warn(
 def test_release_040_detector_through_graph_invocation_withholds_source_frame(
     strategy: type[Redact | Annotate | Hash],
 ) -> None:
-    """The graph-invocation consumer adds source_frame/request_bridge; a 0.4.0 run() must not receive them."""
+    """The graph-invocation consumer adds source_frame; a 0.4.0 run() must not receive it."""
     detector = _Release040Subclass(Mock(), positioned=True)
     selected = DetectionModelSelection(
         entity_detector="d", entity_validator=["v"], entity_augmenter="a", latent_detector="l"
