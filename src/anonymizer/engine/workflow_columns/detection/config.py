@@ -11,6 +11,7 @@ from pydantic import Field
 
 from anonymizer.engine.constants import (
     COL_ADMISSION_RESULTS,
+    COL_ADMITTED_CANDIDATES,
     COL_AUGMENTED_ENTITIES,
     COL_INITIAL_TAGGED_TEXT,
     COL_MERGED_ENTITIES,
@@ -83,6 +84,7 @@ class DetectionTransformConfig(SingleColumnConfig):
         DetectionTransformOperation.PREPARE_VALIDATION_INPUTS: [COL_SEED_TAGGED_TEXT],
         DetectionTransformOperation.ADMIT_VALIDATION_DECISIONS: [],
         DetectionTransformOperation.APPLY_VALIDATION_TO_SEED_ENTITIES: [
+            COL_ADMITTED_CANDIDATES,
             COL_INITIAL_TAGGED_TEXT,
             COL_SEED_ENTITIES_JSON,
             COL_VALIDATED_SEED_ENTITIES,

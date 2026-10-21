@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import inspect
 import logging
 
 import pytest
@@ -132,6 +133,7 @@ def test_validation_decisions_produce_one_terminal_admission_per_observation() -
     )
 
     results = apply_validation_admission(
+        effective_label_policy=EffectiveLabelPolicy(),
         detection_result=_detection_result(text, observations),
         inventories=(inventory,),
         decision_sets=decisions,
@@ -168,6 +170,7 @@ def test_inventory_reference_to_another_detection_result_is_rejected() -> None:
 
     with pytest.raises(ValueError, match="unknown observation"):
         apply_validation_admission(
+            effective_label_policy=EffectiveLabelPolicy(),
             detection_result=_detection_result(text, observations),
             inventories=(inventory,),
             decision_sets=decisions,
@@ -192,6 +195,7 @@ def test_duplicate_assigned_alias_is_rejected_at_admission_boundary() -> None:
 
     with pytest.raises(ValueError, match="duplicate assigned aliases"):
         apply_validation_admission(
+            effective_label_policy=EffectiveLabelPolicy(),
             detection_result=_detection_result(text, observations),
             inventories=(inventory,),
             decision_sets=decisions,
@@ -210,6 +214,7 @@ def test_direct_acceptance_does_not_require_a_validation_request() -> None:
     )
 
     results = apply_validation_admission(
+        effective_label_policy=EffectiveLabelPolicy(),
         detection_result=_detection_result(text, (observation,)),
         inventories=(),
         decision_sets=ValidationRequestDecisionSets(),
@@ -257,6 +262,7 @@ def test_unknown_aliases_are_ignored_and_logged_without_their_contents(caplog: p
 
     with caplog.at_level(logging.WARNING, logger="anonymizer.detection.admission"):
         results = apply_validation_admission(
+            effective_label_policy=EffectiveLabelPolicy(),
             detection_result=_detection_result(text, observations),
             inventories=(inventory,),
             decision_sets=decisions,
@@ -274,6 +280,7 @@ def test_unknown_aliases_are_ignored_and_logged_without_their_contents(caplog: p
 def test_admission_results_reject_equivalent_observation_refs() -> None:
     observation = _observation("o1", "Alice", "first_name", 0, 5, route=AdmissionRoute.direct_acceptance)
     result = apply_validation_admission(
+        effective_label_policy=EffectiveLabelPolicy(),
         detection_result=_detection_result("Alice", (observation,)),
         inventories=(),
         decision_sets=ValidationRequestDecisionSets(),
@@ -281,3 +288,125 @@ def test_admission_results_reject_equivalent_observation_refs() -> None:
 
     with pytest.raises(ValueError, match="each observation at most once"):
         AdmissionResults(results=(result, result.model_copy(deep=True)))
+
+
+def test_label_eligibility_is_applied_to_terminal_admission() -> None:
+    text = "Alice Seattle"
+    observations = (
+        _observation("o1", "Alice", "first_name", 0, 5),
+        _observation("o2", "Seattle", "country", 6, 13),
+    )
+    inventory = _inventory(text, observations).model_copy(
+        update={
+            "effective_label_policy": EffectiveLabelPolicy(
+                allowed_labels=("first_name", "city"),
+                excluded_labels=("country",),
+            )
+        }
+    )
+    decisions = ValidationRequestDecisionSets(
+        responses=(
+            ValidationRequestDecisionSet(
+                request_id=inventory.request_id,
+                decisions=(
+                    RawValidationDecisionSchema(id="c1", decision=ValidationChoice.keep),
+                    RawValidationDecisionSchema(
+                        id="c2",
+                        decision=ValidationChoice.reclass,
+                        proposed_label=" COUNTRY ",
+                    ),
+                ),
+            ),
+        )
+    )
+
+    results = apply_validation_admission(
+        effective_label_policy=inventory.effective_label_policy,
+        detection_result=_detection_result(text, observations),
+        inventories=(inventory,),
+        decision_sets=decisions,
+    )
+
+    assert results[0].effective_label == "first_name"
+    assert results[1].status is AdmissionStatus.rejected
+    assert results[1].reason is AdmissionReason.ineligible_label
+
+
+def test_reserved_prompt_label_is_ineligible_model_output() -> None:
+    text = "Alice"
+    observations = (_observation("o1", "Alice", "first_name", 0, 5),)
+    inventory = _inventory(text, observations)
+
+    results = apply_validation_admission(
+        effective_label_policy=EffectiveLabelPolicy(),
+        detection_result=_detection_result(text, observations),
+        inventories=(inventory,),
+        decision_sets=ValidationRequestDecisionSets(
+            responses=(
+                ValidationRequestDecisionSet(
+                    request_id=inventory.request_id,
+                    decisions=(
+                        RawValidationDecisionSchema(
+                            id="c1",
+                            decision=ValidationChoice.reclass,
+                            proposed_label="NAGROUP_g1",
+                        ),
+                    ),
+                ),
+            )
+        ),
+    )
+
+    assert results[0].status is AdmissionStatus.rejected
+    assert results[0].reason is AdmissionReason.ineligible_label
+
+
+def test_admission_requires_an_explicit_label_policy() -> None:
+    assert (
+        inspect.signature(apply_validation_admission).parameters["effective_label_policy"].default
+        is inspect.Parameter.empty
+    )
+
+
+@pytest.mark.parametrize(
+    ("allowed", "excluded", "expected"),
+    [
+        (None, [], AdmissionStatus.accepted),
+        ([], [], AdmissionStatus.rejected),
+        (["FIRST_NAME"], [], AdmissionStatus.accepted),
+        (["email"], [], AdmissionStatus.rejected),
+        (None, [" FIRST_NAME "], AdmissionStatus.rejected),
+    ],
+)
+def test_direct_acceptance_without_inventories_uses_configured_policy(
+    allowed: list[str] | None, excluded: list[str], expected: AdmissionStatus
+) -> None:
+    observation = _observation("o1", "Alice", "first_name", 0, 5, route=AdmissionRoute.direct_acceptance)
+    results = apply_validation_admission(
+        detection_result=_detection_result("Alice", (observation,)),
+        inventories=(),
+        decision_sets=ValidationRequestDecisionSets(),
+        effective_label_policy=EffectiveLabelPolicy.from_labels(allowed_labels=allowed, excluded_labels=excluded),
+    )
+
+    assert results[0].status is expected
+    if expected is AdmissionStatus.rejected:
+        assert results[0].reason is AdmissionReason.ineligible_label
+
+
+@pytest.mark.parametrize("mismatched_request_index", [0, 1])
+def test_inventory_policy_must_match_configured_policy(mismatched_request_index: int) -> None:
+    observations = (_observation("o1", "Alice", "first_name", 0, 5),)
+    inventory = _inventory("Alice", observations)
+    inventories = [inventory, inventory.model_copy(update={"request_id": "validation-request-2"})]
+    inventories[mismatched_request_index] = inventories[mismatched_request_index].model_copy(
+        update={"effective_label_policy": EffectiveLabelPolicy(excluded_labels=("first_name",))}
+    )
+
+    with pytest.raises(ValueError, match="inventories do not match the effective label policy"):
+        apply_validation_admission(
+            detection_result=_detection_result("Alice", observations),
+            inventories=tuple(inventories),
+            decision_sets=ValidationRequestDecisionSets(),
+            effective_label_policy=EffectiveLabelPolicy(),
+        )

@@ -18,6 +18,7 @@ from data_designer.config import custom_column_generator
 
 from anonymizer.engine.constants import (
     COL_ADMISSION_RESULTS,
+    COL_ADMITTED_CANDIDATES,
     COL_AUGMENTED_ENTITIES,
     COL_DETECTED_ENTITIES,
     COL_INITIAL_TAGGED_TEXT,
@@ -40,6 +41,11 @@ from anonymizer.engine.constants import (
 )
 from anonymizer.engine.detection.admission import apply_validation_admission
 from anonymizer.engine.detection.backend import _GlinerDetectionBackend
+from anonymizer.engine.detection.candidates import (
+    coalesce_exact_candidates,
+    materialize_admitted_candidates,
+    representative_source,
+)
 from anonymizer.engine.detection.postprocess import (
     EntitySpan,
     apply_augmented_entities,
@@ -54,8 +60,10 @@ from anonymizer.engine.detection.postprocess import (
 )
 from anonymizer.engine.schemas import (
     AdmissionResults,
-    AdmissionStatus,
+    AdmittedCandidate,
+    AdmittedCandidates,
     DetectionResult,
+    EffectiveLabelPolicy,
     EntitiesSchema,
     SourceTextRef,
     SourceView,
@@ -133,20 +141,25 @@ def merge_and_build_candidates(
 
 @custom_column_generator(
     required_columns=[COL_TEXT, COL_SEED_DETECTION_RESULT, COL_ADMISSION_RESULTS],
-    side_effect_columns=[COL_INITIAL_TAGGED_TEXT, COL_SEED_ENTITIES_JSON, COL_VALIDATED_SEED_ENTITIES],
+    side_effect_columns=[
+        COL_ADMITTED_CANDIDATES,
+        COL_INITIAL_TAGGED_TEXT,
+        COL_SEED_ENTITIES_JSON,
+        COL_VALIDATED_SEED_ENTITIES,
+    ],
 )
-def apply_validation_to_seed_entities(
-    row: dict[str, Any],
-    *,
-    excluded_entity_labels: list[str] | None = None,
-) -> dict[str, Any]:
+def apply_validation_to_seed_entities(row: dict[str, Any]) -> dict[str, Any]:
     """Materialize retained detector observations from terminal admission state."""
     text = str(row.get(COL_TEXT, ""))
-    validated_seed = _project_admission_results(
-        detection_result=DetectionResult.model_validate(row[COL_SEED_DETECTION_RESULT]),
-        admission_results=AdmissionResults.model_validate(row[COL_ADMISSION_RESULTS]),
+    candidates = coalesce_exact_candidates(
+        materialize_admitted_candidates(
+            canonical_text=text,
+            detection_result=DetectionResult.model_validate(row[COL_SEED_DETECTION_RESULT]),
+            admission_results=AdmissionResults.model_validate(row[COL_ADMISSION_RESULTS]),
+        )
     )
-    validated_seed = filter_excluded_entity_spans(validated_seed, excluded_entity_labels)
+    row[COL_ADMITTED_CANDIDATES] = AdmittedCandidates(candidates=candidates).model_dump(mode="json")
+    validated_seed = _project_admitted_candidates(candidates)
     seed_entities = [entity.as_dict() for entity in validated_seed]
     row[COL_VALIDATED_SEED_ENTITIES] = EntitiesSchema(entities=seed_entities).model_dump(mode="json")
     row[COL_SEED_ENTITIES_JSON] = json.dumps(seed_entities)
@@ -176,14 +189,23 @@ def prepare_validation_inputs(row: dict[str, Any]) -> dict[str, Any]:
         COL_VALIDATION_INVENTORIES,
     ],
 )
-def admit_validation_decisions(row: dict[str, Any]) -> dict[str, Any]:
-    """Consume request-scoped decisions into one terminal result per observation."""
+def admit_validation_decisions(
+    row: dict[str, Any],
+    *,
+    allowed_entity_labels: list[str] | None = None,
+    excluded_entity_labels: list[str] | None = None,
+) -> dict[str, Any]:
+    """Admit observations under the configured label policy, checking inventory agreement."""
     detection_result = DetectionResult.model_validate(row[COL_SEED_DETECTION_RESULT])
     inventories = tuple(ValidationRequestInventory.model_validate(item) for item in row[COL_VALIDATION_INVENTORIES])
     admission_results = apply_validation_admission(
         detection_result=detection_result,
         inventories=inventories,
         decision_sets=ValidationRequestDecisionSets.model_validate(row[COL_VALIDATION_DECISIONS]),
+        effective_label_policy=EffectiveLabelPolicy.from_labels(
+            allowed_labels=allowed_entity_labels,
+            excluded_labels=excluded_entity_labels,
+        ),
     )
     row[COL_ADMISSION_RESULTS] = AdmissionResults(results=admission_results).model_dump(mode="json")
     return row
@@ -230,31 +252,20 @@ def _parse_entity_spans(raw_payload: object) -> list[EntitySpan]:
     ]
 
 
-def _project_admission_results(
-    *,
-    detection_result: DetectionResult,
-    admission_results: AdmissionResults,
-) -> list[EntitySpan]:
-    observations_by_ref = {item.ref: item for item in detection_result.observations}
+def _project_admitted_candidates(candidates: tuple[AdmittedCandidate, ...]) -> list[EntitySpan]:
+    """Project provenance-bearing candidates into the legacy entity payload."""
     projected: list[EntitySpan] = []
-    for result in admission_results.results:
-        if result.status is AdmissionStatus.rejected:
-            continue
-        observation = observations_by_ref.get(result.observation_ref)
-        if observation is None:
-            raise ValueError("admission result references an unknown observation")
-        label = result.effective_label
-        if not label:
-            raise ValueError("retained admission result has no effective label")
+    for candidate in candidates:
+        source = representative_source(candidate)
         projected.append(
             EntitySpan(
-                entity_id=f"{label}_{observation.start_position}_{observation.end_position}",
-                value=observation.value,
-                label=label,
-                start_position=observation.start_position,
-                end_position=observation.end_position,
-                score=observation.native_score or 0.0,
-                source="detector",
+                entity_id=f"{candidate.label}_{candidate.start_position}_{candidate.end_position}",
+                value=candidate.value,
+                label=candidate.label,
+                start_position=candidate.start_position,
+                end_position=candidate.end_position,
+                score=max((score.score for score in candidate.native_scores), default=0.0),
+                source="detector" if source == "initial_detector" else source,
             )
         )
     return projected

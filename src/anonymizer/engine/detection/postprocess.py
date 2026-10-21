@@ -52,6 +52,11 @@ def normalize_labels(labels: Iterable[str] | None) -> set[str]:
     return {normalized for label in labels or [] if (normalized := normalize_label(label))}
 
 
+def is_reserved_entity_label(label: str) -> bool:
+    """Return whether a label is reserved for internal prompt markup."""
+    return re.fullmatch(r"nagroup_g[1-9][0-9]*", normalize_label(label)) is not None
+
+
 def filter_excluded_entity_spans(
     entities: list[EntitySpan],
     excluded_entity_labels: Iterable[str] | None,

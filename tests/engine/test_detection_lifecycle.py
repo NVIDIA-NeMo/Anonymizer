@@ -67,6 +67,20 @@ def _observation_ref() -> ObservationRef:
     return ObservationRef(detection_result_id="r1", observation_id="o1")
 
 
+@pytest.mark.parametrize("allowed", [None, [], ["first_name", "email"]])
+def test_effective_label_policy_copies_configured_lists(allowed: list[str] | None) -> None:
+    excluded = ["email"]
+    policy = EffectiveLabelPolicy.from_labels(allowed_labels=allowed, excluded_labels=excluded)
+
+    assert policy.allowed_labels == (tuple(allowed) if allowed is not None else None)
+    assert policy.excluded_labels == ("email",)
+    excluded.append("first_name")
+    if allowed is not None:
+        allowed.append("city")
+        assert "city" not in (policy.allowed_labels or ())
+    assert policy.excluded_labels == ("email",)
+
+
 def test_observation_ref_is_a_hashable_property_not_a_serialized_field() -> None:
     observation = _observation()
     equivalent_ref = _observation_ref()

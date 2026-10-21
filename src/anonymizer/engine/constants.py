@@ -43,6 +43,7 @@ COL_VALIDATION_SKELETON = "_validation_skeleton"
 COL_VALIDATION_DECISIONS = "_validation_decisions"
 COL_VALIDATION_INVENTORIES = "_validation_request_inventories"
 COL_ADMISSION_RESULTS = "_admission_results"
+COL_ADMITTED_CANDIDATES = "_admitted_candidates"
 
 # Step 6: finalize_entities
 COL_DETECTED_ENTITIES = "_detected_entities"

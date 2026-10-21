@@ -9,12 +9,14 @@ from collections.abc import Callable, Collection, Sequence
 from typing import TypeVar
 
 from anonymizer.engine.constants import SOURCE_KIND_AUGMENTER
+from anonymizer.engine.detection.postprocess import is_reserved_entity_label
 from anonymizer.engine.schemas import (
     AdmissionReason,
     AdmissionResult,
     AdmissionRoute,
     AdmissionStatus,
     DetectionResult,
+    EffectiveLabelPolicy,
     Observation,
     ObservationRef,
     RawValidationDecisionSchema,
@@ -33,8 +35,11 @@ def apply_validation_admission(
     detection_result: DetectionResult,
     inventories: tuple[ValidationRequestInventory, ...],
     decision_sets: ValidationRequestDecisionSets,
+    effective_label_policy: EffectiveLabelPolicy,
 ) -> tuple[AdmissionResult, ...]:
     """Consume request-scoped validation decisions into terminal outcomes once."""
+    if any(inventory.effective_label_policy != effective_label_policy for inventory in inventories):
+        raise ValueError("validation request inventories do not match the effective label policy")
     observations_by_ref = {observation.ref: observation for observation in detection_result.observations}
     inventories_by_id = _index_unique(
         inventories,
@@ -106,7 +111,35 @@ def apply_validation_admission(
         if admission is None:
             raise ValueError("an LLM-validated observation was not assigned to a validation request")
         results.append(admission)
-    return tuple(results)
+    return tuple(_apply_label_eligibility(result, effective_label_policy) for result in results)
+
+
+def _apply_label_eligibility(
+    result: AdmissionResult,
+    policy: EffectiveLabelPolicy,
+) -> AdmissionResult:
+    if result.status is AdmissionStatus.rejected:
+        return result
+    normalized_label = _normalize_label(result.effective_label or "")
+    allowed = None if policy.allowed_labels is None else {_normalize_label(label) for label in policy.allowed_labels}
+    excluded = {_normalize_label(label) for label in policy.excluded_labels}
+    if (
+        not normalized_label
+        or is_reserved_entity_label(normalized_label)
+        or normalized_label in excluded
+        or (allowed is not None and normalized_label not in allowed)
+    ):
+        return AdmissionResult(
+            observation_ref=result.observation_ref,
+            route=result.route,
+            status=AdmissionStatus.rejected,
+            reason=AdmissionReason.ineligible_label,
+        )
+    return result.model_copy(update={"effective_label": normalized_label})
+
+
+def _normalize_label(label: str) -> str:
+    return label.strip().casefold()
 
 
 def find_duplicate_assigned_aliases(
