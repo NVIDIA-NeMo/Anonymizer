@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable
-from concurrent.futures import Future
+from concurrent.futures import Future, InvalidStateError
 from contextvars import copy_context
 from dataclasses import dataclass
 from queue import Empty, Queue
@@ -195,6 +195,19 @@ def _run_sync_profile(
             return callback()
         return put(callback).result()
 
+    def settle_failed(pending: Future[Any]) -> None:
+        if not pending.done():
+            try:
+                pending.set_result(LocalFailure(failure="implementation_exception"))
+            except InvalidStateError:
+                pass
+
+    def settle_outstanding() -> None:
+        # Only this thread runs bodies, so after an interrupt nothing is running: settle whatever
+        # is still waiting, including a body taken from the queue but not yet settled.
+        for pending in list(outstanding):
+            settle_failed(pending)
+
     def cancel_host() -> None:
         # The host loop may already be closed; a stop request then has nothing left to stop.
         if cancellation:
@@ -221,12 +234,8 @@ def _run_sync_profile(
         except Empty:
             return
         except BaseException:
+            settle_outstanding()
             cancel_host()
-            # Only this thread runs bodies, so nothing is running now: settle whatever the
-            # interrupt left waiting, including a body taken from the queue but not yet settled.
-            for pending in list(outstanding):
-                if not pending.done():
-                    pending.set_result(LocalFailure(failure="implementation_exception"))
             raise
 
     async def run() -> ReplacementResult:
@@ -264,6 +273,8 @@ def _run_sync_profile(
         while thread.is_alive():
             try:
                 if interrupted is not None:
+                    # Repeated every pass, so a further Ctrl-C inside the handler cannot leave a body waiting.
+                    settle_outstanding()
                     started.wait()
                     cancel_host()
                 serve_callback()
