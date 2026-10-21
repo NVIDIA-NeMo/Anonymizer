@@ -458,10 +458,10 @@ def test_display_record_explicit_index_does_not_advance_cycle() -> None:
 
 
 def test_build_replaced_entities_no_drift_with_case_mismatch() -> None:
-    """Regression for #15: case-insensitive expanded entities must resolve correctly.
+    """Regression for #15: case variants in source-bound entities resolve correctly.
 
-    expand_entity_occurrences stores value=text[start:end] which may differ in case
-    from the replacement map key (e.g. "the Lantern" vs "The Lantern"). The old
+    An occurrence's source-bound value may differ in case from the replacement
+    map key (e.g. "the Lantern" vs "The Lantern"). The old
     cursor-replay approach missed the map entry and used a wrong-length fallback,
     causing cumulative drift on all subsequent entities.
     """

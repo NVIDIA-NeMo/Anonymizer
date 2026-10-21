@@ -3,20 +3,40 @@
 
 from __future__ import annotations
 
-import json
+import pytest
 
 from anonymizer.engine.detection.postprocess import (
     EntitySpan,
-    apply_augmented_entities,
+    build_conflict_aware_tagged_text,
     build_tagged_text,
     build_validation_candidates,
-    expand_entity_occurrences,
     get_tag_notation,
     group_entities_by_value,
+    group_overlapping_spans,
     normalize_label,
     normalize_labels,
-    resolve_overlaps,
 )
+
+
+@pytest.mark.parametrize(
+    ("spans", "expected"),
+    [
+        ([], []),
+        ([(0, 5)], [((0, 5),)]),
+        ([(0, 5), (5, 8)], [((0, 5),), ((5, 8),)]),
+        ([(0, 5), (7, 8)], [((0, 5),), ((7, 8),)]),
+        ([(0, 10), (2, 3), (9, 11)], [((0, 10), (2, 3), (9, 11))]),
+        ([(0, 5), (3, 10), (9, 11)], [((0, 5), (3, 10), (9, 11))]),
+        ([(0, 5), (0, 5)], [((0, 5), (0, 5))]),
+    ],
+)
+def test_group_overlapping_spans_uses_only_source_bounds(
+    spans: list[tuple[int, int]], expected: list[tuple[tuple[int, int], ...]]
+) -> None:
+    assert (
+        group_overlapping_spans(spans, start_position=lambda span: span[0], end_position=lambda span: span[1])
+        == expected
+    )
 
 
 def test_normalize_label_strips_and_casefolds() -> None:
@@ -31,128 +51,25 @@ def test_normalize_labels_none_returns_empty_set() -> None:
     assert normalize_labels(None) == set()
 
 
-def test_overlap_resolution_prefers_longer_span() -> None:
-    short = EntitySpan("a", "John", "first_name", 0, 4, 1.0, "detector")
-    long = EntitySpan("b", "John Doe", "full_name", 0, 8, 1.0, "detector")
-    resolved = resolve_overlaps([short, long])
-    assert len(resolved) == 1
-    assert resolved[0].value == "John Doe"
-
-
-def test_apply_augmented_entities_adds_occurrences() -> None:
-    text = "Alice met Bob. Bob called Alice."
-    merged = apply_augmented_entities(
-        text=text,
-        entities=[],
-        augmented_output={"entities": [{"value": "Bob", "label": "first_name"}]},
-    )
-    assert len(merged) == 2
-    assert all(entity.source == "augmenter" for entity in merged)
-
-
-def test_apply_augmented_entities_filters_exclusions_before_overlap_resolution() -> None:
-    text = "Alice Johnson"
-    allowed = EntitySpan("first_name_0_5", "Alice", "first_name", 0, 5, 0.95, "detector")
-
-    merged = apply_augmented_entities(
-        text=text,
-        entities=[allowed],
-        augmented_output={
-            "entities": [
-                {
-                    "value": "Alice Johnson",
-                    "label": " Full_Name ",
-                    "reason": "longer overlapping span",
-                }
-            ]
-        },
-        excluded_entity_labels={"full_name"},
-    )
-
-    assert merged == [allowed]
-
-
-def test_apply_augmented_entities_avoids_substring_matches() -> None:
-    text = "Annex contains Ann."
-    merged = apply_augmented_entities(
-        text=text,
-        entities=[],
-        augmented_output={"entities": [{"value": "Ann", "label": "first_name"}]},
-    )
-    assert len(merged) == 1
-    assert merged[0].value == "Ann"
-    assert merged[0].start_position == 15
-
-
-def test_augmented_splits_full_name_into_parts() -> None:
-    text = "John Smith called. Later, John met Smith."
-    merged = apply_augmented_entities(
-        text=text,
-        entities=[EntitySpan("fn", "John Smith", "full_name", 0, 10, 1.0, "detector")],
-        augmented_output={"entities": []},
-    )
-    labels = {entity.label for entity in merged}
-    assert "full_name" in labels
-    assert "first_name" in labels
-    assert "last_name" in labels
-    # "John" at 0-4 overlaps with "John Smith" at 0-10, so only standalone at 26 survives
-    johns = [e for e in merged if e.value == "John"]
-    assert len(johns) == 1
-    assert johns[0].start_position == 26
-    smiths = [e for e in merged if e.value == "Smith"]
-    assert len(smiths) == 1
-    assert smiths[0].start_position == 35
-
-
-def test_apply_augmented_entities_does_not_split_single_token_full_name() -> None:
-    text = "Madonna performed tonight."
-    merged = apply_augmented_entities(
-        text=text,
-        entities=[EntitySpan("fn", "Madonna", "full_name", 0, 7, 1.0, "detector")],
-        augmented_output={"entities": []},
-    )
-    labels = {entity.label for entity in merged}
-    assert "full_name" in labels
-    assert "first_name" not in labels
-    assert "last_name" not in labels
-
-
-def test_name_split_skips_single_letter_parts() -> None:
-    text = "John A. Smith went home."
-    merged = apply_augmented_entities(
-        text=text,
-        entities=[EntitySpan("fn", "John A. Smith", "full_name", 0, 13, 1.0, "detector")],
-        augmented_output={"entities": []},
-    )
-    values = [e.value.lower() for e in merged]
-    assert "a." not in values
-
-
-def test_name_split_does_not_duplicate_existing_entities() -> None:
-    text = "John Smith lives here. John agrees and Smith too."
-    existing = [
-        EntitySpan("fn", "John Smith", "full_name", 0, 10, 1.0, "detector"),
-        EntitySpan("jn", "John", "first_name", 23, 27, 1.0, "detector"),
-    ]
-    merged = apply_augmented_entities(
-        text=text,
-        entities=existing,
-        augmented_output={"entities": []},
-    )
-    # "John" already exists, so name split should NOT add duplicates for it
-    johns = [e for e in merged if e.value == "John" and e.source == "name_split"]
-    assert len(johns) == 0
-    # "Smith" should be added at the standalone occurrence (position 39)
-    smiths = [e for e in merged if e.value == "Smith"]
-    assert len(smiths) == 1
-    assert smiths[0].label == "last_name"
-
-
 def test_build_tagged_text_renders_xml_style_tags() -> None:
     text = "Alice Smith"
     entities = [EntitySpan("id1", "Alice", "first_name", 0, 5, 1.0, "detector")]
     tagged = build_tagged_text(text=text, entities=entities)
     assert tagged == "<first_name>Alice</first_name> Smith"
+
+
+def test_conflict_aware_tagged_text_marks_overlapping_region_once() -> None:
+    text = "John Smith arrived"
+    entities = [
+        EntitySpan("o1", "John Smith", "full_name", 0, 10, 0.8, "detector"),
+        EntitySpan("o2", "John", "first_name", 0, 4, 0.9, "detector"),
+        EntitySpan("o3", "Smith", "last_name", 5, 10, 0.9, "detector"),
+    ]
+
+    tagged = build_conflict_aware_tagged_text(text, entities)
+
+    assert tagged == "<NAGROUP_g1>John Smith</NAGROUP_g1> arrived"
+    assert tagged.count("John Smith") == 1
 
 
 def test_build_tagged_text_avoids_xml_when_input_has_xml() -> None:
@@ -161,112 +78,6 @@ def test_build_tagged_text_avoids_xml_when_input_has_xml() -> None:
     tagged = build_tagged_text(text=text, entities=entities)
     assert "<first_name>Alice</first_name>" not in tagged
     assert "[[Alice|first_name]]" in tagged
-
-
-def test_resolve_overlaps_keeps_non_overlapping_spans() -> None:
-    a = EntitySpan("a", "Alice", "first_name", 0, 5, 1.0, "detector")
-    b = EntitySpan("b", "Acme", "organization", 15, 19, 1.0, "detector")
-    resolved = resolve_overlaps([a, b])
-    assert len(resolved) == 2
-
-
-def test_resolve_overlaps_returns_sorted_by_position() -> None:
-    b = EntitySpan("b", "Acme", "organization", 15, 19, 1.0, "detector")
-    a = EntitySpan("a", "Alice", "first_name", 0, 5, 1.0, "detector")
-    resolved = resolve_overlaps([b, a])  # input order reversed
-    assert resolved[0].value == "Alice"
-    assert resolved[1].value == "Acme"
-
-
-def test_resolve_overlaps_nested_span_keeps_outer() -> None:
-    """Inner 'York' inside 'New York' should be dropped."""
-    outer = EntitySpan("a", "New York", "city", 0, 8, 1.0, "detector")
-    inner = EntitySpan("b", "York", "city", 4, 8, 0.8, "detector")
-    resolved = resolve_overlaps([inner, outer])
-    assert len(resolved) == 1
-    assert resolved[0].value == "New York"
-
-
-def test_resolve_overlaps_empty_input() -> None:
-    assert resolve_overlaps([]) == []
-
-
-def test_resolve_overlaps_default_uses_label_not_score() -> None:
-    """Equal spans use alphabetical label order regardless of score."""
-    low_score = EntitySpan("a_0_3", "Mum", "aaa_label", 0, 3, 0.5, "detector")
-    high_score = EntitySpan("z_0_3", "Mum", "zzz_label", 0, 3, 1.0, "augmenter")
-    resolved = resolve_overlaps([low_score, high_score])
-    assert len(resolved) == 1
-    assert resolved[0].label == "aaa_label"
-
-
-def test_augmented_entities_does_not_use_synthetic_score_precedence() -> None:
-    """Mixed-source merging retains the default label tie-break instead of comparing scores."""
-    detector = EntitySpan("email_0_5", "Alice", "email", 0, 5, 0.95, "detector")
-    result = apply_augmented_entities(
-        "Alice",
-        [detector],
-        {"entities": [{"value": "Alice", "label": "last_name"}]},
-    )
-    at_span = [e for e in result if e.start_position == 0 and e.end_position == 5]
-    assert len(at_span) == 1
-    assert at_span[0].label == "email"
-    assert at_span[0].source == "detector"
-
-
-def test_augmented_entities_from_json_string() -> None:
-    text = "Alice works here"
-    result = apply_augmented_entities(
-        text=text,
-        entities=[],
-        augmented_output=json.dumps({"entities": [{"value": "Alice", "label": "first_name"}]}),
-    )
-    assert len(result) == 1
-
-
-def test_augmented_entities_with_invalid_json_returns_originals() -> None:
-    entities = [EntitySpan("id1", "Alice", "first_name", 0, 5, 1.0, "detector")]
-    result = apply_augmented_entities(text="Alice", entities=entities, augmented_output="bad json {{{")
-    assert len(result) == 1
-    assert result[0].entity_id == "id1"
-
-
-def test_augmented_entities_with_non_list_entities_returns_originals() -> None:
-    entities = [EntitySpan("id1", "Alice", "first_name", 0, 5, 1.0, "detector")]
-    result = apply_augmented_entities(text="Alice", entities=entities, augmented_output={"entities": "not a list"})
-    assert len(result) == 1
-
-
-def test_augmented_entities_skips_non_dict_suggestions() -> None:
-    text = "Alice and Bob"
-    result = apply_augmented_entities(
-        text=text,
-        entities=[],
-        augmented_output={"entities": ["not_a_dict", {"value": "Bob", "label": "first_name"}]},
-    )
-    bobs = [e for e in result if e.value == "Bob"]
-    assert len(bobs) == 1
-
-
-def test_augmented_entities_skips_empty_value_or_label() -> None:
-    text = "Alice works here"
-    result = apply_augmented_entities(
-        text=text,
-        entities=[],
-        augmented_output={"entities": [{"value": "", "label": "first_name"}, {"value": "Alice", "label": ""}]},
-    )
-    assert len(result) == 0
-
-
-def test_augmented_entities_case_insensitive_occurrence_finding() -> None:
-    """'alice' in augmented output should match 'Alice' in text."""
-    text = "Alice works here"
-    result = apply_augmented_entities(
-        text=text,
-        entities=[],
-        augmented_output={"entities": [{"value": "alice", "label": "first_name"}]},
-    )
-    assert len(result) == 1
 
 
 def test_build_tagged_text_empty_entities_returns_text() -> None:
@@ -383,73 +194,3 @@ def test_group_entities_by_value_sorts_by_value() -> None:
 
 def test_group_entities_by_value_empty() -> None:
     assert group_entities_by_value(entities=[]) == []
-
-
-def test_expand_finds_all_occurrences_of_detected_entity() -> None:
-    """'Mara' detected at position 0 should expand to all 4 occurrences."""
-    text = "Mara is a director. Mara learned storytelling. Mara makes films."
-    entities = [EntitySpan("e1", "Mara", "first_name", 0, 4, 1.0, "detector")]
-    expanded = expand_entity_occurrences(text=text, entities=entities)
-    mara_spans = [e for e in expanded if e.value == "Mara"]
-    assert len(mara_spans) == 3
-    assert {e.start_position for e in mara_spans} == {0, 20, 47}
-
-
-def test_expand_preserves_original_entities() -> None:
-    text = "Alice works at Acme"
-    entities = [
-        EntitySpan("e1", "Alice", "first_name", 0, 5, 0.95, "detector"),
-        EntitySpan("e2", "Acme", "organization", 15, 19, 0.9, "detector"),
-    ]
-    expanded = expand_entity_occurrences(text=text, entities=entities)
-    assert len(expanded) == 2
-    assert expanded[0].value == "Alice"
-    assert expanded[1].value == "Acme"
-
-
-def test_expand_avoids_substring_matches() -> None:
-    """'Ann' should not match inside 'Annex'."""
-    text = "Annex contains Ann. Ann is here."
-    entities = [EntitySpan("e1", "Ann", "first_name", 15, 18, 1.0, "detector")]
-    expanded = expand_entity_occurrences(text=text, entities=entities)
-    ann_spans = [e for e in expanded if e.value == "Ann"]
-    assert len(ann_spans) == 2
-    positions = {e.start_position for e in ann_spans}
-    assert 0 not in positions  # "Annex" should not match
-
-
-def test_expand_resolves_overlaps_with_longer_span() -> None:
-    text = "John Doe met John later"
-    entities = [
-        EntitySpan("e1", "John Doe", "full_name", 0, 8, 1.0, "detector"),
-        EntitySpan("e2", "John", "first_name", 13, 17, 1.0, "detector"),
-    ]
-    expanded = expand_entity_occurrences(text=text, entities=entities)
-    assert any(e.value == "John Doe" for e in expanded)
-    johns = [e for e in expanded if e.value == "John"]
-    assert len(johns) == 1
-    assert johns[0].start_position == 13
-
-
-def test_expand_preserves_detector_provenance_at_original_position() -> None:
-    """Expansion must not replace a detector span with a propagation copy at the same position."""
-    text = "Alice works here. Alice volunteers too."
-    entities = [EntitySpan("e1", "Alice", "first_name", 0, 5, 0.85, "detector")]
-    expanded = expand_entity_occurrences(text=text, entities=entities)
-    at_origin = next(e for e in expanded if e.start_position == 0)
-    at_second = next(e for e in expanded if e.start_position == 18)
-    assert at_origin.source == "detector"
-    assert at_origin.score == 0.85
-    assert at_second.source == "propagation"
-
-
-def test_expand_handles_empty_entities() -> None:
-    assert expand_entity_occurrences(text="hello world", entities=[]) == []
-
-
-def test_expand_case_insensitive_matching() -> None:
-    """'alice' in text should match 'Alice' entity."""
-    text = "Alice met alice later"
-    entities = [EntitySpan("e1", "Alice", "first_name", 0, 5, 1.0, "detector")]
-    expanded = expand_entity_occurrences(text=text, entities=entities)
-    assert len(expanded) == 2

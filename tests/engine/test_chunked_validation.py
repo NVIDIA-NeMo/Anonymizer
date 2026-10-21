@@ -23,7 +23,7 @@ from data_designer.engine.models.clients.errors import SyncClientUnavailableErro
 
 from anonymizer.engine.constants import (
     COL_ADMISSION_RESULTS,
-    COL_MERGED_TAGGED_TEXT,
+    COL_RECONCILED_CANDIDATES,
     COL_SEED_DETECTION_RESULT,
     COL_TAG_NOTATION,
     COL_TEXT,
@@ -33,6 +33,7 @@ from anonymizer.engine.constants import (
     COL_VALIDATION_SKELETON,
 )
 from anonymizer.engine.detection.chunked_validation import (
+    VALIDATION_EXCERPT_VAR,
     ChunkedValidationParams,
     _dispatch_chunk,
     _dispatch_chunk_async,
@@ -481,6 +482,7 @@ class TestLifecycleValidationRequests:
             COL_TEXT: text,
             COL_SEED_DETECTION_RESULT: detection_result.model_dump(mode="json"),
             COL_TAG_NOTATION: TagNotation.xml.value,
+            VALIDATION_EXCERPT_VAR: "STALE ROW RENDERING MUST NOT REACH THE VALIDATOR",
         }
 
         facade = FakeFacade(
@@ -503,6 +505,7 @@ class TestLifecycleValidationRequests:
         output = chunked_validate_row(row, params, {"v0": facade})
 
         assert len(facade.calls) == 1
+        assert "STALE ROW RENDERING" not in facade.calls[0]["prompt"]
         assert "<NAGROUP_g1>Alice Johnson</NAGROUP_g1>" in facade.calls[0]["prompt"]
         inventories = [ValidationRequestInventory.model_validate(item) for item in output[COL_VALIDATION_INVENTORIES]]
         assert len(inventories) == 1
@@ -1264,10 +1267,10 @@ class TestMakeChunkedValidationGenerator:
         assert meta["side_effect_columns"] == [COL_VALIDATION_INVENTORIES]
         # Must not declare columns we deliberately don't read; an over-broad
         # required_columns would distort DAG ordering elsewhere. In particular
-        # the post-augmentation views (COL_MERGED_TAGGED_TEXT, COL_VALIDATION_CANDIDATES)
+        # the post-augmentation views (COL_RECONCILED_CANDIDATES, COL_VALIDATION_CANDIDATES)
         # are downstream of this step and would create a cycle if declared.
         assert COL_VALIDATION_SKELETON not in meta["required_columns"]
-        assert COL_MERGED_TAGGED_TEXT not in meta["required_columns"]
+        assert COL_RECONCILED_CANDIDATES not in meta["required_columns"]
         assert COL_VALIDATION_CANDIDATES not in meta["required_columns"]
 
     def test_factory_rejects_empty_pool(self) -> None:

@@ -32,7 +32,6 @@ from anonymizer.engine.constants import (
     COL_RAW_DETECTED,
     COL_SEED_ENTITIES,
     COL_SEED_ENTITIES_JSON,
-    COL_SEED_TAGGED_TEXT,
     COL_SEED_VALIDATION_CANDIDATES,
     COL_TAG_NOTATION,
     COL_TAGGED_TEXT,
@@ -43,6 +42,7 @@ from anonymizer.engine.constants import (
     SEED_DETECTION_RESULT_ID,
     _jinja,
 )
+from anonymizer.engine.detection.chunked_validation import VALIDATION_EXCERPT_VAR
 from anonymizer.engine.detection.entity_label_examples import ResolvedEntityLabelConfig, resolve_entity_label_config
 from anonymizer.engine.detection.postprocess import (
     EntitySpan,
@@ -264,13 +264,10 @@ class EntityDetectionWorkflow:
                 DetectionTransformConfig(
                     name=COL_MERGED_ENTITIES,
                     operation=DetectionTransformOperation.MERGE_AND_BUILD_CANDIDATES,
-                    excluded_entity_labels=list(excluded_entity_labels or []),
                 ),
                 DetectionTransformConfig(
                     name=COL_DETECTED_ENTITIES,
                     operation=DetectionTransformOperation.FINALIZE_ENTITIES,
-                    excluded_entity_labels=list(excluded_entity_labels or []),
-                    allowed_entity_labels=labels if label_config.strict_labels else None,
                 ),
             ],
         )
@@ -761,7 +758,7 @@ Template: <<VALIDATION_SKELETON>>
         prompt,
         {
             "<<TAG_NOTATION>>": COL_TAG_NOTATION,
-            "<<TAGGED_TEXT>>": _jinja(COL_SEED_TAGGED_TEXT),
+            "<<TAGGED_TEXT>>": _jinja(VALIDATION_EXCERPT_VAR),
             "<<VALIDATION_SKELETON>>": _jinja(COL_VALIDATION_SKELETON),
             "<<LABEL_EXAMPLES>>": _format_label_examples(
                 labels,

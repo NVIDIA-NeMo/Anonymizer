@@ -3,18 +3,13 @@
 
 from __future__ import annotations
 
-import json
-import logging
 import re
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from enum import Enum
 from typing import TypeVar
 
-from anonymizer.engine.constants import SOURCE_KIND_AUGMENTER
 from anonymizer.engine.schemas import DetectionResult
-
-logger = logging.getLogger(__name__)
 
 VALIDATION_CONTEXT_WINDOW = 32
 _SpanT = TypeVar("_SpanT")
@@ -86,17 +81,6 @@ def is_reserved_entity_label(label: str) -> bool:
     return re.fullmatch(r"nagroup_g[1-9][0-9]*", normalize_label(label)) is not None
 
 
-def filter_excluded_entity_spans(
-    entities: list[EntitySpan],
-    excluded_entity_labels: Iterable[str] | None,
-) -> list[EntitySpan]:
-    """Remove entity spans whose normalized labels are explicitly excluded."""
-    excluded = normalize_labels(excluded_entity_labels)
-    if not excluded:
-        return list(entities)
-    return [entity for entity in entities if normalize_label(entity.label) not in excluded]
-
-
 class TagNotation(str, Enum):
     xml = "xml"
     bracket = "bracket"
@@ -141,108 +125,6 @@ def build_validation_candidates(text: str, entities: list[EntitySpan]) -> list[d
             }
         )
     return candidates
-
-
-def apply_augmented_entities(
-    text: str,
-    entities: list[EntitySpan],
-    augmented_output: dict | str,
-    excluded_entity_labels: set[str] | None = None,
-) -> list[EntitySpan]:
-    """Add allowed augmented entities, split full names, and resolve overlaps."""
-    payload = _safe_json_loads(augmented_output) if isinstance(augmented_output, str) else augmented_output
-    augmented = payload.get("entities", []) if isinstance(payload, dict) else []
-    if not isinstance(augmented, list):
-        augmented = []
-    excluded = normalize_labels(excluded_entity_labels)
-
-    merged = filter_excluded_entity_spans(entities, excluded)
-    for idx, suggestion in enumerate(augmented):
-        if not isinstance(suggestion, dict):
-            continue
-        value = str(suggestion.get("value", "")).strip()
-        label = str(suggestion.get("label", "")).strip()
-        if not value or not label or normalize_label(label) in excluded:
-            continue
-        for start, end in _find_all_occurrences(text=text, needle=value):
-            entity_id = _build_entity_id(label=label, start=start, end=end)
-            merged.append(
-                EntitySpan(
-                    entity_id=entity_id,
-                    value=value,
-                    label=label,
-                    start_position=start,
-                    end_position=end,
-                    score=1.0,
-                    source=SOURCE_KIND_AUGMENTER,
-                )
-            )
-
-    merged = _split_full_names(text=text, entities=merged)
-    return resolve_overlaps(merged)
-
-
-def _split_full_names(text: str, entities: list[EntitySpan]) -> list[EntitySpan]:
-    """Split ``full_name`` entities into first/middle/last name parts.
-
-    When a ``full_name`` span like "John Smith" is detected, this adds
-    separate ``first_name``/``last_name``/``middle_name`` entities for
-    each part so that standalone occurrences elsewhere in the text are
-    also caught.
-    """
-    existing_values: set[str] = {entity.value.lower() for entity in entities}
-    extra: list[EntitySpan] = []
-
-    for entity in entities:
-        if entity.label != "full_name":
-            continue
-        parts = entity.value.split()
-        if len(parts) < 2:
-            continue
-        for idx, part in enumerate(parts):
-            if len(part) <= 1 or part.lower() in existing_values:
-                continue
-            if idx == 0:
-                part_label = "first_name"
-            elif idx == len(parts) - 1:
-                part_label = "last_name"
-            else:
-                part_label = "middle_name"
-            for start, end in _find_all_occurrences(text=text, needle=part):
-                entity_id = _build_entity_id(label=part_label, start=start, end=end)
-                extra.append(
-                    EntitySpan(
-                        entity_id=entity_id,
-                        value=part,
-                        label=part_label,
-                        start_position=start,
-                        end_position=end,
-                        score=entity.score,
-                        source="name_split",
-                    )
-                )
-            existing_values.add(part.lower())
-
-    return [*entities, *extra]
-
-
-def resolve_overlaps(entities: list[EntitySpan]) -> list[EntitySpan]:
-    """Resolve span conflicts by preferring longer spans, then earlier starts and labels."""
-    sorted_entities = sorted(
-        entities,
-        key=lambda item: (
-            -(item.end_position - item.start_position),
-            item.start_position,
-            item.end_position,
-            item.label,
-        ),
-    )
-    accepted: list[EntitySpan] = []
-    for candidate in sorted_entities:
-        if any(_spans_overlap(candidate, existing) for existing in accepted):
-            continue
-        accepted.append(candidate)
-    return sorted(accepted, key=lambda item: (item.start_position, item.end_position, item.label))
 
 
 def build_tagged_text(
@@ -333,45 +215,6 @@ def get_tag_notation(text: str) -> str:
     return _choose_tag_notation(text).value
 
 
-def expand_entity_occurrences(text: str, entities: list[EntitySpan]) -> list[EntitySpan]:
-    """Expand each validated entity to ALL its occurrences in the text.
-
-    After validation, entities only have the positions where the detector
-    originally found them. This function finds every word-boundary-matched
-    occurrence of each unique entity value in the text, creating new spans
-    for positions not already covered. Overlaps are resolved by preferring
-    longer spans.
-    """
-    entity_map: dict[str, str] = {}
-    for entity in entities:
-        key = entity.value.lower()
-        if key not in entity_map:
-            entity_map[key] = entity.label
-
-    original_positions: set[tuple[int, int]] = {(e.start_position, e.end_position) for e in entities}
-    expanded: list[EntitySpan] = []
-    for idx, (key, label) in enumerate(entity_map.items()):
-        original_value = next(e.value for e in entities if e.value.lower() == key)
-        for start, end in _find_all_occurrences(text=text, needle=original_value):
-            if (start, end) in original_positions:
-                continue  # already covered by a detector span; skip to preserve its provenance
-            entity_id = _build_entity_id(label=label, start=start, end=end)
-            expanded.append(
-                EntitySpan(
-                    entity_id=entity_id,
-                    value=text[start:end],
-                    label=label,
-                    start_position=start,
-                    end_position=end,
-                    score=1.0,
-                    source="propagation",
-                )
-            )
-
-    all_entities = [*entities, *expanded]
-    return resolve_overlaps(all_entities)
-
-
 def group_entities_by_value(entities: list[EntitySpan]) -> list[dict[str, str | list[str]]]:
     """Group entities by normalized value for consistent replacement mapping."""
     grouped: dict[str, set[str]] = {}
@@ -382,42 +225,6 @@ def group_entities_by_value(entities: list[EntitySpan]) -> list[dict[str, str | 
         {"value": value, "labels": sorted(labels)}
         for value, labels in sorted(grouped.items(), key=lambda item: item[0])
     ]
-
-
-def _safe_json_loads(value: dict | str) -> dict:
-    if isinstance(value, dict):
-        return value
-    if not isinstance(value, str):
-        return {}
-    try:
-        parsed = json.loads(value)
-        return parsed if isinstance(parsed, dict) else {}
-    except json.JSONDecodeError as exc:
-        logger.warning(
-            "Failed to parse JSON in postprocessing pipeline (error=%s, length=%d)",
-            exc.msg,
-            len(value),
-        )
-        return {}
-
-
-def _spans_overlap(left: EntitySpan, right: EntitySpan) -> bool:
-    return left.start_position < right.end_position and right.start_position < left.end_position
-
-
-def _find_all_occurrences(text: str, needle: str) -> list[tuple[int, int]]:
-    if not needle:
-        return []
-    escaped = re.escape(needle)
-    if needle[0].isalnum() or needle[0] == "_":
-        escaped = rf"(?<![A-Za-z0-9_]){escaped}"
-    if needle[-1].isalnum() or needle[-1] == "_":
-        escaped = rf"{escaped}(?![A-Za-z0-9_])"
-
-    positions: list[tuple[int, int]] = []
-    for match in re.finditer(escaped, text, flags=re.IGNORECASE):
-        positions.append((match.start(), match.end()))
-    return positions
 
 
 def _build_entity_id(*, label: str, start: int, end: int) -> str:

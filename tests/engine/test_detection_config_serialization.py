@@ -21,7 +21,10 @@ from data_designer.plugins import Plugin
 
 from anonymizer.engine.constants import (
     COL_ADMISSION_RESULTS,
+    COL_ADMITTED_CANDIDATES,
+    COL_AUGMENTED_CANDIDATES,
     COL_AUGMENTED_ENTITIES,
+    COL_RECONCILED_CANDIDATES,
     COL_TEXT,
     COL_VALIDATION_DECISIONS,
     DEFAULT_ENTITY_LABELS,
@@ -110,9 +113,11 @@ def test_detection_builder_round_trips_through_native_data_designer_config(tmp_p
         if DetectionTransformOperation(column.operation) == DetectionTransformOperation.FINALIZE_ENTITIES
     )
     assert seed_validation_transform.excluded_entity_labels == []
-    assert merge_transform.excluded_entity_labels == ["email"]
-    assert finalize_transform.excluded_entity_labels == ["email"]
-    assert finalize_transform.allowed_entity_labels == ["first_name"]
+    assert merge_transform.excluded_entity_labels == []
+    assert merge_transform.required_columns == [COL_TEXT, COL_ADMITTED_CANDIDATES, COL_AUGMENTED_CANDIDATES]
+    assert finalize_transform.excluded_entity_labels == []
+    assert finalize_transform.allowed_entity_labels is None
+    assert finalize_transform.required_columns == [COL_TEXT, COL_RECONCILED_CANDIDATES]
 
     validation = next(column for column in columns if column.name == COL_VALIDATION_DECISIONS)
     assert isinstance(validation, ChunkedValidationConfig)
@@ -227,7 +232,8 @@ def test_exported_builder_includes_explicit_non_default_example_label(tmp_path: 
     assert "- vendor_api_key: acme_live_abc123" in validation.prompt_template
     assert "vendor_api_key: acme_live_abc123" in augmenter.prompt_template
     assert "Use ONLY labels from this list" in augmenter.prompt_template
-    assert finalize.allowed_entity_labels == [*DEFAULT_ENTITY_LABELS, "vendor_api_key"]
+    assert finalize.allowed_entity_labels is None
+    assert validation.allowed_entity_labels == [*DEFAULT_ENTITY_LABELS, "vendor_api_key"]
 
 
 def test_fresh_process_discovers_plugins_when_loading_native_config(tmp_path: Path) -> None:

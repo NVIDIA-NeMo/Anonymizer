@@ -112,17 +112,6 @@ class DetectionTransformGenerator(ColumnGeneratorCellByCell[DetectionTransformCo
                 allowed_entity_labels=self.config.allowed_entity_labels,
                 excluded_entity_labels=self.config.excluded_entity_labels,
             )
-        if operation == DetectionTransformOperation.MERGE_AND_BUILD_CANDIDATES:
-            return merge_and_build_candidates(
-                data,
-                excluded_entity_labels=self.config.excluded_entity_labels,
-            )
-        if operation == DetectionTransformOperation.FINALIZE_ENTITIES:
-            return finalize_entities(
-                data,
-                excluded_entity_labels=self.config.excluded_entity_labels,
-                allowed_entity_labels=self.config.allowed_entity_labels,
-            )
         return _TRANSFORMS[operation](data)
 
 
