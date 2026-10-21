@@ -162,6 +162,7 @@ nav:
       - Evaluation: concepts/evaluation.md
       - Self-hosting GLiNER: concepts/self-hosting-gliner.md
       - Graph SDK: concepts/graph-sdk.md
+  - Tuning Quality and Throughput: tuning.md
   - Troubleshooting: troubleshooting.md
   - Tutorials:
       - Overview: tutorials/index.md
