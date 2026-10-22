@@ -1,0 +1,37 @@
+{
+  "source": "/root/dev/wt/Anonymizer-bounded-inspection-p11/.agent-work/p11/pr1-custom-arc-sep29/runs/authorization-20261006/continuation-20261007/resume-20261008/P9-reference-457/v3",
+  "review": "P9-independent-review-458.md",
+  "files": [
+    {
+      "file": "reference.py",
+      "original_sha256": "f1c27fbe138766ff36b90ffa8abbe1f413811ee89b2f7f031acbda560157384d",
+      "relocated_sha256": "7116e2cb2544bb1038b0f5b2fadcf52289e3f911a8da219ed8f9371ed8528489"
+    },
+    {
+      "file": "cases.py",
+      "original_sha256": "3c7e877d07343fe338f92ca6fc5f22846ffd1097829d215048aa8489a19fbcd7",
+      "relocated_sha256": "5d147551c831a36cccbd995c7017b3c4e5056a1f302ecda117412ea7caaf922b"
+    },
+    {
+      "file": "test_reference.py",
+      "original_sha256": "c779960d8dd596493e473af1da576a4b9facf844708cbbcf0f1a66d0a8031df7",
+      "relocated_sha256": "95936b3fa641d37ec89f608f28627ee788d6489f0ddc803b269613dc960e71e8"
+    },
+    {
+      "file": "corpus.json",
+      "original_sha256": "5898e5e263f0155c89aef79f53bae11a98acd91f13ad372307181eb1b9663e8c",
+      "relocated_sha256": "5898e5e263f0155c89aef79f53bae11a98acd91f13ad372307181eb1b9663e8c"
+    },
+    {
+      "file": "manifest.json",
+      "original_sha256": "fe0787cfde40a7e626c5bf76580228e92b1f58afaf1cda79428bc089181ae231",
+      "relocated_sha256": "fe0787cfde40a7e626c5bf76580228e92b1f58afaf1cda79428bc089181ae231"
+    },
+    {
+      "file": "README.md",
+      "original_sha256": "ca75a0a1702ee930da2f08336ced045e4b1bf4030b0bc0732a5a602315fb0d99",
+      "relocated_sha256": "ca75a0a1702ee930da2f08336ced045e4b1bf4030b0bc0732a5a602315fb0d99"
+    }
+  ],
+  "relocation": "Package import paths and repository formatter; one source-mutation search literal follows identical reformatted code. reference.py AST is unchanged; frozen campaign bytes are unchanged."
+}

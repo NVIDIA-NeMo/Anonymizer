@@ -1,0 +1,34 @@
+{
+  "contract": {
+    "path": "/root/dev/wt/Anonymizer-bounded-inspection-p11/.agent-work/p11/pr1-custom-arc-sep29/runs/authorization-20261006/continuation-20261007/future-contracts/d08-v2/evidence-qualification-v2.md",
+    "sha256": "3424526a5308f5c8cebb13d46cf07deb4fa8b244467c52e3589f1be6814873a5"
+  },
+  "coverage": {
+    "path": "/root/dev/wt/Anonymizer-bounded-inspection-p11/.agent-work/p11/pr1-custom-arc-sep29/runs/authorization-20261006/continuation-20261007/pr1-single-worktree/P7-reduction-coverage.json",
+    "sha256": "be4ae3ddfe712afb574f1c3335589d8901622fc3361057dd2ec1e10257c2beb2"
+  },
+  "export_manifest": {
+    "path": "/root/dev/wt/Anonymizer-bounded-inspection-p11/.agent-work/p11/pr1-custom-arc-sep29/runs/authorization-20261006/continuation-20261007/resume-20261008/P7-legacy-reference-inputs/manifest.json",
+    "sha256": "bbe92f95885cf468322b3663630506ff556ae8e493fa01661d2b25f5e8774485"
+  },
+  "legacy": {
+    "path": "/root/dev/wt/Anonymizer-bounded-inspection-p11/.agent-work/p11/pr1-custom-arc-sep29/runs/authorization-20261006/continuation-20261007/resume-20261008/P7-legacy-reference-inputs/qualification.json",
+    "sha256": "c924ddb72770b7c046bae537075ff5764a1e075ae970aa007defd55d8b8fe959"
+  },
+  "legacy_manifest": {
+    "path": "/root/dev/wt/Anonymizer-bounded-inspection-p11/.agent-work/p11/pr1-custom-arc-sep29/runs/authorization-20261006/continuation-20261007/resume-20261008/P7-legacy-reference-inputs/qualification_v1_manifest.json",
+    "sha256": "8e14b4c32e2d7a4a7541e789c60b94b220fdf1e47eba05dd3ab442482a244c30"
+  },
+  "plan": {
+    "path": "/root/dev/wt/Anonymizer-bounded-inspection-p11/.agent-work/p11/pr1-custom-arc-sep29/PLAN.md",
+    "sha256": "cc90b047b0bee84b539111cbd3877aa3fba6fe2005f609a749bc9f4a17a11309"
+  },
+  "s0": {
+    "path": "/root/dev/wt/Anonymizer-bounded-inspection-p11/.agent-work/p11/pr1-custom-arc-sep29/runs/authorization-20261006/continuation-20261007/resume-20261008/S0-amendments-v2.md",
+    "sha256": "6c711f53ce9e7a737439608b7c8c633c16fd3fed1bc9178cdf197d71cad3859b"
+  },
+  "support": {
+    "path": "/root/dev/wt/Anonymizer-bounded-inspection-p11/.agent-work/p11/pr1-custom-arc-sep29/runs/authorization-20261006/continuation-20261007/future-contracts/r3-map-item-v13/qualification_v1_support.md",
+    "sha256": "39ee7d4f4058bc537960e7839356b3e6e2576cf1a593fd9bbe9ef15da321f8dd"
+  }
+}

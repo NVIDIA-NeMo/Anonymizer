@@ -1,0 +1,162 @@
+{
+  "python": "3.11.15 (main, Apr 14 2026, 14:28:36) [Clang 22.1.3 ]",
+  "method": "plain test function execution; no pytest dependency",
+  "mutations": {
+    "baseline": {
+      "tests": 5,
+      "assertion_failures": [],
+      "source_sha256": "19bd609a6a7a4ea3e84beca94d58aa6e035c3883f534d98226f27581444387e4"
+    },
+    "cycle": {
+      "tests": 5,
+      "assertion_failures": [
+        "test_data"
+      ],
+      "source_sha256": "a72c04ae61c1edeae1acb981cba7b34a25e352cf6c676713a1980109304238eb"
+    },
+    "window": {
+      "tests": 5,
+      "assertion_failures": [
+        "test_data"
+      ],
+      "source_sha256": "ab596ba74674f7554589f81a68bdfbb0514339b2283303c026b6372fae902ef9"
+    },
+    "adjacency": {
+      "tests": 5,
+      "assertion_failures": [
+        "test_data",
+        "test_renaming_and_relation_independence"
+      ],
+      "source_sha256": "cbd6e894b8a1920381fb90e8172b64f2c695fad7356031a5887e143a2b2faa32"
+    },
+    "root_identity": {
+      "tests": 5,
+      "assertion_failures": [
+        "test_data"
+      ],
+      "source_sha256": "567b24e679576cb0b97a331ac3293d2003007f6f0d6950f0bbd5e21a1badf540"
+    },
+    "partition": {
+      "tests": 5,
+      "assertion_failures": [
+        "test_data"
+      ],
+      "source_sha256": "733f1e176fcb24ca395b24cb357596c06aa9a62c4b14fba36c7d0ff293d81115"
+    },
+    "selection": {
+      "tests": 5,
+      "assertion_failures": [
+        "test_activation"
+      ],
+      "source_sha256": "ad9870f3059eed51fc8f708cd87ddbd34f48626052882f9c5a1dbc1cfc99586c"
+    },
+    "readiness": {
+      "tests": 5,
+      "assertion_failures": [
+        "test_activation"
+      ],
+      "source_sha256": "57dae871dd2d6ba8b2be4f98d58232f471908946548818a2adc17fb8e12d4095"
+    },
+    "terminal_once": {
+      "tests": 5,
+      "assertion_failures": [
+        "test_activation"
+      ],
+      "source_sha256": "b6ecadd6a017ee449fe08be9b7edaf31aac96c972e7192e44fbd6f4fa3b6c84e"
+    },
+    "map_failed": {
+      "tests": 5,
+      "assertion_failures": [
+        "test_activation"
+      ],
+      "source_sha256": "60be3d3fcf4c04caa5b2da3926548905b30017ad1e88744eba3da7a85867564d"
+    },
+    "map_all": {
+      "tests": 5,
+      "assertion_failures": [
+        "test_activation"
+      ],
+      "source_sha256": "f189b84c0e8c0f6ade3be761f49fb9a4c574fb713abce8ecaf3becb871d67fe6"
+    },
+    "loop_final": {
+      "tests": 5,
+      "assertion_failures": [
+        "test_activation"
+      ],
+      "source_sha256": "65e2edfff401b6ab413a7d99a738ae11d111033865f8fd2694d876b1e3394e63"
+    },
+    "budget": {
+      "tests": 5,
+      "assertion_failures": [
+        "test_requests"
+      ],
+      "source_sha256": "d6e978be56a2201a6b4e72a7bf443eddbd69101db033a9609d475e62a652c1da"
+    },
+    "reservation": {
+      "tests": 5,
+      "assertion_failures": [
+        "test_requests"
+      ],
+      "source_sha256": "1eebd6a00277d6ff02bf2c574f840a8dd8b419ce3e2d0ca5716e93e3f9c599a6"
+    },
+    "first_terminal": {
+      "tests": 5,
+      "assertion_failures": [
+        "test_requests"
+      ],
+      "source_sha256": "b8c0fdda4d8c9b275b8b9fb8e245322ba605cad79979a702baaafa84ca920468"
+    },
+    "unknown_usage": {
+      "tests": 5,
+      "assertion_failures": [
+        "test_requests"
+      ],
+      "source_sha256": "92844c89f48a1a3bd27ed46c8ed494fe407bf77132058688c27532940f109161"
+    },
+    "first_settlement": {
+      "tests": 5,
+      "assertion_failures": [
+        "test_requests"
+      ],
+      "source_sha256": "762dae8e14f718793bb947797cd470fcd83cc46a1692e19032c838c2be298594"
+    },
+    "reissue_bound": {
+      "tests": 5,
+      "assertion_failures": [
+        "test_reissue_and_resources"
+      ],
+      "source_sha256": "585056ccfa3861e961e6b09bbaa44b3ae38c6738e81ba9303e9e6d12356048ce"
+    },
+    "resource_owner": {
+      "tests": 5,
+      "assertion_failures": [
+        "test_reissue_and_resources"
+      ],
+      "source_sha256": "f2b494df6eac652fea736d2e0117f8826959e1d50198fdf689aafc97f8e072e2"
+    },
+    "resource_live": {
+      "tests": 5,
+      "assertion_failures": [
+        "test_reissue_and_resources"
+      ],
+      "source_sha256": "8a34f97ccce01cb8d39a29ecc9145751513caf20331bf1ee6c3124d0fe816ded"
+    }
+  },
+  "regeneration_sha256": [
+    "0777d2d46288d8a8631a473d9486290c807717d21c3be2057f551f9635a62b0f",
+    "0777d2d46288d8a8631a473d9486290c807717d21c3be2057f551f9635a62b0f"
+  ],
+  "family_counts": {
+    "dag": 64,
+    "window": 100,
+    "ownership": 78,
+    "groups": 25,
+    "activation": 48,
+    "map": 54,
+    "loop": 240,
+    "requests": 72,
+    "associations": 7,
+    "reissue": 432,
+    "resource": 16
+  }
+}

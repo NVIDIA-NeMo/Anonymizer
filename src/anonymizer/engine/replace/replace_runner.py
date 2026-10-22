@@ -4,8 +4,10 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
-from typing import cast
+from collections.abc import Iterator
+from contextlib import contextmanager
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any, cast
 
 import pandas as pd
 from data_designer.config.models import ModelConfig
@@ -29,10 +31,15 @@ from anonymizer.engine.evaluation.judge_base import _BaseJudgeWorkflow
 from anonymizer.engine.evaluation.replace.attribute_fidelity_judge import AttributeFidelityJudgeWorkflow
 from anonymizer.engine.evaluation.replace.relational_consistency_judge import RelationalConsistencyJudgeWorkflow
 from anonymizer.engine.evaluation.replace.type_fidelity_judge import TypeFidelityJudgeWorkflow
-from anonymizer.engine.ndd.adapter import RECORD_ID_COLUMN, FailedRecord, NddAdapter
+from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter
 from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceWorkflow
-from anonymizer.engine.replace.strategies import apply_local_replace_strategy, apply_replacement_map
+from anonymizer.engine.replace.strategies import apply_local_replace_strategy
+from anonymizer.engine.row_partitioning import restore_diagnostic_columns
 from anonymizer.measurement import stage_timer
+
+if TYPE_CHECKING:
+    from anonymizer.engine.graph_sdk._execution_values import ExecutionResult
+
 
 logger = logging.getLogger("anonymizer.replace")
 
@@ -43,6 +50,15 @@ class ReplacementResult:
 
     dataframe: pd.DataFrame
     failed_records: list[FailedRecord]
+    _execution: ExecutionResult | None = field(default=None, repr=False, compare=False)
+
+
+@contextmanager
+def replacement_stage(strategy: str, dataframe: pd.DataFrame) -> Iterator[dict[str, Any]]:
+    """Measure one replacement run, whether the builtin runner or the graph lowers it."""
+    with stage_timer("ReplacementWorkflow.run", strategy=strategy, input_row_count=len(dataframe)) as measurement:
+        logger.debug("replacement starting on %d records", len(dataframe))
+        yield measurement
 
 
 class ReplacementWorkflow:
@@ -79,32 +95,36 @@ class ReplacementWorkflow:
         dataframe when you want the Judge Agreement scores.
         """
         strategy = type(replace_method).__name__
-        with stage_timer(
-            "ReplacementWorkflow.run",
-            strategy=strategy,
-            input_row_count=len(dataframe),
-        ) as measurement:
-            logger.debug("replacement strategy: %s on %d records", strategy, len(dataframe))
-
+        with replacement_stage(strategy, dataframe) as measurement:
             if isinstance(replace_method, (Annotate, Redact, Hash)):
                 local_df = apply_local_replace_strategy(dataframe, strategy=replace_method)
                 failed_records: list[FailedRecord] = []
             elif isinstance(replace_method, Substitute):
                 if self._llm_workflow is None:
                     raise ValueError("Substitute requires an llm_workflow, but none was provided.")
-                map_result = self._llm_workflow.generate_map_only(
+                from anonymizer.engine.replace._semantic_replace import run_substitute
+
+                result = run_substitute(
+                    self,
                     dataframe,
-                    model_configs=model_configs,
-                    selected_models=selected_models,
-                    instructions=replace_method.instructions,
-                    preview_num_records=preview_num_records,
+                    dict(
+                        replace_method=replace_method,
+                        model_configs=model_configs,
+                        selected_models=selected_models,
+                        preview_num_records=preview_num_records,
+                    ),
                 )
-                local_df = apply_replacement_map(map_result.dataframe)
-                failed_records = list(map_result.failed_records)
+                local_df = result.dataframe
+                failed_records = result.failed_records
+
             else:
                 raise ValueError(f"Unsupported replace method: {type(replace_method).__name__}")
 
-            result = ReplacementResult(dataframe=local_df, failed_records=failed_records)
+            result = ReplacementResult(
+                dataframe=local_df,
+                failed_records=failed_records,
+                _execution=getattr(result, "_execution", None) if isinstance(replace_method, Substitute) else None,
+            )
             measurement.update(
                 output_row_count=len(result.dataframe),
                 failed_record_count=len(result.failed_records),
@@ -215,11 +235,8 @@ class ReplacementWorkflow:
         prepared = dataframe
         for judge in active:
             prepared = judge.prepare(prepared)
-        # Attach record IDs upfront so we can join (possibly row-shrunken) judge
-        # output back onto the full prepared frame. The adapter would attach
-        # these itself; doing it here lets us treat evaluation as non-critical:
-        # rows the LLM drops still appear in the result with "Unavailable"
-        # verdicts instead of disappearing from a previously successful run.
+        # Retain the adapter's record-ID column in the public trace. Diagnostic
+        # correspondence uses source positions, including when IDs repeat.
         adapter = cast(NddAdapter, self._adapter)
         prepared = adapter._attach_record_ids(prepared)
 
@@ -238,23 +255,21 @@ class ReplacementWorkflow:
                 preview_num_records=preview_num_records,
             )
             failed_records.extend(run_result.failed_records)
-            # Left-join the judge output columns onto the full prepared frame.
-            # Rows missing from run_result.dataframe (LLM parse failures,
-            # timeouts, etc.) keep NaN for the raw judge columns; each judge's
-            # postprocess() converts that to *_valid=None ("Unavailable").
             new_cols = [c for c in run_result.dataframe.columns if c not in prepared.columns]
-            if new_cols:
-                judged_df = prepared.merge(
-                    run_result.dataframe[[RECORD_ID_COLUMN, *new_cols]],
-                    on=RECORD_ID_COLUMN,
-                    how="left",
-                )
-            else:
-                judged_df = prepared
+            judged_df = restore_diagnostic_columns(
+                prepared,
+                run_result.dataframe,
+                dict.fromkeys(new_cols),
+                source_positions=run_result.source_positions,
+            ).reset_index(drop=True)
         except Exception:
-            logger.debug("Replace judges workflow failed; evaluation scores may be unavailable.", exc_info=True)
+            logger.debug("Replace judges workflow failed; evaluation scores may be unavailable.")
             judged_df = prepared
 
         for judge in active:
             judged_df = judge.postprocess(judged_df)
         return judged_df
+
+
+# Pin library entry identity so a patched or overriding runner is classified as the caller's own.
+_REPLACEMENT_RUN = ReplacementWorkflow.run

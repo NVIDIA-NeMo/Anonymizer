@@ -29,7 +29,7 @@ from pydantic import BaseModel
 from anonymizer.config.models import EvaluateModelSelection
 from anonymizer.engine.ndd.adapter import FailedRecord
 from anonymizer.engine.ndd.model_loader import resolve_model_alias
-from anonymizer.engine.row_partitioning import ROW_ORDER_COL, merge_and_reorder
+from anonymizer.engine.row_partitioning import ROW_ORDER_COL, merge_and_reorder, resolve_source_positions
 from anonymizer.engine.workflow_columns.evaluation.judge.config import JudgeColumnConfig, JudgeKind
 
 logger = logging.getLogger("anonymizer.evaluation.judge_base")
@@ -41,6 +41,7 @@ class JudgeResult:
 
     dataframe: pd.DataFrame
     failed_records: list[FailedRecord]
+    source_positions: tuple[int, ...] | None = None
 
 
 class _JudgeRunResult(Protocol):
@@ -206,7 +207,7 @@ class _BaseJudgeWorkflow(ABC):
 
         if with_content.empty:
             combined = merge_and_reorder(passthrough_rows)
-            return JudgeResult(dataframe=combined, failed_records=[])
+            return JudgeResult(dataframe=combined, failed_records=[], source_positions=tuple(range(len(dataframe))))
 
         effective_preview_num_records = (
             min(preview_num_records, len(with_content)) if preview_num_records is not None else None
@@ -220,9 +221,14 @@ class _BaseJudgeWorkflow(ABC):
         )
 
         judged_df = run_result.dataframe.copy()
+        positions = getattr(run_result, "source_positions", None)
+        if positions is not None:
+            positions = resolve_source_positions(with_content, judged_df, positions)
+            judged_df[ROW_ORDER_COL] = with_content.iloc[list(positions)][ROW_ORDER_COL].to_numpy()
+            positions = tuple(sorted([*judged_df[ROW_ORDER_COL], *passthrough_rows[ROW_ORDER_COL]]))
         flattened = judged_df[self.RAW_COL].apply(self._flatten_judgment)
         judged_df[self.VALID_COL] = flattened.apply(lambda pair: pair[0])
         judged_df[self.INVALID_COL] = flattened.apply(lambda pair: pair[1])
 
         combined = merge_and_reorder(judged_df, passthrough_rows)
-        return JudgeResult(dataframe=combined, failed_records=run_result.failed_records)
+        return JudgeResult(dataframe=combined, failed_records=run_result.failed_records, source_positions=positions)

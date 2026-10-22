@@ -112,6 +112,23 @@ One pipeline-specific fact worth knowing: `COL_TEXT` is the internal name for th
 - **Don't add a domain to only one supplement map** — see `engine/rewrite/domain_classification.py` for the sync invariant
 - **Don't hardcode `gliner_threshold`** — it belongs in `Detect` config (default 0.3)
 
+## Graph SDK preview branch (PR1)
+
+These rules apply when this checkout is on `aagonzales/graph-sdk/feat/main` (draft
+[PR #319](https://github.com/NVIDIA-NeMo/Anonymizer/pull/319), formerly #302):
+
+- **Do not push to this branch.** Writes land only via the implementation campaign's reviewed
+  pipeline; work in your own branch or worktree.
+- **Do not fix problems you find under `anonymizer/engine/**`** — report them instead; an
+  uncoordinated fix will collide with in-flight work and be discarded.
+- **Never modify compat-marked tests, fixtures, or expected-output files.** They are frozen
+  oracles: a wrong oracle is a finding, not an edit.
+
+Review scope, current status, known-open items, and accepted behavior deltas live in the PR #319
+description — read it before testing or reporting. Report findings as comments on PR #319: one
+finding per comment, with the exact SHA, route/surface, smallest repro (provider-free if possible),
+and expected vs actual.
+
 ## Development
 
 ```bash

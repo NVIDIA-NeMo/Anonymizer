@@ -6,14 +6,18 @@ from __future__ import annotations
 import asyncio
 import concurrent.futures
 from collections.abc import Callable
+from contextvars import copy_context
 from typing import Any
 
+import pandas as pd
 from data_designer.config.column_configs import GenerationStrategy
 from data_designer.engine.column_generators.generators.base import (
     ColumnGeneratorCellByCell,
     ColumnGeneratorWithModelRegistry,
 )
 
+from anonymizer.engine.constants import COL_VALIDATION_DECISIONS
+from anonymizer.engine.detection._opaque_redact import _EvaluationInvocation, execute_injected_redact, run_evaluation
 from anonymizer.engine.detection.chunked_validation import (
     ChunkedValidationParams,
     chunked_validate_row,
@@ -27,13 +31,19 @@ from anonymizer.engine.detection.custom_columns import (
     parse_detected_entities,
     prepare_validation_inputs,
 )
+from anonymizer.engine.graph_sdk._execution_delegated import source_worker_borrow
+from anonymizer.engine.graph_sdk._execution_values import DelegatedRequests
+from anonymizer.engine.graph_sdk.blocking import BlockingPool
+from anonymizer.engine.harness.kernel import project_detection_redact
+from anonymizer.engine.ndd._source_frame import current_source_work
+from anonymizer.engine.replace.replace_runner import ReplacementResult
 from anonymizer.engine.workflow_columns.detection.config import (
     ChunkedValidationConfig,
     DetectionTransformConfig,
     DetectionTransformOperation,
 )
 
-_TRANSFORMS: dict[DetectionTransformOperation, Callable[[dict[str, Any]], dict[str, Any]]] = {
+_TRANSFORMS: dict[DetectionTransformOperation, Callable[..., dict[str, Any]]] = {
     DetectionTransformOperation.PARSE_DETECTED_ENTITIES: parse_detected_entities,
     DetectionTransformOperation.PREPARE_VALIDATION_INPUTS: prepare_validation_inputs,
     DetectionTransformOperation.ENRICH_VALIDATION_DECISIONS: enrich_validation_decisions,
@@ -88,7 +98,12 @@ class _AsyncBridgedModelFacade:
         try:
             return future.result(timeout=bridge_timeout)
         except concurrent.futures.TimeoutError as exc:
-            future.cancel()
+            # A cancelled concurrent Future cannot prove the borrowed coroutine
+            # stopped. Preserve its actual completion before releasing the row.
+            try:
+                future.result()
+            except BaseException:
+                pass
             from data_designer.engine.models.errors import ModelTimeoutError
 
             raise ModelTimeoutError(f"model.generate() bridge timed out after {bridge_timeout:.0f}s") from exc
@@ -98,25 +113,54 @@ class _AsyncBridgedModelFacade:
 
 
 class DetectionTransformGenerator(ColumnGeneratorCellByCell[DetectionTransformConfig]):
+    """Run pure dictionary transforms, authorizing the source worker when one owns the row.
+
+    Exported configuration and row payloads retain the native DD contract. Outside a
+    source owner (standalone DD use) the transform runs directly, as in the release.
+    """
+
     def generate(self, data: dict[str, Any]) -> dict[str, Any]:
         operation = DetectionTransformOperation(self.config.operation)
-        if operation == DetectionTransformOperation.APPLY_VALIDATION_TO_SEED_ENTITIES:
-            return apply_validation_to_seed_entities(
-                data,
-                excluded_entity_labels=self.config.excluded_entity_labels,
-            )
-        if operation == DetectionTransformOperation.MERGE_AND_BUILD_CANDIDATES:
-            return merge_and_build_candidates(
-                data,
-                excluded_entity_labels=self.config.excluded_entity_labels,
-            )
+        transform = _TRANSFORMS[operation]
+        options: dict[str, Any] = (
+            {"excluded_entity_labels": tuple(self.config.excluded_entity_labels)}
+            if operation
+            in {
+                DetectionTransformOperation.APPLY_VALIDATION_TO_SEED_ENTITIES,
+                DetectionTransformOperation.MERGE_AND_BUILD_CANDIDATES,
+                DetectionTransformOperation.APPLY_VALIDATION_AND_FINALIZE,
+            }
+            else {}
+        )
         if operation == DetectionTransformOperation.APPLY_VALIDATION_AND_FINALIZE:
-            return apply_validation_and_finalize(
-                data,
-                excluded_entity_labels=self.config.excluded_entity_labels,
-                allowed_entity_labels=self.config.allowed_entity_labels,
-            )
-        return _TRANSFORMS[operation](data)
+            options["allowed_entity_labels"] = self.config.allowed_entity_labels
+        work = current_source_work(self)
+        if work is not None:
+            source_worker_borrow().authorize_source_sync(work.association)
+        return transform(data, **options)
+
+    async def agenerate(self, data: dict[str, Any]) -> dict[str, Any]:  # ty: ignore[invalid-method-override]
+        # Preserve DD's worker-thread/copy contract and keep the row until that worker
+        # actually returns after observer cancellation.
+        task = asyncio.create_task(asyncio.to_thread(self.generate, data.copy()))
+        cancellation = None
+        while not task.done():
+            try:
+                await asyncio.shield(task)
+            except asyncio.CancelledError as error:
+                if cancellation is None and task.done() and task.cancelled():
+                    return task.result()
+                cancellation = cancellation or error
+            except Exception:
+                if cancellation is None:
+                    raise
+        if cancellation is not None:
+            try:
+                task.result()
+            except BaseException:
+                pass
+            raise cancellation
+        return task.result()
 
 
 class ChunkedValidationGenerator(ColumnGeneratorWithModelRegistry[ChunkedValidationConfig]):
@@ -138,11 +182,62 @@ class ChunkedValidationGenerator(ColumnGeneratorWithModelRegistry[ChunkedValidat
     def generate(self, data: dict[str, Any]) -> dict[str, Any]:  # ty: ignore[invalid-method-override]
         raw_models = {alias: self.get_model(alias) for alias in self.config.pool}
         models = {alias: _AsyncBridgedModelFacade(model) for alias, model in raw_models.items()}
-        return chunked_validate_row(data, self._params(raw_models), models)
+        work = current_source_work(self)
+        if work is not None:
+            source_worker_borrow().authorize_source_sync(work.association)
+            return chunked_validate_row(data, self._params(raw_models), models)
+
+        def validate(requests: DelegatedRequests) -> ReplacementResult:
+            del requests
+            row = chunked_validate_row(data, self._params(raw_models), models)
+            return ReplacementResult(dataframe=pd.DataFrame({COL_VALIDATION_DECISIONS: [row]}), failed_records=[])
+
+        result = run_evaluation(
+            pd.DataFrame({COL_VALIDATION_DECISIONS: [data]}),
+            validate,
+            retained_owner=None,
+            name="opaque-chunked-validation",
+        )
+        return result.dataframe.at[0, COL_VALIDATION_DECISIONS]
 
     async def agenerate(self, data: dict[str, Any]) -> dict[str, Any]:  # ty: ignore[invalid-method-override]
         models = {alias: self.get_model(alias) for alias in self.config.pool}
-        return await chunked_validate_row_async(data, self._params(models), models)
+        work = current_source_work(self)
+        if work is not None:
+            await source_worker_borrow().authorize_source(work.association)
+            return await chunked_validate_row_async(data, self._params(models), models)
+        loop = asyncio.get_running_loop()
+        context = copy_context()
+        params = self._params(models)
+
+        def validate(requests: DelegatedRequests) -> ReplacementResult:
+            del requests
+            future = context.run(
+                asyncio.run_coroutine_threadsafe, chunked_validate_row_async(data, params, models), loop
+            )
+            row = future.result()
+            return ReplacementResult(dataframe=pd.DataFrame({COL_VALIDATION_DECISIONS: [row]}), failed_records=[])
+
+        pool = BlockingPool(max_workers=1)
+        try:
+            execution = await execute_injected_redact(
+                _EvaluationInvocation(
+                    pd.DataFrame({COL_VALIDATION_DECISIONS: [data]}),
+                    validate,
+                    None,
+                    "opaque-chunked-validation",
+                ),
+                pool,
+            )
+            if execution.invocation_state is not None and any(
+                entry.status == "cancelled" for entry in execution.invocation_state.entries
+            ):
+                _retained_execution = execution  # kept alive by the traceback; see kernel.retained_execution
+                raise asyncio.CancelledError()
+            result = project_detection_redact(execution)
+            return result.dataframe.at[0, COL_VALIDATION_DECISIONS]
+        finally:
+            await pool.close()
 
 
 def _derive_max_parallel_chunks(models: dict[str, Any]) -> int:
