@@ -31,6 +31,8 @@ class ResolvedInput:
             identifier (e.g. ``"final_entities__input"`` when the user
             requested ``"final_entities"``). Use this when restoring
             user-facing output column names.
+        resolved_id_column: The identifier column after the same collision
+            resolution, or ``None`` when no identifier column was configured.
 
     Note:
         ``==`` and ``hash()`` are unsupported: the ``dataframe`` field is
@@ -41,6 +43,7 @@ class ResolvedInput:
     dataframe: pd.DataFrame
     requested_text_column: str
     resolved_text_column: str
+    resolved_id_column: str | None = None
 
     def with_dataframe(self, dataframe: pd.DataFrame) -> ResolvedInput:
         """Return a new instance wrapping *dataframe* with unchanged metadata."""
