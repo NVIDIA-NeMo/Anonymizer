@@ -161,8 +161,8 @@ being compared itself errored.
   record and no review flag — this trace column is the only signal. This is a known issue (DF-3): the
   replacement map is indexed by exact `(original, label)` text in
   `_apply_indexed_replacements`/`_resolve_synthetic`. There is a value-only fallback
-  (`by_value`, used when `allow_value_fallback=True`, which the Substitute route's
-  `apply_replacement_map` sets) that resolves a span whose exact `(value, label)` pair is missing but
+  (`by_value`, used when `allow_value_fallback=True`, which the Substitute and local
+  routes set) that resolves a span whose exact `(value, label)` pair is missing but
   whose bare value has exactly one synthetic across all labels — so not every map miss causes a skip.
   But there is no Unicode/whitespace normalization anywhere in this lookup, so an LLM-generated map
   that paraphrases, retypes, or drops an entity's text still silently leaves the source text in
