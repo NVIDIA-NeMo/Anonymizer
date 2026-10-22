@@ -12,7 +12,14 @@ import pytest
 from data_designer.config.models import ModelConfig
 
 from anonymizer import RunConfig
-from anonymizer.config.anonymizer_config import AnonymizerConfig, AnonymizerInput, EvaluateConfig, Rewrite
+from anonymizer.config.anonymizer_config import (
+    AnonymizerConfig,
+    AnonymizerInput,
+    EvaluateConfig,
+    Rewrite,
+    TextRecord,
+    TextRecordsInput,
+)
 from anonymizer.config.models import ModelSelection, ReplaceModelSelection
 from anonymizer.config.replace_strategies import Redact, Substitute
 from anonymizer.engine.constants import (
@@ -26,6 +33,7 @@ from anonymizer.engine.constants import (
     COL_REWRITTEN_TEXT,
     COL_TAGGED_TEXT,
     COL_TEXT,
+    RECORD_ID_COLUMN,
 )
 from anonymizer.engine.detection.detection_workflow import EntityDetectionResult, EntityDetectionWorkflow
 from anonymizer.engine.ndd.adapter import FailedRecord
@@ -105,6 +113,38 @@ def test_run_merges_failed_records_from_both_stages(
     assert len(result.failed_records) == 2
     assert result.failed_records[0].step == "detection"
     assert result.failed_records[1].step == "replace"
+
+
+def test_run_in_memory_records_exposes_ids_and_entities_in_public_dataframe() -> None:
+    ids = ["turn-2", "turn-1"]
+    texts = ["Bob works at Acme", "Alice works at Globex"]
+    entities = [
+        {"entities": [{"value": "Bob", "label": "first_name", "start_position": 0, "end_position": 3}]},
+        {"entities": [{"value": "Alice", "label": "first_name", "start_position": 0, "end_position": 5}]},
+    ]
+    detected = pd.DataFrame({"id": ids, COL_TEXT: texts, COL_FINAL_ENTITIES: entities})
+    replaced = detected.assign(
+        **{
+            COL_REPLACED_TEXT: ["[REDACTED_FIRST_NAME] works at Acme", "[REDACTED_FIRST_NAME] works at Globex"],
+            COL_TAGGED_TEXT: ["<Bob, first_name> works at Acme", "<Alice, first_name> works at Globex"],
+        }
+    )
+    anonymizer, detection_workflow, _, _ = _make_anonymizer(
+        detection_return=EntityDetectionResult(dataframe=detected, failed_records=[]),
+        replace_return=ReplacementResult(dataframe=replaced, failed_records=[]),
+    )
+
+    result = anonymizer.run(
+        config=AnonymizerConfig(replace=Redact(), emit_telemetry=False),
+        data=TextRecordsInput(
+            records=[TextRecord(id=record_id, text=text) for record_id, text in zip(ids, texts, strict=True)]
+        ),
+    )
+
+    assert detection_workflow.run.call_args.args[0]["id"].tolist() == ids
+    assert detection_workflow.run.call_args.args[0][RECORD_ID_COLUMN].tolist() == ids
+    assert result.dataframe["id"].tolist() == ids
+    assert result.dataframe["final_entities"].tolist() == entities
 
 
 def test_run_enables_latent_detection_when_rewrite_configured(stub_input: AnonymizerInput) -> None:
