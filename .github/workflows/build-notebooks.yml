@@ -37,7 +37,7 @@ jobs:
           test -n "$wheel"
           make convert-notebooks ANONYMIZER_NOTEBOOK_PACKAGE="${wheel}[notebooks]"
       - name: Upload notebooks as artifacts
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: notebooks
           path: docs/notebooks
