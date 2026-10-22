@@ -3464,11 +3464,16 @@ result's <code>trace_dataframe</code> when you want the Judge Agreement scores.<
 
   
       pydantic-model
-   (anonymizer.config.anonymizer_config.AnonymizerInput)" href="../../config/anonymizer_config/#anonymizer.config.anonymizer_config.AnonymizerInput">AnonymizerInput</a></code>
+   (anonymizer.config.anonymizer_config.AnonymizerInput)" href="../../config/anonymizer_config/#anonymizer.config.anonymizer_config.AnonymizerInput">AnonymizerInput</a> | <a class="autorefs autorefs-internal" title="            TextRecordsInput
+
+
+  
+      pydantic-model
+   (anonymizer.config.anonymizer_config.TextRecordsInput)" href="../../config/anonymizer_config/#anonymizer.config.anonymizer_config.TextRecordsInput">TextRecordsInput</a></code>
             </td>
             <td>
               <div class="doc-md-description">
-                <p>Input source with file path, text column, and optional data summary.</p>
+                <p>File-backed or in-memory records and optional dataset context.</p>
               </div>
             </td>
             <td>
@@ -3485,7 +3490,7 @@ result's <code>trace_dataframe</code> when you want the Judge Agreement scores.<
     self,
     *,
     config: AnonymizerConfig,
-    data: AnonymizerInput,
+    data: AnonymizerInput | TextRecordsInput,
 ) -&gt; AnonymizerResult:
     """Run the full anonymization pipeline (detection + replacement).
 
@@ -3494,7 +3499,7 @@ result's <code>trace_dataframe</code> when you want the Judge Agreement scores.<
 
     Args:
         config: Workflow behavior — replace strategy, entity labels, thresholds.
-        data: Input source with file path, text column, and optional data summary.
+        data: File-backed or in-memory records and optional dataset context.
     """
     self._validate_preflight_config(config)
     context = read_input(data)
@@ -3589,7 +3594,12 @@ its per-record output carries the finalized entity columns to score.</p>
 
   
       pydantic-model
-   (anonymizer.config.anonymizer_config.AnonymizerInput)" href="../../config/anonymizer_config/#anonymizer.config.anonymizer_config.AnonymizerInput">AnonymizerInput</a></code>
+   (anonymizer.config.anonymizer_config.AnonymizerInput)" href="../../config/anonymizer_config/#anonymizer.config.anonymizer_config.AnonymizerInput">AnonymizerInput</a> | <a class="autorefs autorefs-internal" title="            TextRecordsInput
+
+
+  
+      pydantic-model
+   (anonymizer.config.anonymizer_config.TextRecordsInput)" href="../../config/anonymizer_config/#anonymizer.config.anonymizer_config.TextRecordsInput">TextRecordsInput</a></code>
             </td>
             <td>
               <div class="doc-md-description">
@@ -3626,7 +3636,7 @@ its per-record output carries the finalized entity columns to score.</p>
     self,
     *,
     config: AnonymizerConfig,
-    data: AnonymizerInput,
+    data: AnonymizerInput | TextRecordsInput,
     seed_path: str | Path,
 ) -&gt; DataDesignerConfigBuilder:
     """Build (without running) the core detection workflow as a DataDesigner config.
@@ -3786,11 +3796,16 @@ result's <code>trace_dataframe</code> when you want the Judge Agreement scores.<
 
   
       pydantic-model
-   (anonymizer.config.anonymizer_config.AnonymizerInput)" href="../../config/anonymizer_config/#anonymizer.config.anonymizer_config.AnonymizerInput">AnonymizerInput</a></code>
+   (anonymizer.config.anonymizer_config.AnonymizerInput)" href="../../config/anonymizer_config/#anonymizer.config.anonymizer_config.AnonymizerInput">AnonymizerInput</a> | <a class="autorefs autorefs-internal" title="            TextRecordsInput
+
+
+  
+      pydantic-model
+   (anonymizer.config.anonymizer_config.TextRecordsInput)" href="../../config/anonymizer_config/#anonymizer.config.anonymizer_config.TextRecordsInput">TextRecordsInput</a></code>
             </td>
             <td>
               <div class="doc-md-description">
-                <p>Input source with file path, text column, and optional data summary.</p>
+                <p>File-backed or in-memory records and optional dataset context.</p>
               </div>
             </td>
             <td>
@@ -3823,7 +3838,7 @@ result's <code>trace_dataframe</code> when you want the Judge Agreement scores.<
     self,
     *,
     config: AnonymizerConfig,
-    data: AnonymizerInput,
+    data: AnonymizerInput | TextRecordsInput,
     num_records: int = 10,
 ) -&gt; PreviewResult:
     """Run the pipeline on a subset of records for quick inspection.
@@ -3833,7 +3848,7 @@ result's <code>trace_dataframe</code> when you want the Judge Agreement scores.<
 
     Args:
         config: Workflow behavior — replace strategy, entity labels, thresholds.
-        data: Input source with file path, text column, and optional data summary.
+        data: File-backed or in-memory records and optional dataset context.
         num_records: Maximum records to process (default 10).
     """
     self._validate_preflight_config(config)
@@ -3850,6 +3865,7 @@ result's <code>trace_dataframe</code> when you want the Judge Agreement scores.<
             resolved_text_column=result.resolved_text_column,
             failed_records=result.failed_records,
             preview_num_records=num_records,
+            id_column=result.id_column,
             replace_method=config.replace,
             rewrite_config=config.rewrite.privacy_goal if config.rewrite is not None else None,
             entity_labels=config.detect.entity_labels,
@@ -3922,11 +3938,11 @@ evaluated = anonymizer.evaluate(loaded)</code></pre>
                 <code>output</code>
             </td>
             <td>
-                  <code><a class="autorefs autorefs-internal" title="              AnonymizerResult(dataframe, trace_dataframe, resolved_text_column, failed_records, replace_method=None, rewrite_config=None, entity_labels=None, data_summary=None, excluded_entity_labels=None)
+                  <code><a class="autorefs autorefs-internal" title="              AnonymizerResult(dataframe, trace_dataframe, resolved_text_column, failed_records, replace_method=None, rewrite_config=None, entity_labels=None, data_summary=None, excluded_entity_labels=None, id_column=None)
 
   
       dataclass
-   (anonymizer.interface.results.AnonymizerResult)" href="../results/#anonymizer.interface.results.AnonymizerResult">AnonymizerResult</a> | <a class="autorefs autorefs-internal" title="              PreviewResult(dataframe, trace_dataframe, resolved_text_column, failed_records, preview_num_records, replace_method=None, rewrite_config=None, entity_labels=None, data_summary=None, excluded_entity_labels=None)
+   (anonymizer.interface.results.AnonymizerResult)" href="../results/#anonymizer.interface.results.AnonymizerResult">AnonymizerResult</a> | <a class="autorefs autorefs-internal" title="              PreviewResult(dataframe, trace_dataframe, resolved_text_column, failed_records, preview_num_records, replace_method=None, rewrite_config=None, entity_labels=None, data_summary=None, excluded_entity_labels=None, id_column=None)
 
   
       dataclass
@@ -4124,11 +4140,13 @@ per-judge model/prompt overrides, etc.).</p>
             dataframe=_build_user_dataframe(
                 renamed_trace,
                 resolved_text_column=text_column,
+                id_column=output.id_column,
                 compute_detection_validity=evaluate_config.compute_detection_validity,
             ),
             trace_dataframe=renamed_trace,
             resolved_text_column=text_column,
             failed_records=all_failed,
+            id_column=output.id_column,
             rewrite_config=rewrite_config,
             entity_labels=entity_labels,
             excluded_entity_labels=excluded_entity_labels,
@@ -4174,11 +4192,13 @@ per-judge model/prompt overrides, etc.).</p>
             dataframe=_build_user_dataframe(
                 renamed_trace,
                 resolved_text_column=text_column,
+                id_column=output.id_column,
                 compute_detection_validity=evaluate_config.compute_detection_validity,
             ),
             trace_dataframe=renamed_trace,
             resolved_text_column=text_column,
             failed_records=replace_result.failed_records,
+            id_column=output.id_column,
             replace_method=replace_method,
             entity_labels=entity_labels,
             excluded_entity_labels=excluded_entity_labels,

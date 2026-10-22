@@ -492,6 +492,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#in-memory-records" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        In-memory records
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#detect-fields" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2941,6 +2952,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#in-memory-records" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        In-memory records
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#detect-fields" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3213,6 +3235,26 @@ config = AnonymizerConfig(
     detect=Detect(),
     replace=Redact(),
 )</code></pre>
+<h3 id="in-memory-records">In-memory records<a class="headerlink" href="#in-memory-records" title="Permanent link">&para;</a></h3>
+<p>Applications can pass typed records without first writing a CSV or Parquet file:</p>
+<pre class="highlight"><code class="language-python">from anonymizer import Anonymizer, AnonymizerConfig, Redact, TextRecord, TextRecordsInput
+
+result = Anonymizer().run(
+    config=AnonymizerConfig(replace=Redact()),
+    data=TextRecordsInput(
+        records=[
+            TextRecord(id="request-1", text="Email Alice at alice@example.com"),
+            TextRecord(id="request-2", text="Bob works at Acme"),
+        ],
+        data_summary="Application request logs",
+    ),
+)
+
+entities_by_id = dict(zip(result.dataframe["id"], result.dataframe["final_entities"], strict=True))</code></pre>
+<p><code>result.dataframe</code> is the public result surface for validated entities. It
+retains IDs and input order for records that complete the pipeline. Dropped
+records use the same caller-provided IDs in <code>result.failed_records</code>. Use
+<code>result.trace_dataframe</code> only when you need internal pipeline diagnostics.</p>
 <h3 id="detect-fields"><code>Detect</code> fields<a class="headerlink" href="#detect-fields" title="Permanent link">&para;</a></h3>
 <table>
 <thead>
