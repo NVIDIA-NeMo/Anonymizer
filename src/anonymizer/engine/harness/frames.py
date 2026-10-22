@@ -18,7 +18,6 @@ from typing import TYPE_CHECKING, cast
 import numpy as np
 import pandas as pd
 
-from anonymizer.engine.detection.artifacts import EntitySpansValue
 from anonymizer.engine.graph_sdk._graph_values import ActivationKey, ArtifactRef
 from anonymizer.engine.graph_sdk.requests import AssociationResult, SemanticAssociation, TextArtifactValue
 from anonymizer.engine.ndd.failed_record import FailedRecord
@@ -137,7 +136,7 @@ class PublishedFrame:
                 ):
                     raise ValueError("frame reference differs from its accepted source output port")
             text = [values[reference] for reference in references]
-            if any(type(value) not in (TextArtifactValue, EntitySpansValue, RewriteCandidateValue) for value in text):
+            if any(type(value) not in (TextArtifactValue, RewriteCandidateValue) for value in text):
                 raise ValueError("frame reference has an unsupported artifact")
             accepted = dict(self._accepted_candidates).get(column, (None,) * len(text))
             observed = [
@@ -147,9 +146,7 @@ class PublishedFrame:
                 if isinstance(value, RewriteCandidateValue) and type(cell) is RewriteCandidateValue and cell == value
                 else value.project()
                 if isinstance(value, RewriteCandidateValue)
-                else value.text
-                if isinstance(value, TextArtifactValue)
-                else {"entities": [entity.as_dict() for entity in cast(EntitySpansValue, value).entities]}
+                else cast(TextArtifactValue, value).text
                 for value, cell in zip(text, accepted, strict=True)
             ]
             dtype = dict(self._observation_dtypes).get(column)
@@ -211,7 +208,7 @@ class FramePublication:
     _content: pd.DataFrame
     _columns: pd.Index
     associations: tuple[SemanticAssociation, ...]
-    _text: tuple[tuple[str, str, tuple[str | EntitySpansValue | RewriteCandidateValue, ...]], ...]
+    _text: tuple[tuple[str, str, tuple[str | RewriteCandidateValue, ...]], ...]
     failed_records: tuple[FailedRecord, ...]
     _opaque: tuple[object, ...]
     stages: FrameStages | None = None
@@ -227,7 +224,6 @@ class FramePublication:
         text_ports: tuple[tuple[str, str], ...],
         failed_records: tuple[FailedRecord, ...],
         opaque_source: pd.DataFrame,
-        span_ports: tuple[tuple[str, str, tuple[EntitySpansValue, ...]], ...] = (),
         observation_ports: tuple[tuple[str, str], ...] = (),
         observation_dtypes: Mapping[str, pd.api.extensions.ExtensionDtype] | None = None,
         stages: FrameStages | None = None,
@@ -242,7 +238,6 @@ class FramePublication:
             raise ValueError("frame publication has ambiguous source or text columns")
         text = (
             tuple((column, port, tuple(dataframe[column])) for column, port in text_ports)
-            + span_ports
             + tuple(
                 (column, port, tuple(json.dumps(value) for value in dataframe[column])) for column, port in json_ports
             )
@@ -252,9 +247,7 @@ class FramePublication:
             )
         )
         if not text or any(
-            type(value) not in (str, EntitySpansValue, RewriteCandidateValue)
-            for _, _, values in text
-            for value in values
+            type(value) not in (str, RewriteCandidateValue) for _, _, values in text for value in values
         ):
             raise ValueError("frame publication requires semantic text outputs")
         opaque = tuple(value for row in opaque_source.itertuples(index=False, name=None) for value in row)
@@ -300,7 +293,7 @@ class FramePublication:
                 or not item[1]
                 or type(item[2]) is not tuple
                 or len(item[2]) != len(self.associations)
-                or any(type(value) not in (str, EntitySpansValue, RewriteCandidateValue) for value in item[2])
+                or any(type(value) not in (str, RewriteCandidateValue) for value in item[2])
             ):
                 return None
         names = [column for column, _, _ in self._text]
@@ -411,19 +404,6 @@ class InvocationFrame:
     @property
     def row_counts(self) -> tuple[int, int]:
         return len(self.detected_dataframe), len(self.dataframe)
-
-    @property
-    def text_bytes(self) -> int:
-        """Observed direct string cells; arbitrary object-cell sizes remain unavailable."""
-        from anonymizer.engine.graph_sdk._artifact_shape import content_bytes
-
-        return sum(
-            content_bytes(value)
-            for frame in (self.detected_dataframe, self.dataframe)
-            for row in frame.itertuples(index=False, name=None)
-            for value in row
-            if isinstance(value, str)
-        )
 
     @property
     def failed_records(self) -> tuple[FailedRecord, ...]:

@@ -253,7 +253,6 @@ class DelegatedRequestContract(PrivateValue):
     optional_tail: tuple[int, ...] = ()
     generation_groups: tuple[tuple[int, ...], ...] = ()
     selection: DelegatedGenerationSelection | None = None
-    publication_sources: tuple[tuple[NodeId, frozenset[str]], ...] = ()
     observed_request: PhysicalRequestPolicy | None = None
 
     def __post_init__(self) -> None:
@@ -261,20 +260,6 @@ class DelegatedRequestContract(PrivateValue):
             require_instance(self.observed_request, PhysicalRequestPolicy)
             if self.mode != "opaque":
                 reject(EffectCode.CONTRADICTORY)
-        if type(self.publication_sources) is not tuple:
-            reject(EffectCode.INVALID_TYPE)
-        for item in self.publication_sources:
-            if (
-                type(item) is not tuple
-                or len(item) != 2
-                or not isinstance(item[0], NodeId)
-                or type(item[1]) is not frozenset
-                or not item[1]
-                or any(type(port) is not str or not port for port in item[1])
-            ):
-                reject(EffectCode.INVALID_TYPE)
-        if len({node for node, _ in self.publication_sources}) != len(self.publication_sources):
-            reject(EffectCode.DUPLICATE)
         if self.readiness is not None:
             require_instance(self.readiness, DelegatedReadiness)
         require_literal(self.mode, frozenset({"qualified", "opaque"}))

@@ -9,16 +9,9 @@ import threading
 from collections.abc import Callable
 from typing import Any
 
-from anonymizer.engine.graph_core import (
-    Assessment,
-    GraphRejection,
-    GraphScope,
-    Operation,
-    ProtectionGraph,
-    Workflow,
-    prepare,
-    protect,
-)
+from anonymizer.engine.graph_core.authoring import Assessment, GraphScope, Operation, ProtectionGraph, Workflow
+from anonymizer.engine.graph_core.execution import prepare, protect
+from anonymizer.engine.graph_core.kernel import GraphRejection
 
 NAME = "Alice"
 

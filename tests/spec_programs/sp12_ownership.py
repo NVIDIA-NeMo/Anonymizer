@@ -5,7 +5,14 @@
 
 from __future__ import annotations
 
-from anonymizer.engine.graph_core import Assessment, ContextScope, ContextSource, GraphScope, Operation, ProtectionGraph
+from anonymizer.engine.graph_core.authoring import (
+    Assessment,
+    ContextScope,
+    ContextSource,
+    GraphScope,
+    Operation,
+    ProtectionGraph,
+)
 from tests.spec_programs._builder import Checks, graph, rejected, run
 
 

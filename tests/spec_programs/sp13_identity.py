@@ -8,7 +8,8 @@ from __future__ import annotations
 import copy
 import dataclasses
 
-from anonymizer.engine.graph_core import GraphScope, Mention, Operation, ProtectionGraph, Workflow, prepare, protect
+from anonymizer.engine.graph_core.authoring import GraphScope, Mention, Operation, ProtectionGraph, Workflow
+from anonymizer.engine.graph_core.execution import prepare, protect
 from tests.spec_programs._builder import Checks, Recorder, rejected, run
 
 

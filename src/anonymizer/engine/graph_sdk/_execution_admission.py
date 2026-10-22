@@ -398,17 +398,6 @@ def _validate_delegated_recipes(prepared: PreparedPlan, policies: tuple[Operatio
         if contract is None:
             continue
         _require_exact_contract(contract)
-        if contract.publication_sources:
-            if contract.mode != "opaque" or prepared.configuration.purpose != "execution_only":
-                reject(EffectCode.UNSUPPORTED)
-            for node, ports in contract.publication_sources:
-                producer = by_node.get(node)
-                if (
-                    producer is None
-                    or producer.submission_owner != policy.node
-                    or not ports <= {port.name for port in producer.implementations[0].capability.operation.outputs}
-                ):
-                    reject(EffectCode.FOREIGN_OWNER)
         request = contract.observed_request or policy.request
         if contract.mode == "opaque":
             if (

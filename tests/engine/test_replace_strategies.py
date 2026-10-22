@@ -11,7 +11,6 @@ import pytest
 from anonymizer.config.replace_strategies import Redact
 from anonymizer.engine.constants import (
     COL_REPLACED_TEXT,
-    COL_REPLACEMENT_APPLICATION,
     COL_REPLACEMENT_MAP,
 )
 from anonymizer.engine.detection.postprocess import EntitySpan
@@ -19,38 +18,9 @@ from anonymizer.engine.replace.strategies import (
     ReplacementEntry,
     apply_entity_spans,
     apply_local_replace_strategy,
-    apply_replacement_map,
     apply_replacements_to_spans,
 )
 from anonymizer.engine.schemas import EntitiesSchema, EntitySchema
-
-
-def test_apply_replacement_map_preserves_row_order_and_custom_columns() -> None:
-    dataframe = pd.DataFrame(
-        {
-            "source": ["Bob", "Alice"],
-            "detected": [
-                {"entities": [{"value": "Bob", "label": "first_name", "start_position": 0, "end_position": 3}]},
-                {"entities": [{"value": "Alice", "label": "first_name", "start_position": 0, "end_position": 5}]},
-            ],
-            "maps": [
-                {"replacements": [{"original": "Bob", "label": "first_name", "synthetic": "Robert"}]},
-                {"replacements": [{"original": "Alice", "label": "first_name", "synthetic": "Maria"}]},
-            ],
-        },
-        index=pd.Index([9, 3]),
-    )
-
-    result = apply_replacement_map(
-        dataframe,
-        text_column="source",
-        entities_column="detected",
-        replacement_map_column="maps",
-    )
-
-    assert result.index.tolist() == [9, 3]
-    assert result[COL_REPLACED_TEXT].tolist() == ["Robert", "Maria"]
-    assert [metrics["applied_span_count"] for metrics in result[COL_REPLACEMENT_APPLICATION]] == [1, 1]
 
 
 def test_apply_local_replace_strategy_records_progress_for_each_entity_value() -> None:

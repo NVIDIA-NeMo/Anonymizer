@@ -58,7 +58,6 @@ from anonymizer.engine.replace.llm_replace_workflow import (
     _enrich_entities_for_template,
     _filter_replacement_map_to_input_entities,
 )
-from anonymizer.engine.replace.strategies import apply_replacement_map
 from anonymizer.engine.row_partitioning import ROW_ORDER_COL, merge_and_reorder, resolve_source_positions
 from anonymizer.engine.schemas import EntitiesByValueSchema, EntityReplacementMapSchema
 
@@ -84,35 +83,23 @@ def extend_map_graph(
     *,
     submission_owner: NodeId,
     predecessor: NodeId | None = None,
-    source_free: bool = False,
-    apply: bool = False,
-    optional: bool = False,
 ) -> tuple[Graph, tuple[Any, ...], tuple[Any, ...], dict[str, NodeId]]:
     from anonymizer.engine.harness.kernel import _frame_implementation
 
     ids = {name: NodeId.new(workflow=raw.workflow) for name in ("select", "generate", "accept", "empty")}
     nodes, bindings, edges, capabilities, policies = [], [], [], [], []
     for name in ids:
-        inputs = (
-            {}
-            if source_free
-            else {
-                "source": _TEXT,
-                **({"entities": _ENTITIES} if name != "select" else {}),
-                **({"raw_map": _MAP} if name == "accept" else {}),
-            }
-        )
-        outputs = (
-            {}
-            if source_free
-            else {
-                "source": _TEXT,
-                **({"entities": _ENTITIES} if name in {"select", "generate"} else {}),
-                **({"raw_map": _MAP} if name == "generate" else {}),
-                **({"map": _MAP} if name in {"accept", "empty"} else {}),
-                **({"protected": _TEXT} if apply and name in {"accept", "empty"} else {}),
-            }
-        )
+        inputs = {
+            "source": _TEXT,
+            **({"entities": _ENTITIES} if name != "select" else {}),
+            **({"raw_map": _MAP} if name == "accept" else {}),
+        }
+        outputs = {
+            "source": _TEXT,
+            **({"entities": _ENTITIES} if name in {"select", "generate"} else {}),
+            **({"raw_map": _MAP} if name == "generate" else {}),
+            **({"map": _MAP} if name in {"accept", "empty"} else {}),
+        }
         operation = _operation_spec(
             name="replacement-" + name,
             inputs=tuple(InputPort(name="in_" + key, artifact_type=value) for key, value in inputs.items()),
@@ -137,13 +124,7 @@ def extend_map_graph(
                         max_output_bytes=None,
                     ),
                 )
-                for outcome in (
-                    ("entities", "empty", "bypass")
-                    if name == "select" and optional
-                    else ("entities", "empty")
-                    if name == "select"
-                    else ("ok",)
-                )
+                for outcome in (("entities", "empty", "bypass") if name == "select" else ("ok",))
             ),
         )
         nodes.append(OperationNode(id=ids[name], operation=operation))
@@ -166,33 +147,29 @@ def extend_map_graph(
     edges.extend(SequenceEdge(before=ids[name], after=owner) for name in ("select", "accept", "empty"))
     if predecessor is not None:
         edges.append(SequenceEdge(before=predecessor, after=ids["select"]))
-    if optional:
-        entry = NodeId.new(workflow=raw.workflow)
-        ids["entry"] = entry
-        op = replace(
-            nodes[0].operation,
-            name="replacement-call",
-            outputs=(),
-            output_dependencies=(),
-            outcomes=tuple(
-                replace(nodes[0].operation.outcomes[0], name=name, produced_ports=frozenset())
-                for name in ("builtin", "bypass")
-            ),
-        )
-        nodes.append(OperationNode(id=entry, operation=op))
-        if not source_free:
-            bindings.append(
-                InputBinding(
-                    source=WorkflowInputRef(port="source"), destination=NodeInputRef(node=entry, port="in_source")
-                )
-            )
-        cap, policy = _frame_implementation(entry, op, configuration, submission_owner=submission_owner, local=True)
-        capabilities.append(cap)
-        policies.append(policy)
-        if predecessor is not None:
-            edges.remove(SequenceEdge(before=predecessor, after=ids["select"]))
-            edges.append(SequenceEdge(before=predecessor, after=entry))
-        edges.extend((SequenceEdge(before=entry, after=ids["select"]), SequenceEdge(before=entry, after=owner)))
+    entry = NodeId.new(workflow=raw.workflow)
+    ids["entry"] = entry
+    op = replace(
+        nodes[0].operation,
+        name="replacement-call",
+        outputs=(),
+        output_dependencies=(),
+        outcomes=tuple(
+            replace(nodes[0].operation.outcomes[0], name=name, produced_ports=frozenset())
+            for name in ("builtin", "bypass")
+        ),
+    )
+    nodes.append(OperationNode(id=entry, operation=op))
+    bindings.append(
+        InputBinding(source=WorkflowInputRef(port="source"), destination=NodeInputRef(node=entry, port="in_source"))
+    )
+    cap, policy = _frame_implementation(entry, op, configuration, submission_owner=submission_owner, local=True)
+    capabilities.append(cap)
+    policies.append(policy)
+    if predecessor is not None:
+        edges.remove(SequenceEdge(before=predecessor, after=ids["select"]))
+        edges.append(SequenceEdge(before=predecessor, after=entry))
+    edges.extend((SequenceEdge(before=entry, after=ids["select"]), SequenceEdge(before=entry, after=owner)))
     raw = _compile_graph(
         workflow=raw.workflow,
         interface=replace(
@@ -202,7 +179,7 @@ def extend_map_graph(
                     outcome,
                     ceiling=replace(
                         outcome.ceiling,
-                        max_activations=outcome.ceiling.max_activations + 4 + int(optional),
+                        max_activations=outcome.ceiling.max_activations + 5,
                         max_input_bytes=None,
                         max_output_bytes=None,
                     ),
@@ -228,16 +205,16 @@ def extend_map_graph(
         protection=tuple(raw.protection_requirements),
         limits=replace(
             raw.limits,
-            max_nodes=raw.limits.max_nodes + 4 + int(optional),
+            max_nodes=raw.limits.max_nodes + 5,
             max_bindings=raw.limits.max_bindings + 13,
             max_sequence_edges=raw.limits.max_sequence_edges + 10,
             max_choices=raw.limits.max_choices + 1,
             max_branch_members=raw.limits.max_branch_members + 3,
-            max_choice_states=raw.limits.max_choice_states * (6 if optional else 2),
+            max_choice_states=raw.limits.max_choice_states * 6,
         ),
         dynamic_limits=replace(
             raw.dynamic_limits,
-            max_activation_occurrences=raw.dynamic_limits.max_activation_occurrences + 4 + int(optional),
+            max_activation_occurrences=raw.dynamic_limits.max_activation_occurrences + 5,
         ),
     )
     return raw, tuple(capabilities), tuple(policies), ids
@@ -255,7 +232,6 @@ class MapBinding(StageBinding):
     receiver: LlmReplaceWorkflow
     entry: pd.DataFrame
     arguments: dict[str, Any]
-    apply: bool = False
     entry_inputs: tuple[AssociationInput, ...] = ()
     terminal: tuple[Any, ...] = ()
     _positions: dict[SemanticAssociation, int] = field(init=False, repr=False)
@@ -318,7 +294,6 @@ class MapBinding(StageBinding):
         entities: str | None = None,
         raw_map: str | None = None,
         accepted: str | None = None,
-        protected: str | None = None,
     ) -> LocalCompleted:
         outputs = []
         source = next((port.value for port in item.inputs if port.port == "in_source"), None)
@@ -328,7 +303,6 @@ class MapBinding(StageBinding):
                 ("entities", entities, _ENTITIES),
                 ("raw_map", raw_map, _MAP),
                 ("map", accepted, _MAP),
-                ("protected", protected, _TEXT),
             ):
                 if value is not None:
                     outputs.append(
@@ -469,18 +443,10 @@ class MapBinding(StageBinding):
                     one[COL_REPLACEMENT_MAP] = [accepted_map]
                     one[COL_REPLACEMENT_MAP_SOURCE] = REPLACEMENT_MAP_SOURCE_LLM
                     one[ROW_ORDER_COL] = position
-                    if self.apply:
-                        one = apply_replacement_map(one)
-                    from anonymizer.engine.constants import COL_REPLACED_TEXT
-
                     results.append(
                         (
                             cast(SemanticAssociation, item.association),
-                            self.publish(
-                                item,
-                                accepted=json.dumps(accepted_map),
-                                protected=one[COL_REPLACED_TEXT].iloc[0] if self.apply else None,
-                            ),
+                            self.publish(item, accepted=json.dumps(accepted_map)),
                         )
                     )
                     successful.append(one)

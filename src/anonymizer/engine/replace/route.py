@@ -31,7 +31,10 @@ from anonymizer.engine.constants import (
     COL_REPLACEMENT_MAP,
     COL_TEXT,
 )
-from anonymizer.engine.graph_core import (
+from anonymizer.engine.graph_core.authoring import (
+    DATUM,
+    MENTIONS,
+    TEXT,
     Assessment,
     Datum,
     GraphScope,
@@ -39,14 +42,11 @@ from anonymizer.engine.graph_core import (
     Mention,
     Operation,
     ProtectionGraph,
-    ProtectionResult,
     Requests,
     Workflow,
-    prepare,
-    protect,
-    register_kind,
 )
-from anonymizer.engine.graph_core.authoring import DATUM, MENTIONS, TEXT
+from anonymizer.engine.graph_core.execution import ProtectionResult, prepare, protect
+from anonymizer.engine.graph_core.kernel import register_kind
 from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceResult, LlmReplaceWorkflow
 from anonymizer.engine.replace.replace_runner import ReplacementResult
 from anonymizer.engine.replace.strategies import (

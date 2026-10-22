@@ -9,7 +9,8 @@ import contextvars
 import threading
 from typing import Any
 
-from anonymizer.engine.graph_core import Assessment, Operation, Workflow, prepare, protect
+from anonymizer.engine.graph_core.authoring import Assessment, Operation, Workflow
+from anonymizer.engine.graph_core.execution import prepare, protect
 from tests.spec_programs._builder import NAME, Checks, graph
 
 VAR: contextvars.ContextVar[str] = contextvars.ContextVar("sp10", default="unset")

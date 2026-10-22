@@ -5,7 +5,8 @@
 
 from __future__ import annotations
 
-from anonymizer.engine.graph_core import Operation, Workflow, prepare, protect
+from anonymizer.engine.graph_core.authoring import Operation, Workflow
+from anonymizer.engine.graph_core.execution import prepare, protect
 from tests.spec_programs._builder import Checks, Recorder, graph
 
 CANARY_IN, CANARY_OUT = "CANARYxIN7731", "CANARYxOUT4410"

@@ -5,7 +5,9 @@
 
 from __future__ import annotations
 
-from anonymizer.engine.graph_core import CancelToken, Operation, Workflow, prepare, protect
+from anonymizer.engine.graph_core.authoring import Operation, Workflow
+from anonymizer.engine.graph_core.execution import prepare, protect
+from anonymizer.engine.graph_core.kernel import CancelToken
 from tests.spec_programs._builder import Checks, graph
 
 

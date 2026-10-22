@@ -5,7 +5,14 @@
 
 from __future__ import annotations
 
-from anonymizer.engine.graph_core import ContextScope, ContextView, GraphScope, Mention, Operation, ProtectionGraph
+from anonymizer.engine.graph_core.authoring import (
+    ContextScope,
+    ContextView,
+    GraphScope,
+    Mention,
+    Operation,
+    ProtectionGraph,
+)
 from tests.spec_programs._builder import Checks, Recorder, rejected, run
 
 TEXT = "Alice met Bob."

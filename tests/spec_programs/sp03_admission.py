@@ -5,7 +5,8 @@
 
 from __future__ import annotations
 
-from anonymizer.engine.graph_core import Limits, Operation, Requests, Workflow, prepare
+from anonymizer.engine.graph_core.authoring import Limits, Operation, Requests, Workflow
+from anonymizer.engine.graph_core.execution import prepare
 from tests.spec_programs._builder import NAME, Checks, Recorder, graph, rejected, run
 
 
