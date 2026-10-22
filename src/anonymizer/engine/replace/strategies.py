@@ -21,7 +21,6 @@ from anonymizer.engine.constants import (
 )
 from anonymizer.engine.detection.postprocess import EntitySpan
 from anonymizer.engine.schemas import EntitiesSchema
-from anonymizer.logging import ProgressTracker
 
 logger = logging.getLogger("anonymizer")
 
@@ -58,43 +57,10 @@ def apply_local_replace_strategy(
     text_column: str = COL_TEXT,
     entities_column: str = COL_FINAL_ENTITIES,
 ) -> pd.DataFrame:
-    """Apply deterministic local replace strategy on detected entities."""
-    output_df = dataframe.copy()
-    tracker = ProgressTracker(total=len(output_df), label="Replacement")
+    """Apply deterministic local replace strategy on detected entities (runs on the graph kernel)."""
+    from anonymizer.engine.replace.local_route import run_local_route
 
-    _debug = logger.isEnabledFor(logging.DEBUG)
-    total_label_counts: Counter[str] = Counter()
-    replacement_maps = []
-    entity_values = output_df[entities_column] if entities_column in output_df.columns else repeat({}, len(output_df))
-    for raw_entities in entity_values:
-        rmap = _build_local_replacement_map(
-            entities=EntitiesSchema.from_raw(raw_entities),
-            strategy=strategy,
-        )
-        replacement_maps.append(rmap)
-        if _debug:
-            row_counts: Counter[str] = Counter()
-            for r in rmap.get("replacements", []):
-                row_counts[r.get("label", "unknown")] += 1
-            total_label_counts += row_counts
-            n = sum(row_counts.values())
-            logger.debug("  record replacement count: %d", n)
-        tracker.record_success()
-    output_df[COL_REPLACEMENT_MAP] = replacement_maps
-
-    if _debug:
-        total = sum(total_label_counts.values())
-        logger.debug("replacement stats: %d unique entities replaced", total)
-
-    _apply_replacement_maps_to_dataframe(
-        output_df,
-        text_column=text_column,
-        entities_column=entities_column,
-        replacement_map_column=COL_REPLACEMENT_MAP,
-    )
-
-    tracker.log_final()
-    return output_df
+    return run_local_route(dataframe, strategy=strategy, text_column=text_column, entities_column=entities_column)
 
 
 def apply_replacement_map(
