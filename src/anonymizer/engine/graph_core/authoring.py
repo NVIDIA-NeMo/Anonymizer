@@ -147,6 +147,15 @@ class ProtectionGraph:
                         raise GraphRejection("view_out_of_range")
         for d in self.targets:
             self._own(d, None, "target")
+        sources: dict[str, ContextSource] = {}
+        for cs in self.context:
+            for item in cs.items:
+                if isinstance(item, ContextSource):
+                    first = sources.setdefault(item.name, item)
+                    if first is not item and (first != item or first.provider is not item.provider):
+                        # One name is one source: bindings are keyed by name, so a second source under it would
+                        # hand one target another target's context.
+                        raise GraphRejection("duplicate_context_source", item.name)
         self._check_mentions(targets, declared)
         for dep in self.dependencies:
             self._own(dep.dependent, targets, "dependency")

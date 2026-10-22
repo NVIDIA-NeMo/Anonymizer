@@ -161,5 +161,3 @@ def test_substitute_map_requests_run_concurrently_up_to_max_parallel_requests(
     # 0.4.0 runs the map in one wave (about 1 x latency); one request at a time takes about 16 x latency.
     assert map_stage < 3 * _LATENCY_S, f"map stage {map_stage:.2f}s for {_RECORDS} requests of {_LATENCY_S}s"
     assert mock.peak >= 8
-    # DataDesigner's own transport makes the map requests: the graph accounts the map as one opaque call.
-    assert not getattr(result, "_execution").requests.dispatches

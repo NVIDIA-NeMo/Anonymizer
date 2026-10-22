@@ -3,8 +3,6 @@
 
 from __future__ import annotations
 
-from contextvars import ContextVar
-from threading import get_ident
 from typing import Any
 from unittest.mock import Mock
 
@@ -21,7 +19,6 @@ from anonymizer.engine.harness.frames import PublishedFrame
 from anonymizer.engine.ndd.adapter import FailedRecord, WorkflowRunResult
 from anonymizer.graph import EffectRejected
 from anonymizer.interface.errors import AnonymizerWorkflowError
-from tests.retained import retained
 
 
 def _arguments(models: list[ModelConfig], selected: DetectionModelSelection, *, latent: bool = False) -> dict[str, Any]:
@@ -143,70 +140,6 @@ def test_supplied_source_frame_authenticated_before_effects(
     adapter.run_workflow.assert_not_called()
 
 
-@pytest.mark.parametrize("delegate", [False, True])
-def test_caller_wrapper_runs_opaque_and_delegation_runs_builtin_standalone(
-    monkeypatch: pytest.MonkeyPatch,
-    delegate: bool,
-    stub_detector_model_configs: list[ModelConfig],
-    stub_detection_model_selection: DetectionModelSelection,
-) -> None:
-    from anonymizer.engine.detection._graph_profile import run_detection_redact
-    from anonymizer.engine.detection.detection_workflow import EntityDetectionResult
-    from anonymizer.engine.harness import kernel
-
-    source = pd.DataFrame({COL_TEXT: ["Alice."]})
-    observed = source.copy()
-    entities = {"entities": [{"value": "Alice", "label": "first_name", "start_position": 0, "end_position": 5}]}
-    observed[COL_DETECTED_ENTITIES] = [entities]
-    observed[COL_FINAL_ENTITIES] = [entities]
-    adapter = Mock()
-    adapter.run_workflow.return_value = WorkflowRunResult(observed, [], (0,))
-    receiver = EntityDetectionWorkflow(adapter)
-    builtin = receiver.run
-    calls = []
-    invocations = []
-    execute = kernel._execute_frame_plan
-    caller = get_ident()
-    context: ContextVar[str] = ContextVar("detection-wrapper-context", default="missing")
-    context.set("caller")
-
-    def wrapper(frame: pd.DataFrame, **kwargs: Any) -> EntityDetectionResult:
-        assert get_ident() == caller and context.get() == "caller"
-        calls.append((frame, kwargs))
-        return builtin(frame, **kwargs) if delegate else EntityDetectionResult(observed, [], (0,))
-
-    async def capture(**kwargs: Any) -> Any:
-        invocations.append(kwargs["prepared"])
-        return await execute(**kwargs)
-
-    monkeypatch.setattr(receiver, "run", wrapper)
-    monkeypatch.setattr(kernel, "_execute_frame_plan", capture)
-    result = run_detection_redact(
-        source,
-        detection=receiver,
-        model_configs=stub_detector_model_configs,
-        selected_models=stub_detection_model_selection,
-        detection_options={"gliner_detection_threshold": 0.3, "tag_latent_entities": False},
-    )
-    from anonymizer.engine.constants import COL_REPLACED_TEXT
-
-    assert result.dataframe[COL_REPLACED_TEXT].tolist() == ["[REDACTED_FIRST_NAME]."]
-    # A delegated builtin runs as its own standalone invocation, as the release ran it.
-    assert len(calls) == 1 and len(invocations) == 1 + int(delegate)
-    assert calls[0][0] is source
-    assert calls[0][1]["model_configs"] is stub_detector_model_configs
-    assert calls[0][1]["selected_models"] is stub_detection_model_selection
-    execution = result._execution
-    assert execution is not None
-    workflow = execution._execution.context.prepared.workflow
-    names = {node.id: node.operation.name for scope in workflow.bodies() for node in scope.operations}
-    entries = [entry for state in execution.states for entry in state.entries]
-    assert {names[entry.template] for entry in entries} == {"dd-detection-replace"}
-    assert not execution.requests.dispatches
-    if not delegate:
-        adapter.run_workflow.assert_not_called()
-
-
 def test_empty_latent_invocation_preserves_callback_objects_and_has_no_source_artifacts(
     monkeypatch: pytest.MonkeyPatch,
     stub_detector_model_configs: list[ModelConfig],
@@ -244,54 +177,3 @@ def test_empty_latent_invocation_preserves_callback_objects_and_has_no_source_ar
         "detection-final",
         "empty-detection-lowering",
     }
-
-
-def test_source_admitted_aggregate_cannot_publish_with_unfinished_detection_stages(
-    monkeypatch: pytest.MonkeyPatch,
-    stub_detector_model_configs: list[ModelConfig],
-    stub_detection_model_selection: DetectionModelSelection,
-) -> None:
-    from anonymizer.config.models import ReplaceModelSelection
-    from anonymizer.config.replace_strategies import Redact
-    from anonymizer.engine.detection._graph_profile import run_detection_redact
-    from anonymizer.engine.graph_sdk.executor import LocalCompleted
-    from anonymizer.engine.graph_sdk.requests import AssociationInput, AssociationResult
-    from anonymizer.engine.harness import kernel
-    from anonymizer.engine.harness.frames import InvocationFrame
-    from anonymizer.engine.replace.replace_runner import ReplacementWorkflow
-
-    source = pd.DataFrame({COL_TEXT: ["Alice."]})
-    adapter = Mock()
-    execute = kernel._execute_frame_plan
-
-    async def unfinished(**kwargs: Any) -> Any:
-        def callback(inputs: tuple[AssociationInput, ...], requests: Any) -> LocalCompleted:
-            del requests
-            return LocalCompleted(
-                results=tuple(
-                    AssociationResult(
-                        association=item.association, outcome="ok", outputs=(), consumed_context_ports=frozenset()
-                    )
-                    for item in inputs
-                ),
-                frame=InvocationFrame(source.copy(), source.copy(), (), (), 0.0, 0.0),
-            )
-
-        kwargs["callback"] = callback
-        return await execute(**kwargs)
-
-    monkeypatch.setattr(kernel, "_execute_frame_plan", unfinished)
-    with pytest.raises(AnonymizerWorkflowError) as rejected:
-        run_detection_redact(
-            source,
-            detection=EntityDetectionWorkflow(adapter),
-            model_configs=stub_detector_model_configs,
-            selected_models=stub_detection_model_selection,
-            detection_options={"gliner_detection_threshold": 0.3, "tag_latent_entities": False},
-            replacement=ReplacementWorkflow(),
-            replacement_models=ReplaceModelSelection(replacement_generator="unused"),
-            replace_method=Redact(),
-        )
-    execution = retained(rejected.value)
-    assert not execution.frames and not execution.final_outputs
-    adapter.run_workflow.assert_not_called()

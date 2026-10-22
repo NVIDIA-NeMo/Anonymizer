@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 from anonymizer.engine.graph_core import Assessment, ContextScope, ContextSource, GraphScope, Operation, ProtectionGraph
-from tests.spec_programs._builder import Checks, graph, run
+from tests.spec_programs._builder import Checks, graph, rejected, run
 
 
 class Client:
@@ -84,4 +84,15 @@ def program() -> list[dict[str, str]]:
         by_op.count("first") == 3 and by_op.count("never") == 0,
         f"entries first={by_op.count('first')}, never={by_op.count('never')}",
     )  # RFC :3182
+    scope = GraphScope()
+    t1, t2 = scope.datum("Alice one"), scope.datum("Bob two")
+    mine, theirs = ContextSource("kb", lambda: ["for t1"], max_items=1), ContextSource("kb", lambda: ["for t2"], 1)
+    code = rejected(
+        lambda: ProtectionGraph(scope, (t1, t2), context=(ContextScope(t1, (mine,)), ContextScope(t2, (theirs,))))
+    )
+    c.check(
+        "F2",
+        code == "duplicate_context_source",
+        f"two sources under one name are rejected at graph construction; code={code}",
+    )  # A2 ruling: one target never receives another target's context
     return c.lines

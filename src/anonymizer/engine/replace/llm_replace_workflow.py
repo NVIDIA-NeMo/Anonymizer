@@ -21,12 +21,14 @@ from anonymizer.engine.constants import (
     COL_ENTITIES_FOR_REPLACE_JSON,
     COL_ENTITY_EXAMPLES,
     COL_REPLACEMENT_MAP,
+    COL_REPLACEMENT_MAP_SOURCE,
     ENTITY_LABEL_EXAMPLES,
 )
 from anonymizer.engine.harness.retention import RetainsExecution
 from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter, WorkflowRunResult
 from anonymizer.engine.ndd.model_loader import resolve_model_alias
 from anonymizer.engine.prompt_utils import substitute_placeholders
+from anonymizer.engine.row_partitioning import ROW_ORDER_COL, merge_and_reorder, split_rows
 from anonymizer.engine.schemas import EntitiesByValueSchema, EntityReplacementMapSchema
 
 logger = logging.getLogger("anonymizer.replace.llm_workflow")
@@ -62,18 +64,53 @@ class LlmReplaceWorkflow:
         entities_column: str = COL_ENTITIES_BY_VALUE,
         preview_num_records: int | None = None,
     ) -> LlmReplaceResult:
-        from anonymizer.engine.replace._semantic_map import run_map
+        working_df = dataframe.copy()
 
-        return run_map(
-            self,
-            dataframe,
-            dict(
-                model_configs=model_configs,
-                selected_models=selected_models,
-                instructions=instructions,
-                entities_column=entities_column,
-                preview_num_records=preview_num_records,
+        # Parse the per-row entity payload once, then reuse it for prompt inputs.
+        parsed_entities = working_df[entities_column].apply(EntitiesByValueSchema.from_raw)
+        working_df[COL_ENTITY_EXAMPLES] = parsed_entities.apply(_create_entity_examples)
+        working_df[COL_ENTITIES_FOR_REPLACE] = parsed_entities.apply(_enrich_entities_for_template)
+        working_df[COL_ENTITIES_FOR_REPLACE_JSON] = working_df[COL_ENTITIES_FOR_REPLACE].apply(json.dumps)
+
+        # Partition: rows with an empty entity list bypass replacement-map generation.
+        entity_rows, passthrough_rows = split_rows(working_df, column=COL_ENTITIES_FOR_REPLACE, predicate=bool)
+        passthrough_rows[COL_REPLACEMENT_MAP] = [{"replacements": []} for _ in range(len(passthrough_rows))]
+        passthrough_rows[COL_REPLACEMENT_MAP_SOURCE] = REPLACEMENT_MAP_SOURCE_LLM
+
+        if entity_rows.empty:
+            return LlmReplaceResult(
+                dataframe=merge_and_reorder(passthrough_rows).drop(columns=list(_INTERNAL_COLUMNS), errors="ignore"),
+                failed_records=[],
+                source_positions=tuple(range(len(dataframe))),
+            )
+
+        # Only rows with actual entities are sent to the LLM.
+        run_result = self._generate_columns(
+            entity_rows,
+            model_configs=model_configs,
+            selected_models=selected_models,
+            instructions=instructions,
+            preview_num_records=min(preview_num_records, len(entity_rows)) if preview_num_records is not None else None,
+        )
+        output_df = run_result.dataframe.copy()
+        # Drop any LLM-returned replacements that were not requested for this row.
+        output_df[COL_REPLACEMENT_MAP] = output_df.apply(
+            lambda row: _filter_replacement_map_to_input_entities(
+                raw_map=row.get(COL_REPLACEMENT_MAP, {"replacements": []}),
+                parsed_entities=EntitiesByValueSchema.from_raw(row.get(entities_column, {})),
+                record_id=str(row.get("_anonymizer_record_id", "")),
             ),
+            axis=1,
+        )
+        output_df[COL_REPLACEMENT_MAP_SOURCE] = REPLACEMENT_MAP_SOURCE_LLM
+
+        # Input positions of the rows that came back, in output order: the rows the LLM dropped are absent.
+        positions = tuple(sorted((*passthrough_rows[ROW_ORDER_COL], *output_df[ROW_ORDER_COL])))
+        combined = merge_and_reorder(output_df, passthrough_rows)
+        return LlmReplaceResult(
+            dataframe=combined.drop(columns=list(_INTERNAL_COLUMNS), errors="ignore"),
+            failed_records=run_result.failed_records,
+            source_positions=positions,
         )
 
     def _generate_columns(

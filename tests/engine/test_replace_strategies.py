@@ -65,7 +65,7 @@ def test_apply_local_replace_strategy_records_progress_for_each_entity_value() -
     )
     tracker = Mock()
 
-    with patch("anonymizer.engine.replace.strategies.ProgressTracker", return_value=tracker):
+    with patch("anonymizer.engine.replace.route.ProgressTracker", return_value=tracker):
         result = apply_local_replace_strategy(
             dataframe,
             strategy=Redact(format_template="***"),

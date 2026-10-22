@@ -498,15 +498,3 @@ class MapBinding(StageBinding):
         combined = combined.drop(columns=list(_INTERNAL_COLUMNS), errors="ignore")
         self.terminal = tuple(sorted(terminal))
         return LlmReplaceResult(combined, failures, tuple(position for position, _, _ in self.terminal))
-
-
-def run_map(receiver: LlmReplaceWorkflow, dataframe: pd.DataFrame, arguments: dict[str, Any]) -> LlmReplaceResult:
-    """The builtin helper's own entry: one standalone invocation, also when a caller's helper delegates to it."""
-    from anonymizer.engine.graph_sdk._execution_delegated import _WORKER_BORROW
-    from anonymizer.engine.replace._semantic_map_profile import run_direct_map
-
-    token = _WORKER_BORROW.set(None)
-    try:
-        return run_direct_map(receiver, dataframe, arguments)
-    finally:
-        _WORKER_BORROW.reset(token)

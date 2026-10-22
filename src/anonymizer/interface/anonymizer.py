@@ -53,7 +53,6 @@ from anonymizer.engine.constants import (
     COL_WEIGHTED_LEAKAGE_RATE,
     DEFAULT_ENTITY_LABELS,
 )
-from anonymizer.engine.detection._graph_profile import run_detection_redact
 from anonymizer.engine.detection._opaque_redact import run_detection_rewrite, run_evaluation
 from anonymizer.engine.detection.detection_workflow import EntityDetectionWorkflow
 from anonymizer.engine.detection.entity_label_examples import resolve_entity_label_config
@@ -823,8 +822,7 @@ class Anonymizer:
             _warn_entity_label_examples_withheld(detection_options.pop("entity_label_examples"))
         t0 = time.perf_counter()
         execution = None
-        opaque_frame = config.rewrite is not None or isinstance(config.replace, Substitute)
-        if config.replace is not None and not opaque_frame:
+        if config.replace is not None:
             logger.info("🔄 Running replacement")
             detection_result = self._detection_workflow.run(
                 input_df,
@@ -845,48 +843,35 @@ class Anonymizer:
             replacement_elapsed = time.perf_counter() - t0
             final_df, post_detection_failures = replace_result.dataframe, list(replace_result.failed_records)
         else:
-            if config.replace is not None:
-                logger.info("🔄 Running replacement with graph-owned detection")
-                graph_result = run_detection_redact(
-                    input_df,
-                    detection=self._detection_workflow,
-                    model_configs=self._model_configs,
-                    selected_models=self._selected_models.detection,
-                    detection_options=detection_options,
-                    replace_method=config.replace,
-                    replacement=self._replace_runner,
-                    replacement_models=self._selected_models.replace,
-                )
-            else:
-                assert config.rewrite is not None
-                privacy_goal = admitted_goal
-                if privacy_goal is None:
-                    raise InvalidConfigError("rewrite.privacy_goal must not be None")
-                logger.info("✏️ Running rewrite pipeline with graph-owned detection")
-                rewrite_runner = (
-                    self._combined_rewrite_runner if config.rewrite.use_combined_graph else self._rewrite_runner
-                )
-                rewrite_arguments: RewriteArguments = dict(
-                    model_configs=self._model_configs,
-                    selected_models=self._selected_models.rewrite,
-                    replace_model_selection=self._selected_models.replace,
-                    privacy_goal=privacy_goal,
-                    evaluation=config.rewrite.evaluation,
-                    data_summary=data.data_summary,
-                    preview_num_records=preview_num_records,
-                    strict_entity_protection=config.rewrite.strict_entity_protection,
-                )
-                graph_result = run_detection_rewrite(
-                    input_df,
-                    detection=self._detection_workflow,
-                    model_configs=self._model_configs,
-                    selected_models=self._selected_models.detection,
-                    detection_options=detection_options,
-                    rewrite=partial(rewrite_runner.run, **rewrite_arguments),
-                    semantic_arguments=rewrite_arguments if builtin_rewrite_runner(rewrite_runner) else None,
-                    semantic_runner=rewrite_runner,
-                    combined=config.rewrite.use_combined_graph,
-                )
+            assert config.rewrite is not None
+            privacy_goal = admitted_goal
+            if privacy_goal is None:
+                raise InvalidConfigError("rewrite.privacy_goal must not be None")
+            logger.info("✏️ Running rewrite pipeline with graph-owned detection")
+            rewrite_runner = (
+                self._combined_rewrite_runner if config.rewrite.use_combined_graph else self._rewrite_runner
+            )
+            rewrite_arguments: RewriteArguments = dict(
+                model_configs=self._model_configs,
+                selected_models=self._selected_models.rewrite,
+                replace_model_selection=self._selected_models.replace,
+                privacy_goal=privacy_goal,
+                evaluation=config.rewrite.evaluation,
+                data_summary=data.data_summary,
+                preview_num_records=preview_num_records,
+                strict_entity_protection=config.rewrite.strict_entity_protection,
+            )
+            graph_result = run_detection_rewrite(
+                input_df,
+                detection=self._detection_workflow,
+                model_configs=self._model_configs,
+                selected_models=self._selected_models.detection,
+                detection_options=detection_options,
+                rewrite=partial(rewrite_runner.run, **rewrite_arguments),
+                semantic_arguments=rewrite_arguments if builtin_rewrite_runner(rewrite_runner) else None,
+                semantic_runner=rewrite_runner,
+                combined=config.rewrite.use_combined_graph,
+            )
             assert graph_result._execution is not None
             frame = graph_result._execution.frames[0]
             frame = frame if isinstance(frame, InvocationFrame) else frame.stages

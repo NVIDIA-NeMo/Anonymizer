@@ -17,10 +17,10 @@ from typing import Any, cast
 import pandas as pd
 import pytest
 
-from anonymizer.config.replace_strategies import Annotate, Hash, Redact, Substitute
+from anonymizer.config.replace_strategies import Substitute
 from anonymizer.engine.constants import COL_TEXT
 from anonymizer.engine.detection.detection_workflow import EntityDetectionWorkflow
-from anonymizer.engine.ndd._route import builtin_detection, native_adapter, native_map
+from anonymizer.engine.ndd._route import native_adapter
 from anonymizer.engine.ndd.adapter import NddAdapter
 from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceWorkflow
 from anonymizer.engine.replace.replace_runner import ReplacementWorkflow
@@ -150,32 +150,6 @@ def test_builtin_detection_entry(monkeypatch: pytest.MonkeyPatch, adapter: Any, 
     assert seen["hosted"]
 
 
-@pytest.mark.parametrize(
-    ("receiver", "opaque"),
-    [
-        (lambda: LlmReplaceWorkflow(_native()), False),
-        (lambda: LlmReplaceWorkflow(_overridden()), True),
-        (lambda: _SubclassMap(_native()), True),
-    ],
-    ids=["builtin", "overridden-adapter", "subclass-map"],
-)
-def test_direct_map_entry(monkeypatch: pytest.MonkeyPatch, receiver: Any, opaque: bool) -> None:
-    from anonymizer.engine.replace import _semantic_map_profile
-
-    seen: dict[str, Any] = {}
-
-    def run_sync_profile(operation: Any) -> Any:
-        seen["hosted"] = True
-        raise _Stop
-
-    monkeypatch.setattr(_semantic_map_profile, "_run_sync_profile", run_sync_profile)
-    monkeypatch.setattr(_semantic_map_profile, "map_configuration", lambda arguments: None)
-    with pytest.raises(_Stop):
-        _semantic_map_profile.run_direct_map(receiver(), _SOURCE, {})
-    assert native_map(receiver()) is not opaque
-    assert seen["hosted"]
-
-
 _ARGUMENTS: Any = {"evaluation": SimpleNamespace(max_repair_iterations=1), "preview_num_records": None}
 
 
@@ -231,51 +205,6 @@ _DETECTORS = [
     (lambda: _Signature040Detection(_native()), False),
 ]
 _DETECTOR_IDS = ["builtin", "builtin-overridden-adapter", "subclass", "mutate-then-delegate", "duck", "sig040"]
-
-
-@pytest.mark.parametrize(("detector", "builtin"), _DETECTORS, ids=_DETECTOR_IDS)
-@pytest.mark.parametrize("method", [Redact(), Hash(), Annotate()], ids=["redact", "hash", "annotate"])
-def test_detection_redact_entry_opaque(
-    monkeypatch: pytest.MonkeyPatch, detector: Any, builtin: bool, method: Any
-) -> None:
-    from anonymizer.engine.detection import _graph_profile, _opaque_redact
-
-    seen = _observe(monkeypatch, _opaque_redact, "execute_injected_redact")
-    with pytest.raises(_Stop):
-        _graph_profile.run_detection_redact(
-            _SOURCE,
-            detection=detector(),
-            model_configs=[],
-            selected_models=_any(None),
-            detection_options={},
-            replace_method=method,
-        )
-    assert builtin_detection(detector()) is builtin
-    assert seen["hosted"]
-
-
-@pytest.mark.parametrize(("detector", "builtin"), _DETECTORS, ids=_DETECTOR_IDS)
-@pytest.mark.parametrize(
-    "replacement", [ReplacementWorkflow, _SubclassReplacement], ids=["builtin-replacement", "subclass-replacement"]
-)
-def test_detection_substitute_entry(
-    monkeypatch: pytest.MonkeyPatch, detector: Any, builtin: bool, replacement: Any
-) -> None:
-    from anonymizer.engine.detection import _graph_profile, _opaque_redact
-
-    seen = _observe(monkeypatch, _opaque_redact, "execute_injected_redact")
-    with pytest.raises(_Stop):
-        _graph_profile.run_detection_redact(
-            _SOURCE,
-            detection=detector(),
-            model_configs=[],
-            selected_models=_any(None),
-            detection_options={},
-            replace_method=Substitute(),
-            replacement=replacement(llm_workflow=LlmReplaceWorkflow(_native())),
-            replacement_models=_any(SimpleNamespace()),
-        )
-    assert seen["hosted"]
 
 
 class _Signature040Rewrite:
@@ -344,86 +273,8 @@ class _SubclassColumns(LlmReplaceWorkflow):
 _GENERATE_MAP_ONLY = LlmReplaceWorkflow.generate_map_only
 
 
-@pytest.mark.parametrize(
-    ("receiver", "patch_class", "opaque"),
-    [
-        (lambda: LlmReplaceWorkflow(_native()), True, False),
-        (lambda: _BorrowedMap(_native()), False, False),
-        (lambda: _Signature040Map(_native()), False, True),
-        (lambda: LlmReplaceWorkflow(_patched_instance()), False, True),
-    ],
-    ids=["class-patched-delegating", "borrowed-function", "sig040", "patched-instance-adapter"],
-)
-def test_direct_map_entry_method_shapes(
-    monkeypatch: pytest.MonkeyPatch, receiver: Any, patch_class: bool, opaque: bool
-) -> None:
-    from anonymizer.engine.replace import _semantic_map_profile
-
-    seen: dict[str, Any] = {}
-
-    def run_sync_profile(operation: Any) -> Any:
-        seen["hosted"] = True
-        raise _Stop
-
-    if patch_class:
-        monkeypatch.setattr(LlmReplaceWorkflow, "generate_map_only", _delegating_generate_map_only)
-    monkeypatch.setattr(_semantic_map_profile, "_run_sync_profile", run_sync_profile)
-    monkeypatch.setattr(_semantic_map_profile, "map_configuration", lambda arguments: None)
-    with pytest.raises(_Stop):
-        _semantic_map_profile.run_direct_map(receiver(), _SOURCE, {})
-    assert native_map(receiver()) is not opaque
-    assert seen["hosted"]
-
-
 class _GateSeen(Exception):
     pass
-
-
-@pytest.mark.parametrize(
-    ("detector", "replacement", "patch_class", "semantic_map"),
-    [
-        (lambda: EntityDetectionWorkflow(_native()), ReplacementWorkflow, False, True),
-        (lambda: EntityDetectionWorkflow(_native()), _SubclassReplacement, False, False),
-        (lambda: _SubclassDetection(_native()), ReplacementWorkflow, False, False),
-        (lambda: EntityDetectionWorkflow(_native()), ReplacementWorkflow, True, False),
-    ],
-    ids=["builtin", "subclass-replacement", "subclass-detection", "class-patched-map"],
-)
-def test_injected_redact_map_gate(
-    monkeypatch: pytest.MonkeyPatch, detector: Any, replacement: Any, patch_class: bool, semantic_map: bool
-) -> None:
-    import sys
-
-    from anonymizer.engine.detection import _graph_profile, _opaque_redact
-    from anonymizer.engine.harness import kernel
-
-    seen: dict[str, Any] = {}
-
-    class _Graph:
-        @staticmethod
-        def new() -> Any:
-            seen["semantic_map"] = sys._getframe(1).f_locals["semantic_map"]
-            raise _GateSeen
-
-    def run_sync_profile(operation: Any) -> Any:
-        asyncio.run(operation(None))
-
-    if patch_class:
-        monkeypatch.setattr(LlmReplaceWorkflow, "generate_map_only", _delegating_generate_map_only)
-    monkeypatch.setattr(kernel, "_run_sync_profile", run_sync_profile)
-    monkeypatch.setattr(_opaque_redact, "DataGraph", _Graph)
-    with pytest.raises(_GateSeen):
-        _graph_profile.run_detection_redact(
-            _SOURCE,
-            detection=detector(),
-            model_configs=[],
-            selected_models=_any(None),
-            detection_options={},
-            replace_method=Substitute(),
-            replacement=replacement(llm_workflow=LlmReplaceWorkflow(_native())),
-            replacement_models=_any(SimpleNamespace()),
-        )
-    assert seen["semantic_map"] is semantic_map
 
 
 _BINDING_SITES = {
@@ -467,9 +318,6 @@ def _trace_binding_routes(run: Any) -> dict[str, list[bool]]:
         ("rewrite", "builtin", {"detection": [True], "map": [True], "rewrite-map": [True]}),
         ("rewrite", "overridden-adapter", {"detection": [False], "map": [True], "rewrite-map": [True]}),
         ("rewrite", "mutate-then-delegate", {"detection": [False], "map": [True], "rewrite-map": [True]}),
-        ("substitute", "builtin", {"detection": [True], "map": [True]}),
-        ("substitute", "overridden-adapter", {"detection": [False], "map": [True]}),
-        ("substitute", "mutate-then-delegate", {"detection": [False], "map": [True]}),
     ],
 )
 def test_binding_sites_route_end_to_end(

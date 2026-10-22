@@ -14,9 +14,7 @@ import pandas as pd
 from data_designer.config import ModelConfig
 
 from anonymizer.config.models import DetectionModelSelection
-from anonymizer.engine.constants import COL_REPLACED_TEXT, COL_REPLACEMENT_MAP, COL_TEXT
-from anonymizer.engine.detection._graph_invocation import DetectionRedactInvocation
-from anonymizer.engine.detection.artifacts import ENTITY_SPANS_TYPE
+from anonymizer.engine.constants import COL_TEXT
 from anonymizer.engine.detection.detection_workflow import EntityDetectionWorkflow
 from anonymizer.engine.detection.run_arguments import detection_run_arguments
 from anonymizer.engine.graph_sdk._artifact_shape import content_bytes
@@ -28,7 +26,6 @@ from anonymizer.engine.graph_sdk._authoring_defaults import (
     _outcome_spec,
     _validate_targets,
 )
-from anonymizer.engine.graph_sdk._effect_values import EffectCode, reject
 from anonymizer.engine.graph_sdk._execution_delegated import SubmitterPool, drive
 from anonymizer.engine.graph_sdk._execution_values import DelegatedRequests
 from anonymizer.engine.graph_sdk._workflow_values import (
@@ -38,18 +35,13 @@ from anonymizer.engine.graph_sdk._workflow_values import (
     NodeId,
     NodeInputRef,
     NodeOutcomeRef,
-    NodeOutputRef,
     OperationNode,
     OutcomeBinding,
-    OutputBinding,
-    OutputDependency,
-    OutputPort,
     ResourceCeiling,
     WorkflowId,
     WorkflowInputRef,
     WorkflowLimits,
     WorkflowOutcomeRef,
-    WorkflowOutputRef,
 )
 from anonymizer.engine.graph_sdk.capabilities import (
     FrozenConfig,
@@ -57,7 +49,6 @@ from anonymizer.engine.graph_sdk.capabilities import (
 from anonymizer.engine.graph_sdk.data import DataGraph, DataLimits
 from anonymizer.engine.graph_sdk.executor import (
     AssessmentLimits,
-    DelegatedRequestContract,
     ExecutionResult,
     LocalCompleted,
     LocalFailure,
@@ -67,7 +58,7 @@ from anonymizer.engine.graph_sdk.preparation import (
 )
 from anonymizer.engine.graph_sdk.requests import AssociationInput, AssociationResult, SemanticAssociation
 from anonymizer.engine.harness import kernel
-from anonymizer.engine.harness.frames import FramePublication, FrameStages, InvocationFrame
+from anonymizer.engine.harness.frames import InvocationFrame
 from anonymizer.engine.ndd._stage_binding import completed
 from anonymizer.engine.replace.replace_runner import ReplacementResult
 from anonymizer.engine.rewrite.rewrite_workflow import RewriteArguments, RewriteResult, RewriteWorkflow
@@ -79,7 +70,7 @@ from anonymizer.interface.errors import AnonymizerWorkflowError
 class _DetectionInvocation:
     source: pd.DataFrame
     detection: EntityDetectionWorkflow
-    transform: Callable[[pd.DataFrame], ReplacementResult | RewriteResult]
+    transform: Callable[[pd.DataFrame], RewriteResult]
     model_configs: list[ModelConfig]
     selected_models: DetectionModelSelection
     detection_options: Mapping[str, Any]
@@ -88,9 +79,6 @@ class _DetectionInvocation:
     semantic_targets: tuple[Any, ...] = ()
     semantic_transform_slot: int | None = None
     semantic_entry_slot: int | None = None
-    replacement_receiver: Any | None = None
-    replacement_arguments: dict[str, Any] | None = None
-    map_slots: Mapping[str, int] | None = None
 
     def run(self, inputs: tuple[AssociationInput, ...], requests: DelegatedRequests) -> LocalCompleted | LocalFailure:
         if requests.cancelled:
@@ -124,57 +112,8 @@ class _DetectionInvocation:
             return LocalFailure(failure="implementation_exception")
         detection_elapsed = perf_counter() - started
         started = perf_counter()
-        map_binding = None
-        if self.map_slots is not None:
-            from anonymizer.engine.constants import COL_ENTITIES_BY_VALUE
-            from anonymizer.engine.ndd._source_frame import WorkflowSourceFrame
-            from anonymizer.engine.replace._semantic_map import MapBinding
-            from anonymizer.engine.replace.replace_runner import replacement_stage
-
-            if self.replacement_receiver is None or self.replacement_arguments is None:
-                reject(EffectCode.MISSING)
-            options = self.replacement_arguments
-            map_slots = self.map_slots
-            active = tuple(source.associations[position] for position in detected.source_positions)
-
-            async def enter_map():
-                return (
-                    await requests.enter_operations(map_slots["entry"], active)
-                    if active
-                    else (
-                        (await requests.enter_operation(map_slots["entry"], None),) if not source.associations else ()
-                    )
-                )
-
-            with replacement_stage(type(options["replace_method"]).__name__, detected.dataframe) as measurement:
-                map_binding = MapBinding(
-                    requests,
-                    WorkflowSourceFrame.capture(detected.dataframe, associations=active, invocation_bound=True),
-                    {name: slot for name, slot in map_slots.items() if name != "entry"},
-                    self.replacement_receiver._llm_workflow,
-                    detected.dataframe,
-                    dict(
-                        model_configs=options["model_configs"],
-                        selected_models=options["selected_models"],
-                        instructions=options["replace_method"].instructions,
-                        entities_column=COL_ENTITIES_BY_VALUE,
-                        preview_num_records=options["preview_num_records"],
-                    ),
-                    apply=True,
-                    entry_inputs=drive(enter_map()),
-                )
-                mapped = map_binding.lower()
-                replaced = ReplacementResult(mapped.dataframe, list(mapped.failed_records))
-                measurement.update(
-                    output_row_count=len(replaced.dataframe), failed_record_count=len(replaced.failed_records)
-                )
-        else:
-            replaced = self.transform(detected.dataframe)
-        selected_positions = (
-            tuple(detected.source_positions[position] for position, _, _ in map_binding.terminal)
-            if map_binding is not None
-            else detected.source_positions
-        )
+        replaced = self.transform(detected.dataframe)
+        selected_positions = detected.source_positions
         if self.semantic_transform_slot is not None:
             transform_slot = self.semantic_transform_slot
 
@@ -212,23 +151,7 @@ class _DetectionInvocation:
             failed_sources=frozenset(set(source.associations) - succeeded)
             if self.semantic_slots is not None
             else frozenset(),
-            frame=FramePublication.capture(
-                replaced.dataframe,
-                associations=tuple(association for _, association, _ in map_binding.terminal),
-                text_ports=((COL_REPLACED_TEXT, "protected"),),
-                json_ports=((COL_REPLACEMENT_MAP, "map"),),
-                failed_records=tuple(detected.failed_records) + tuple(replaced.failed_records),
-                opaque_source=self.source,
-                stages=FrameStages(
-                    detected.dataframe,
-                    tuple(detected.failed_records),
-                    tuple(replaced.failed_records),
-                    detection_elapsed,
-                    perf_counter() - started,
-                ),
-            )
-            if map_binding is not None and source.associations
-            else InvocationFrame(
+            frame=InvocationFrame(
                 dataframe=replaced.dataframe.copy(),
                 detected_dataframe=detected.dataframe.copy(),
                 detection_failures=tuple(detected.failed_records),
@@ -350,22 +273,12 @@ def run_evaluation(
 
 
 async def execute_injected_redact(
-    callback: _DetectionInvocation | DetectionRedactInvocation | _EvaluationInvocation, pool: SubmitterPool
+    callback: _DetectionInvocation | _EvaluationInvocation, pool: SubmitterPool
 ) -> ExecutionResult:
-    from anonymizer.config.replace_strategies import Substitute
-    from anonymizer.engine.ndd._route import builtin_detection, builtin_map, builtin_replacement
+    from anonymizer.engine.ndd._route import builtin_detection
 
-    authenticated = isinstance(callback, DetectionRedactInvocation)
     # Builtin runners are lowered by this graph; a caller's runner runs opaque, as in the release.
     semantic_detection = not isinstance(callback, _EvaluationInvocation) and builtin_detection(callback.detection)
-    semantic_map = (
-        semantic_detection
-        and isinstance(callback, _DetectionInvocation)
-        and callback.replacement_arguments is not None
-        and isinstance(callback.replacement_arguments["replace_method"], Substitute)
-        and builtin_replacement(callback.replacement_receiver)
-        and builtin_map(getattr(callback.replacement_receiver, "_llm_workflow", None))
-    )
     preview = (
         None if isinstance(callback, _EvaluationInvocation) else callback.detection_options.get("preview_num_records")
     )
@@ -376,22 +289,12 @@ async def execute_injected_redact(
     targets = []
     for text in texts:
         graph, target = graph.add_text(text)
-        if authenticated or semantic_detection:
+        if semantic_detection:
             targets.append(target)
-    if authenticated:
-        callback = replace(callback, targets=tuple(targets))
     size = len(targets)
     characters = max((len(text) for text in texts), default=0)
     total_characters = sum(len(text) for text in texts)
     text_type = ArtifactType(name="anonymizer.text", revision=1)
-    outputs = (
-        (
-            OutputPort(name="redacted", artifact_type=text_type),
-            OutputPort(name="spans", artifact_type=ENTITY_SPANS_TYPE),
-        )
-        if authenticated and size
-        else ()
-    )
     data = _validate_targets(
         graph,
         targets=tuple(targets),
@@ -406,47 +309,31 @@ async def execute_injected_redact(
     owner = WorkflowId.new()
     node = NodeId.new(workflow=owner)
     operation = _operation_spec(
-        name="dd-detection-replace" if isinstance(callback, DetectionRedactInvocation) else callback.name,
+        name=callback.name,
         inputs=(InputPort(name="source", artifact_type=text_type),) if size else (),
-        outputs=outputs,
-        output_dependencies=tuple(
-            OutputDependency(output=port.name, inputs=frozenset({"source"}), identity_input=None) for port in outputs
-        ),
+        outputs=(),
+        output_dependencies=(),
         outcomes=(
             _outcome_spec(
                 name="ok",
                 category="success",
-                produced_ports=frozenset(port.name for port in outputs),
+                produced_ports=frozenset(),
                 ceiling=ResourceCeiling(
                     max_activations=1, max_model_requests=None, max_input_bytes=None, max_output_bytes=None
                 ),
             ),
         ),
     )
-    interface = replace(
-        operation,
-        outputs=outputs[:1],
-        output_dependencies=operation.output_dependencies[:1],
-        outcomes=tuple(
-            replace(outcome, produced_ports=frozenset(port.name for port in outputs[:1]))
-            for outcome in operation.outcomes
-        ),
-    )
     raw = _compile_graph(
         workflow=owner,
-        interface=interface,
+        interface=operation,
         nodes=(OperationNode(id=node, operation=operation),),
         input_bindings=(
             InputBinding(source=WorkflowInputRef(port="source"), destination=NodeInputRef(node=node, port="source")),
         )
         if size
         else (),
-        output_bindings=tuple(
-            OutputBinding(
-                source=NodeOutputRef(node=node, port=port.name), destination=WorkflowOutputRef(port=port.name)
-            )
-            for port in interface.outputs
-        ),
+        output_bindings=(),
         outcome_bindings=(
             OutcomeBinding(
                 source=NodeOutcomeRef(node=node, outcome="ok"), destination=WorkflowOutcomeRef(outcome="ok")
@@ -462,12 +349,7 @@ async def execute_injected_redact(
             max_choice_states=1,
         ),
     )
-    capability, policy = kernel._frame_implementation(
-        node,
-        operation,
-        callback.redact_configuration if isinstance(callback, DetectionRedactInvocation) else FrozenConfig(fields=()),
-        aggregate=not authenticated,
-    )
+    capability, policy = kernel._frame_implementation(node, operation, FrozenConfig(fields=()), aggregate=True)
     detection_ids = {}
     detection_config = None
     child_capabilities, child_policies = (), ()
@@ -497,49 +379,6 @@ async def execute_injected_redact(
         parent_capabilities, parent_policies = reparent_detection_policies(
             parent_capabilities, parent_policies, detection_ids["entry"]
         )
-    map_ids = {}
-    if semantic_map:
-        from anonymizer.engine.constants import COL_ENTITIES_BY_VALUE
-        from anonymizer.engine.replace._semantic_map import extend_map_graph, map_configuration
-
-        assert isinstance(callback, _DetectionInvocation) and callback.replacement_arguments is not None
-        options = callback.replacement_arguments
-        args = dict(
-            model_configs=options["model_configs"],
-            selected_models=options["selected_models"],
-            instructions=options["replace_method"].instructions,
-            entities_column=COL_ENTITIES_BY_VALUE,
-            preview_num_records=options["preview_num_records"],
-        )
-        config = map_configuration(args)
-        raw, map_caps, map_policies, map_ids = extend_map_graph(
-            raw,
-            node,
-            config,
-            submission_owner=detection_ids["entry"],
-            predecessor=detection_ids["final"],
-            source_free=not size,
-            apply=True,
-            optional=True,
-        )
-        child_capabilities = (*child_capabilities, *map_caps)
-        child_policies = (*child_policies, *map_policies)
-        # A source-free (zero-row) map graph has no ports to publish; 0.4.0 still runs detection there.
-        publication_sources = (
-            tuple((map_ids[name], frozenset({"map", "protected"})) for name in ("accept", "empty")) if size else ()
-        )
-        child_policies = tuple(
-            replace(
-                policy,
-                delegated=replace(
-                    cast(DelegatedRequestContract, policy.delegated),
-                    publication_sources=publication_sources,
-                ),
-            )
-            if policy.node == detection_ids["entry"]
-            else policy
-            for policy in child_policies
-        )
     prepared = kernel._prepare_frame_plan(
         data,
         raw,
@@ -559,15 +398,7 @@ async def execute_injected_redact(
             if not size
             else None,
             semantic_transform_slot=next(slot.index for slot in prepared.reservation_recipe if slot.template == node),
-            **({} if isinstance(callback, DetectionRedactInvocation) else {"semantic_targets": tuple(targets)}),
-        )
-    if map_ids:
-        callback = replace(
-            callback,
-            map_slots={
-                name: next(slot.index for slot in prepared.reservation_recipe if slot.template == node)
-                for name, node in map_ids.items()
-            },
+            semantic_targets=tuple(targets),
         )
     return await kernel._execute_frame_plan(
         prepared=prepared,
@@ -577,13 +408,13 @@ async def execute_injected_redact(
         borrowed_loop=asyncio.get_running_loop(),
         limits=_execution_limits(
             max_local_in_flight=1,
-            max_runtime_artifacts=max(1, (24 if map_ids else 11) * size),
+            max_runtime_artifacts=max(1, 11 * size),
             max_collection_items=characters,
         ),
         policies=(*parent_policies, *child_policies),
         ingress_limits=_ingress_limits(
             max_associations=max(1, size),
-            max_outputs_per_association=4 if map_ids else 2,
+            max_outputs_per_association=2,
             # Ingress counts spans across the batch; publication checks each artifact.
             max_collection_items=max(1, total_characters),
             max_assessments=1,
@@ -595,7 +426,7 @@ async def execute_injected_redact(
             max_findings_per_production=0,
             max_finding_code_bytes=0,
             max_assessment_facts=0,
-            max_port_facts=(48 if map_ids else 20) * size,
-            max_provenance_edges=(100 if map_ids else 20) * size,
+            max_port_facts=20 * size,
+            max_provenance_edges=20 * size,
         ),
     )

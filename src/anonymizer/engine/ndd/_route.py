@@ -41,22 +41,6 @@ def builtin_map(helper: object) -> bool:
     return isinstance(helper, LlmReplaceWorkflow) and _bound_to(helper.generate_map_only, _GENERATE_MAP_ONLY)
 
 
-def native_map(receiver: Any) -> bool:
-    """Whether a direct map call runs the class's current ``generate_map_only`` on a builtin adapter."""
-    from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceWorkflow
-
-    return native_adapter(receiver._adapter) and _bound_to(
-        receiver.generate_map_only, LlmReplaceWorkflow.generate_map_only
-    )
-
-
-def builtin_replacement(receiver: object) -> bool:
-    """Whether a replacement runner is the builtin one."""
-    from anonymizer.engine.replace.replace_runner import _REPLACEMENT_RUN
-
-    return _bound_to(getattr(receiver, "run", None), _REPLACEMENT_RUN)
-
-
 def builtin_rewrite_runner(runner: object) -> bool:
     """Whether a Rewrite runner is the builtin one, so the facade lowers it natively."""
     from anonymizer.engine.rewrite.rewrite_workflow import _REWRITE_RUN, RewriteWorkflow

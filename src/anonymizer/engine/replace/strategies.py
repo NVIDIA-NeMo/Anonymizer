@@ -58,7 +58,7 @@ def apply_local_replace_strategy(
     entities_column: str = COL_FINAL_ENTITIES,
 ) -> pd.DataFrame:
     """Apply deterministic local replace strategy on detected entities (runs on the graph kernel)."""
-    from anonymizer.engine.replace.local_route import run_local_route
+    from anonymizer.engine.replace.route import run_local_route
 
     return run_local_route(dataframe, strategy=strategy, text_column=text_column, entities_column=entities_column)
 
