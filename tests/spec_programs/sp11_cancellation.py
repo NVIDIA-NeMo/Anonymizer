@@ -48,7 +48,7 @@ def program() -> list[dict[str, str]]:
         "E11.1",
         not calls and terms == ["cancelled", "cancelled"] and not r1.protected,
         f"callbacks={len(calls)}, terminals={terms}",
-    )  # C.failure-cancellation-and-release.p2
+    )
     complete.append(r1 is not None and raised1 is None and len(r1.ledger()) == 4)
     p, token, calls, (t1, t2) = _setup(True)
     r2, raised2 = _run(p, token)
@@ -56,28 +56,26 @@ def program() -> list[dict[str, str]]:
         "E11.2",
         r2 is not None and calls == [("first", "Alice one")] and not any(a.operation == "second" for a in r2.attempts),
         f"dispatches={[op for op, _ in calls]}",
-    )  # X.D.L3182.s4
-    c.retired("E11.3", "retired 2026-10-22 (item 15); superseded by E11.3'")
+    )
+    c.retired("E11.3", "retired 2026-10-22; superseded by E11.3'")
     o1 = r2.outcome(t1) if r2 else None
     dispatched = [a for a in r2.attempts if a.target == t1] if r2 else []
     c.check(
         "E11.3'",
         o1 is not None and o1.terminal not in ("lost", "failed") and len(dispatched) == 1 and not r2.protected,
         f"terminal={o1 and o1.terminal}, recorded attempt={[a.status for a in dispatched]}",
-    )  # RFC :758; C.complete-outcome-accounting.p2
+    )
     complete.append(r2 is not None and raised2 is None and len(r2.ledger()) == 4)
     p, token, calls, (t1, t2) = _setup(False)
     r3, raised3 = _run(p, token)
     before = ([r3.outcome(t) for t in (t1, t2)], dict(r3.protected), r3.ledger())
     token.cancel()
     after = ([r3.outcome(t) for t in (t1, t2)], dict(r3.protected), r3.ledger())
-    c.check(
-        "E11.4", before == after, f"terminals={[o.terminal for o in after[0]]}"
-    )  # C.failure-cancellation-and-release.p2
+    c.check("E11.4", before == after, f"terminals={[o.terminal for o in after[0]]}")
     complete.append(raised3 is None and len(r3.ledger()) == 4)
     c.check(
         "E11.5",
         all(complete),
         f"complete accounting (one terminal per target and operation, nothing raised) in {sum(complete)}/3 cases",
-    )  # D.REQ7.s1
+    )
     return c.lines

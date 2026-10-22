@@ -1,9 +1,9 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Direct authoring values: datums, relations, operations, workflows and limits (SPEC §4 capabilities 1-4, 7, 8, 11).
+"""Direct authoring values: datums, relations, operations, workflows and limits.
 
-Every value here is immutable and constructing it has no effect: no retrieval, no callback (RFC :3169, :584).
+Every value here is immutable and constructing it has no effect: no retrieval, no callback.
 """
 
 from __future__ import annotations
@@ -27,11 +27,11 @@ def utf8_size(text: str) -> int:
     return len(text.encode("utf-8"))
 
 
-# ---------------------------------------------------------------- data relationship graph (REQ 4, 5, 10, 18)
+# ---------------------------------------------------------------- data relationship graph
 
 
 class GraphScope:
-    """Identity namespace of one data graph; datums are declared from it (D.REQ5.s1 graph-scoped identity)."""
+    """Identity namespace of one data graph; datums are declared from it."""
 
     def __init__(self) -> None:
         self._token = secrets.token_hex(8)
@@ -44,8 +44,7 @@ class GraphScope:
 
 @dataclass(frozen=True, eq=False)
 class Datum:
-    """Immutable text value with opaque, graph-scoped identity. Equality and hashing use identity only, never text
-    (D.REQ5.s1, D.REQ5.s4)."""
+    """Immutable text value with opaque, graph-scoped identity. Equality and hashing use identity only, never text."""
 
     text: str = field(repr=False)
     _scope: str = field(repr=False)
@@ -63,7 +62,7 @@ class Datum:
 
 @dataclass(frozen=True)
 class Mention:
-    """An output-producing region: an exact half-open character interval of one target datum (D.REQ10.s1)."""
+    """An output-producing region: an exact half-open character interval of one target datum."""
 
     datum: Datum
     start: int
@@ -74,7 +73,7 @@ class Mention:
 
 @dataclass(frozen=True)
 class ContextView:
-    """A read-only view ``[start, end)`` over a datum, delivered as context to ``target`` (D.REQ10.s4)."""
+    """A read-only view ``[start, end)`` over a datum, delivered as context to ``target``."""
 
     target: Datum
     over: Datum
@@ -84,10 +83,10 @@ class ContextView:
 
 @dataclass(frozen=True)
 class ContextSource:
-    """A caller-owned provider retrieved once per invocation at binding (RFC :584; D.REQ9.s1).
+    """A caller-owned provider retrieved once per invocation at binding.
 
     ``provider()`` returns an iterable of texts. ``max_items`` is the declared cardinality bound; ``max_bytes`` is an
-    optional caller-supplied UTF-8 ceiling over the returned items (absent means none, D.REQ9.s6).
+    optional caller-supplied UTF-8 ceiling over the returned items (absent means none).
     """
 
     name: str
@@ -98,7 +97,7 @@ class ContextSource:
 
 @dataclass(frozen=True)
 class ContextScope:
-    """The ordered context a target may read: context datums, views and sources (REQ 4 context scope)."""
+    """The ordered context a target may read: context datums, views and sources."""
 
     target: Datum
     items: tuple[Datum | ContextView | ContextSource, ...]
@@ -106,7 +105,7 @@ class ContextScope:
 
 @dataclass(frozen=True)
 class Dependency:
-    """Release dependency: ``dependent`` is withheld when ``on`` is withheld (D.REQ8.s2)."""
+    """Release dependency: ``dependent`` is withheld when ``on`` is withheld."""
 
     dependent: Datum
     on: Datum
@@ -114,14 +113,14 @@ class Dependency:
 
 @dataclass(frozen=True)
 class OutputGroup:
-    """All-or-none release group; groups form a flat partition (C.hierarchical-workflows-and-bounded-cycle)."""
+    """All-or-none release group; groups form a flat partition."""
 
     members: tuple[Datum, ...]
 
 
 @dataclass(frozen=True)
 class ProtectionGraph:
-    """Immutable bound semantic input: target datums plus separately typed relations (REQ 2, REQ 4, REQ 18)."""
+    """Immutable bound semantic input: target datums plus separately typed relations."""
 
     scope: GraphScope = field(repr=False)
     targets: tuple[Datum, ...]
@@ -180,7 +179,7 @@ class ProtectionGraph:
         for m in self.mentions:
             self._own(m.datum, None, "mention")
             if m.datum not in targets:
-                # Context must not supply a mention endpoint or replacement span (D.REQ10.s2).
+                # Context must not supply a mention endpoint or replacement span.
                 raise GraphRejection("mention_not_on_target" if m.datum in declared else "unknown_reference")
             if not (0 <= m.start < m.end <= len(m.datum.text)):
                 raise GraphRejection("mention_out_of_range")
@@ -191,7 +190,7 @@ class ProtectionGraph:
             ms.sort(key=lambda m: m.start)
             for a, b in zip(ms, ms[1:]):
                 if b.start < a.end:
-                    raise GraphRejection("overlapping_output_ownership")  # D.REQ10.s3
+                    raise GraphRejection("overlapping_output_ownership")
 
     def _check_acyclic(self) -> None:
         edges: dict[Datum, set[Datum]] = {}
@@ -211,14 +210,14 @@ class ProtectionGraph:
             visit(d, set())
 
 
-# ---------------------------------------------------------------- operations and workflows (REQ 15, :590)
+# ---------------------------------------------------------------- operations and workflows
 
 RequestBound = Literal["none", "exact", "upper", "unknown", "opaque"]
 
 
 @dataclass(frozen=True)
 class Requests:
-    """Declared external requests per activation: exact, known upper bound, unknown, or opaque (REQ 16, D.REQ17.s4).
+    """Declared external requests per activation: exact, known upper bound, unknown, or opaque.
 
     ``opaque`` declares requests the implementation can neither make visible nor control before dispatch.
     """
@@ -252,7 +251,7 @@ class Assessment:
     """Evidence returned by a verifier: ``satisfied`` True/False, or None when it could not assess.
 
     ``target`` attributes the finding; evidence attributed to another target destroys attribution and makes the
-    whole invocation inconsistent (C.failure-cancellation-and-release.p3).
+    whole invocation inconsistent.
     """
 
     satisfied: bool | None
@@ -262,7 +261,7 @@ class Assessment:
 
 @dataclass(frozen=True)
 class Operation:
-    """A caller-supplied local operation with typed ports and declared requests (REQ 15, D.REQ7 evidence outcomes).
+    """A caller-supplied local operation with typed ports and declared requests.
 
     Input ports bind by name to the latest earlier output, else to the per-target seeds ``text`` (current candidate),
     ``source`` (original text), ``mentions``, ``context`` and ``target``. An operation whose output kind is
@@ -288,10 +287,10 @@ class Operation:
 
 @dataclass(frozen=True)
 class Workflow:
-    """Sequence composition; a nested ``Workflow`` is a declared, inspectable subgraph (:590, :2531).
+    """Sequence composition; a nested ``Workflow`` is a declared, inspectable subgraph.
 
     ``release`` selects the result contract: ``protected`` output, or ``annotation`` output that retains source
-    text and is never Protected (D.REQ8.s3).
+    text and is never Protected.
     """
 
     name: str
@@ -310,8 +309,8 @@ class Workflow:
 
 @dataclass(frozen=True)
 class Limits:
-    """One limits record (S0-8 (b)). Count limits have defaults (proposed values, DESIGN-NOTE); byte ceilings
-    default to none and are enforced only when supplied (D.REQ9.s5, D.REQ9.s6)."""
+    """One limits record. Count limits have defaults (provisional values); byte ceilings default to none and are
+    enforced only when supplied."""
 
     max_operations: int = 32
     max_targets: int = 1_000

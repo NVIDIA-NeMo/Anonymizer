@@ -66,7 +66,7 @@ def program() -> list[dict[str, str]]:
         and len(calls2) == 2
         and all(t == box["tid"] for _, _, t in calls2),
         f"calls on main thread={len(calls)}, on caller-created thread={len(calls2)}",
-    )  # X.D.L3157.s3, s4
+    )
     inner = seen["inner_result"]
     order = [op for op, _, _ in calls]
     c.check(
@@ -75,7 +75,7 @@ def program() -> list[dict[str, str]]:
         and inner.outcome(ia).qualification == "met"
         and calls[1][1] == "[NAME] met Bob.",
         f"order={order}, inner qualification={inner.outcome(ia).qualification}",
-    )  # D.REQ16.s1, D.REQ15.s3
+    )
     c.check(
         "E10.3",
         seen["inner_var"] == "caller-value"
@@ -83,7 +83,7 @@ def program() -> list[dict[str, str]]:
         and seen["outer_after_inner"] == "caller-value"
         and seen["caller_after"] == "caller-value",
         f"inner saw={seen['inner_var']}, outer after inner={seen['outer_after_inner']}, caller after={seen['caller_after']}",
-    )  # X.D.L3157.s5, s6
+    )
 
     def boom(text: str) -> str:
         raise RuntimeError("inner failure")
@@ -98,7 +98,7 @@ def program() -> list[dict[str, str]]:
         "E10.4",
         ok4 and outer4.outcome(oa4).qualification != "met",
         f"raised={raised}, outer qualification={outer4.outcome(oa4).qualification if raised is None else None}",
-    )  # D.REQ7.s1, D.REQ7.s2
+    )
     inner_ops = {name for _, name, _ in inner.ledger()}
     outer_ops = {name for _, name, _ in outer.ledger()}
     c.check(
@@ -108,5 +108,5 @@ def program() -> list[dict[str, str]]:
         and inner_ops == {"transform", "verifier"}
         and outer_ops == {"outer", "check"},
         f"inner attempts={len(inner.attempts)}, outer attempts={len(outer.attempts)} (outer + its verifier)",
-    )  # D.REQ7.s1
+    )
     return c.lines

@@ -3,8 +3,7 @@
 
 """Domain-free graph kernel: artifact-kind registry, plan topology, reducer executor, execution frame.
 
-The kernel knows no Anonymizer artifact kind (RFC :1008 "graph component owns graph structure, topology and
-readiness"; :3138 typed interfaces). Layers above register the kinds they need with :func:`register_kind`.
+The kernel knows no Anonymizer artifact kind; it owns graph structure, topology and readiness only. Layers above register the kinds they need with :func:`register_kind`.
 Execution state advances only by applying events to an immutable :class:`State` (:func:`reduce`); outcomes are
 derived from the final state by the caller.
 """
@@ -21,14 +20,14 @@ from typing import Any
 
 
 class GraphRejection(Exception):
-    """Typed rejection raised before any callback runs (D.REQ6.s1, D.REQ6.s7). Not an ``AnonymizerError``."""
+    """Typed rejection raised before any callback runs. Not an ``AnonymizerError``."""
 
     def __init__(self, code: str, detail: str = "") -> None:
         super().__init__(f"{code}: {detail}" if detail else code)
         self.code = code
 
 
-# ---------------------------------------------------------------- artifact kinds (S0-3 (c): routes register)
+# ---------------------------------------------------------------- artifact kinds (routes register their own)
 
 
 @dataclass(frozen=True)
@@ -88,7 +87,7 @@ def compile_sequence(nodes: tuple[Node, ...], seeds: Mapping[str, str]) -> Plan:
     """Bind each input port to the latest earlier output of the same name, else to a seed; check kinds.
 
     Sequence order is a dependency edge (each node depends on its predecessor), so readiness preserves the
-    declared order (D.REQ16.s1).
+    declared order.
     """
     for k in (*seeds.values(), *(v for n in nodes for v in (*n.inputs.values(), *n.outputs.values()))):
         kind(k)
@@ -129,14 +128,14 @@ PENDING, RUNNING, SUCCEEDED, FAILED, BLOCKED, CANCELLED = (
 
 @dataclass(frozen=True)
 class Entry:
-    """One accounting entry per actual dispatch (RFC :3182)."""
+    """One accounting entry per actual dispatch."""
 
     unit: int
     node: int
     status: str
     reason: str = ""
     error: BaseException | None = field(default=None, repr=False, compare=False)
-    ref: str = field(default_factory=lambda: secrets.token_hex(8))  # random, invocation-local (D.REQ5.s2)
+    ref: str = field(default_factory=lambda: secrets.token_hex(8))  # random, invocation-local
 
 
 @dataclass(frozen=True)
@@ -252,7 +251,7 @@ def _set(items: tuple[Any, ...], i: int, value: Any) -> tuple[Any, ...]:
 
 
 def reduce(plan: Plan, state: State, event: Event) -> State:
-    """Apply one event. Accepted terminals are immutable: a later event cannot rewrite them (RFC :2690)."""
+    """Apply one event. Accepted terminals are immutable: a later event cannot rewrite them."""
     if isinstance(event, CancelRequested):
         return state if state.cancelled else replace(state, cancelled=True)
     row = state.rows[event.unit]
@@ -325,8 +324,8 @@ def _outputs(node: Node, raw: Any) -> Mapping[str, Any]:
 def execute(plan: Plan, state: State, cancelled: Callable[[], bool]) -> State:
     """Drive the reducer to quiescence on the calling thread; callables run here, one at a time.
 
-    A callable that raises ``Exception`` closes its activation as failed; nothing is raised to the caller
-    (signed item 6). ``BaseException`` (``KeyboardInterrupt``) propagates unchanged, as in 0.4.0.
+    A callable that raises ``Exception`` closes its activation as failed; nothing is raised to the caller.
+    ``BaseException`` (``KeyboardInterrupt``) propagates unchanged, as in 0.4.0.
     """
     while True:
         if cancelled():
@@ -350,11 +349,11 @@ def execute(plan: Plan, state: State, cancelled: Callable[[], bool]) -> State:
             state = reduce(plan, state, Completed(unit, i, outputs))
 
 
-# ---------------------------------------------------------------- execution frame (RFC :3157) and cancellation
+# ---------------------------------------------------------------- execution frame and cancellation
 
 
 class CancelToken:
-    """Synchronous cancellation request, settable from a callback or any caller thread (item 13 axis).
+    """Synchronous cancellation request, settable from a callback or any caller thread.
 
     A frame's token is linked to the enclosing frame's token: cancelling an outer run also stops new dispatches
     of runs nested inside it.
@@ -383,7 +382,7 @@ def current_token() -> CancelToken | None:
 
 
 def run_in_frame(fn: Callable[..., Any], *args: Any, token: CancelToken | None = None, **kwargs: Any) -> Any:
-    """Run ``fn`` on the calling thread in a copy of the calling context (copy-in without copy-out, R2/R3)."""
+    """Run ``fn`` on the calling thread in a copy of the calling context (copy-in without copy-out)."""
     frame_token = token or CancelToken()
     parent = _FRAME_TOKEN.get()
     if parent is not None and parent is not frame_token and frame_token._parent is None:

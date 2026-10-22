@@ -3,8 +3,7 @@
 
 """Admission, synchronous execution, qualification and inspection over the domain-free kernel.
 
-Anonymizer owns identity, accounting and qualification here; the kernel owns topology and readiness (RFC :1004,
-B.graph-component-boundary.p1).
+Anonymizer owns identity, accounting and qualification here; the kernel owns topology and readiness.
 """
 
 from __future__ import annotations
@@ -62,7 +61,7 @@ class PreparedProtection:
         return InspectionSummary(self.names, len(self.graph.targets), self.planned_requests)
 
     def __reduce__(self) -> Any:
-        raise TypeError("PreparedProtection is process-local and not serializable (RFC :3277)")
+        raise TypeError("PreparedProtection is process-local and not serializable")
 
 
 def prepare(
@@ -73,7 +72,7 @@ def prepare(
     capabilities: tuple[str, ...] | None = None,
     request_budget: int | None = None,
 ) -> PreparedProtection:
-    """Validate everything before effects and compile an immutable plan (REQ 6, REQ 15). No callback runs here.
+    """Validate everything before effects and compile an immutable plan. No callback runs here.
 
     ``capabilities`` names the operation implementations admitted for this invocation (default: the workflow's);
     ``request_budget`` selects a hard external-request budget.
@@ -99,7 +98,7 @@ def prepare(
         raise k.GraphRejection("capability_not_admitted")
     planned = _planned(ops, len(graph.targets))
     if request_budget is not None and (planned.value is None or planned.bound == "opaque"):
-        raise k.GraphRejection("hard_budget_without_visibility")  # D.REQ16.s7: never downgraded to soft
+        raise k.GraphRejection("hard_budget_without_visibility")  # never downgraded to soft
     if request_budget is not None and planned.value is not None and planned.value > request_budget:
         raise k.GraphRejection("over_request_budget")
     nodes = tuple(k.Node(name, op.inputs, op.outputs, op.fn) for name, op in ops)
@@ -132,7 +131,7 @@ def _planned(ops: tuple[tuple[str, Operation], ...], targets: int) -> Count:
 
 @dataclass(frozen=True)
 class ContextItem:
-    """One bound context artifact, attributable to its source (D.REQ9.s1)."""
+    """One bound context artifact, attributable to its source."""
 
     source: str
     index: int
@@ -141,7 +140,7 @@ class ContextItem:
 
 @dataclass(frozen=True)
 class Retrieval:
-    """Binding accounting for one source, separate from execution attempts (RFC :584; D.REQ9.s2, s4)."""
+    """Binding accounting for one source, separate from execution attempts."""
 
     source: str
     status: str  # ok | failed | overflow | over_byte_ceiling | invalid_item | not_started
@@ -152,7 +151,7 @@ class Retrieval:
 
 @dataclass(frozen=True)
 class Attempt:
-    """One accounting entry per actual dispatch (RFC :3182)."""
+    """One accounting entry per actual dispatch."""
 
     target: Datum
     operation: str
@@ -163,7 +162,7 @@ class Attempt:
 
 @dataclass(frozen=True)
 class TargetOutcome:
-    """Execution terminal, criteria satisfaction and output availability, kept separate (D.REQ8.s6)."""
+    """Execution terminal, criteria satisfaction and output availability, kept separate."""
 
     terminal: str  # success | failed | cancelled | blocked
     qualification: str  # met | not_met | not_assessed
@@ -174,7 +173,7 @@ class TargetOutcome:
 
 @dataclass(frozen=True)
 class InspectionSummary:
-    """Bounded, content-free summary: structure, counts and reason codes only (RFC :2310; X.D.L3137)."""
+    """Bounded, content-free summary: structure, counts and reason codes only."""
 
     operations: tuple[str, ...]
     targets: int
@@ -206,7 +205,7 @@ class InspectionSummary:
 
 @dataclass(frozen=True)
 class ProtectionResult:
-    """Reconciled result: the canonical record every projection derives from without rerunning work (D.REQ8.s5)."""
+    """Reconciled result: the canonical record every projection derives from without rerunning work."""
 
     prepared: PreparedProtection = field(repr=False)
     state: k.State = field(repr=False)
@@ -233,7 +232,7 @@ class ProtectionResult:
 
     @property
     def protected(self) -> dict[Datum, str]:
-        """Only qualified, releasable output (D.REQ8.s1)."""
+        """Only qualified, releasable output."""
         return {d: self.value(d) for d, o in zip(self.targets, self.outcomes) if o.protected}
 
     @property
@@ -244,7 +243,7 @@ class ProtectionResult:
         )
 
     def ledger(self) -> tuple[tuple[Datum, str, str], ...]:
-        """One terminal per target and operation, dispatched or not (D.REQ7.s1)."""
+        """One terminal per target and operation, dispatched or not."""
         stopped = k.CANCELLED if self.state.cancelled else k.BLOCKED
         return tuple(
             (d, name, {k.PENDING: stopped}.get(status, status))
@@ -285,10 +284,10 @@ class ProtectionResult:
 
 
 def protect(prepared: PreparedProtection, *, cancel: k.CancelToken | None = None) -> ProtectionResult:
-    """Execute synchronously on the calling thread in a copy of the calling context (RFC :3157).
+    """Execute synchronously on the calling thread in a copy of the calling context.
 
-    Callbacks and providers run on this thread. A raising callback closes its target as failed; nothing is raised
-    (signed item 6). ``cancel`` stops new dispatches and retrievals; a frame nested in another inherits its
+    Callbacks and providers run on this thread. A raising callback closes its target as failed; nothing is raised.
+    ``cancel`` stops new dispatches and retrievals; a frame nested in another inherits its
     cancellation.
     """
     if not isinstance(prepared, PreparedProtection):
@@ -347,7 +346,7 @@ def _bind(g: ProtectionGraph, limits: Limits, cancelled: Any) -> tuple[list[Retr
             status = "invalid_item"
         size = sum(map(utf8_size, items)) if status != "failed" and status != "invalid_item" else None
         if status == "ok" and len(items) > src.max_items:
-            status = "overflow"  # D.REQ9.s7: one over closes as overflow, never truncated
+            status = "overflow"  # one over closes as overflow, never truncated
         ceiling = src.max_bytes
         if status == "ok" and ceiling is not None and size is not None and size > ceiling:
             status = "over_byte_ceiling"
@@ -361,7 +360,7 @@ def _bind(g: ProtectionGraph, limits: Limits, cancelled: Any) -> tuple[list[Retr
 
 
 def _reconcile(p: PreparedProtection, state: k.State, retrievals: tuple[Retrieval, ...]) -> ProtectionResult:
-    """Derive outcomes from the final state: terminal, qualification, then fixed-point release (RFC :2688)."""
+    """Derive outcomes from the final state: terminal, qualification, then fixed-point release."""
     g = p.graph
     consistent = True
     verdicts: list[tuple[str, str, str]] = []
@@ -377,7 +376,7 @@ def _reconcile(p: PreparedProtection, state: k.State, retrievals: tuple[Retrieva
         for i in p.covering_verifiers:
             a: Assessment | None = row.values.get((i, "assessment"))
             if a is not None and a.target is not None and a.target != d:
-                consistent = False  # foreign or swapped evidence destroys attribution (RFC :2692)
+                consistent = False  # foreign or swapped evidence destroys attribution
             quals.append(a.satisfied is True if a is not None else False)
         if terminal != "success":
             qual = "not_met"
@@ -387,7 +386,7 @@ def _reconcile(p: PreparedProtection, state: k.State, retrievals: tuple[Retrieva
             qual = "met" if all(quals) else "not_met"
             reason = reason or ("" if qual == "met" else "unsatisfied")
         verdicts.append((terminal, qual, reason))
-    if not consistent:  # the invocation is the whole call: nothing qualifies (RFC :2692)
+    if not consistent:  # the invocation is the whole call: nothing qualifies
         verdicts = [(t, "not_met", "inconsistent_invocation") for t, _, _ in verdicts]
     released = {d for d, (_, q, _) in zip(g.targets, verdicts) if q == "met"}
     if p.workflow.release != "protected":

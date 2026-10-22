@@ -30,7 +30,7 @@ def program() -> list[dict[str, str]]:
         "E7.1",
         m is not None and (m.start, m.end) == (0, 5) and TEXT[m.start : m.end] == "Alice",
         f"mention=[{m and m.start}, {m and m.end})",
-    )  # D.REQ10.s1
+    )
     rec = Recorder()
     code = rejected(
         lambda: run(ProtectionGraph(scope, (t,), mentions=(Mention(t, 1, 6, "first_name", "Alice"),)), rec.transform())
@@ -38,11 +38,11 @@ def program() -> list[dict[str, str]]:
     c.check("E7.2", code is not None and rec.count() == 0, f"rejection={code}, callbacks={rec.count()}")
     overlap = (Mention(t, 0, 5, "first_name"), Mention(t, 3, 9, "other"))
     code = rejected(lambda: run(ProtectionGraph(scope, (t,), mentions=overlap), rec.transform()))
-    c.check("E7.3", code is not None and rec.count() == 0, f"rejection={code}, callbacks={rec.count()}")  # D.REQ10.s3
+    c.check("E7.3", code is not None and rec.count() == 0, f"rejection={code}, callbacks={rec.count()}")
     views = ContextScope(t, (ContextView(t, t, 0, 9), ContextView(t, t, 6, 14)))
     g4 = ProtectionGraph(scope, (t,), mentions=(Mention(t, 0, 5, "first_name"),), context=(views,))
     r4 = run(g4, rec.transform())
-    c.check("E7.4", r4.outcome(t).terminal == "success", f"accepted, terminal={r4.outcome(t).terminal}")  # D.REQ10.s4
+    c.check("E7.4", r4.outcome(t).terminal == "success", f"accepted, terminal={r4.outcome(t).terminal}")
     ctx = scope.datum("Bob met Alice.")
     bad = ProtectionGraph  # the output span's endpoints come from the context artifact, not the target
     before = rec.count()
@@ -52,5 +52,5 @@ def program() -> list[dict[str, str]]:
             rec.transform(),
         )
     )
-    c.check("E7.5", code is not None and rec.count() == before, f"rejection={code}")  # D.REQ10.s2
+    c.check("E7.5", code is not None and rec.count() == before, f"rejection={code}")
     return c.lines

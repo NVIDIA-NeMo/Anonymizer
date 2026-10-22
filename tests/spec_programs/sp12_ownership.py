@@ -44,11 +44,9 @@ def _with_resource(fail: bool) -> bool:
 
 def program() -> list[dict[str, str]]:
     c = Checks("SP-12")
-    c.retired("E12.1", "retired 2026-10-22 (item 20)")
+    c.retired("E12.1", "retired 2026-10-22")
     closed = [_with_resource(False), _with_resource(True)]
-    c.check(
-        "E12.2", closed == [False, False], f"closed after success/failure={closed}"
-    )  # C.failure-cancellation-and-release.p4
+    c.check("E12.2", closed == [False, False], f"closed after success/failure={closed}")
     effects: list[str] = []
 
     def uncertain(text: str) -> str:
@@ -61,7 +59,7 @@ def program() -> list[dict[str, str]]:
         "E12.3",
         effects == ["sent"] and r.outcome(a).qualification != "met",
         f"invocations={len(effects)}, qualification={r.outcome(a).qualification}",
-    )  # RFC :2677; C.hierarchical-workflows-and-bounded-cycle.r4
+    )
     g, (t1, t2) = graph("Alice one", "Bob two")
     swap = {t1: t2, t2: t2}  # the verifier for t1 returns its finding keyed to t2
 
@@ -78,7 +76,7 @@ def program() -> list[dict[str, str]]:
         "E12.4",
         "met" not in quals and not r.protected,
         f"verifiers attribute findings by target; qualifications={quals}, protected={len(r.protected)}",
-    )  # C.failure-cancellation-and-release.p3, RFC :2692
+    )
     g, ts = graph("a", "b", "c")
 
     def fail(text: str) -> str:
@@ -90,7 +88,7 @@ def program() -> list[dict[str, str]]:
         "E12.5",
         by_op.count("first") == 3 and by_op.count("never") == 0,
         f"entries first={by_op.count('first')}, never={by_op.count('never')}",
-    )  # RFC :3182
+    )
     scope = GraphScope()
     t1, t2 = scope.datum("Alice one"), scope.datum("Bob two")
     mine, theirs = ContextSource("kb", lambda: ["for t1"], max_items=1), ContextSource("kb", lambda: ["for t2"], 1)
@@ -101,5 +99,5 @@ def program() -> list[dict[str, str]]:
         "F2",
         code == "duplicate_context_source",
         f"two sources under one name are rejected at graph construction; code={code}",
-    )  # A2 ruling: one target never receives another target's context
+    )  # one target never receives another target's context
     return c.lines

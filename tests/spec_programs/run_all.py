@@ -35,9 +35,7 @@ def collect() -> list[dict[str, str]]:
         except Exception as exc:  # noqa: BLE001 - a crashed program is reported, not hidden
             lines.append({"program": name, "check": "*", "result": "FAIL", "detail": f"crashed: {type(exc).__name__}"})
         if name == "sp07_offsets":
-            lines += [
-                {"program": "SP-8", "check": e, "result": "RETIRED", "detail": "retired (item 11)"} for e in RETIRED_SP8
-            ]
+            lines += [{"program": "SP-8", "check": e, "result": "RETIRED", "detail": "retired"} for e in RETIRED_SP8]
     return lines
 
 

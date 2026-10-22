@@ -22,7 +22,7 @@ def program() -> list[dict[str, str]]:
         mutable = True
     except dataclasses.FrozenInstanceError:
         mutable = False
-    c.check("E13.1", not mutable and copy.copy(x) == x and copy.deepcopy(x) == x, f"assignable={mutable}")  # D.REQ5.s1
+    c.check("E13.1", not mutable and copy.copy(x) == x and copy.deepcopy(x) == x, f"assignable={mutable}")
     rec = Recorder()
     other = GraphScope()
     code = rejected(lambda: run(ProtectionGraph(other, (x,)), rec.transform()))
@@ -31,7 +31,7 @@ def program() -> list[dict[str, str]]:
     r1 = run(ProtectionGraph(scope, (x, y, z)), rec.transform(fn=str.upper))
     r2 = run(ProtectionGraph(scope, (z, x, y)), rec.transform(fn=str.upper))
     same = all((r1.value(d), r1.outcome(d)) == (r2.value(d), r2.outcome(d)) for d in (x, y, z))
-    c.check("E13.3", same, "outputs and terminals equal by identity across declaration orders")  # D.REQ5.s4, D.REQ6.s5
+    c.check("E13.3", same, "outputs and terminals equal by identity across declaration orders")
     g = ProtectionGraph(scope, (x,))
     p = prepare(g, Workflow("w", (Operation("t", lambda text: text.upper()),)))
     a, b = protect(p), protect(p)
@@ -40,9 +40,9 @@ def program() -> list[dict[str, str]]:
         "E13.4",
         bool(refs_a) and bool(refs_b) and not refs_a & refs_b and a.outcome(x).terminal == "success",
         f"runtime refs shared={len(refs_a & refs_b)}",
-    )  # D.REQ5.s2
+    )
     s2 = GraphScope()
     d1, d2 = s2.datum("Alice"), s2.datum("Alice")
     m1, m2 = Mention(d1, 0, 5, "first_name"), Mention(d2, 0, 5, "first_name")
-    c.check("E13.5", d1 != d2 and m1 != m2, f"distinct identities={d1 != d2}")  # D.REQ5.s4, D.REQ4.s2
+    c.check("E13.5", d1 != d2 and m1 != m2, f"distinct identities={d1 != d2}")
     return c.lines

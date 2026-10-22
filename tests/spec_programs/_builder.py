@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Shared builder for the spec programs (EXPECTED.md): check lines, call recorders and small workflows."""
+"""Shared builder for the spec programs: check lines, call recorders and small workflows."""
 
 from __future__ import annotations
 

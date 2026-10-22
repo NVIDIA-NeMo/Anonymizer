@@ -27,7 +27,7 @@ def program() -> list[dict[str, str]]:
         "E5.1",
         before.operations == ("transform", "verifier") and before.terminals is None,
         f"operations={list(before.operations)}, terminals={before.terminals}",
-    )  # RFC :2310; X.D.L3137
+    )
     r = protect(p)
     text = r.summary().render()
     c.check(
@@ -37,7 +37,7 @@ def program() -> list[dict[str, str]]:
         and CANARY_OUT not in text
         and dict(r.content())[a] == f"Hello {CANARY_OUT}.",
         f"terminals={r.summary().terminals}, canary in rendering={CANARY_IN in text or CANARY_OUT in text}",
-    )  # D.REQ17.s6
+    )
 
     def boom(text: str) -> str:
         raise ValueError(f"cannot handle {text}")
@@ -52,10 +52,10 @@ def program() -> list[dict[str, str]]:
         and CANARY_IN not in text3
         and CANARY_OUT not in text3,
         f"terminals={s3.terminals}, reasons={s3.reasons}",
-    )  # D.REQ17.s3
+    )
     small = protect(_prepared("x" * 10)[0]).summary().render()
     large = protect(_prepared("x" * 100_000)[0]).summary().render()
-    c.check("E5.4", len(large) - len(small) <= 64, f"growth={len(large) - len(small)} chars")  # X.D.L3137
+    c.check("E5.4", len(large) - len(small) <= 64, f"growth={len(large) - len(small)} chars")
     obs = dict(r.summary().observed)
     planned = before.planned_requests
     known_zero = all(v.value == 0 or v.value is None for v in obs.values()) and set(obs) >= {
@@ -68,5 +68,5 @@ def program() -> list[dict[str, str]]:
         "E5.5",
         planned.value in (0, None) and known_zero and r.summary().planned_requests == planned,
         f"planned={planned}, observed={ {k: str(v) for k, v in obs.items()} }",
-    )  # D.REQ17.s4
+    )
     return c.lines

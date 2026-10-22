@@ -33,7 +33,7 @@ def program() -> list[dict[str, str]]:
         "E6.1",
         sources == ["A", "B", "B"] and [x.source for x in r.retrievals] == ["A", "B"] and len(r.attempts) == 1,
         f"items by source={sources}, retrievals={len(r.retrievals)}, attempts={len(r.attempts)}",
-    )  # D.REQ9.s1; RFC :584
+    )
 
     def down() -> list[str]:
         raise TimeoutError("B down")
@@ -44,21 +44,21 @@ def program() -> list[dict[str, str]]:
         "E6.2",
         status["B"] == "failed" and not seen and o.terminal != "success" and o.qualification != "met",
         f"retrievals={status}, operation ran={bool(seen)}, terminal={o.terminal}",
-    )  # D.REQ9.s8
+    )
     big = "x" * (1024 * 1024 + 1)
     r, o, seen = _two([big], list)
     c.check(
         "E6.3",
         o.terminal == "success" and seen and seen[0][0].text == big,
         f"terminal={o.terminal}, delivered bytes={len(seen[0][0].text) if seen else None}",
-    )  # D.REQ9.s6
+    )
     r, o, seen = _two(["a1", "a2"], list, a_max=5)
     ra = r.retrievals[0]
     c.check(
         "E6.4",
         (ra.declared_max_items, ra.observed_items) == (5, 2),
         f"declared={ra.declared_max_items}, observed={ra.observed_items}",
-    )  # D.REQ9.s2
+    )
     r, o, seen = _two(["Zoë Ågren"], list)
-    c.check("E6.5", r.retrievals[0].observed_bytes == 11, f"bytes={r.retrievals[0].observed_bytes}")  # D.REQ9.s4
+    c.check("E6.5", r.retrievals[0].observed_bytes == 11, f"bytes={r.retrievals[0].observed_bytes}")
     return c.lines

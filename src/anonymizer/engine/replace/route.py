@@ -5,9 +5,8 @@
 
 Each row lowers to one target datum whose exact, non-overlapping entity spans are its mentions. A row is a transform
 (``replace``: the 0.4.0 per-row replacement) followed by a verifier (``verify-patches``: one patch per accepted
-mention, checked by source-plus-patches reconstruction; D.REQ10.s5, RFC :3198-3201). The legacy DataFrame projection
-derives from the canonical result without rerunning work (D.REQ8.s5); Annotate output is an annotation result and is
-never Protected (D.REQ8.s3).
+mention, checked by source-plus-patches reconstruction). The legacy DataFrame projection derives from
+the canonical result without rerunning work; Annotate output is an annotation result and is never Protected.
 
 Substitute first runs its replacement map, one ``LlmReplaceWorkflow`` call over the whole frame (DataDesigner batches
 it), as the single operation of its own invocation; the rows it returns then take the same route as a local strategy,
@@ -205,7 +204,7 @@ def _run(graph: ProtectionGraph, workflow: Workflow, limits: Limits) -> Protecti
 
 
 def _accepted_mentions(datum: Datum, entities: EntitiesSchema) -> list[Mention]:
-    """Exact, non-overlapping spans in start order: the output regions the graph owns (D.REQ10.s1, s3)."""
+    """Exact, non-overlapping spans in start order: the output regions the graph owns."""
     accepted: list[Mention] = []
     cursor = 0
     text = datum.text

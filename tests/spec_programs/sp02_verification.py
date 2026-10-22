@@ -29,7 +29,7 @@ def program() -> list[dict[str, str]]:
         "E2.2",
         o2.qualification != "met" and len(r2.protected) == 0 and o2.terminal == "success",
         f"qualification={o2.qualification}, protected={len(r2.protected)}, terminal={o2.terminal}",
-    )  # D.REQ7.s2, D.REQ8.s2, D.REQ8.s4
+    )
     order = [op for op, _, _ in rec.calls]
     received = [t for op, t, _ in rec.calls if op == "verifier"]
     c.check(
