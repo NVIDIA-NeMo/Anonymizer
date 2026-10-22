@@ -148,9 +148,47 @@ class Row:
     closed: str = ""
 
 
+class _Vec:
+    """Persistent vector (32-way path-copying trie) so each event copies O(log n) slots, not the whole state."""
+
+    __slots__ = ("_root", "_depth", "size")
+
+    def __init__(self, root: tuple, depth: int, size: int) -> None:
+        self._root, self._depth, self.size = root, depth, size
+
+    @classmethod
+    def of(cls, items: list[Any]) -> _Vec:
+        nodes = [tuple(items[i : i + 32]) for i in range(0, len(items), 32)] or [()]
+        depth = 1
+        while len(nodes) > 1:
+            nodes = [tuple(nodes[i : i + 32]) for i in range(0, len(nodes), 32)]
+            depth += 1
+        return cls(nodes[0], depth, len(items))
+
+    def __len__(self) -> int:
+        return self.size
+
+    def __getitem__(self, i: int) -> Any:
+        node: Any = self._root
+        for level in range(self._depth - 1, -1, -1):
+            node = node[(i >> (5 * level)) & 31]
+        return node
+
+    def set(self, i: int, value: Any) -> _Vec:
+        def path(node: tuple, level: int) -> tuple:
+            j = (i >> (5 * level)) & 31
+            child = value if level == 0 else path(node[j], level - 1)
+            return (*node[:j], child, *node[j + 1 :])
+
+        return _Vec(path(self._root, self._depth - 1), self._depth, self.size)
+
+    def __iter__(self) -> Any:
+        return (self[i] for i in range(self.size))
+
+
 @dataclass(frozen=True)
 class State:
-    rows: tuple[Row, ...] = field(repr=False)
+    rows: _Vec = field(repr=False)
     log: tuple | None = field(default=None, repr=False)  # entries as a persistent cons list, newest first
     cancelled: bool = False
     cursor: tuple[int, int] = (0, 0)  # breadth-first scan position (node, unit)
@@ -206,7 +244,7 @@ Event = Dispatched | Completed | Failed | Closed | CancelRequested
 
 def initial_state(plan: Plan, seeds: list[Mapping[str, Any]]) -> State:
     pending = (PENDING,) * len(plan.nodes)
-    return State(tuple(Row(pending, MappingProxyType({(-1, k): v for k, v in s.items()})) for s in seeds))
+    return State(_Vec.of([Row(pending, MappingProxyType({(-1, k): v for k, v in s.items()})) for s in seeds]))
 
 
 def _set(items: tuple[Any, ...], i: int, value: Any) -> tuple[Any, ...]:
@@ -222,12 +260,12 @@ def reduce(plan: Plan, state: State, event: Event) -> State:
         if row.closed:
             return state
         blocked = tuple(BLOCKED if s == PENDING else s for s in row.status)
-        return replace(state, rows=_set(state.rows, event.unit, Row(blocked, row.values, event.reason)))
+        return replace(state, rows=state.rows.set(event.unit, Row(blocked, row.values, event.reason)))
     if isinstance(event, Dispatched):
         if state.cancelled or row.status[event.node] != PENDING:
             raise RuntimeError(f"dispatch refused: {row.status[event.node]!r}, cancelled={state.cancelled}")
         new = Row(_set(row.status, event.node, RUNNING), row.values, row.closed)
-        return replace(state, rows=_set(state.rows, event.unit, new))
+        return replace(state, rows=state.rows.set(event.unit, new))
     if row.status[event.node] != RUNNING:
         return state
     if isinstance(event, Completed):
@@ -237,7 +275,7 @@ def reduce(plan: Plan, state: State, event: Event) -> State:
     else:  # Failed: dependents stay pending and never become ready; the ledger reports them blocked.
         new = Row(_set(row.status, event.node, FAILED), row.values, row.closed)
         entry = Entry(event.unit, event.node, FAILED, event.reason, event.error)
-    return replace(state, rows=_set(state.rows, event.unit, new), log=(entry, state.log))
+    return replace(state, rows=state.rows.set(event.unit, new), log=(entry, state.log))
 
 
 def unit_terminal(row: Row, cancelled: bool) -> str:

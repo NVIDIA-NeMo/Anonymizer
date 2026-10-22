@@ -78,11 +78,6 @@ def _build_local_replacement_map(
     return {"replacements": replacements}
 
 
-def _apply_replacement_map_to_text(text: str, entities: EntitiesSchema, replacements: list[ReplacementEntry]) -> str:
-    """Compatibility wrapper around the canonical offset replacement primitive."""
-    return apply_replacements_to_spans(text, entities, replacements, allow_value_fallback=True)[0]
-
-
 def apply_replacements_to_spans(
     text: str,
     entities: EntitiesSchema,
