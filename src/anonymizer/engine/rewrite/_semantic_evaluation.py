@@ -7,7 +7,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Coroutine
 from dataclasses import dataclass, field, replace
-from typing import TYPE_CHECKING, Any, NotRequired, TypedDict, TypeVar, cast
+from typing import TYPE_CHECKING, Any, TypedDict, TypeVar, cast
 
 import pandas as pd
 import pyarrow as pa
@@ -39,6 +39,7 @@ from anonymizer.engine.constants import (
     COL_WEIGHTED_LEAKAGE_RATE,
 )
 from anonymizer.engine.graph_sdk._effect_values import EffectCode, reject
+from anonymizer.engine.graph_sdk._execution_delegated import drive
 from anonymizer.engine.graph_sdk._execution_values import DelegatedRequests
 from anonymizer.engine.graph_sdk._workflow_values import ArtifactType
 from anonymizer.engine.graph_sdk.executor import AssessmentFinding, LocalAssessmentResult
@@ -95,7 +96,6 @@ class RewriteEvaluationBinding(StageBinding):
     requests: DelegatedRequests
     source: WorkflowSourceFrame
     slots: dict[str, int]
-    loop: asyncio.AbstractEventLoop
     state: EvaluationState
     criteria: EvaluationCriteria
     iteration_slots: dict[int, dict[str, int]] = field(default_factory=dict)
@@ -129,7 +129,6 @@ class RewriteEvaluationBinding(StageBinding):
         if (
             self is not self._entry_owner
             or self.requests is not borrow
-            or self.loop is not borrow.owner.loop
             or borrow.owner.closed
             or type(self.source) is not WorkflowSourceFrame
             or not self.source.invocation_bound
@@ -402,7 +401,7 @@ class RewriteEvaluationBinding(StageBinding):
                     prefix=name == "prefix",
                 )
 
-        asyncio.run_coroutine_threadsafe(observe(frame, "prefix", 0), self.loop).result()
+        drive(observe(frame, "prefix", 0))
 
         async def ready() -> tuple[int, list[int]] | None:
             selected = {}
@@ -412,7 +411,7 @@ class RewriteEvaluationBinding(StageBinding):
                         selected.setdefault(slot, []).append(index)
             return min(selected.items()) if selected else None
 
-        while (batch := asyncio.run_coroutine_threadsafe(ready(), self.loop).result()) is not None:
+        while (batch := drive(ready())) is not None:
             slot, indices = batch
             name, iteration = stages[slot]
             rows = frame.iloc[indices].copy()
@@ -432,7 +431,7 @@ class RewriteEvaluationBinding(StageBinding):
                 rows, result.dataframe, source_positions=result.source_positions, overwrite=True, seed_cols=seed_cols
             )
             if self.opaque:
-                asyncio.run_coroutine_threadsafe(observe(rows, name, iteration), self.loop).result()
+                drive(observe(rows, name, iteration))
             if name == "repair":
                 if COL_REWRITTEN_TEXT_NEXT in rows:
                     rows[COL_REWRITTEN_TEXT] = rows[COL_REWRITTEN_TEXT_NEXT]
@@ -478,7 +477,7 @@ class RewriteEvaluationBinding(StageBinding):
         ]
 
     async def _call(self, operation: Coroutine[Any, Any, _T]) -> _T:
-        return await asyncio.shield(asyncio.wrap_future(asyncio.run_coroutine_threadsafe(operation, self.loop)))
+        return drive(operation)
 
     def stage(self, frame: pd.DataFrame, positions: tuple[int, ...], *, iteration: int = 0) -> _StageArguments:
         return {
@@ -779,7 +778,6 @@ class RewriteEvaluationBinding(StageBinding):
 class _StageArguments(TypedDict):
     source_frame: WorkflowSourceFrame
     rewrite_binding: RewriteEvaluationBinding
-    request_bridge: NotRequired[None]
 
 
 def _replacement_ready(baseline: RewriteCandidateValue) -> bool:

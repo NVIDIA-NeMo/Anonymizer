@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable
 from contextlib import suppress
+from threading import RLock
 from typing import TypeVar, cast
 
 from anonymizer.engine.graph_sdk._activation_reducer import advance_activation
@@ -194,12 +195,16 @@ class _InvocationRuntime:
         self.publication_failures: list[PublicationFailureFact] = []
         self.submission_failures: list[SubmissionFailure] = []
         self.submissions: dict[_ExecutionTask, tuple[_OperationJob[DatumId | InvocationId], ...]] = {}
+        # Delegated bookkeeping may arrive synchronously from another thread (DataDesigner's engine loop);
+        # it and the scheduler's state transitions hold this lock.
+        self.lock = RLock()
 
     async def run(self) -> ExecutionResult:
         try:
             while True:
-                scheduled = self._schedule_ready()
-                self._close_observed_activations()
+                with self.lock:
+                    scheduled = self._schedule_ready()
+                    self._close_observed_activations()
                 if all((state.complete for state in self.frame.all_states)) and (not self.submissions):
                     break
                 if not self.submissions:
@@ -235,7 +240,17 @@ class _InvocationRuntime:
                     span.outcome = entry.status
                     span.finish()
 
-    def _schedule_ready(self) -> bool:
+    def advance(self) -> None:
+        """Apply one scheduler frontier without launching work: subgraph starts and closures only.
+
+        Synchronous delegated bookkeeping calls this after it changed the ledger, so a body that is still
+        running sees the same frontier the owner loop's scheduler would have applied between its calls.
+        """
+        with self.lock:
+            self._schedule_ready(launch=False)
+            self._close_observed_activations()
+
+    def _schedule_ready(self, *, launch: bool = True) -> bool:
         if self.control.cancelled:
             changed = False
             for source in (*self.frame.sources.values(), self.frame.invocation_source):
@@ -360,6 +375,8 @@ class _InvocationRuntime:
                         self._start_observed_activation(entry.activation, operation=False)
                         source.state = advance_activation(state=source.state, event=Start(activation=entry.activation))
                     scheduled = True
+                    continue
+                if not launch:
                     continue
 
                 batchable = isinstance(scope, DatumId) and policy.kind in {"delegated", "external"}
@@ -534,9 +551,10 @@ class _InvocationRuntime:
                 await scheduler_wakeup
         if scheduler_wakeup in completed:
             self.control.scheduler_changed.clear()
-        for task in tuple(self.submissions):
-            if task in completed:
-                self._complete_submission(task)
+        with self.lock:
+            for task in tuple(self.submissions):
+                if task in completed:
+                    self._complete_submission(task)
 
     def _complete_submission(self, task: _ExecutionTask) -> None:
         jobs = self.submissions.pop(task)

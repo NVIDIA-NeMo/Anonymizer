@@ -225,7 +225,6 @@ class ChunkedValidationGenerator(ColumnGeneratorWithModelRegistry[ChunkedValidat
                     pd.DataFrame({COL_VALIDATION_DECISIONS: [data]}),
                     validate,
                     None,
-                    lambda callback: callback(),
                     "opaque-chunked-validation",
                 ),
                 pool,

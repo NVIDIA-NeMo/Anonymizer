@@ -835,7 +835,6 @@ class Anonymizer:
                 selected_models=self._selected_models.detection,
                 detection_options=detection_options,
                 replace_method=config.replace,
-                opaque=not opaque_replacement,
                 **(
                     {"replacement": self._replace_runner, "replacement_models": self._selected_models.replace}
                     if opaque_replacement

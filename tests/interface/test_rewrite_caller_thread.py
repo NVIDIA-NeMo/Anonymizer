@@ -230,22 +230,21 @@ def test_native_rewrite_runs_from_inside_a_running_event_loop(tmp_path: Path) ->
     assert all(ident == caller for _, ident, _ in seen)
 
 
-def test_nested_handoff_from_the_serving_thread_runs_inline_on_the_caller_thread() -> None:
+def test_invocation_nested_in_a_body_runs_inline_on_the_caller_thread() -> None:
     from anonymizer.engine.harness.kernel import _run_sync_profile
 
     caller = threading.get_ident()
     seen: list[int] = []
 
-    def inner() -> Any:
-        seen.append(threading.get_ident())
-        return "inner"
+    async def inner(channel: Any) -> Any:
+        return channel.run(lambda: seen.append(threading.get_ident()) or "inner")
 
-    async def operation(pool: Any, handoff: Any) -> Any:
+    async def operation(channel: Any) -> Any:
         def body() -> Any:
             seen.append(threading.get_ident())
-            return handoff(inner)
+            return _run_sync_profile(inner)
 
-        return await asyncio.to_thread(handoff, body)
+        return channel.run(body)
 
     assert _run_sync_profile(operation) == "inner"
     assert seen == [caller, caller]

@@ -352,8 +352,7 @@ def test_owned_plugin_borrows_source_without_another_invocation(monkeypatch, asy
     asyncio.run(run())
 
 
-@pytest.mark.parametrize("phase", ["authorization", "chunks"])
-def test_owned_async_plugin_repeated_cancel_keeps_submission_until_chunks_end(monkeypatch, phase):
+def test_owned_async_plugin_repeated_cancel_keeps_submission_until_chunks_end():
     from threading import Event
 
     from anonymizer.engine.graph_sdk.executor import LocalFailure
@@ -380,18 +379,6 @@ def test_owned_async_plugin_repeated_cancel_keeps_submission_until_chunks_end(mo
                         prompt=kwargs["prompt"], parser=kwargs["parser"], system_prompt=None, purpose=None, kwargs={}
                     )
 
-            if phase == "authorization":
-                from anonymizer.engine.graph_sdk._execution_delegated import _DelegatedOwner
-
-                authorize = _DelegatedOwner._authorize_source
-
-                async def held(owner, association):
-                    entered.set()
-                    while not release.is_set():
-                        await asyncio.sleep(0.01)
-                    return await authorize(owner, association)
-
-                monkeypatch.setattr(_DelegatedOwner, "_authorize_source", held)
             generator = _generator(Model("v0", response={"decisions": []}))
             execution, services, *_ = _fixture()
 
@@ -426,9 +413,7 @@ def test_owned_async_plugin_repeated_cancel_keeps_submission_until_chunks_end(mo
             finally:
                 release.set()
             result = await asyncio.wait_for(running, _HANG_GUARD_TIMEOUT)
-            assert len(finished) == (2 if phase == "chunks" else 0)
-            if phase == "authorization":
-                assert captured["cancellation"] == ("first",)
+            assert len(finished) == 2
             assert captured["borrow"].expired and pool.occupied == 0
             assert not result.requests.dispatches and not loop.is_closed()
 

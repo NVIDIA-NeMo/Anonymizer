@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable, Mapping
-from contextvars import copy_context
 from dataclasses import dataclass, replace
 from time import perf_counter
 from typing import Any, cast
@@ -30,7 +29,7 @@ from anonymizer.engine.graph_sdk._authoring_defaults import (
     _validate_targets,
 )
 from anonymizer.engine.graph_sdk._effect_values import EffectCode, reject
-from anonymizer.engine.graph_sdk._execution_delegated import SubmitterPool
+from anonymizer.engine.graph_sdk._execution_delegated import SubmitterPool, drive
 from anonymizer.engine.graph_sdk._execution_values import DelegatedRequests
 from anonymizer.engine.graph_sdk._workflow_values import (
     ArtifactType,
@@ -86,24 +85,14 @@ class _DetectionInvocation:
     detection_options: Mapping[str, Any]
     name: str = "opaque-detection-replace"
     semantic_slots: Mapping[str, int] | None = None
-    semantic_loop: asyncio.AbstractEventLoop | None = None
     semantic_targets: tuple[Any, ...] = ()
     semantic_transform_slot: int | None = None
     semantic_entry_slot: int | None = None
-    handoff: Callable[[Callable[[], LocalCompleted | LocalFailure]], LocalCompleted | LocalFailure] | None = None
     replacement_receiver: Any | None = None
     replacement_arguments: dict[str, Any] | None = None
     map_slots: Mapping[str, int] | None = None
 
     def run(self, inputs: tuple[AssociationInput, ...], requests: DelegatedRequests) -> LocalCompleted | LocalFailure:
-        context = copy_context()
-        return (
-            self._run(inputs, requests)
-            if self.handoff is None
-            else self.handoff(lambda: context.run(self._run, inputs, requests))
-        )
-
-    def _run(self, inputs: tuple[AssociationInput, ...], requests: DelegatedRequests) -> LocalCompleted | LocalFailure:
         if requests.cancelled:
             return LocalFailure(failure="implementation_exception")
         started = perf_counter()
@@ -114,11 +103,9 @@ class _DetectionInvocation:
         }
         # Slots exist only for builtin runners, which the graph lowers directly; caller runners run opaque.
         if self.semantic_slots is not None:
-            if self.semantic_loop is None:
-                raise AnonymizerWorkflowError("Detection binding has no owning loop")
             from anonymizer.engine.detection._semantic_detection import complete_detection_entry, lower_detection
 
-            asyncio.run_coroutine_threadsafe(complete_detection_entry(requests, inputs), self.semantic_loop).result()
+            drive(complete_detection_entry(requests, inputs))
             source = requests.bind_frame(
                 self.source, targets=self.semantic_targets, source_limit=len(self.semantic_targets)
             )
@@ -129,7 +116,6 @@ class _DetectionInvocation:
                 requests,
                 source,
                 dict(self.semantic_slots),
-                self.semantic_loop,
                 self.semantic_entry_slot,
             )
         else:
@@ -145,7 +131,7 @@ class _DetectionInvocation:
             from anonymizer.engine.replace._semantic_map import MapBinding
             from anonymizer.engine.replace.replace_runner import replacement_stage
 
-            if self.replacement_receiver is None or self.replacement_arguments is None or self.semantic_loop is None:
+            if self.replacement_receiver is None or self.replacement_arguments is None:
                 reject(EffectCode.MISSING)
             options = self.replacement_arguments
             map_slots = self.map_slots
@@ -165,7 +151,6 @@ class _DetectionInvocation:
                     requests,
                     WorkflowSourceFrame.capture(detected.dataframe, associations=active, invocation_bound=True),
                     {name: slot for name, slot in map_slots.items() if name != "entry"},
-                    self.semantic_loop,
                     self.replacement_receiver._llm_workflow,
                     detected.dataframe,
                     dict(
@@ -176,7 +161,7 @@ class _DetectionInvocation:
                         preview_num_records=options["preview_num_records"],
                     ),
                     apply=True,
-                    entry_inputs=asyncio.run_coroutine_threadsafe(enter_map(), self.semantic_loop).result(),
+                    entry_inputs=drive(enter_map()),
                 )
                 mapped = map_binding.lower()
                 replaced = ReplacementResult(mapped.dataframe, list(mapped.failed_records))
@@ -191,8 +176,6 @@ class _DetectionInvocation:
             else detected.source_positions
         )
         if self.semantic_transform_slot is not None:
-            if self.semantic_loop is None:
-                raise AnonymizerWorkflowError("Detection binding has no owning loop")
             transform_slot = self.semantic_transform_slot
 
             async def finish() -> None:
@@ -212,7 +195,7 @@ class _DetectionInvocation:
                         completed(item.association),
                     )
 
-            asyncio.run_coroutine_threadsafe(finish(), self.semantic_loop).result()
+            drive(finish())
         succeeded = (
             {source.associations[position] for position in selected_positions}
             if self.semantic_slots is not None
@@ -264,8 +247,6 @@ class _EvaluationInvocation:
     source: pd.DataFrame
     evaluate: Callable[[DelegatedRequests], ReplacementResult | LocalFailure]
     retained_owner: object | None
-    handoff: Callable[[Callable[[], LocalCompleted | LocalFailure]], LocalCompleted | LocalFailure]
-
     name: str = "opaque-evaluation"
 
     def run(self, inputs: tuple[AssociationInput, ...], requests: DelegatedRequests) -> LocalCompleted | LocalFailure:
@@ -289,7 +270,7 @@ class _EvaluationInvocation:
                 ),
             )
 
-        return self.handoff(evaluate)
+        return evaluate()
 
 
 def run_detection_rewrite(
@@ -331,7 +312,6 @@ def run_detection_rewrite(
 
     async def operation(
         pool: SubmitterPool,
-        handoff: Callable[[Callable[[], LocalCompleted | LocalFailure]], LocalCompleted | LocalFailure],
     ) -> ReplacementResult:
         result = await execute_injected_redact(
             _DetectionInvocation(
@@ -342,7 +322,6 @@ def run_detection_rewrite(
                 selected_models,
                 detection_options,
                 name="opaque-detection-rewrite",
-                handoff=handoff,
             ),
             pool,
         )
@@ -363,11 +342,8 @@ def run_evaluation(
 
     async def operation(
         pool: SubmitterPool,
-        handoff: Callable[[Callable[[], LocalCompleted | LocalFailure]], LocalCompleted | LocalFailure],
     ) -> ReplacementResult:
-        result = await execute_injected_redact(
-            _EvaluationInvocation(source, evaluate, retained_owner, handoff, name), pool
-        )
+        result = await execute_injected_redact(_EvaluationInvocation(source, evaluate, retained_owner, name), pool)
         return project_detection_redact(result)
 
     return _run_sync_profile(operation)
@@ -522,14 +498,11 @@ async def execute_injected_redact(
             parent_capabilities, parent_policies, detection_ids["entry"]
         )
     map_ids = {}
-    native_ids = {}
     if semantic_map:
         from anonymizer.engine.constants import COL_ENTITIES_BY_VALUE
-        from anonymizer.engine.replace._native_map_requests import extend_native_map_requests, native_map_capacity
         from anonymizer.engine.replace._semantic_map import extend_map_graph, map_configuration
 
         assert isinstance(callback, _DetectionInvocation) and callback.replacement_arguments is not None
-        helper = cast(Any, callback.replacement_receiver)._llm_workflow
         options = callback.replacement_arguments
         args = dict(
             model_configs=options["model_configs"],
@@ -567,11 +540,6 @@ async def execute_injected_redact(
             else policy
             for policy in child_policies
         )
-        capacity = native_map_capacity(helper, options)
-        if size and capacity is not None:
-            raw, physical_caps, physical_policies, native_ids = extend_native_map_requests(raw, capacity)
-            child_capabilities = (*child_capabilities, *physical_caps)
-            child_policies = (*child_policies, *physical_policies)
     prepared = kernel._prepare_frame_plan(
         data,
         raw,
@@ -585,7 +553,6 @@ async def execute_injected_redact(
         callback = replace(
             callback,
             semantic_slots=detection_slots(prepared, detection_ids),
-            semantic_loop=asyncio.get_running_loop(),
             semantic_entry_slot=next(
                 slot.index for slot in prepared.reservation_recipe if slot.template == detection_ids["entry"]
             )
@@ -631,5 +598,4 @@ async def execute_injected_redact(
             max_port_facts=(48 if map_ids else 20) * size,
             max_provenance_edges=(100 if map_ids else 20) * size,
         ),
-        native_request_nodes=native_ids,
     )

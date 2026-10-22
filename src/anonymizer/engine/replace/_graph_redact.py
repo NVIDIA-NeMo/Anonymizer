@@ -1,17 +1,14 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Check Redact against the exact source and its accepted candidate spans."""
+"""Freeze and restore the local replace strategies (Redact, Annotate, Hash) as admitted graph configuration."""
 
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
 
 from pydantic import TypeAdapter
 
 from anonymizer.config.replace_strategies import LocalReplaceMethod, Redact
-from anonymizer.engine.detection.artifacts import EntitySpansValue
-from anonymizer.engine.graph_sdk._workflow_values import ArtifactType
 from anonymizer.engine.graph_sdk.capabilities import (
     ConfigBoolean,
     ConfigField,
@@ -19,20 +16,6 @@ from anonymizer.engine.graph_sdk.capabilities import (
     ConfigText,
     FrozenConfig,
 )
-from anonymizer.engine.graph_sdk.executor import AssessmentFinding, LocalAssessmentResult, LocalCompleted
-from anonymizer.engine.graph_sdk.requests import (
-    AssociationInput,
-    AssociationResult,
-    PortArtifact,
-    SemanticAssociation,
-    TextArtifactValue,
-)
-from anonymizer.engine.replace.strategies import ReplacementEntry, apply_entity_spans
-
-REDACT_MEANING = "All admitted entity spans are redacted in the exact source text"
-REDACT_EVIDENCE_TYPE = ArtifactType(name="anonymizer.redact-check", revision=1)
-REDACT_MATCH = AssessmentFinding(status="satisfied", code="span_redaction_matches")
-REDACT_MISMATCH = AssessmentFinding(status="unsatisfied", code="span_redaction_mismatch")
 
 
 def redact_configuration(strategy: Redact) -> FrozenConfig:
@@ -86,62 +69,3 @@ def local_strategy(configuration: FrozenConfig) -> LocalReplaceMethod:
                 {**json.loads(field.value.value), "kind": field.name}
             )
     return redact_strategy(configuration)
-
-
-@dataclass(frozen=True, slots=True)
-class RedactAssessment:
-    configuration: FrozenConfig
-
-    async def run(self, request: tuple[AssociationInput, ...]) -> LocalCompleted:
-        (item,) = request
-        ports = {port.port: port for port in item.inputs}
-        source, spans, candidate = ports["source"], ports["spans"].value, ports["candidate"].value
-        if (
-            not isinstance(item.association, SemanticAssociation)
-            or source.artifact is None
-            or type(source.value) is not TextArtifactValue
-            or type(spans) is not EntitySpansValue
-            or type(candidate) is not TextArtifactValue
-        ):
-            raise ValueError("Redact assessment requires source, spans and candidate artifacts")
-        strategy = redact_strategy(self.configuration)
-        expected, application = apply_entity_spans(
-            source.value.text,
-            spans.entities,
-            [
-                ReplacementEntry(entity.value, entity.label, strategy.replace(text=entity.value, label=entity.label))
-                for entity in spans.entities
-            ],
-            allow_value_fallback=False,
-        )
-        matched = (
-            spans.matches_source(source.artifact, source.value.text)
-            and application.skipped_span_count == 0
-            and expected == candidate.text
-        )
-        finding = REDACT_MATCH if matched else REDACT_MISMATCH
-        return LocalCompleted(
-            results=(
-                AssociationResult(
-                    association=item.association,
-                    outcome="ok",
-                    consumed_context_ports=frozenset(),
-                    outputs=(
-                        PortArtifact(
-                            port="assessment",
-                            artifact_type=REDACT_EVIDENCE_TYPE,
-                            artifact=None,
-                            value=TextArtifactValue(text=finding.code),
-                        ),
-                    ),
-                ),
-            ),
-            assessments=(
-                LocalAssessmentResult(
-                    association=item.association,
-                    promise="redaction",
-                    evidence_port="assessment",
-                    finding=finding,
-                ),
-            ),
-        )

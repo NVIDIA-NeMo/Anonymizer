@@ -99,13 +99,6 @@ ceiling does not claim bounded memory usage or a hard transport-response size.
 Context retrieval, observations and other explicitly bounded contracts retain
 their separate limits.
 
-The qualified development detection/Redact profile derives count capacity from the selected
-source and declared work when no execution limits are supplied. Five retained
-artifacts per source is an upper bound: one root, three producer outputs and one
-assessment output. Final span count is bounded by source character count;
-validation membership is bounded by the admitted chunk capacity. Actual counts
-can be lower. Caller-supplied execution limits remain authoritative. The separate qualified development profile retains this five-artifact inventory.
-
 This counts-first policy records the 2026-10-13 operator clarification that
 ordinary runs should not impose incidental byte or per-string ceilings. It
 qualifies the RFC's earlier mandatory-retained-byte-bound wording; it does not
@@ -120,9 +113,7 @@ whole frame through `NddAdapter.run_workflow()`, with the existing DataDesigner
 retry, chunk scheduling and provider configuration. Authenticated source positions,
 typed spans and canonical text artifacts support the existing `PublishedFrame`;
 there is no inference from text, indexes or row order. This path makes no
-Protected claim and does not use the incomplete qualified request bridge.
-The qualified development profile remains available for its explicit supported
-controls; public execution does not fall back to it after an error.
+Protected claim.
 
 The ordinary profile reserves at most three semantic artifacts per selected
 source: initial text, final spans and transformed text. Span membership is bounded
@@ -225,11 +216,12 @@ thread that called them, at every depth, including built-in code reached through
 bodies, and every DataDesigner `create()`/`preview()` call and wait, run there too.
 Your code therefore sees that thread's thread-locals and can install signal handlers
 exactly when that thread is the main thread, and Ctrl-C reaches the run as in 0.4.0.
-Some Anonymizer internals still run on other threads: the per-call
-`anonymizer-graph-host` event-loop thread does bookkeeping such as stage completion,
-entity grouping and schema parsing, and DataDesigner's engine threads run
-Anonymizer's column generators and send model requests, as in 0.4.0. None of
-them runs your code. Each call runs in a copy of the caller's
+The graph's event loop runs on that thread as well, as a private loop that leaves a
+notebook's or `asyncio.run` caller's running loop untouched, and so does the graph
+bookkeeping those bodies perform. DataDesigner's engine threads run Anonymizer's
+column generators and send model requests, as in 0.4.0; the graph bookkeeping that
+DataDesigner's per-row hooks trigger runs there too, under the invocation's lock.
+None of those threads runs your code. Each call runs in a copy of the caller's
 context variables: values set before the call are visible inside, and values set
 inside are not visible to the caller afterwards.
 
@@ -362,29 +354,12 @@ and repeated observer cancellation. Physical transports, classification, Start,
 terminal facts and publication still execute on the invocation loop. A worker
 submission is not a physical request. Cancellation before worker entry submits
 nothing; cancellation after physical entry preserves the first terminal and
-usable late settlement while draining local work. The DataDesigner physical
-transport cancels its in-flight HTTP exchange when asked to stop; the provider
-gives no stop evidence, so such a request is recorded as lost.
+usable late settlement while draining local work.
 
-The Substitute map's DataDesigner bridge declares retry follow-ups. DataDesigner
-0.9.4 keeps its own retry policy: its request executor retries 502/503/504 and
-connection errors with backoff, and its scheduler re-runs a task that failed
-with a 5xx, 429, timeout or connection error in later salvage rounds. Each of
-those attempts is a separate leaf with its own dispatch and settlement, linked to
-the failed predecessor as a `retry` child. A refused connection settles as
-`rejected_before_acceptance`; any other transport error leaves the provider side
-unknown. Each record admits its parser attempts plus
-`(RetryConfig.max_retries + 1) * (salvage_max_rounds + 1) - 1` retries as
-accounted leaves, which covers DataDesigner's bounded 5xx, timeout and
-connection policy: exhausting it drops that record, as in 0.4.0. DataDesigner
-never drops a rate-limited (429) task and keeps retrying it; attempts beyond the
-admitted leaves run as DataDesigner-owned requests outside graph request
-accounting, and the bridge logs their count. This is honest only because the
-Substitute invocation already declares no request upper bound and admits no hard
-request budget; a run that selects one could not use this path. DataDesigner runs that the graph does not
-bridge (for example Rewrite's stages) are cancelled through DataDesigner's own
-scheduler cancellation when the owning invocation is cancelled, as a Ctrl-C does
-in 0.4.0. The caller owns
+The Substitute map, like every other facade stage, runs on DataDesigner's own
+transport, retry policy and scheduling, as in 0.4.0; the graph accounts it as one
+opaque invocation with unknown physical requests. A Ctrl-C cancels DataDesigner's
+runs through DataDesigner's own scheduler cancellation, as in 0.4.0. The caller owns
 the pool and borrowed loop; the executor neither closes nor replaces them. The
 pool must be open at service admission. These are live execution resources, not stateless
 handles: this invocation drains its retained worker and children without waiting

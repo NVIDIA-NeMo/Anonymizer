@@ -3,7 +3,7 @@
 """Native vs opaque routing per runner shape, observed at each entry's executor boundary.
 
 Each row pins how the entry classifies its runner (``opaque`` or native) and that every entry is hosted
-by the kernel with its handoff, whatever the route: a caller's code, or a caller's
+by the kernel, whatever the route: a caller's code, or a caller's
 adapter, runs opaque; builtin code on a builtin adapter is lowered natively. Where each body actually
 runs is pinned end to end in ``tests/interface/test_thread_placement.py``.
 """
@@ -26,8 +26,6 @@ from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceWorkflow
 from anonymizer.engine.replace.replace_runner import ReplacementWorkflow
 from anonymizer.engine.rewrite.combined_rewrite_workflow import CombinedRewriteWorkflow
 from anonymizer.engine.rewrite.rewrite_workflow import RewriteWorkflow
-
-_HANDOFF = object()
 
 
 def _any(value: object) -> Any:
@@ -112,7 +110,7 @@ _SOURCE = pd.DataFrame({COL_TEXT: ["Alice met Bob."]})
 
 
 def _observe(monkeypatch: pytest.MonkeyPatch, module: Any, name: str) -> dict[str, Any]:
-    """Run an entry's kernel operation with a marked handoff; stop at the executor and keep what it received."""
+    """Run an entry's kernel operation; stop at the executor and keep what it received."""
     from anonymizer.engine.harness import kernel
 
     seen: dict[str, Any] = {}
@@ -120,7 +118,7 @@ def _observe(monkeypatch: pytest.MonkeyPatch, module: Any, name: str) -> dict[st
     def run_sync_profile(operation: Any) -> Any:
         seen["hosted"] = True
         try:
-            asyncio.run(operation(None, _HANDOFF))
+            asyncio.run(operation(None))
         except _Stop:
             pass
         raise _Stop
@@ -150,7 +148,6 @@ def test_builtin_detection_entry(monkeypatch: pytest.MonkeyPatch, adapter: Any, 
         _semantic_detection.run_direct_detection(EntityDetectionWorkflow(adapter()), _SOURCE, {})
     assert native_adapter(adapter()) is not opaque
     assert seen["hosted"]
-    assert seen["args"][5] is _HANDOFF
 
 
 @pytest.mark.parametrize(
@@ -200,7 +197,6 @@ def test_builtin_rewrite_entry(monkeypatch: pytest.MonkeyPatch, runner: Any, opa
         _semantic_profile.run_builtin_rewrite(runner(), _SOURCE, _ARGUMENTS)
     assert seen["hosted"]
     assert seen["kwargs"]["opaque"] is opaque
-    assert seen["kwargs"]["handoff"] is _HANDOFF
 
 
 @pytest.mark.parametrize(
@@ -224,7 +220,6 @@ def test_semantic_rewrite_entry(monkeypatch: pytest.MonkeyPatch, adapter: Any, o
         )
     assert seen["hosted"]
     assert seen["kwargs"]["opaque"] is opaque
-    assert seen["kwargs"]["handoff"] is _HANDOFF
 
 
 _DETECTORS = [
@@ -254,29 +249,9 @@ def test_detection_redact_entry_opaque(
             selected_models=_any(None),
             detection_options={},
             replace_method=method,
-            opaque=True,
         )
     assert builtin_detection(detector()) is builtin
     assert seen["hosted"]
-    assert seen["args"][0].handoff is _HANDOFF
-
-
-@pytest.mark.parametrize(("detector", "builtin"), _DETECTORS, ids=_DETECTOR_IDS)
-def test_detection_redact_entry_native(monkeypatch: pytest.MonkeyPatch, detector: Any, builtin: bool) -> None:
-    from anonymizer.engine.detection import _graph_profile
-
-    seen = _observe(monkeypatch, _graph_profile, "execute_detection_redact")
-    with pytest.raises(_Stop):
-        _graph_profile.run_detection_redact(
-            _SOURCE,
-            detection=detector(),
-            model_configs=[],
-            selected_models=_any(None),
-            detection_options={},
-        )
-    assert builtin_detection(detector()) is builtin
-    assert seen["hosted"]
-    assert "handoff" not in seen["kwargs"]
 
 
 @pytest.mark.parametrize(("detector", "builtin"), _DETECTORS, ids=_DETECTOR_IDS)
@@ -301,7 +276,6 @@ def test_detection_substitute_entry(
             replacement_models=_any(SimpleNamespace()),
         )
     assert seen["hosted"]
-    assert seen["args"][0].handoff is _HANDOFF
 
 
 class _Signature040Rewrite:
@@ -401,30 +375,6 @@ def test_direct_map_entry_method_shapes(
     assert seen["hosted"]
 
 
-def _designer_stub() -> Any:
-    run_config = SimpleNamespace(max_conversation_correction_steps=0, max_conversation_restarts=0)
-    return _any(SimpleNamespace(run_config=run_config))
-
-
-@pytest.mark.parametrize(
-    ("receiver", "native"),
-    [
-        (lambda: LlmReplaceWorkflow(NddAdapter(_designer_stub())), True),
-        (lambda: _SubclassMap(NddAdapter(_designer_stub())), True),
-        (lambda: LlmReplaceWorkflow(_OverriddenAdapter(_designer_stub())), False),
-        (lambda: _SubclassColumns(NddAdapter(_designer_stub())), False),
-        (lambda: SimpleNamespace(_generate_columns=None), False),
-    ],
-    ids=["builtin", "subclass-map-only", "overridden-adapter", "subclass-columns", "adapterless-duck"],
-)
-def test_native_map_columns_gate(receiver: Any, native: bool) -> None:
-    from anonymizer.config.models import ReplaceModelSelection
-    from anonymizer.engine.replace._native_map_requests import native_map_capacity
-
-    arguments = {"selected_models": ReplaceModelSelection(replacement_generator="m"), "model_configs": []}
-    assert (native_map_capacity(receiver(), arguments) is not None) is native
-
-
 class _GateSeen(Exception):
     pass
 
@@ -456,7 +406,7 @@ def test_injected_redact_map_gate(
             raise _GateSeen
 
     def run_sync_profile(operation: Any) -> Any:
-        asyncio.run(operation(None, _HANDOFF))
+        asyncio.run(operation(None))
 
     if patch_class:
         monkeypatch.setattr(LlmReplaceWorkflow, "generate_map_only", _delegating_generate_map_only)

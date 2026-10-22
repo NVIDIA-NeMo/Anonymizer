@@ -11,7 +11,7 @@ from typing import Any
 # Keyword arguments EntityDetectionWorkflow.run() gained after v0.4.0. A caller-supplied
 # detection_workflow written against v0.4.0's exact run() signature (none of these, no
 # **kwargs) raises TypeError if they are passed unconditionally.
-POST_040_RUN_KEYWORDS = ("entity_label_examples", "source_frame", "request_bridge")
+POST_040_RUN_KEYWORDS = ("entity_label_examples", "source_frame")
 
 
 def accepts_keyword(method: Callable[..., object], name: str) -> bool:

@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
-from contextvars import copy_context
 from copy import deepcopy
 from dataclasses import replace
 from time import perf_counter
@@ -30,7 +29,7 @@ from anonymizer.engine.graph_sdk._authoring_defaults import (
     _validate_targets,
 )
 from anonymizer.engine.graph_sdk._effect_values import EffectCode, reject
-from anonymizer.engine.graph_sdk._execution_delegated import SubmitterPool
+from anonymizer.engine.graph_sdk._execution_delegated import SubmitterPool, drive
 from anonymizer.engine.graph_sdk._execution_values import DelegatedRequests
 from anonymizer.engine.graph_sdk._workflow_values import (
     ArtifactType,
@@ -148,7 +147,6 @@ def run_builtin_rewrite(runner: RewriteWorkflow, source: pd.DataFrame, arguments
 
     async def operation(
         pool: SubmitterPool,
-        handoff: Callable[[Callable[[], LocalCompleted | LocalFailure]], LocalCompleted | LocalFailure],
     ) -> ReplacementResult:
         result = await execute_initial_evaluation(
             source,
@@ -162,7 +160,6 @@ def run_builtin_rewrite(runner: RewriteWorkflow, source: pd.DataFrame, arguments
             ),
             runner=runner,
             opaque=opaque,
-            handoff=handoff,
             on_result=captured.append,
         )
         projected = project_detection_redact(result)
@@ -208,7 +205,6 @@ def run_semantic_rewrite(
 
     async def operation(
         pool: SubmitterPool,
-        handoff: Callable[[Callable[[], LocalCompleted | LocalFailure]], LocalCompleted | LocalFailure],
     ) -> ReplacementResult:
         result = await execute_initial_evaluation(
             source,
@@ -221,7 +217,6 @@ def run_semantic_rewrite(
             detection_arguments=detection_arguments,
             runner=runner,
             opaque=opaque,
-            handoff=handoff,
         )
         return project_detection_redact(result)
 
@@ -234,7 +229,6 @@ def run_semantic_rewrite(
 
     async def rewrite_detected(
         pool: SubmitterPool,
-        handoff: Callable[[Callable[[], LocalCompleted | LocalFailure]], LocalCompleted | LocalFailure],
     ) -> ReplacementResult:
         result = await execute_initial_evaluation(
             detected.dataframe,
@@ -248,7 +242,6 @@ def run_semantic_rewrite(
             ),
             runner=runner,
             opaque=opaque,
-            handoff=handoff,
             predetected=detected,
         )
         return project_detection_redact(result)
@@ -269,7 +262,6 @@ async def execute_initial_evaluation(
     runner: RewriteWorkflow | None = None,
     opaque: bool = False,
     on_result: Callable[[RewriteResult], None] | None = None,
-    handoff: Callable[[Callable[[], LocalCompleted | LocalFailure]], LocalCompleted | LocalFailure] | None = None,
     predetected: EntityDetectionResult | None = None,
 ) -> ExecutionResult:
     """Execute Rewrite lowerings under one admitted source-bound owner.
@@ -433,11 +425,11 @@ async def execute_initial_evaluation(
         if map_entry is not None:
             from anonymizer.engine.detection._semantic_detection import complete_detection_entry
 
-            asyncio.run_coroutine_threadsafe(complete_detection_entry(requests, inputs), loop).result()
+            drive(complete_detection_entry(requests, inputs))
         if detection_ids:
             from anonymizer.engine.detection._semantic_detection import complete_detection_entry
 
-            asyncio.run_coroutine_threadsafe(complete_detection_entry(requests, inputs), loop).result()
+            drive(complete_detection_entry(requests, inputs))
 
         def detect() -> EntityDetectionResult | None:
             if detection is None:
@@ -456,14 +448,13 @@ async def execute_initial_evaluation(
                     requests,
                     original_frame,
                     detection_slots(prepared, detection_ids),
-                    loop,
                 )
             return detection.run(source, **arguments_for_detection)
 
         if predetected is not None:
             detected = predetected
         else:
-            # Runs inline in the body, on the caller's thread; a nested handoff from here runs inline too.
+            # Runs inline in the body, on the caller's thread, as does any invocation nested in it.
             detected = detect()
         if requests.cancelled:
             return LocalFailure(failure="implementation_exception")
@@ -497,9 +488,7 @@ async def execute_initial_evaluation(
                 if rows.empty:
                     continue
                 associations = tuple(active[position] for position in rows[ROW_ORDER_COL])
-                entry_inputs = asyncio.run_coroutine_threadsafe(
-                    requests.enter_operations(map_slots["entry"], associations), loop
-                ).result()
+                entry_inputs = drive(requests.enter_operations(map_slots["entry"], associations))
                 helper = LlmReplaceWorkflow(adapter) if passthrough else map_factory(adapter=adapter)
                 # The builtin map helper is lowered by this graph; a caller's helper runs opaque, as in the release.
                 native = builtin_map(helper)
@@ -509,7 +498,6 @@ async def execute_initial_evaluation(
                     requests,
                     WorkflowSourceFrame.capture(rows, associations=associations, invocation_bound=True),
                     {k: v for k, v in map_slots.items() if k != "entry"},
-                    loop,
                     helper if native else LlmReplaceWorkflow(adapter),
                     rows,
                     map_arguments,
@@ -539,15 +527,14 @@ async def execute_initial_evaluation(
                 for association in surviving:
                     await requests.enter_operation(slots["prefix"], association)
 
-            asyncio.run_coroutine_threadsafe(begin_map_prefix(), loop).result()
-            asyncio.run_coroutine_threadsafe(binding.passthrough(detected_frame), loop).result()
+            drive(begin_map_prefix())
+            drive(binding.passthrough(detected_frame))
             return map_result
 
         binding = RewriteEvaluationBinding(
             requests,
             WorkflowSourceFrame.capture(detected_frame, associations=active, invocation_bound=True),
             slots,
-            loop,
             _evaluation_state(0 if combined else None, COL_REWRITTEN_TEXT_INITIAL if combined else COL_REWRITTEN_TEXT),
             iteration_slots=iteration_slots,
             combined=combined,
@@ -564,9 +551,9 @@ async def execute_initial_evaluation(
                 for association in active:
                     await requests.enter_operation(slots["prefix"], association)
 
-            asyncio.run_coroutine_threadsafe(begin_prefix(), loop).result()
+            drive(begin_prefix())
         if not map_ids:
-            asyncio.run_coroutine_threadsafe(binding.passthrough(detected_frame), loop).result()
+            drive(binding.passthrough(detected_frame))
         binding.authorize_entry()
         result = selected_runner._run_lowering(detected_frame, binding=binding, **arguments)
         if on_result is not None:
@@ -575,9 +562,7 @@ async def execute_initial_evaluation(
             reject(EffectCode.MISSING)
         positions = resolve_source_positions(detected_frame, result.dataframe, result.source_positions)
         successful = tuple(binding.source.associations[index] for index in positions)
-        selected, projected = asyncio.run_coroutine_threadsafe(
-            binding.finish(result.dataframe, successful), loop
-        ).result()
+        selected, projected = drive(binding.finish(result.dataframe, successful))
         publication = FramePublication.capture(
             projected,
             associations=tuple(selected[association] for association in successful),
@@ -608,17 +593,11 @@ async def execute_initial_evaluation(
             frame=publication,
         )
 
-    def dispatch(inputs: tuple[AssociationInput, ...], requests: DelegatedRequests) -> LocalCompleted | LocalFailure:
-        if handoff is None:
-            return callback(inputs, requests)
-        context = copy_context()
-        return handoff(lambda: context.run(callback, inputs, requests))
-
     result = await _execute_frame_plan(
         prepared=prepared,
         capabilities=tuple(capabilities),
         policies=tuple(policies),
-        callback=dispatch,
+        callback=callback,
         pool=pool,
         borrowed_loop=loop,
         limits=replace(limits, max_runtime_artifacts=limits.max_runtime_artifacts + (20 * size if map_ids else 0)),

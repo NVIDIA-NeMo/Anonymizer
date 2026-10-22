@@ -3,15 +3,12 @@
 """Whole-frame detection/Redact consumer of an admitted graph invocation.
 
 Source frames always bind authenticated positions and typed span/text outputs.
-An optional physical bridge selects the separately qualified development path;
-ordinary public execution leaves DataDesigner's retry and scheduling intact.
+DataDesigner keeps its own transport, retries and scheduling.
 """
 
 from __future__ import annotations
 
-import asyncio
-from collections.abc import Callable, Mapping
-from contextvars import copy_context
+from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from typing import Any, cast
 
@@ -21,16 +18,14 @@ from data_designer.config import ModelConfig
 from anonymizer.config.models import DetectionModelSelection
 from anonymizer.engine.constants import COL_FINAL_ENTITIES, COL_REPLACED_TEXT
 from anonymizer.engine.detection.artifacts import ENTITY_SPANS_TYPE, EntitySpansValue
-from anonymizer.engine.detection.chunked_validation import validation_chunks
 from anonymizer.engine.detection.detection_workflow import (
-    _DEFAULT_VALIDATION_MAX_ENTITIES_PER_CALL,
     EntityDetectionWorkflow,
 )
 from anonymizer.engine.detection.postprocess import EntitySpan
 from anonymizer.engine.detection.run_arguments import detection_run_arguments
-from anonymizer.engine.graph_sdk._execution_values import DelegatedRequests, LocalCompleted, LocalFailure
+from anonymizer.engine.graph_sdk._execution_delegated import drive
+from anonymizer.engine.graph_sdk._execution_values import DelegatedRequests, LocalCompleted
 from anonymizer.engine.graph_sdk._graph_values import ArtifactRef, DatumId
-from anonymizer.engine.graph_sdk._workflow_values import ArtifactType
 from anonymizer.engine.graph_sdk.capabilities import FrozenConfig
 from anonymizer.engine.graph_sdk.requests import (
     AssociationInput,
@@ -38,11 +33,8 @@ from anonymizer.engine.graph_sdk.requests import (
     PortArtifact,
     SemanticAssociation,
     TextArtifactValue,
-    TextCollectionItem,
-    TextCollectionValue,
 )
 from anonymizer.engine.harness.frames import FramePublication, InvocationFrame
-from anonymizer.engine.ndd._graph_requests import NddPhysicalTransport, NddRequestBridge
 from anonymizer.engine.replace._graph_redact import local_strategy
 from anonymizer.engine.replace.strategies import apply_local_replace_strategy
 from anonymizer.engine.schemas import EntitiesSchema
@@ -59,32 +51,14 @@ class DetectionRedactInvocation:
     model_configs: list[ModelConfig]
     selected_models: DetectionModelSelection
     redact_configuration: FrozenConfig
-    physical: NddPhysicalTransport | None
-    slots: Mapping[tuple[str, int], int | tuple[int, ...]]
     detection_options: Mapping[str, Any]
     output_port: str
     outcome: str
-    execution: str = "same_loop"
     semantic_slots: Mapping[str, int] | None = None
-    semantic_loop: asyncio.AbstractEventLoop | None = None
     semantic_transform_slot: int | None = None
     semantic_entry_slot: int | None = None
-    handoff: Callable[[Callable[[], LocalCompleted | LocalFailure]], LocalCompleted | LocalFailure] | None = None
 
-    async def submit(
-        self, inputs: tuple[AssociationInput, ...], requests: DelegatedRequests
-    ) -> LocalCompleted | LocalFailure:
-        return await asyncio.to_thread(self.run, inputs, requests)
-
-    def run(self, inputs: tuple[AssociationInput, ...], requests: DelegatedRequests) -> LocalCompleted | LocalFailure:
-        context = copy_context()
-        return (
-            self._run(inputs, requests)
-            if self.handoff is None
-            else self.handoff(lambda: context.run(self._run, inputs, requests))
-        )
-
-    def _run(self, inputs: tuple[AssociationInput, ...], requests: DelegatedRequests) -> LocalCompleted:
+    def run(self, inputs: tuple[AssociationInput, ...], requests: DelegatedRequests) -> LocalCompleted:
         if any(
             type(item.association) is not SemanticAssociation
             or len(item.inputs) != 1
@@ -93,12 +67,10 @@ class DetectionRedactInvocation:
         ):
             raise AnonymizerWorkflowError("DD graph detection requires one source-text input per association")
         frame = requests.bind_frame(self.source, targets=self.targets, source_limit=len(self.targets))
-        bridge = None if self.physical is None else NddRequestBridge(requests, self.slots, self.physical)
         arguments: dict[str, Any] = {
             "model_configs": self.model_configs,
             "selected_models": self.selected_models,
             "source_frame": frame,
-            "request_bridge": bridge,
             **self.detection_options,
         }
         from anonymizer.engine.detection._semantic_detection import (
@@ -109,12 +81,7 @@ class DetectionRedactInvocation:
 
         # The submitting profile classified the runner: only a builtin one has detection children.
         if self.semantic_slots is not None:
-            if self.semantic_loop is None:
-                raise AnonymizerWorkflowError("Detection binding has no owning loop")
-            if self.physical is None:
-                asyncio.run_coroutine_threadsafe(
-                    complete_detection_entry(requests, inputs), self.semantic_loop
-                ).result()
+            drive(complete_detection_entry(requests, inputs))
             detected = lower_detection(
                 self.detection,
                 self.source,
@@ -122,7 +89,6 @@ class DetectionRedactInvocation:
                 requests,
                 frame,
                 dict(self.semantic_slots),
-                self.semantic_loop,
                 self.semantic_entry_slot,
             )
         else:
@@ -164,37 +130,6 @@ class DetectionRedactInvocation:
                 outcome=self.outcome,
                 consumed_context_ports=frozenset(),
                 outputs=(
-                    *(
-                        (
-                            PortArtifact(
-                                port="validation_chunks",
-                                artifact_type=ArtifactType(name="anonymizer.validation-chunks", revision=1),
-                                artifact=None,
-                                value=TextCollectionValue(
-                                    items=tuple(
-                                        TextCollectionItem(
-                                            key=index,
-                                            version=1,
-                                            value=TextArtifactValue(
-                                                text="\n".join(candidate.id for candidate, _ in chunk)
-                                            ),
-                                        )
-                                        for index, chunk in enumerate(
-                                            validation_chunks(
-                                                detected.dataframe.iloc[rows[item.association]].to_dict(),
-                                                self.detection_options.get(
-                                                    "validation_max_entities_per_call",
-                                                    _DEFAULT_VALIDATION_MAX_ENTITIES_PER_CALL,
-                                                ),
-                                            )[2]
-                                        )
-                                    )
-                                ),
-                            ),
-                        )
-                        if self.physical is not None
-                        else ()
-                    ),
                     PortArtifact(
                         port="spans", artifact_type=ENTITY_SPANS_TYPE, artifact=None, value=spans[item.association]
                     ),
@@ -210,8 +145,6 @@ class DetectionRedactInvocation:
             if item.association in rows
         )
         if self.semantic_transform_slot is not None:
-            if self.semantic_loop is None:
-                raise AnonymizerWorkflowError("Detection binding has no owning loop")
             transform_slot = self.semantic_transform_slot
             completed_sources = {}
 
@@ -248,7 +181,7 @@ class DetectionRedactInvocation:
                     await complete_empty_stage(requests, [item])
                 results = accepted
 
-            asyncio.run_coroutine_threadsafe(finish(), self.semantic_loop).result()
+            drive(finish())
             successful = tuple(completed_sources[association] for association in successful)
         results_by_source = {item.association: item for item in results}
         results = tuple(results_by_source[association] for association in successful)

@@ -5,7 +5,6 @@
 from __future__ import annotations
 
 import asyncio
-from contextvars import copy_context
 from dataclasses import replace
 from typing import Any, cast
 
@@ -22,7 +21,7 @@ from anonymizer.engine.graph_sdk._authoring_defaults import (
     _validate_targets,
 )
 from anonymizer.engine.graph_sdk._effect_values import EffectCode, reject
-from anonymizer.engine.graph_sdk._execution_delegated import SubmitterPool
+from anonymizer.engine.graph_sdk._execution_delegated import SubmitterPool, drive
 from anonymizer.engine.graph_sdk._execution_values import DelegatedRequests
 from anonymizer.engine.graph_sdk._workflow_values import (
     InputBinding,
@@ -81,7 +80,7 @@ def run_direct_map(
     captured = []
     configuration = map_configuration(arguments)
 
-    async def execute(pool: SubmitterPool, handoff: Any) -> ReplacementResult:
+    async def execute(pool: SubmitterPool) -> ReplacementResult:
         graph = DataGraph.new()
         targets = []
         texts = dataframe[COL_TEXT] if COL_TEXT in dataframe else [""] * len(dataframe)
@@ -173,17 +172,6 @@ def run_direct_map(
         )
         capabilities = (cap, projection_cap, *child_caps)
         policies = (policy, projection_policy, *child_policies)
-        from anonymizer.engine.replace._native_map_requests import extend_native_map_requests, native_map_capacity
-
-        native_ids = {}
-        capacity = native_map_capacity(receiver, arguments)
-        preview = arguments.get("preview_num_records")
-        # A preview narrower than the frame (a caller detector's extra rows) leaves sources DD never generates;
-        # those run through the opaque DD call, as in the release.
-        if size and capacity is not None and (preview is None or preview >= size):
-            raw, physical_caps, physical_policies, native_ids = extend_native_map_requests(raw, capacity)
-            capabilities = (*capabilities, *physical_caps)
-            policies = (*policies, *physical_policies)
         prepared = _prepare_frame_plan(
             data,
             raw,
@@ -202,14 +190,13 @@ def run_direct_map(
             bound_frame = dataframe if COL_TEXT in dataframe else dataframe.assign(**{COL_TEXT: [""] * size})
             issued = requests.bind_frame(bound_frame, targets=tuple(targets), source_limit=size)
             source = WorkflowSourceFrame.capture(dataframe, associations=issued.associations, invocation_bound=True)
-            asyncio.run_coroutine_threadsafe(complete_detection_entry(requests, inputs), loop).result()
+            drive(complete_detection_entry(requests, inputs))
             map_entry_slot = slots["entry"]
-            entry_inputs = asyncio.run_coroutine_threadsafe(
+            entry_inputs = drive(
                 requests.enter_operations(map_entry_slot, source.associations)
                 if size
-                else _enter_empty(requests, map_entry_slot),
-                loop,
-            ).result()
+                else _enter_empty(requests, map_entry_slot)
+            )
             if any(item is None for item in entry_inputs):
                 reject(EffectCode.REQUEST_CAUSALITY)
             entry_inputs = cast(tuple[AssociationInput, ...], entry_inputs)
@@ -217,7 +204,6 @@ def run_direct_map(
                 requests,
                 source,
                 {k: v for k, v in slots.items() if k != "entry"},
-                loop,
                 receiver,
                 dataframe,
                 arguments,
@@ -249,7 +235,7 @@ def run_direct_map(
                     )
                 )
 
-            asyncio.run_coroutine_threadsafe(finish(), loop).result()
+            drive(finish())
             return LocalCompleted(
                 results=tuple(
                     AssociationResult(
@@ -273,15 +259,11 @@ def run_direct_map(
                 ),
             )
 
-        def dispatch(inputs: tuple[AssociationInput, ...], requests: DelegatedRequests) -> LocalCompleted:
-            context = copy_context()
-            return handoff(lambda: context.run(callback, inputs, requests))
-
         result = await _execute_frame_plan(
             prepared=prepared,
             capabilities=capabilities,
             policies=policies,
-            callback=dispatch,
+            callback=callback,
             pool=pool,
             borrowed_loop=loop,
             limits=_execution_limits(
@@ -302,7 +284,6 @@ def run_direct_map(
                 max_port_facts=40 * size,
                 max_provenance_edges=80 * size,
             ),
-            native_request_nodes=native_ids,
         )
         return project_detection_redact(result)
 

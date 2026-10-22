@@ -50,18 +50,6 @@ def native_map(receiver: Any) -> bool:
     )
 
 
-def native_map_columns(receiver: Any) -> bool:
-    """Whether a map helper's column generation can run as native graph requests."""
-    from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceWorkflow
-
-    adapter = getattr(receiver, "_adapter", None)
-    return (
-        getattr(adapter, "run_workflow", None) is not None
-        and native_adapter(adapter)
-        and _bound_to(receiver._generate_columns, LlmReplaceWorkflow._generate_columns)
-    )
-
-
 def builtin_replacement(receiver: object) -> bool:
     """Whether a replacement runner is the builtin one."""
     from anonymizer.engine.replace.replace_runner import _REPLACEMENT_RUN

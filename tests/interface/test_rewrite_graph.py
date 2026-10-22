@@ -303,7 +303,7 @@ def test_caller_detector_mutating_privacy_goal_runs_on_the_admitted_goal(
         "generate_map_only",
         lambda self, frame, **kwargs: WorkflowRunResult(frame.copy(), [], tuple(range(len(frame)))),
     )
-    from tests.engine.test_detection_graph_publication import _modify_dd_responses
+    from tests.engine.test_detection_source_frame import _modify_dd_responses
 
     def latent(request, answer):
         if "LatentEntitiesSchema" not in request.content.decode():

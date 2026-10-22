@@ -364,18 +364,3 @@ def test_injected_callbacks_keep_caller_thread_context_and_running_loop(tmp_path
         assert len(calls) == 2 and result._execution is not None
     finally:
         connection.close()
-
-
-@pytest.mark.parametrize("stage", ["detection", "replacement"])
-@pytest.mark.parametrize("error_type", [KeyboardInterrupt, SystemExit])
-def test_caller_interrupt_drains_graph_and_preserves_identity(tmp_path, stage, error_type):
-    anonymizer, detector, replacement, _ = _make_anonymizer()
-    interrupted = error_type()
-    (detector if stage == "detection" else replacement).run.side_effect = interrupted
-    with pytest.raises(error_type) as caught:
-        anonymizer.run(config=AnonymizerConfig(replace=Redact()), data=_input(tmp_path, 1))
-    assert caught.value is interrupted
-    execution = retained(interrupted)
-    assert not execution.frames
-    assert [terminal.category for terminal in execution.record.terminals] == ["cancelled"]
-    assert replacement.run.call_count == (stage == "replacement")

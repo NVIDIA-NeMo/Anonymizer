@@ -11,7 +11,7 @@ import tempfile
 import time
 import uuid
 from collections.abc import Iterator, Mapping
-from contextlib import contextmanager, nullcontext
+from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, replace
 from functools import wraps
@@ -38,8 +38,6 @@ from anonymizer.measurement import current_collector, record_ndd_workflow
 if TYPE_CHECKING:
     import pandas as pd
     from data_designer.interface.data_designer import DataDesigner
-
-    from anonymizer.engine.ndd._graph_requests import NddRequestBridge
 
 logger = logging.getLogger("anonymizer.ndd")
 
@@ -320,7 +318,6 @@ class NddAdapter:
         workflow_name: str,
         preview_num_records: int | None = None,
         source_frame: WorkflowSourceFrame | None = None,
-        request_bridge: NddRequestBridge | None = None,
         rewrite_binding: StageBinding | None = None,
     ) -> WorkflowRunResult:
         """Run one workflow and return output with missing-record tracking.
@@ -344,7 +341,7 @@ class NddAdapter:
         Returns:
             `WorkflowRunResult` with the output DataFrame and any `FailedRecord` entries.
         """
-        if (request_bridge is not None or rewrite_binding is not None) and (
+        if rewrite_binding is not None and (
             source_frame is None
             or not source_frame.associations
             and not (source_frame.invocation_bound and (len(df) == 0 or preview_num_records == 0))
@@ -404,7 +401,6 @@ class NddAdapter:
                 with (
                     self._run_lock,
                     usage_probe,
-                    request_bridge.bind(self._data_designer) if request_bridge is not None else nullcontext(),
                     _temporary_dd_task_trace(self._data_designer, collector=collector),
                     source_frame.bind_generators(
                         self._data_designer, frozenset(col_names), rewrite_binding

@@ -4,7 +4,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 from dataclasses import dataclass, field, replace
 from typing import Any, cast
@@ -21,6 +20,7 @@ from anonymizer.engine.constants import (
 )
 from anonymizer.engine.graph_sdk._authoring_defaults import _compile_graph, _operation_spec, _outcome_spec
 from anonymizer.engine.graph_sdk._effect_values import EffectCode, reject
+from anonymizer.engine.graph_sdk._execution_delegated import drive
 from anonymizer.engine.graph_sdk._execution_values import DelegatedRequests, LocalCompleted
 from anonymizer.engine.graph_sdk._workflow_values import (
     ArtifactType,
@@ -252,7 +252,6 @@ class MapBinding(StageBinding):
     requests: DelegatedRequests
     source: WorkflowSourceFrame
     slots: dict[str, int]
-    loop: asyncio.AbstractEventLoop
     receiver: LlmReplaceWorkflow
     entry: pd.DataFrame
     arguments: dict[str, Any]
@@ -300,7 +299,7 @@ class MapBinding(StageBinding):
         source_worker_borrow().authorize_sources_sync(self.source.associations)
 
     def call(self, operation: Any) -> Any:
-        return asyncio.run_coroutine_threadsafe(operation, self.loop).result()
+        return drive(operation)
 
     async def ready(
         self, associations: tuple[Any, ...]
@@ -394,8 +393,6 @@ class MapBinding(StageBinding):
                     else [(cast(SemanticAssociation, bound[0].association), self.publish(bound[0], outcome="empty"))]
                 )
             elif name == "generate":
-                from anonymizer.engine.replace._native_map_requests import _BRIDGE
-
                 native = native_adapter(self.receiver._adapter)
                 stage_source = (
                     WorkflowSourceFrame.capture(selected, associations=selected_sources, invocation_bound=True)
@@ -410,7 +407,6 @@ class MapBinding(StageBinding):
                     instructions=arguments["instructions"],
                     preview_num_records=min(preview, len(selected)) if preview is not None else None,
                     **({"source_frame": stage_source} if stage_source is not None else {}),
-                    **({"request_bridge": _BRIDGE.get()} if native and _BRIDGE.get() is not None else {}),
                 )
                 generated_sources.update(selected_sources)
                 self.authorize()
@@ -490,10 +486,6 @@ class MapBinding(StageBinding):
                     successful.append(one)
                     terminal.append((position, item.association, name))
             self.call(self.complete_results(results))
-        from anonymizer.engine.replace._native_map_requests import _BRIDGE
-
-        if _BRIDGE.get() is not None:
-            self.call(self.requests.close_observed_requests(self.source.associations, frozenset(generated_sources)))
         combined = (
             merge_and_reorder(*successful, *((empty_partition,) if empty_partition is not None else ()))
             if successful
