@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable, Sequence
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 import pandas as pd
@@ -34,17 +34,7 @@ from anonymizer.engine.constants import (
     COL_WEIGHTED_LEAKAGE_RATE,
 )
 from anonymizer.engine.evaluation.detection_judge import DetectionJudgeWorkflow
-from anonymizer.engine.graph_core.authoring import (
-    DATUM,
-    GraphScope,
-    Limits,
-    Operation,
-    ProtectionGraph,
-    Requests,
-    Workflow,
-)
-from anonymizer.engine.graph_core.execution import prepare, protect
-from anonymizer.engine.graph_core.kernel import register_kind
+from anonymizer.engine.graph_core.stages import run_stages
 from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter
 from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceWorkflow
 from anonymizer.engine.rewrite.domain_classification import DomainClassificationWorkflow
@@ -197,8 +187,6 @@ class RewriteResult:
 # Kernel sequence
 # ---------------------------------------------------------------------------
 
-STAGE_DONE = register_kind("rewrite-stage-done", lambda v: v is True)
-
 
 @dataclass
 class _Rows:
@@ -209,28 +197,6 @@ class _Rows:
     passing: pd.DataFrame = field(default_factory=pd.DataFrame)
     failing: pd.DataFrame = field(default_factory=pd.DataFrame)
     converged: bool = False
-
-
-def run_stages(name: str, stages: Sequence[tuple[str, Callable[[], None]]]) -> None:
-    """Run ``stages`` in order as one kernel invocation, each an opaque operation over a single frame target.
-
-    The first error a stage raised is raised, as when the stages were called directly.
-    """
-
-    def operation(stage_name: str, stage: Callable[[], None]) -> Operation:
-        def run(target: object) -> bool:
-            stage()
-            return True
-
-        return Operation(stage_name, run, {"target": DATUM}, {"done": STAGE_DONE}, Requests.opaque())
-
-    scope = GraphScope()
-    graph = ProtectionGraph(scope, (scope.datum(""),))
-    workflow = Workflow(name, tuple(operation(*stage) for stage in stages))
-    limits = Limits(max_operations=len(stages), max_targets=1, max_mentions=0, max_context_items=0)
-    for entry in protect(prepare(graph, workflow, limits=limits)).state.entries:
-        if entry.error is not None:
-            raise entry.error
 
 
 def _replacement_unavailable(df: pd.DataFrame) -> pd.Series:

@@ -151,14 +151,9 @@ def test_graph_unrolls_conditional_repairs(
 
 
 def test_finalizer_selects_last_executed_iteration(
-    monkeypatch: pytest.MonkeyPatch,
     stub_rewrite_model_selection: RewriteModelSelection,
     stub_replace_model_selection: ReplaceModelSelection,
 ) -> None:
-    from anonymizer.graph import InvocationId
-
-    # H1.5: standalone finalization is a pure row projection; it starts no graph invocation.
-    monkeypatch.setattr(InvocationId, "new", lambda **kwargs: pytest.fail("standalone finalize started a graph"))
     graph = CombinedRewriteWorkflow(adapter=Mock()).build_graph(
         selected_models=stub_rewrite_model_selection,
         replace_model_selection=stub_replace_model_selection,

@@ -12,7 +12,8 @@ validator pool. The per-chunk decisions are merged into a
 
 Public entry point: :func:`make_chunked_validation_generator`, which
 produces a ``@custom_column_generator``-decorated function bound to a
-concrete pool. Plugin columns invoke the same helpers under their opaque graph owner. The helpers below are exposed for unit testing.
+concrete pool. Plugin columns call :func:`chunked_validate_row` and :func:`chunked_validate_row_async`
+directly. The helpers below are exposed for unit testing.
 
 Failure contract. Each chunk attempts its round-robin primary first and
 fails over sequentially to the rest of the pool; a chunk only fails when
@@ -56,7 +57,6 @@ from anonymizer.engine.detection.postprocess import (
     TagNotation,
     build_tagged_text,
 )
-from anonymizer.engine.ndd._source_frame import source_generation
 from anonymizer.engine.schemas import (
     EntitiesSchema,
     RawValidationDecisionsSchema,
@@ -435,7 +435,7 @@ async def _dispatch_chunk_async(
 def validation_chunks(
     row: dict[str, Any], max_entities_per_call: int
 ) -> tuple[ValidationCandidatesSchema, list[EntitySpan], list[list[tuple[Any, EntitySpan]]]]:
-    """One pure chunk selection shared by DD dispatch and canonical publication."""
+    """The candidates, seed spans and chunks of one row."""
     candidates = ValidationCandidatesSchema.from_raw(row.get(COL_SEED_VALIDATION_CANDIDATES, {}))
     seed_entities_schema = EntitiesSchema.from_raw(row.get(COL_SEED_ENTITIES, {}))
 
@@ -564,8 +564,7 @@ async def _bounded_dispatch_chunk_async(
     kwargs: dict[str, Any],
 ) -> RawValidationDecisionsSchema:
     async with semaphore:
-        with source_generation(kwargs["chunk_index"]):
-            return await _dispatch_chunk_async(**kwargs)
+        return await _dispatch_chunk_async(**kwargs)
 
 
 def chunked_validate_row(
@@ -614,7 +613,7 @@ async def chunked_validate_row_async(
             chunk_results = await asyncio.gather(*tasks)
         except BaseException:
             # gather may report the first failed chunk while siblings still use
-            # borrowed DD clients. Retain those users before releasing the row.
+            # DD clients. Wait for them before releasing the row.
             drained = asyncio.gather(*tasks, return_exceptions=True)
             while not drained.done():
                 try:

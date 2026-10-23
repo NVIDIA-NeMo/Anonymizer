@@ -13,7 +13,7 @@ import uuid
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from contextvars import ContextVar
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from functools import wraps
 from pathlib import Path
 from threading import Lock, RLock
@@ -316,7 +316,6 @@ class NddAdapter:
         columns: list[ColumnConfigT],
         workflow_name: str,
         preview_num_records: int | None = None,
-        source_frame: WorkflowSourceFrame | None = None,
     ) -> WorkflowRunResult:
         """Run one workflow and return output with missing-record tracking.
 
@@ -340,12 +339,7 @@ class NddAdapter:
             `WorkflowRunResult` with the output DataFrame and any `FailedRecord` entries.
         """
         workflow_input_df = self._attach_record_ids(df=df)
-        if source_frame is None:
-            source_frame = WorkflowSourceFrame.capture(workflow_input_df)
-        elif not source_frame.matches(df):
-            raise AnonymizerWorkflowError("Workflow source frame does not match submitted data")
-        else:
-            source_frame = replace(source_frame, dataframe=workflow_input_df)
+        source_frame = WorkflowSourceFrame.capture(workflow_input_df)
         logger.debug("NDD workflow starting with %d records", len(workflow_input_df))
         col_names = [c.name for c in columns]
         logger.debug("NDD workflow column count: %d", len(col_names))
@@ -392,7 +386,7 @@ class NddAdapter:
                     self._run_lock,
                     usage_probe,
                     _temporary_dd_task_trace(self._data_designer, collector=collector),
-                    source_frame.bind_generators(self._data_designer, frozenset(col_names)) as source_failures,
+                    source_frame.bind_generators(self._data_designer),
                 ):
                     if preview_num_records is None:
                         run_results = self._data_designer.create(
@@ -413,8 +407,6 @@ class NddAdapter:
                         else:
                             output_df = preview_results.dataset
                     output_df, source_positions = source_frame.project(output_df, requested=record_count)
-                    if source_frame.associations and set(range(record_count)) - set(source_positions) - source_failures:
-                        raise AnonymizerWorkflowError("Workflow output has unattributed source loss")
             except Exception as exc:
                 logger.warning(
                     "Workflow failed for %d input record(s).",
