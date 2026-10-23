@@ -31,10 +31,10 @@ def test_benchmark_workflow_keeps_setup_on_workflow_revision() -> None:
     workflow = yaml.safe_load((REPO_ROOT / ".github/workflows/benchmark-ci.yml").read_text(encoding="utf-8"))
     steps = workflow["jobs"]["benchmark"]["steps"]
 
-    assert steps[0]["uses"] == "actions/checkout@v6"
+    assert steps[0]["uses"] == "actions/checkout@v7"
     assert steps[1]["uses"] == "./.github/actions/setup-python-env"
     assert steps[1]["with"]["checkout"] == "false"
-    assert steps[2]["uses"] == "actions/checkout@v6"
+    assert steps[2]["uses"] == "actions/checkout@v7"
     assert steps[2]["with"] == {
         "ref": "${{ env.BENCHMARK_REF }}",
         "fetch-depth": "0",
@@ -52,7 +52,7 @@ def test_benchmark_workflow_keeps_setup_on_workflow_revision() -> None:
     run_step = next(step for step in steps if step.get("name") == "Run benchmark suite")
     assert "uv run --locked --group dev python tools/measurement/run_benchmarks.py" in run_step["run"]
 
-    upload_step = next(step for step in steps if step.get("uses") == "actions/upload-artifact@v4")
+    upload_step = next(step for step in steps if step.get("uses") == "actions/upload-artifact@v7")
     assert upload_step["with"]["path"] == "benchmark-target/${{ env.BENCHMARK_OUTPUT_DIR }}/"
 
 
@@ -70,12 +70,12 @@ def test_release_workflow_keeps_setup_on_workflow_revision() -> None:
         root_checkout_index = next(
             index
             for index, step in enumerate(steps)
-            if step.get("uses") == "actions/checkout@v6" and "ref" not in step.get("with", {})
+            if step.get("uses") == "actions/checkout@v7" and "ref" not in step.get("with", {})
         )
         target_checkout_index = next(
             index
             for index, step in enumerate(steps)
-            if step.get("uses") == "actions/checkout@v6" and step.get("with", {}).get("path") == "release-target"
+            if step.get("uses") == "actions/checkout@v7" and step.get("with", {}).get("path") == "release-target"
         )
 
         assert root_checkout_index < setup_index < target_checkout_index
