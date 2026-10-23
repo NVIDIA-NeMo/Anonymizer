@@ -8,7 +8,6 @@ from collections.abc import Mapping
 from dataclasses import replace
 from typing import TYPE_CHECKING, Literal, TypeGuard, cast
 
-from anonymizer.engine.detection.artifacts import ENTITY_SPANS_TYPE, EntitySpansValue
 from anonymizer.engine.graph_sdk._activation_topology import _publication_outcome
 from anonymizer.engine.graph_sdk._activation_values import ActivationState
 from anonymizer.engine.graph_sdk._effect_values import (
@@ -38,6 +37,7 @@ from anonymizer.engine.graph_sdk._execution_values import (
 )
 from anonymizer.engine.graph_sdk._graph_values import ActivationKey, ArtifactRef, DatumId, InvocationId, TaskAttemptId
 from anonymizer.engine.graph_sdk._workflow_values import NodeId, OperationSpec, SubgraphNode, WorkflowInputRef
+from anonymizer.engine.graph_sdk.detection_artifacts import ENTITY_SPANS_TYPE, EntitySpansValue
 from anonymizer.engine.graph_sdk.preparation import PreparedPlan
 from anonymizer.engine.graph_sdk.records import (
     CandidateRef,

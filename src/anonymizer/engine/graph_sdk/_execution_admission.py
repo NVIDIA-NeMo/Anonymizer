@@ -9,7 +9,6 @@ from dataclasses import replace
 from inspect import iscoroutinefunction
 from itertools import product
 
-from anonymizer.engine.detection.artifacts import ENTITY_SPANS_TYPE
 from anonymizer.engine.graph_sdk._effect_values import (
     EffectCode,
     reject,
@@ -60,6 +59,7 @@ from anonymizer.engine.graph_sdk.context import (
     BoundTextArtifact,
     MaterializationSchema,
 )
+from anonymizer.engine.graph_sdk.detection_artifacts import ENTITY_SPANS_TYPE
 from anonymizer.engine.graph_sdk.preparation import PreparedPlan
 from anonymizer.engine.graph_sdk.requests import (
     BindingDeclarationId,

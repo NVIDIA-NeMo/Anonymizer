@@ -39,6 +39,7 @@ from anonymizer.engine.constants import (
     COL_UTILITY_SCORE,
     COL_WEIGHTED_LEAKAGE_RATE,
 )
+from anonymizer.engine.graph_core.stages import run_stages
 from anonymizer.engine.ndd.adapter import RECORD_ID_COLUMN, NddAdapter
 from anonymizer.engine.ndd.model_loader import resolve_model_alias
 from anonymizer.engine.replace.llm_replace_workflow import (
@@ -64,7 +65,6 @@ from anonymizer.engine.rewrite.rewrite_workflow import (
     _has_entities,
     _join_new_columns,
     _Rows,
-    run_stages,
 )
 from anonymizer.engine.rewrite.sensitivity_disposition import SensitivityDispositionWorkflow
 from anonymizer.engine.rewrite.workflow_utils import derive_seed_columns, select_seed_cols

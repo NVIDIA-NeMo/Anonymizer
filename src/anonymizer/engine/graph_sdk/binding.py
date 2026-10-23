@@ -8,7 +8,6 @@ import asyncio
 from dataclasses import dataclass
 from typing import Literal
 
-from anonymizer.engine.detection.artifacts import ENTITY_SPANS_TYPE
 from anonymizer.engine.graph_sdk._effect_values import EffectCode, EffectRejected, reject, require_instance
 from anonymizer.engine.graph_sdk._ingress import inspect_failure, inspect_source, inspect_source_identity
 from anonymizer.engine.graph_sdk._request_driver import _RequestAuthority, drive_request, late_source_event
@@ -37,6 +36,7 @@ from anonymizer.engine.graph_sdk.context import (
     _create_binding_result,
 )
 from anonymizer.engine.graph_sdk.data import ValidatedDataGraph
+from anonymizer.engine.graph_sdk.detection_artifacts import ENTITY_SPANS_TYPE
 from anonymizer.engine.graph_sdk.observations import (
     _PRODUCER,
     ObservationSession,
