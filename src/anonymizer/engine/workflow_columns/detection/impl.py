@@ -89,12 +89,7 @@ class _AsyncBridgedModelFacade:
         try:
             return future.result(timeout=bridge_timeout)
         except concurrent.futures.TimeoutError as exc:
-            # A cancelled concurrent Future cannot prove the borrowed coroutine
-            # stopped. Preserve its actual completion before releasing the row.
-            try:
-                future.result()
-            except BaseException:
-                pass
+            future.cancel()
             from data_designer.engine.models.errors import ModelTimeoutError
 
             raise ModelTimeoutError(f"model.generate() bridge timed out after {bridge_timeout:.0f}s") from exc
