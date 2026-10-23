@@ -3,12 +3,12 @@
 
 # Tool versions managed by mise (https://mise.jdx.dev/).
 # Run `mise install` to install all tools.
-min_version = "2026.7.6"
+min_version = "2026.10.15"
 
 [tools]
 uv = "0.13.4"
-ruff = "0.16.2"
-ty = "0.0.69"
+ruff = "0.17.1"
+ty = "0.0.90"
 
 [env]
 _.file = [".env", { path = ".env.local", redact = true }]
@@ -18,7 +18,7 @@ includes = [".mise/tasks", ".mise/tasks/*.toml"]
 
 [settings]
 lockfile = true
-install_before = "7d"
+minimum_release_age = "3d"
 lockfile_platforms = ["macos-arm64", "linux-x64", "linux-arm64"]
 idiomatic_version_file_enable_tools = []
 python.uv_venv_auto = "source"

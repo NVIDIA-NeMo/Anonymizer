@@ -12,7 +12,7 @@ import os
 import socket
 import time
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -156,7 +156,7 @@ detector = BatchDetector()
 
 
 @asynccontextmanager
-async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+async def lifespan(_: FastAPI) -> AsyncGenerator[None]:
     """Load the model and own the batching worker for the server lifespan."""
     global model, selected_device
     selected_device = resolve_device(os.getenv(DEVICE_ENV, "auto"))

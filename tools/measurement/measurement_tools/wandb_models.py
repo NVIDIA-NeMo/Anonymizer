@@ -809,7 +809,7 @@ class RecordTableRow(_MetricTableRow):
 
 
 class EvaluationTableRow(RecordTableRow):
-    record_type: Literal["evaluation_record"]
+    record_type: Literal["evaluation_record"]  # ty: ignore[invalid-attribute-override]
     detection_valid: StrictBool | None = None
     type_fidelity_valid: StrictBool | None = None
     relational_consistency_valid: StrictBool | None = None

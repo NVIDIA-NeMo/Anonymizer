@@ -243,14 +243,14 @@ class StrictCombinedRiskLevel(str, Enum):
 class StrictEntityDispositionSchema(EntityDispositionSchema):
     """Strict variant: leave_as_is and low combined_risk_level are excluded."""
 
-    protection_method_suggestion: StrictProtectionMethod
-    combined_risk_level: StrictCombinedRiskLevel
+    protection_method_suggestion: StrictProtectionMethod  # ty: ignore[invalid-attribute-override]
+    combined_risk_level: StrictCombinedRiskLevel  # ty: ignore[invalid-attribute-override]
 
 
 class StrictSensitivityDispositionSchema(SensitivityDispositionSchema):
     """Strict variant container: every entity must be protected."""
 
-    sensitivity_disposition: list[StrictEntityDispositionSchema] = Field(min_length=1)
+    sensitivity_disposition: list[StrictEntityDispositionSchema] = Field(min_length=1)  # ty: ignore[invalid-attribute-override]
 
 
 # ---------------------------------------------------------------------------
