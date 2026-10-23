@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, cast
+from typing import cast
 
 import pandas as pd
 from data_designer.config.models import ModelConfig
@@ -35,10 +35,6 @@ from anonymizer.engine.replace.strategies import apply_local_replace_strategy
 from anonymizer.engine.row_partitioning import restore_diagnostic_columns
 from anonymizer.measurement import stage_timer
 
-if TYPE_CHECKING:
-    from anonymizer.engine.graph_sdk._execution_values import ExecutionResult
-
-
 logger = logging.getLogger("anonymizer.replace")
 
 
@@ -48,7 +44,7 @@ class ReplacementResult:
 
     dataframe: pd.DataFrame
     failed_records: list[FailedRecord]
-    _execution: ExecutionResult | None = field(default=None, repr=False, compare=False)
+    _execution: object | None = field(default=None, repr=False, compare=False)
 
 
 class ReplacementWorkflow:

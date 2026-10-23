@@ -54,7 +54,7 @@ from anonymizer.engine.graph_sdk.requests import (
     TextArtifactValue,
     TextCollectionValue,
 )
-from anonymizer.engine.rewrite.artifacts import REWRITE_TYPES
+from anonymizer.engine.graph_sdk.rewrite_artifacts import REWRITE_TYPES
 
 if TYPE_CHECKING:
     from anonymizer.engine.harness.frames import AggregateFramePublication, FramePublication, InvocationFrame

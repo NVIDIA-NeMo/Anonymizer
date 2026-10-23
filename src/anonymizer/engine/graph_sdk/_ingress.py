@@ -35,7 +35,7 @@ from anonymizer.engine.graph_sdk._request_values import (
 )
 from anonymizer.engine.graph_sdk._workflow_values import ArtifactType
 from anonymizer.engine.graph_sdk.context import ContextSourceRef, SourceItem, SourceResponse
-from anonymizer.engine.rewrite.artifacts import REWRITE_TYPES, rewrite_content
+from anonymizer.engine.graph_sdk.rewrite_artifacts import REWRITE_TYPES, rewrite_content
 
 
 class _ExhaustedIngress(Exception):

@@ -10,7 +10,7 @@ from contextlib import ExitStack, contextmanager
 from contextvars import ContextVar
 from copy import deepcopy
 from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import pandas as pd
 
@@ -29,14 +29,10 @@ from anonymizer.engine.constants import (
 from anonymizer.engine.rewrite.parsers import normalize_payload
 from anonymizer.interface.errors import AnonymizerWorkflowError
 
-if TYPE_CHECKING:
-    from anonymizer.engine.graph_sdk.requests import SemanticAssociation
-    from anonymizer.engine.ndd._stage_binding import StageBinding
-
 
 @dataclass(frozen=True, slots=True)
 class SourceWork:
-    association: SemanticAssociation
+    association: Any
     column: str
     generation: int = 0
 
@@ -88,7 +84,7 @@ class WorkflowSourceFrame:
     dataframe: pd.DataFrame
     key_column: str
     keys: tuple[str, ...]
-    associations: tuple[SemanticAssociation, ...] = ()
+    associations: tuple[Any, ...] = ()
     invocation_bound: bool = False
 
     @classmethod
@@ -96,7 +92,7 @@ class WorkflowSourceFrame:
         cls,
         dataframe: pd.DataFrame,
         *,
-        associations: tuple[SemanticAssociation, ...] = (),
+        associations: tuple[Any, ...] = (),
         invocation_bound: bool = False,
         source_limit: int | None = None,
     ) -> WorkflowSourceFrame:
@@ -181,9 +177,7 @@ class WorkflowSourceFrame:
         return returned.iloc[order].drop(columns=self.key_column).reset_index(drop=True), positions
 
     @contextmanager
-    def bind_generators(
-        self, designer: Any, columns: frozenset[str], rewrite_binding: StageBinding | None = None
-    ) -> Iterator[set[int]]:
+    def bind_generators(self, designer: Any, columns: frozenset[str]) -> Iterator[set[int]]:
         """Bind real DD row generators to issued associations, without exposing transport keys."""
         from anonymizer.engine.ndd._graph_requests import (
             require_dataset_builder_capabilities,
@@ -246,15 +240,11 @@ class WorkflowSourceFrame:
                         body = {name: value for name, value in record.items() if name != self.key_column}
                         token = _SOURCE_WORK.set(SourceWork(association, _name))
                         try:
-                            if rewrite_binding is not None:
-                                body = await rewrite_binding.before(_name, association, body)
                             returned = await _original(body)
                             if not isinstance(returned, dict) or self.key_column in returned:
                                 raise AnonymizerWorkflowError(
                                     "Workflow generator returned invalid source correspondence"
                                 )
-                            if rewrite_binding is not None:
-                                await rewrite_binding.after(_name, association, returned)
                             return {**returned, self.key_column: key}
                         except BaseException:
                             failed.add(position)

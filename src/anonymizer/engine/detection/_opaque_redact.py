@@ -15,6 +15,7 @@ from data_designer.config import ModelConfig
 
 from anonymizer.config.models import DetectionModelSelection
 from anonymizer.engine.constants import COL_TEXT
+from anonymizer.engine.detection._stage_binding import completed
 from anonymizer.engine.detection.detection_workflow import EntityDetectionWorkflow
 from anonymizer.engine.detection.run_arguments import detection_run_arguments
 from anonymizer.engine.graph_sdk._artifact_shape import content_bytes
@@ -59,9 +60,8 @@ from anonymizer.engine.graph_sdk.preparation import (
 from anonymizer.engine.graph_sdk.requests import AssociationInput, AssociationResult, SemanticAssociation
 from anonymizer.engine.harness import kernel
 from anonymizer.engine.harness.frames import InvocationFrame
-from anonymizer.engine.ndd._stage_binding import completed
 from anonymizer.engine.replace.replace_runner import ReplacementResult
-from anonymizer.engine.rewrite.rewrite_workflow import RewriteArguments, RewriteResult, RewriteWorkflow
+from anonymizer.engine.rewrite.rewrite_workflow import RewriteResult
 from anonymizer.engine.source_text import source_text
 from anonymizer.interface.errors import AnonymizerWorkflowError
 
@@ -194,63 +194,6 @@ class _EvaluationInvocation:
             )
 
         return evaluate()
-
-
-def run_detection_rewrite(
-    source: pd.DataFrame,
-    *,
-    detection: EntityDetectionWorkflow,
-    model_configs: list[ModelConfig],
-    selected_models: DetectionModelSelection,
-    detection_options: Mapping[str, Any],
-    rewrite: Callable[[pd.DataFrame], RewriteResult],
-    semantic_arguments: RewriteArguments | None = None,
-    semantic_runner: RewriteWorkflow | None = None,
-    combined: bool = False,
-) -> ReplacementResult:
-    """Admit native Rewrite independently of opaque detection callbacks."""
-    from anonymizer.engine.harness.kernel import _run_sync_profile, project_detection_redact
-
-    selected = (
-        len(source)
-        if detection_options.get("preview_num_records") is None
-        else min(len(source), detection_options["preview_num_records"])
-    )
-    if semantic_arguments is not None and selected:
-        from anonymizer.engine.rewrite._semantic_profile import run_semantic_rewrite
-        from anonymizer.engine.rewrite.combined_rewrite_workflow import CombinedRewriteWorkflow
-
-        return run_semantic_rewrite(
-            source,
-            detection=detection,
-            adapter=semantic_runner._adapter if semantic_runner is not None else detection._adapter,
-            runner=semantic_runner,
-            combined=isinstance(semantic_runner, CombinedRewriteWorkflow) if semantic_runner is not None else combined,
-            arguments=semantic_arguments,
-            detection_arguments=detection_run_arguments(
-                detection.run,
-                {"model_configs": model_configs, "selected_models": selected_models, **detection_options},
-            ),
-        )
-
-    async def operation(
-        pool: SubmitterPool,
-    ) -> ReplacementResult:
-        result = await execute_injected_redact(
-            _DetectionInvocation(
-                source,
-                detection,
-                rewrite,
-                model_configs,
-                selected_models,
-                detection_options,
-                name="opaque-detection-rewrite",
-            ),
-            pool,
-        )
-        return project_detection_redact(result)
-
-    return _run_sync_profile(operation)
 
 
 def run_evaluation(

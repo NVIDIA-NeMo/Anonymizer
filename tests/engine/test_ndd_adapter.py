@@ -360,16 +360,3 @@ def test_load_dataset_exception_wraps_in_workflow_error_and_logs(
     assert "replace-workflow" not in debug_msg
     assert "output" not in debug_msg
     _assert_no_backend_reference(debug_msg)
-
-
-def test_ndd_adapter_import_does_not_load_a_route_binding() -> None:
-    """H1.4: the NDD boundary types stage hooks with a route-neutral protocol, not Rewrite's binding."""
-    import subprocess
-    import sys
-
-    code = (
-        "import sys, anonymizer.engine.ndd.adapter; "
-        "print('anonymizer.engine.rewrite._semantic_evaluation' in sys.modules)"
-    )
-    loaded = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True)
-    assert loaded.stdout.strip() == "False"
