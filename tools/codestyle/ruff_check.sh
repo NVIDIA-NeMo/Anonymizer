@@ -3,16 +3,16 @@
 # SPDX-License-Identifier: Apache-2.0
 
 #
-# ruff_check.sh -- check Python files for lint-rule violations (read-only)
+# ruff_check.sh -- check Python files and notebooks for lint violations (read-only)
 #
 # This is the read-only counterpart to `ruff check --fix` in format.sh.
 # ruff exposes format and check as separate commands; this script wraps
-# the read-only check so CI and `make format-check` can verify lint rules
+# the read-only check so CI and `mise run check:lint` can verify lint rules
 # without modifying files.
 #
 # Usage:
-#   ./ruff_check.sh                      # all tracked .py files
-#   ./ruff_check.sh src/foo.py bar.py    # specific files
+#   ./ruff_check.sh                      # all tracked .py and .ipynb files
+#   ./ruff_check.sh src/foo.py demo.ipynb # specific files
 #
 
 set -euo pipefail

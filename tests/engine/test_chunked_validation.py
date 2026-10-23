@@ -13,8 +13,9 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+from collections.abc import Callable
 from types import SimpleNamespace
-from typing import Any, Callable
+from typing import Any
 
 import pytest
 from data_designer.engine.models.clients.errors import SyncClientUnavailableError
@@ -100,7 +101,7 @@ class FakeFacade:
             raise RuntimeError(f"forced failure from {self.alias}")
         response = self._response
         if callable(response):
-            response = response(prompt)  # ty: ignore[call-top-callable]
+            response = response(prompt)
         raw = response if isinstance(response, str) else f"```json\n{json.dumps(response)}\n```"
         return parser(raw), []
 
@@ -1016,12 +1017,11 @@ class TestMakeChunkedValidationGenerator:
         synchronously and rejects coroutine returns with "must return a dict,
         got coroutine". Guard against accidentally re-introducing an async
         outer wrapper."""
-        import asyncio as _asyncio
         import inspect as _inspect
 
         fn = make_chunked_validation_generator(["v0"])
         inner = _inspect.unwrap(fn)
-        assert not _asyncio.iscoroutinefunction(inner), (
+        assert not _inspect.iscoroutinefunction(inner), (
             "DD-exposed generator must be sync; an async outer wrapper breaks the default thread-pool engine."
         )
 

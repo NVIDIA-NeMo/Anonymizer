@@ -58,7 +58,7 @@ class _StrictJudgeResponseRecipe(PydanticResponseRecipe):
 
 class JudgeColumnGenerator(ColumnGeneratorWithModelChatCompletion[JudgeColumnConfig]):
     @functools.cached_property
-    def response_recipe(self) -> _StrictJudgeResponseRecipe:
+    def response_recipe(self) -> _StrictJudgeResponseRecipe:  # ty: ignore[invalid-mutable-override]
         schema = _JUDGE_SCHEMAS[JudgeKind(self.config.judge_kind)]
         return _StrictJudgeResponseRecipe(schema)
 

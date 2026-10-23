@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Generator, Iterator
 from contextlib import contextmanager
 from pathlib import Path
 from types import ModuleType
@@ -939,7 +939,7 @@ def test_benchmark_case_passes_dd_trace_config_to_measurement_session(
     captured: list[Any] = []
 
     @contextmanager
-    def fake_measurement_session(config: Any) -> Iterator[None]:
+    def fake_measurement_session(config: Any) -> Generator[None]:
         captured.append(config)
         yield None
 
@@ -1008,7 +1008,7 @@ def test_benchmark_case_can_run_optional_evaluation(
     )
 
     @contextmanager
-    def fake_measurement_session(_config: Any) -> Iterator[None]:
+    def fake_measurement_session(_config: Any) -> Generator[None]:
         yield None
 
     class FakeAnonymizer:
