@@ -7,7 +7,15 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 
-from anonymizer.engine.graph_core.authoring import DATUM, GraphScope, Limits, Operation, ProtectionGraph, Requests, Workflow
+from anonymizer.engine.graph_core.authoring import (
+    DATUM,
+    GraphScope,
+    Limits,
+    Operation,
+    ProtectionGraph,
+    Requests,
+    Workflow,
+)
 from anonymizer.engine.graph_core.execution import prepare, protect
 from anonymizer.engine.graph_core.kernel import register_kind
 
