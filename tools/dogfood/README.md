@@ -134,8 +134,7 @@ being compared itself errored.
   `meta.json["failed_record_steps"]` is a `{step: count}` summary of the same list, and
   `compare.py` prints both sides' step breakdown next to the `skipped_span_count` totals below.
 - **`meta.json["error_type"]`** — module-qualified (`f"{type(exc).__module__}.{type(exc).__qualname__}"`),
-  not just the bare class name, so e.g. the branch's `ContractViolation` (`anonymizer.engine.graph_sdk._graph_values`)
-  or `EffectRejected` (`anonymizer.engine.graph_sdk._effect_values`) can't be confused with a public
+  not just the bare class name, so e.g. an engine-internal rejection type can't be confused with a public
   `anonymizer.interface.errors` class of the same name. `meta.json["started_epoch"]` /
   `["ended_epoch"]` give wall-clock epoch times (in addition to `["seconds"]`) so you can compute
   e.g. Ctrl-C drain time. On error, `meta.json["traceback_frames"]` is a bare stack

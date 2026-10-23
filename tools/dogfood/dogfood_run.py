@@ -210,10 +210,8 @@ def main(argv: list[str] | None = None) -> int:
     except BaseException as exc:  # noqa: BLE001 - this is a diagnostic harness, not library code
         exc_type = type(exc)
         error_type = f"{exc_type.__module__}.{exc_type.__qualname__}"
-        # Module-qualified so e.g. the branch's ContractViolation
-        # (anonymizer.engine.graph_sdk._graph_values) or EffectRejected
-        # (anonymizer.engine.graph_sdk._effect_values) can't be confused with a public
-        # anonymizer.interface.errors class of the same name.
+        # Module-qualified so e.g. an engine-internal rejection type can't be confused with a
+        # public anonymizer.interface.errors class of the same name.
         #
         # The exception's own message/str() is deliberately never persisted to
         # meta.json (or anywhere else this kit writes to disk). A backend exception can
