@@ -14,13 +14,11 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from anonymizer.config.models import DetectionModelSelection, ReplaceModelSelection, RewriteModelSelection
-from anonymizer.config.replace_strategies import Substitute
+from anonymizer.config.models import ReplaceModelSelection, RewriteModelSelection
 from anonymizer.config.rewrite import EvaluationCriteria, PrivacyGoal
 from anonymizer.engine.constants import (
     COL_ANY_HIGH_LEAKED,
     COL_ENTITIES_BY_VALUE,
-    COL_FINAL_ENTITIES,
     COL_LATENT_ENTITIES,
     COL_LEAKAGE_MASS,
     COL_NEEDS_HUMAN_REVIEW,
@@ -28,24 +26,18 @@ from anonymizer.engine.constants import (
     COL_PRIVACY_QA,
     COL_QUALITY_QA,
     COL_REPAIR_ITERATIONS,
-    COL_REPLACED_TEXT,
     COL_REPLACEMENT_MAP,
     COL_REWRITTEN_TEXT,
     COL_TAGGED_TEXT,
     COL_TEXT,
     COL_UTILITY_SCORE,
 )
-from anonymizer.engine.detection._graph_profile import run_detection_redact
-from anonymizer.engine.detection.detection_workflow import EntityDetectionResult, EntityDetectionWorkflow
-from anonymizer.engine.graph_sdk._execution_delegated import source_worker_borrow
 from anonymizer.engine.ndd.adapter import RECORD_ID_COLUMN, FailedRecord, NddAdapter, WorkflowRunResult
 from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceResult, LlmReplaceWorkflow
-from anonymizer.engine.replace.replace_runner import ReplacementWorkflow
 from anonymizer.engine.rewrite import rewrite_workflow
 from anonymizer.engine.rewrite.combined_rewrite_workflow import CombinedRewriteWorkflow
 from anonymizer.engine.rewrite.rewrite_workflow import RewriteWorkflow
 from anonymizer.engine.row_partitioning import ROW_ORDER_COL
-from anonymizer.graph import InvocationId
 from anonymizer.interface.errors import AnonymizerWorkflowError
 from tests.engine import test_detection_source_frame as detection_tests
 from tests.engine.test_detection_source_frame import _modify_dd_responses
@@ -213,59 +205,6 @@ def test_rewrite_opaque_map_receives_original_entity_rows_and_preserves_drop_reo
     assert all(thread is main_thread() for _, _, thread in adapter.calls)
 
 
-def test_custom_detector_runs_builtin_substitute_as_its_own_invocation(monkeypatch: pytest.MonkeyPatch) -> None:
-    source = pd.DataFrame({COL_TEXT: ["Alice"]})
-    owners: list[Any] = []
-    allocated: list[InvocationId] = []
-    original = InvocationId.new
-    models: list[Any] = []
-    selected = DetectionModelSelection(**{key: "test" for key in DetectionModelSelection.model_fields})
-
-    def allocate(*args: Any, **kwargs: Any) -> InvocationId:
-        invocation = original(*args, **kwargs)
-        allocated.append(invocation)
-        return invocation
-
-    class CustomDetect:
-        def run(self, dataframe: pd.DataFrame, **kwargs: Any) -> EntityDetectionResult:
-            assert dataframe is source and current_thread() is main_thread()
-            assert set(kwargs) == {"model_configs", "selected_models"}
-            assert kwargs["model_configs"] is models and kwargs["selected_models"] is selected
-            owners.append(source_worker_borrow().owner)
-            output = dataframe.copy()
-            output[COL_ENTITIES_BY_VALUE] = [_entities()]
-            output[COL_FINAL_ENTITIES] = [
-                {"entities": [{"value": "Alice", "label": "first_name", "start_position": 0, "end_position": 5}]}
-            ]
-            return EntityDetectionResult(output, [], (0,))
-
-    adapter = Mock(spec=NddAdapter)
-
-    def respond(frame: pd.DataFrame, **kwargs: Any) -> WorkflowRunResult:
-        assert current_thread() is main_thread()
-        owners.append(source_worker_borrow().owner)
-        output = frame.copy()
-        output[COL_REPLACEMENT_MAP] = [_map()]
-        return WorkflowRunResult(output, [], (0,))
-
-    monkeypatch.setattr(InvocationId, "new", allocate)
-    adapter.run_workflow.side_effect = respond
-    result = run_detection_redact(
-        source,
-        detection=cast(EntityDetectionWorkflow, CustomDetect()),
-        model_configs=models,
-        selected_models=selected,
-        detection_options={},
-        replace_method=Substitute(),
-        replacement=ReplacementWorkflow(llm_workflow=LlmReplaceWorkflow(adapter)),
-        replacement_models=ReplaceModelSelection(replacement_generator="test"),
-    )
-    assert result.dataframe[COL_REPLACED_TEXT].tolist() == ["Maya"]
-    # The caller's detector runs opaque; the builtin Substitute it hands off to runs standalone, as in the release.
-    assert len(allocated) == 2 and len(owners) == 2 and owners[0] is not owners[1]
-    assert result.dataframe[COL_TEXT].tolist() == ["Alice"] and not result.failed_records
-
-
 def test_map_accepts_normalized_nested_numpy_source(scripted_detection: Any, monkeypatch: pytest.MonkeyPatch) -> None:
     designer, models, _, calls = scripted_detection
     map_prompts: list[str] = []
@@ -306,10 +245,6 @@ def test_map_accepts_normalized_nested_numpy_source(scripted_detection: Any, mon
     assert len(map_prompts) == 1 and "Alice" in map_prompts[0]
     assert nested["entities_by_value"][0]["value"] == "Alice"
     assert nested["entities_by_value"][0]["labels"].tolist() == ["first_name"]
-    assert result._execution is not None and len(result._execution.frames) == 1
-    # DataDesigner's own transport makes the map request: the graph accounts it as one opaque invocation.
-    assert not result._execution.requests.dispatches
-    assert not result._execution.requests.remote_outstanding and not result._execution.requests.local_in_flight
 
 
 @pytest.mark.parametrize("combined", [False, True])

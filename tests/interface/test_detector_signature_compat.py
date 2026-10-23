@@ -23,8 +23,6 @@ from data_designer.interface.data_designer import DataDesigner
 
 from anonymizer import Annotate, AnonymizerConfig, AnonymizerInput, Hash, Redact, Rewrite, Substitute
 from anonymizer.config.models import DetectionModelSelection
-from anonymizer.engine.constants import COL_REPLACED_TEXT, COL_TEXT
-from anonymizer.engine.detection._graph_profile import run_detection_redact
 from anonymizer.engine.detection.detection_workflow import EntityDetectionResult, EntityDetectionWorkflow
 from anonymizer.engine.detection.run_arguments import POST_040_RUN_KEYWORDS, detection_run_arguments
 from anonymizer.engine.ndd.adapter import NddAdapter
@@ -204,35 +202,6 @@ def test_release_040_detector_without_examples_does_not_warn(
 
     assert result.dataframe["text_replaced"].tolist() == _EXPECTED["Redact"]
     assert _withheld_warnings(caplog) == []
-
-
-@pytest.mark.parametrize("strategy", [Redact, Annotate, Hash])
-def test_release_040_detector_through_graph_invocation_withholds_source_frame(
-    strategy: type[Redact | Annotate | Hash],
-) -> None:
-    """The graph-invocation consumer adds source_frame; a 0.4.0 run() must not receive it."""
-    detector = _Release040Subclass(Mock(), positioned=True)
-    selected = DetectionModelSelection(
-        entity_detector="d", entity_validator=["v"], entity_augmenter="a", latent_detector="l"
-    )
-
-    projected = run_detection_redact(
-        pd.DataFrame({COL_TEXT: _TEXTS}),
-        detection=detector,
-        model_configs=[],
-        selected_models=selected,
-        detection_options={
-            "gliner_detection_threshold": 0.3,
-            "entity_labels": ["first_name"],
-            "entity_label_examples": _EXAMPLES,
-            "tag_latent_entities": False,
-            "compute_grouped_entities": True,
-        },
-        replace_method=strategy(),
-    )
-
-    assert detector.calls == 1
-    assert projected.dataframe[COL_REPLACED_TEXT].tolist() == _EXPECTED[strategy.__name__]
 
 
 def test_builtin_run_keeps_every_argument() -> None:

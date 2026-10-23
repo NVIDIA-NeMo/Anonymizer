@@ -25,7 +25,7 @@ from anonymizer.config.anonymizer_config import (
     EvaluateConfig,
     Rewrite,
 )
-from anonymizer.config.replace_strategies import Annotate, Hash, Redact, ReplaceMethod, Substitute
+from anonymizer.config.replace_strategies import ReplaceMethod, Substitute
 from anonymizer.config.rewrite import PrivacyGoal
 from anonymizer.engine.constants import (
     COL_ANY_HIGH_LEAKED,
@@ -53,7 +53,6 @@ from anonymizer.engine.constants import (
     COL_WEIGHTED_LEAKAGE_RATE,
     DEFAULT_ENTITY_LABELS,
 )
-from anonymizer.engine.detection._graph_profile import run_detection_redact
 from anonymizer.engine.detection._opaque_redact import run_detection_rewrite, run_evaluation
 from anonymizer.engine.detection.detection_workflow import EntityDetectionWorkflow
 from anonymizer.engine.detection.entity_label_examples import resolve_entity_label_config
@@ -257,7 +256,6 @@ class Anonymizer:
             reapply_log_levels()
         if data_designer_run_config is not None:
             self._data_designer.set_run_config(data_designer_run_config)
-        self._owns_detection_and_replacement = detection_workflow is None and replace_runner is None
         self._adapter = NddAdapter(data_designer=self._data_designer)
         self._detection_workflow = detection_workflow or EntityDetectionWorkflow(adapter=self._adapter)
         self._replace_runner = replace_runner or ReplacementWorkflow(
@@ -268,7 +266,6 @@ class Anonymizer:
             attribute_fidelity_judge=AttributeFidelityJudgeWorkflow(adapter=self._adapter),
             adapter=self._adapter,
         )
-        self._owns_detection = detection_workflow is None
         self._rewrite_runner = rewrite_runner or RewriteWorkflow(adapter=self._adapter)
         self._combined_rewrite_runner = combined_rewrite_runner or CombinedRewriteWorkflow(adapter=self._adapter)
 
@@ -824,23 +821,27 @@ class Anonymizer:
             # entity_label_examples parameter and no **kwargs to swallow it.
             _warn_entity_label_examples_withheld(detection_options.pop("entity_label_examples"))
         t0 = time.perf_counter()
-        opaque_replacement = config.replace is not None and not self._uses_graph_redact(config)
-        opaque_frame = opaque_replacement or config.rewrite is not None
+        execution = None
         if config.replace is not None:
-            logger.info("🔄 Running replacement with graph-owned detection")
-            graph_result = run_detection_redact(
+            logger.info("🔄 Running replacement")
+            detection_result = self._detection_workflow.run(
                 input_df,
-                detection=self._detection_workflow,
                 model_configs=self._model_configs,
                 selected_models=self._selected_models.detection,
-                detection_options=detection_options,
-                replace_method=config.replace,
-                **(
-                    {"replacement": self._replace_runner, "replacement_models": self._selected_models.replace}
-                    if opaque_replacement
-                    else {}
-                ),
+                **detection_options,
             )
+            detection_elapsed = time.perf_counter() - t0
+            detected_df, detection_failures = detection_result.dataframe, list(detection_result.failed_records)
+            t0 = time.perf_counter()
+            replace_result = self._replace_runner.run(
+                detected_df,
+                replace_method=config.replace,
+                model_configs=self._model_configs,
+                selected_models=self._selected_models.replace,
+                preview_num_records=preview_num_records,
+            )
+            replacement_elapsed = time.perf_counter() - t0
+            final_df, post_detection_failures = replace_result.dataframe, list(replace_result.failed_records)
         else:
             assert config.rewrite is not None
             privacy_goal = admitted_goal
@@ -871,14 +872,14 @@ class Anonymizer:
                 semantic_runner=rewrite_runner,
                 combined=config.rewrite.use_combined_graph,
             )
-        detected_df, detection_failures = graph_result.dataframe, graph_result.failed_records
-        if opaque_frame:
             assert graph_result._execution is not None
             frame = graph_result._execution.frames[0]
             frame = frame if isinstance(frame, InvocationFrame) else frame.stages
             assert frame is not None
             detected_df, detection_failures = frame.detected_dataframe, list(frame.detection_failures)
-        detection_elapsed = frame.detection_elapsed if opaque_frame else time.perf_counter() - t0
+            detection_elapsed, replacement_elapsed = frame.detection_elapsed, frame.replacement_elapsed
+            final_df, post_detection_failures = graph_result.dataframe, list(frame.replacement_failures)
+            execution = graph_result._execution
         entity_count = _count_entities(detected_df)
         detection_failed = len(detection_failures)
         logger.info(
@@ -892,14 +893,11 @@ class Anonymizer:
             label_counts = _count_labels(detected_df[COL_DETECTED_ENTITIES])
             if label_counts:
                 logger.info(LOG_INDENT + "distinct entity labels: %d", len(label_counts))
-        final_df = graph_result.dataframe
-        execution = graph_result._execution
-        post_detection_failures = list(frame.replacement_failures) if opaque_frame else []
         logger.info(
             LOG_INDENT + "📋 %s complete (%d failed) [%.1fs]",
             "Rewrite" if config.rewrite is not None else "Replacement",
             len(post_detection_failures),
-            frame.replacement_elapsed if opaque_frame else detection_elapsed,
+            replacement_elapsed,
         )
 
         all_failures = [*detection_failures, *post_detection_failures]
@@ -928,10 +926,6 @@ class Anonymizer:
         )
         result._execution = execution
         return result
-
-    def _uses_graph_redact(self, config: AnonymizerConfig) -> bool:
-        """Select the ordinary DD route before effects, with disclosed physical opacity."""
-        return self._owns_detection_and_replacement and isinstance(config.replace, (Redact, Hash, Annotate))
 
     def _validate_preflight_config(self, config: AnonymizerConfig) -> None:
         """Run semantic preflight checks shared by validate, run, and preview."""

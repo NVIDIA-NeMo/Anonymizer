@@ -1566,11 +1566,7 @@ class _DelegatedOwner(PrivateValue):
         frame_results = successful
         if self.contract.mode == "opaque" and self.owns_children and not any(item.outputs for item in successful):
             targets = {self.jobs[cast(SemanticAssociation, item.association)].scope for item in successful}
-            frame_results = (
-                self._publication_source_results(frame, targets)
-                if self.contract.publication_sources
-                else self._final_output_results(targets)
-            )
+            frame_results = self._final_output_results(targets)
         opaque = tuple(
             value for job in self.jobs.values() for value in self.runtime.frame.sources[job.scope].opaque_cells
         )
@@ -1608,37 +1604,6 @@ class _DelegatedOwner(PrivateValue):
         if publication is None:
             raise _Failed("failure", "malformed_response")
         self.runtime.frame.publications.append(publication)
-
-    def _publication_source_results(self, frame: object, targets: set[DatumId]) -> tuple[AssociationResult, ...]:
-        """Bind a frame to the declared owned publication sources, one per successful target."""
-        allowed = dict(self.contract.publication_sources)
-        if (
-            self.runtime.prepared.configuration.purpose != "execution_only"
-            or not _is_publication_frame(frame)
-            or len(frame.associations) != len(targets)
-        ):
-            raise _Failed("failure", "malformed_response")
-        results = []
-        seen_targets = set()
-        for association in frame.associations:
-            job = self.runtime.operations.get(association.task.activation)
-            if (
-                job is None
-                or job.association != association
-                or not isinstance(job.scope, DatumId)
-                or job.scope not in targets
-                or job.scope in seen_targets
-                or job.policy.submission_owner != self.policy.node
-                or job.node not in allowed
-                or not {port for _, port, _ in frame._text} <= allowed[job.node]
-            ):
-                raise _Failed("failure", "malformed_response")
-            seen_targets.add(job.scope)
-            accepted = self.runtime._operation_result(job.scope, job.activation)
-            if accepted is None:
-                raise _Failed("failure", "malformed_response")
-            results.append(accepted)
-        return tuple(results)
 
     def _final_output_results(self, targets: set[DatumId]) -> tuple[AssociationResult, ...]:
         """Bind a frame to each successful target's final output, produced by an owned child."""

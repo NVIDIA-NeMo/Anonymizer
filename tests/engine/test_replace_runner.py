@@ -36,7 +36,6 @@ from anonymizer.engine.evaluation.replace.type_fidelity_judge import TypeFidelit
 from anonymizer.engine.ndd.adapter import RECORD_ID_COLUMN, FailedRecord, WorkflowRunResult
 from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceResult
 from anonymizer.engine.replace.replace_runner import ReplacementWorkflow
-from anonymizer.engine.replace.strategies import apply_replacement_map
 from anonymizer.engine.schemas import EntitiesSchema
 
 
@@ -125,42 +124,6 @@ def test_substitute_runner_applies_generated_map(
         "applied_span_count": 2,
         "skipped_span_count": 0,
         "skipped_span_label_counts": {},
-    }
-
-
-def test_apply_replacement_map_reports_invalid_and_overlapping_spans() -> None:
-    dataframe = pd.DataFrame(
-        {
-            COL_TEXT: ["Alice Bob"],
-            COL_FINAL_ENTITIES: [
-                {
-                    "entities": [
-                        {"value": "Alice", "label": "first_name", "start_position": 0, "end_position": 5},
-                        {"value": "lice ", "label": "alias", "start_position": 1, "end_position": 6},
-                        {"value": "Bob", "label": "first_name", "start_position": 99, "end_position": 102},
-                    ]
-                }
-            ],
-            COL_REPLACEMENT_MAP: [
-                {
-                    "replacements": [
-                        {"original": "Alice", "label": "first_name", "synthetic": "Maria"},
-                        {"original": "lice ", "label": "alias", "synthetic": "X"},
-                        {"original": "Bob", "label": "first_name", "synthetic": "Robert"},
-                    ]
-                }
-            ],
-        }
-    )
-
-    result = apply_replacement_map(dataframe)
-
-    assert result[COL_REPLACED_TEXT].iloc[0] == "Maria Bob"
-    assert result[COL_REPLACEMENT_APPLICATION].iloc[0] == {
-        "targeted_span_count": 3,
-        "applied_span_count": 1,
-        "skipped_span_count": 2,
-        "skipped_span_label_counts": {"alias": 1, "first_name": 1},
     }
 
 
@@ -506,68 +469,6 @@ def test_evaluate_raises_on_missing_required_columns(
             model_configs=stub_model_configs,
             selected_models=stub_evaluate_model_selection,
         )
-
-
-def test_apply_replacement_map_handles_string_map() -> None:
-    dataframe = pd.DataFrame(
-        {
-            COL_TEXT: ["abc Alice xyz"],
-            COL_FINAL_ENTITIES: [
-                {"entities": [{"value": "Alice", "label": "first_name", "start_position": 4, "end_position": 9}]}
-            ],
-            COL_REPLACEMENT_MAP: ['{"replacements":[{"original":"Alice","label":"first_name","synthetic":"Elena"}]}'],
-        }
-    )
-    output_df = apply_replacement_map(dataframe)
-    assert output_df[COL_REPLACED_TEXT].iloc[0] == "abc Elena xyz"
-
-
-def test_apply_replacement_map_does_not_cascade_synthetic_values() -> None:
-    dataframe = pd.DataFrame(
-        {
-            COL_TEXT: ["Alice and Maria"],
-            COL_FINAL_ENTITIES: [
-                {
-                    "entities": [
-                        {"value": "Alice", "label": "first_name", "start_position": 0, "end_position": 5},
-                        {"value": "Maria", "label": "first_name", "start_position": 10, "end_position": 15},
-                    ]
-                }
-            ],
-            COL_REPLACEMENT_MAP: [
-                {
-                    "replacements": [
-                        {"original": "Alice", "label": "first_name", "synthetic": "Maria"},
-                        {"original": "Maria", "label": "first_name", "synthetic": "Elena"},
-                    ]
-                }
-            ],
-        }
-    )
-    assert apply_replacement_map(dataframe)[COL_REPLACED_TEXT].iloc[0] == "Maria and Elena"
-
-
-@pytest.mark.parametrize(
-    "payload_kind",
-    ["dict_wrapper", "numpy_wrapped_dict_wrapper", "entities_schema"],
-)
-def test_apply_replacement_map_handles_entity_payload_shapes(payload_kind: str) -> None:
-    dataframe = pd.DataFrame(
-        {
-            COL_TEXT: ["Alice works at Acme"],
-            COL_FINAL_ENTITIES: [_build_entities_payload(payload_kind)],
-            COL_REPLACEMENT_MAP: [
-                {
-                    "replacements": [
-                        {"original": "Alice", "label": "first_name", "synthetic": "Maya"},
-                        {"original": "Acme", "label": "organization", "synthetic": "NovaCorp"},
-                    ]
-                }
-            ],
-        }
-    )
-    output_df = apply_replacement_map(dataframe)
-    assert output_df[COL_REPLACED_TEXT].iloc[0] == "Maya works at NovaCorp"
 
 
 def test_hash_strategy_executes(

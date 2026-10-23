@@ -198,55 +198,6 @@ def public_anonymizer(scripted_detection, **kwargs):
     )
 
 
-@pytest.mark.parametrize("preview", [False, True])
-def test_public_source_frame(
-    scripted_detection: tuple[DataDesigner, list[ModelConfig], DetectionModelSelection, Counter[str]],
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    preview: bool,
-) -> None:
-    designer, models, selected, calls = scripted_detection
-    detections = []
-    detect = EntityDetectionWorkflow.run
-
-    def detected(self, frame, **kwargs):
-        detections.append((frame, kwargs))
-        return detect(self, frame, **kwargs)
-
-    def displaced(*args, **kwargs):
-        raise AssertionError("production Redact must not call the legacy replacement dispatcher")
-
-    monkeypatch.setattr(EntityDetectionWorkflow, "run", detected)
-    monkeypatch.setattr(ReplacementWorkflow, "run", displaced)
-    path = tmp_path / "source.csv"
-    pd.DataFrame({"text": ["Alice travels.", "Alice stays.", "Alice leaves."], "extra": [17, 29, 43]}).to_csv(
-        path, index=False
-    )
-    anonymizer = public_anonymizer(scripted_detection, artifact_path=tmp_path / "public")
-    config = AnonymizerConfig(replace=Redact(), emit_telemetry=False)
-    data = AnonymizerInput(source=str(path))
-    result = (
-        anonymizer.preview(config=config, data=data, num_records=2)
-        if preview
-        else anonymizer.run(config=config, data=data)
-    )
-    expected = ["[REDACTED_FIRST_NAME] travels.", "[REDACTED_FIRST_NAME] stays.", "[REDACTED_FIRST_NAME] leaves."][
-        : 2 if preview else 3
-    ]
-    assert result.dataframe["text_replaced"].tolist() == expected
-    assert result.trace_dataframe["extra"].tolist() == [17, 29, 43][: len(expected)]
-    assert result.failed_records == []
-    assert result._execution is not None
-    assert len(detections) == 1
-    assert len(detections[0][0]) == len(expected)
-    assert detections[0][1]["source_frame"] is not None
-    assert "request_bridge" not in detections[0][1]
-    assert result._execution._execution.context.prepared.declared_request_upper_bound is None
-    assert not result._execution.requests.dispatches
-    assert not any(str(name).startswith("_anonymizer_source_") for name in result.trace_dataframe.columns)
-    assert calls == {**dict.fromkeys(("detector", "validator", "augmenter"), len(expected)), "readiness": 1}
-
-
 @pytest.mark.parametrize("rows,preview", [(6, None), (7, None), (20, None), (20, 7), (1025, None)])
 def test_public_batch_span_items_are_aggregated(scripted_detection, tmp_path, rows, preview):
     path = tmp_path / "batch.csv"
@@ -263,8 +214,6 @@ def test_public_batch_span_items_are_aggregated(scripted_detection, tmp_path, ro
     assert result.dataframe["text_replaced"].tolist() == ["[REDACTED_FIRST_NAME]."] * selected
     assert result.trace_dataframe["extra"].tolist() == list(range(selected))
     assert result.failed_records == []
-    assert len(result._execution.frames) == 1
-    assert len(result._execution.final_outputs) == selected
     assert scripted_detection[3] == {
         **dict.fromkeys(("detector", "validator", "augmenter"), selected),
         "readiness": 1,
@@ -318,36 +267,6 @@ def _modify_dd_responses(scripted_detection, monkeypatch, modify):
     monkeypatch.setattr(designer, "_create_resource_provider", resources)
 
 
-async def run_graph_profile(scripted_detection, source, options, replace_method=None):
-    """The facade's opaque detection/Redact invocation on a one-worker pool; returns its execution."""
-    from anonymizer.config.replace_strategies import Redact
-    from anonymizer.engine.detection._graph_invocation import DetectionRedactInvocation
-    from anonymizer.engine.detection._opaque_redact import execute_injected_redact
-    from anonymizer.engine.graph_sdk.blocking import BlockingPool
-    from anonymizer.engine.replace._graph_redact import local_configuration
-
-    designer, models, selected, _ = scripted_detection
-    configuration = local_configuration(replace_method if replace_method is not None else Redact())
-    pool = BlockingPool(max_workers=1)
-    try:
-        return await execute_injected_redact(
-            DetectionRedactInvocation(
-                source,
-                (),
-                EntityDetectionWorkflow(NddAdapter(designer)),
-                models,
-                selected,
-                configuration,
-                options,
-                "redacted",
-                "ok",
-            ),
-            pool,
-        )
-    finally:
-        await pool.close()
-
-
 @pytest.mark.parametrize(
     "command,method,template,token",
     [
@@ -357,21 +276,11 @@ async def run_graph_profile(scripted_detection, source, options, replace_method=
         ("preview", "annotate", "<{text}:{label}>", "<Alice:first_name>"),
     ],
 )
-def test_cli_local_replace_uses_actual_graph(
+def test_cli_local_replace_matches_release(
     scripted_detection, monkeypatch, tmp_path, capsys, command, method, template, token
 ):
-    import anonymizer.interface.anonymizer as facade
     import anonymizer.interface.cli.main as cli
 
-    executions = []
-    run = facade.run_detection_redact
-
-    def capture(*args, **kwargs):
-        result = run(*args, **kwargs)
-        executions.append(result._execution)
-        return result
-
-    monkeypatch.setattr(facade, "run_detection_redact", capture)
     monkeypatch.setattr(cli, "Anonymizer", lambda **kwargs: public_anonymizer(scripted_detection))
     monkeypatch.setattr(cli, "_configure_logging", lambda opts: None)
     path = tmp_path / "cli.csv"
@@ -391,7 +300,6 @@ def test_cli_local_replace_uses_actual_graph(
     with pytest.raises(SystemExit) as stopped:
         cli.app(arguments)
     assert stopped.value.code == 0
-    assert len(executions) == 1 and executions[0] is not None
     if command == "run":
         assert pd.read_csv(tmp_path / "cli_anonymized.csv")["text_replaced"].tolist() == [
             f"{token} travels.",
@@ -448,12 +356,8 @@ def test_public_graph_preserves_failed_source_order_and_injected_result(scripted
     legacy = public_anonymizer(
         scripted_detection, detection_workflow=EntityDetectionWorkflow(NddAdapter(designer))
     ).run(config=config, data=data)
-    assert legacy._execution is not None
-    assert legacy._execution._execution.context.prepared.declared_request_upper_bound is None
-    assert not legacy._execution.final_outputs
     calls.clear()
     result = public_anonymizer(scripted_detection).run(config=config, data=data)
-    assert result._execution is not None
     pd.testing.assert_frame_equal(result.dataframe, legacy.dataframe)
     pd.testing.assert_frame_equal(result.trace_dataframe, legacy.trace_dataframe)
     assert result.failed_records == legacy.failed_records
@@ -468,7 +372,6 @@ def test_public_opaque_dd_preserves_backend_retry_and_usage_behavior(scripted_de
     from data_designer.engine.models.clients.model_request_executor import ModelRequestExecutor
 
     from anonymizer import Detect
-    from anonymizer.engine.harness.frames import PublishedFrame
 
     monkeypatch.setattr(ModelRequestExecutor, "_retry_delay_seconds", lambda self, attempt: 0)
     remaining = [1 if case == "rate_limit" else 4 if case == "second_chunk" else 0]
@@ -512,8 +415,3 @@ def test_public_opaque_dd_preserves_backend_retry_and_usage_behavior(scripted_de
         "augmenter": 1,
         "readiness": 1,
     }
-    execution = result._execution
-    assert execution is not None and isinstance(execution.frames[0], PublishedFrame)
-    assert execution._execution.context.prepared.declared_request_upper_bound is None
-    assert execution._execution.capabilities[0].attribution == "per_task"
-    assert not execution.requests.dispatches

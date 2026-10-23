@@ -4,7 +4,6 @@
 
 from __future__ import annotations
 
-import pickle
 from dataclasses import replace
 from functools import partial
 
@@ -15,13 +14,7 @@ from anonymizer.config.anonymizer_config import AnonymizerConfig, AnonymizerInpu
 from anonymizer.config.replace_strategies import Annotate, Hash, Redact, Substitute
 from anonymizer.engine.constants import COL_FINAL_ENTITIES, COL_REPLACED_TEXT, COL_TEXT
 from anonymizer.engine.detection.detection_workflow import EntityDetectionResult
-from anonymizer.engine.graph_sdk.capabilities import ImplementationSelection, PreparationRejected
-from anonymizer.engine.graph_sdk.executor import ExecutionResult
-from anonymizer.engine.graph_sdk.inspection import InspectionLimits, bind_inspection_source, explain, inspect
-from anonymizer.engine.graph_sdk.preparation import prepare
-from anonymizer.engine.graph_sdk.qualification import qualify
 from anonymizer.engine.replace.replace_runner import ReplacementResult
-from tests.graph_sdk.qualification_fixtures import _inputs
 from tests.interface.test_anonymizer_interface import _make_anonymizer
 from tests.retained import retained
 
@@ -36,7 +29,7 @@ def _input(tmp_path, rows=2):
     "strategy,preview",
     [(Redact(), False), (Redact(), True), (Hash(), False), (Annotate(), True), (Substitute(), False)],
 )
-def test_injected_redact_keeps_frame_calls_and_reports_unknown_work(tmp_path, strategy, preview):
+def test_injected_redact_keeps_frame_and_calls(tmp_path, strategy, preview):
     detected = pd.DataFrame(
         {COL_TEXT: ["same", "same"], COL_FINAL_ENTITIES: [{"entities": []}] * 2}, index=pd.Index([7, 7])
     )
@@ -77,81 +70,16 @@ def test_injected_redact_keeps_frame_calls_and_reports_unknown_work(tmp_path, st
     assert result.trace_dataframe["text_replaced"].tolist() == ["second", "first"]
     assert result.trace_dataframe.index.tolist() == [7, 7]
     assert result.trace_dataframe["extra"].iloc[0] is cell
-    execution = result._execution
-    assert isinstance(execution, ExecutionResult)
-    admitted = execution._execution
-    prepared = admitted.context.prepared
-    assert prepared.declared_request_upper_bound is None
-    assert not execution.requests.dispatches and not execution.final_outputs
-    assert execution.invocation_state is not None
-    assert [entry.status for entry in execution.invocation_state.entries] == ["success"]
-    from anonymizer.engine.harness.frames import InvocationFrame
-
-    frame = execution.frames[0]
-    assert isinstance(frame, InvocationFrame)
-    assert frame.row_counts == (2, 2)
-    assert frame.text_bytes == 27
-    assert len(execution.record.terminals) == 1
-    assert execution.cleanup[0].disposition == "left_open"
-    source = bind_inspection_source(
-        prepared=prepared,
-        context=admitted.context,
-        execution_plan=admitted,
-        execution=execution,
-        limits=InspectionLimits(
-            max_nodes=100,
-            max_depth=20,
-            max_pairs=100,
-            max_events=100,
-            max_reason_counts=20,
-            max_encoded_bytes=65536,
-            max_count=100,
-        ),
-    )
-    forecast = explain(source=source)
-    assert forecast.requests.upper_bound.knowledge == "unknown"
-    assert forecast.hard_budget_support == "unsupported"
-    observed = inspect(source=source)
-    assert observed.requests.total.knowledge == "unknown"
-    assert observed.usage.input_units.knowledge == "unknown"
-    qualification, current, submissions = _inputs(admitted, execution)
-    assert not qualify(admitted=qualification, result=execution, current=current, submissions=submissions).qualified
-    restored = pickle.loads(pickle.dumps(result))
-    assert restored._execution is None
-    assert detector.run.call_count == replacement.run.call_count == 1
-    with pytest.raises(PreparationRejected, match="hard_budget_incompatible"):
-        prepare(
-            data=prepared.data,
-            workflow=prepared.workflow,
-            activation_limits=prepared.activation_limits,
-            bound_inputs=(),
-            configuration=replace(prepared.configuration, hard_request_limit=1),
-            selections=tuple(
-                # The real consumer's selected implementation is reused unchanged.
-                ImplementationSelection(
-                    node=item.node,
-                    implementation=item.capability.implementation,
-                    configuration=item.capability.configuration,
-                )
-                for item in prepared.implementations
-            ),
-            capabilities=admitted.capabilities,
-            limits=prepared.limits,
-        )
-    assert detector.run.call_count == replacement.run.call_count == 1
 
 
 @pytest.mark.parametrize("stage", ["detection", "replacement"])
-def test_injected_exception_identity_and_owner_survive(tmp_path, stage):
+def test_injected_exception_identity_survives(tmp_path, stage):
     anonymizer, detector, replacement, _ = _make_anonymizer()
     error = ValueError("callback-owned failure")
     (detector if stage == "detection" else replacement).run.side_effect = error
     with pytest.raises(ValueError) as caught:
         anonymizer.run(config=AnonymizerConfig(replace=Redact()), data=_input(tmp_path, 1))
     assert caught.value is error
-    execution = retained(error)
-    assert execution._execution.context.prepared.declared_request_upper_bound is None
-    assert not execution.requests.dispatches and not execution.frames
     assert detector.run.call_count == 1
     assert replacement.run.call_count == (stage == "replacement")
 
@@ -247,7 +175,6 @@ def test_empty_injected_frame_still_calls_both_callbacks(tmp_path):
     result = anonymizer.run(config=AnonymizerConfig(replace=Redact()), data=_input(tmp_path, 0))
     assert detector.run.call_count == replacement.run.call_count == 1
     assert result.dataframe.empty
-    assert result._execution is not None
 
 
 def _execute_callback():
@@ -361,6 +288,6 @@ def test_injected_callbacks_keep_caller_thread_context_and_running_loop(tmp_path
     loop = None
     try:
         result = asyncio.run(run())
-        assert len(calls) == 2 and result._execution is not None
+        assert len(calls) == 2 and result.dataframe is not None
     finally:
         connection.close()

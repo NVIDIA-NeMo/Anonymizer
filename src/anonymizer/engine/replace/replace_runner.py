@@ -4,10 +4,8 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterator
-from contextlib import contextmanager
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, cast
 
 import pandas as pd
 from data_designer.config.models import ModelConfig
@@ -53,14 +51,6 @@ class ReplacementResult:
     _execution: ExecutionResult | None = field(default=None, repr=False, compare=False)
 
 
-@contextmanager
-def replacement_stage(strategy: str, dataframe: pd.DataFrame) -> Iterator[dict[str, Any]]:
-    """Measure one replacement run, whether the builtin runner or the graph lowers it."""
-    with stage_timer("ReplacementWorkflow.run", strategy=strategy, input_row_count=len(dataframe)) as measurement:
-        logger.debug("replacement starting on %d records", len(dataframe))
-        yield measurement
-
-
 class ReplacementWorkflow:
     """Dispatch replace execution between local and LLM-backed strategies."""
 
@@ -95,36 +85,31 @@ class ReplacementWorkflow:
         dataframe when you want the Judge Agreement scores.
         """
         strategy = type(replace_method).__name__
-        with replacement_stage(strategy, dataframe) as measurement:
+        with stage_timer("ReplacementWorkflow.run", strategy=strategy, input_row_count=len(dataframe)) as measurement:
+            logger.debug("replacement starting on %d records", len(dataframe))
             if isinstance(replace_method, (Annotate, Redact, Hash)):
                 local_df = apply_local_replace_strategy(dataframe, strategy=replace_method)
                 failed_records: list[FailedRecord] = []
             elif isinstance(replace_method, Substitute):
                 if self._llm_workflow is None:
                     raise ValueError("Substitute requires an llm_workflow, but none was provided.")
-                from anonymizer.engine.replace._semantic_replace import run_substitute
+                from anonymizer.engine.replace.route import run_substitute_route
 
-                result = run_substitute(
-                    self,
+                substituted = run_substitute_route(
                     dataframe,
-                    dict(
-                        replace_method=replace_method,
+                    llm_workflow=self._llm_workflow,
+                    replace_method=replace_method,
+                    map_arguments=dict(
                         model_configs=model_configs,
                         selected_models=selected_models,
                         preview_num_records=preview_num_records,
                     ),
                 )
-                local_df = result.dataframe
-                failed_records = result.failed_records
-
+                local_df, failed_records = substituted.dataframe, substituted.failed_records
             else:
                 raise ValueError(f"Unsupported replace method: {type(replace_method).__name__}")
 
-            result = ReplacementResult(
-                dataframe=local_df,
-                failed_records=failed_records,
-                _execution=getattr(result, "_execution", None) if isinstance(replace_method, Substitute) else None,
-            )
+            result = ReplacementResult(dataframe=local_df, failed_records=failed_records)
             measurement.update(
                 output_row_count=len(result.dataframe),
                 failed_record_count=len(result.failed_records),
@@ -269,7 +254,3 @@ class ReplacementWorkflow:
         for judge in active:
             judged_df = judge.postprocess(judged_df)
         return judged_df
-
-
-# Pin library entry identity so a patched or overriding runner is classified as the caller's own.
-_REPLACEMENT_RUN = ReplacementWorkflow.run

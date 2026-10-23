@@ -808,7 +808,10 @@ async def execute_detection(
             frame=FramePublication.capture(
                 result.dataframe,
                 associations=tuple(terminal),
-                text_ports=((COL_TEXT, "returned_source"),),
+                # A null or non-string source cell is published as it came; only its rendered root text is bound.
+                text_ports=((COL_TEXT, "returned_source"),)
+                if result.dataframe[COL_TEXT].map(type).eq(str).all()
+                else (),
                 failed_records=tuple(result.failed_records),
                 opaque_source=frame,
                 json_ports=tuple(

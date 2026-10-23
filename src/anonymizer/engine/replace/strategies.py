@@ -7,21 +7,16 @@ import json
 import logging
 from collections import Counter
 from dataclasses import dataclass
-from itertools import repeat
 
 import pandas as pd
 
 from anonymizer.config.replace_strategies import LocalReplaceMethod
 from anonymizer.engine.constants import (
     COL_FINAL_ENTITIES,
-    COL_REPLACED_TEXT,
-    COL_REPLACEMENT_APPLICATION,
-    COL_REPLACEMENT_MAP,
     COL_TEXT,
 )
 from anonymizer.engine.detection.postprocess import EntitySpan
 from anonymizer.engine.schemas import EntitiesSchema
-from anonymizer.logging import ProgressTracker
 
 logger = logging.getLogger("anonymizer")
 
@@ -58,92 +53,10 @@ def apply_local_replace_strategy(
     text_column: str = COL_TEXT,
     entities_column: str = COL_FINAL_ENTITIES,
 ) -> pd.DataFrame:
-    """Apply deterministic local replace strategy on detected entities."""
-    output_df = dataframe.copy()
-    tracker = ProgressTracker(total=len(output_df), label="Replacement")
+    """Apply deterministic local replace strategy on detected entities (runs on the graph kernel)."""
+    from anonymizer.engine.replace.route import run_local_route
 
-    _debug = logger.isEnabledFor(logging.DEBUG)
-    total_label_counts: Counter[str] = Counter()
-    replacement_maps = []
-    entity_values = output_df[entities_column] if entities_column in output_df.columns else repeat({}, len(output_df))
-    for raw_entities in entity_values:
-        rmap = _build_local_replacement_map(
-            entities=EntitiesSchema.from_raw(raw_entities),
-            strategy=strategy,
-        )
-        replacement_maps.append(rmap)
-        if _debug:
-            row_counts: Counter[str] = Counter()
-            for r in rmap.get("replacements", []):
-                row_counts[r.get("label", "unknown")] += 1
-            total_label_counts += row_counts
-            n = sum(row_counts.values())
-            logger.debug("  record replacement count: %d", n)
-        tracker.record_success()
-    output_df[COL_REPLACEMENT_MAP] = replacement_maps
-
-    if _debug:
-        total = sum(total_label_counts.values())
-        logger.debug("replacement stats: %d unique entities replaced", total)
-
-    _apply_replacement_maps_to_dataframe(
-        output_df,
-        text_column=text_column,
-        entities_column=entities_column,
-        replacement_map_column=COL_REPLACEMENT_MAP,
-    )
-
-    tracker.log_final()
-    return output_df
-
-
-def apply_replacement_map(
-    dataframe: pd.DataFrame,
-    *,
-    text_column: str = COL_TEXT,
-    entities_column: str = COL_FINAL_ENTITIES,
-    replacement_map_column: str = COL_REPLACEMENT_MAP,
-) -> pd.DataFrame:
-    """Apply pre-generated replacement map to text."""
-    output_df = dataframe.copy()
-    _apply_replacement_maps_to_dataframe(
-        output_df,
-        text_column=text_column,
-        entities_column=entities_column,
-        replacement_map_column=replacement_map_column,
-    )
-    return output_df
-
-
-def _apply_replacement_maps_to_dataframe(
-    dataframe: pd.DataFrame,
-    *,
-    text_column: str,
-    entities_column: str,
-    replacement_map_column: str,
-) -> None:
-    """Apply aligned replacement-map columns and write replacement results in place."""
-    text_values = dataframe[text_column] if text_column in dataframe.columns else repeat("", len(dataframe))
-    entity_values = dataframe[entities_column] if entities_column in dataframe.columns else repeat({}, len(dataframe))
-    map_values = (
-        dataframe[replacement_map_column]
-        if replacement_map_column in dataframe.columns
-        else repeat({"replacements": []}, len(dataframe))
-    )
-
-    replaced_texts = []
-    applications = []
-    for text, raw_entities, raw_map in zip(text_values, entity_values, map_values, strict=True):
-        replaced_text, application = apply_replacements_to_spans(
-            text=str(text),
-            entities=EntitiesSchema.from_raw(raw_entities),
-            replacements=_parse_replacements(raw_map),
-            allow_value_fallback=True,
-        )
-        replaced_texts.append(replaced_text)
-        applications.append(application.to_metrics())
-    dataframe[COL_REPLACED_TEXT] = replaced_texts
-    dataframe[COL_REPLACEMENT_APPLICATION] = applications
+    return run_local_route(dataframe, strategy=strategy, text_column=text_column, entities_column=entities_column)
 
 
 def _build_local_replacement_map(
@@ -163,11 +76,6 @@ def _build_local_replacement_map(
         synthetic = strategy.replace(text=entity.value, label=entity.label)
         replacements.append({"original": entity.value, "label": entity.label, "synthetic": synthetic})
     return {"replacements": replacements}
-
-
-def _apply_replacement_map_to_text(text: str, entities: EntitiesSchema, replacements: list[ReplacementEntry]) -> str:
-    """Compatibility wrapper around the canonical offset replacement primitive."""
-    return apply_replacements_to_spans(text, entities, replacements, allow_value_fallback=True)[0]
 
 
 def apply_replacements_to_spans(

@@ -393,7 +393,6 @@ async def execute_initial_evaluation(
             map_configuration_snapshot,
             submission_owner=detection_ids["entry"] if detection_ids else cast(NodeId, map_entry),
             predecessor=detection_ids["final"] if detection_ids else map_entry,
-            optional=True,
         )
         capabilities = (*capabilities, *map_caps)
         policies = (*policies, *map_policies)
