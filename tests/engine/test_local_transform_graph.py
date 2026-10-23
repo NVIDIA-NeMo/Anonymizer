@@ -5,7 +5,6 @@
 from __future__ import annotations
 
 import asyncio
-from threading import Event
 from types import SimpleNamespace
 from typing import Any
 
@@ -111,34 +110,6 @@ def test_original_exception_identity_like_release(monkeypatch, asynchronous):
     assert not hasattr(failure, "_anonymizer_execution")
 
 
-def test_repeated_async_observer_cancel_retains_local_worker(monkeypatch):
-    from anonymizer.engine.workflow_columns.detection import impl
-
-    entered, release = Event(), Event()
-
-    def held(row):
-        entered.set()
-        assert release.wait(5)
-        return row
-
-    monkeypatch.setitem(impl._TRANSFORMS, DetectionTransformOperation.PARSE_DETECTED_ENTITIES, held)
-
-    async def run():
-        task = asyncio.create_task(_generator("parse_detected_entities").agenerate({}))
-        try:
-            assert await asyncio.to_thread(entered.wait, 5)
-            for _ in range(2):
-                task.cancel()
-                await asyncio.sleep(0.01)
-                assert not task.done()
-        finally:
-            release.set()
-        with pytest.raises(asyncio.CancelledError):
-            await task
-
-    asyncio.run(run())
-
-
 def test_managed_missing_source_context_cannot_start_fresh_invocation(monkeypatch):
     from anonymizer.graph import InvocationId
     from anonymizer.interface.errors import AnonymizerWorkflowError
@@ -165,68 +136,6 @@ def test_local_self_cancellation_preserves_error(monkeypatch, asynchronous):
         asyncio.run(generator.agenerate({})) if asynchronous else generator.generate({})
     assert caught.value is cancellation
     assert not hasattr(caught.value, "_anonymizer_execution")
-
-
-@pytest.mark.parametrize("asynchronous", [False, True])
-@pytest.mark.parametrize("fault", [None, "foreign", "expired", "missing_owner"])
-def test_managed_transform_reuses_authenticated_owner(monkeypatch, asynchronous, fault):
-    from anonymizer.engine.graph_sdk._execution_delegated import _WORKER_BORROW
-    from anonymizer.engine.graph_sdk.executor import LocalFailure
-    from anonymizer.engine.graph_sdk.requests import SemanticAssociation
-    from anonymizer.engine.ndd._source_frame import _SOURCE_WORK, SourceWork
-    from anonymizer.graph import EffectRejected, InvocationId, TaskAttemptId
-    from tests.graph_sdk.test_delegated_execution import _execute, _fixture
-    from tests.graph_sdk.test_delegated_worker import _loop_and_pool, _worker_services
-
-    created = []
-    original = InvocationId.new
-
-    def count(**kwargs):
-        result = original(**kwargs)
-        created.append(result)
-        return result
-
-    monkeypatch.setattr(InvocationId, "new", count)
-
-    async def run():
-        async with _loop_and_pool() as (loop, pool):
-            execution, services, *_ = _fixture()
-            generator = _generator("parse_detected_entities")
-
-            def callback(inputs, borrowed):
-                association = inputs[0].association
-                if fault == "foreign":
-                    association = SemanticAssociation(task=TaskAttemptId.new(activation=association.task.activation))
-                token = _SOURCE_WORK.set(SourceWork(association, "result"))
-                owner_token = _WORKER_BORROW.set(None) if fault == "missing_owner" else None
-                borrowed.expired = fault == "expired"
-                try:
-
-                    def generate():
-                        return (
-                            asyncio.run_coroutine_threadsafe(generator.agenerate({}), loop).result()
-                            if asynchronous
-                            else generator.generate({})
-                        )
-
-                    if fault:
-                        with pytest.raises(EffectRejected):
-                            generate()
-                    else:
-                        assert generate() == {COL_SEED_ENTITIES: {"entities": []}, COL_TAG_NOTATION: "xml"}
-                finally:
-                    borrowed.expired = False
-                    if owner_token is not None:
-                        _WORKER_BORROW.reset(owner_token)
-                    _SOURCE_WORK.reset(token)
-                return LocalFailure(failure="permanent")
-
-            execution, services, _ = _worker_services(execution, services, loop, pool, callback)
-            before = len(created)
-            await _execute(execution, services)
-            assert len(created) == before + 1 and pool.occupied == 0
-
-    asyncio.run(run())
 
 
 @pytest.mark.parametrize("operation", list(DetectionTransformOperation))

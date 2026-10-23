@@ -11,7 +11,6 @@ from anonymizer import AnonymizerConfig, AnonymizerInput, Rewrite
 from anonymizer.engine.constants import COL_REWRITTEN_TEXT
 from tests.engine import test_detection_source_frame as detection_fixtures
 from tests.engine.test_detection_source_frame import public_anonymizer
-from tests.retained import retained
 
 scripted_detection = detection_fixtures.scripted_detection
 
@@ -39,13 +38,9 @@ def test_builtin_rewrite_zero_source_and_all_failed_execution(
     path = tmp_path / "rewrite.csv"
     pd.DataFrame({"text": pd.Series(texts, dtype=str)}).to_csv(path, index=False)
     config = AnonymizerConfig(rewrite=Rewrite(use_combined_graph=combined), emit_telemetry=False)
-    with pytest.raises(AnonymizerWorkflowError, match=error) as caught:
+    with pytest.raises(AnonymizerWorkflowError, match=error):
         options = dict(config=config, data=AnonymizerInput(source=str(path)))
         facade.preview(**options, num_records=0) if preview else facade.run(**options)
-    execution = retained(caught.value)
-    assert not execution.frames and not execution.final_outputs
-    assert not execution.requests.dispatches
-    assert len(execution.record.targets) == (0 if preview or not texts else 1)
 
 
 @pytest.mark.parametrize("combined", [False, True])

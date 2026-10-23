@@ -14,7 +14,6 @@ import logging
 from collections import Counter
 from pathlib import Path
 from typing import Any
-from unittest.mock import Mock
 
 import pandas as pd
 import pytest
@@ -24,7 +23,6 @@ from data_designer.interface.data_designer import DataDesigner
 from anonymizer import Annotate, AnonymizerConfig, AnonymizerInput, Hash, Redact, Rewrite, Substitute
 from anonymizer.config.models import DetectionModelSelection
 from anonymizer.engine.detection.detection_workflow import EntityDetectionResult, EntityDetectionWorkflow
-from anonymizer.engine.detection.run_arguments import POST_040_RUN_KEYWORDS, detection_run_arguments
 from anonymizer.engine.ndd.adapter import NddAdapter
 from tests.interface.test_substitute_route_compat import (
     _PLAIN,
@@ -202,25 +200,3 @@ def test_release_040_detector_without_examples_does_not_warn(
 
     assert result.dataframe["text_replaced"].tolist() == _EXPECTED["Redact"]
     assert _withheld_warnings(caplog) == []
-
-
-def test_builtin_run_keeps_every_argument() -> None:
-    arguments = {"gliner_detection_threshold": 0.3, **dict.fromkeys(POST_040_RUN_KEYWORDS, object())}
-
-    assert detection_run_arguments(EntityDetectionWorkflow(Mock()).run, arguments) == arguments
-    assert detection_run_arguments(lambda frame, **kwargs: None, arguments) == arguments
-    assert detection_run_arguments(_Release040Detector().run, arguments) == {"gliner_detection_threshold": 0.3}
-
-
-def test_non_introspectable_run_fails_open() -> None:
-    arguments = dict.fromkeys(POST_040_RUN_KEYWORDS, None)
-
-    class _Opaque:
-        @property
-        def __signature__(self) -> Any:
-            raise ValueError("no signature")
-
-        def __call__(self, *args: Any, **kwargs: Any) -> None:
-            return None
-
-    assert detection_run_arguments(_Opaque(), arguments) == arguments

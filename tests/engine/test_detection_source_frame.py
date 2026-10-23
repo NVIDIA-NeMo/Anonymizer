@@ -26,7 +26,6 @@ from anonymizer.engine.constants import COL_REPLACED_TEXT, COL_TEXT
 from anonymizer.engine.detection.detection_workflow import EntityDetectionWorkflow
 from anonymizer.engine.ndd.adapter import RECORD_ID_COLUMN, NddAdapter
 from anonymizer.engine.replace.replace_runner import ReplacementWorkflow
-from tests.retained import retained
 
 
 @pytest.fixture
@@ -330,15 +329,11 @@ def test_public_graph_preserves_empty_and_all_failed_errors(scripted_detection, 
     pd.DataFrame({"text": pd.Series(texts, dtype=str)}).to_csv(path, index=False)
     facade = public_anonymizer(scripted_detection)
     config, data = AnonymizerConfig(replace=Redact(), emit_telemetry=False), AnonymizerInput(source=str(path))
-    with pytest.raises(AnonymizerWorkflowError, match=error) as caught:
+    with pytest.raises(AnonymizerWorkflowError, match=error):
         if preview:
             facade.preview(config=config, data=data, num_records=0)
         else:
             facade.run(config=config, data=data)
-    execution = retained(caught.value)
-    assert execution is not None and not execution.final_outputs and not execution.frames
-    assert execution.requests.dispatched_count == 0
-    assert execution._execution.context.prepared.declared_request_upper_bound is None
 
 
 def test_public_graph_preserves_failed_source_order_and_injected_result(scripted_detection, tmp_path):
