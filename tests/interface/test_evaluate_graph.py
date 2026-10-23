@@ -10,13 +10,8 @@ import pandas as pd
 import pytest
 
 from anonymizer.config.replace_strategies import Redact
-from anonymizer.engine.constants import COL_REPLACED_TEXT, COL_TEXT
-from anonymizer.engine.graph_sdk.executor import ExecutionResult
-from anonymizer.engine.harness.frames import InvocationFrame
-from anonymizer.engine.replace.replace_runner import ReplacementResult
-from anonymizer.interface.results import AnonymizerResult, PreviewResult
+from anonymizer.interface.results import AnonymizerResult
 from tests.interface.test_anonymizer_interface import _make_anonymizer
-from tests.retained import retained
 
 
 @pytest.fixture
@@ -24,46 +19,6 @@ def evaluation_dd(tmp_path, monkeypatch):
     from tests.engine.test_detection_source_frame import scripted_detection
 
     yield from getattr(scripted_detection, "__wrapped__")(tmp_path, monkeypatch)
-
-
-@pytest.mark.parametrize("saved", [False, True])
-def test_evaluate_owns_fresh_execution_and_retains_live_input(saved):
-    trace = pd.DataFrame({"biography": ["Alice"], "biography_replaced": ["hidden"]})
-    prior = object()
-    output = AnonymizerResult(trace, trace, "biography", [], replace_method=Redact())
-    output._execution = prior
-    if saved:
-        output = PreviewResult(trace, trace, "biography", [], 1, replace_method=Redact())
-        output._execution = prior
-        output = pickle.loads(pickle.dumps(output))
-        assert output._execution is None
-    anonymizer, _, replacement, _ = _make_anonymizer()
-    replacement.evaluate.return_value = ReplacementResult(
-        pd.DataFrame({COL_TEXT: ["Alice"], COL_REPLACED_TEXT: ["hidden"], "entity_coverage": [1.0]}), []
-    )
-    result = anonymizer.evaluate(output)
-    assert type(result) is AnonymizerResult
-    assert isinstance(result._execution, ExecutionResult)
-    assert result._execution is not output._execution
-    assert result._execution._execution.context.prepared.configuration.purpose == "execution_only"
-    assert result._execution._execution.context.prepared.declared_request_upper_bound is None
-    assert result._execution.requests.dispatches == ()
-    assert result._execution.final_outputs == ()
-    frame = result._execution.frames[0]
-    assert isinstance(frame, InvocationFrame) and isinstance(frame.retained_owner, tuple)
-    assert frame.retained_owner[0] is output._execution
-    assert replacement.evaluate.call_count == 1
-    assert replacement.evaluate.call_args.kwargs["replace_method"] is output.replace_method
-    assert result.dataframe["biography_replaced"].tolist() == ["hidden"]
-    assert result.dataframe["entity_coverage"].tolist() == [1.0]
-    assert pickle.loads(pickle.dumps(result))._execution is None
-    again = anonymizer.evaluate(result)
-    assert isinstance(again._execution, ExecutionResult)
-    assert again._execution is not result._execution
-    retained = again._execution.frames[0]
-    assert isinstance(retained, InvocationFrame) and isinstance(retained.retained_owner, tuple)
-    assert retained.retained_owner[0] is result._execution
-    assert not again._execution._execution.context.prepared.bound_inputs
 
 
 def test_injected_evaluate_preserves_caller_context_and_exception_identity():
@@ -101,9 +56,6 @@ def test_injected_evaluate_preserves_caller_context_and_exception_identity():
         with pytest.raises(ValueError) as caught:
             anonymizer.evaluate(output)
         assert caught.value is error
-        execution = retained(error)
-        assert isinstance(execution, ExecutionResult)
-        assert not execution.frames
 
     try:
         asyncio.run(active_loop())
@@ -226,8 +178,6 @@ def test_saved_evaluate_real_dd_preserves_rows_and_metrics(evaluation_dd, monkey
     result = anonymizer.evaluate(loaded, config=EvaluateConfig(compute_detection_validity=validity))
     if strategy == "Empty":
         assert result.dataframe.empty and result.failed_records == []
-        assert isinstance(result._execution, ExecutionResult)
-        assert result._execution.frames[0].row_counts == (0, 0)
         assert len(calls) == 1 and "Hello!" in calls[0]
         return
     assert result.dataframe["text"].tolist() == ["Alice", "Broken" if drop else "ordinary"]
@@ -251,8 +201,5 @@ def test_saved_evaluate_real_dd_preserves_rows_and_metrics(evaluation_dd, monkey
         assert result.dataframe[COL_JUDGE_EVALUATION].iloc[0]["privacy"]["score"] == "high"
         assert pd.isna(result.dataframe[COL_JUDGE_EVALUATION].iloc[1])
     assert len(calls) >= 2
-    assert isinstance(result._execution, ExecutionResult)
-    assert result._execution.frames[0].row_counts == (2, 2)
-    assert not result._execution.requests.dispatches
     assert result.entity_labels == ["first_name"] and result.excluded_entity_labels == ["email"]
     assert result.data_summary == "literal saved source"

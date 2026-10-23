@@ -20,8 +20,8 @@ import pandas as pd
 
 from anonymizer.engine.graph_sdk._graph_values import ActivationKey, ArtifactRef
 from anonymizer.engine.graph_sdk.requests import AssociationResult, SemanticAssociation, TextArtifactValue
+from anonymizer.engine.graph_sdk.rewrite_artifacts import RewriteCandidateValue
 from anonymizer.engine.ndd.failed_record import FailedRecord
-from anonymizer.engine.rewrite.artifacts import RewriteCandidateValue
 
 if TYPE_CHECKING:
     from collections.abc import Mapping

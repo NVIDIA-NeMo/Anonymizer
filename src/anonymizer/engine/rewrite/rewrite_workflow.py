@@ -4,10 +4,11 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
-from typing import Required, TypedDict
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass, field
 
 import pandas as pd
+import pyarrow as pa
 from data_designer.config.models import ModelConfig
 
 from anonymizer.config.models import EvaluateModelSelection, ReplaceModelSelection, RewriteModelSelection
@@ -20,23 +21,32 @@ from anonymizer.engine.constants import (
     COL_JUDGE_EVALUATION,
     COL_LEAKAGE_MASS,
     COL_NEEDS_HUMAN_REVIEW,
+    COL_NEEDS_REPAIR,
     COL_PRIVACY_QA_REANSWER,
     COL_QUALITY_QA_COMPARE,
     COL_QUALITY_QA_REANSWER,
     COL_REPAIR_ITERATIONS,
+    COL_REWRITE_REPLACEMENT_READY,
     COL_REWRITTEN_TEXT,
+    COL_REWRITTEN_TEXT_NEXT,
     COL_TEXT,
     COL_UTILITY_SCORE,
     COL_WEIGHTED_LEAKAGE_RATE,
 )
 from anonymizer.engine.evaluation.detection_judge import DetectionJudgeWorkflow
-from anonymizer.engine.graph_sdk._effect_values import EffectCode, reject
-from anonymizer.engine.harness.retention import RetainsExecution
-from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter
-from anonymizer.engine.replace.llm_replace_workflow import (
-    LlmReplaceWorkflow,  # noqa: F401 - captured injectable factory
+from anonymizer.engine.graph_core.authoring import (
+    DATUM,
+    GraphScope,
+    Limits,
+    Operation,
+    ProtectionGraph,
+    Requests,
+    Workflow,
 )
-from anonymizer.engine.rewrite._semantic_evaluation import RewriteEvaluationBinding
+from anonymizer.engine.graph_core.execution import prepare, protect
+from anonymizer.engine.graph_core.kernel import register_kind
+from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter
+from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceWorkflow
 from anonymizer.engine.rewrite.domain_classification import DomainClassificationWorkflow
 from anonymizer.engine.rewrite.evaluate import EvaluateWorkflow
 from anonymizer.engine.rewrite.final_judge import FinalJudgeWorkflow
@@ -58,20 +68,6 @@ from anonymizer.engine.row_partitioning import (
 )
 from anonymizer.engine.schemas import EntitiesByValueSchema
 from anonymizer.measurement import stage_timer
-
-
-class RewriteArguments(TypedDict, total=False):
-    """The Rewrite route's arguments, built once at the facade and passed through unchanged."""
-
-    model_configs: list[ModelConfig]
-    selected_models: RewriteModelSelection
-    replace_model_selection: ReplaceModelSelection
-    privacy_goal: PrivacyGoal
-    evaluation: Required[EvaluationCriteria]
-    data_summary: str | None
-    preview_num_records: int | None
-    strict_entity_protection: bool
-
 
 logger = logging.getLogger("anonymizer.rewrite.workflow")
 
@@ -191,10 +187,77 @@ def _apply_passthrough_defaults(
 
 
 @dataclass(frozen=True)
-class RewriteResult(RetainsExecution):
+class RewriteResult:
     dataframe: pd.DataFrame
     failed_records: list[FailedRecord]
     source_positions: tuple[int, ...] | None = None
+
+
+# ---------------------------------------------------------------------------
+# Kernel sequence
+# ---------------------------------------------------------------------------
+
+STAGE_DONE = register_kind("rewrite-stage-done", lambda v: v is True)
+
+
+@dataclass
+class _Rows:
+    """The rows a sequence of stages works on, and the failures they have reported."""
+
+    frame: pd.DataFrame
+    failed: list[FailedRecord] = field(default_factory=list)
+    passing: pd.DataFrame = field(default_factory=pd.DataFrame)
+    failing: pd.DataFrame = field(default_factory=pd.DataFrame)
+    converged: bool = False
+
+
+def run_stages(name: str, stages: Sequence[tuple[str, Callable[[], None]]]) -> None:
+    """Run ``stages`` in order as one kernel invocation, each an opaque operation over a single frame target.
+
+    The first error a stage raised is raised, as when the stages were called directly.
+    """
+
+    def operation(stage_name: str, stage: Callable[[], None]) -> Operation:
+        def run(target: object) -> bool:
+            stage()
+            return True
+
+        return Operation(stage_name, run, {"target": DATUM}, {"done": STAGE_DONE}, Requests.opaque())
+
+    scope = GraphScope()
+    graph = ProtectionGraph(scope, (scope.datum(""),))
+    workflow = Workflow(name, tuple(operation(*stage) for stage in stages))
+    limits = Limits(max_operations=len(stages), max_targets=1, max_mentions=0, max_context_items=0)
+    for entry in protect(prepare(graph, workflow, limits=limits)).state.entries:
+        if entry.error is not None:
+            raise entry.error
+
+
+def _replacement_unavailable(df: pd.DataFrame) -> pd.Series:
+    if COL_REWRITE_REPLACEMENT_READY in df.columns:
+        return ~df[COL_REWRITE_REPLACEMENT_READY].apply(bool)
+    return pd.Series(False, index=df.index)
+
+
+def _withhold_rewritten_text(df: pd.DataFrame) -> None:
+    """Null the rewritten text of rows whose replacements could not be applied.
+
+    When every rewrite in a DataDesigner batch is withheld, the rewritten column arrives as ``null[pyarrow]``
+    and a masked assignment into it aborts the process inside pyarrow. That column holds only nulls, so give it
+    the Arrow string dtype a partially withheld batch has: that of the batch's source text.
+    """
+    column = df[COL_REWRITTEN_TEXT]
+    if isinstance(column.dtype, pd.ArrowDtype) and pa.types.is_null(column.dtype.pyarrow_dtype):
+        text = df[COL_TEXT].dtype if COL_TEXT in df.columns else None
+        dtype = (
+            text
+            if isinstance(text, pd.ArrowDtype)
+            and (pa.types.is_string(text.pyarrow_dtype) or pa.types.is_large_string(text.pyarrow_dtype))
+            else pd.ArrowDtype(pa.string())
+        )
+        df[COL_REWRITTEN_TEXT] = pd.Series(pd.array([None] * len(df), dtype=dtype), index=df.index)
+        return
+    df.loc[_replacement_unavailable(df), COL_REWRITTEN_TEXT] = None
 
 
 # ---------------------------------------------------------------------------
@@ -235,52 +298,8 @@ class RewriteWorkflow:
         preview_num_records: int | None = None,
         strict_entity_protection: bool = False,
     ) -> RewriteResult:
-        from anonymizer.engine.rewrite._semantic_profile import run_builtin_rewrite
-
-        arguments: RewriteArguments = dict(
-            model_configs=model_configs,
-            selected_models=selected_models,
-            replace_model_selection=replace_model_selection,
-            privacy_goal=privacy_goal,
-            evaluation=evaluation,
-            data_summary=data_summary,
-            preview_num_records=preview_num_records,
-            strict_entity_protection=strict_entity_protection,
-        )
-        if dataframe.empty:
-            return RewriteResult(_apply_passthrough_defaults(dataframe.copy()), [], ())
-        from anonymizer.engine.graph_sdk._execution_delegated import _WORKER_BORROW
-
-        # Called from inside another invocation's worker (a caller's runner delegating to this builtin, as
-        # on main): run the builtin as its own invocation, not as a borrow of the caller's.
-        token = _WORKER_BORROW.set(None)
-        try:
-            return run_builtin_rewrite(self, dataframe, arguments)
-        finally:
-            _WORKER_BORROW.reset(token)
-
-    def _run_lowering(
-        self,
-        dataframe: pd.DataFrame,
-        *,
-        model_configs: list[ModelConfig],
-        selected_models: RewriteModelSelection,
-        replace_model_selection: ReplaceModelSelection,
-        privacy_goal: PrivacyGoal,
-        evaluation: EvaluationCriteria,
-        data_summary: str | None = None,
-        preview_num_records: int | None = None,
-        strict_entity_protection: bool = False,
-        binding: RewriteEvaluationBinding,
-    ) -> RewriteResult:
-        """The builtin Rewrite lowering; called only by the admitted graph with its binding."""
-        with stage_timer(
-            "CombinedRewriteWorkflow.run" if binding.combined else "RewriteWorkflow.run", input_row_count=len(dataframe)
-        ) as measurement:
-            all_failed: list[FailedRecord] = []
-
+        with stage_timer("RewriteWorkflow.run", input_row_count=len(dataframe)) as measurement:
             entity_rows, passthrough_rows = split_rows(dataframe, column=COL_ENTITIES_BY_VALUE, predicate=_has_entities)
-            replace_result = binding.prepare_replacement_maps(entity_rows, passthrough_rows)
             measurement.update(
                 entity_row_count=len(entity_rows),
                 passthrough_row_count=len(passthrough_rows),
@@ -289,111 +308,51 @@ class RewriteWorkflow:
             # Fast path: no entities anywhere
             if entity_rows.empty:
                 _apply_passthrough_defaults(passthrough_rows)
-                result_df = merge_and_reorder(passthrough_rows)
                 result = RewriteResult(
-                    dataframe=result_df,
-                    failed_records=all_failed,
+                    dataframe=merge_and_reorder(passthrough_rows),
+                    failed_records=[],
                     source_positions=tuple(sorted(passthrough_rows[ROW_ORDER_COL])),
                 )
-                measurement.update(
-                    output_row_count=len(result.dataframe),
-                    failed_record_count=len(result.failed_records),
-                )
+                measurement.update(output_row_count=len(result.dataframe), failed_record_count=0)
                 return result
 
-            if binding.combined:
-                from anonymizer.engine.rewrite.combined_rewrite_workflow import (
-                    CombinedRewriteWorkflow,
-                    admitted_finalization,
-                )
-
-                if not isinstance(self, CombinedRewriteWorkflow):
-                    reject(EffectCode.FOREIGN_OWNER)
-                graph = self.build_graph(
-                    selected_models=selected_models,
-                    replace_model_selection=replace_model_selection,
-                    privacy_goal=privacy_goal,
-                    evaluation=evaluation,
-                    data_summary=data_summary,
-                    strict_entity_protection=strict_entity_protection,
-                )
-                if not binding.opaque:
-                    graph = admitted_finalization(graph, evaluation)
-                seed = select_seed_cols(entity_rows, derive_seed_columns(graph.columns, entity_rows))
-                generated = self._adapter.run_workflow(
-                    seed,
-                    model_configs=model_configs,
-                    columns=graph.columns,
-                    workflow_name="rewrite-combined",
-                    preview_num_records=preview_num_records,
-                    **binding.stage(seed, tuple(entity_rows[ROW_ORDER_COL])),
-                )
-                restore_empty_skipped_span_label_counts(generated.dataframe)
-                entity_rows = _join_new_columns(
-                    entity_rows, generated.dataframe, source_positions=generated.source_positions
-                )
-                entity_rows = entity_rows.drop(columns=graph.internal_columns, errors="ignore")
-                all_failed.extend(generated.failed_records)
-            else:
-                # --- Step 1: replacement map (needs only detection output) ---
-                if replace_result is None:
-                    reject(EffectCode.MISSING)
-                entity_rows = _join_new_columns(
-                    entity_rows, replace_result.dataframe, source_positions=replace_result.source_positions
-                )
-                all_failed.extend(replace_result.failed_records)
-
-                # --- Step 2: domain, disposition, QA, rewrite (single adapter call) ---
-                pipeline_columns = [
-                    *self._domain_wf.columns(selected_models=selected_models, data_summary=data_summary),
-                    *self._disposition_wf.columns(
+            rows = _Rows(entity_rows)
+            run_stages(
+                "rewrite",
+                [
+                    (
+                        "replacement-map",
+                        lambda: self._replacement_map(rows, model_configs, replace_model_selection),
+                    ),
+                    (
+                        "pipeline",
+                        lambda: self._pipeline(
+                            rows,
+                            model_configs=model_configs,
+                            selected_models=selected_models,
+                            privacy_goal=privacy_goal,
+                            data_summary=data_summary,
+                            preview_num_records=preview_num_records,
+                            strict_entity_protection=strict_entity_protection,
+                        ),
+                    ),
+                    *self._evaluate_repair_stages(
+                        rows,
+                        model_configs=model_configs,
                         selected_models=selected_models,
                         privacy_goal=privacy_goal,
-                        data_summary=data_summary,
-                        strict_entity_protection=strict_entity_protection,
+                        evaluation=evaluation,
+                        preview_num_records=preview_num_records,
                     ),
-                    *self._qa_wf.columns(selected_models=selected_models),
-                    *self._rewrite_gen_wf.columns(
-                        selected_models=selected_models,
-                        privacy_goal=privacy_goal,
-                        data_summary=data_summary,
-                    ),
-                ]
-
-                pipeline_seed = select_seed_cols(entity_rows, derive_seed_columns(pipeline_columns, entity_rows))
-                pipeline_result = self._adapter.run_workflow(
-                    pipeline_seed,
-                    model_configs=model_configs,
-                    columns=pipeline_columns,
-                    workflow_name="rewrite-pipeline",
-                    preview_num_records=preview_num_records,
-                    **(binding.stage(pipeline_seed, tuple(entity_rows[ROW_ORDER_COL]))),
-                )
-                restore_empty_skipped_span_label_counts(pipeline_result.dataframe)
-                entity_rows = _join_new_columns(
-                    entity_rows, pipeline_result.dataframe, source_positions=pipeline_result.source_positions
-                )
-                all_failed.extend(pipeline_result.failed_records)
-
-                # --- Step 5: evaluate-repair loop ---
-                entity_rows, eval_repair_failed = binding.lower_ready(
-                    self,
-                    entity_rows,
-                    model_configs=model_configs,
-                    selected_models=selected_models,
-                    privacy_goal=privacy_goal,
-                    evaluation=evaluation,
-                    preview_num_records=preview_num_records,
-                )
-                all_failed.extend(eval_repair_failed)
+                ],
+            )
 
             # --- Merge and return ---
             _apply_passthrough_defaults(passthrough_rows)
-            combined = merge_and_reorder(entity_rows, passthrough_rows)
             result = RewriteResult(
-                dataframe=combined,
-                failed_records=all_failed,
-                source_positions=tuple(sorted([*entity_rows[ROW_ORDER_COL], *passthrough_rows[ROW_ORDER_COL]])),
+                dataframe=merge_and_reorder(rows.frame, passthrough_rows),
+                failed_records=rows.failed,
+                source_positions=tuple(sorted([*rows.frame[ROW_ORDER_COL], *passthrough_rows[ROW_ORDER_COL]])),
             )
             measurement.update(
                 output_row_count=len(result.dataframe),
@@ -401,9 +360,158 @@ class RewriteWorkflow:
             )
             return result
 
+    # --- Step 1: replacement map (needs only detection output) ---
+    def _replacement_map(
+        self, rows: _Rows, model_configs: list[ModelConfig], replace_model_selection: ReplaceModelSelection
+    ) -> None:
+        replace_result = LlmReplaceWorkflow(adapter=self._adapter).generate_map_only(
+            rows.frame,
+            model_configs=model_configs,
+            selected_models=replace_model_selection,
+        )
+        rows.frame = _join_new_columns(
+            rows.frame, replace_result.dataframe, source_positions=replace_result.source_positions
+        )
+        rows.failed.extend(replace_result.failed_records)
+
+    # --- Step 2: domain, disposition, QA, rewrite (single adapter call) ---
+    def _pipeline(
+        self,
+        rows: _Rows,
+        *,
+        model_configs: list[ModelConfig],
+        selected_models: RewriteModelSelection,
+        privacy_goal: PrivacyGoal,
+        data_summary: str | None,
+        preview_num_records: int | None,
+        strict_entity_protection: bool,
+    ) -> None:
+        pipeline_columns = [
+            *self._domain_wf.columns(selected_models=selected_models, data_summary=data_summary),
+            *self._disposition_wf.columns(
+                selected_models=selected_models,
+                privacy_goal=privacy_goal,
+                data_summary=data_summary,
+                strict_entity_protection=strict_entity_protection,
+            ),
+            *self._qa_wf.columns(selected_models=selected_models),
+            *self._rewrite_gen_wf.columns(
+                selected_models=selected_models,
+                privacy_goal=privacy_goal,
+                data_summary=data_summary,
+            ),
+        ]
+        pipeline_seed = select_seed_cols(rows.frame, derive_seed_columns(pipeline_columns, rows.frame))
+        pipeline_result = self._adapter.run_workflow(
+            pipeline_seed,
+            model_configs=model_configs,
+            columns=pipeline_columns,
+            workflow_name="rewrite-pipeline",
+            preview_num_records=preview_num_records,
+        )
+        restore_empty_skipped_span_label_counts(pipeline_result.dataframe)
+        rows.frame = _join_new_columns(
+            rows.frame, pipeline_result.dataframe, source_positions=pipeline_result.source_positions
+        )
+        rows.failed.extend(pipeline_result.failed_records)
+
     # ---------------------------------------------------------------------------
     # Evaluate-repair loop
     # ---------------------------------------------------------------------------
+
+    def _evaluate_repair_stages(
+        self,
+        rows: _Rows,
+        *,
+        model_configs: list[ModelConfig],
+        selected_models: RewriteModelSelection,
+        privacy_goal: PrivacyGoal,
+        evaluation: EvaluationCriteria,
+        preview_num_records: int | None,
+    ) -> list[tuple[str, Callable[[], None]]]:
+        """The initial evaluate, then one repair and one re-evaluate per allowed iteration, then the review flags.
+
+        Every iteration is a stage that does nothing once no row needs repair, so the loop runs at most
+        ``max_repair_iterations`` repairs and the initial evaluate runs even when that is 0.
+        """
+        eval_columns = self._evaluate_wf.columns(selected_models=selected_models, evaluation=evaluation)
+        repair_columns = self._repair_wf.columns(
+            selected_models=selected_models,
+            privacy_goal=privacy_goal,
+            effective_threshold=evaluation.repair_threshold,
+        )
+
+        def run_columns(df: pd.DataFrame, columns: list, name: str, *, overwrite: bool = False) -> pd.DataFrame:
+            seed_cols = derive_seed_columns(columns, df)
+            result = self._adapter.run_workflow(
+                select_seed_cols(df, seed_cols),
+                model_configs=model_configs,
+                columns=columns,
+                workflow_name=name,
+                preview_num_records=preview_num_records,
+            )
+            rows.failed.extend(result.failed_records)
+            return _join_new_columns(
+                df, result.dataframe, overwrite=overwrite, seed_cols=seed_cols, source_positions=result.source_positions
+            )
+
+        def evaluate(df: pd.DataFrame, iteration: int) -> pd.DataFrame:
+            df = run_columns(df, eval_columns, f"rewrite-evaluate-{iteration}", overwrite=True)
+            _normalize_evaluation_payloads(df)
+            return df
+
+        def initial_evaluate() -> None:
+            if COL_REPAIR_ITERATIONS not in rows.frame.columns:
+                rows.frame[COL_REPAIR_ITERATIONS] = 0
+            rows.frame = evaluate(rows.frame, 0)
+            _withhold_rewritten_text(rows.frame)
+
+        def repair(iteration: int) -> None:
+            if rows.converged:
+                return
+            df = rows.frame
+            needs_repair_mask = df[COL_NEEDS_REPAIR].apply(bool) & ~_replacement_unavailable(df)
+            if not needs_repair_mask.any():
+                logger.info("Evaluate-repair loop: all rows pass at iteration %d", iteration)
+                rows.converged = True
+                return
+            rows.failing, rows.passing = df[needs_repair_mask].copy(), df[~needs_repair_mask].copy()
+            logger.info(
+                "Evaluate-repair loop iteration %d: %d/%d rows need repair",
+                iteration,
+                len(rows.failing),
+                len(df),
+            )
+            # Repair failing rows only
+            repaired = run_columns(rows.failing, repair_columns, f"rewrite-repair-{iteration}")
+            if COL_REWRITTEN_TEXT_NEXT in repaired.columns:
+                repaired[COL_REWRITTEN_TEXT] = repaired[COL_REWRITTEN_TEXT_NEXT]
+            repaired[COL_REPAIR_ITERATIONS] = repaired[COL_REPAIR_ITERATIONS].apply(lambda x: int(x) + 1)
+            rows.failing = repaired
+
+        def reevaluate(iteration: int) -> None:
+            if rows.converged:
+                return
+            # Re-evaluate only repaired rows (passing rows' metrics are unchanged)
+            rows.frame = pd.concat([rows.passing, evaluate(rows.failing, iteration + 1)], ignore_index=True)
+
+        def flag_for_review() -> None:
+            # Compute needs_human_review from objective metrics after the loop exhausts.
+            df = rows.frame
+            _withhold_rewritten_text(df)
+            needs_review = df[COL_REWRITTEN_TEXT].isna() | df[COL_ANY_HIGH_LEAKED].apply(bool)
+            if evaluation.flag_utility_below is not None:
+                needs_review = needs_review | (df[COL_UTILITY_SCORE].apply(float) < evaluation.flag_utility_below)
+            if evaluation.flag_leakage_above is not None:
+                needs_review = needs_review | (df[COL_LEAKAGE_MASS].apply(float) > evaluation.flag_leakage_above)
+            df[COL_NEEDS_HUMAN_REVIEW] = needs_review
+
+        stages: list[tuple[str, Callable[[], None]]] = [("evaluate-0", initial_evaluate)]
+        for iteration in range(evaluation.max_repair_iterations):
+            stages.append((f"repair-{iteration}", lambda i=iteration: repair(i)))
+            stages.append((f"evaluate-{iteration + 1}", lambda i=iteration: reevaluate(i)))
+        stages.append(("flag-for-review", flag_for_review))
+        return stages
 
     def _run_final_judge(
         self,
@@ -479,44 +587,47 @@ class RewriteWorkflow:
             combined = merge_and_reorder(passthrough_rows)
             return RewriteResult(dataframe=combined, failed_records=[])
 
-        all_failed: list[FailedRecord] = []
+        rows = _Rows(entity_rows)
 
         # --- Detection validity judge (opt-in) ---
-        if compute_detection_validity:
+        def detection_judge() -> None:
             try:
                 detection_result = self._detection_judge_wf.evaluate(
-                    entity_rows,
+                    rows.frame,
                     model_configs=model_configs,
                     selected_models=selected_models,
                     preview_num_records=preview_num_records,
                 )
-                entity_rows = _join_preserving(
-                    entity_rows,
+                rows.frame = _join_preserving(
+                    rows.frame,
                     detection_result.dataframe,
                     defaults={COL_DETECTION_VALID: None, COL_DETECTION_INVALID_ENTITIES: None},
                     source_positions=detection_result.source_positions,
                 )
-                all_failed.extend(detection_result.failed_records)
+                rows.failed.extend(detection_result.failed_records)
                 # Convert bool all_valid → 0–1 fraction so detection validity sits on the
                 # same scale as utility_score and leakage_mass in the rewrite scores section.
-                entity_rows[COL_DETECTION_VALID] = entity_rows.apply(_detection_valid_fraction, axis=1)
+                rows.frame[COL_DETECTION_VALID] = rows.frame.apply(_detection_valid_fraction, axis=1)
             except Exception:
                 logger.debug("Detection validity judge failed; scores may be unavailable.")
-                entity_rows[COL_DETECTION_VALID] = None
-                entity_rows[COL_DETECTION_INVALID_ENTITIES] = None
+                rows.frame[COL_DETECTION_VALID] = None
+                rows.frame[COL_DETECTION_INVALID_ENTITIES] = None
 
         # --- Holistic judge (privacy / quality / style) ---
-        entity_rows, judge_failed = self._run_final_judge(
-            entity_rows,
-            model_configs=model_configs,
-            selected_models=selected_models,
-            privacy_goal=privacy_goal,
-            preview_num_records=preview_num_records,
-        )
-        all_failed.extend(judge_failed)
+        def final_judge() -> None:
+            rows.frame, judge_failed = self._run_final_judge(
+                rows.frame,
+                model_configs=model_configs,
+                selected_models=selected_models,
+                privacy_goal=privacy_goal,
+                preview_num_records=preview_num_records,
+            )
+            rows.failed.extend(judge_failed)
 
-        combined = merge_and_reorder(entity_rows, passthrough_rows)
-        return RewriteResult(dataframe=combined, failed_records=all_failed)
+        stages: list[tuple[str, Callable[[], None]]] = [("final-judge", final_judge)]
+        if compute_detection_validity:
+            stages.insert(0, ("detection-judge", detection_judge))
+        run_stages("rewrite-evaluate", stages)
 
-
-_REWRITE_RUN = RewriteWorkflow.run
+        combined = merge_and_reorder(rows.frame, passthrough_rows)
+        return RewriteResult(dataframe=combined, failed_records=rows.failed)

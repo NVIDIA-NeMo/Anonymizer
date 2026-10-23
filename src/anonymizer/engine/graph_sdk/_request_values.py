@@ -22,7 +22,7 @@ from anonymizer.engine.graph_sdk._effect_values import (
 )
 from anonymizer.engine.graph_sdk._graph_values import ArtifactRef, InvocationId, TaskAttemptId
 from anonymizer.engine.graph_sdk._workflow_values import ArtifactType, OperationSpec
-from anonymizer.engine.rewrite.artifacts import REWRITE_TYPES, RewriteArtifactValue
+from anonymizer.engine.graph_sdk.rewrite_artifacts import REWRITE_TYPES, RewriteArtifactValue
 
 RequestPurpose: TypeAlias = Literal["initial", "retry", "correction", "repair", "failover", "initial_binding"]
 

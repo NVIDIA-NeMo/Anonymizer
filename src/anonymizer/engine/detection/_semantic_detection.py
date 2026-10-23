@@ -14,6 +14,7 @@ import pandas as pd
 from pydantic import TypeAdapter
 
 from anonymizer.engine.constants import COL_DETECTED_ENTITIES, COL_ENTITIES_BY_VALUE, COL_FINAL_ENTITIES, COL_TEXT
+from anonymizer.engine.detection._stage_binding import StageBinding, completed
 from anonymizer.engine.detection.detection_workflow import (
     _DETECTION_RUN,
     EntityDetectionResult,
@@ -76,7 +77,6 @@ from anonymizer.engine.harness.frames import FramePublication
 from anonymizer.engine.harness.retention import attach_execution
 from anonymizer.engine.ndd._route import native_adapter
 from anonymizer.engine.ndd._source_frame import WorkflowSourceFrame
-from anonymizer.engine.ndd._stage_binding import StageBinding, completed
 from anonymizer.engine.replace.replace_runner import ReplacementResult
 from anonymizer.engine.row_partitioning import resolve_source_positions
 from anonymizer.engine.schemas import EntitiesSchema

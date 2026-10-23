@@ -30,7 +30,6 @@ from data_designer.config.utils.constants import TRACE_COLUMN_POSTFIX
 from data_designer.config.utils.trace_type import TraceType
 
 from anonymizer.engine.ndd._source_frame import WorkflowSourceFrame
-from anonymizer.engine.ndd._stage_binding import StageBinding
 from anonymizer.engine.ndd.failed_record import FailedRecord as FailedRecord
 from anonymizer.interface.errors import AnonymizerWorkflowError
 from anonymizer.measurement import current_collector, record_ndd_workflow
@@ -318,7 +317,6 @@ class NddAdapter:
         workflow_name: str,
         preview_num_records: int | None = None,
         source_frame: WorkflowSourceFrame | None = None,
-        rewrite_binding: StageBinding | None = None,
     ) -> WorkflowRunResult:
         """Run one workflow and return output with missing-record tracking.
 
@@ -341,12 +339,6 @@ class NddAdapter:
         Returns:
             `WorkflowRunResult` with the output DataFrame and any `FailedRecord` entries.
         """
-        if rewrite_binding is not None and (
-            source_frame is None
-            or not source_frame.associations
-            and not (source_frame.invocation_bound and (len(df) == 0 or preview_num_records == 0))
-        ):
-            raise AnonymizerWorkflowError("DD request binding requires invocation-owned source associations")
         workflow_input_df = self._attach_record_ids(df=df)
         if source_frame is None:
             source_frame = WorkflowSourceFrame.capture(workflow_input_df)
@@ -355,8 +347,6 @@ class NddAdapter:
         else:
             source_frame = replace(source_frame, dataframe=workflow_input_df)
         logger.debug("NDD workflow starting with %d records", len(workflow_input_df))
-        if rewrite_binding is not None:
-            columns = rewrite_binding.columns(columns)
         col_names = [c.name for c in columns]
         logger.debug("NDD workflow column count: %d", len(col_names))
         available_model_aliases = [m.alias for m in model_configs]
@@ -402,9 +392,7 @@ class NddAdapter:
                     self._run_lock,
                     usage_probe,
                     _temporary_dd_task_trace(self._data_designer, collector=collector),
-                    source_frame.bind_generators(
-                        self._data_designer, frozenset(col_names), rewrite_binding
-                    ) as source_failures,
+                    source_frame.bind_generators(self._data_designer, frozenset(col_names)) as source_failures,
                 ):
                     if preview_num_records is None:
                         run_results = self._data_designer.create(

@@ -7,7 +7,6 @@ import json
 import logging
 from collections import Counter
 from dataclasses import dataclass
-from typing import Any
 
 import pandas as pd
 from data_designer.config.column_configs import LLMStructuredColumnConfig
@@ -24,8 +23,7 @@ from anonymizer.engine.constants import (
     COL_REPLACEMENT_MAP_SOURCE,
     ENTITY_LABEL_EXAMPLES,
 )
-from anonymizer.engine.harness.retention import RetainsExecution
-from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter, WorkflowRunResult
+from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter
 from anonymizer.engine.ndd.model_loader import resolve_model_alias
 from anonymizer.engine.prompt_utils import substitute_placeholders
 from anonymizer.engine.row_partitioning import ROW_ORDER_COL, merge_and_reorder, split_rows
@@ -42,7 +40,7 @@ _INTERNAL_COLUMNS = (COL_ENTITY_EXAMPLES, COL_ENTITIES_FOR_REPLACE, COL_ENTITIES
 
 
 @dataclass(frozen=True)
-class LlmReplaceResult(RetainsExecution):
+class LlmReplaceResult:
     dataframe: pd.DataFrame
     failed_records: list[FailedRecord]
     source_positions: tuple[int, ...] | None = None
@@ -85,11 +83,21 @@ class LlmReplaceWorkflow:
             )
 
         # Only rows with actual entities are sent to the LLM.
-        run_result = self._generate_columns(
+        run_result = self._adapter.run_workflow(
             entity_rows,
             model_configs=model_configs,
-            selected_models=selected_models,
-            instructions=instructions,
+            columns=[
+                LLMStructuredColumnConfig(
+                    name=COL_REPLACEMENT_MAP,
+                    prompt=_get_replacement_mapping_prompt(
+                        entities_column=COL_ENTITIES_FOR_REPLACE,
+                        instructions=instructions,
+                    ),
+                    model_alias=resolve_model_alias("replacement_generator", selected_models),
+                    output_format=EntityReplacementMapSchema,
+                )
+            ],
+            workflow_name="replace-map-generation",
             preview_num_records=min(preview_num_records, len(entity_rows)) if preview_num_records is not None else None,
         )
         output_df = run_result.dataframe.copy()
@@ -111,35 +119,6 @@ class LlmReplaceWorkflow:
             dataframe=combined.drop(columns=list(_INTERNAL_COLUMNS), errors="ignore"),
             failed_records=run_result.failed_records,
             source_positions=positions,
-        )
-
-    def _generate_columns(
-        self,
-        dataframe: pd.DataFrame,
-        *,
-        model_configs: list[ModelConfig],
-        selected_models: ReplaceModelSelection,
-        instructions: str | None,
-        preview_num_records: int | None,
-        **binding: Any,
-    ) -> WorkflowRunResult:
-        """Lower one admitted generation batch to DataDesigner columns."""
-        return self._adapter.run_workflow(
-            dataframe,
-            model_configs=model_configs,
-            columns=[
-                LLMStructuredColumnConfig(
-                    name=COL_REPLACEMENT_MAP,
-                    prompt=_get_replacement_mapping_prompt(
-                        entities_column=COL_ENTITIES_FOR_REPLACE, instructions=instructions
-                    ),
-                    model_alias=resolve_model_alias("replacement_generator", selected_models),
-                    output_format=EntityReplacementMapSchema,
-                )
-            ],
-            workflow_name="replace-map-generation",
-            preview_num_records=preview_num_records,
-            **binding,
         )
 
 
@@ -328,7 +307,3 @@ Before generating replacements, verify:
 _EXAMPLE_LOOKUP: dict[str, str] = {
     label: f"(e.g. {', '.join(examples)})" for label, examples in ENTITY_LABEL_EXAMPLES.items()
 }
-
-
-# Pin library entry identity so a patched or overriding helper is classified as the caller's own.
-_GENERATE_MAP_ONLY = LlmReplaceWorkflow.generate_map_only

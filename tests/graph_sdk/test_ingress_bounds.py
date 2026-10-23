@@ -304,7 +304,7 @@ def test_large_finite_depth_never_uses_python_recursion_for_foreign_values() -> 
 def test_unconfigured_nested_items_still_recount_and_preserve_explicit_caps():
     from anonymizer.engine.graph_sdk._artifact_shape import ArtifactShape
     from anonymizer.engine.graph_sdk._ingress import inspect_artifact
-    from anonymizer.engine.rewrite.artifacts import QualityAnswer, QualityAnswersValue
+    from anonymizer.engine.graph_sdk.rewrite_artifacts import QualityAnswer, QualityAnswersValue
 
     value = QualityAnswersValue(answers=tuple(QualityAnswer(index, "answer") for index in range(12)))
     unlimited = IngressLimits(max_collection_items=None, max_metadata_items=None)
