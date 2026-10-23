@@ -150,6 +150,55 @@ def test_graph_unrolls_conditional_repairs(
         assert previous.needs_repair in condition.columns
 
 
+def test_finalizer_selects_last_executed_iteration(
+    stub_rewrite_model_selection: RewriteModelSelection,
+    stub_replace_model_selection: ReplaceModelSelection,
+) -> None:
+    graph = CombinedRewriteWorkflow(adapter=Mock()).build_graph(
+        selected_models=stub_rewrite_model_selection,
+        replace_model_selection=stub_replace_model_selection,
+        privacy_goal=_PRIVACY_GOAL,
+        evaluation=EvaluationCriteria(max_repair_iterations=2),
+    )
+    initial, repaired, skipped = graph.evaluation_states
+    row = {
+        initial.rewritten_text: "Initial rewrite",
+        initial.quality_reanswer: {"answers": []},
+        initial.privacy_reanswer: {"answers": []},
+        initial.quality_compare: {"per_item": []},
+        initial.utility_score: 0.7,
+        initial.leakage_mass: 2.0,
+        initial.weighted_leakage_rate: 0.8,
+        initial.any_high_leaked: True,
+        initial.needs_repair: True,
+        repaired.rewritten_text: "Repaired rewrite",
+        repaired.quality_reanswer: {"answers": []},
+        repaired.privacy_reanswer: {"answers": []},
+        repaired.quality_compare: {"per_item": []},
+        repaired.utility_score: 0.9,
+        repaired.leakage_mass: 0.1,
+        repaired.weighted_leakage_rate: 0.05,
+        repaired.any_high_leaked: False,
+        repaired.needs_repair: False,
+        skipped.needs_repair: None,
+        COL_REWRITTEN_TEXT: "forged preexisting terminal",
+        COL_UTILITY_SCORE: 0.123,
+    }
+    finalizer = graph.columns[-1]
+    assert isinstance(finalizer, CustomColumnConfig)
+
+    result = finalizer.generator_function(row, finalizer.generator_params)
+
+    assert result[COL_REWRITTEN_TEXT] == "Repaired rewrite"
+    assert result[COL_UTILITY_SCORE] == 0.9
+    assert result[COL_LEAKAGE_MASS] == 0.1
+    assert result[COL_WEIGHTED_LEAKAGE_RATE] == 0.05
+    assert result[COL_ANY_HIGH_LEAKED] is False
+    assert result[COL_NEEDS_REPAIR] is False
+    assert result[COL_REPAIR_ITERATIONS] == 1
+    assert result[COL_NEEDS_HUMAN_REVIEW] is False
+
+
 def test_combined_graph_preserves_malformed_rewrite_handling(
     stub_rewrite_model_selection: RewriteModelSelection,
     stub_replace_model_selection: ReplaceModelSelection,
