@@ -7,9 +7,8 @@ from __future__ import annotations
 import uuid
 from collections.abc import Iterator
 from contextlib import ExitStack, contextmanager
-from contextvars import ContextVar
 from copy import deepcopy
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from typing import Any
 
 import pandas as pd
@@ -27,35 +26,6 @@ from anonymizer.engine.constants import (
     COL_REPLACEMENT_MAP,
 )
 from anonymizer.interface.errors import AnonymizerWorkflowError
-
-
-@dataclass(frozen=True, slots=True)
-class SourceWork:
-    association: Any
-    column: str
-    generation: int = 0
-
-
-_SOURCE_WORK: ContextVar[SourceWork | None] = ContextVar("anonymizer_dd_source_work", default=None)
-
-
-def current_source_work(generator: Any = None) -> SourceWork | None:
-    work = _SOURCE_WORK.get()
-    if work is not None and (type(work) is not SourceWork or not hasattr(work, "association")):
-        raise AnonymizerWorkflowError("Malformed owned workflow source context")
-    return work
-
-
-@contextmanager
-def source_generation(index: int) -> Iterator[None]:
-    """Keep each validation chunk distinct from physical attempts of that chunk."""
-    work = _SOURCE_WORK.get()
-    token = _SOURCE_WORK.set(replace(work, generation=index) if work is not None else None)
-    try:
-        yield
-    finally:
-        _SOURCE_WORK.reset(token)
-
 
 _COL_SOURCE_PREFIX = "_anonymizer_source_"
 _SEMANTIC_PAYLOAD_COLUMNS = frozenset(

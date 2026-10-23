@@ -27,7 +27,6 @@ from anonymizer.engine.detection.custom_columns import (
     parse_detected_entities,
     prepare_validation_inputs,
 )
-from anonymizer.engine.ndd._source_frame import current_source_work
 from anonymizer.engine.workflow_columns.detection.config import (
     ChunkedValidationConfig,
     DetectionTransformConfig,
@@ -100,7 +99,6 @@ class _AsyncBridgedModelFacade:
 
 class DetectionTransformGenerator(ColumnGeneratorCellByCell[DetectionTransformConfig]):
     def generate(self, data: dict[str, Any]) -> dict[str, Any]:
-        current_source_work(self)
         operation = DetectionTransformOperation(self.config.operation)
         if operation == DetectionTransformOperation.APPLY_VALIDATION_TO_SEED_ENTITIES:
             return apply_validation_to_seed_entities(
@@ -140,12 +138,10 @@ class ChunkedValidationGenerator(ColumnGeneratorWithModelRegistry[ChunkedValidat
     def generate(self, data: dict[str, Any]) -> dict[str, Any]:  # ty: ignore[invalid-method-override]
         raw_models = {alias: self.get_model(alias) for alias in self.config.pool}
         models = {alias: _AsyncBridgedModelFacade(model) for alias, model in raw_models.items()}
-        current_source_work(self)
         return chunked_validate_row(data, self._params(raw_models), models)
 
     async def agenerate(self, data: dict[str, Any]) -> dict[str, Any]:  # ty: ignore[invalid-method-override]
         models = {alias: self.get_model(alias) for alias in self.config.pool}
-        current_source_work(self)
         return await chunked_validate_row_async(data, self._params(models), models)
 
 

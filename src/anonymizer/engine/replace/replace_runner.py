@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import cast
 
 import pandas as pd
@@ -44,7 +44,6 @@ class ReplacementResult:
 
     dataframe: pd.DataFrame
     failed_records: list[FailedRecord]
-    _execution: object | None = field(default=None, repr=False, compare=False)
 
 
 class ReplacementWorkflow:
