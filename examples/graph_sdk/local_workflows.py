@@ -38,7 +38,9 @@ def main() -> None:
     # Read the outcomes: execution terminal, qualification and release are separate facts.
     for name, datum in (("alice", alice), ("bob", bob)):
         outcome = result.outcome(datum)
-        print(f"{name}: terminal={outcome.terminal} qualification={outcome.qualification} protected={outcome.protected}")
+        print(
+            f"{name}: terminal={outcome.terminal} qualification={outcome.qualification} protected={outcome.protected}"
+        )
     assert result.outcome(alice).protected and result.protected[alice] == "[NAME] uses alice@example.test"
     assert result.outcome(bob).qualification == "not_met" and bob not in result.protected
 
