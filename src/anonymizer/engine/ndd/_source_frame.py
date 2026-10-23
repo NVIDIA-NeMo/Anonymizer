@@ -26,7 +26,6 @@ from anonymizer.engine.constants import (
     COL_QUALITY_QA_REANSWER,
     COL_REPLACEMENT_MAP,
 )
-from anonymizer.engine.rewrite.parsers import normalize_payload
 from anonymizer.interface.errors import AnonymizerWorkflowError
 
 
@@ -44,10 +43,6 @@ def current_source_work(generator: Any = None) -> SourceWork | None:
     work = _SOURCE_WORK.get()
     if work is not None and (type(work) is not SourceWork or not hasattr(work, "association")):
         raise AnonymizerWorkflowError("Malformed owned workflow source context")
-    if hasattr(generator, "_anonymizer_source_frame"):
-        frame = generator._anonymizer_source_frame
-        if type(frame) is not WorkflowSourceFrame or work is None or work.association not in frame.associations:
-            raise AnonymizerWorkflowError("Managed workflow generator lost its source correspondence")
     return work
 
 
@@ -84,25 +79,9 @@ class WorkflowSourceFrame:
     dataframe: pd.DataFrame
     key_column: str
     keys: tuple[str, ...]
-    associations: tuple[Any, ...] = ()
-    invocation_bound: bool = False
 
     @classmethod
-    def capture(
-        cls,
-        dataframe: pd.DataFrame,
-        *,
-        associations: tuple[Any, ...] = (),
-        invocation_bound: bool = False,
-        source_limit: int | None = None,
-    ) -> WorkflowSourceFrame:
-        selected = len(dataframe) if source_limit is None else source_limit
-        if type(selected) is not int or not 0 <= selected <= len(dataframe):
-            raise AnonymizerWorkflowError("Workflow source limit does not match the frame")
-        if (associations or invocation_bound) and (
-            len(associations) != selected or len(set(associations)) != len(associations)
-        ):
-            raise AnonymizerWorkflowError("Workflow source associations do not match the frame")
+    def capture(cls, dataframe: pd.DataFrame) -> WorkflowSourceFrame:
         key_column = f"{_COL_SOURCE_PREFIX}{uuid.uuid4().hex}"
         while key_column in dataframe.columns:
             key_column = f"{_COL_SOURCE_PREFIX}{uuid.uuid4().hex}"
@@ -111,45 +90,7 @@ class WorkflowSourceFrame:
             if dtype == object and dataframe.columns[ordinal] in _SEMANTIC_PAYLOAD_COLUMNS:
                 for row in range(len(dataframe)):
                     snapshot.iat[row, ordinal] = deepcopy(dataframe.iat[row, ordinal])
-        return cls(
-            snapshot,
-            key_column,
-            tuple(uuid.uuid4().hex for _ in range(len(dataframe))),
-            associations,
-            invocation_bound,
-        )
-
-    def matches(self, dataframe: pd.DataFrame | None) -> bool:
-        """Authenticate structured source values independently of container identity.
-
-        Parquet cells can contain NumPy arrays nested inside schema wrappers;
-        pandas equality alone compares their container aliases inconsistently.
-        Normalize those semantic cells while preserving raw string values,
-        exact frame axes/dtypes, and opaque caller metadata semantics.
-        """
-        if (
-            not isinstance(dataframe, pd.DataFrame)
-            or not self.dataframe.columns.equals(dataframe.columns)
-            or not self.dataframe.index.equals(dataframe.index)
-            or not self.dataframe.dtypes.equals(dataframe.dtypes)
-        ):
-            return False
-        captured, supplied = self.dataframe.copy(), dataframe.copy()
-        for ordinal, dtype in enumerate(dataframe.dtypes):
-            if dtype == object and dataframe.columns[ordinal] in _SEMANTIC_PAYLOAD_COLUMNS:
-                for frame in (captured, supplied):
-                    frame.isetitem(
-                        ordinal,
-                        pd.Series(
-                            [
-                                value if type(value) is str else normalize_payload(value)
-                                for value in frame.iloc[:, ordinal]
-                            ],
-                            index=frame.index,
-                            dtype=object,
-                        ),
-                    )
-        return captured.equals(supplied)
+        return cls(snapshot, key_column, tuple(uuid.uuid4().hex for _ in range(len(dataframe))))
 
     def seed(self) -> pd.DataFrame:
         seed = self.dataframe.copy()
@@ -177,33 +118,24 @@ class WorkflowSourceFrame:
         return returned.iloc[order].drop(columns=self.key_column).reset_index(drop=True), positions
 
     @contextmanager
-    def bind_generators(self, designer: Any, columns: frozenset[str]) -> Iterator[set[int]]:
-        """Bind real DD row generators to issued associations, without exposing transport keys."""
+    def bind_generators(self, designer: Any) -> Iterator[None]:
+        """Carry source keys through DD's artifact storage without exposing them in public output."""
         from anonymizer.engine.ndd._graph_requests import (
             require_dataset_builder_capabilities,
             require_source_frame_capabilities,
         )
 
-        failed: set[int] = set()
-        if not self.associations and not self.invocation_bound and not _is_data_designer(designer):
+        if not _is_data_designer(designer) and not hasattr(designer, "_create_dataset_builder"):
             # A caller's stand-in designer without DD's builder: nothing to bind.
-            if not hasattr(designer, "_create_dataset_builder"):
-                yield failed
-                return
+            yield
+            return
         require_source_frame_capabilities(designer)
         storage_bindings = ExitStack()
         original_builder = designer._create_dataset_builder
-        sources = {
-            key: (index, association)
-            for index, (key, association) in enumerate(
-                zip(self.keys[: len(self.associations)], self.associations, strict=True)
-            )
-        }
 
         def builder(*args: Any, **kwargs: Any) -> Any:
             result = original_builder(*args, **kwargs)
             storage_bindings.enter_context(self._bind_storage(require_dataset_builder_capabilities(result)))
-            original_initialize = result._initialize_generators_and_graph
 
             def write_config() -> None:
                 from data_designer.config.config_builder import BuilderConfig
@@ -218,49 +150,11 @@ class WorkflowSourceFrame:
                 BuilderConfig(data_designer=public).to_json(storage.base_dataset_path / SDG_CONFIG_FILENAME)
 
             result._write_builder_config = write_config
-
-            def initialize() -> Any:
-                generators, graph = original_initialize()
-                if not self.associations and not self.invocation_bound:
-                    return generators, graph
-                for generator in generators:
-                    name = getattr(generator.config, "name", None)
-                    if name not in columns:
-                        continue
-                    original = generator.agenerate
-                    generator._anonymizer_source_frame = self
-
-                    async def generate(
-                        record: dict[str, Any], *, _original: Any = original, _name: str = name
-                    ) -> dict[str, Any]:
-                        key = record.get(self.key_column)
-                        if not isinstance(key, str) or key not in sources:
-                            raise AnonymizerWorkflowError("Workflow generator has invalid source correspondence")
-                        position, association = sources[key]
-                        body = {name: value for name, value in record.items() if name != self.key_column}
-                        token = _SOURCE_WORK.set(SourceWork(association, _name))
-                        try:
-                            returned = await _original(body)
-                            if not isinstance(returned, dict) or self.key_column in returned:
-                                raise AnonymizerWorkflowError(
-                                    "Workflow generator returned invalid source correspondence"
-                                )
-                            return {**returned, self.key_column: key}
-                        except BaseException:
-                            failed.add(position)
-                            raise
-                        finally:
-                            _SOURCE_WORK.reset(token)
-
-                    generator.agenerate = generate
-                return generators, graph
-
-            result._initialize_generators_and_graph = initialize
             return result
 
         designer._create_dataset_builder = builder
         try:
-            yield failed
+            yield
         finally:
             designer._create_dataset_builder = original_builder
             storage_bindings.close()

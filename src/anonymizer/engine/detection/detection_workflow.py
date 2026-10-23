@@ -8,7 +8,7 @@ import logging
 from copy import deepcopy
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, ClassVar, cast
+from typing import ClassVar, cast
 
 import pandas as pd
 from data_designer.config.column_configs import LLMStructuredColumnConfig, LLMTextColumnConfig
@@ -65,12 +65,7 @@ from anonymizer.engine.workflow_columns.detection.config import (
     DetectionTransformConfig,
     DetectionTransformOperation,
 )
-from anonymizer.interface.errors import AnonymizerWorkflowError
 from anonymizer.measurement import stage_timer
-
-if TYPE_CHECKING:
-    from anonymizer.engine.ndd._source_frame import WorkflowSourceFrame
-
 
 logger = logging.getLogger("anonymizer.detection")
 
@@ -130,7 +125,6 @@ class EntityDetectionWorkflow:
         entity_label_examples: dict[str, list[str]] | None = None,
         data_summary: str | None = None,
         preview_num_records: int | None = None,
-        source_frame: WorkflowSourceFrame | None = None,
         _resolved_label_config: ResolvedEntityLabelConfig | None = None,
     ) -> EntityDetectionResult:
         """Run the core detection pipeline: GLiNER NER, LLM validation, LLM augmentation, and finalization.
@@ -160,10 +154,7 @@ class EntityDetectionWorkflow:
             columns=columns,
             workflow_name="entity-detection",
             preview_num_records=preview_num_records,
-            **({"source_frame": source_frame} if source_frame is not None else {}),
         )
-        if source_frame is not None and detection_result.source_positions is None:
-            raise AnonymizerWorkflowError("Bound detection result is missing source correspondence")
         detected_df = detection_result.dataframe.copy()
         return EntityDetectionResult(
             dataframe=detected_df,
@@ -390,7 +381,6 @@ class EntityDetectionWorkflow:
         data_summary: str | None = None,
         preview_num_records: int | None = None,
         _resolved_label_config: ResolvedEntityLabelConfig | None = None,
-        source_frame: WorkflowSourceFrame | None = None,
     ) -> EntityDetectionResult:
         """Detect latent/inferred entities that could enable re-identification.
 
@@ -427,7 +417,6 @@ class EntityDetectionWorkflow:
             ],
             workflow_name="latent-entity-detection",
             preview_num_records=preview_num_records,
-            **({"source_frame": source_frame} if source_frame is not None else {}),
         )
         latent_df = latent_result.dataframe.copy()
         if COL_LATENT_ENTITIES in latent_df.columns:
@@ -458,7 +447,6 @@ class EntityDetectionWorkflow:
         tag_latent_entities: bool = True,
         compute_grouped_entities: bool | None = None,
         preview_num_records: int | None = None,
-        source_frame: WorkflowSourceFrame | None = None,
     ) -> EntityDetectionResult:
         """Run the full detection pipeline, optionally including latent entity detection.
 
@@ -496,7 +484,6 @@ class EntityDetectionWorkflow:
                     entity_label_examples=entity_label_examples,
                     data_summary=data_summary,
                     preview_num_records=preview_num_records,
-                    source_frame=source_frame,
                     _resolved_label_config=label_config,
                 )
                 rows.frame = detected_result.dataframe
