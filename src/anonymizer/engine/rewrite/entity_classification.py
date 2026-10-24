@@ -172,7 +172,7 @@ class EntityClassificationWorkflow:
                         "{{ not <<UNMAPPED_LABELS>> }}",
                         {"<<UNMAPPED_LABELS>>": COL_ENTITY_CLASSIFICATION_UNMAPPED_LABELS},
                     ),
-                    value='{"classifications": []}',
+                    value=None,
                 ),
             ),
             CustomColumnConfig(

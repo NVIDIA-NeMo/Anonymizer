@@ -209,3 +209,13 @@ def test_classification_skips_only_rows_without_custom_labels(
         {"first_name": "direct_identifier", "custom_widget_id": "direct_identifier"},
         {},
     ]
+    seed_path = tmp_path / "evaluation-seed.parquet"
+    result.dataframe.to_parquet(seed_path, index=False)
+    restored = pd.read_parquet(seed_path)
+    classifications = restored[COL_ENTITY_CLASSIFICATION_LLM]
+    assert pd.isna(classifications.iloc[0])
+    assert classifications.iloc[1]["classifications"][0] == {
+        "label": "custom_widget_id",
+        "category": "direct_identifier",
+    }
+    assert pd.isna(classifications.iloc[2])
