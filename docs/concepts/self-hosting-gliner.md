@@ -48,9 +48,7 @@ through unchanged; omitted fields use the server's defaults.
 The native splitter preserves source offsets and avoids cutting words. Unspaced
 Chinese or Japanese text can form a single long token, so word-window size does
 not guarantee a subword-token limit; evaluate chunk sizes for your language.
-Returned spans must match the original source. The adapter removes GLiNER2's
-synthetic terminal period where needed; unexplained text/offset mismatches remain
-errors.
+Returned entities must match the original source text at their reported offsets.
 
 The response must use the chat-completion shape. `message.content` is a JSON string containing an
 `entities` list. Each entity has `text`, `label`, `start`, `end`, and `score` fields:
