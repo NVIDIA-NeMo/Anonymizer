@@ -26,6 +26,7 @@ from anonymizer.telemetry import (
     TaskEnum,
     TaskStatusEnum,
 )
+from tests.conftest import stub_run_with_detection
 
 
 @pytest.fixture
@@ -50,6 +51,7 @@ def _make_anonymizer(
     )
     _replace_df.attrs["original_text_column"] = "text"
     replace_runner = Mock(spec=ReplacementWorkflow)
+    stub_run_with_detection(replace_runner)
     replace_runner.run.return_value = replace_return or ReplacementResult(
         dataframe=_replace_df,
         failed_records=[],

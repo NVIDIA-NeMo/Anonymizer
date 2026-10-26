@@ -36,6 +36,7 @@ from anonymizer.engine.replace.replace_runner import ReplacementResult, Replacem
 from anonymizer.engine.rewrite.rewrite_workflow import RewriteResult, RewriteWorkflow
 from anonymizer.interface.anonymizer import Anonymizer, _resolve_model_providers
 from anonymizer.interface.errors import InvalidConfigError, InvalidInputError
+from tests.conftest import stub_run_with_detection
 
 
 @pytest.fixture
@@ -59,6 +60,7 @@ def _make_anonymizer(
         {COL_TEXT: ["Alice works at Acme"], COL_REPLACED_TEXT: ["[REDACTED] works at [REDACTED]"]}
     )
     replace_runner = Mock(spec=ReplacementWorkflow)
+    stub_run_with_detection(replace_runner)
     replace_runner.run.return_value = replace_return or ReplacementResult(
         dataframe=_replace_df,
         failed_records=[],
@@ -149,7 +151,7 @@ def test_run_passes_entity_label_examples_only_to_detection_workflow(stub_input:
     assert detection_wf.run.call_args.kwargs["entity_label_examples"] == examples
     assert result.entity_labels == ["vendor_api_key"]
     assert not hasattr(result, "entity_label_examples")
-    assert "entity_label_examples" not in replace_runner.run.call_args.kwargs
+    assert "entity_label_examples" not in replace_runner.run_with_detection.call_args.kwargs
     assert "acme_live_abc123" not in (result.dataframe.to_json() or "")
 
 
@@ -900,7 +902,7 @@ def test_run_raises_invalid_config_before_workflows(
         anonymizer.run(config=AnonymizerConfig(replace=Substitute()), data=stub_input)
 
     detection_wf.run.assert_not_called()
-    replace_runner.run.assert_not_called()
+    replace_runner.run_with_detection.assert_not_called()
 
 
 def test_preview_raises_invalid_config_before_workflows(
@@ -919,7 +921,7 @@ def test_preview_raises_invalid_config_before_workflows(
         anonymizer.preview(config=AnonymizerConfig(rewrite=Rewrite()), data=stub_input, num_records=1)
 
     detection_wf.run.assert_not_called()
-    replace_runner.run.assert_not_called()
+    replace_runner.run_with_detection.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

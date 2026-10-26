@@ -35,6 +35,7 @@ from anonymizer.engine.ndd.adapter import RECORD_ID_COLUMN, FailedRecord, NddAda
 from anonymizer.engine.replace.replace_runner import ReplacementResult, ReplacementWorkflow
 from anonymizer.engine.rewrite.rewrite_workflow import RewriteResult, RewriteWorkflow
 from anonymizer.interface.anonymizer import Anonymizer
+from tests.conftest import stub_run_with_detection
 
 
 def _mock_method(method: object) -> Mock:
@@ -81,6 +82,7 @@ def _make_logging_anonymizer(
         }
     )
     replace_runner = Mock(spec=ReplacementWorkflow)
+    stub_run_with_detection(replace_runner)
     replace_runner.run.return_value = ReplacementResult(dataframe=_replace_df, failed_records=replace_failures or [])
     _replace_eval_df = _replace_df.copy()
     _replace_eval_df[COL_ENTITY_COVERAGE] = [1.0, 1.0]
@@ -489,7 +491,7 @@ def test_preview_set_preview_num_records_capped(stub_input: AnonymizerInput) -> 
     det_call_kwargs = _call_kwargs(anonymizer._detection_workflow.run)
     assert det_call_kwargs["preview_num_records"] == 2
 
-    rep_call_kwargs = _call_kwargs(anonymizer._replace_runner.run)
+    rep_call_kwargs = _call_kwargs(anonymizer._replace_runner.run_with_detection)
     assert rep_call_kwargs["preview_num_records"] == 2
 
 
@@ -504,7 +506,7 @@ def test_preview_set_preview_num_records_not_capped(stub_input: AnonymizerInput)
     det_call_kwargs = _call_kwargs(anonymizer._detection_workflow.run)
     assert det_call_kwargs["preview_num_records"] == 1
 
-    rep_call_kwargs = _call_kwargs(anonymizer._replace_runner.run)
+    rep_call_kwargs = _call_kwargs(anonymizer._replace_runner.run_with_detection)
     assert rep_call_kwargs["preview_num_records"] == 1
 
 
@@ -518,7 +520,7 @@ def test_run_set_preview_num_records(stub_input: AnonymizerInput) -> None:
     det_call_kwargs = _call_kwargs(anonymizer._detection_workflow.run)
     assert det_call_kwargs["preview_num_records"] is None
 
-    rep_call_kwargs = _call_kwargs(anonymizer._replace_runner.run)
+    rep_call_kwargs = _call_kwargs(anonymizer._replace_runner.run_with_detection)
     assert rep_call_kwargs["preview_num_records"] is None
 
 
@@ -559,6 +561,7 @@ def test_preview_with_large_input_only_loads_preview_rows(tmp_path: Path, caplog
         }
     )
     replace_runner = Mock(spec=ReplacementWorkflow)
+    stub_run_with_detection(replace_runner)
     replace_runner.run.return_value = ReplacementResult(dataframe=_replace_df, failed_records=[])
     anonymizer = Anonymizer(detection_workflow=detection_workflow, replace_runner=replace_runner)
     config = AnonymizerConfig(replace=Redact())

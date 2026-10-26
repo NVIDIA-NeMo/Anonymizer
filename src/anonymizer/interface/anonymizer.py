@@ -52,7 +52,7 @@ from anonymizer.engine.constants import (
     COL_WEIGHTED_LEAKAGE_RATE,
     DEFAULT_ENTITY_LABELS,
 )
-from anonymizer.engine.detection.detection_workflow import EntityDetectionWorkflow
+from anonymizer.engine.detection.detection_workflow import EntityDetectionResult, EntityDetectionWorkflow
 from anonymizer.engine.detection.entity_label_examples import resolve_entity_label_config
 from anonymizer.engine.evaluation.detection_judge import DetectionJudgeWorkflow
 from anonymizer.engine.evaluation.entity_coverage_judge import EntityCoverageWorkflow
@@ -801,28 +801,43 @@ class Anonymizer:
             # Caller-supplied detection_workflow with a pre-#275 (v0.4.0) signature: no
             # entity_label_examples parameter and no **kwargs to swallow it.
             _warn_entity_label_examples_withheld(detection_options.pop("entity_label_examples"))
-        t0 = time.perf_counter()
-        detection_result = self._detection_workflow.run(
-            input_df,
-            model_configs=self._model_configs,
-            selected_models=self._selected_models.detection,
-            **detection_options,
-        )
-        detection_elapsed = time.perf_counter() - t0
-        detected_df, detection_failures = detection_result.dataframe, list(detection_result.failed_records)
+
+        def detect(frame: pd.DataFrame) -> EntityDetectionResult:
+            result = self._detection_workflow.run(
+                frame,
+                model_configs=self._model_configs,
+                selected_models=self._selected_models.detection,
+                **detection_options,
+            )
+            if config.replace is not None:
+                logger.info("🔄 Running replacement")
+            return result
+
         t0 = time.perf_counter()
         if config.replace is not None:
-            logger.info("🔄 Running replacement")
-            replace_result = self._replace_runner.run(
-                detected_df,
+            replace_result = self._replace_runner.run_with_detection(
+                input_df,
+                detect=detect,
                 replace_method=config.replace,
                 model_configs=self._model_configs,
                 selected_models=self._selected_models.replace,
                 preview_num_records=preview_num_records,
             )
-            final_df, post_detection_failures = replace_result.dataframe, list(replace_result.failed_records)
+            assert replace_result.detection is not None
+            detected_df, detection_failures = (
+                replace_result.detection.dataframe,
+                list(replace_result.detection.failed_records),
+            )
+            detection_elapsed = replace_result.detection_elapsed
+            replacement_elapsed = time.perf_counter() - t0 - detection_elapsed
+            final_df = replace_result.dataframe
+            post_detection_failures = replace_result.failed_records[len(detection_failures) :]
         else:
             assert config.rewrite is not None
+            detection_result = detect(input_df)
+            detection_elapsed = time.perf_counter() - t0
+            detected_df, detection_failures = detection_result.dataframe, list(detection_result.failed_records)
+            t0 = time.perf_counter()
             privacy_goal = admitted_goal
             if privacy_goal is None:
                 raise InvalidConfigError("rewrite.privacy_goal must not be None")
@@ -842,7 +857,7 @@ class Anonymizer:
                 strict_entity_protection=config.rewrite.strict_entity_protection,
             )
             final_df, post_detection_failures = rewrite_result.dataframe, list(rewrite_result.failed_records)
-        replacement_elapsed = time.perf_counter() - t0
+            replacement_elapsed = time.perf_counter() - t0
         entity_count = _count_entities(detected_df)
         detection_failed = len(detection_failures)
         logger.info(

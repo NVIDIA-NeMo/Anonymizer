@@ -62,6 +62,7 @@ from anonymizer.measurement import (
     stage_timer,
 )
 from anonymizer.measurement.metrics.rewrite import _output_contains_original_value
+from tests.conftest import stub_run_with_detection
 
 
 class _FailingSink:
@@ -416,6 +417,7 @@ def test_anonymizer_records_per_record_measurement_without_raw_pii(tmp_path: Pat
         failed_records=[],
     )
     replace_runner = Mock(spec=ReplacementWorkflow)
+    stub_run_with_detection(replace_runner)
     replace_runner.run.return_value = ReplacementResult(
         dataframe=pd.DataFrame(
             {
@@ -550,6 +552,7 @@ def test_anonymizer_measurement_config_writes_jsonl(tmp_path: Path) -> None:
         failed_records=[],
     )
     replace_runner = Mock(spec=ReplacementWorkflow)
+    stub_run_with_detection(replace_runner)
     replace_runner.run.return_value = ReplacementResult(
         dataframe=pd.DataFrame(
             {

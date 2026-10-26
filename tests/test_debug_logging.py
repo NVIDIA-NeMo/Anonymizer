@@ -20,6 +20,7 @@ from anonymizer.engine.ndd.adapter import FailedRecord
 from anonymizer.engine.replace.replace_runner import ReplacementResult, ReplacementWorkflow
 from anonymizer.interface.anonymizer import Anonymizer
 from anonymizer.logging import LoggingConfig, configure_logging
+from tests.conftest import stub_run_with_detection
 
 
 @pytest.fixture(autouse=True)
@@ -54,6 +55,7 @@ def _stub_anonymizer() -> Anonymizer:
         }
     )
     replace_runner = Mock(spec=ReplacementWorkflow)
+    stub_run_with_detection(replace_runner)
     replace_runner.run.return_value = ReplacementResult(
         dataframe=_replace_df,
         failed_records=[FailedRecord(record_id="r2", step="replace", reason="parse error")],

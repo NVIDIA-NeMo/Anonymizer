@@ -9,6 +9,7 @@ import sys
 from collections.abc import Callable, Generator
 from pathlib import Path
 from types import ModuleType
+from unittest.mock import Mock
 
 import pandas as pd
 import pytest
@@ -24,7 +25,26 @@ from anonymizer.config.models import (
 )
 from anonymizer.config.replace_strategies import Redact
 from anonymizer.engine.constants import COL_FINAL_ENTITIES, COL_TEXT
+from anonymizer.engine.detection.detection_workflow import EntityDetectionResult
 from anonymizer.engine.ndd.model_loader import load_default_model_selection
+from anonymizer.engine.replace.replace_runner import ReplacementResult
+
+
+def stub_run_with_detection(replace_runner: Mock) -> None:
+    """Make ``run_with_detection`` call the detector it is given, then return ``replace_runner.run.return_value``.
+
+    The returned result carries the detection's failures before the stub's own, as the real method's do.
+    """
+
+    def run_with_detection(
+        dataframe: pd.DataFrame, *, detect: Callable[[pd.DataFrame], EntityDetectionResult], **_: object
+    ) -> ReplacementResult:
+        detection = detect(dataframe)
+        replaced = replace_runner.run.return_value
+        failures = [*detection.failed_records, *replaced.failed_records]
+        return ReplacementResult(replaced.dataframe, failures, detection)
+
+    replace_runner.run_with_detection.side_effect = run_with_detection
 
 
 @pytest.fixture
