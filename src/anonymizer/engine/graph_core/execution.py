@@ -122,7 +122,7 @@ def _planned(ops: tuple[tuple[str, Operation], ...], targets: int) -> Count:
         return Count(None, "opaque")
     if "unknown" in bounds:
         return Count(None, "unknown")
-    per_target = sum((op.requests.count or 0) for _, op in ops if op.scope == "target")
+    per_target = sum((op.requests.count or 0) for _, op in ops if op.scope != "invocation")
     total = per_target * targets + sum((op.requests.count or 0) for _, op in ops if op.scope == "invocation")
     return Count(total, "upper" if "upper" in bounds else "exact")
 

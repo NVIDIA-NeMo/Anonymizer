@@ -345,8 +345,10 @@ def _dispatch_invocation(plan: Plan, state: State, i: int) -> State:
             state = reduce(plan, state, Failed(u, i, "raised", exc))
         return state
     if not isinstance(raw, Sequence) or isinstance(raw, (str, bytes)) or len(raw) != len(units):
+        size = f" of length {len(raw)}" if hasattr(raw, "__len__") else ""
+        error = TypeError(f"invocation operation returned {type(raw).__name__}{size}, expected {len(units)} entries")
         for u in units:
-            state = reduce(plan, state, Failed(u, i, "invalid_output"))
+            state = reduce(plan, state, Failed(u, i, "invalid_output", error))
         return state
     for u, value in zip(units, raw):
         if value is None:

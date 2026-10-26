@@ -79,10 +79,25 @@ def program() -> list[dict[str, str]]:
     rec = Recorder()
     r = run(g, rec.invocation_transform(fn=lambda ts: _replace(ts)[:2]))
     reasons = {x.reason for x in r.attempts}
+    errors = [e.error for e in r.state.entries if e.status == "failed"]
+    rec = Recorder()
+    rg = run(
+        g,
+        rec.invocation_transform(fn=lambda ts: (t for t in _replace(ts))),  # ty: ignore[invalid-argument-type]
+    )
+    gen_errors = [e.error for e in rg.state.entries if e.status == "failed"]
     c.check(
         "E14.5",
-        len(r.attempts) == 3 and reasons == {"invalid_output"} and all(x.status == "failed" for x in r.attempts),
-        f"attempts={len(r.attempts)}, reasons={sorted(reasons)}",
+        len(r.attempts) == 3
+        and reasons == {"invalid_output"}
+        and all(x.status == "failed" for x in r.attempts)
+        and len(errors) == 3
+        and all(isinstance(e, TypeError) for e in errors)
+        and {x.reason for x in rg.attempts} == {"invalid_output"}
+        and len(gen_errors) == 3
+        and all(isinstance(e, TypeError) for e in gen_errors),
+        f"attempts={len(r.attempts)}, reasons={sorted(reasons)}, errors={sorted({type(e).__name__ for e in errors})}, "
+        f"generator errors={sorted({type(e).__name__ for e in gen_errors})}",
     )
 
     def pre_fn(t: str) -> str:
@@ -110,14 +125,19 @@ def program() -> list[dict[str, str]]:
     inv = Operation.per_invocation("inv", rec.invocation_transform().fn, requests=Requests.exact(1))
     per_target = Operation("call", rec.transform().fn, requests=Requests.exact(2))
     only, both = forecast(inv), forecast(inv, per_target)
+    odd = Operation("odd", rec.transform().fn, requests=Requests.exact(2), scope="Invocation")  # ty: ignore[invalid-argument-type]
+    odd_only, odd_both = forecast(odd), forecast(odd, inv)
     code = rejected(lambda: forecast(inv, per_target, request_budget=6))
     c.check(
         "E14.7",
         (only.bound, only.value) == ("exact", 1)
         and (both.bound, both.value) == ("exact", 7)
+        and (odd_only.bound, odd_only.value) == ("exact", 6)
+        and (odd_both.bound, odd_both.value) == ("exact", 7)
         and code is not None
         and rec.count() == 0,
-        f"invocation only={only}, with per-target={both}, budget 6 rejection={code}, callbacks={rec.count()}",
+        f"invocation only={only}, with per-target={both}, budget 6 rejection={code}, callbacks={rec.count()}, "
+        f"unknown scope={odd_only}, with invocation={odd_both}",
     )
 
     def verify(swap: bool) -> Operation:
