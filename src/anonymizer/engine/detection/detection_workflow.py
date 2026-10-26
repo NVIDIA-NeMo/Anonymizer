@@ -24,6 +24,7 @@ from anonymizer.engine.constants import (
     COL_ADMISSION_RESULTS,
     COL_AUGMENTED_ENTITIES,
     COL_DETECTED_ENTITIES,
+    COL_DETECTOR_SOURCE,
     COL_ENTITIES_BY_VALUE,
     COL_FINAL_ENTITIES,
     COL_INITIAL_TAGGED_TEXT,
@@ -35,7 +36,6 @@ from anonymizer.engine.constants import (
     COL_SEED_VALIDATION_CANDIDATES,
     COL_TAG_NOTATION,
     COL_TAGGED_TEXT,
-    COL_TEXT,
     COL_VALIDATION_DECISIONS,
     COL_VALIDATION_SKELETON,
     ENTITY_LABEL_EXAMPLES,
@@ -208,9 +208,14 @@ class EntityDetectionWorkflow:
         columns = cast(
             list[ColumnConfigT],
             [
+                DetectionTransformConfig(
+                    name=COL_DETECTOR_SOURCE,
+                    operation=DetectionTransformOperation.PREPARE_DETECTOR_SOURCE,
+                    drop=True,
+                ),
                 LLMTextColumnConfig(
                     name=COL_RAW_DETECTED,
-                    prompt=_jinja(COL_TEXT),
+                    prompt=_jinja(COL_DETECTOR_SOURCE, key="text"),
                     model_alias=detection_alias,
                 ),
                 DetectionTransformConfig(

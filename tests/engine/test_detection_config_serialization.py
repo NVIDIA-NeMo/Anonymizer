@@ -91,7 +91,7 @@ def test_detection_builder_round_trips_through_native_data_designer_config(tmp_p
     assert seed_config.selection_strategy == PartitionBlock(index=1, num_partitions=3)
 
     columns = restored.get_column_configs()
-    assert len(columns) == 9
+    assert len(columns) == 10
     assert all(column.column_type != "custom" for column in columns)
 
     transforms = [column for column in columns if isinstance(column, DetectionTransformConfig)]
