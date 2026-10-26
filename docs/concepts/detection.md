@@ -116,6 +116,8 @@ Anonymizer ships with a comprehensive default label set covering:
 - **Demographics** (e.g. `gender`, `race_ethnicity`, `religious_belief`, `political_view`, `language`)
 - **Financial** (e.g. `credit_debit_card`, `account_number`, `bank_routing_number`, `tax_id`)
 
+The `date` label includes complete dates and partial calendar references, such as a month (`March`), year (`2024`), month and year (`March 2024`), or day of the month (`the 15th`), when the surrounding text establishes their date meaning. Standalone numbers without date context and vague time words such as `today`, `now`, and `soon` are not dates.
+
 To inspect the full list:
 
 ```python

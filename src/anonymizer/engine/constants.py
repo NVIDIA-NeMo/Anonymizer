@@ -176,7 +176,7 @@ ENTITY_LABEL_EXAMPLES: dict[str, list[str]] = {
     "last_name": ["Smith", "Rodriguez", "McKenzie", "Nakamura"],
     "cvv": ["161", "884", "447", "760"],
     "customer_id": ["CUS439012", "SM-19382", "CUST-00012345", "SM-78321"],
-    "date": ["07/15/2024", "2023-09-15", "March 15, 2024", "15/07/2024"],
+    "date": ["07/15/2024", "2023-09-15", "March 15, 2024", "15/07/2024", "March", "2024", "March 2024", "the 15th"],
     "user_name": ["jeffreymoon87", "stacy.flynn", "e.sullivan", "Henry1985"],
     "street_address": ["661 NE Regents Dr", "739 Main St", "4/87 Collins Street", "22 Boulevard Haussmann"],
     "ipv6": ["2001:0db8:85a3:0000:0000:8a2e:0370:7334", "2a02:4d60:1031::85e1:7341:9203:4c56"],
