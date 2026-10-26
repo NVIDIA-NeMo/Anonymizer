@@ -4,10 +4,12 @@
 from __future__ import annotations
 
 import json
+from unittest.mock import Mock
 
 import pytest
 from data_designer.config.models import ModelProvider
 
+from anonymizer.engine.detection.detection_workflow import EntityDetectionWorkflow
 from anonymizer.engine.ndd.model_loader import parse_model_configs
 from anonymizer.notebooks import required_api_key_environment_variables as public_required_api_keys
 from anonymizer.notebooks._model_config import (
@@ -37,6 +39,27 @@ def test_build_notebook_model_configuration_overrides_only_detector() -> None:
     assert any(provider.name == "openrouter" for provider in configuration.model_providers)
     injected = next(provider for provider in configuration.model_providers if provider.name == LOCAL_PROVIDER)
     assert injected.endpoint == "http://127.0.0.1:43210/v1"
+
+
+def test_notebook_word_window_defaults_survive_engine_parameter_injection() -> None:
+    configuration = build_notebook_model_configuration(
+        model_configs=None, model_providers=None, endpoint="http://127.0.0.1:43210/v1"
+    )
+    parsed = parse_model_configs(configuration.model_configs)
+    injected = EntityDetectionWorkflow(adapter=Mock())._inject_detector_params(
+        model_configs=parsed.model_configs,
+        selected_models=parsed.selected_models.detection,
+        labels=["first_name"],
+        gliner_detection_threshold=0.3,
+    )
+    detector = next(config for config in injected if config.alias == LOCAL_ALIAS)
+    assert detector.inference_parameters.extra_body == {
+        "chunk_length": 128,
+        "overlap": 32,
+        "labels": ["first_name"],
+        "threshold": 0.3,
+        "flat_ner": False,
+    }
 
 
 def test_custom_configuration_preserves_non_detector_entries_and_selections() -> None:

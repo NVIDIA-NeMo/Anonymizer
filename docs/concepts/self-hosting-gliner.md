@@ -28,11 +28,27 @@ the normal OpenAI-compatible request:
   "messages": [{"role": "user", "content": "<input text>"}],
   "labels": ["first_name", "last_name", "email"],
   "threshold": 0.3,
-  "chunk_length": 384,
-  "overlap": 128,
+  "chunk_length": 128,
+  "overlap": 32,
   "flat_ner": false
 }
 ```
+
+!!! note "Chunk defaults and units"
+
+    The bundled GLiNER2 server defaults to **128 native word tokens per chunk**
+    with **32 tokens of overlap**. These tokens include punctuation; they are not
+    characters or encoder subword tokens.
+
+Both the notebook helper and plain `Anonymizer()` use these defaults with the
+bundled server. For a custom service, check that service's units and defaults.
+Chunk values set in the detector model's `inference_parameters.extra_body` pass
+through unchanged; omitted fields use the server's defaults.
+
+The native splitter preserves source offsets and avoids cutting words. Unspaced
+Chinese or Japanese text can form a single long token, so word-window size does
+not guarantee a subword-token limit; evaluate chunk sizes for your language.
+Returned entities must match the original source text at their reported offsets.
 
 The response must use the chat-completion shape. `message.content` is a JSON string containing an
 `entities` list. Each entity has `text`, `label`, `start`, `end`, and `score` fields:
@@ -91,6 +107,12 @@ v4 name required by GLiNER2 2.0; model weights and source cache files remain unc
 pin applies only to this packaged notebook runtime. Production services control and pin their own
 model artifact independently.
 
+Notebook CI runs on a CPU runner and constrains its isolated runtime to the CPU
+build of PyTorch through `.github/constraints/notebook-ci.txt`. It caches only
+Hugging Face model files; platform-specific runtime packages are rebuilt per job
+and reused across tutorials within that job. These CI installation settings do
+not change the local helper's automatic device selection or GPU support.
+
 To request a device explicitly:
 
 ```python
@@ -118,6 +140,20 @@ uv run python tools/serve_gliner.py --host 127.0.0.1 --port 8001
 The wrapper prepares the same isolated dependency set used by the notebook helper, then starts the
 packaged server. It uses the pinned model but does not add production hardening. Keep it bound to
 loopback unless you provide an authenticated network boundary.
+
+Plain `Anonymizer()` uses this server's defaults without a manual override. To
+request explicit chunk settings for a custom endpoint, add them to the detector
+entry in your complete model configuration:
+
+```yaml
+inference_parameters:
+  extra_body:
+    chunk_length: 128
+    overlap: 32
+```
+
+The notebook helper supplies these settings automatically. The threshold still
+comes from `Detect(gliner_threshold=...)`.
 
 ## Configuring a managed endpoint
 
