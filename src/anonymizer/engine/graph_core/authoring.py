@@ -273,12 +273,36 @@ class Operation:
     inputs: Mapping[str, str] = field(default_factory=lambda: MappingProxyType({"text": TEXT}))
     outputs: Mapping[str, str] = field(default_factory=lambda: MappingProxyType({"text": TEXT}))
     requests: Requests = Requests()
+    scope: Literal["target", "invocation"] = "target"
 
     @classmethod
     def verifier(
         cls, name: str, fn: Callable[..., Any], inputs: Mapping[str, str] | None = None, requests: Requests = Requests()
     ) -> Operation:
         return cls(name, fn, MappingProxyType(dict(inputs or {"text": TEXT})), {"assessment": ASSESSMENT}, requests)
+
+    @classmethod
+    def per_invocation(
+        cls,
+        name: str,
+        fn: Callable[..., Any],
+        inputs: Mapping[str, str] | None = None,
+        outputs: Mapping[str, str] | None = None,
+        requests: Requests = Requests(),
+    ) -> Operation:
+        """An operation called once over every ready target; each input is a tuple of per-target values.
+
+        ``fn`` returns one entry per target in that order: an output value, ``None`` (no output) or an
+        ``Exception`` instance (that target failed). Its declared requests count once per invocation.
+        """
+        return cls(
+            name,
+            fn,
+            MappingProxyType(dict(inputs or {"text": TEXT})),
+            MappingProxyType(dict(outputs or {"text": TEXT})),
+            requests,
+            "invocation",
+        )
 
     @property
     def is_verifier(self) -> bool:

@@ -101,7 +101,7 @@ def prepare(
         raise k.GraphRejection("hard_budget_without_visibility")  # never downgraded to soft
     if request_budget is not None and planned.value is not None and planned.value > request_budget:
         raise k.GraphRejection("over_request_budget")
-    nodes = tuple(k.Node(name, op.inputs, op.outputs, op.fn) for name, op in ops)
+    nodes = tuple(k.Node(name, op.inputs, op.outputs, op.fn, op.scope) for name, op in ops)
     plan = k.compile_sequence(nodes, SEEDS)
     final_text = max((i for i, n in enumerate(nodes) if "text" in n.outputs), default=-1)
     covering = frozenset(
@@ -122,7 +122,8 @@ def _planned(ops: tuple[tuple[str, Operation], ...], targets: int) -> Count:
         return Count(None, "opaque")
     if "unknown" in bounds:
         return Count(None, "unknown")
-    total = sum((op.requests.count or 0) for _, op in ops) * targets
+    per_target = sum((op.requests.count or 0) for _, op in ops if op.scope == "target")
+    total = per_target * targets + sum((op.requests.count or 0) for _, op in ops if op.scope == "invocation")
     return Count(total, "upper" if "upper" in bounds else "exact")
 
 

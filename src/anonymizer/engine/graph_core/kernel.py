@@ -16,7 +16,7 @@ import threading
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
 from types import MappingProxyType
-from typing import Any
+from typing import Any, Literal
 
 
 class GraphRejection(Exception):
@@ -68,6 +68,7 @@ class Node:
     inputs: Mapping[str, str]
     outputs: Mapping[str, str]
     impl: Callable[..., Any] = field(repr=False, compare=False)
+    scope: Literal["target", "invocation"] = "target"
 
 
 @dataclass(frozen=True)
