@@ -42,8 +42,14 @@ overlap. Independently hosted services control their own chunking implementation
 change units for those services automatically. The example above shows the notebook
 helper's request. The engine passes through the detector model's
 `inference_parameters.extra_body` chunk settings; when omitted, the server chooses
-its defaults. The shipped model pool explicitly retains 384/128 for its existing
-detector endpoint, preserving the previous request settings for that service.
+its defaults. The shipped model pool targets the bundled localhost server and
+omits these chunk fields, so plain `Anonymizer()` also uses its 128/32 defaults.
+
+**Compatibility note for the next release:** custom detector model YAML now
+passes configured chunk settings through unchanged. When either field is absent,
+the request omits it and the server chooses that default. Earlier versions always
+overrode both fields with 384/128. Set them explicitly in `extra_body` if an
+independently hosted service needs those request values.
 
 Native word windows do not impose a fixed subword-token limit. In particular,
 the default splitter can treat an unspaced Chinese or Japanese run as one word,
@@ -149,8 +155,9 @@ The wrapper prepares the same isolated dependency set used by the notebook helpe
 packaged server. It uses the pinned model but does not add production hardening. Keep it bound to
 loopback unless you provide an authenticated network boundary.
 
-When using this server with a regular `Anonymizer()` instead of the notebook helper,
-add these settings to the detector entry in your complete model configuration:
+Plain `Anonymizer()` uses this server's defaults without a manual override. To
+request explicit chunk settings for a custom endpoint, add them to the detector
+entry in your complete model configuration:
 
 ```yaml
 inference_parameters:

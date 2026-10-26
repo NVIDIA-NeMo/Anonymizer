@@ -377,7 +377,7 @@ def test_inject_detector_params_does_not_mutate_input_configs(
     assert updated[0].inference_parameters.extra_body["flat_ner"] is False
 
 
-def test_default_model_pool_retains_legacy_endpoint_chunk_settings() -> None:
+def test_default_model_pool_defers_chunk_settings_to_local_server() -> None:
     parsed = parse_model_configs(None)
     updated = EntityDetectionWorkflow(adapter=Mock())._inject_detector_params(
         model_configs=parsed.model_configs,
@@ -387,8 +387,8 @@ def test_default_model_pool_retains_legacy_endpoint_chunk_settings() -> None:
     )
     detector = next(config for config in updated if config.alias == parsed.selected_models.detection.entity_detector)
     assert detector.inference_parameters.extra_body is not None
-    assert detector.inference_parameters.extra_body["chunk_length"] == 384
-    assert detector.inference_parameters.extra_body["overlap"] == 128
+    assert "chunk_length" not in detector.inference_parameters.extra_body
+    assert "overlap" not in detector.inference_parameters.extra_body
 
 
 def test_inject_detector_params_preserves_chunk_settings_but_injects_labels_and_threshold(
