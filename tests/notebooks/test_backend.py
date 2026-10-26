@@ -4,11 +4,15 @@
 from __future__ import annotations
 
 import json
+import re
+from collections.abc import Iterator
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
 
+from anonymizer.engine.detection.postprocess import parse_raw_entities
 from anonymizer.notebooks.local_inference.gliner2.backend import (
     _prepare_transformers_v4_snapshot,
     _resolve_document_overlaps,
@@ -18,9 +22,15 @@ from anonymizer.notebooks.local_inference.gliner2.backend import (
 )
 
 
+def _split_words(text: str, lower: bool = True) -> Iterator[tuple[str, int, int]]:
+    for match in re.finditer(r"\S+", text):
+        yield match.group().lower() if lower else match.group(), match.start(), match.end()
+
+
 class _FakeModel:
     def __init__(self, results: list[dict[str, Any]]) -> None:
         self.results = results
+        self.processor = SimpleNamespace(word_splitter=_split_words)
         self.calls: list[tuple[list[str], list[str], dict[str, Any]]] = []
 
     def batch_extract_entities(
@@ -124,7 +134,7 @@ def test_disallow_equal_score_tie_uses_confidence_start_end_ranking() -> None:
     assert _resolve_document_overlaps([inner, outer], "disallow") == [outer]
 
 
-def test_detect_entities_remaps_and_deduplicates_overlapping_character_chunks() -> None:
+def test_detect_entities_remaps_and_deduplicates_overlapping_word_chunks() -> None:
     model = _FakeModel(
         [
             {"entities": {"name": [{"text": "Alice", "confidence": 0.8, "start": 5, "end": 10}]}},
@@ -136,12 +146,13 @@ def test_detect_entities_remaps_and_deduplicates_overlapping_character_chunks() 
         ["xxxx Alice yyyy"],
         ["name"],
         threshold=0.3,
-        chunk_length=10,
-        overlap=5,
+        chunk_length=2,
+        overlap=1,
         flat_ner=False,
         inference_batch_size=2,
     )
     assert result == [[{"text": "Alice", "label": "name", "start": 5, "end": 10, "score": 0.9}]]
+    assert model.calls[0][0] == ["xxxx Alice", "Alice yyyy"]
     assert model.calls[0][2]["include_spans"] is True
     assert model.calls[0][2]["include_confidence"] is True
     assert model.calls[0][2]["overlap_policy"] == "longest"
@@ -167,3 +178,183 @@ def test_detect_entities_rejects_invalid_chunk_settings(
             flat_ner=False,
             inference_batch_size=1,
         )
+
+
+@pytest.mark.parametrize("suffix", [".", ".."])
+def test_synthetic_suffix_is_removed_without_losing_the_source_entity(suffix: str) -> None:
+    text = "Ask May"
+    model = _FakeModel(
+        [
+            {
+                "entities": {
+                    "first_name": [{"text": "May" + suffix, "confidence": 0.9, "start": 4, "end": 7 + len(suffix)}]
+                }
+            }
+        ]
+    )
+    result = detect_entities_for_texts(
+        model,
+        [text],
+        ["first_name"],
+        threshold=0.3,
+        chunk_length=384,
+        overlap=128,
+        flat_ner=False,
+        inference_batch_size=1,
+    )[0]
+    assert result == [{"text": "May", "label": "first_name", "start": 4, "end": 7, "score": 0.9}]
+    parsed = parse_raw_entities(raw_response=json.dumps({"entities": result}), text=text)
+    assert [(entity.value, entity.start_position, entity.end_position) for entity in parsed] == [("May", 4, 7)]
+
+
+def test_boundary_punctuation_does_not_consume_the_next_source_character() -> None:
+    text = "Ask May today"
+    model = _FakeModel(
+        [
+            {"entities": {"first_name": [{"text": "May.", "confidence": 0.8, "start": 4, "end": 8}]}},
+            {"entities": {"first_name": [{"text": "May", "confidence": 0.9, "start": 0, "end": 3}]}},
+        ]
+    )
+    result = detect_entities_for_texts(
+        model,
+        [text],
+        ["first_name"],
+        threshold=0.3,
+        chunk_length=2,
+        overlap=1,
+        flat_ner=False,
+        inference_batch_size=2,
+    )[0]
+    assert model.calls[0][0] == ["Ask May", "May today"]
+    assert result == [{"text": "May", "label": "first_name", "start": 4, "end": 7, "score": 0.9}]
+    assert text[result[0]["start"] : result[0]["end"]] == result[0]["text"]
+
+
+def test_synthetic_only_prediction_does_not_remove_valid_entities() -> None:
+    model = _FakeModel(
+        [
+            {
+                "entities": {
+                    "first_name": [
+                        {"text": "May", "confidence": 0.9, "start": 4, "end": 7},
+                        {"text": ".", "confidence": 0.8, "start": 7, "end": 8},
+                    ]
+                }
+            }
+        ]
+    )
+    result = detect_entities_for_texts(
+        model,
+        ["Ask May"],
+        ["first_name"],
+        threshold=0.3,
+        chunk_length=384,
+        overlap=128,
+        flat_ner=False,
+        inference_batch_size=1,
+    )[0]
+    assert [entity["text"] for entity in result] == ["May"]
+
+
+def test_word_windows_preserve_unicode_whitespace_and_document_coordinates() -> None:
+    text = "  İpek\t\nvisits José  today "
+    model = _FakeModel(
+        [
+            {"entities": {"first_name": [{"text": "İpek", "confidence": 0.9, "start": 0, "end": 4}]}},
+            {"entities": {"first_name": [{"text": "José", "confidence": 0.9, "start": 7, "end": 11}]}},
+            {"entities": {"first_name": [{"text": "José", "confidence": 0.8, "start": 0, "end": 4}]}},
+        ]
+    )
+    result = detect_entities_for_texts(
+        model,
+        [text],
+        ["first_name"],
+        threshold=0.3,
+        chunk_length=2,
+        overlap=1,
+        flat_ner=False,
+        inference_batch_size=3,
+    )[0]
+    assert model.calls[0][0] == ["İpek\t\nvisits", "visits José", "José  today"]
+    assert [(e["text"], e["start"], e["end"]) for e in result] == [("İpek", 2, 6), ("José", 15, 19)]
+    assert all(text[e["start"] : e["end"]] == e["text"] for e in result)
+
+
+@pytest.mark.parametrize("text", ["", " \t\n "])
+def test_empty_or_whitespace_source_skips_inference(text: str) -> None:
+    model = _FakeModel([])
+    assert detect_entities_for_texts(
+        model,
+        [text],
+        ["name"],
+        threshold=0.3,
+        chunk_length=384,
+        overlap=128,
+        flat_ner=False,
+        inference_batch_size=1,
+    ) == [[]]
+    assert model.calls == []
+
+
+@pytest.mark.parametrize(
+    ("source", "value", "start", "end"),
+    [
+        ("Ask May", "June", 4, 7),
+        ("Ask May", "MayX", 4, 8),
+        ("Ask May.", "May..", 4, 9),
+        ("Ask May", "May", -1, 3),
+        ("Ask May", "May", 4, 4),
+    ],
+)
+def test_unexplained_span_errors_still_fail_without_logging_values(
+    source: str,
+    value: str,
+    start: int,
+    end: int,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    model = _FakeModel(
+        [
+            {
+                "entities": {
+                    "first_name": [
+                        {"text": value, "confidence": 0.9, "start": start, "end": end},
+                    ]
+                }
+            }
+        ]
+    )
+    with pytest.raises(ValueError, match="inconsistent offsets") as error:
+        detect_entities_for_texts(
+            model,
+            [source],
+            ["first_name"],
+            threshold=0.3,
+            chunk_length=384,
+            overlap=128,
+            flat_ner=False,
+            inference_batch_size=1,
+        )
+    assert value not in str(error.value)
+    assert source not in str(error.value)
+    assert value not in caplog.text
+
+
+def test_batch_word_windows_keep_document_offsets_separate() -> None:
+    model = _FakeModel(
+        [
+            {"entities": {"first_name": [{"text": "May.", "confidence": 0.9, "start": 4, "end": 8}]}},
+            {"entities": {"first_name": [{"text": "June", "confidence": 0.9, "start": 5, "end": 9}]}},
+        ]
+    )
+    result = detect_entities_for_texts(
+        model,
+        ["Ask May", "Call June"],
+        ["first_name"],
+        threshold=0.3,
+        chunk_length=384,
+        overlap=128,
+        flat_ner=False,
+        inference_batch_size=2,
+    )
+    assert [(row[0]["text"], row[0]["start"], row[0]["end"]) for row in result] == [("May", 4, 7), ("June", 5, 9)]

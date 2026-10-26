@@ -34,6 +34,20 @@ the normal OpenAI-compatible request:
 }
 ```
 
+In the bundled notebook/development server, `chunk_length` and `overlap` count
+GLiNER2 native word tokens, not characters. The server uses the loaded model's word
+splitter to preserve original character offsets and avoid cutting words. The
+existing defaults use 384-word windows with 128-word overlap. Independently hosted
+services control their own chunking implementation; these request fields do not
+change units for those services automatically.
+
+GLiNER2 may append terminal punctuation internally. The bundled adapter removes
+only a proven synthetic period suffix from a returned span before mapping it to
+the document. Predictions entirely inside that suffix contain no source text and
+are ignored. Other text/offset mismatches remain errors. Returned entity values
+are taken from the original source, and the engine's source-integrity check stays
+enabled.
+
 The response must use the chat-completion shape. `message.content` is a JSON string containing an
 `entities` list. Each entity has `text`, `label`, `start`, `end`, and `score` fields:
 
