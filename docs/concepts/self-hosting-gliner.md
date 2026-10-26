@@ -34,35 +34,23 @@ the normal OpenAI-compatible request:
 }
 ```
 
-In the bundled notebook/development server, `chunk_length` and `overlap` count
-GLiNER2 native word tokens, not characters. The server uses the loaded model's word
-splitter to preserve original character offsets and avoid cutting words. The
-bundled server and notebook helper default to 128-word windows with 32-word
-overlap. Independently hosted services control their own chunking implementation; these request fields do not
-change units for those services automatically. The example above shows the notebook
-helper's request. The engine passes through the detector model's
-`inference_parameters.extra_body` chunk settings; when omitted, the server chooses
-its defaults. The shipped model pool targets the bundled localhost server and
-omits these chunk fields, so plain `Anonymizer()` also uses its 128/32 defaults.
+!!! note "Chunk defaults and units"
 
-**Compatibility note for the next release:** custom detector model YAML now
-passes configured chunk settings through unchanged. When either field is absent,
-the request omits it and the server chooses that default. Earlier versions always
-overrode both fields with 384/128. Set them explicitly in `extra_body` if an
-independently hosted service needs those request values.
+    The bundled GLiNER2 server defaults to **128 native word tokens per chunk**
+    with **32 tokens of overlap**. These tokens include punctuation; they are not
+    characters or encoder subword tokens.
 
-Native word windows do not impose a fixed subword-token limit. In particular,
-the default splitter can treat an unspaced Chinese or Japanese run as one word,
-so the word count may not bound input size for those scripts. The bundled
-tutorials use English; evaluate window sizes on your own language and data.
+Both the notebook helper and plain `Anonymizer()` use these defaults with the
+bundled server. For a custom service, check that service's units and defaults.
+Chunk values set in the detector model's `inference_parameters.extra_body` pass
+through unchanged; omitted fields use the server's defaults.
 
-The pinned GLiNER2 2.0 implementation can append one terminal period internally.
-The bundled adapter removes only that exact synthetic period from a returned span before mapping it to
-the document. Predictions entirely inside that suffix contain no source text and
-are ignored. Other text/offset mismatches, case changes, whitespace normalization,
-and extra synthetic periods remain errors. Returned entity values
-are taken from the original source, and the engine's source-integrity check stays
-enabled.
+The native splitter preserves source offsets and avoids cutting words. Unspaced
+Chinese or Japanese text can form a single long token, so word-window size does
+not guarantee a subword-token limit; evaluate chunk sizes for your language.
+Returned spans must match the original source. The adapter removes GLiNER2's
+synthetic terminal period where needed; unexplained text/offset mismatches remain
+errors.
 
 The response must use the chat-completion shape. `message.content` is a JSON string containing an
 `entities` list. Each entity has `text`, `label`, `start`, `end`, and `score` fields:
