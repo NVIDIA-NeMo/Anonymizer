@@ -199,31 +199,22 @@ def _create_text_chunks(
 
 
 def _ground_chunk_entity(entity: dict[str, Any], chunk: str) -> dict[str, Any] | None:
-    """Remove proven synthetic terminal punctuation before document remapping."""
+    """Remove the pinned GLiNER2 implementation's single synthetic terminal period."""
     start, end = int(entity["start"]), int(entity["end"])
-    value = str(entity["text"]).strip()
+    value = str(entity["text"])
     invalid_span = f"GLiNER2 returned inconsistent offsets [{start}, {end}) for a chunk of length {len(chunk)}"
-    if start < 0 or end <= start or not value:
+    if not value.strip():
         raise ValueError(invalid_span)
-    if end > len(chunk):
-        # GLiNER2 can append periods before inference. They are not source
-        # characters, even when these coordinates would fit the full document.
-        suffix_length = end - max(start, len(chunk))
-        if (
-            not chunk
-            or chunk.endswith((".", "!", "?"))
-            or suffix_length > len(value)
-            or value.casefold() != (chunk[start:] + "." * suffix_length).strip().casefold()
-        ):
-            raise ValueError(invalid_span)
-        if start >= len(chunk):
+    if 0 <= start < end <= len(chunk) and value == chunk[start:end]:
+        return entity
+    appended = bool(chunk) and not chunk.endswith((".", "!", "?"))
+    if appended and 0 <= start <= len(chunk) and end == len(chunk) + 1 and value == chunk[start:] + ".":
+        if start == len(chunk):
             return None
-        end = len(chunk)
-    elif value.casefold() != chunk[start:end].strip().casefold():
-        raise ValueError(invalid_span)
-    entity["text"] = chunk[start:end]
-    entity["end"] = end
-    return entity
+        entity["text"] = chunk[start:]
+        entity["end"] = len(chunk)
+        return entity
+    raise ValueError(invalid_span)
 
 
 def _resolve_document_overlaps(

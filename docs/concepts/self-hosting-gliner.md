@@ -41,10 +41,16 @@ existing defaults use 384-word windows with 128-word overlap. Independently host
 services control their own chunking implementation; these request fields do not
 change units for those services automatically.
 
-GLiNER2 may append terminal punctuation internally. The bundled adapter removes
-only a proven synthetic period suffix from a returned span before mapping it to
+Native word windows do not impose a fixed subword-token limit. In particular,
+the default splitter can treat an unspaced Chinese or Japanese run as one word,
+so the word count may not bound input size for those scripts. The bundled
+tutorials use English; evaluate window sizes on your own language and data.
+
+The pinned GLiNER2 2.0 implementation can append one terminal period internally.
+The bundled adapter removes only that exact synthetic period from a returned span before mapping it to
 the document. Predictions entirely inside that suffix contain no source text and
-are ignored. Other text/offset mismatches remain errors. Returned entity values
+are ignored. Other text/offset mismatches, case changes, whitespace normalization,
+and extra synthetic periods remain errors. Returned entity values
 are taken from the original source, and the engine's source-integrity check stays
 enabled.
 

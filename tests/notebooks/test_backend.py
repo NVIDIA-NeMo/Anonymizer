@@ -180,31 +180,31 @@ def test_detect_entities_rejects_invalid_chunk_settings(
         )
 
 
-@pytest.mark.parametrize("suffix", [".", ".."])
-def test_synthetic_suffix_is_removed_without_losing_the_source_entity(suffix: str) -> None:
-    text = "Ask May"
+@pytest.mark.parametrize(
+    ("text", "value", "start", "label"),
+    [("Ask May", "May", 4, "first_name"), ("Visit https://example.org", "https://example.org", 6, "url")],
+)
+def test_synthetic_suffix_is_removed_without_losing_the_source_entity(
+    text: str, value: str, start: int, label: str
+) -> None:
     model = _FakeModel(
-        [
-            {
-                "entities": {
-                    "first_name": [{"text": "May" + suffix, "confidence": 0.9, "start": 4, "end": 7 + len(suffix)}]
-                }
-            }
-        ]
+        [{"entities": {label: [{"text": value + ".", "confidence": 0.9, "start": start, "end": len(text) + 1}]}}]
     )
     result = detect_entities_for_texts(
         model,
         [text],
-        ["first_name"],
+        [label],
         threshold=0.3,
         chunk_length=384,
         overlap=128,
         flat_ner=False,
         inference_batch_size=1,
     )[0]
-    assert result == [{"text": "May", "label": "first_name", "start": 4, "end": 7, "score": 0.9}]
+    assert result == [{"text": value, "label": label, "start": start, "end": len(text), "score": 0.9}]
     parsed = parse_raw_entities(raw_response=json.dumps({"entities": result}), text=text)
-    assert [(entity.value, entity.start_position, entity.end_position) for entity in parsed] == [("May", 4, 7)]
+    assert [(entity.value, entity.start_position, entity.end_position) for entity in parsed] == [
+        (value, start, len(text))
+    ]
 
 
 def test_boundary_punctuation_does_not_consume_the_next_source_character() -> None:
@@ -301,6 +301,10 @@ def test_empty_or_whitespace_source_skips_inference(text: str) -> None:
     [
         ("Ask May", "June", 4, 7),
         ("Ask May", "MayX", 4, 8),
+        ("Ask May", "may", 4, 7),
+        ("Ask May", " May", 4, 7),
+        ("Ask May", "May..", 4, 9),
+        ("Ask May", ".", 9, 10),
         ("Ask May.", "May..", 4, 9),
         ("Ask May", "May", -1, 3),
         ("Ask May", "May", 4, 4),
