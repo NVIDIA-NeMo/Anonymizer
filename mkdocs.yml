@@ -175,6 +175,7 @@ nav:
   - API Reference: reference/
   - Developer Notes:
       - devnotes/index.md
+      - "Anonymize a Few, Generate Many: Scaling Up Private Agent Traces": devnotes/posts/agent-traces.md
       - "Hybrid Entity Detection: Why One Model Shouldn't Do Everything": devnotes/posts/hybrid-entity-detection.md
       - "After Anonymization — Part II: Evaluating Rewrite Mode": devnotes/posts/evaluation-anonymizer-rewrite.md
       - "After Anonymization — Part I: Evaluating Replace Mode": devnotes/posts/evaluation-anonymizer-replace.md
