@@ -13,7 +13,7 @@ from __future__ import annotations
 import contextvars
 import secrets
 import threading
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from types import MappingProxyType
 from typing import Any, Literal
@@ -322,6 +322,47 @@ def _outputs(node: Node, raw: Any) -> Mapping[str, Any]:
     return MappingProxyType(dict(raw))
 
 
+def _dispatch_invocation(plan: Plan, state: State, i: int) -> State:
+    """Run invocation-scoped node ``i`` once over every unit that will ever be ready at it.
+
+    The callable gets one tuple per input port, aligned with the dispatched units, and returns one entry per unit:
+    ``None`` closes the unit as ``missing_output``, an ``Exception`` instance as ``raised``, any other value is
+    checked as a target operation's output.
+    """
+    node = plan.nodes[i]
+    units = [
+        u
+        for u, row in enumerate(state.rows)
+        if row.status[i] == PENDING and all(row.status[d] == SUCCEEDED for d in plan.deps[i])
+    ]
+    for u in units:
+        state = reduce(plan, state, Dispatched(u, i))
+    per_unit = [_inputs(plan, state, u, i) for u in units]
+    try:
+        raw = node.impl(**{port: tuple(values[port] for values in per_unit) for port in node.inputs})
+    except Exception as exc:
+        for u in units:
+            state = reduce(plan, state, Failed(u, i, "raised", exc))
+        return state
+    if not isinstance(raw, Sequence) or isinstance(raw, (str, bytes)) or len(raw) != len(units):
+        for u in units:
+            state = reduce(plan, state, Failed(u, i, "invalid_output"))
+        return state
+    for u, value in zip(units, raw):
+        if value is None:
+            state = reduce(plan, state, Failed(u, i, "missing_output"))
+        elif isinstance(value, Exception):
+            state = reduce(plan, state, Failed(u, i, "raised", value))
+        else:
+            try:
+                outputs = _outputs(node, value)
+            except TypeError as exc:
+                state = reduce(plan, state, Failed(u, i, "invalid_output", exc))
+            else:
+                state = reduce(plan, state, Completed(u, i, outputs))
+    return state
+
+
 def execute(plan: Plan, state: State, cancelled: Callable[[], bool]) -> State:
     """Drive the reducer to quiescence on the calling thread; callables run here, one at a time.
 
@@ -336,6 +377,9 @@ def execute(plan: Plan, state: State, cancelled: Callable[[], bool]) -> State:
             return state
         unit, i = ready
         node = plan.nodes[i]
+        if node.scope == "invocation":
+            state = _dispatch_invocation(plan, state, i)
+            continue
         state = reduce(plan, state, Dispatched(unit, i))
         try:
             raw = node.impl(**_inputs(plan, state, unit, i))
