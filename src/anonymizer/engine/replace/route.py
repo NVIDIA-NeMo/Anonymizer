@@ -8,9 +8,10 @@ Each row lowers to one target datum whose exact, non-overlapping entity spans ar
 mention, checked by source-plus-patches reconstruction). The legacy DataFrame projection derives from
 the canonical result without rerunning work; Annotate output is an annotation result and is never Protected.
 
-Substitute first runs its replacement map, one ``LlmReplaceWorkflow`` call over the whole frame (DataDesigner batches
-it), as the single operation of its own invocation; the rows it returns then take the same route as a local strategy,
-with their map taken from the frame.
+Substitute runs as one invocation. Its invocation-scoped ``substitute-map`` step makes one ``LlmReplaceWorkflow`` call
+over the whole frame (DataDesigner batches it) and returns each row's replacement map; a row DataDesigner dropped gets
+no map and fails at that step. ``replace`` then reads the map from its ``replacement_map`` port, and the patch verifier
+runs per row.
 """
 
 from __future__ import annotations
