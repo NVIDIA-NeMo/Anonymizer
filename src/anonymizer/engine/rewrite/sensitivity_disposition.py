@@ -28,13 +28,13 @@ from anonymizer.engine.constants import (
 )
 from anonymizer.engine.ndd.model_loader import resolve_model_alias
 from anonymizer.engine.prompt_utils import substitute_placeholders
-from anonymizer.engine.rewrite.parsers import normalize_payload, parse_sensitivity_disposition
+from anonymizer.engine.rewrite.parsers import normalize_payload
 from anonymizer.engine.schemas import (
     EntitiesByValueSchema,
     LatentEntitiesSchema,
     SensitivityDispositionSchema,
-    StrictSensitivityDispositionSchema,
 )
+from anonymizer.engine.schemas.rewrite import RawSensitivityDispositionSchema, StrictRawSensitivityDispositionSchema
 
 logger = logging.getLogger("anonymizer.rewrite.sensitivity_disposition")
 
@@ -134,9 +134,9 @@ Latent entities with stable IDs, values, and supporting evidence:
 Return exactly one disposition for every supplied entity, in input order:
 explicit entities first, then latent entities.
 
-Preserve supplied IDs, labels, values, and explicit categories exactly.
-Use source="tagged" for explicit entities.
-Use source="latent" and category="latent_identifier" for latent entities.
+Preserve supplied IDs exactly. Use the supplied labels, values, categories,
+and explicit/latent distinction to make decisions, but do not echo them.
+Code will reconstruct those fields from each ID.
 Do not add, omit, combine, split, or discover entities.
 </scope>
 
@@ -217,10 +217,6 @@ if its value must change for protection, assign it a protected disposition.
 <output>
 Return sensitivity_disposition. Each entry contains:
 - id
-- source
-- category
-- entity_label
-- entity_value
 - sensitivity: high, medium, or low
 - protection_method_suggestion: replace, generalize, remove,
   suppress_inference, or leave_as_is
@@ -231,8 +227,11 @@ Return sensitivity_disposition. Each entry contains:
     it adds no meaningful linkage or recognition risk in context.
   - Confirm consistency with the privacy goal and other protection decisions.
 
+Return only these four fields per entry. Do not repeat source, category,
+entity_label, or entity_value; they are supplied by code using the ID.
+
 Before returning, verify:
-- Complete coverage, input order, and unchanged entity identity fields.
+- Complete coverage, input order, and unchanged IDs.
 - Direct identifiers are high.
 - High/medium entities are protected; low entities use leave_as_is.
 - Protected latent entities use suppress_inference.
@@ -352,12 +351,39 @@ def verify_disposition_coverage(
     side_effect_columns=[COL_DISPOSITION_COVERAGE],
 )
 def _verify_disposition_coverage(row: dict[str, Any]) -> dict[str, Any]:
-    disposition = parse_sensitivity_disposition(row.get(COL_RAW_SENSITIVITY_DISPOSITION))
+    raw = RawSensitivityDispositionSchema.model_validate(normalize_payload(row.get(COL_RAW_SENSITIVITY_DISPOSITION)))
+    explicit = _parse_numbered_lines(row.get(COL_DISPOSITION_EXPLICIT_ENTITIES))
+    expected = explicit + _parse_numbered_lines(row.get(COL_DISPOSITION_LATENT_ENTITIES))
+    decisions = raw.sensitivity_disposition
+    if len(decisions) != len(expected):
+        raise ValueError(
+            f"Disposition has {len(decisions)} entries but {len(expected)} entities were supplied; "
+            "every supplied entity must receive exactly one disposition."
+        )
+    classifications = normalize_payload(row.get(COL_ENTITY_CLASSIFICATION)) or {}
+    entries = []
+    for index, (supplied, decision) in enumerate(zip(expected, decisions, strict=True)):
+        source = "tagged" if index < len(explicit) else "latent"
+        category = classifications.get(supplied["label"]) if source == "tagged" else "latent_identifier"
+        if category not in {"direct_identifier", "quasi_identifier", "latent_identifier"}:
+            raise ValueError(
+                f"Entity {decision.id}: missing or invalid supplied category {category!r} for {supplied['label']!r}"
+            )
+        entries.append(
+            {
+                **decision.model_dump(mode="json"),
+                "source": source,
+                "category": category,
+                "entity_label": supplied["label"],
+                "entity_value": supplied["value"],
+            }
+        )
+    disposition = SensitivityDispositionSchema.model_validate({"sensitivity_disposition": entries})
     verify_disposition_coverage(
         disposition,
         row.get(COL_DISPOSITION_EXPLICIT_ENTITIES),
         row.get(COL_DISPOSITION_LATENT_ENTITIES),
-        normalize_payload(row.get(COL_ENTITY_CLASSIFICATION)) or {},
+        classifications,
     )
     row[COL_SENSITIVITY_DISPOSITION] = disposition.model_dump(mode="json")
     row[COL_DISPOSITION_COVERAGE] = True
@@ -378,7 +404,9 @@ class SensitivityDispositionWorkflow:
         strict_entity_protection: bool = False,
     ) -> list[ColumnConfigT]:
         disposition_alias = resolve_model_alias("disposition_analyzer", selected_models)
-        output_schema = StrictSensitivityDispositionSchema if strict_entity_protection else SensitivityDispositionSchema
+        output_schema = (
+            StrictRawSensitivityDispositionSchema if strict_entity_protection else RawSensitivityDispositionSchema
+        )
         return [
             CustomColumnConfig(
                 name=COL_DISPOSITION_EXPLICIT_ENTITIES,

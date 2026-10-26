@@ -41,7 +41,8 @@ from anonymizer.engine.rewrite.sensitivity_disposition import (
     build_numbered_entities,
     verify_disposition_coverage,
 )
-from anonymizer.engine.schemas import SensitivityDispositionSchema, StrictSensitivityDispositionSchema
+from anonymizer.engine.schemas import SensitivityDispositionSchema
+from anonymizer.engine.schemas.rewrite import RawSensitivityDispositionSchema, StrictRawSensitivityDispositionSchema
 
 _STUB_PRIVACY_GOAL = PrivacyGoal(
     protect="Protect direct identifiers and quasi-identifier combinations from re-identification.",
@@ -90,8 +91,8 @@ def test_columns_output_schema_follows_strict_flag(stub_rewrite_model_selection:
     assert isinstance(default_llm, LLMStructuredColumnConfig)
     assert isinstance(strict_llm, LLMStructuredColumnConfig)
     # NDD stores output_format as a JSON schema, so compare against each model's schema.
-    assert default_llm.output_format == SensitivityDispositionSchema.model_json_schema()
-    assert strict_llm.output_format == StrictSensitivityDispositionSchema.model_json_schema()
+    assert default_llm.output_format == RawSensitivityDispositionSchema.model_json_schema()
+    assert strict_llm.output_format == StrictRawSensitivityDispositionSchema.model_json_schema()
     assert default_llm.output_format != strict_llm.output_format
 
 
@@ -219,6 +220,19 @@ def _disposition(*entries: tuple[int, str, str]) -> SensitivityDispositionSchema
     )
 
 
+def _compact(disposition: SensitivityDispositionSchema | dict[str, Any]) -> dict[str, Any]:
+    payload = (
+        disposition.model_dump(mode="json") if isinstance(disposition, SensitivityDispositionSchema) else disposition
+    )
+    fields = {"id", "sensitivity", "protection_method_suggestion", "low_sensitivity_reason"}
+    return {
+        "sensitivity_disposition": [
+            {key: value for key, value in entry.items() if key in fields}
+            for entry in payload["sensitivity_disposition"]
+        ]
+    }
+
+
 def test_verify_disposition_coverage_accepts_exact_coverage() -> None:
     explicit, latent = build_numbered_entities(_TWO_ENTITIES, None)
     verify_disposition_coverage(
@@ -272,12 +286,133 @@ def test_verify_disposition_coverage_restores_identity_on_mismatch(
 def test_verify_disposition_column_marks_row_verified() -> None:
     explicit, latent = build_numbered_entities(_TWO_ENTITIES, None)
     row = {
-        COL_RAW_SENSITIVITY_DISPOSITION: _disposition((1, "first_name", "Alice"), (2, "city", "Portland")),
+        COL_RAW_SENSITIVITY_DISPOSITION: _compact(_disposition((1, "first_name", "Alice"), (2, "city", "Portland"))),
         COL_DISPOSITION_EXPLICIT_ENTITIES: explicit,
         COL_DISPOSITION_LATENT_ENTITIES: latent,
         COL_ENTITY_CLASSIFICATION: _CLASSIFICATIONS,
     }
     assert _verify_disposition_coverage(row)[COL_DISPOSITION_COVERAGE] is True
+
+
+def test_compact_response_schema_has_only_decision_fields() -> None:
+    schema = RawSensitivityDispositionSchema.model_json_schema()
+    fields = schema["$defs"]["RawEntityDispositionSchema"]["properties"]
+    assert set(fields) == {"id", "sensitivity", "protection_method_suggestion", "low_sensitivity_reason"}
+    prompt = _get_sensitivity_disposition_prompt(_STUB_PRIVACY_GOAL)
+    output = prompt.split("<output>")[1]
+    assert "Do not repeat source, category" in output
+    assert "- entity_value" not in output
+
+
+def test_compact_disposition_reconstructs_identity_and_normalizes_policy() -> None:
+    entities = {"entities_by_value": [{"value": "José\u202fGarcía", "labels": ["first_name", "city"]}]}
+    explicit, latent = build_numbered_entities(entities, _STUB_LATENT)
+    raw = {
+        "sensitivity_disposition": [
+            {"id": 1, "sensitivity": "medium", "protection_method_suggestion": "generalize"},
+            {
+                "id": 2,
+                "sensitivity": "low",
+                "protection_method_suggestion": "leave_as_is",
+                "low_sensitivity_reason": "No additional linkage in context.",
+            },
+            {"id": 3, "sensitivity": "medium", "protection_method_suggestion": "remove"},
+        ]
+    }
+    row = {
+        COL_RAW_SENSITIVITY_DISPOSITION: json.dumps(raw),
+        COL_DISPOSITION_EXPLICIT_ENTITIES: explicit,
+        COL_DISPOSITION_LATENT_ENTITIES: latent,
+        COL_ENTITY_CLASSIFICATION: _CLASSIFICATIONS,
+    }
+
+    result = _verify_disposition_coverage(row)
+    first, second, third = result[COL_SENSITIVITY_DISPOSITION]["sensitivity_disposition"]
+
+    assert (first["id"], first["source"], first["category"], first["entity_label"], first["entity_value"]) == (
+        1,
+        "tagged",
+        "direct_identifier",
+        "first_name",
+        "José\u202fGarcía",
+    )
+    assert first["sensitivity"] == "high"
+    assert first["protection_method_suggestion"] == "generalize"
+    assert second["entity_label"] == "city"
+    assert second["entity_value"] == first["entity_value"]
+    assert second["sensitivity"] == "low"
+    assert second["low_sensitivity_reason"] == "No additional linkage in context."
+    assert (third["source"], third["category"], third["entity_label"], third["entity_value"]) == (
+        "latent",
+        "latent_identifier",
+        "employer",
+        "a large cloud provider",
+    )
+    assert third["protection_method_suggestion"] == "suppress_inference"
+    assert result[COL_DISPOSITION_COVERAGE] is True
+    assert result[COL_RAW_SENSITIVITY_DISPOSITION] == json.dumps(raw)
+
+
+@pytest.mark.parametrize("count", [1, 3])
+def test_compact_disposition_rejects_incomplete_or_extra_coverage(count: int) -> None:
+    explicit, latent = build_numbered_entities(_TWO_ENTITIES, None)
+    row = {
+        COL_RAW_SENSITIVITY_DISPOSITION: {
+            "sensitivity_disposition": [
+                {"id": i, "sensitivity": "medium", "protection_method_suggestion": "generalize"}
+                for i in range(1, count + 1)
+            ]
+        },
+        COL_DISPOSITION_EXPLICIT_ENTITIES: explicit,
+        COL_DISPOSITION_LATENT_ENTITIES: latent,
+        COL_ENTITY_CLASSIFICATION: _CLASSIFICATIONS,
+    }
+    with pytest.raises(ValueError, match=f"{count} entries but 2 entities were supplied"):
+        _verify_disposition_coverage(row)
+    assert COL_DISPOSITION_COVERAGE not in row
+
+
+@pytest.mark.parametrize("ids", [[1, 1], [2, 1], [1, 3]])
+def test_compact_response_rejects_duplicate_reordered_or_missing_ids(ids: list[int]) -> None:
+    with pytest.raises(ValueError, match="IDs must be sequential"):
+        RawSensitivityDispositionSchema.model_validate(
+            {
+                "sensitivity_disposition": [
+                    {"id": i, "sensitivity": "medium", "protection_method_suggestion": "generalize"} for i in ids
+                ]
+            }
+        )
+
+
+def test_compact_disposition_rejects_missing_category() -> None:
+    explicit, latent = build_numbered_entities(_TWO_ENTITIES, None)
+    row = {
+        COL_RAW_SENSITIVITY_DISPOSITION: _compact(_disposition((1, "first_name", "Alice"), (2, "city", "Portland"))),
+        COL_DISPOSITION_EXPLICIT_ENTITIES: explicit,
+        COL_DISPOSITION_LATENT_ENTITIES: latent,
+        COL_ENTITY_CLASSIFICATION: {},
+    }
+    with pytest.raises(ValueError, match="missing or invalid supplied category"):
+        _verify_disposition_coverage(row)
+
+
+def test_compact_response_checks_low_sensitivity_reason_before_reconstruction() -> None:
+    with pytest.raises(ValueError, match="low sensitivity requires a non-empty"):
+        RawSensitivityDispositionSchema.model_validate(
+            {
+                "sensitivity_disposition": [
+                    {"id": 1, "sensitivity": "low", "protection_method_suggestion": "leave_as_is"}
+                ]
+            }
+        )
+
+
+@pytest.mark.parametrize(("sensitivity", "method"), [("low", "leave_as_is"), ("medium", "leave_as_is")])
+def test_strict_compact_response_disallows_unprotected_decisions(sensitivity: str, method: str) -> None:
+    with pytest.raises(ValueError):
+        StrictRawSensitivityDispositionSchema.model_validate(
+            {"sensitivity_disposition": [{"id": 1, "sensitivity": sensitivity, "protection_method_suggestion": method}]}
+        )
 
 
 @pytest.mark.parametrize(
@@ -336,7 +471,7 @@ def test_verify_disposition_normalizes_surname_and_preserves_method(value: str, 
         entity_label="last_name", sensitivity="medium", protection_method_suggestion=method
     )
     row = {
-        COL_RAW_SENSITIVITY_DISPOSITION: payload,
+        COL_RAW_SENSITIVITY_DISPOSITION: _compact(payload),
         COL_DISPOSITION_EXPLICIT_ENTITIES: explicit,
         COL_DISPOSITION_LATENT_ENTITIES: "(none)",
         COL_ENTITY_CLASSIFICATION: {"last_name": "direct_identifier"},
@@ -404,16 +539,11 @@ def test_verify_disposition_normalizes_protected_latent_method(
 
 
 @custom_column_generator(required_columns=[COL_DISPOSITION_EXPLICIT_ENTITIES])
-def _generate_misclassified_disposition(row: dict[str, Any]) -> dict[str, Any]:
-    supplied = json.loads(row[COL_DISPOSITION_EXPLICIT_ENTITIES])
+def _generate_compact_disposition(row: dict[str, Any]) -> dict[str, Any]:
     row[COL_RAW_SENSITIVITY_DISPOSITION] = {
         "sensitivity_disposition": [
             {
                 "id": 1,
-                "source": "tagged",
-                "category": "quasi_identifier",
-                "entity_label": supplied["label"],
-                "entity_value": supplied["value"],
                 "sensitivity": "medium",
                 "protection_method_suggestion": "generalize",
             }
@@ -433,7 +563,7 @@ def test_scheduler_propagates_normalized_disposition(
     # Replace only the remote LLM call; execute normalization and consumers in the real scheduler.
     columns[1] = CustomColumnConfig(
         name=COL_RAW_SENSITIVITY_DISPOSITION,
-        generator_function=_generate_misclassified_disposition,
+        generator_function=_generate_compact_disposition,
     )
     columns.extend(
         [
@@ -466,7 +596,10 @@ def test_scheduler_propagates_normalized_disposition(
         normalized = normalize_payload(row[COL_SENSITIVITY_DISPOSITION])["sensitivity_disposition"][0]
         qa = normalize_payload(row[COL_PRIVACY_QA])["items"][0]
         rewrite = normalize_payload(row[COL_REWRITE_DISPOSITION_BLOCK])[0]
-        assert raw["category"] == "quasi_identifier"
+        assert "category" not in raw
+        assert "entity_label" not in raw
+        assert "entity_value" not in raw
+        assert normalized["entity_value"] in {"O.K.", "Kotu"}
         assert raw["sensitivity"] == "medium"
         assert normalized["category"] == qa["category"] == "direct_identifier"
         assert normalized["sensitivity"] == qa["sensitivity"] == rewrite["sensitivity"] == "high"
