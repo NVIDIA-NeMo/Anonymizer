@@ -323,8 +323,8 @@ def _protect(p: PreparedProtection) -> ProtectionResult:
         seeds.append({"text": d.text, "source": d.text, "mentions": m, "context": tuple(items), "target": d})
     state = k.initial_state(p.plan, seeds)
     for u in closed:
-        state = k.reduce(p.plan, state, k.Closed(u, "binding_failed"))
-    state = k.execute(p.plan, state, cancelled)
+        k.apply(state, k.Closed(u, "binding_failed"))
+    k.execute(p.plan, state, cancelled)
     return _reconcile(p, state, tuple(retrievals))
 
 

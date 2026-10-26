@@ -14,7 +14,7 @@ import contextvars
 import secrets
 import threading
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Any, Literal
 
@@ -73,27 +73,24 @@ class Node:
 
 @dataclass(frozen=True)
 class Plan:
-    """Immutable compiled plan: nodes in declared order, per-node input sources and dependencies.
+    """Immutable compiled plan: nodes in declared order and each node's input sources.
 
     ``sources[i][port]`` is ``(-1, port)`` for a seed value or ``(j, port)`` for node ``j``'s output.
     """
 
     nodes: tuple[Node, ...]
     sources: tuple[Mapping[str, tuple[int, str]], ...]
-    deps: tuple[frozenset[int], ...]
     seeds: Mapping[str, str]
 
 
 def compile_sequence(nodes: tuple[Node, ...], seeds: Mapping[str, str]) -> Plan:
     """Bind each input port to the latest earlier output of the same name, else to a seed; check kinds.
 
-    Sequence order is a dependency edge (each node depends on its predecessor), so readiness preserves the
-    declared order.
+    Each node runs after its predecessor, so execution preserves the declared order.
     """
     for k in (*seeds.values(), *(v for n in nodes for v in (*n.inputs.values(), *n.outputs.values()))):
         kind(k)
     sources: list[Mapping[str, tuple[int, str]]] = []
-    deps: list[frozenset[int]] = []
     produced: dict[str, tuple[int, str]] = {}
     for i, node in enumerate(nodes):
         bound: dict[str, tuple[int, str]] = {}
@@ -109,13 +106,12 @@ def compile_sequence(nodes: tuple[Node, ...], seeds: Mapping[str, str]) -> Plan:
             if k != want:
                 raise GraphRejection("port_kind_mismatch", f"{node.name}.{port}: {k} != {want}")
         sources.append(MappingProxyType(bound))
-        deps.append(frozenset({i - 1} if i else set()) | {j for j, _ in bound.values() if j >= 0})
         for port, k in node.outputs.items():
             produced[port] = (i, k)
-    return Plan(tuple(nodes), tuple(sources), tuple(deps), MappingProxyType(dict(seeds)))
+    return Plan(tuple(nodes), tuple(sources), MappingProxyType(dict(seeds)))
 
 
-# ---------------------------------------------------------------- reducer executor
+# ---------------------------------------------------------------- sequential executor
 
 PENDING, RUNNING, SUCCEEDED, FAILED, BLOCKED, CANCELLED = (
     "pending",
@@ -139,70 +135,29 @@ class Entry:
     ref: str = field(default_factory=lambda: secrets.token_hex(8))  # random, invocation-local
 
 
-@dataclass(frozen=True)
+@dataclass
 class Row:
     """One unit's node statuses, produced values keyed ``(node, port)`` (node -1: seeds) and pre-dispatch close."""
 
-    status: tuple[str, ...]
-    values: Mapping[tuple[int, str], Any]
+    status: list[str]
+    values: dict[tuple[int, str], Any]
     closed: str = ""
 
 
-class _Vec:
-    """Persistent vector (32-way path-copying trie) so each event copies O(log n) slots, not the whole state."""
-
-    __slots__ = ("_root", "_depth", "size")
-
-    def __init__(self, root: tuple, depth: int, size: int) -> None:
-        self._root, self._depth, self.size = root, depth, size
-
-    @classmethod
-    def of(cls, items: list[Any]) -> _Vec:
-        nodes = [tuple(items[i : i + 32]) for i in range(0, len(items), 32)] or [()]
-        depth = 1
-        while len(nodes) > 1:
-            nodes = [tuple(nodes[i : i + 32]) for i in range(0, len(nodes), 32)]
-            depth += 1
-        return cls(nodes[0], depth, len(items))
-
-    def __len__(self) -> int:
-        return self.size
-
-    def __getitem__(self, i: int) -> Any:
-        node: Any = self._root
-        for level in range(self._depth - 1, -1, -1):
-            node = node[(i >> (5 * level)) & 31]
-        return node
-
-    def set(self, i: int, value: Any) -> _Vec:
-        def path(node: tuple, level: int) -> tuple:
-            j = (i >> (5 * level)) & 31
-            child = value if level == 0 else path(node[j], level - 1)
-            return (*node[:j], child, *node[j + 1 :])
-
-        return _Vec(path(self._root, self._depth - 1), self._depth, self.size)
-
-    def __iter__(self) -> Any:
-        return (self[i] for i in range(self.size))
-
-
-@dataclass(frozen=True)
+@dataclass
 class State:
-    rows: _Vec = field(repr=False)
-    log: tuple | None = field(default=None, repr=False)  # entries as a persistent cons list, newest first
+    """Rows in unit order and entries in dispatch order, changed in place by :func:`apply`."""
+
+    rows: list[Row] = field(repr=False)
+    history: list[Entry] = field(default_factory=list, repr=False)
     cancelled: bool = False
-    cursor: tuple[int, int] = (0, 0)  # breadth-first scan position (node, unit)
 
     def row(self, unit: int) -> Row:
         return self.rows[unit]
 
     @property
     def entries(self) -> tuple[Entry, ...]:
-        out, cell = [], self.log
-        while cell is not None:
-            out.append(cell[0])
-            cell = cell[1]
-        return tuple(reversed(out))
+        return tuple(self.history)
 
 
 @dataclass(frozen=True)
@@ -243,39 +198,33 @@ Event = Dispatched | Completed | Failed | Closed | CancelRequested
 
 
 def initial_state(plan: Plan, seeds: list[Mapping[str, Any]]) -> State:
-    pending = (PENDING,) * len(plan.nodes)
-    return State(_Vec.of([Row(pending, MappingProxyType({(-1, k): v for k, v in s.items()})) for s in seeds]))
+    return State([Row([PENDING] * len(plan.nodes), {(-1, k): v for k, v in s.items()}) for s in seeds])
 
 
-def _set(items: tuple[Any, ...], i: int, value: Any) -> tuple[Any, ...]:
-    return (*items[:i], value, *items[i + 1 :])
-
-
-def reduce(plan: Plan, state: State, event: Event) -> State:
-    """Apply one event. Accepted terminals are immutable: a later event cannot rewrite them."""
-    if isinstance(event, CancelRequested):
-        return state if state.cancelled else replace(state, cancelled=True)
-    row = state.rows[event.unit]
-    if isinstance(event, Closed):
-        if row.closed:
-            return state
-        blocked = tuple(BLOCKED if s == PENDING else s for s in row.status)
-        return replace(state, rows=state.rows.set(event.unit, Row(blocked, row.values, event.reason)))
-    if isinstance(event, Dispatched):
-        if state.cancelled or row.status[event.node] != PENDING:
-            raise RuntimeError(f"dispatch refused: {row.status[event.node]!r}, cancelled={state.cancelled}")
-        new = Row(_set(row.status, event.node, RUNNING), row.values, row.closed)
-        return replace(state, rows=state.rows.set(event.unit, new))
-    if row.status[event.node] != RUNNING:
-        return state
-    if isinstance(event, Completed):
-        values = MappingProxyType({**row.values, **{(event.node, k): v for k, v in event.outputs.items()}})
-        new = Row(_set(row.status, event.node, SUCCEEDED), values, row.closed)
-        entry = Entry(event.unit, event.node, SUCCEEDED)
-    else:  # Failed: dependents stay pending and never become ready; the ledger reports them blocked.
-        new = Row(_set(row.status, event.node, FAILED), row.values, row.closed)
-        entry = Entry(event.unit, event.node, FAILED, event.reason, event.error)
-    return replace(state, rows=state.rows.set(event.unit, new), log=(entry, state.log))
+def apply(state: State, event: Event) -> None:
+    """Apply one event in place. Accepted terminals are immutable: a later event cannot rewrite them."""
+    match event:
+        case CancelRequested():
+            state.cancelled = True
+        case Closed(unit, reason):
+            row = state.rows[unit]
+            if not row.closed:
+                row.status = [BLOCKED if s == PENDING else s for s in row.status]
+                row.closed = reason
+        case Dispatched(unit, node):
+            row = state.rows[unit]
+            if state.cancelled or row.status[node] != PENDING:
+                raise RuntimeError(f"dispatch refused: {row.status[node]!r}, cancelled={state.cancelled}")
+            row.status[node] = RUNNING
+        case Completed(unit, node, outputs) if state.rows[unit].status[node] == RUNNING:
+            row = state.rows[unit]
+            row.status[node] = SUCCEEDED
+            row.values.update({(node, port): value for port, value in outputs.items()})
+            state.history.append(Entry(unit, node, SUCCEEDED))
+        case Failed(unit, node, reason, error) if state.rows[unit].status[node] == RUNNING:
+            # Dependents stay pending and never run; the ledger reports them blocked.
+            state.rows[unit].status[node] = FAILED
+            state.history.append(Entry(unit, node, FAILED, reason, error))
 
 
 def unit_terminal(row: Row, cancelled: bool) -> str:
@@ -287,27 +236,13 @@ def unit_terminal(row: Row, cancelled: bool) -> str:
     return CANCELLED if cancelled and PENDING in row.status else BLOCKED
 
 
-def next_ready(plan: Plan, state: State) -> tuple[State, tuple[int, int] | None]:
-    """Next pending activation in (node, unit) order whose dependencies succeeded.
-
-    Breadth-first by stage: every dependency of node ``i`` is an earlier node, all closed before the scan reaches
-    ``i``, so the cursor never moves back.
-    """
-    if state.cancelled:
-        return state, None
-    i, u = state.cursor
-    n = len(state.rows)
-    while i < len(plan.nodes) and n:
-        row = state.rows[u]
-        if row.status[i] == PENDING and all(row.status[d] == SUCCEEDED for d in plan.deps[i]):
-            return replace(state, cursor=(i, u)), (u, i)
-        i, u = (i, u + 1) if u + 1 < n else (i + 1, 0)
-    return replace(state, cursor=(i, u)), None
+def _ready(row: Row, node: int) -> bool:
+    """A node is ready when it is pending, the unit is open and every earlier node succeeded."""
+    return row.status[node] == PENDING and not row.closed and all(s == SUCCEEDED for s in row.status[:node])
 
 
-def _inputs(plan: Plan, state: State, unit: int, node: int) -> dict[str, Any]:
-    values = state.rows[unit].values
-    return {port: values[src] for port, src in plan.sources[node].items()}
+def _inputs(plan: Plan, row: Row, node: int) -> dict[str, Any]:
+    return {port: row.values[src] for port, src in plan.sources[node].items()}
 
 
 def _outputs(node: Node, raw: Any) -> Mapping[str, Any]:
@@ -322,78 +257,73 @@ def _outputs(node: Node, raw: Any) -> Mapping[str, Any]:
     return MappingProxyType(dict(raw))
 
 
-def _dispatch_invocation(plan: Plan, state: State, i: int) -> State:
-    """Run invocation-scoped node ``i`` once over every unit that will ever be ready at it.
-
-    The callable gets one tuple per input port, aligned with the dispatched units, and returns one entry per unit:
-    ``None`` closes the unit as ``missing_output``, an ``Exception`` instance as ``raised``, any other value is
-    checked as a target operation's output.
-    """
-    node = plan.nodes[i]
-    units = [
-        u
-        for u, row in enumerate(state.rows)
-        if row.status[i] == PENDING and all(row.status[d] == SUCCEEDED for d in plan.deps[i])
-    ]
-    for u in units:
-        state = reduce(plan, state, Dispatched(u, i))
-    per_unit = [_inputs(plan, state, u, i) for u in units]
+def _accept(state: State, node: Node, index: int, unit: int, raw: Any) -> None:
+    """Settle one unit's returned value: its outputs complete the node, a malformed value fails it."""
     try:
-        raw = node.impl(**{port: tuple(values[port] for values in per_unit) for port in node.inputs})
+        event = Completed(unit, index, _outputs(node, raw))
+    except TypeError as exc:
+        event = Failed(unit, index, "invalid_output", exc)
+    apply(state, event)
+
+
+def _settle_entry(state: State, node: Node, index: int, unit: int, entry: Any) -> None:
+    """Settle one entry of an invocation's return: ``None`` is missing output, an ``Exception`` instance a raise."""
+    match entry:
+        case None:
+            apply(state, Failed(unit, index, "missing_output"))
+        case Exception():
+            apply(state, Failed(unit, index, "raised", entry))
+        case _:
+            _accept(state, node, index, unit, entry)
+
+
+def _run_invocation(state: State, node: Node, index: int, units: list[int], calls: list[dict[str, Any]]) -> None:
+    """One call over every unit: one tuple per input port, aligned with ``units``; one returned entry per unit."""
+    try:
+        raw = node.impl(**{port: tuple(args[port] for args in calls) for port in node.inputs})
     except Exception as exc:
-        for u in units:
-            state = reduce(plan, state, Failed(u, i, "raised", exc))
-        return state
+        for unit in units:
+            apply(state, Failed(unit, index, "raised", exc))
+        return
     if not isinstance(raw, Sequence) or isinstance(raw, (str, bytes)) or len(raw) != len(units):
         size = f" of length {len(raw)}" if hasattr(raw, "__len__") else ""
         error = TypeError(f"invocation operation returned {type(raw).__name__}{size}, expected {len(units)} entries")
-        for u in units:
-            state = reduce(plan, state, Failed(u, i, "invalid_output", error))
-        return state
-    for u, value in zip(units, raw):
-        if value is None:
-            state = reduce(plan, state, Failed(u, i, "missing_output"))
-        elif isinstance(value, Exception):
-            state = reduce(plan, state, Failed(u, i, "raised", value))
-        else:
-            try:
-                outputs = _outputs(node, value)
-            except TypeError as exc:
-                state = reduce(plan, state, Failed(u, i, "invalid_output", exc))
-            else:
-                state = reduce(plan, state, Completed(u, i, outputs))
-    return state
+        for unit in units:
+            apply(state, Failed(unit, index, "invalid_output", error))
+        return
+    for unit, entry in zip(units, raw):
+        _settle_entry(state, node, index, unit, entry)
 
 
-def execute(plan: Plan, state: State, cancelled: Callable[[], bool]) -> State:
-    """Drive the reducer to quiescence on the calling thread; callables run here, one at a time.
+def execute(plan: Plan, state: State, cancelled: Callable[[], bool]) -> None:
+    """Run the nodes in order, each over every ready unit in order, on the calling thread.
 
-    A callable that raises ``Exception`` closes its activation as failed; nothing is raised to the caller.
+    Cancellation is checked before each per-target call and before an invocation-scoped call. A callable that
+    raises ``Exception`` fails its unit (an invocation: every unit); nothing is raised to the caller.
     ``BaseException`` (``KeyboardInterrupt``) propagates unchanged, as in 0.4.0.
     """
-    while True:
-        if cancelled():
-            state = reduce(plan, state, CancelRequested())
-        state, ready = next_ready(plan, state)
-        if ready is None:
-            return state
-        unit, i = ready
-        node = plan.nodes[i]
-        if node.scope == "invocation":
-            state = _dispatch_invocation(plan, state, i)
-            continue
-        state = reduce(plan, state, Dispatched(unit, i))
-        try:
-            raw = node.impl(**_inputs(plan, state, unit, i))
-        except Exception as exc:
-            state = reduce(plan, state, Failed(unit, i, "raised", exc))
-            continue
-        try:
-            outputs = _outputs(node, raw)
-        except TypeError as exc:
-            state = reduce(plan, state, Failed(unit, i, "invalid_output", exc))
-        else:
-            state = reduce(plan, state, Completed(unit, i, outputs))
+    for index, node in enumerate(plan.nodes):
+        ready = [u for u, row in enumerate(state.rows) if _ready(row, index)]
+        batches = [ready] if node.scope == "invocation" and ready else [[u] for u in ready]
+        for units in batches:
+            if cancelled():
+                apply(state, CancelRequested())
+            if state.cancelled:
+                return
+            for unit in units:
+                apply(state, Dispatched(unit, index))
+            calls = [_inputs(plan, state.rows[u], index) for u in units]
+            if node.scope == "invocation":
+                _run_invocation(state, node, index, units, calls)
+                continue
+            try:
+                raw = node.impl(**calls[0])
+            except Exception as exc:
+                apply(state, Failed(units[0], index, "raised", exc))
+            else:
+                _accept(state, node, index, units[0], raw)
+    if cancelled():
+        apply(state, CancelRequested())
 
 
 # ---------------------------------------------------------------- execution frame and cancellation
