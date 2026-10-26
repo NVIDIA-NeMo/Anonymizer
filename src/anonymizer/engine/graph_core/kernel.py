@@ -1,11 +1,12 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Domain-free graph kernel: artifact-kind registry, plan topology, reducer executor, execution frame.
+"""Domain-free graph kernel: artifact-kind registry, plan topology, sequential executor, execution frame.
 
-The kernel knows no Anonymizer artifact kind; it owns graph structure, topology and readiness only. Layers above register the kinds they need with :func:`register_kind`.
-Execution state advances only by applying events to an immutable :class:`State` (:func:`reduce`); outcomes are
-derived from the final state by the caller.
+The kernel knows no Anonymizer artifact kind; it owns graph structure, topology and readiness only. Layers above
+register the kinds they need with :func:`register_kind`. Execution runs a plan's nodes in order over every unit and
+advances only by applying events to a :class:`State` (:func:`apply`); outcomes are derived from the final state by
+the caller.
 """
 
 from __future__ import annotations
@@ -15,8 +16,9 @@ import secrets
 import threading
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
+from enum import StrEnum
 from types import MappingProxyType
-from typing import Any, Literal
+from typing import Any, Literal, NamedTuple
 
 
 class GraphRejection(Exception):
@@ -71,15 +73,19 @@ class Node:
     scope: Literal["target", "invocation"] = "target"
 
 
+class Source(NamedTuple):
+    """Where an input port reads: a seed value (``node`` is None) or the output ``port`` of node ``node``."""
+
+    node: int | None
+    port: str
+
+
 @dataclass(frozen=True)
 class Plan:
-    """Immutable compiled plan: nodes in declared order and each node's input sources.
-
-    ``sources[i][port]`` is ``(-1, port)`` for a seed value or ``(j, port)`` for node ``j``'s output.
-    """
+    """Immutable compiled plan: nodes in declared order and each node's input sources."""
 
     nodes: tuple[Node, ...]
-    sources: tuple[Mapping[str, tuple[int, str]], ...]
+    sources: tuple[Mapping[str, Source], ...]
     seeds: Mapping[str, str]
 
 
@@ -88,39 +94,36 @@ def compile_sequence(nodes: tuple[Node, ...], seeds: Mapping[str, str]) -> Plan:
 
     Each node runs after its predecessor, so execution preserves the declared order.
     """
-    for k in (*seeds.values(), *(v for n in nodes for v in (*n.inputs.values(), *n.outputs.values()))):
-        kind(k)
-    sources: list[Mapping[str, tuple[int, str]]] = []
-    produced: dict[str, tuple[int, str]] = {}
+    names = (*seeds.values(), *(name for n in nodes for name in (*n.inputs.values(), *n.outputs.values())))
+    unknown = next((name for name in names if name not in _KINDS), None)
+    if unknown is not None:
+        raise GraphRejection("unknown_kind", repr(unknown))
+    latest = {port: (Source(None, port), name) for port, name in seeds.items()}
+    sources: list[Mapping[str, Source]] = []
     for i, node in enumerate(nodes):
-        bound: dict[str, tuple[int, str]] = {}
+        bound: dict[str, Source] = {}
         for port, want in node.inputs.items():
-            if port in produced:
-                j, k = produced[port]
-                bound[port] = (j, port)
-            elif port in seeds:
-                k = seeds[port]
-                bound[port] = (-1, port)
-            else:
+            if port not in latest:
                 raise GraphRejection("unbound_port", f"{node.name}.{port}")
-            if k != want:
-                raise GraphRejection("port_kind_mismatch", f"{node.name}.{port}: {k} != {want}")
+            source, have = latest[port]
+            if have != want:
+                raise GraphRejection("port_kind_mismatch", f"{node.name}.{port}: {have} != {want}")
+            bound[port] = source
         sources.append(MappingProxyType(bound))
-        for port, k in node.outputs.items():
-            produced[port] = (i, k)
+        latest.update({port: (Source(i, port), name) for port, name in node.outputs.items()})
     return Plan(tuple(nodes), tuple(sources), MappingProxyType(dict(seeds)))
 
 
 # ---------------------------------------------------------------- sequential executor
 
-PENDING, RUNNING, SUCCEEDED, FAILED, BLOCKED, CANCELLED = (
-    "pending",
-    "running",
-    "succeeded",
-    "failed",
-    "blocked",
-    "cancelled",
-)
+
+class Status(StrEnum):
+    PENDING = "pending"
+    RUNNING = "running"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+    BLOCKED = "blocked"
+    CANCELLED = "cancelled"
 
 
 @dataclass(frozen=True)
@@ -129,7 +132,7 @@ class Entry:
 
     unit: int
     node: int
-    status: str
+    status: Status
     reason: str = ""
     error: BaseException | None = field(default=None, repr=False, compare=False)
     ref: str = field(default_factory=lambda: secrets.token_hex(8))  # random, invocation-local
@@ -137,10 +140,11 @@ class Entry:
 
 @dataclass
 class Row:
-    """One unit's node statuses, produced values keyed ``(node, port)`` (node -1: seeds) and pre-dispatch close."""
+    """One unit's node statuses, seed values, node outputs by node index and pre-dispatch close."""
 
-    status: list[str]
-    values: dict[tuple[int, str], Any]
+    status: list[Status]
+    seeds: Mapping[str, Any]
+    outputs: dict[int, Mapping[str, Any]] = field(default_factory=dict)
     closed: str = ""
 
 
@@ -151,9 +155,6 @@ class State:
     rows: list[Row] = field(repr=False)
     history: list[Entry] = field(default_factory=list, repr=False)
     cancelled: bool = False
-
-    def row(self, unit: int) -> Row:
-        return self.rows[unit]
 
     @property
     def entries(self) -> tuple[Entry, ...]:
@@ -198,7 +199,7 @@ Event = Dispatched | Completed | Failed | Closed | CancelRequested
 
 
 def initial_state(plan: Plan, seeds: list[Mapping[str, Any]]) -> State:
-    return State([Row([PENDING] * len(plan.nodes), {(-1, k): v for k, v in s.items()}) for s in seeds])
+    return State([Row([Status.PENDING] * len(plan.nodes), MappingProxyType(dict(s))) for s in seeds])
 
 
 def apply(state: State, event: Event) -> None:
@@ -209,40 +210,45 @@ def apply(state: State, event: Event) -> None:
         case Closed(unit, reason):
             row = state.rows[unit]
             if not row.closed:
-                row.status = [BLOCKED if s == PENDING else s for s in row.status]
+                row.status = [Status.BLOCKED if s == Status.PENDING else s for s in row.status]
                 row.closed = reason
         case Dispatched(unit, node):
             row = state.rows[unit]
-            if state.cancelled or row.status[node] != PENDING:
-                raise RuntimeError(f"dispatch refused: {row.status[node]!r}, cancelled={state.cancelled}")
-            row.status[node] = RUNNING
-        case Completed(unit, node, outputs) if state.rows[unit].status[node] == RUNNING:
+            if state.cancelled or row.status[node] != Status.PENDING:
+                raise RuntimeError(f"dispatch refused: {row.status[node].value!r}, cancelled={state.cancelled}")
+            row.status[node] = Status.RUNNING
+        case Completed(unit, node, outputs) if state.rows[unit].status[node] == Status.RUNNING:
             row = state.rows[unit]
-            row.status[node] = SUCCEEDED
-            row.values.update({(node, port): value for port, value in outputs.items()})
-            state.history.append(Entry(unit, node, SUCCEEDED))
-        case Failed(unit, node, reason, error) if state.rows[unit].status[node] == RUNNING:
+            row.status[node] = Status.SUCCEEDED
+            row.outputs[node] = outputs
+            state.history.append(Entry(unit, node, Status.SUCCEEDED))
+        case Failed(unit, node, reason, error) if state.rows[unit].status[node] == Status.RUNNING:
             # Dependents stay pending and never run; the ledger reports them blocked.
-            state.rows[unit].status[node] = FAILED
-            state.history.append(Entry(unit, node, FAILED, reason, error))
+            state.rows[unit].status[node] = Status.FAILED
+            state.history.append(Entry(unit, node, Status.FAILED, reason, error))
 
 
-def unit_terminal(row: Row, cancelled: bool) -> str:
+def unit_terminal(row: Row, cancelled: bool) -> Status:
     """Derived per-unit status: failed, cancelled (stopped before all nodes ran), succeeded or blocked."""
-    if row.closed or FAILED in row.status:
-        return FAILED
-    if all(s == SUCCEEDED for s in row.status):
-        return SUCCEEDED
-    return CANCELLED if cancelled and PENDING in row.status else BLOCKED
+    if row.closed or Status.FAILED in row.status:
+        return Status.FAILED
+    if all(s == Status.SUCCEEDED for s in row.status):
+        return Status.SUCCEEDED
+    return Status.CANCELLED if cancelled and Status.PENDING in row.status else Status.BLOCKED
 
 
 def _ready(row: Row, node: int) -> bool:
     """A node is ready when it is pending, the unit is open and every earlier node succeeded."""
-    return row.status[node] == PENDING and not row.closed and all(s == SUCCEEDED for s in row.status[:node])
+    return (
+        row.status[node] == Status.PENDING and not row.closed and all(s == Status.SUCCEEDED for s in row.status[:node])
+    )
 
 
 def _inputs(plan: Plan, row: Row, node: int) -> dict[str, Any]:
-    return {port: row.values[src] for port, src in plan.sources[node].items()}
+    return {
+        port: row.seeds[port] if src.node is None else row.outputs[src.node][port]
+        for port, src in plan.sources[node].items()
+    }
 
 
 def _outputs(node: Node, raw: Any) -> Mapping[str, Any]:
@@ -258,7 +264,7 @@ def _outputs(node: Node, raw: Any) -> Mapping[str, Any]:
 
 
 def _accept(state: State, node: Node, index: int, unit: int, raw: Any) -> None:
-    """Settle one unit's returned value: its outputs complete the node, a malformed value fails it."""
+    """Complete the node with a returned value's outputs, or fail it as ``invalid_output``."""
     try:
         event = Completed(unit, index, _outputs(node, raw))
     except TypeError as exc:
@@ -266,33 +272,32 @@ def _accept(state: State, node: Node, index: int, unit: int, raw: Any) -> None:
     apply(state, event)
 
 
-def _settle_entry(state: State, node: Node, index: int, unit: int, entry: Any) -> None:
-    """Settle one entry of an invocation's return: ``None`` is missing output, an ``Exception`` instance a raise."""
-    match entry:
-        case None:
-            apply(state, Failed(unit, index, "missing_output"))
-        case Exception():
-            apply(state, Failed(unit, index, "raised", entry))
-        case _:
-            _accept(state, node, index, unit, entry)
-
-
 def _run_invocation(state: State, node: Node, index: int, units: list[int], calls: list[dict[str, Any]]) -> None:
-    """One call over every unit: one tuple per input port, aligned with ``units``; one returned entry per unit."""
+    """One call over every unit: one tuple per input port, aligned with ``units``; one returned entry per unit.
+
+    An entry of ``None`` fails its unit as ``missing_output``, an ``Exception`` instance as ``raised``; any other
+    value is checked as a target operation's output. A raise or a malformed return fails every unit alike.
+    """
+    reason = "raised"
     try:
         raw = node.impl(**{port: tuple(args[port] for args in calls) for port in node.inputs})
     except Exception as exc:
-        for unit in units:
-            apply(state, Failed(unit, index, "raised", exc))
-        return
-    if not isinstance(raw, Sequence) or isinstance(raw, (str, bytes)) or len(raw) != len(units):
-        size = f" of length {len(raw)}" if hasattr(raw, "__len__") else ""
-        error = TypeError(f"invocation operation returned {type(raw).__name__}{size}, expected {len(units)} entries")
-        for unit in units:
-            apply(state, Failed(unit, index, "invalid_output", error))
-        return
+        raw = [exc] * len(units)
+    else:
+        if not isinstance(raw, Sequence) or isinstance(raw, (str, bytes)) or len(raw) != len(units):
+            size = f" of length {len(raw)}" if hasattr(raw, "__len__") else ""
+            error = TypeError(
+                f"invocation operation returned {type(raw).__name__}{size}, expected {len(units)} entries"
+            )
+            raw, reason = [error] * len(units), "invalid_output"
     for unit, entry in zip(units, raw):
-        _settle_entry(state, node, index, unit, entry)
+        match entry:
+            case None:
+                apply(state, Failed(unit, index, "missing_output"))
+            case Exception():
+                apply(state, Failed(unit, index, reason, entry))
+            case _:
+                _accept(state, node, index, unit, entry)
 
 
 def execute(plan: Plan, state: State, cancelled: Callable[[], bool]) -> None:
@@ -340,6 +345,11 @@ class CancelToken:
         self._event = threading.Event()
         self._parent: CancelToken | None = None
 
+    def link(self, parent: CancelToken) -> None:
+        """Follow ``parent``'s cancellation unless a parent is already linked."""
+        if self._parent is None and parent is not self:
+            self._parent = parent
+
     def cancel(self) -> None:
         self._event.set()
 
@@ -362,8 +372,8 @@ def run_in_frame(fn: Callable[..., Any], *args: Any, token: CancelToken | None =
     """Run ``fn`` on the calling thread in a copy of the calling context (copy-in without copy-out)."""
     frame_token = token or CancelToken()
     parent = _FRAME_TOKEN.get()
-    if parent is not None and parent is not frame_token and frame_token._parent is None:
-        frame_token._parent = parent
+    if parent is not None:
+        frame_token.link(parent)
 
     def body() -> Any:
         _FRAME_TOKEN.set(frame_token)
