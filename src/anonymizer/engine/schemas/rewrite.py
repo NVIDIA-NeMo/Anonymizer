@@ -149,24 +149,13 @@ class ProtectionMethod(str, Enum):
     leave_as_is = "leave_as_is"
 
 
-class EntityDispositionSchema(BaseModel):
-    """Protection decision for one tagged or latent entity in rewrite planning.
+class RawEntityDispositionSchema(BaseModel):
+    """Model-generated protection decision, with identity reconstructed from its ID."""
 
-    Each instance represents one entry in the sensitivity disposition, not each
-    repeated text span where that entity may appear.
-
-    ``sensitivity`` is a protection-policy tier that drives both protection and
-    leakage weighting. ``low`` ⇔ ``leave_as_is``; ``medium``/``high`` ⇒ protected.
-    """
-
-    model_config = ConfigDict(use_enum_values=True)
+    model_config = ConfigDict(use_enum_values=True, extra="forbid")
 
     id: int = Field(ge=1)
-    source: EntitySource
-    category: EntityCategory
     sensitivity: SensitivityLevel
-    entity_label: str = Field(min_length=1)
-    entity_value: str = Field(min_length=1)
     protection_method_suggestion: ProtectionMethod
     low_sensitivity_reason: str | None = Field(
         default=None,
@@ -178,14 +167,14 @@ class EntityDispositionSchema(BaseModel):
         return self.protection_method_suggestion != ProtectionMethod.leave_as_is
 
     @model_validator(mode="after")
-    def _validate_protection_consistency(self) -> EntityDispositionSchema:
+    def _validate_protection_consistency(self) -> RawEntityDispositionSchema:
         retained = not self.needs_protection
         if self.sensitivity == SensitivityLevel.low and not retained:
             logger.warning(
                 "Entity %d (label=%r): sensitivity='low' conflicts with "
                 "protection_method_suggestion=%r; promoting sensitivity to 'medium'.",
                 self.id,
-                self.entity_label,
+                getattr(self, "entity_label", None),
                 self.protection_method_suggestion,
             )
             # Normalize toward more protection: trust the protection intent over the level.
@@ -201,6 +190,21 @@ class EntityDispositionSchema(BaseModel):
         else:
             self.low_sensitivity_reason = None
         return self
+
+
+class EntityDispositionSchema(RawEntityDispositionSchema):
+    """Protection decision with authoritative identity for one supplied entity.
+
+    Each instance represents a unique entity value/label pair rather than each
+    repeated text span. Low sensitivity means leave_as_is; medium/high require protection.
+    """
+
+    model_config = ConfigDict(use_enum_values=True, extra="ignore")
+
+    source: EntitySource
+    category: EntityCategory
+    entity_label: str = Field(min_length=1)
+    entity_value: str = Field(min_length=1)
 
 
 class SensitivityDispositionSchema(BaseModel):
@@ -280,6 +284,33 @@ class StrictSensitivityDispositionSchema(SensitivityDispositionSchema):
     """Strict variant container: every entity must be protected."""
 
     sensitivity_disposition: list[StrictEntityDispositionSchema] = Field(min_length=1)
+
+
+class RawSensitivityDispositionSchema(BaseModel):
+    """Compact model response; complete inventory coverage is checked during reconstruction."""
+
+    sensitivity_disposition: list[RawEntityDispositionSchema] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def _validate_ids(self) -> RawSensitivityDispositionSchema:
+        ids = [entry.id for entry in self.sensitivity_disposition]
+        expected = list(range(1, len(ids) + 1))
+        if ids != expected:
+            raise ValueError(f"Entity IDs must be sequential 1..{len(ids)} in input order; got {ids}")
+        return self
+
+
+class StrictRawEntityDispositionSchema(RawEntityDispositionSchema):
+    """Compact strict decision: every entity must receive protection."""
+
+    sensitivity: StrictSensitivityLevel
+    protection_method_suggestion: StrictProtectionMethod
+
+
+class StrictRawSensitivityDispositionSchema(RawSensitivityDispositionSchema):
+    """Compact strict response with the same authoritative reconstruction."""
+
+    sensitivity_disposition: list[StrictRawEntityDispositionSchema] = Field(min_length=1)
 
 
 # ---------------------------------------------------------------------------
