@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""SP-14 invocation-scoped operations: one call over all ready targets, per-target fan-out (E14.1-E14.10)."""
+"""SP-14 invocation-scoped operations: one call over all ready targets, per-target fan-out (E14.1-E14.11)."""
 
 from __future__ import annotations
 
@@ -216,4 +216,33 @@ def program() -> list[dict[str, str]]:
         )
 
     c.guard("E14.10", cancel_inside_invocation)
+
+    def cancel_before_invocation() -> tuple[bool, str]:
+        token = CancelToken()
+        rec = Recorder()
+
+        def cancel_on_third(text: str) -> str:
+            if "three" in text:
+                token.cancel()
+            return text.replace(NAME, "[NAME]")
+
+        r = protect(
+            prepare(g, Workflow("w", (rec.transform("pre", cancel_on_third), rec.invocation_transform("inv")))),
+            cancel=token,
+        )
+        terms = [r.outcome(t).terminal for t in (a, b, d)]
+        inv_ledger = [status for _, op, status in r.ledger() if op == "inv"]
+        return (
+            rec.count("pre") == 3
+            and rec.count("inv") == 0
+            and len(r.attempts) == 3
+            and all(x.operation == "pre" and x.status == "succeeded" for x in r.attempts)
+            and terms == ["cancelled"] * 3
+            and inv_ledger == ["cancelled"] * 3
+            and not r.protected,
+            f"pre calls={rec.count('pre')}, inv calls={rec.count('inv')}, attempts={len(r.attempts)}, "
+            f"terminals={terms}, inv ledger={inv_ledger}, protected={len(r.protected)}",
+        )
+
+    c.guard("E14.11", cancel_before_invocation)
     return c.lines
