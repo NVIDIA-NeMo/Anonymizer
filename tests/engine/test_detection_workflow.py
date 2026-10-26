@@ -21,11 +21,13 @@ from anonymizer.engine.constants import (
     COL_ADMISSION_RESULTS,
     COL_AUGMENTED_ENTITIES,
     COL_DETECTED_ENTITIES,
+    COL_DETECTOR_SOURCE,
     COL_ENTITIES_BY_VALUE,
     COL_FINAL_ENTITIES,
     COL_INITIAL_TAGGED_TEXT,
     COL_LATENT_ENTITIES,
     COL_MERGED_ENTITIES,
+    COL_RAW_DETECTED,
     COL_SEED_DETECTION_RESULT,
     COL_SEED_ENTITIES,
     COL_SEED_ENTITIES_JSON,
@@ -1134,6 +1136,7 @@ def test_detection_workflow_uses_plugin_transform_columns(
     )
     columns = adapter.run_workflow.call_args.kwargs["columns"]
     expected_operations = {
+        COL_DETECTOR_SOURCE: DetectionTransformOperation.PREPARE_DETECTOR_SOURCE,
         COL_SEED_ENTITIES: DetectionTransformOperation.PARSE_DETECTED_ENTITIES,
         COL_SEED_VALIDATION_CANDIDATES: DetectionTransformOperation.PREPARE_VALIDATION_INPUTS,
         COL_ADMISSION_RESULTS: DetectionTransformOperation.ADMIT_VALIDATION_DECISIONS,
@@ -1146,6 +1149,11 @@ def test_detection_workflow_uses_plugin_transform_columns(
         assert isinstance(column, DetectionTransformConfig)
         assert DetectionTransformOperation(column.operation) == operation
     parse_column = _find_column(columns, COL_SEED_ENTITIES)
+    source_column = _find_column(columns, COL_DETECTOR_SOURCE)
+    assert source_column.required_columns == [COL_TEXT]
+    assert source_column.drop is True
+    detector_column = _find_column(columns, COL_RAW_DETECTED)
+    assert detector_column.required_columns == [COL_DETECTOR_SOURCE]
     assert isinstance(parse_column, DetectionTransformConfig)
     assert parse_column.detection_result_id == "r1"
     assert parse_column.source_instance == stub_detection_model_selection.entity_detector

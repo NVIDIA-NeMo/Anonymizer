@@ -26,6 +26,7 @@ from anonymizer.engine.detection.custom_columns import (
     finalize_entities,
     merge_and_build_candidates,
     parse_detected_entities,
+    prepare_detector_source,
     prepare_validation_inputs,
 )
 from anonymizer.engine.workflow_columns.detection.config import (
@@ -36,6 +37,7 @@ from anonymizer.engine.workflow_columns.detection.config import (
 )
 
 _TRANSFORMS: dict[DetectionTransformOperation, Callable[[dict[str, Any]], dict[str, Any]]] = {
+    DetectionTransformOperation.PREPARE_DETECTOR_SOURCE: prepare_detector_source,
     DetectionTransformOperation.PREPARE_VALIDATION_INPUTS: prepare_validation_inputs,
     DetectionTransformOperation.APPLY_VALIDATION_TO_SEED_ENTITIES: apply_validation_to_seed_entities,
     DetectionTransformOperation.MERGE_AND_BUILD_CANDIDATES: merge_and_build_candidates,

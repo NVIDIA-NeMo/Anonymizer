@@ -21,6 +21,7 @@ from anonymizer.engine.constants import (
     COL_ADMITTED_CANDIDATES,
     COL_AUGMENTED_CANDIDATES,
     COL_DETECTED_ENTITIES,
+    COL_DETECTOR_SOURCE,
     COL_INITIAL_TAGGED_TEXT,
     COL_MERGED_ENTITIES,
     COL_RAW_DETECTED,
@@ -66,6 +67,18 @@ from anonymizer.engine.schemas import (
     ValidationRequestDecisionSets,
     ValidationRequestInventory,
 )
+
+
+@custom_column_generator(required_columns=[COL_TEXT])
+def prepare_detector_source(row: dict[str, Any]) -> dict[str, Any]:
+    """Preserve exact source text through DataDesigner's automatic JSON decoding.
+
+    DataDesigner decodes JSON-valued columns before rendering LLM prompts.
+    Encoding an outer object lets it decode that object while leaving the
+    original source string, including JSON formatting and escapes, untouched.
+    """
+    row[COL_DETECTOR_SOURCE] = json.dumps({"text": row[COL_TEXT]}, ensure_ascii=False)
+    return row
 
 
 @custom_column_generator(

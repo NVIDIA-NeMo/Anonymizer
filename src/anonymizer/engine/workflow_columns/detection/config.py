@@ -71,6 +71,7 @@ class AugmentationConfig(SingleColumnConfig):
 
 
 class DetectionTransformOperation(str, Enum):
+    PREPARE_DETECTOR_SOURCE = "prepare_detector_source"
     PARSE_DETECTED_ENTITIES = "parse_detected_entities"
     PREPARE_VALIDATION_INPUTS = "prepare_validation_inputs"
     ADMIT_VALIDATION_DECISIONS = "admit_validation_decisions"
@@ -88,6 +89,7 @@ class DetectionTransformConfig(SingleColumnConfig):
     source_instance: str = "gliner"
 
     _REQUIRED_COLUMNS: ClassVar[dict[DetectionTransformOperation, list[str]]] = {
+        DetectionTransformOperation.PREPARE_DETECTOR_SOURCE: [COL_TEXT],
         DetectionTransformOperation.PARSE_DETECTED_ENTITIES: [
             RECORD_ID_COLUMN,
             COL_TEXT,
@@ -115,6 +117,7 @@ class DetectionTransformConfig(SingleColumnConfig):
         ],
     }
     _SIDE_EFFECT_COLUMNS: ClassVar[dict[DetectionTransformOperation, list[str]]] = {
+        DetectionTransformOperation.PREPARE_DETECTOR_SOURCE: [],
         DetectionTransformOperation.PARSE_DETECTED_ENTITIES: [
             COL_SEED_DETECTION_RESULT,
             COL_TAG_NOTATION,
