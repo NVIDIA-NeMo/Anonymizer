@@ -3,10 +3,9 @@
 
 """Domain-free graph kernel: artifact-kind registry, plan topology, sequential executor, execution frame.
 
-The kernel knows no Anonymizer artifact kind; it owns graph structure, topology and readiness only. Layers above
-register the kinds they need with :func:`register_kind`. Execution runs a plan's nodes in order over every unit and
-advances only by applying events to a :class:`State` (:func:`apply`); outcomes are derived from the final state by
-the caller.
+The kernel knows no Anonymizer artifact kind; layers above register theirs with :func:`register_kind`. Execution runs
+a plan's nodes in order over every unit, changing a :class:`State` only through :func:`apply`; the caller derives
+outcomes from the final state.
 """
 
 from __future__ import annotations
@@ -90,13 +89,9 @@ class Plan:
 
 
 def compile_sequence(nodes: tuple[Node, ...], seeds: Mapping[str, str]) -> Plan:
-    """Bind each input port to the latest earlier output of the same name, else to a seed; check kinds.
-
-    Each node runs after its predecessor, so execution preserves the declared order.
-    """
+    """Bind each input port to the latest earlier output of the same name, else to a seed; check kinds."""
     names = (*seeds.values(), *(name for n in nodes for name in (*n.inputs.values(), *n.outputs.values())))
-    unknown = next((name for name in names if name not in _KINDS), None)
-    if unknown is not None:
+    if (unknown := next((name for name in names if name not in _KINDS), None)) is not None:
         raise GraphRejection("unknown_kind", repr(unknown))
     latest = {port: (Source(None, port), name) for port, name in seeds.items()}
     sources: list[Mapping[str, Source]] = []
@@ -161,38 +156,32 @@ class State:
         return tuple(self.history)
 
 
-@dataclass(frozen=True)
-class Dispatched:
+class Dispatched(NamedTuple):
     unit: int
     node: int
 
 
-@dataclass(frozen=True)
-class Completed:
+class Completed(NamedTuple):
     unit: int
     node: int
     outputs: Mapping[str, Any]
 
 
-@dataclass(frozen=True)
-class Failed:
+class Failed(NamedTuple):
     unit: int
     node: int
     reason: str
     error: BaseException | None = None
 
 
-@dataclass(frozen=True)
-class Closed:
+class Closed(NamedTuple):
     """A unit closed before dispatch (e.g. its binding failed); its nodes become blocked."""
 
     unit: int
     reason: str
 
 
-@dataclass(frozen=True)
-class CancelRequested:
-    pass
+class CancelRequested(NamedTuple): ...
 
 
 Event = Dispatched | Completed | Failed | Closed | CancelRequested
@@ -218,9 +207,8 @@ def apply(state: State, event: Event) -> None:
                 raise RuntimeError(f"dispatch refused: {row.status[node].value!r}, cancelled={state.cancelled}")
             row.status[node] = Status.RUNNING
         case Completed(unit, node, outputs) if state.rows[unit].status[node] == Status.RUNNING:
-            row = state.rows[unit]
-            row.status[node] = Status.SUCCEEDED
-            row.outputs[node] = outputs
+            state.rows[unit].status[node] = Status.SUCCEEDED
+            state.rows[unit].outputs[node] = outputs
             state.history.append(Entry(unit, node, Status.SUCCEEDED))
         case Failed(unit, node, reason, error) if state.rows[unit].status[node] == Status.RUNNING:
             # Dependents stay pending and never run; the ledger reports them blocked.
@@ -238,17 +226,11 @@ def unit_terminal(row: Row, cancelled: bool) -> Status:
 
 
 def _ready(row: Row, node: int) -> bool:
-    """A node is ready when it is pending, the unit is open and every earlier node succeeded."""
-    return (
-        row.status[node] == Status.PENDING and not row.closed and all(s == Status.SUCCEEDED for s in row.status[:node])
-    )
+    return not row.closed and all(s == Status.SUCCEEDED for s in row.status[:node])
 
 
 def _inputs(plan: Plan, row: Row, node: int) -> dict[str, Any]:
-    return {
-        port: row.seeds[port] if src.node is None else row.outputs[src.node][port]
-        for port, src in plan.sources[node].items()
-    }
+    return {p: (row.seeds if s.node is None else row.outputs[s.node])[p] for p, s in plan.sources[node].items()}
 
 
 def _outputs(node: Node, raw: Any) -> Mapping[str, Any]:
@@ -273,11 +255,7 @@ def _accept(state: State, node: Node, index: int, unit: int, raw: Any) -> None:
 
 
 def _run_invocation(state: State, node: Node, index: int, units: list[int], calls: list[dict[str, Any]]) -> None:
-    """One call over every unit: one tuple per input port, aligned with ``units``; one returned entry per unit.
-
-    An entry of ``None`` fails its unit as ``missing_output``, an ``Exception`` instance as ``raised``; any other
-    value is checked as a target operation's output. A raise or a malformed return fails every unit alike.
-    """
+    """One call over every unit; a returned ``None`` is ``missing_output``, an ``Exception`` instance ``raised``."""
     reason = "raised"
     try:
         raw = node.impl(**{port: tuple(args[port] for args in calls) for port in node.inputs})
@@ -303,30 +281,27 @@ def _run_invocation(state: State, node: Node, index: int, units: list[int], call
 def execute(plan: Plan, state: State, cancelled: Callable[[], bool]) -> None:
     """Run the nodes in order, each over every ready unit in order, on the calling thread.
 
-    Cancellation is checked before each per-target call and before an invocation-scoped call. A callable that
-    raises ``Exception`` fails its unit (an invocation: every unit); nothing is raised to the caller.
-    ``BaseException`` (``KeyboardInterrupt``) propagates unchanged, as in 0.4.0.
+    Cancellation is checked before each per-target call and the invocation call. An ``Exception`` fails its unit
+    (an invocation: every unit); ``BaseException`` (``KeyboardInterrupt``) propagates unchanged.
     """
     for index, node in enumerate(plan.nodes):
         ready = [u for u, row in enumerate(state.rows) if _ready(row, index)]
-        batches = [ready] if node.scope == "invocation" and ready else [[u] for u in ready]
-        for units in batches:
+        for units in [ready] if node.scope == "invocation" and ready else [[u] for u in ready]:
             if cancelled():
                 apply(state, CancelRequested())
-            if state.cancelled:
                 return
             for unit in units:
                 apply(state, Dispatched(unit, index))
             calls = [_inputs(plan, state.rows[u], index) for u in units]
             if node.scope == "invocation":
                 _run_invocation(state, node, index, units, calls)
-                continue
-            try:
-                raw = node.impl(**calls[0])
-            except Exception as exc:
-                apply(state, Failed(units[0], index, "raised", exc))
             else:
-                _accept(state, node, index, units[0], raw)
+                try:
+                    raw = node.impl(**calls[0])
+                except Exception as exc:
+                    apply(state, Failed(units[0], index, "raised", exc))
+                else:
+                    _accept(state, node, index, units[0], raw)
     if cancelled():
         apply(state, CancelRequested())
 
@@ -335,19 +310,15 @@ def execute(plan: Plan, state: State, cancelled: Callable[[], bool]) -> None:
 
 
 class CancelToken:
-    """Synchronous cancellation request, settable from a callback or any caller thread.
-
-    A frame's token is linked to the enclosing frame's token: cancelling an outer run also stops new dispatches
-    of runs nested inside it.
-    """
+    """Synchronous cancellation request, settable from any thread; an outer frame's cancel reaches nested runs."""
 
     def __init__(self) -> None:
         self._event = threading.Event()
         self._parent: CancelToken | None = None
 
-    def link(self, parent: CancelToken) -> None:
+    def link(self, parent: CancelToken | None) -> None:
         """Follow ``parent``'s cancellation unless a parent is already linked."""
-        if self._parent is None and parent is not self:
+        if self._parent is None and parent is not None and parent is not self:
             self._parent = parent
 
     def cancel(self) -> None:
@@ -371,12 +342,7 @@ def current_token() -> CancelToken | None:
 def run_in_frame(fn: Callable[..., Any], *args: Any, token: CancelToken | None = None, **kwargs: Any) -> Any:
     """Run ``fn`` on the calling thread in a copy of the calling context (copy-in without copy-out)."""
     frame_token = token or CancelToken()
-    parent = _FRAME_TOKEN.get()
-    if parent is not None:
-        frame_token.link(parent)
-
-    def body() -> Any:
-        _FRAME_TOKEN.set(frame_token)
-        return fn(*args, **kwargs)
-
-    return contextvars.copy_context().run(body)
+    frame_token.link(_FRAME_TOKEN.get())
+    frame = contextvars.copy_context()
+    frame.run(_FRAME_TOKEN.set, frame_token)
+    return frame.run(fn, *args, **kwargs)
