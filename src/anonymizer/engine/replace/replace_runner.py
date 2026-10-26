@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import cast
 
@@ -23,6 +24,7 @@ from anonymizer.engine.constants import (
     COL_REPLACEMENT_APPLICATION,
     COL_REPLACEMENT_MAP,
 )
+from anonymizer.engine.detection.detection_workflow import EntityDetectionResult
 from anonymizer.engine.evaluation.detection_judge import DetectionJudgeWorkflow
 from anonymizer.engine.evaluation.entity_coverage_judge import EntityCoverageWorkflow
 from anonymizer.engine.evaluation.judge_base import _BaseJudgeWorkflow
@@ -44,6 +46,8 @@ class ReplacementResult:
 
     dataframe: pd.DataFrame
     failed_records: list[FailedRecord]
+    detection: EntityDetectionResult | None = None  # set when detection ran in the same invocation
+    detection_elapsed: float = 0.0
 
 
 class ReplacementWorkflow:
@@ -110,6 +114,29 @@ class ReplacementWorkflow:
                 failed_record_count=len(result.failed_records),
             )
             return result
+
+    def run_with_detection(
+        self,
+        dataframe: pd.DataFrame,
+        *,
+        detect: Callable[[pd.DataFrame], EntityDetectionResult],
+        replace_method: ReplaceMethod,
+        model_configs: list[ModelConfig],
+        selected_models: ReplaceModelSelection,
+        preview_num_records: int | None = None,
+    ) -> ReplacementResult:
+        """Detect entities with ``detect`` and apply the replacement strategy as one graph invocation."""
+        from anonymizer.engine.replace.route import run_replace_pipeline
+
+        return run_replace_pipeline(
+            dataframe,
+            detect=detect,
+            replace_method=replace_method,
+            llm_workflow=self._llm_workflow,
+            map_arguments=dict(
+                model_configs=model_configs, selected_models=selected_models, preview_num_records=preview_num_records
+            ),
+        )
 
     def evaluate(
         self,

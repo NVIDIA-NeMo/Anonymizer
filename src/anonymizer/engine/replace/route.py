@@ -17,13 +17,14 @@ runs per row.
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
+import time
+from collections.abc import Callable, Sequence
 from itertools import repeat
 from typing import Any
 
 import pandas as pd
 
-from anonymizer.config.replace_strategies import Annotate, LocalReplaceMethod, Substitute
+from anonymizer.config.replace_strategies import Annotate, LocalReplaceMethod, ReplaceMethod, Substitute
 from anonymizer.engine.constants import (
     COL_FINAL_ENTITIES,
     COL_REPLACED_TEXT,
@@ -32,6 +33,7 @@ from anonymizer.engine.constants import (
     COL_REPLACEMENT_MAP_SOURCE,
     COL_TEXT,
 )
+from anonymizer.engine.detection.detection_workflow import EntityDetectionResult
 from anonymizer.engine.graph_core.authoring import (
     DATUM,
     MENTIONS,
@@ -48,9 +50,9 @@ from anonymizer.engine.graph_core.authoring import (
 )
 from anonymizer.engine.graph_core.execution import ProtectionResult, prepare, protect
 from anonymizer.engine.graph_core.kernel import register_kind
+from anonymizer.engine.ndd.adapter import FailedRecord
 from anonymizer.engine.replace.llm_replace_workflow import (
     REPLACEMENT_MAP_SOURCE_LLM,
-    LlmReplaceResult,
     LlmReplaceWorkflow,
 )
 from anonymizer.engine.replace.replace_runner import ReplacementResult
@@ -84,14 +86,8 @@ def run_local_route(
         tracker.record_success()
         return _build_local_replacement_map(entities=entities, strategy=strategy)
 
-    graph, result = _protect_rows(
-        output_df,
-        text_column,
-        entities_column,
-        type(strategy).__name__.lower(),
-        build_map,
-        isinstance(strategy, Annotate),
-    )
+    lowered = _lower(output_df, text_column, entities_column)
+    graph, result = _protect_rows(lowered, type(strategy).__name__.lower(), build_map, isinstance(strategy, Annotate))
     output_df[COL_REPLACEMENT_MAP] = [result.value(d, "replacement_map") for d in graph.targets]
     _log_stats(output_df[COL_REPLACEMENT_MAP])
     output_df[COL_REPLACED_TEXT] = [result.value(d) for d in graph.targets]
@@ -108,27 +104,11 @@ def run_substitute_route(
     map_arguments: dict[str, Any],
 ) -> ReplacementResult:
     """Run Substitute as one invocation: the whole-frame LLM map step, then ``replace`` and the verifier per row."""
-    mapped: list[LlmReplaceResult] = []
-
-    def generate_maps(target: tuple[Datum, ...]) -> list[dict[str, Any] | None]:
-        result = llm_workflow.generate_map_only(dataframe, instructions=replace_method.instructions, **map_arguments)
-        mapped.append(result)
-        positions = resolve_source_positions(dataframe, result.dataframe, result.source_positions)
-        maps = (
-            result.dataframe[COL_REPLACEMENT_MAP]
-            if COL_REPLACEMENT_MAP in result.dataframe.columns
-            else repeat({}, len(positions))
-        )
-        by_position = {
-            position: {"replacements": [dict(vars(r)) for r in _parse_replacements(rmap)]}
-            for position, rmap in zip(positions, maps)
-        }
-        return [by_position.get(position) for position in range(len(target))]
-
-    map_step = Operation.per_invocation(
-        "substitute-map", generate_maps, {"target": DATUM}, {"replacement_map": REPLACEMENT_MAP}, Requests.opaque()
+    failures: list[FailedRecord] = []
+    map_step = _substitute_map_step(
+        llm_workflow, replace_method, map_arguments, failures, lambda target: (dataframe, target)
     )
-    graph, result = _protect_rows(dataframe, COL_TEXT, COL_FINAL_ENTITIES, "substitute", None, False, map_step)
+    graph, result = _protect_rows(_lower(dataframe, COL_TEXT, COL_FINAL_ENTITIES), "substitute", None, False, map_step)
     kept = [position for position, target in enumerate(graph.targets) if result.outcome(target).available]
     output_df = dataframe.iloc[kept].reset_index(drop=True)
     targets = [graph.targets[position] for position in kept]
@@ -136,7 +116,112 @@ def run_substitute_route(
     output_df[COL_REPLACEMENT_MAP_SOURCE] = REPLACEMENT_MAP_SOURCE_LLM
     output_df[COL_REPLACED_TEXT] = [result.value(d) for d in targets]
     output_df[COL_REPLACEMENT_APPLICATION] = [result.value(d, "application") for d in targets]
-    return ReplacementResult(dataframe=output_df, failed_records=list(mapped[0].failed_records if mapped else []))
+    return ReplacementResult(dataframe=output_df, failed_records=failures)
+
+
+def _substitute_map_step(
+    llm_workflow: LlmReplaceWorkflow,
+    replace_method: Substitute,
+    map_arguments: dict[str, Any],
+    failures: list[FailedRecord],
+    frame: Callable[[tuple[Datum, ...]], tuple[pd.DataFrame, Sequence[Datum]]],
+) -> Operation:
+    """One ``generate_map_only`` call over ``frame(target)``'s frame and the target each of its rows belongs to."""
+
+    def generate_maps(target: tuple[Datum, ...]) -> list[dict[str, Any] | None]:
+        source, owners = frame(target)
+        result = llm_workflow.generate_map_only(source, instructions=replace_method.instructions, **map_arguments)
+        failures.extend(result.failed_records)
+        positions = resolve_source_positions(source, result.dataframe, result.source_positions)
+        maps = (
+            result.dataframe[COL_REPLACEMENT_MAP]
+            if COL_REPLACEMENT_MAP in result.dataframe.columns
+            else repeat({}, len(positions))
+        )
+        by_owner = {
+            owners[position]: {"replacements": [dict(vars(r)) for r in _parse_replacements(rmap)]}
+            for position, rmap in zip(positions, maps)
+        }
+        return [by_owner.get(datum) for datum in target]
+
+    return Operation.per_invocation(
+        "substitute-map", generate_maps, {"target": DATUM}, {"replacement_map": REPLACEMENT_MAP}, Requests.opaque()
+    )
+
+
+def run_replace_pipeline(
+    dataframe: pd.DataFrame,
+    *,
+    detect: Callable[[pd.DataFrame], EntityDetectionResult],
+    replace_method: ReplaceMethod,
+    llm_workflow: LlmReplaceWorkflow | None,
+    map_arguments: dict[str, Any],
+) -> ReplacementResult:
+    """Run ``detect``, the Substitute map step and the per-target replace and verify as one invocation.
+
+    A row the detector drops fails at ``detect`` and blocks the later steps. Output rows are the detection frame's
+    rows for the targets that reached the end.
+    """
+    scope = GraphScope()
+    graph = ProtectionGraph(scope, tuple(scope.datum(str(text)) for text in dataframe[COL_TEXT]))
+    rows: dict[Datum, EntitiesSchema] = {}
+    failures: list[FailedRecord] = []
+    detected: list[EntityDetectionResult] = []
+    owners: list[Datum] = []
+    elapsed: list[float] = []
+
+    def run_detection(target: tuple[Datum, ...]) -> list[tuple[Mention, ...] | None]:
+        started = time.perf_counter()
+        detected.append(result := detect(dataframe))
+        elapsed.append(time.perf_counter() - started)
+        failures.extend(result.failed_records)
+        reported = result.source_positions or (None if len(result.dataframe) else ())  # () is the default: unassociated
+        positions = resolve_source_positions(dataframe, result.dataframe, reported)
+        owners.extend(target[position] for position in positions)
+        raw_entities = result.dataframe.get(COL_FINAL_ENTITIES, repeat({}, len(positions)))
+        for datum, raw in zip(owners, raw_entities):
+            rows[datum] = EntitiesSchema.from_raw(raw)
+        return [tuple(_accepted_mentions(d, rows[d])) if d in rows else None for d in target]
+
+    detect_step = Operation.per_invocation(
+        "detect", run_detection, {"target": DATUM}, {"mentions": MENTIONS}, Requests.opaque()
+    )
+    tracker = ProgressTracker(total=len(graph.targets), label="Replacement")
+    map_step = build_map = None
+    if isinstance(replace_method, Substitute):
+        if llm_workflow is None:
+            raise ValueError("Substitute requires an llm_workflow, but none was provided.")
+        map_step = _substitute_map_step(
+            llm_workflow, replace_method, map_arguments, failures, lambda target: (detected[0].dataframe, owners)
+        )
+    else:
+
+        def build_map(position: int, entities: EntitiesSchema) -> dict[str, Any]:
+            tracker.record_success()
+            return _build_local_replacement_map(entities=entities, strategy=replace_method)
+
+    _, result = _protect_rows(
+        (graph, rows),
+        type(replace_method).__name__.lower(),
+        build_map,
+        isinstance(replace_method, Annotate),
+        map_step,
+        detect_step,
+    )
+    if not detected:  # no targets: the step never ran, but the detector still sees the (empty) input
+        run_detection(())
+    targets = [d for d in graph.targets if result.outcome(d).available]
+    row_of = {datum: row for row, datum in enumerate(owners)}
+    output_df = detected[0].dataframe.iloc[[row_of[d] for d in targets]].reset_index(drop=True)
+    output_df[COL_REPLACEMENT_MAP] = [result.value(d, "replacement_map") for d in targets]
+    if map_step:
+        output_df[COL_REPLACEMENT_MAP_SOURCE] = REPLACEMENT_MAP_SOURCE_LLM
+    else:
+        _log_stats(output_df[COL_REPLACEMENT_MAP])
+    output_df[COL_REPLACED_TEXT] = [result.value(d) for d in targets]
+    output_df[COL_REPLACEMENT_APPLICATION] = [result.value(d, "application") for d in targets]
+    tracker.log_final()
+    return ReplacementResult(output_df, failures, detected[0], elapsed[0])
 
 
 def _lower(
@@ -157,19 +242,19 @@ def _lower(
 
 
 def _protect_rows(
-    frame: pd.DataFrame,
-    text_column: str,
-    entities_column: str,
+    lowered: tuple[ProtectionGraph, dict[Datum, EntitiesSchema]],
     name: str,
     build_map: Callable[[int, EntitiesSchema], dict[str, Any]] | None,
     annotate: bool,
     map_step: Operation | None = None,
+    detect_step: Operation | None = None,
 ) -> tuple[ProtectionGraph, ProtectionResult]:
-    """Run ``replace`` then the patch verifier over every row of ``frame``.
+    """Run ``replace`` then the patch verifier over every lowered row.
 
-    Each row's map comes from ``map_step``'s ``replacement_map`` port when there is one, else from ``build_map``.
+    Each row's map comes from ``map_step``'s ``replacement_map`` port when there is one, else from ``build_map``;
+    ``detect_step``, when given, runs first and supplies the mentions and row entities the graph does not declare.
     """
-    graph, rows = _lower(frame, text_column, entities_column)
+    graph, rows = lowered
     positions = {target: position for position, target in enumerate(graph.targets)}
 
     def replace(text: str, target: Datum, replacement_map: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -206,7 +291,7 @@ def _protect_rows(
             },
         ),
     )
-    operations = (map_step, *operations) if map_step is not None else operations
+    operations = (*(s for s in (detect_step, map_step) if s is not None), *operations)
     workflow = Workflow(name, operations, release="annotation" if annotate else "protected")
     # The facade admits the workload it was given, as 0.4.0 did: its limits are sized to the input.
     limits = Limits(
