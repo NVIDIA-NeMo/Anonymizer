@@ -64,6 +64,25 @@ def test_sanitizer_batches_unique_leaves() -> None:
     assert detector.calls == [["prompt", "Email ana@example.com", "history"]]
 
 
+def test_sanitizer_skips_only_relay_root_wrapper_keys() -> None:
+    detector = FakeDetector()
+    sanitizer = ObservationSanitizer(detector)
+
+    result = asyncio.run(
+        sanitizer.sanitize(
+            {
+                "data": {"metadata": "Email ana@example.com"},
+                "category_profile": None,
+                "metadata": {},
+            },
+            structural_root_keys=frozenset({"data", "category_profile", "metadata"}),
+        )
+    )
+
+    assert result["data"] == {"metadata": "Email [REDACTED]"}
+    assert detector.calls == [["metadata", "Email ana@example.com"]]
+
+
 def test_sensitive_application_keys_fail_closed() -> None:
     detector = FakeDetector()
     sanitizer = ObservationSanitizer(detector)

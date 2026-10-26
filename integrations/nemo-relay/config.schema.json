@@ -80,6 +80,50 @@
       "pattern": "^(?:EMPTY|[A-Za-z_][A-Za-z0-9_]{0,127})$",
       "default": "NVIDIA_API_KEY"
     },
+    "entity_labels": {
+      "description": "Explicit Anonymizer label allowlist. Supplying a list keeps detection strict instead of enabling Anonymizer's full default catalog and permissive augmentation.",
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 128,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128,
+        "pattern": ".*\\S.*"
+      },
+      "default": [
+        "account_number",
+        "bank_routing_number",
+        "credit_debit_card",
+        "customer_id",
+        "date_of_birth",
+        "email",
+        "employee_id",
+        "first_name",
+        "last_name",
+        "medical_record_number",
+        "national_id",
+        "phone_number",
+        "ssn",
+        "street_address",
+        "tax_id",
+        "user_name"
+      ]
+    },
+    "excluded_entity_labels": {
+      "description": "Labels removed from entity_labels before detection. Exclusions cannot remove the entire allowlist.",
+      "type": "array",
+      "maxItems": 128,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128,
+        "pattern": ".*\\S.*"
+      },
+      "default": []
+    },
     "threshold": {
       "description": "GLiNER candidate threshold.",
       "type": "number",
@@ -88,7 +132,7 @@
       "default": 0.3
     },
     "provider_timeout_seconds": {
-      "description": "Timeout passed to Anonymizer provider calls. Relay separately limits each worker callback to 30 seconds.",
+      "description": "Timeout passed to each Anonymizer provider call. Relay applies a separate host callback deadline: compatible 0.9.x hosts use a fixed 30-second deadline, while current Relay supports manifest defaults and per-callback overrides.",
       "type": "integer",
       "minimum": 1,
       "maximum": 29,

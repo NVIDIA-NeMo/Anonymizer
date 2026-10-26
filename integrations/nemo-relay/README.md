@@ -10,8 +10,10 @@ and tool input and output used by the application are not changed.
 
 > [!WARNING]
 > This integration is experimental and is not ready for production use. The
-> current version is too slow and too large for Relay's worker limits. Relay
-> clears slow event data instead of risking unredacted telemetry.
+> full synchronous spike exceeded the tested Relay 0.9.x host's built-in
+> callback deadline and leaves little headroom in the complete
+> activation-snapshot budget. Relay clears slow event data instead of risking
+> unredacted telemetry.
 > [Issue #289](https://github.com/NVIDIA-NeMo/Anonymizer/issues/289) tracks the
 > faster Anonymizer API needed before release.
 
@@ -68,6 +70,9 @@ The current backend uses Anonymizer's full pipeline:
 Both configured model endpoints receive selected telemetry text. Only use
 endpoints that are approved to receive this telemetry.
 
+The full synchronous pipeline is for architecture testing only. The release
+implementation will use Anonymizer's planned online detector instead.
+
 The worker loads one Anonymizer pipeline when it is first needed and reuses it
 for later events. Calls are processed one at a time because the current
 Anonymizer pipeline does not support concurrent use. Temporary artifacts are
@@ -76,11 +81,20 @@ removed after a completed call.
 This backend is useful for testing the integration, but it cannot ship in its
 current form:
 
-- It exceeds Relay's 30-second callback limit.
-- Its last packaged environment was about 541 MiB, above Relay's 512 MiB limit.
+- It exceeded the Relay 0.9.x host's built-in 30-second callback deadline in
+  qualification. Current Relay adds manifest-level defaults and per-callback
+  overrides; if the integration relies on those controls, its minimum Relay
+  version must be raised accordingly.
+- The packaged worker leaves little headroom within Relay's 512 MiB complete
+  activation-snapshot budget. Testing did not consistently establish an
+  over-budget snapshot.
 - A forced worker shutdown may happen before a synchronous Anonymizer call has
   removed its temporary files.
 - Some internal Anonymizer or provider errors may log source text.
+
+One earlier end-to-end wrapper run took about 208 seconds. That number includes
+wrapper startup, execution, and subscriber drain; it is not a single callback
+latency measurement.
 
 A slow sanitizer does not slow the model or tool call. It delays delivery of
 that telemetry event. If the callback times out, Relay clears `data`,
@@ -119,6 +133,25 @@ detector_api_key_env = "EMPTY"
 evaluator_endpoint = "https://integrate.api.nvidia.com/v1"
 evaluator_model = "nvidia/nemotron-3.5-lightning-30b-a3b"
 evaluator_api_key_env = "NVIDIA_API_KEY"
+entity_labels = [
+  "account_number",
+  "bank_routing_number",
+  "credit_debit_card",
+  "customer_id",
+  "date_of_birth",
+  "email",
+  "employee_id",
+  "first_name",
+  "last_name",
+  "medical_record_number",
+  "national_id",
+  "phone_number",
+  "ssn",
+  "street_address",
+  "tax_id",
+  "user_name",
+]
+excluded_entity_labels = []
 
 [plugins.dynamic.config.secret_env]
 NVIDIA_API_KEY = "..."
@@ -129,6 +162,13 @@ Relay does not pass the host environment directly to workers. Values under
 are not secret-store references. Protect the plugin configuration file. The
 worker accepts only the credential variable names selected by
 `detector_api_key_env` and `evaluator_api_key_env`.
+
+`entity_labels` is an explicit allowlist. The provisional default is limited
+to common direct identifiers found in agent telemetry instead of enabling
+Anonymizer's entire label catalog and permissive augmentation. Replace the list
+to match your policy, or use `excluded_entity_labels` to remove individual
+labels. An empty exclusion list means no exclusions. The release detector still
+needs accuracy testing against this label taxonomy.
 
 Enable the plugin and validate the saved configuration:
 
@@ -154,9 +194,9 @@ uv run --project integrations/nemo-relay --group test --locked \
   ty check --project integrations/nemo-relay
 ```
 
-`scripts/package_bundle.py` prepares the Anonymizer source used by a release
-build. It does not create the final Relay plugin archive or collect its full
-dependency set and license notices.
+`scripts/package_bundle.py` stages this integration for a release build. It
+does not create the final Relay plugin archive or collect its full dependency
+set and license notices.
 
 Local development uses this Anonymizer checkout. The staged bundle currently
 requires `nemo-anonymizer>0.4.0,<1` because version 0.4.0 does not include the
@@ -176,6 +216,6 @@ Before release, this integration still needs:
 - the faster Anonymizer API from #289;
 - an exact released Anonymizer dependency;
 - tests covering forced shutdown and source-free error logs;
-- a worker environment comfortably below Relay's 512 MiB limit; and
+- a complete activation snapshot comfortably below Relay's 512 MiB budget; and
 - a final Relay and Codex test showing that application traffic keeps its
   original data while subscribers receive useful redacted telemetry.

@@ -80,6 +80,36 @@ def test_projection_inspects_application_mapping_keys() -> None:
     assert value == original
 
 
+def test_projection_skips_only_declared_root_wrapper_keys() -> None:
+    value = {
+        "data": {"metadata": "inspect nested value"},
+        "category_profile": {},
+        "metadata": {"data": "inspect nested data"},
+        "application_root": "inspect application root",
+    }
+
+    leaves = collect_text_leaves(
+        value,
+        max_leaves=20,
+        max_bytes=1000,
+        max_leaf_bytes=1000,
+        structural_root_keys=frozenset({"data", "category_profile", "metadata"}),
+    )
+
+    key_leaves = {(leaf.path, leaf.key) for leaf in leaves if leaf.key is not None}
+    assert ((), "data") not in key_leaves
+    assert ((), "category_profile") not in key_leaves
+    assert ((), "metadata") not in key_leaves
+    assert (("data",), "metadata") in key_leaves
+    assert (("metadata",), "data") in key_leaves
+    assert ((), "application_root") in key_leaves
+    assert {leaf.text for leaf in leaves if leaf.key is None} == {
+        "inspect nested value",
+        "inspect nested data",
+        "inspect application root",
+    }
+
+
 def test_projection_omits_media_without_mutating_source() -> None:
     source = {
         "messages": [

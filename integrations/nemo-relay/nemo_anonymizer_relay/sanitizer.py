@@ -105,6 +105,7 @@ class ObservationSanitizer:
         value: Json,
         *,
         preserve_protocol_values: bool = False,
+        structural_root_keys: frozenset[str] = frozenset(),
     ) -> Json:
         """Sanitize one copied observability value without mutating its source."""
 
@@ -121,6 +122,7 @@ class ObservationSanitizer:
             max_bytes=self._max_bytes,
             max_leaf_bytes=self._max_leaf_bytes,
             preserve_protocol_values=preserve_protocol_values,
+            structural_root_keys=structural_root_keys,
         )
         if not leaves:
             return protected

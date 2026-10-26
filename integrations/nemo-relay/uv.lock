@@ -76,11 +76,11 @@ wheels = [
 
 [[package]]
 name = "certifi"
-version = "2026.7.22"
+version = "2026.10.23"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/a3/c2/24167ea9858356b47a87a50d39908bfdb72ceeefe0041586e704e5376b3a/certifi-2026.7.22.tar.gz", hash = "sha256:741e2c3b351ddf169a738da9f2c048608ff7f2c5cc02f1ebc6b118bb090d5d55", size = 138112, upload-time = "2026-07-22T03:35:12.644Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/fd/11/b524cbd9bbdaca58608e4cf4053fd463417549e1959fa8d3aa18319f9555/certifi-2026.10.23.tar.gz", hash = "sha256:a9895e6e2758b371e0545e321a3a8fd1fcfd9829ada8824a936dfb16aaaf36cd", size = 136225, upload-time = "2026-10-23T11:36:16.478Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/0b/a7/71ac2cff56fec219ed242bb11b8efb69fcc4bec75db06fb7bfe35de520e6/certifi-2026.7.22-py3-none-any.whl", hash = "sha256:62f22742b58a1a33014a2b6b706588a8d7e2a88ae7bd1a6ebe8c992928483775", size = 136983, upload-time = "2026-07-22T03:35:11.276Z" },
+    { url = "https://files.pythonhosted.org/packages/32/d1/a3652fe2c19134d0d15922177821d863cbd7e842d53a21bbe7e8e3a1b5ac/certifi-2026.10.23-py3-none-any.whl", hash = "sha256:e9b54de76e530bb6cf0ccd036787103acb58fd42ba930ea8bf948ddbaa2f61d1", size = 135082, upload-time = "2026-10-23T11:36:14.763Z" },
 ]
 
 [[package]]
@@ -238,7 +238,7 @@ wheels = [
 
 [[package]]
 name = "data-designer"
-version = "0.9.3"
+version = "0.9.7"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "data-designer-config" },
@@ -257,18 +257,18 @@ dependencies = [
     { name = "rich" },
     { name = "typer" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/41/05/db4386dff2bf3d22662d2eb247dd7e8a955525fa1d75824e458429640447/data_designer-0.9.3.tar.gz", hash = "sha256:69540dc492490dda594cb8fa2ff21f9a854a17399b6a091be9eb48126eee082e", size = 238806, upload-time = "2026-09-21T18:16:26.487Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/44/5b/775137cf838d1c06635ae8fb03a6732a47db808cbd06f6aee8f17e01ab7a/data_designer-0.9.7.tar.gz", hash = "sha256:c1358fb5e1ccad7140148788cd36302672b1b8b7d529b86e5e01e3c29d69ad77", size = 248195, upload-time = "2026-10-22T02:00:20.094Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/f0/53/b354a5e5d85677009587a4b5c61ebd83f9ffcbc700d9ecbb941df171ffc0/data_designer-0.9.3-py3-none-any.whl", hash = "sha256:81c7cb2a76a4e7006ada07a080de125514d261e36ab0194ba8ec360868198536", size = 159973, upload-time = "2026-09-21T18:16:25.037Z" },
+    { url = "https://files.pythonhosted.org/packages/12/f3/75c578f1286f052d18967b9d27a5c68ad8d566c9309aba95ca0981a7dc9a/data_designer-0.9.7-py3-none-any.whl", hash = "sha256:7a8fe33d88b8927e103d585dc9129a3c335191440e73a0e451f13702b4b08410", size = 160876, upload-time = "2026-10-22T02:00:18.759Z" },
 ]
 
 [[package]]
 name = "data-designer-config"
-version = "0.9.3"
+version = "0.9.7"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
+    { name = "certifi" },
     { name = "httpx" },
-    { name = "idna" },
     { name = "jinja2" },
     { name = "numpy" },
     { name = "pandas" },
@@ -280,22 +280,19 @@ dependencies = [
     { name = "pyyaml" },
     { name = "requests" },
     { name = "rich" },
-    { name = "urllib3" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/1f/c4/b8f489a9b853aa89bc1e5e5859673a6f39684bb176fa5e533b9a28afc76e/data_designer_config-0.9.3.tar.gz", hash = "sha256:c4ca9fe53ddb03a1617d008e08dcd0d55ffd832ad7c259084c433260b954264b", size = 151494, upload-time = "2026-09-21T18:16:18.244Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/67/f9/a2a1c3e1abe4e5d2cf1c8d55ed5609a95082da4c166cb5fc041298445192/data_designer_config-0.9.7.tar.gz", hash = "sha256:fc6a72f6ea9223e11222f513796be8df3cdf0e67d528524c14840c98cadf3e7a", size = 153073, upload-time = "2026-10-22T02:00:11.926Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/91/70/ec685cd515506a76645d240df87bc463792ace4f74bfe281ff96fd110d82/data_designer_config-0.9.3-py3-none-any.whl", hash = "sha256:3099871b955e378079835d6f477dc5de05e4a2ee8f3e969a5aa87d8dcab1adac", size = 128753, upload-time = "2026-09-21T18:16:16.783Z" },
+    { url = "https://files.pythonhosted.org/packages/96/87/90ebf0662a80e5be2d0ae18e3817e2a0f5fcb59d9c8fa4ded7b88c9b7a56/data_designer_config-0.9.7-py3-none-any.whl", hash = "sha256:b17913a76cad92672d2350aa10399899aabf3b04783d61d5f8ebd7210cb145d1", size = 129938, upload-time = "2026-10-22T02:00:10.207Z" },
 ]
 
 [[package]]
 name = "data-designer-engine"
-version = "0.9.3"
+version = "0.9.7"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyascii" },
     { name = "asciichartpy" },
-    { name = "chardet" },
-    { name = "cryptography" },
     { name = "data-designer-config" },
     { name = "duckdb" },
     { name = "faker" },
@@ -315,19 +312,16 @@ dependencies = [
     { name = "pandas" },
     { name = "pyarrow" },
     { name = "pydantic" },
-    { name = "pyjwt", extra = ["crypto"] },
-    { name = "python-multipart" },
     { name = "rich" },
     { name = "ruff" },
     { name = "scipy" },
     { name = "sqlfluff" },
-    { name = "starlette" },
     { name = "tiktoken" },
     { name = "wcwidth" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/0a/4c/4b04245c5ea39f28153b1470a9c476037daa993a45f8e8d334638c2d5504/data_designer_engine-0.9.3.tar.gz", hash = "sha256:8b1489b7dddb7cd84dd3a6c6e66484b9ceb73595f295a650f07c24ad613ba5f2", size = 919420, upload-time = "2026-09-21T18:16:22.31Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/ed/e1/9225b78bb2c049fee24dda80eeb1d52821ea91e559aefcc571d2692ae189/data_designer_engine-0.9.7.tar.gz", hash = "sha256:ba9578c13abb278ce2b0e1ecb63dc2b9da0b2ca7c8198e3db66b37aa756d53c9", size = 939761, upload-time = "2026-10-22T02:00:16.221Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/cf/a5/f0a62dfcaeb51e9211d026132f425e51ecd0d59e23db73ecd83eb58d5634/data_designer_engine-0.9.3-py3-none-any.whl", hash = "sha256:61aceee9b0984ae54d4ea72be679b40e0b522e2479897a2cd7e66168ed81dde4", size = 706611, upload-time = "2026-09-21T18:16:20.917Z" },
+    { url = "https://files.pythonhosted.org/packages/58/a7/d5d9023a39ad970f5bc8d862ba5ba5af64606680542f11ff11a48fc65378/data_designer_engine-0.9.7-py3-none-any.whl", hash = "sha256:2a1f4f7f1717adee4bb4447b6636d397d0ee1a7edba8bf6081c8bbefc8cd6936", size = 711961, upload-time = "2026-10-22T02:00:13.994Z" },
 ]
 
 [[package]]
@@ -392,11 +386,11 @@ wheels = [
 
 [[package]]
 name = "fsspec"
-version = "2025.12.0"
+version = "2026.9.0"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/b6/27/954057b0d1f53f086f681755207dda6de6c660ce133c829158e8e8fe7895/fsspec-2025.12.0.tar.gz", hash = "sha256:c505de011584597b1060ff778bb664c1bc022e87921b0e4f10cc9c44f9635973", size = 309748, upload-time = "2025-12-03T15:23:42.687Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/77/cd/9be253869fc42e764de7f3dedd6969af7d44ff9c3375214a3442a6f3fc08/fsspec-2026.9.0.tar.gz", hash = "sha256:0f08147951c8cb31d844c3547d631053b127863b60be04cf06e121333ee0e2fe", size = 333545, upload-time = "2026-09-18T17:50:42.825Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/51/c7/b64cae5dba3a1b138d7123ec36bb5ccd39d39939f18454407e5468f4763f/fsspec-2025.12.0-py3-none-any.whl", hash = "sha256:8bf1fe301b7d8acfa6e8571e3b1c3d158f909666642431cc78a1b7b4dbc5ec5b", size = 201422, upload-time = "2025-12-03T15:23:41.434Z" },
+    { url = "https://files.pythonhosted.org/packages/6c/c0/a98505f18594f1bce828bb159cec0fcf9860562f1a2c85913409fc8f3d9e/fsspec-2026.9.0-py3-none-any.whl", hash = "sha256:8dd6e646e99ea382bd85f97a45e6b526a442d79423a7dc673f1e2756d05fcb5f", size = 221738, upload-time = "2026-09-18T17:50:41.341Z" },
 ]
 
 [[package]]
@@ -724,6 +718,7 @@ wheels = [
 name = "nemo-anonymizer"
 source = { editable = "../../" }
 dependencies = [
+    { name = "certifi" },
     { name = "cryptography" },
     { name = "cyclopts" },
     { name = "data-designer" },
@@ -736,9 +731,10 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "certifi", specifier = ">=2026.10.19" },
     { name = "cryptography", specifier = ">=46.0.6" },
     { name = "cyclopts", specifier = ">=3" },
-    { name = "data-designer", specifier = ">=0.9,<0.10" },
+    { name = "data-designer", specifier = ">=0.9.4,<0.10" },
     { name = "datasets", marker = "extra == 'notebooks'", specifier = ">=4.0.0,<6" },
     { name = "gliner2", marker = "extra == 'notebooks'", specifier = "==2.0.0" },
     { name = "httpx", specifier = ">=0.27.0" },
@@ -746,7 +742,7 @@ requires-dist = [
     { name = "jupyter", marker = "extra == 'notebooks'", specifier = ">=1.0.0,<2" },
     { name = "jupytext", marker = "extra == 'notebooks'", specifier = ">=1.16.0,<2" },
     { name = "pillow", marker = "extra == 'notebooks'", specifier = ">=12.0.0,<13" },
-    { name = "pip", marker = "extra == 'notebooks'", specifier = ">=25,<27" },
+    { name = "pip", marker = "extra == 'notebooks'", specifier = ">=26.2.2" },
     { name = "pydantic", specifier = ">=2.9,<3" },
     { name = "pydantic-settings", specifier = ">=2.12,<3" },
     { name = "pygments", specifier = ">=2.20.0" },

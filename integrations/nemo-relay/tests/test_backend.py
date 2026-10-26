@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import sys
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -31,6 +32,8 @@ def backend_config() -> BackendConfig:
         evaluator_endpoint="https://example.invalid/v1",
         evaluator_model="evaluator",
         evaluator_api_key_env="MISSING_TEST_EVALUATOR_KEY",
+        entity_labels=("email", "phone_number"),
+        excluded_entity_labels=("phone_number",),
         threshold=0.3,
         timeout_seconds=30,
         data_summary=None,
@@ -141,8 +144,20 @@ def test_model_config_wires_detection_pipeline() -> None:
     }
 
 
-def test_backend_reuses_pipeline_and_cleans_per_call_artifacts(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize(
+    ("excluded_entity_labels", "expected_exclusions"),
+    [
+        ((), None),
+        (("phone_number",), ["phone_number"]),
+    ],
+)
+def test_backend_reuses_pipeline_and_cleans_per_call_artifacts(
+    monkeypatch: pytest.MonkeyPatch,
+    excluded_entity_labels: tuple[str, ...],
+    expected_exclusions: list[str] | None,
+) -> None:
     instances: list[Any] = []
+    detect_configs: list[dict[str, Any]] = []
 
     class Value:
         def __init__(self, *args: Any, **kwargs: Any) -> None:
@@ -156,8 +171,9 @@ def test_backend_reuses_pipeline_and_cleans_per_call_artifacts(monkeypatch: pyte
             self.run_count = 0
             instances.append(self)
 
-        def run(self, *, data: Any, **_kwargs: Any) -> Any:
+        def run(self, *, config: Any, data: Any, **_kwargs: Any) -> Any:
             self.run_count += 1
+            detect_configs.append(config.kwargs["detect"].kwargs)
             self.artifact_path.mkdir(parents=True, exist_ok=True)
             (self.artifact_path / "copied-event.txt").write_text("temporary copied source")
             records = data.kwargs["records"]
@@ -190,12 +206,23 @@ def test_backend_reuses_pipeline_and_cleans_per_call_artifacts(monkeypatch: pyte
             TextRecordsInput=Value,
         ),
     )
-    backend = AnonymizerBackend(backend_config())
+    backend = AnonymizerBackend(replace(backend_config(), excluded_entity_labels=excluded_entity_labels))
 
     assert backend.detect(["first copied event"]) == [[]]
     assert backend.detect(["second copied event"]) == [[]]
     assert len(instances) == 1
     assert instances[0].run_count == 2
+    assert (
+        detect_configs
+        == [
+            {
+                "entity_labels": ["email", "phone_number"],
+                "excluded_entity_labels": expected_exclusions,
+                "gliner_threshold": 0.3,
+            }
+        ]
+        * 2
+    )
     assert not instances[0].artifact_path.exists()
     private_directory = instances[0].artifact_path.parent
 

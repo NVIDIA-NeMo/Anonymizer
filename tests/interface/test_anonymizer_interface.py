@@ -181,6 +181,8 @@ def test_run_in_memory_records_tracks_dropped_caller_id_and_survivor_order() -> 
             reason="Record missing from workflow output",
         )
     ]
+
+
 def test_run_enables_latent_detection_when_rewrite_configured(stub_input: AnonymizerInput) -> None:
     config = AnonymizerConfig(rewrite=Rewrite())
     anonymizer, detection_wf, _, _ = _make_anonymizer()

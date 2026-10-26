@@ -29,6 +29,28 @@ from nemo_anonymizer_relay.sanitizer import ObservationSanitizer
 PLUGIN_ID = "nvidia.nemo_anonymizer"
 _ENV_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,127}$")
 _MISSING = object()
+_EVENT_FIELD_NAMES = frozenset({"data", "category_profile", "metadata"})
+
+# Keep this provisional policy focused on direct identifiers commonly found in
+# agent telemetry. Release qualification must validate it against the detector.
+_DEFAULT_ENTITY_LABELS = [
+    "account_number",
+    "bank_routing_number",
+    "credit_debit_card",
+    "customer_id",
+    "date_of_birth",
+    "email",
+    "employee_id",
+    "first_name",
+    "last_name",
+    "medical_record_number",
+    "national_id",
+    "phone_number",
+    "ssn",
+    "street_address",
+    "tax_id",
+    "user_name",
+]
 
 DEFAULT_CONFIG: dict[str, Json] = {
     "version": 1,
@@ -42,6 +64,8 @@ DEFAULT_CONFIG: dict[str, Json] = {
     "evaluator_endpoint": "https://integrate.api.nvidia.com/v1",
     "evaluator_model": "nvidia/nemotron-3.5-lightning-30b-a3b",
     "evaluator_api_key_env": "NVIDIA_API_KEY",
+    "entity_labels": _DEFAULT_ENTITY_LABELS,
+    "excluded_entity_labels": [],
     "threshold": 0.3,
     "provider_timeout_seconds": 20,
     "data_summary": "Copied AI-agent observability containing prompts, model responses, and tool traffic.",
@@ -122,6 +146,8 @@ class NemoAnonymizerWorker(WorkerPlugin):
                 evaluator_endpoint=cast(str, settings["evaluator_endpoint"]),
                 evaluator_model=cast(str, settings["evaluator_model"]),
                 evaluator_api_key_env=cast(str, settings["evaluator_api_key_env"]),
+                entity_labels=tuple(cast(list[str], settings["entity_labels"])),
+                excluded_entity_labels=tuple(cast(list[str], settings["excluded_entity_labels"])),
                 threshold=cast(float, settings["threshold"]),
                 timeout_seconds=cast(int, settings["provider_timeout_seconds"]),
                 data_summary=cast(str | None, settings["data_summary"]),
@@ -202,6 +228,10 @@ def normalized_config(raw: Json) -> dict[str, Json]:
         value = _nonempty_string(config, field)
         if value != "EMPTY" and _ENV_NAME.fullmatch(value) is None:
             raise ValueError(f"{field} must be EMPTY or a valid environment variable name")
+    entity_labels = _normalized_labels(config, "entity_labels", allow_empty=False)
+    excluded_entity_labels = _normalized_labels(config, "excluded_entity_labels", allow_empty=True)
+    if not set(entity_labels) - set(excluded_entity_labels):
+        raise ValueError("excluded_entity_labels must not remove every configured entity label")
     threshold = config["threshold"]
     if isinstance(threshold, bool) or not isinstance(threshold, (int, float)) or not 0 <= threshold <= 1:
         raise ValueError("threshold must be a number between 0 and 1")
@@ -236,11 +266,18 @@ async def _sanitize_event_fields(
             "metadata": {"nemo_anonymizer.coverage": "stream_chunk_payload_omitted"},
         }
 
+    if not any(_has_observable_content(value) for value in fields.values()):
+        return fields
+
     # Relay's dispatcher has already assembled the final observability copy for
     # managed LLM/tool lifecycles. Generic scopes use the same event shape, so
     # one complete pass covers both paths without provenance heuristics.
 
-    sanitized = await sanitizer.sanitize(dict(fields), preserve_protocol_values=True)
+    sanitized = await sanitizer.sanitize(
+        dict(fields),
+        preserve_protocol_values=True,
+        structural_root_keys=_EVENT_FIELD_NAMES,
+    )
     if not isinstance(sanitized, dict):
         raise RuntimeError("Anonymizer returned invalid event sanitizer fields")
     result = dict(fields)
@@ -261,6 +298,31 @@ def _nonempty_string(config: dict[str, Json], field: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise TypeError(f"{field} must be a non-empty string")
     return value
+
+
+def _normalized_labels(config: dict[str, Json], field: str, *, allow_empty: bool) -> list[str]:
+    value = config[field]
+    if not isinstance(value, list) or len(value) > 128:
+        raise TypeError(f"{field} must be an array with at most 128 entries")
+    normalized: list[str] = []
+    for label in value:
+        if not isinstance(label, str) or not label.strip() or len(label) > 128:
+            raise TypeError(f"{field} entries must be non-empty strings no longer than 128 characters")
+        normalized.append(label.strip().casefold())
+    if not normalized and not allow_empty:
+        raise ValueError(f"{field} must contain at least one label")
+    if len(normalized) != len(set(normalized)):
+        raise ValueError(f"{field} must not contain duplicate labels")
+    config[field] = normalized
+    return normalized
+
+
+def _has_observable_content(value: Json) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, (str, list, dict)):
+        return bool(value)
+    return False
 
 
 def _validate_secret_env(value: Json) -> None:

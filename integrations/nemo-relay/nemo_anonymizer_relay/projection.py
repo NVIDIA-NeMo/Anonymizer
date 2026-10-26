@@ -81,6 +81,7 @@ def collect_text_leaves(
     max_bytes: int,
     max_leaf_bytes: int,
     preserve_protocol_values: bool = False,
+    structural_root_keys: frozenset[str] = frozenset(),
 ) -> list[TextLeaf]:
     """Select caller-controlled strings within a copied observability value."""
 
@@ -112,7 +113,7 @@ def collect_text_leaves(
             return
         if isinstance(current, dict):
             for key, item in current.items():
-                if isinstance(key, str):
+                if isinstance(key, str) and (path or key not in structural_root_keys):
                     add(TextLeaf(path=path, text=key, key=key))
                 visit(item, (*path, key), key)
 

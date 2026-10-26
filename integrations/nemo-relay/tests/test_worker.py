@@ -83,6 +83,16 @@ def test_normalized_config_rejects_unknown_or_unsafe_values() -> None:
         worker.normalized_config({"provider_timeout_seconds": 30})
     with pytest.raises(ValueError, match="threshold"):
         worker.normalized_config({"threshold": 1.1})
+    with pytest.raises(TypeError, match="entity_labels must be an array"):
+        worker.normalized_config({"entity_labels": "email"})
+    with pytest.raises(ValueError, match="at least one label"):
+        worker.normalized_config({"entity_labels": []})
+    with pytest.raises(ValueError, match="duplicate labels"):
+        worker.normalized_config({"entity_labels": ["email", " EMAIL "]})
+    with pytest.raises(TypeError, match="excluded_entity_labels entries"):
+        worker.normalized_config({"excluded_entity_labels": [""]})
+    with pytest.raises(ValueError, match="must not remove every"):
+        worker.normalized_config({"entity_labels": ["email"], "excluded_entity_labels": ["EMAIL"]})
     with pytest.raises(ValueError, match="secret_env"):
         worker.normalized_config({"secret_env": {"BAD-NAME": "value"}})
     with pytest.raises(ValueError, match="configured provider credential"):
@@ -116,6 +126,27 @@ async def test_worker_registers_event_sanitizer_surfaces(monkeypatch: pytest.Mon
 
     await plugin.close()
     sanitizer.close.assert_called_once_with()
+
+
+async def test_worker_normalizes_and_forwards_entity_policy(monkeypatch: pytest.MonkeyPatch) -> None:
+    install_runtime_fakes(monkeypatch)
+    context = Context()
+    plugin = worker.NemoAnonymizerWorker()
+
+    await plugin.register(
+        cast(PluginContext, context),
+        {
+            **valid_config(),
+            "entity_labels": [" Email ", "phone_number"],
+            "excluded_entity_labels": ["PHONE_NUMBER"],
+        },
+    )
+
+    backend_factory = cast(MagicMock, worker.AnonymizerBackend)
+    backend_config = backend_factory.call_args.args[0]
+    assert backend_config.entity_labels == ("email", "phone_number")
+    assert backend_config.excluded_entity_labels == ("phone_number",)
+    await plugin.close()
 
 
 async def test_secret_environment_is_worker_scoped(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -207,6 +238,52 @@ async def test_stream_chunks_are_omitted_without_anonymizer_call(monkeypatch: py
         "metadata": {"nemo_anonymizer.coverage": "stream_chunk_payload_omitted"},
     }
     sanitizer.sanitize.assert_not_awaited()
+    await plugin.close()
+
+
+@pytest.mark.parametrize(
+    "fields",
+    [
+        {"data": None, "category_profile": None, "metadata": None},
+        {"data": {}, "category_profile": [], "metadata": ""},
+    ],
+)
+async def test_empty_event_fields_skip_anonymizer(
+    monkeypatch: pytest.MonkeyPatch,
+    fields: dict[str, Any],
+) -> None:
+    sanitizer = install_runtime_fakes(monkeypatch)
+    context = Context()
+    plugin = worker.NemoAnonymizerWorker()
+    await plugin.register(cast(PluginContext, context), valid_config())
+
+    result = await context.callback("register_mark_sanitize_guardrail")(
+        {"kind": "mark", "name": "custom", "category": "custom"},
+        fields,
+    )
+
+    assert result is fields
+    sanitizer.sanitize.assert_not_awaited()
+    await plugin.close()
+
+
+async def test_event_sanitizer_marks_relay_root_keys_as_structural(monkeypatch: pytest.MonkeyPatch) -> None:
+    sanitizer = install_runtime_fakes(monkeypatch)
+    context = Context()
+    plugin = worker.NemoAnonymizerWorker()
+    await plugin.register(cast(PluginContext, context), valid_config())
+    fields = {"data": {"owner": "Marisol Vega"}, "category_profile": None, "metadata": {}}
+
+    await context.callback("register_mark_sanitize_guardrail")(
+        {"kind": "mark", "name": "custom", "category": "custom"},
+        fields,
+    )
+
+    sanitizer.sanitize.assert_awaited_once_with(
+        fields,
+        preserve_protocol_values=True,
+        structural_root_keys=frozenset({"data", "category_profile", "metadata"}),
+    )
     await plugin.close()
 
 

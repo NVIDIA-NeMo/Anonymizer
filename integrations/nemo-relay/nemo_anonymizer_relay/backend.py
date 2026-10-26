@@ -51,6 +51,8 @@ class BackendConfig:
     evaluator_endpoint: str
     evaluator_model: str
     evaluator_api_key_env: str
+    entity_labels: tuple[str, ...]
+    excluded_entity_labels: tuple[str, ...]
     threshold: float
     timeout_seconds: int
     data_summary: str | None
@@ -88,7 +90,11 @@ class AnonymizerBackend:
                 records = [api.TextRecord(id=str(index), text=record.text) for index, record in enumerate(packed)]
                 result = runtime.anonymizer.run(
                     config=api.AnonymizerConfig(
-                        detect=api.Detect(gliner_threshold=self._config.threshold),
+                        detect=api.Detect(
+                            entity_labels=list(self._config.entity_labels),
+                            excluded_entity_labels=list(self._config.excluded_entity_labels) or None,
+                            gliner_threshold=self._config.threshold,
+                        ),
                         replace=api.Redact(),
                         emit_telemetry=False,
                     ),
