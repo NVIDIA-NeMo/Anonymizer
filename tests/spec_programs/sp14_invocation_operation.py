@@ -1,14 +1,15 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""SP-14 invocation-scoped operations: one call over all ready targets, per-target fan-out (E14.1-E14.8)."""
+"""SP-14 invocation-scoped operations: one call over all ready targets, per-target fan-out (E14.1-E14.10)."""
 
 from __future__ import annotations
 
 import threading
 
 from anonymizer.engine.graph_core.authoring import ASSESSMENT, DATUM, TEXT, Assessment, Operation, Requests, Workflow
-from anonymizer.engine.graph_core.execution import prepare
+from anonymizer.engine.graph_core.execution import prepare, protect
+from anonymizer.engine.graph_core.kernel import CancelToken
 from tests.spec_programs._builder import NAME, Checks, Recorder, graph, rejected, run
 
 TEXTS = (f"{NAME} one", f"{NAME} two", f"{NAME} three")
@@ -167,4 +168,52 @@ def program() -> list[dict[str, str]]:
         f"qualifications={quals}, protected={len(r.protected)}; "
         f"foreign attribution consistent={r2.consistent}, protected={len(r2.protected)}",
     )
+
+    def interrupt_reaches_caller() -> tuple[bool, str]:
+        interrupt = KeyboardInterrupt()
+        calls: list[int] = []
+
+        def raises(ts: tuple[str, ...]) -> list[str]:
+            calls.append(len(ts))
+            raise interrupt
+
+        caught: BaseException | None = None
+        try:
+            run(g, Recorder().invocation_transform(fn=raises))
+        except KeyboardInterrupt as exc:
+            caught = exc
+        return (
+            caught is interrupt and len(calls) == 1,
+            f"raised={type(caught).__name__}, same object={caught is interrupt}, callbacks={len(calls)}",
+        )
+
+    c.guard("E14.9", interrupt_reaches_caller)
+
+    def cancel_inside_invocation() -> tuple[bool, str]:
+        token = CancelToken()
+        rec = Recorder()
+
+        def cancel_and_replace(ts: tuple[str, ...]) -> list[str]:
+            token.cancel()
+            return _replace(ts)
+
+        r = protect(
+            prepare(g, Workflow("w", (rec.invocation_transform("inv", cancel_and_replace), rec.transform("per")))),
+            cancel=token,
+        )
+        terms = [r.outcome(t).terminal for t in (a, b, d)]
+        per_ledger = [status for _, op, status in r.ledger() if op == "per"]
+        return (
+            rec.count("inv") == 1
+            and rec.count("per") == 0
+            and len(r.attempts) == 3
+            and all(x.operation == "inv" and x.status == "succeeded" for x in r.attempts)
+            and terms == ["cancelled"] * 3
+            and per_ledger == ["cancelled"] * 3
+            and not r.protected,
+            f"inv calls={rec.count('inv')}, per-target calls={rec.count('per')}, attempts={len(r.attempts)}, "
+            f"terminals={terms}, per-target ledger={per_ledger}, protected={len(r.protected)}",
+        )
+
+    c.guard("E14.10", cancel_inside_invocation)
     return c.lines
