@@ -28,6 +28,7 @@ from anonymizer.engine.constants import (
     COL_REPLACED_TEXT,
     COL_REPLACEMENT_APPLICATION,
     COL_REPLACEMENT_MAP,
+    COL_REPLACEMENT_MAP_SOURCE,
     COL_TEXT,
 )
 from anonymizer.engine.graph_core.authoring import (
@@ -46,13 +47,18 @@ from anonymizer.engine.graph_core.authoring import (
 )
 from anonymizer.engine.graph_core.execution import ProtectionResult, prepare, protect
 from anonymizer.engine.graph_core.kernel import register_kind
-from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceResult, LlmReplaceWorkflow
+from anonymizer.engine.replace.llm_replace_workflow import (
+    REPLACEMENT_MAP_SOURCE_LLM,
+    LlmReplaceResult,
+    LlmReplaceWorkflow,
+)
 from anonymizer.engine.replace.replace_runner import ReplacementResult
 from anonymizer.engine.replace.strategies import (
     _build_local_replacement_map,
     _parse_replacements,
     apply_replacements_to_spans,
 )
+from anonymizer.engine.row_partitioning import resolve_source_positions
 from anonymizer.engine.schemas import EntitiesSchema
 from anonymizer.logging import ProgressTracker
 
@@ -60,7 +66,6 @@ logger = logging.getLogger("anonymizer")
 
 REPLACEMENT_MAP = register_kind("replacement-map", lambda v: isinstance(v, dict))
 REPLACEMENT_APPLICATION = register_kind("replacement-application", lambda v: isinstance(v, dict))
-MAP_RESULT = register_kind("replacement-map-result", lambda v: isinstance(v, LlmReplaceResult))
 
 
 def run_local_route(
@@ -101,33 +106,36 @@ def run_substitute_route(
     replace_method: Substitute,
     map_arguments: dict[str, Any],
 ) -> ReplacementResult:
-    """Run Substitute: the whole-frame LLM map as one operation, then the rows it returns through the local route."""
-    scope = GraphScope()
-    frame_target = scope.datum("")
-    mapping = Operation(
-        "map",
-        lambda target: llm_workflow.generate_map_only(
-            dataframe, instructions=replace_method.instructions, **map_arguments
-        ),
-        {"target": DATUM},
-        {"mapped": MAP_RESULT},
-        Requests.opaque(),
-    )
-    limits = Limits(max_operations=1, max_targets=1, max_mentions=0, max_context_items=0)
-    mapped = _run(ProtectionGraph(scope, (frame_target,)), Workflow("substitute-map", (mapping,)), limits).value(
-        frame_target, "mapped"
-    )
-    output_df = mapped.dataframe.copy()
-    maps = list(output_df[COL_REPLACEMENT_MAP]) if COL_REPLACEMENT_MAP in output_df.columns else [{}] * len(output_df)
+    """Run Substitute as one invocation: the whole-frame LLM map step, then ``replace`` and the verifier per row."""
+    mapped: list[LlmReplaceResult] = []
 
-    def build_map(position: int, entities: EntitiesSchema) -> dict[str, Any]:
-        replacements = _parse_replacements(maps[position])
-        return {"replacements": [dict(vars(r)) for r in replacements]}
+    def generate_maps(target: tuple[Datum, ...]) -> list[dict[str, Any] | None]:
+        result = llm_workflow.generate_map_only(dataframe, instructions=replace_method.instructions, **map_arguments)
+        mapped.append(result)
+        positions = resolve_source_positions(dataframe, result.dataframe, result.source_positions)
+        maps = (
+            result.dataframe[COL_REPLACEMENT_MAP]
+            if COL_REPLACEMENT_MAP in result.dataframe.columns
+            else repeat({}, len(positions))
+        )
+        by_position = {
+            position: {"replacements": [dict(vars(r)) for r in _parse_replacements(rmap)]}
+            for position, rmap in zip(positions, maps)
+        }
+        return [by_position.get(position) for position in range(len(target))]
 
-    graph, result = _protect_rows(output_df, COL_TEXT, COL_FINAL_ENTITIES, "substitute", build_map, False)
-    output_df[COL_REPLACED_TEXT] = [result.value(d) for d in graph.targets]
-    output_df[COL_REPLACEMENT_APPLICATION] = [result.value(d, "application") for d in graph.targets]
-    return ReplacementResult(dataframe=output_df, failed_records=list(mapped.failed_records))
+    map_step = Operation.per_invocation(
+        "substitute-map", generate_maps, {"target": DATUM}, {"replacement_map": REPLACEMENT_MAP}, Requests.opaque()
+    )
+    graph, result = _protect_rows(dataframe, COL_TEXT, COL_FINAL_ENTITIES, "substitute", None, False, map_step)
+    kept = [position for position, target in enumerate(graph.targets) if result.outcome(target).available]
+    output_df = dataframe.iloc[kept].reset_index(drop=True)
+    targets = [graph.targets[position] for position in kept]
+    output_df[COL_REPLACEMENT_MAP] = [result.value(d, "replacement_map") for d in targets]
+    output_df[COL_REPLACEMENT_MAP_SOURCE] = REPLACEMENT_MAP_SOURCE_LLM
+    output_df[COL_REPLACED_TEXT] = [result.value(d) for d in targets]
+    output_df[COL_REPLACEMENT_APPLICATION] = [result.value(d, "application") for d in targets]
+    return ReplacementResult(dataframe=output_df, failed_records=list(mapped[0].failed_records if mapped else []))
 
 
 def _lower(
@@ -152,25 +160,36 @@ def _protect_rows(
     text_column: str,
     entities_column: str,
     name: str,
-    build_map: Callable[[int, EntitiesSchema], dict[str, Any]],
+    build_map: Callable[[int, EntitiesSchema], dict[str, Any]] | None,
     annotate: bool,
+    map_step: Operation | None = None,
 ) -> tuple[ProtectionGraph, ProtectionResult]:
-    """Run ``replace`` then the patch verifier over every row of ``frame``; ``build_map`` supplies each row's map."""
+    """Run ``replace`` then the patch verifier over every row of ``frame``.
+
+    Each row's map comes from ``map_step``'s ``replacement_map`` port when there is one, else from ``build_map``.
+    """
     graph, rows = _lower(frame, text_column, entities_column)
     positions = {target: position for position, target in enumerate(graph.targets)}
 
-    def replace(text: str, target: Datum) -> dict[str, Any]:
-        rmap = build_map(positions[target], rows[target])
+    def replace(text: str, target: Datum, replacement_map: dict[str, Any] | None = None) -> dict[str, Any]:
+        if map_step is None:
+            assert build_map is not None, "a workflow without a map step needs build_map"
+            rmap = build_map(positions[target], rows[target])
+        else:
+            rmap = replacement_map
         replaced, application = apply_replacements_to_spans(
             text=text, entities=rows[target], replacements=_parse_replacements(rmap), allow_value_fallback=True
         )
         return {"text": replaced, "replacement_map": rmap, "application": application.to_metrics()}
 
+    replace_inputs = {"text": TEXT, "target": DATUM}
+    if map_step is not None:
+        replace_inputs["replacement_map"] = REPLACEMENT_MAP
     operations = (
         Operation(
             "replace",
             replace,
-            {"text": TEXT, "target": DATUM},
+            replace_inputs,
             {"text": TEXT, "replacement_map": REPLACEMENT_MAP, "application": REPLACEMENT_APPLICATION},
         ),
         Operation.verifier(
@@ -186,19 +205,24 @@ def _protect_rows(
             },
         ),
     )
+    operations = (map_step, *operations) if map_step is not None else operations
     workflow = Workflow(name, operations, release="annotation" if annotate else "protected")
     # The facade admits the workload it was given, as 0.4.0 did: its limits are sized to the input.
     limits = Limits(
-        max_operations=2, max_targets=len(graph.targets), max_mentions=len(graph.mentions), max_context_items=0
+        max_operations=len(operations),
+        max_targets=len(graph.targets),
+        max_mentions=len(graph.mentions),
+        max_context_items=0,
     )
     return graph, _run(graph, workflow, limits)
 
 
 def _run(graph: ProtectionGraph, workflow: Workflow, limits: Limits) -> ProtectionResult:
-    """Execute one invocation; the first error a transform raised is raised, as 0.4.0 raised it."""
+    """Execute one invocation; the first error a non-verifier step raised is raised, as 0.4.0 raised it."""
     result = protect(prepare(graph, workflow, limits=limits))
+    steps = [step for _, step in workflow.flatten()]
     for entry in result.state.entries:
-        if entry.error is not None and entry.node == 0:
+        if entry.error is not None and not steps[entry.node].is_verifier:
             raise entry.error
     return result
 
