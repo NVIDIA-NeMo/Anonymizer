@@ -90,9 +90,13 @@ class Plan:
 
 def compile_sequence(nodes: tuple[Node, ...], seeds: Mapping[str, str]) -> Plan:
     """Bind each input port to the latest earlier output of the same name, else to a seed; check kinds."""
-    names = (*seeds.values(), *(name for n in nodes for name in (*n.inputs.values(), *n.outputs.values())))
-    if (unknown := next((name for name in names if name not in _KINDS), None)) is not None:
-        raise GraphRejection("unknown_kind", repr(unknown))
+    kind_names = list(seeds.values())
+    for node in nodes:
+        kind_names.extend(node.inputs.values())
+        kind_names.extend(node.outputs.values())
+    for name in kind_names:
+        if name not in _KINDS:
+            raise GraphRejection("unknown_kind", repr(name))
     latest = {port: (Source(None, port), name) for port, name in seeds.items()}
     sources: list[Mapping[str, Source]] = []
     for i, node in enumerate(nodes):
@@ -206,14 +210,18 @@ def apply(state: State, event: Event) -> None:
             if state.cancelled or row.status[node] != Status.PENDING:
                 raise RuntimeError(f"dispatch refused: {row.status[node].value!r}, cancelled={state.cancelled}")
             row.status[node] = Status.RUNNING
-        case Completed(unit, node, outputs) if state.rows[unit].status[node] == Status.RUNNING:
-            state.rows[unit].status[node] = Status.SUCCEEDED
-            state.rows[unit].outputs[node] = outputs
-            state.history.append(Entry(unit, node, Status.SUCCEEDED))
-        case Failed(unit, node, reason, error) if state.rows[unit].status[node] == Status.RUNNING:
-            # Dependents stay pending and never run; the ledger reports them blocked.
-            state.rows[unit].status[node] = Status.FAILED
-            state.history.append(Entry(unit, node, Status.FAILED, reason, error))
+        case Completed(unit, node, outputs):
+            row = state.rows[unit]
+            if row.status[node] == Status.RUNNING:
+                row.status[node] = Status.SUCCEEDED
+                row.outputs[node] = outputs
+                state.history.append(Entry(unit, node, Status.SUCCEEDED))
+        case Failed(unit, node, reason, error):
+            row = state.rows[unit]
+            if row.status[node] == Status.RUNNING:
+                # Dependents stay pending and never run; the ledger reports them blocked.
+                row.status[node] = Status.FAILED
+                state.history.append(Entry(unit, node, Status.FAILED, reason, error))
 
 
 def unit_terminal(row: Row, cancelled: bool) -> Status:
@@ -230,7 +238,11 @@ def _ready(row: Row, node: int) -> bool:
 
 
 def _inputs(plan: Plan, row: Row, node: int) -> dict[str, Any]:
-    return {p: (row.seeds if s.node is None else row.outputs[s.node])[p] for p, s in plan.sources[node].items()}
+    values: dict[str, Any] = {}
+    for port, source in plan.sources[node].items():
+        origin = row.seeds if source.node is None else row.outputs[source.node]
+        values[port] = origin[port]
+    return values
 
 
 def _outputs(node: Node, raw: Any) -> Mapping[str, Any]:
@@ -254,26 +266,42 @@ def _accept(state: State, node: Node, index: int, unit: int, raw: Any) -> None:
     apply(state, event)
 
 
-def _run_invocation(state: State, node: Node, index: int, units: list[int], calls: list[dict[str, Any]]) -> None:
+def _run_target(plan: Plan, state: State, index: int, unit: int) -> None:
+    """One call for one unit; a raised ``Exception`` fails the unit as ``raised``."""
+    apply(state, Dispatched(unit, index))
+    node = plan.nodes[index]
+    try:
+        raw = node.impl(**_inputs(plan, state.rows[unit], index))
+    except Exception as exc:
+        apply(state, Failed(unit, index, "raised", exc))
+        return
+    _accept(state, node, index, unit, raw)
+
+
+def _run_invocation(plan: Plan, state: State, index: int, units: list[int]) -> None:
     """One call over every unit; a returned ``None`` is ``missing_output``, an ``Exception`` instance ``raised``."""
-    reason = "raised"
+    for unit in units:
+        apply(state, Dispatched(unit, index))
+    node = plan.nodes[index]
+    calls = [_inputs(plan, state.rows[unit], index) for unit in units]
     try:
         raw = node.impl(**{port: tuple(args[port] for args in calls) for port in node.inputs})
     except Exception as exc:
-        raw = [exc] * len(units)
-    else:
-        if not isinstance(raw, Sequence) or isinstance(raw, (str, bytes)) or len(raw) != len(units):
-            size = f" of length {len(raw)}" if hasattr(raw, "__len__") else ""
-            error = TypeError(
-                f"invocation operation returned {type(raw).__name__}{size}, expected {len(units)} entries"
-            )
-            raw, reason = [error] * len(units), "invalid_output"
+        for unit in units:
+            apply(state, Failed(unit, index, "raised", exc))
+        return
+    if not isinstance(raw, Sequence) or isinstance(raw, (str, bytes)) or len(raw) != len(units):
+        size = f" of length {len(raw)}" if hasattr(raw, "__len__") else ""
+        error = TypeError(f"invocation operation returned {type(raw).__name__}{size}, expected {len(units)} entries")
+        for unit in units:
+            apply(state, Failed(unit, index, "invalid_output", error))
+        return
     for unit, entry in zip(units, raw):
         match entry:
             case None:
                 apply(state, Failed(unit, index, "missing_output"))
             case Exception():
-                apply(state, Failed(unit, index, reason, entry))
+                apply(state, Failed(unit, index, "raised", entry))
             case _:
                 _accept(state, node, index, unit, entry)
 
@@ -285,23 +313,19 @@ def execute(plan: Plan, state: State, cancelled: Callable[[], bool]) -> None:
     (an invocation: every unit); ``BaseException`` (``KeyboardInterrupt``) propagates unchanged.
     """
     for index, node in enumerate(plan.nodes):
-        ready = [u for u, row in enumerate(state.rows) if _ready(row, index)]
-        for units in [ready] if node.scope == "invocation" and ready else [[u] for u in ready]:
-            if cancelled():
-                apply(state, CancelRequested())
-                return
-            for unit in units:
-                apply(state, Dispatched(unit, index))
-            calls = [_inputs(plan, state.rows[u], index) for u in units]
-            if node.scope == "invocation":
-                _run_invocation(state, node, index, units, calls)
-            else:
-                try:
-                    raw = node.impl(**calls[0])
-                except Exception as exc:
-                    apply(state, Failed(units[0], index, "raised", exc))
-                else:
-                    _accept(state, node, index, units[0], raw)
+        ready = [unit for unit, row in enumerate(state.rows) if _ready(row, index)]
+        if node.scope == "invocation":
+            if ready:
+                if cancelled():
+                    apply(state, CancelRequested())
+                    return
+                _run_invocation(plan, state, index, ready)
+        else:
+            for unit in ready:
+                if cancelled():
+                    apply(state, CancelRequested())
+                    return
+                _run_target(plan, state, index, unit)
     if cancelled():
         apply(state, CancelRequested())
 
