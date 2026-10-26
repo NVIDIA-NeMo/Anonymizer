@@ -340,6 +340,22 @@ def test_unexplained_span_errors_still_fail_without_logging_values(
     assert value not in caplog.text
 
 
+@pytest.mark.parametrize("value", ["", " \t\n "])
+def test_blank_entity_text_is_rejected_even_for_a_whitespace_source_span(value: str) -> None:
+    model = _FakeModel([{"entities": {"first_name": [{"text": value, "confidence": 0.9, "start": 3, "end": 6}]}}])
+    with pytest.raises(ValueError, match="inconsistent offsets"):
+        detect_entities_for_texts(
+            model,
+            ["Ask \t May"],
+            ["first_name"],
+            threshold=0.3,
+            chunk_length=384,
+            overlap=128,
+            flat_ner=False,
+            inference_batch_size=1,
+        )
+
+
 def test_batch_word_windows_keep_document_offsets_separate() -> None:
     model = _FakeModel(
         [

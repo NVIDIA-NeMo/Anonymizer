@@ -27,10 +27,11 @@ Commit with a conventional message and DCO signoff after repository hooks pass. 
 ## Verified results
 
 - `make check`: passed formatting, lint, type checking, lock consistency, and SPDX checks.
-- `make test`: 1,569 passed, with three dependency deprecation warnings.
+- `make test`: 1,571 passed after the review follow-up, with three dependency deprecation warnings.
 - Strict MkDocs build: passed, writing generated output outside the checkout.
 - Live endpoint replay using the model's actual native word splitter: all 11 affected fixtures (two biographies and nine public legal records) returned source-valid spans; one synthetic suffix prediction was corrected. Only aggregate results are recorded here.
-- Full tutorial execution and detection-recall evaluation have not been repeated for this branch. The separate LLM repair-provider timeouts are not addressed by this change.
+- [Notebook CI run 40271396191](https://github.com/NVIDIA-NeMo/Anonymizer/actions/runs/40271396191) on commit `b27e39e3` completed CPU runtime installation and notebooks 01–03. Notebook 04 detection completed across all 25 records with zero detection failures; provider timeouts then failed all eight repair records and triggered the missing-Parquet crash tracked in [#331](https://github.com/NVIDIA-NeMo/Anonymizer/issues/331). Notebook 05 did not execute, and artifact upload was skipped. The full five-notebook run has not passed; detection recall remains unevaluated.
+- Local legal verification on commit `b27e39e3`: all 25 records passed through the actual notebook-local server on CPU, using the pinned checkpoint, notebook 05 labels, threshold 0.3, and word windows 384/128. All 1,717 returned spans had valid bounds and exact source text; the engine parser passed and retained 1,578 spans after overlap resolution. This includes all nine previously failing legal records. LLM validation, augmentation, and rewriting were not part of this local check.
 
 
 ## CI setup follow-up
@@ -41,4 +42,9 @@ Constrain pip installs in this CPU-only CI job to `torch==2.14.1+cpu`, matching 
 
 Validate workflow structure, resolve the Linux Python 3.11 dependency graph and confirm it contains CPU PyTorch without CUDA packages, run repository checks and strict docs, then dispatch a new notebook run on the updated PR. The full notebook run remains the Linux execution check.
 
-Follow-up validation: Linux x86_64/Python 3.11 resolution passed with 43 packages, `torch==2.14.1+cpu`, and no NVIDIA CUDA or Triton packages. Workflow YAML validation, `make check`, and the strict documentation build passed. The notebook workflow must still execute successfully on the updated branch.
+Follow-up validation: Linux x86_64/Python 3.11 resolution passed with 43 packages, `torch==2.14.1+cpu`, and no NVIDIA CUDA or Triton packages. Workflow YAML validation, `make check`, and the strict documentation build passed. The subsequent notebook run confirmed CPU runtime installation succeeded without the earlier disk-quota failure, before encountering the separate rewrite-repair failure described above.
+
+
+## Review follow-up
+
+Reject empty or whitespace-only model entity text before source-span comparison, even when its offsets point to whitespace. Add synthetic regressions for both cases; both reproduced the missing rejection before the guard was added. This is defensive validation of malformed responses, separate from the real-model span validation above.

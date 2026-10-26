@@ -203,7 +203,7 @@ def _ground_chunk_entity(entity: dict[str, Any], chunk: str) -> dict[str, Any] |
     start, end = int(entity["start"]), int(entity["end"])
     value = str(entity["text"]).strip()
     invalid_span = f"GLiNER2 returned inconsistent offsets [{start}, {end}) for a chunk of length {len(chunk)}"
-    if start < 0 or end <= start:
+    if start < 0 or end <= start or not value:
         raise ValueError(invalid_span)
     if end > len(chunk):
         # GLiNER2 can append periods before inference. They are not source
