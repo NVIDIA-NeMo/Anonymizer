@@ -46,15 +46,16 @@ Public-API changes (re-exports, signatures, kwargs, default values) may require 
 
 ```
 input_df
-  → EntityDetectionWorkflow.run()              # engine/detection/detection_workflow.py
-        GLiNER detection
-        → parse + tag
-        → LLM validation    (keep / drop candidates)
-        → LLM augmentation  (add entities GLiNER missed)
-        → merge + finalize  → COL_DETECTED_ENTITIES, COL_FINAL_ENTITIES
-  → ReplacementWorkflow.run()                  # engine/replace/replace_runner.py
-        Redact / Annotate / Hash  → applied locally, no LLM
-        Substitute                → LlmReplaceWorkflow → NddAdapter
+  → one graph invocation: run_replace_pipeline()   # engine/replace/route.py
+      detect (invocation-scoped step)              → mentions per row
+        EntityDetectionWorkflow.run()              # engine/detection/detection_workflow.py
+            GLiNER detection
+            → parse + tag
+            → LLM validation    (keep / drop candidates)
+            → LLM augmentation  (add entities GLiNER missed)
+            → merge + finalize  → COL_DETECTED_ENTITIES, COL_FINAL_ENTITIES
+      substitute-map (Substitute only)             → LlmReplaceWorkflow → NddAdapter
+      replace → verify-patches (per row)           # Redact / Annotate / Hash apply locally, no LLM
   → output: {text_col}_replaced, {text_col}_with_spans, final_entities
 ```
 
