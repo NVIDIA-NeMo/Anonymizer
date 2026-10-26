@@ -103,9 +103,11 @@ def prepare(
         raise k.GraphRejection("over_request_budget")
     nodes = tuple(k.Node(name, op.inputs, op.outputs, op.fn, op.scope) for name, op in ops)
     plan = k.compile_sequence(nodes, SEEDS)
-    final_text = max((i for i, n in enumerate(nodes) if "text" in n.outputs), default=-1)
+    final_text = max((i for i, n in enumerate(nodes) if "text" in n.outputs), default=None)
     covering = frozenset(
-        i for i, (_, op) in enumerate(ops) if op.is_verifier and plan.sources[i].get("text", (None,))[0] == final_text
+        i
+        for i, (_, op) in enumerate(ops)
+        if op.is_verifier and plan.sources[i].get("text") == k.Source(final_text, "text")
     )
     if planned.bound == "opaque":
         planned = Count(None, "unknown")
@@ -223,9 +225,9 @@ class ProtectionResult:
 
     def value(self, target: Datum, port: str = "text") -> Any:
         """Explicit content access: the latest value of ``port`` for ``target``, or None if never produced."""
-        values = self.state.row(self._index(target)).values
-        found = [(i, v) for (i, p), v in values.items() if p == port and i >= 0]
-        return max(found, key=lambda t: t[0])[1] if found else None
+        outputs = self.state.rows[self._index(target)].outputs
+        found = [out[port] for _, out in sorted(outputs.items()) if port in out]
+        return found[-1] if found else None
 
     def content(self) -> tuple[tuple[Datum, str | None], ...]:
         """Content projection: each target with its final candidate text (not a Protected claim)."""
@@ -240,16 +242,16 @@ class ProtectionResult:
     def attempts(self) -> tuple[Attempt, ...]:
         names = self.prepared.names
         return tuple(
-            Attempt(self.targets[e.unit], names[e.node], e.status, e.reason, e.ref) for e in self.state.entries
+            Attempt(self.targets[e.unit], names[e.node], e.status.value, e.reason, e.ref) for e in self.state.entries
         )
 
     def ledger(self) -> tuple[tuple[Datum, str, str], ...]:
         """One terminal per target and operation, dispatched or not."""
-        stopped = k.CANCELLED if self.state.cancelled else k.BLOCKED
+        stopped = k.Status.CANCELLED if self.state.cancelled else k.Status.BLOCKED
         return tuple(
-            (d, name, {k.PENDING: stopped}.get(status, status))
+            (d, name, {k.Status.PENDING: stopped}.get(status, status).value)
             for u, d in enumerate(self.targets)
-            for name, status in zip(self.prepared.names, self.state.row(u).status)
+            for name, status in zip(self.prepared.names, self.state.rows[u].status)
         )
 
     def summary(self) -> InspectionSummary:
@@ -323,8 +325,8 @@ def _protect(p: PreparedProtection) -> ProtectionResult:
         seeds.append({"text": d.text, "source": d.text, "mentions": m, "context": tuple(items), "target": d})
     state = k.initial_state(p.plan, seeds)
     for u in closed:
-        state = k.reduce(p.plan, state, k.Closed(u, "binding_failed"))
-    state = k.execute(p.plan, state, cancelled)
+        k.apply(state, k.Closed(u, "binding_failed"))
+    k.execute(p.plan, state, cancelled)
     return _reconcile(p, state, tuple(retrievals))
 
 
@@ -367,15 +369,16 @@ def _reconcile(p: PreparedProtection, state: k.State, retrievals: tuple[Retrieva
     verdicts: list[tuple[str, str, str]] = []
     failures: dict[int, str] = {}
     for e in state.entries:
-        if e.status == k.FAILED:
+        if e.status == k.Status.FAILED:
             failures.setdefault(e.unit, e.reason)
     for u, d in enumerate(g.targets):
-        row = state.row(u)
-        terminal = {k.SUCCEEDED: "success"}.get(t := k.unit_terminal(row, state.cancelled), t)
+        row = state.rows[u]
+        status = k.unit_terminal(row, state.cancelled)
+        terminal = "success" if status == k.Status.SUCCEEDED else status.value
         reason = "" if terminal == "success" else row.closed or failures.get(u, terminal)
         quals = []
         for i in p.covering_verifiers:
-            a: Assessment | None = row.values.get((i, "assessment"))
+            a: Assessment | None = row.outputs.get(i, {}).get("assessment")
             if a is not None and a.target is not None and a.target != d:
                 consistent = False  # foreign or swapped evidence destroys attribution
             quals.append(a.satisfied is True if a is not None else False)
@@ -402,7 +405,7 @@ def _reconcile(p: PreparedProtection, state: k.State, retrievals: tuple[Retrieva
         changed = len(released) != before
     outcomes = []
     for u, (d, (terminal, qual, reason)) in enumerate(zip(g.targets, verdicts)):
-        available = any(n == "text" for (i, n) in state.row(u).values if i >= 0)
+        available = any("text" in out for out in state.rows[u].outputs.values())
         if qual == "met" and d not in released and not reason:
             reason = "withheld" if p.workflow.release == "protected" else "annotation"
         outcomes.append(TargetOutcome(terminal, qual, available, d in released, reason))
