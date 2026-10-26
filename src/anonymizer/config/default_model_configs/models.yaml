@@ -9,6 +9,9 @@ model_configs:
     inference_parameters:
       max_parallel_requests: 8
       timeout: 120
+      extra_body:
+        chunk_length: 384
+        overlap: 128
 
   - alias: gpt-oss-120b
     model: openai/gpt-oss-120b

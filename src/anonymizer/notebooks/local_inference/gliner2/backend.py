@@ -14,6 +14,8 @@ from pathlib import Path
 from typing import Any
 
 SUPPORTED_DEVICES = ("auto", "cuda", "mps", "cpu")
+DEFAULT_CHUNK_LENGTH = 128
+DEFAULT_OVERLAP = 32
 MODEL_ID = "fastino/gliner2-privacy-filter-PII-multi"
 MODEL_REVISION = "59894c087cb2923b01f337d4ee72f6ff84d5bdd6"
 

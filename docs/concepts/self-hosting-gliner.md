@@ -28,8 +28,8 @@ the normal OpenAI-compatible request:
   "messages": [{"role": "user", "content": "<input text>"}],
   "labels": ["first_name", "last_name", "email"],
   "threshold": 0.3,
-  "chunk_length": 384,
-  "overlap": 128,
+  "chunk_length": 128,
+  "overlap": 32,
   "flat_ner": false
 }
 ```
@@ -37,9 +37,13 @@ the normal OpenAI-compatible request:
 In the bundled notebook/development server, `chunk_length` and `overlap` count
 GLiNER2 native word tokens, not characters. The server uses the loaded model's word
 splitter to preserve original character offsets and avoid cutting words. The
-existing defaults use 384-word windows with 128-word overlap. Independently hosted
-services control their own chunking implementation; these request fields do not
-change units for those services automatically.
+bundled server and notebook helper default to 128-word windows with 32-word
+overlap. Independently hosted services control their own chunking implementation; these request fields do not
+change units for those services automatically. The example above shows the notebook
+helper's request. The engine passes through the detector model's
+`inference_parameters.extra_body` chunk settings; when omitted, the server chooses
+its defaults. The shipped model pool explicitly retains 384/128 for its existing
+detector endpoint, preserving the previous request settings for that service.
 
 Native word windows do not impose a fixed subword-token limit. In particular,
 the default splitter can treat an unspaced Chinese or Japanese run as one word,
@@ -144,6 +148,19 @@ uv run python tools/serve_gliner.py --host 127.0.0.1 --port 8001
 The wrapper prepares the same isolated dependency set used by the notebook helper, then starts the
 packaged server. It uses the pinned model but does not add production hardening. Keep it bound to
 loopback unless you provide an authenticated network boundary.
+
+When using this server with a regular `Anonymizer()` instead of the notebook helper,
+add these settings to the detector entry in your complete model configuration:
+
+```yaml
+inference_parameters:
+  extra_body:
+    chunk_length: 128
+    overlap: 32
+```
+
+The notebook helper supplies these settings automatically. The threshold still
+comes from `Detect(gliner_threshold=...)`.
 
 ## Configuring a managed endpoint
 
