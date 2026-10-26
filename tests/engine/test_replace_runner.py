@@ -111,7 +111,7 @@ def test_substitute_runner_applies_generated_map(
     )
     runner = ReplacementWorkflow(llm_workflow=llm_workflow)
     result = runner.run(
-        pd.DataFrame({COL_TEXT: ["Alice works at Acme"], COL_FINAL_ENTITIES: [{"entities": []}]}),
+        pd.DataFrame({COL_TEXT: ["Alice works at Acme"], COL_FINAL_ENTITIES: [{"entities": stub_entities}]}),
         replace_method=Substitute(),
         model_configs=stub_model_configs,
         selected_models=stub_replace_model_selection,
@@ -427,7 +427,7 @@ def test_runner_does_not_invoke_judges(
     )
 
     result = runner.run(
-        pd.DataFrame({COL_TEXT: ["Alice works at Acme"], COL_FINAL_ENTITIES: [{"entities": []}]}),
+        pd.DataFrame({COL_TEXT: ["Alice works at Acme"], COL_FINAL_ENTITIES: [{"entities": stub_entities}]}),
         replace_method=Substitute(),
         model_configs=stub_model_configs,
         selected_models=stub_replace_model_selection,
