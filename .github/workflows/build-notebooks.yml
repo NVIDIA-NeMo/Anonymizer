@@ -24,14 +24,19 @@ jobs:
       - name: Cache pinned GLiNER2 model
         uses: actions/cache@v6
         with:
-          path: |
-            ~/.cache/huggingface/hub
-            ~/.cache/nemo-anonymizer
-          key: gliner2-59894c087cb2923b01f337d4ee72f6ff84d5bdd6-${{ hashFiles('uv.lock', 'src/anonymizer/notebooks/_runtime.py') }}
+          # Cache model files only: runtime packages have a platform-specific
+          # identity and must not accumulate across ubuntu-latest migrations.
+          path: ~/.cache/huggingface/hub
+          key: gliner2-model-only-v1-59894c087cb2923b01f337d4ee72f6ff84d5bdd6
       - name: Build notebook wheel
         run: uv build --wheel
       - name: Convert and execute notebooks
         shell: bash
+        env:
+          # Nested pip installs in the isolated runtime inherit these settings.
+          PIP_CONSTRAINT: ${{ github.workspace }}/.github/constraints/notebook-ci.txt
+          PIP_FIND_LINKS: https://download.pytorch.org/whl/cpu/torch/
+          PIP_NO_CACHE_DIR: "1"
         run: |
           wheel=$(find "$GITHUB_WORKSPACE/dist" -name '*.whl' -print -quit)
           test -n "$wheel"

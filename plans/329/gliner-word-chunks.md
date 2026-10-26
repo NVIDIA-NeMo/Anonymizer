@@ -31,3 +31,14 @@ Commit with a conventional message and DCO signoff after repository hooks pass. 
 - Strict MkDocs build: passed, writing generated output outside the checkout.
 - Live endpoint replay using the model's actual native word splitter: all 11 affected fixtures (two biographies and nine public legal records) returned source-valid spans; one synthetic suffix prediction was corrected. Only aggregate results are recorded here.
 - Full tutorial execution and detection-recall evaluation have not been repeated for this branch. The separate LLM repair-provider timeouts are not addressed by this change.
+
+
+## CI setup follow-up
+
+The first branch notebook run failed before inference with a disk quota error. Compared with the successful baseline, the runner changed from Ubuntu 24.04 to 26.04 and restored an old isolated runtime that could not be reused because its internal identity contains platform details. Keep `ubuntu-latest`, but cache only Hugging Face model files under a new model-only cache key. Rebuild the isolated package environment on each runner, then reuse it across tutorials within the job.
+
+Constrain pip installs in this CPU-only CI job to `torch==2.14.1+cpu`, matching the previously resolved PyTorch release. Discover that wheel through the official PyTorch CPU torch listing only; continue resolving other packages from the normal package index. Disable pip's download cache to avoid retaining a second copy of large wheels. Apply these settings to the notebook execution step so its nested isolated-runtime pip install inherits them. Local notebook installation and GPU selection remain unchanged.
+
+Validate workflow structure, resolve the Linux Python 3.11 dependency graph and confirm it contains CPU PyTorch without CUDA packages, run repository checks and strict docs, then dispatch a new notebook run on the updated PR. The full notebook run remains the Linux execution check.
+
+Follow-up validation: Linux x86_64/Python 3.11 resolution passed with 43 packages, `torch==2.14.1+cpu`, and no NVIDIA CUDA or Triton packages. Workflow YAML validation, `make check`, and the strict documentation build passed. The notebook workflow must still execute successfully on the updated branch.

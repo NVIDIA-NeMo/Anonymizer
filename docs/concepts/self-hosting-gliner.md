@@ -105,6 +105,12 @@ v4 name required by GLiNER2 2.0; model weights and source cache files remain unc
 pin applies only to this packaged notebook runtime. Production services control and pin their own
 model artifact independently.
 
+Notebook CI runs on a CPU runner and constrains its isolated runtime to the CPU
+build of PyTorch through `.github/constraints/notebook-ci.txt`. It caches only
+Hugging Face model files; platform-specific runtime packages are rebuilt per job
+and reused across tutorials within that job. These CI installation settings do
+not change the local helper's automatic device selection or GPU support.
+
 To request a device explicitly:
 
 ```python
