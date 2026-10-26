@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = ">=3.11"
 resolution-markers = [
     "python_full_version >= '3.14'",
@@ -2583,7 +2583,7 @@ measurement = [
 requires-dist = [
     { name = "cryptography", specifier = ">=46.0.6" },
     { name = "cyclopts", specifier = ">=3" },
-    { name = "data-designer", specifier = "==0.9.4" },
+    { name = "data-designer", specifier = ">=0.9.4,<0.10" },
     { name = "datasets", marker = "extra == 'notebooks'", specifier = ">=4.0.0,<6" },
     { name = "gliner2", marker = "extra == 'notebooks'", specifier = "==2.0.0" },
     { name = "httpx", specifier = ">=0.27.0" },
