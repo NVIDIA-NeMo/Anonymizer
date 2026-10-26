@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from typing import Any
 
 from anonymizer.engine.graph_core.authoring import Assessment, GraphScope, Operation, ProtectionGraph, Workflow
@@ -55,6 +55,17 @@ class Recorder:
             return (fn or (lambda t: t.replace(NAME, "[NAME]")))(text)
 
         return Operation(name, call)
+
+    def invocation_transform(
+        self, name: str = "transform", fn: Callable[[tuple[str, ...]], Sequence[Any]] | None = None
+    ) -> Operation:
+        """An invocation-scoped transform; each call records the whole text tuple it received."""
+
+        def call(text: tuple[str, ...]) -> Sequence[Any]:
+            self.calls.append((name, text, threading.get_ident()))
+            return (fn or (lambda ts: [t.replace(NAME, "[NAME]") for t in ts]))(text)
+
+        return Operation.per_invocation(name, call)
 
     def verifier(self, name: str = "verifier", needle: str = NAME) -> Operation:
         def call(text: str, target: Any) -> Assessment:

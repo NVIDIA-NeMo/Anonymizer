@@ -22,6 +22,8 @@ PROGRAMS = [
     "sp11_cancellation",
     "sp12_ownership",
     "sp13_identity",
+    "sp14_invocation_operation",
+    "sp15_stage_sequence",
 ]
 RETIRED_SP8 = [f"E8.{i}" for i in range(1, 6)]
 
