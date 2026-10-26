@@ -3069,7 +3069,7 @@
               <td><code><a class="autorefs autorefs-internal" title="            detect_entities_for_texts(model, texts, labels, *, threshold, chunk_length, overlap, flat_ner, inference_batch_size) (anonymizer.notebooks.local_inference.gliner2.backend.detect_entities_for_texts)" href="#anonymizer.notebooks.local_inference.gliner2.backend.detect_entities_for_texts">detect_entities_for_texts</a></code></td>
               <td>
                 <div class="doc-md-description">
-                  <p>Detect entities while retaining the existing character-chunk contract.</p>
+                  <p>Detect entities in overlapping native word windows with source-safe spans.</p>
                 </div>
               </td>
             </tr>
@@ -3242,7 +3242,7 @@
 
     <div class="doc doc-contents ">
 
-        <p>Detect entities while retaining the existing character-chunk contract.</p>
+        <p>Detect entities in overlapping native word windows with source-safe spans.</p>
 
 
             <details class="mkdocstrings-source">
@@ -3258,7 +3258,7 @@
     flat_ner: bool,
     inference_batch_size: int,
 ) -&gt; list[list[dict[str, Any]]]:
-    """Detect entities while retaining the existing character-chunk contract."""
+    """Detect entities in overlapping native word windows with source-safe spans."""
     if not labels:
         return [[] for _ in texts]
     _validate_chunk_params(chunk_length, overlap)
@@ -3267,7 +3267,7 @@
 
     chunk_records: list[tuple[int, int, str]] = []
     for text_index, source_text in enumerate(texts):
-        for chunk, offset in _create_text_chunks(source_text, chunk_length, overlap):
+        for chunk, offset in _create_text_chunks(source_text, chunk_length, overlap, model.processor.word_splitter):
             chunk_records.append((text_index, offset, chunk))
     results: list[list[dict[str, Any]]] = [[] for _ in texts]
     if not chunk_records:
@@ -3284,8 +3284,11 @@
     )
     if not isinstance(raw_results, list) or len(raw_results) != len(chunk_records):
         raise ValueError("Unexpected GLiNER2 batch result shape.")
-    for (text_index, offset, _), raw_result in zip(chunk_records, raw_results, strict=True):
-        for entity in flatten_result(raw_result):
+    for (text_index, offset, chunk), raw_result in zip(chunk_records, raw_results, strict=True):
+        for raw_entity in flatten_result(raw_result):
+            entity = _ground_chunk_entity(raw_entity, chunk)
+            if entity is None:
+                continue
             entity["start"] += offset
             entity["end"] += offset
             results[text_index].append(entity)

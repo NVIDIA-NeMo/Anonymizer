@@ -2878,10 +2878,24 @@ the normal OpenAI-compatible request:</p>
   "messages": [{"role": "user", "content": "&lt;input text&gt;"}],
   "labels": ["first_name", "last_name", "email"],
   "threshold": 0.3,
-  "chunk_length": 384,
-  "overlap": 128,
+  "chunk_length": 128,
+  "overlap": 32,
   "flat_ner": false
 }</code></pre>
+<div class="admonition note">
+<p class="admonition-title">Chunk defaults and units</p>
+<p>The bundled GLiNER2 server defaults to <strong>128 native word tokens per chunk</strong>
+with <strong>32 tokens of overlap</strong>. These tokens include punctuation; they are not
+characters or encoder subword tokens.</p>
+</div>
+<p>Both the notebook helper and plain <code>Anonymizer()</code> use these defaults with the
+bundled server. For a custom service, check that service's units and defaults.
+Chunk values set in the detector model's <code>inference_parameters.extra_body</code> pass
+through unchanged; omitted fields use the server's defaults.</p>
+<p>The native splitter preserves source offsets and avoids cutting words. Unspaced
+Chinese or Japanese text can form a single long token, so word-window size does
+not guarantee a subword-token limit; evaluate chunk sizes for your language.
+Returned entities must match the original source text at their reported offsets.</p>
 <p>The response must use the chat-completion shape. <code>message.content</code> is a JSON string containing an
 <code>entities</code> list. Each entity has <code>text</code>, <code>label</code>, <code>start</code>, <code>end</code>, and <code>score</code> fields:</p>
 <pre class="highlight"><code class="language-json">{
@@ -2925,6 +2939,11 @@ snapshot that translates the checkpoint's Transformers v5 tokenizer field name t
 v4 name required by GLiNER2 2.0; model weights and source cache files remain unchanged. The revision
 pin applies only to this packaged notebook runtime. Production services control and pin their own
 model artifact independently.</p>
+<p>Notebook CI runs on a CPU runner and constrains its isolated runtime to the CPU
+build of PyTorch through <code>.github/constraints/notebook-ci.txt</code>. It caches only
+Hugging Face model files; platform-specific runtime packages are rebuilt per job
+and reused across tutorials within that job. These CI installation settings do
+not change the local helper's automatic device selection or GPU support.</p>
 <p>To request a device explicitly:</p>
 <pre class="highlight"><code class="language-python">anonymizer = create_anonymizer(gliner_device="cuda")  # also: "mps", "cpu", or "auto"</code></pre>
 <p>Calling the helper again with an incompatible device or configuration replaces the previous local
@@ -2942,6 +2961,15 @@ uv run python tools/serve_gliner.py --host 127.0.0.1 --port 8001</code></pre>
 <p>The wrapper prepares the same isolated dependency set used by the notebook helper, then starts the
 packaged server. It uses the pinned model but does not add production hardening. Keep it bound to
 loopback unless you provide an authenticated network boundary.</p>
+<p>Plain <code>Anonymizer()</code> uses this server's defaults without a manual override. To
+request explicit chunk settings for a custom endpoint, add them to the detector
+entry in your complete model configuration:</p>
+<pre class="highlight"><code class="language-yaml">inference_parameters:
+  extra_body:
+    chunk_length: 128
+    overlap: 32</code></pre>
+<p>The notebook helper supplies these settings automatically. The threshold still
+comes from <code>Detect(gliner_threshold=...)</code>.</p>
 <h2 id="configuring-a-managed-endpoint">Configuring a managed endpoint<a class="headerlink" href="#configuring-a-managed-endpoint" title="Permanent link">&para;</a></h2>
 <p>Custom provider and model files replace the bundled lists, so include the detector plus every LLM
 provider and model alias your selected workflow uses.</p>
