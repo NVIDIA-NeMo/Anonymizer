@@ -24,6 +24,8 @@ if TYPE_CHECKING:
         EvaluateConfig,
         Rewrite,
         RiskTolerance,
+        TextRecord,
+        TextRecordsInput,
     )
     from anonymizer.config.replace_strategies import Annotate, Hash, Redact, Substitute
     from anonymizer.config.rewrite import PrivacyGoal
@@ -43,6 +45,8 @@ _EXPORTS = {
     "EvaluateConfig": "anonymizer.config.anonymizer_config",
     "Rewrite": "anonymizer.config.anonymizer_config",
     "RiskTolerance": "anonymizer.config.anonymizer_config",
+    "TextRecord": "anonymizer.config.anonymizer_config",
+    "TextRecordsInput": "anonymizer.config.anonymizer_config",
     "Annotate": "anonymizer.config.replace_strategies",
     "Hash": "anonymizer.config.replace_strategies",
     "Redact": "anonymizer.config.replace_strategies",
@@ -96,6 +100,8 @@ __all__ = [
     "RiskTolerance",
     "RunConfig",
     "Substitute",
+    "TextRecord",
+    "TextRecordsInput",
     "configure_logging",
     "graph",
 ]
