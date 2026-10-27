@@ -51,6 +51,7 @@ from anonymizer.engine.graph_core.authoring import (
 from anonymizer.engine.graph_core.execution import ProtectionResult, prepare, protect
 from anonymizer.engine.graph_core.kernel import register_kind
 from anonymizer.engine.ndd.adapter import FailedRecord
+from anonymizer.engine.ndd.backend import per_target
 from anonymizer.engine.replace.llm_replace_workflow import (
     REPLACEMENT_MAP_SOURCE_LLM,
     LlmReplaceWorkflow,
@@ -138,10 +139,8 @@ def _substitute_map_step(
             if COL_REPLACEMENT_MAP in result.dataframe.columns
             else repeat({}, len(positions))
         )
-        by_owner = {
-            owners[position]: {"replacements": [dict(vars(r)) for r in _parse_replacements(rmap)]}
-            for position, rmap in zip(positions, maps)
-        }
+        entries = [{"replacements": [dict(vars(r)) for r in _parse_replacements(rmap)]} for rmap in maps]
+        by_owner = dict(zip(owners, per_target(entries, positions, len(owners))))
         return [by_owner.get(datum) for datum in target]
 
     return Operation.per_invocation(
@@ -182,11 +181,12 @@ def run_replace_pipeline(
         if positions is None:
             unresolved.append(True)
             return [None] * len(target)
-        owners.extend(target[position] for position in positions)
+        surviving = [target[position] for position in positions]
+        owners.extend(surviving)
         raw_entities = result.dataframe.get(COL_FINAL_ENTITIES, repeat({}, len(positions)))
-        for datum, raw in zip(owners, raw_entities):
+        for datum, raw in zip(surviving, raw_entities):
             rows[datum] = EntitiesSchema.from_raw(raw)
-        return [tuple(_accepted_mentions(d, rows[d])) if d in rows else None for d in target]
+        return per_target([tuple(_accepted_mentions(d, rows[d])) for d in surviving], positions, len(target))
 
     detect_step = Operation.per_invocation(
         "detect", run_detection, {"target": DATUM}, {"mentions": MENTIONS}, Requests.opaque()

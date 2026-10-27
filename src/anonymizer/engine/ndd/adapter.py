@@ -29,6 +29,7 @@ from data_designer.config.seed_source import LocalFileSeedSource
 from data_designer.config.utils.constants import TRACE_COLUMN_POSTFIX
 from data_designer.config.utils.trace_type import TraceType
 
+from anonymizer.engine.graph_core.observe import report_requests
 from anonymizer.engine.ndd._source_frame import WorkflowSourceFrame
 from anonymizer.engine.ndd.failed_record import FailedRecord as FailedRecord
 from anonymizer.interface.errors import AnonymizerWorkflowError
@@ -60,6 +61,7 @@ class WorkflowRunResult:
     dataframe: pd.DataFrame
     failed_records: list[FailedRecord]
     source_positions: tuple[int, ...] | None = None
+    observed_requests: int | None = None
 
 
 @dataclass(frozen=True)
@@ -424,6 +426,7 @@ class NddAdapter:
                 _error_model_usage = usage_probe.model_usage()
                 with self._run_lock:
                     self._add_input_tokens(_error_model_usage)
+                _report_observed_requests(_error_model_usage)
                 record_ndd_workflow(
                     workflow_name=workflow_name,
                     model_aliases=model_aliases,
@@ -466,6 +469,7 @@ class NddAdapter:
         _success_model_usage = usage_probe.model_usage()
         with self._run_lock:
             self._add_input_tokens(_success_model_usage)
+        observed_requests = _report_observed_requests(_success_model_usage)
         record_ndd_workflow(
             workflow_name=workflow_name,
             model_aliases=model_aliases,
@@ -479,7 +483,12 @@ class NddAdapter:
             column_names=col_names,
             model_usage=_success_model_usage,
         )
-        return WorkflowRunResult(dataframe=output_df, failed_records=failed_records, source_positions=source_positions)
+        return WorkflowRunResult(
+            dataframe=output_df,
+            failed_records=failed_records,
+            source_positions=source_positions,
+            observed_requests=observed_requests,
+        )
 
     def build_config(
         self,
@@ -842,6 +851,26 @@ def _get_model_usage_snapshot_by_alias(model_registry: object) -> Mapping[str, o
             }
         snapshot[str(model_alias)] = payload
     return snapshot or None
+
+
+def _report_observed_requests(model_usage: Mapping[str, Any] | None) -> int | None:
+    """Report this run's request count to the running graph step, or return ``None`` if the probe cannot tell.
+
+    The count is DataDesigner model requests as the usage probe reports them, not strictly LLM calls made through
+    DataDesigner; counting those strictly needs further work.
+    """
+    reported = [
+        usage["request_usage"]
+        for usage in (model_usage or {}).values()
+        if isinstance(usage, Mapping) and isinstance(usage.get("request_usage"), Mapping)
+    ]
+    if not reported:
+        return None
+    total = sum(
+        int(r.get("total_requests") or r.get("successful_requests", 0) + r.get("failed_requests", 0)) for r in reported
+    )
+    report_requests(total)
+    return total
 
 
 def _model_usage_as_json(stats: object) -> Any:

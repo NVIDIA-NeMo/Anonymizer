@@ -24,6 +24,7 @@ from anonymizer.engine.constants import (
     ENTITY_LABEL_EXAMPLES,
 )
 from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter
+from anonymizer.engine.ndd.backend import DataDesignerBackend
 from anonymizer.engine.ndd.model_loader import resolve_model_alias
 from anonymizer.engine.prompt_utils import substitute_placeholders
 from anonymizer.engine.row_partitioning import ROW_ORDER_COL, merge_and_reorder, split_rows
@@ -51,6 +52,7 @@ class LlmReplaceWorkflow:
 
     def __init__(self, adapter: NddAdapter) -> None:
         self._adapter = adapter
+        self._backend = DataDesignerBackend(adapter)
 
     def generate_map_only(
         self,
@@ -83,7 +85,7 @@ class LlmReplaceWorkflow:
             )
 
         # Only rows with actual entities are sent to the LLM.
-        run_result = self._adapter.run_workflow(
+        run_result = self._backend.run(
             entity_rows,
             model_configs=model_configs,
             columns=[
