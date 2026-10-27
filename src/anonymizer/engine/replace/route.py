@@ -65,6 +65,7 @@ from anonymizer.engine.replace.strategies import (
 from anonymizer.engine.row_partitioning import resolve_source_positions, try_resolve_source_positions
 from anonymizer.engine.schemas import EntitiesSchema
 from anonymizer.logging import ProgressTracker
+from anonymizer.measurement import record_stage
 
 logger = logging.getLogger("anonymizer")
 
@@ -205,6 +206,7 @@ def run_replace_pipeline(
             tracker.record_success()
             return _build_local_replacement_map(entities=entities, strategy=replace_method)
 
+    started = time.perf_counter()
     _, result = _protect_rows(
         (graph, rows),
         type(replace_method).__name__.lower(),
@@ -213,6 +215,7 @@ def run_replace_pipeline(
         map_step,
         detect_step,
     )
+    replace_elapsed = time.perf_counter() - started - sum(elapsed)  # detection records its own stage
     if not detected:  # no targets: the step never ran, but the detector still sees the (empty) input
         run_detection(())
     if unresolved:
@@ -231,6 +234,14 @@ def run_replace_pipeline(
     output_df[COL_REPLACED_TEXT] = [str(text) if _missing(text) else result.value(d) for d, text in zip(targets, shown)]
     output_df[COL_REPLACEMENT_APPLICATION] = [result.value(d, "application") for d in targets]
     tracker.log_final()
+    record_stage(
+        "ReplacementWorkflow.run",
+        elapsed_sec=replace_elapsed,
+        strategy=type(replace_method).__name__,
+        input_row_count=len(detected[0].dataframe),
+        output_row_count=len(output_df),
+        failed_record_count=len(failures) - len(detected[0].failed_records),
+    )
     return ReplacementResult(output_df, failures, detected[0], elapsed[0])
 
 
