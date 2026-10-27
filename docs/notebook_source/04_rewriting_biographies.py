@@ -46,7 +46,7 @@
 #
 # - Install the notebook extra, then provide credentials for the configured external LLM providers.
 # - `create_anonymizer()` starts pinned GLiNER2 locally and selects CUDA, MPS, or CPU automatically.
-# - The default external LLM models currently use [NVIDIA Build](https://build.nvidia.com); its terms and privacy practices apply.
+# - The default external LLM models currently use [OpenRouter](https://openrouter.ai); its terms and privacy practices apply.
 #
 # > **Data boundary:** GLiNER2 detection runs locally in this notebook environment. LLM-assisted validation,
 # > augmentation, replacement, rewriting, repair, and evaluation use configured external hosts and may send
@@ -196,7 +196,8 @@ evaluated.display_record(0)
 # ## ⏭️ Next steps
 #
 # - **[⚖️ Rewriting Legal Documents](../05_rewriting_legal_documents/)** --
-#   rewrite legal text with custom entity labels and domain-specific privacy goals.
+#   rewrite legal text with an explicit label set that includes non-default legal labels
+#   and domain-specific privacy goals.
 # - **[📊 Evaluation](../../concepts/evaluation/#rewrite-evaluation)** --
 #   learn about the detection validity and rewrite quality judges in detail.
 # - **[🎯 Choosing a Replacement Strategy](../03_choosing_a_replacement_strategy/)** --

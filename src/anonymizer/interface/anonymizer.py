@@ -21,6 +21,7 @@ from anonymizer.config.anonymizer_config import (
     AnonymizerInput,
     EvaluateConfig,
     Rewrite,
+    TextRecordsInput,
 )
 from anonymizer.config.replace_strategies import ReplaceMethod, Substitute
 from anonymizer.config.rewrite import PrivacyGoal
@@ -51,6 +52,7 @@ from anonymizer.engine.constants import (
     DEFAULT_ENTITY_LABELS,
 )
 from anonymizer.engine.detection.detection_workflow import EntityDetectionWorkflow
+from anonymizer.engine.detection.entity_label_examples import resolve_entity_label_config
 from anonymizer.engine.evaluation.detection_judge import DetectionJudgeWorkflow
 from anonymizer.engine.evaluation.entity_coverage_judge import EntityCoverageWorkflow
 from anonymizer.engine.evaluation.replace.attribute_fidelity_judge import AttributeFidelityJudgeWorkflow
@@ -235,7 +237,7 @@ class Anonymizer:
         self,
         *,
         config: AnonymizerConfig,
-        data: AnonymizerInput,
+        data: AnonymizerInput | TextRecordsInput,
     ) -> AnonymizerResult:
         """Run the full anonymization pipeline (detection + replacement).
 
@@ -244,7 +246,7 @@ class Anonymizer:
 
         Args:
             config: Workflow behavior — replace strategy, entity labels, thresholds.
-            data: Input source with file path, text column, and optional data summary.
+            data: File-backed or in-memory records and optional dataset context.
         """
         self._validate_preflight_config(config)
         context = read_input(data)
@@ -276,7 +278,7 @@ class Anonymizer:
         self,
         *,
         config: AnonymizerConfig,
-        data: AnonymizerInput,
+        data: AnonymizerInput | TextRecordsInput,
         seed_path: str | Path,
     ) -> DataDesignerConfigBuilder:
         """Build (without running) the core detection workflow as a DataDesigner config.
@@ -306,6 +308,7 @@ class Anonymizer:
             validation_excerpt_window_chars=config.detect.validation_excerpt_window_chars,
             entity_labels=config.detect.entity_labels,
             excluded_entity_labels=config.detect.excluded_entity_labels,
+            entity_label_examples=config.detect.entity_label_examples,
             data_summary=data.data_summary,
         )
 
@@ -339,6 +342,7 @@ class Anonymizer:
             validation_excerpt_window_chars=config.detect.validation_excerpt_window_chars,
             entity_labels=config.detect.entity_labels,
             excluded_entity_labels=config.detect.excluded_entity_labels,
+            entity_label_examples=config.detect.entity_label_examples,
             data_summary=data_summary,
             job_index=job_index,
             num_jobs=num_jobs,
@@ -348,7 +352,7 @@ class Anonymizer:
         self,
         *,
         config: AnonymizerConfig,
-        data: AnonymizerInput,
+        data: AnonymizerInput | TextRecordsInput,
         num_records: int = 10,
     ) -> PreviewResult:
         """Run the pipeline on a subset of records for quick inspection.
@@ -358,7 +362,7 @@ class Anonymizer:
 
         Args:
             config: Workflow behavior — replace strategy, entity labels, thresholds.
-            data: Input source with file path, text column, and optional data summary.
+            data: File-backed or in-memory records and optional dataset context.
             num_records: Maximum records to process (default 10).
         """
         self._validate_preflight_config(config)
@@ -375,6 +379,7 @@ class Anonymizer:
                 resolved_text_column=result.resolved_text_column,
                 failed_records=result.failed_records,
                 preview_num_records=num_records,
+                id_column=result.id_column,
                 replace_method=config.replace,
                 rewrite_config=config.rewrite.privacy_goal if config.rewrite is not None else None,
                 entity_labels=config.detect.entity_labels,
@@ -550,11 +555,13 @@ class Anonymizer:
                 dataframe=_build_user_dataframe(
                     renamed_trace,
                     resolved_text_column=text_column,
+                    id_column=output.id_column,
                     compute_detection_validity=evaluate_config.compute_detection_validity,
                 ),
                 trace_dataframe=renamed_trace,
                 resolved_text_column=text_column,
                 failed_records=all_failed,
+                id_column=output.id_column,
                 rewrite_config=rewrite_config,
                 entity_labels=entity_labels,
                 excluded_entity_labels=excluded_entity_labels,
@@ -600,11 +607,13 @@ class Anonymizer:
                 dataframe=_build_user_dataframe(
                     renamed_trace,
                     resolved_text_column=text_column,
+                    id_column=output.id_column,
                     compute_detection_validity=evaluate_config.compute_detection_validity,
                 ),
                 trace_dataframe=renamed_trace,
                 resolved_text_column=text_column,
                 failed_records=replace_result.failed_records,
+                id_column=output.id_column,
                 replace_method=replace_method,
                 entity_labels=entity_labels,
                 excluded_entity_labels=excluded_entity_labels,
@@ -630,7 +639,7 @@ class Anonymizer:
         self,
         *,
         config: AnonymizerConfig,
-        data: AnonymizerInput,
+        data: AnonymizerInput | TextRecordsInput,
         context: ResolvedInput,
         preview_num_records: int | None,
     ) -> AnonymizerResult:
@@ -669,7 +678,7 @@ class Anonymizer:
         self,
         *,
         config: AnonymizerConfig,
-        data: AnonymizerInput,
+        data: AnonymizerInput | TextRecordsInput,
         context: ResolvedInput,
         preview_num_records: int | None,
     ) -> AnonymizerResult:
@@ -691,6 +700,21 @@ class Anonymizer:
             preview_num_records = effective_records
         else:
             logger.info("🔍 Running entity detection on %d records", num_records)
+        label_config = resolve_entity_label_config(
+            entity_labels=config.detect.entity_labels,
+            excluded_entity_labels=config.detect.excluded_entity_labels,
+            entity_label_examples=config.detect.entity_label_examples,
+        )
+        configured_label_count = len(
+            config.detect.entity_labels if config.detect.entity_labels is not None else DEFAULT_ENTITY_LABELS
+        )
+        effective_label_count = len(label_config.labels)
+        removed_label_count = configured_label_count - effective_label_count
+        label_scope: list[str] | str
+        if config.detect.entity_labels is None:
+            label_scope = "(defaults; see anonymizer.DEFAULT_ENTITY_LABELS for the pre-exclusion list)"
+        else:
+            label_scope = label_config.labels
         if logger.isEnabledFor(logging.DEBUG):
             text_lengths = input_df[COL_TEXT].astype(str).str.len()
             logger.debug(
@@ -701,16 +725,22 @@ class Anonymizer:
                 num_records,
             )
             logger.debug(
-                "detection config: threshold=%.2f, labels=%s",
+                "detection config: threshold=%.2f, configured_label_count=%d, "
+                "effective_label_count=%d, removed_by_exclusions=%d, labels=%s",
                 config.detect.gliner_threshold,
-                config.detect.entity_labels
-                or f"(default: {len(DEFAULT_ENTITY_LABELS)} labels; see anonymizer.DEFAULT_ENTITY_LABELS for list)",
+                configured_label_count,
+                effective_label_count,
+                removed_label_count,
+                label_scope,
             )
         else:
             logger.info(
-                "detection labels in scope: %s",
-                config.detect.entity_labels
-                or f"(default: {len(DEFAULT_ENTITY_LABELS)} labels; see anonymizer.DEFAULT_ENTITY_LABELS for list)",
+                "effective detection scope: %d %s (configured: %d, removed by exclusions: %d): %s",
+                effective_label_count,
+                "label" if effective_label_count == 1 else "labels",
+                configured_label_count,
+                removed_label_count,
+                label_scope,
             )
 
         t0 = time.perf_counter()
@@ -723,6 +753,7 @@ class Anonymizer:
             validation_excerpt_window_chars=config.detect.validation_excerpt_window_chars,
             entity_labels=config.detect.entity_labels,
             excluded_entity_labels=config.detect.excluded_entity_labels,
+            entity_label_examples=config.detect.entity_label_examples,
             privacy_goal=config.rewrite.privacy_goal if config.rewrite else None,
             data_summary=data.data_summary,
             tag_latent_entities=config.rewrite is not None,
@@ -811,10 +842,15 @@ class Anonymizer:
             validation_max_entities_per_call=config.detect.validation_max_entities_per_call,
         )
         return AnonymizerResult(
-            dataframe=_build_user_dataframe(renamed_trace, resolved_text_column=text_col),
+            dataframe=_build_user_dataframe(
+                renamed_trace,
+                resolved_text_column=text_col,
+                id_column=context.resolved_id_column,
+            ),
             trace_dataframe=renamed_trace,
             resolved_text_column=text_col,
             failed_records=all_failures,
+            id_column=context.resolved_id_column,
             replace_method=config.replace,
             rewrite_config=config.rewrite.privacy_goal if config.rewrite is not None else None,
             entity_labels=config.detect.entity_labels,
@@ -844,7 +880,7 @@ class Anonymizer:
         task: TaskEnum,
         status: TaskStatusEnum,
         config: AnonymizerConfig,
-        data: AnonymizerInput,
+        data: AnonymizerInput | TextRecordsInput,
         input_df: pd.DataFrame,
         result: AnonymizerResult | None,
         duration_sec: float,
@@ -887,7 +923,7 @@ class Anonymizer:
         task: TaskEnum,
         status: TaskStatusEnum,
         config: AnonymizerConfig,
-        data: AnonymizerInput,
+        data: AnonymizerInput | TextRecordsInput,
         input_df: pd.DataFrame,
         result: AnonymizerResult | None,
         duration_sec: float,
@@ -1057,6 +1093,7 @@ def _build_user_dataframe(
     trace_dataframe: pd.DataFrame,
     *,
     resolved_text_column: str,
+    id_column: str | None = None,
     compute_detection_validity: bool = False,
 ) -> pd.DataFrame:
     """Filter trace dataframe to the public column set for the active mode.
@@ -1110,6 +1147,8 @@ def _build_user_dataframe(
             COL_FINAL_ENTITIES,
         }
 
+    if id_column is not None:
+        allowed.add(id_column)
     return t[[col for col in t.columns if col in allowed]].copy()
 
 

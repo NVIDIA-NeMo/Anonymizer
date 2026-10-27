@@ -7,6 +7,7 @@ requires-python = ">=3.11"
 license = "Apache-2.0"
 
 dependencies = [
+    "certifi>=2026.10.19", # Updated CA bundle for the eMudhra compromise
     "data-designer>=0.9.4,<0.10",
     "pydantic>=2.9,<3",
     "pydantic-settings>=2.12,<3",
@@ -24,7 +25,7 @@ notebooks = [
     "ipykernel>=6.29.0,<8",
     "jupyter>=1.0.0,<2",
     "jupytext>=1.16.0,<2",
-    "pip>=25,<27",
+    "pip>=26.2.2",
     "pillow>=12.0.0,<13",
 ]
 
@@ -34,6 +35,7 @@ anonymizer = "anonymizer.interface.cli.main:main"
 [project.entry-points."data_designer.plugins"]
 anonymizer-detection-transform = "anonymizer.engine.workflow_columns.detection.plugins:detection_transform_plugin"
 anonymizer-chunked-validation = "anonymizer.engine.workflow_columns.detection.plugins:chunked_validation_plugin"
+anonymizer-evaluation-judge = "anonymizer.engine.workflow_columns.evaluation.judge.plugins:judge_column_plugin"
 
 [dependency-groups]
 dev = [
@@ -41,6 +43,7 @@ dev = [
     "pre-commit>=4.0.0,<5",
     "pytest>=9.0.3,<10",
     "pytest-cov>=7.0,<8",
+    "pyyaml>=6,<7",
     "ruff>=0.12.3,<1",
     "ty==0.0.69",
     "uvicorn>=0.30,<1",
@@ -75,7 +78,7 @@ style = "pep440"
 packages = ["src/anonymizer"]
 
 [tool.uv]
-required-version = ">=0.5.0"
+required-version = ">=0.13.4"
 package = true
 
 constraint-dependencies = [

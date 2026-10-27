@@ -325,7 +325,7 @@ class TestFieldPopulation:
         anonymizer, *_ = _make_anonymizer()
         anonymizer.run(config=AnonymizerConfig(replace=Redact()), data=stub_input)
 
-        assert captured_events[0].model_hosts == ["local", "nvidia-build"]
+        assert captured_events[0].model_hosts == ["local", "openrouter"]
 
     def test_input_tokens_reflect_adapter_total(
         self,

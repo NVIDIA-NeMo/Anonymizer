@@ -12,7 +12,7 @@ model_configs:
 
   - alias: gpt-oss-120b
     model: openai/gpt-oss-120b
-    provider: nvidia
+    provider: openrouter
     inference_parameters:
       max_parallel_requests: 16
       max_tokens: 16384
@@ -22,7 +22,7 @@ model_configs:
 
   - alias: nemotron-30b-thinking
     model: nvidia/nemotron-3-nano-30b-a3b
-    provider: nvidia
+    provider: openrouter
     inference_parameters:
       max_parallel_requests: 16
       max_tokens: 8192
@@ -32,7 +32,7 @@ model_configs:
 
   - alias: nemotron-super
     model: nvidia/nemotron-3-super-120b-a12b
-    provider: nvidia
+    provider: openrouter
     inference_parameters:
       max_parallel_requests: 16
       max_tokens: 16384

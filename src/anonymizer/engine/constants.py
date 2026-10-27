@@ -11,6 +11,7 @@ from __future__ import annotations
 
 # Input
 COL_TEXT = "__nemo_anonymizer_text_input__"
+RECORD_ID_COLUMN = "_anonymizer_record_id"
 
 # Step 1: GLiNER detection
 COL_RAW_DETECTED = "_raw_detected_entities"
@@ -149,7 +150,8 @@ COL_NEEDS_HUMAN_REVIEW = "needs_human_review"
 # Entity labels and examples
 #
 # Source of truth for default entity labels and their examples.
-# Used by both detection (validation/augment prompts) and replacement prompts.
+# Used by the detection validator and replacement prompts. The augmenter receives
+# effective label names plus only the examples configured for the current run.
 # ---------------------------------------------------------------------------
 
 ENTITY_LABEL_EXAMPLES: dict[str, list[str]] = {

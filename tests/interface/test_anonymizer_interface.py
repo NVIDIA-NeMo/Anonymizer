@@ -12,7 +12,14 @@ import pytest
 from data_designer.config.models import ModelConfig
 
 from anonymizer import RunConfig
-from anonymizer.config.anonymizer_config import AnonymizerConfig, AnonymizerInput, EvaluateConfig, Rewrite
+from anonymizer.config.anonymizer_config import (
+    AnonymizerConfig,
+    AnonymizerInput,
+    EvaluateConfig,
+    Rewrite,
+    TextRecord,
+    TextRecordsInput,
+)
 from anonymizer.config.models import ModelSelection, ReplaceModelSelection
 from anonymizer.config.replace_strategies import Redact, Substitute
 from anonymizer.engine.constants import (
@@ -26,6 +33,7 @@ from anonymizer.engine.constants import (
     COL_REWRITTEN_TEXT,
     COL_TAGGED_TEXT,
     COL_TEXT,
+    RECORD_ID_COLUMN,
 )
 from anonymizer.engine.detection.detection_workflow import EntityDetectionResult, EntityDetectionWorkflow
 from anonymizer.engine.ndd.adapter import FailedRecord
@@ -107,6 +115,74 @@ def test_run_merges_failed_records_from_both_stages(
     assert result.failed_records[1].step == "replace"
 
 
+def test_run_in_memory_records_exposes_ids_and_entities_in_public_dataframe() -> None:
+    ids = ["turn-2", "turn-1"]
+    texts = ["Bob works at Acme", "Alice works at Globex"]
+    entities = [
+        {"entities": [{"value": "Bob", "label": "first_name", "start_position": 0, "end_position": 3}]},
+        {"entities": [{"value": "Alice", "label": "first_name", "start_position": 0, "end_position": 5}]},
+    ]
+    detected = pd.DataFrame({"id": ids, COL_TEXT: texts, COL_FINAL_ENTITIES: entities})
+    replaced = detected.assign(
+        **{
+            COL_REPLACED_TEXT: ["[REDACTED_FIRST_NAME] works at Acme", "[REDACTED_FIRST_NAME] works at Globex"],
+            COL_TAGGED_TEXT: ["<Bob, first_name> works at Acme", "<Alice, first_name> works at Globex"],
+        }
+    )
+    anonymizer, detection_workflow, _, _ = _make_anonymizer(
+        detection_return=EntityDetectionResult(dataframe=detected, failed_records=[]),
+        replace_return=ReplacementResult(dataframe=replaced, failed_records=[]),
+    )
+
+    result = anonymizer.run(
+        config=AnonymizerConfig(replace=Redact(), emit_telemetry=False),
+        data=TextRecordsInput(
+            records=[TextRecord(id=record_id, text=text) for record_id, text in zip(ids, texts, strict=True)]
+        ),
+    )
+
+    assert detection_workflow.run.call_args.args[0]["id"].tolist() == ids
+    assert detection_workflow.run.call_args.args[0][RECORD_ID_COLUMN].tolist() == ids
+    assert result.dataframe["id"].tolist() == ids
+    assert result.dataframe["final_entities"].tolist() == entities
+
+
+def test_run_in_memory_records_tracks_dropped_caller_id_and_survivor_order() -> None:
+    from data_designer.interface.data_designer import DataDesigner
+
+    ids = ["turn-2", "dropped", "turn-1"]
+    texts = ["Bob works at Acme", "Drop this record", "Alice works at Globex"]
+    surviving_ids = ["turn-2", "turn-1"]
+    surviving_texts = [texts[0], texts[2]]
+    detected = pd.DataFrame(
+        {
+            "id": surviving_ids,
+            COL_TEXT: surviving_texts,
+            RECORD_ID_COLUMN: surviving_ids,
+            COL_DETECTED_ENTITIES: [{"entities": []}, {"entities": []}],
+            COL_TAGGED_TEXT: surviving_texts,
+        }
+    )
+    data_designer = Mock(spec=DataDesigner)
+    data_designer.create.return_value = SimpleNamespace(load_dataset=Mock(return_value=detected))
+
+    result = Anonymizer(data_designer=data_designer).run(
+        config=AnonymizerConfig(replace=Redact(), emit_telemetry=False),
+        data=TextRecordsInput(
+            records=[TextRecord(id=record_id, text=text) for record_id, text in zip(ids, texts, strict=True)]
+        ),
+    )
+
+    assert result.dataframe["id"].tolist() == surviving_ids
+    assert result.failed_records == [
+        FailedRecord(
+            record_id="dropped",
+            step="entity-detection",
+            reason="Record missing from workflow output",
+        )
+    ]
+
+
 def test_run_enables_latent_detection_when_rewrite_configured(stub_input: AnonymizerInput) -> None:
     config = AnonymizerConfig(rewrite=Rewrite())
     anonymizer, detection_wf, _, _ = _make_anonymizer()
@@ -132,6 +208,71 @@ def test_run_passes_detect_entity_labels_to_detection_workflow(stub_input: Anony
     anonymizer.run(config=config, data=stub_input)
 
     assert detection_wf.run.call_args.kwargs["entity_labels"] == ["server_name"]
+
+
+def test_run_passes_entity_label_examples_only_to_detection_workflow(stub_input: AnonymizerInput) -> None:
+    examples = {"vendor_api_key": ["acme_live_abc123"]}
+    config = AnonymizerConfig(
+        detect={"entity_labels": ["vendor_api_key"], "entity_label_examples": examples},
+        replace=Redact(),
+    )
+    anonymizer, detection_wf, replace_runner, _ = _make_anonymizer()
+
+    result = anonymizer.run(config=config, data=stub_input)
+
+    assert detection_wf.run.call_args.kwargs["entity_label_examples"] == examples
+    assert result.entity_labels == ["vendor_api_key"]
+    assert not hasattr(result, "entity_label_examples")
+    assert "entity_label_examples" not in replace_runner.run.call_args.kwargs
+    assert "acme_live_abc123" not in (result.dataframe.to_json() or "")
+
+
+def test_rewrite_run_passes_entity_label_examples_to_detection_workflow(stub_input: AnonymizerInput) -> None:
+    examples = {"vendor_api_key": ["acme_live_abc123"]}
+    config = AnonymizerConfig(
+        detect={"entity_labels": ["vendor_api_key"], "entity_label_examples": examples},
+        rewrite=Rewrite(),
+    )
+    anonymizer, detection_wf, _, rewrite_runner = _make_anonymizer()
+
+    result = anonymizer.run(config=config, data=stub_input)
+
+    assert detection_wf.run.call_args.kwargs["entity_label_examples"] == examples
+    assert detection_wf.run.call_args.kwargs["tag_latent_entities"] is True
+    assert result.entity_labels == ["vendor_api_key"]
+    assert "entity_label_examples" not in rewrite_runner.run.call_args.kwargs
+    assert "acme_live_abc123" not in (result.dataframe.to_json() or "")
+
+
+def test_preview_passes_entity_label_examples_to_detection_workflow(stub_input: AnonymizerInput) -> None:
+    examples = {"api_key": ["sk-ant-api03-abc123"]}
+    config = AnonymizerConfig(detect={"entity_label_examples": examples}, replace=Redact())
+    anonymizer, detection_wf, _, _ = _make_anonymizer()
+
+    anonymizer.preview(config=config, data=stub_input, num_records=1)
+
+    assert detection_wf.run.call_args.kwargs["entity_label_examples"] == examples
+
+
+def test_export_detection_paths_pass_entity_label_examples(
+    stub_input: AnonymizerInput,
+    tmp_path: Path,
+) -> None:
+    examples = {"vendor_api_key": ["acme_live_abc123"]}
+    config = AnonymizerConfig(
+        detect={"entity_labels": ["vendor_api_key"], "entity_label_examples": examples},
+        replace=Redact(),
+    )
+    anonymizer, detection_wf, _, _ = _make_anonymizer()
+    detection_wf.build_detection_config.return_value = Mock()
+    detection_wf.build_detection_builder_for_seed.return_value = Mock()
+    seed_path = tmp_path / "seed.parquet"
+
+    anonymizer.export_detection_config(config=config, data=stub_input, seed_path=seed_path)
+    anonymizer.export_detection_builder_for_seed(config=config, seed_path=seed_path)
+
+    assert detection_wf.build_detection_config.call_args.kwargs["entity_label_examples"] == examples
+    assert detection_wf.build_detection_builder_for_seed.call_args.kwargs["entity_label_examples"] == examples
 
 
 def test_run_propagates_excluded_entity_labels(stub_input: AnonymizerInput) -> None:
@@ -178,10 +319,10 @@ def test_anonymizer_default_passes_bundled_providers_to_data_designer() -> None:
 def test_anonymizer_custom_model_providers_override_bundled_defaults() -> None:
     from anonymizer import ModelProvider
 
-    # Custom providers replace the full list, so retain the local detector while overriding NVIDIA.
+    # Custom providers replace the full list, so retain the local detector while overriding OpenRouter.
     custom_providers = [
         ModelProvider(name="local-gliner2", endpoint="http://127.0.0.1:8001/v1"),
-        ModelProvider(name="nvidia", endpoint="https://example.com/v1"),
+        ModelProvider(name="openrouter", endpoint="https://example.com/v1"),
     ]
     with patch("anonymizer.interface.anonymizer.DataDesigner") as mock_data_designer:
         Anonymizer(
@@ -888,7 +1029,13 @@ def test_run_rewrite_does_not_include_judge_in_user_dataframe(stub_input: Anonym
 
 def test_evaluate_rewrite_result_adds_judge_columns(stub_input: AnonymizerInput) -> None:
     """anonymizer.evaluate() on a rewrite result must add COL_JUDGE_EVALUATION."""
-    config = AnonymizerConfig(rewrite=Rewrite())
+    config = AnonymizerConfig(
+        detect={
+            "entity_labels": ["vendor_api_key"],
+            "entity_label_examples": {"vendor_api_key": ["acme_live_abc123"]},
+        },
+        rewrite=Rewrite(),
+    )
     anonymizer, _, _, rewrite_runner = _make_anonymizer()
 
     run_result = anonymizer.run(config=config, data=stub_input)
@@ -911,6 +1058,8 @@ def test_evaluate_rewrite_result_adds_judge_columns(stub_input: AnonymizerInput)
     evaluated = anonymizer.evaluate(run_result)
 
     assert COL_JUDGE_EVALUATION in evaluated.dataframe.columns
+    assert "entity_label_examples" not in rewrite_runner.evaluate.call_args.kwargs
+    assert "acme_live_abc123" not in (evaluated.dataframe.to_json() or "")
 
 
 def test_evaluate_rewrite_result_adds_detection_valid(stub_input: AnonymizerInput) -> None:

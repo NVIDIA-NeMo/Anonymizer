@@ -41,23 +41,23 @@ Pick a strategy:
 ```bash
 pip install nemo-anonymizer
 ```
-## Setup 
+## Setup
 
 ```bash
-# Get an API key from build.nvidia.com
-export NVIDIA_API_KEY="your-nvidia-api-key"
+# Get an API key from OpenRouter
+export OPENROUTER_API_KEY="your-openrouter-api-key"
 ```
-By default, Anonymizer uses NVIDIA-hosted models for detection and LLM-based anonymization. You can also [bring your own models](concepts/models.md).
+By default, Anonymizer runs GLiNER2 detection locally and uses OpenRouter for LLM-based anonymization. You can also [bring your own models](concepts/models.md).
 
-!!! warning "Default hosted models are best for experimentation"
+!!! warning "Review the default provider's data policies"
 
-    The default `build.nvidia.com` (NVIDIA Build) setup is a convenient way to try Anonymizer and iterate on previews. Use of NVIDIA Build is subject to NVIDIA Build's own terms of service and privacy practices, which are separate from and independent of the NeMo Framework library. NVIDIA Build is intended for evaluation and testing purposes only and may not be used in production environments. Do not upload any confidential information or personal data when using NVIDIA Build. Your use of NVIDIA Build is logged for security purposes and to improve NVIDIA products and services.
-
-    Request and token rate limits on `build.nvidia.com` vary by account and model access, and lower-volume development access can be slow for full-dataset runs. Start with `preview()` on a small sample, then move to your own endpoint for production data and usage.
+    OpenRouter's terms of service and privacy practices apply independently of the NeMo Framework
+    library. Review those terms and the data policies of the models you select before sending
+    sensitive data to the default endpoint.
 
 !!! info "Record length"
 
-    Records up to 2,000 tokens each work with the default model configs. Longer text will require adjustment of model providers and model configs. 
+    Records up to 2,000 tokens each work with the default model configs. Longer text will require adjustment of model providers and model configs.
 
 ## Anonymize
 
@@ -169,7 +169,7 @@ To disable telemetry for the current shell, set `NEMO_TELEMETRY_ENABLED=false` (
 export NEMO_TELEMETRY_ENABLED=false
 ```
 
-**Use of third-party endpoints, including NVIDIA Build:** Anonymizer can be configured to use various inference endpoints, including [build.nvidia.com](https://build.nvidia.com), [OpenRouter](https://openrouter.ai), or local model servers. If you choose to use a third-party endpoint, that endpoint's own terms of service and privacy practices apply independently of this library. Any opt-out you exercise within Anonymizer does not extend to data collection by your chosen endpoint.
+**Use of third-party endpoints, including OpenRouter and NVIDIA Build:** Anonymizer can be configured to use various inference endpoints, including [OpenRouter](https://openrouter.ai), [build.nvidia.com](https://build.nvidia.com), or local model servers. If you choose to use a third-party endpoint, that endpoint's own terms of service and privacy practices apply independently of this library. Any opt-out you exercise within Anonymizer does not extend to data collection by your chosen endpoint.
 
 ---
 ## Next up

@@ -161,6 +161,7 @@ nav:
       - Choosing a Strategy: concepts/choosing-a-strategy.md
       - Evaluation: concepts/evaluation.md
       - Self-hosting GLiNER: concepts/self-hosting-gliner.md
+  - Tuning Quality and Throughput: tuning.md
   - Troubleshooting: troubleshooting.md
   - Tutorials:
       - Overview: tutorials/index.md
@@ -174,6 +175,7 @@ nav:
   - API Reference: reference/
   - Developer Notes:
       - devnotes/index.md
+      - "Hybrid Entity Detection: Why One Model Shouldn't Do Everything": devnotes/posts/hybrid-entity-detection.md
       - "After Anonymization — Part II: Evaluating Rewrite Mode": devnotes/posts/evaluation-anonymizer-rewrite.md
       - "After Anonymization — Part I: Evaluating Replace Mode": devnotes/posts/evaluation-anonymizer-replace.md
       - "Running NeMo Anonymizer Fully Self-Hosted on One B300": devnotes/posts/self-hosted-anonymizer-b300.md
