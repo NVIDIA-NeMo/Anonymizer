@@ -84,6 +84,16 @@ def resolve_source_positions(
     return positions
 
 
+def try_resolve_source_positions(
+    source: pd.DataFrame, returned: pd.DataFrame, positions: tuple[int, ...] | None
+) -> tuple[int, ...] | None:
+    """``resolve_source_positions``, or ``None`` when the result cannot be aligned to its source."""
+    try:
+        return resolve_source_positions(source, returned, positions)
+    except AnonymizerWorkflowError:
+        return None
+
+
 def restore_diagnostic_columns(
     target: pd.DataFrame,
     returned: pd.DataFrame,

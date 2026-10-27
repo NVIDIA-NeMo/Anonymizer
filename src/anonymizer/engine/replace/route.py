@@ -24,7 +24,7 @@ from typing import Any
 
 import pandas as pd
 
-from anonymizer.config.replace_strategies import Annotate, LocalReplaceMethod, ReplaceMethod, Substitute
+from anonymizer.config.replace_strategies import Annotate, LocalReplaceMethod, Substitute
 from anonymizer.engine.constants import (
     COL_FINAL_ENTITIES,
     COL_REPLACED_TEXT,
@@ -61,9 +61,8 @@ from anonymizer.engine.replace.strategies import (
     _parse_replacements,
     apply_replacements_to_spans,
 )
-from anonymizer.engine.row_partitioning import resolve_source_positions
+from anonymizer.engine.row_partitioning import resolve_source_positions, try_resolve_source_positions
 from anonymizer.engine.schemas import EntitiesSchema
-from anonymizer.interface.errors import AnonymizerWorkflowError
 from anonymizer.logging import ProgressTracker
 
 logger = logging.getLogger("anonymizer")
@@ -154,7 +153,7 @@ def run_replace_pipeline(
     dataframe: pd.DataFrame,
     *,
     detect: Callable[[pd.DataFrame], EntityDetectionResult],
-    replace_method: ReplaceMethod,
+    replace_method: LocalReplaceMethod | Substitute,
     llm_workflow: LlmReplaceWorkflow | None,
     map_arguments: dict[str, Any],
     reroute: Callable[[pd.DataFrame], ReplacementResult],
@@ -246,11 +245,10 @@ def _resolve_positions(dataframe: pd.DataFrame, result: EntityDetectionResult) -
     text of the input row at its position, a missing value equalling a missing value.
     """
     reported = result.source_positions
-    try:
-        positions = resolve_source_positions(
-            dataframe, result.dataframe, reported or (None if len(result.dataframe) else ())
-        )
-    except AnonymizerWorkflowError:
+    positions = try_resolve_source_positions(
+        dataframe, result.dataframe, reported or (None if len(result.dataframe) else ())
+    )
+    if positions is None:
         return None
     if reported or COL_TEXT not in result.dataframe.columns:
         return positions
