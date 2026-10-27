@@ -130,6 +130,8 @@ class ChunkedValidationGenerator(ColumnGeneratorWithModelRegistry[ChunkedValidat
             max_entities_per_call=self.config.max_entities_per_call,
             excerpt_window_chars=self.config.excerpt_window_chars,
             max_parallel_chunks=self.config.max_parallel_chunks or _derive_max_parallel_chunks(models),
+            max_conversation_restarts=self.resource_provider.run_config.max_conversation_restarts,
+            max_correction_steps=self.resource_provider.run_config.max_conversation_correction_steps,
             single_chunk_full_text=self.config.single_chunk_full_text,
             prompt_template=self.config.prompt_template,
             system_prompt=self.config.system_prompt,

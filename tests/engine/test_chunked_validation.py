@@ -15,9 +15,18 @@ import json
 import re
 from types import SimpleNamespace
 from typing import Any, Callable
+from unittest.mock import Mock
 
 import pytest
+from data_designer.config.models import ModelConfig, ModelProvider
+from data_designer.config.run_config import RunConfig
+from data_designer.engine.model_provider import ModelProviderRegistry
+from data_designer.engine.models.clients.base import ModelClient
 from data_designer.engine.models.clients.errors import SyncClientUnavailableError
+from data_designer.engine.models.clients.types import AssistantMessage, ChatCompletionResponse
+from data_designer.engine.models.errors import ModelGenerationValidationFailureError
+from data_designer.engine.models.facade import ModelFacade
+from pydantic import ValidationError
 
 from anonymizer.engine.constants import (
     COL_MERGED_TAGGED_TEXT,
@@ -724,6 +733,8 @@ class TestChunkedValidateRowAsync:
                 pool=["v0", "v1"],
                 max_entities_per_call=5,
                 excerpt_window_chars=50,
+                max_conversation_restarts=2,
+                max_correction_steps=1,
                 prompt_template=_MINIMAL_TEMPLATE,
             )
 
@@ -734,9 +745,84 @@ class TestChunkedValidateRowAsync:
         assert out[COL_VALIDATION_DECISIONS]["decisions"][0]["id"] == "a"
         assert len(v0.calls) == 1
         assert len(v1.calls) == 1
+        for facade in (v0, v1):
+            assert facade.calls[0]["kwargs"] == {"max_conversation_restarts": 2, "max_correction_steps": 1}
 
 
 class TestChunkedValidationGenerator:
+    @pytest.fixture
+    def generator_and_client(self) -> tuple[ChunkedValidationGenerator, Mock]:
+        client = Mock(spec=ModelClient)
+        facade = ModelFacade(
+            ModelConfig(alias="v0", model="test-model", provider="test-provider"),
+            ModelProviderRegistry(
+                providers=[ModelProvider(name="test-provider", endpoint="https://example.invalid/v1")]
+            ),
+            client=client,
+        )
+        generator = ChunkedValidationGenerator(
+            ChunkedValidationConfig(
+                name=COL_VALIDATION_DECISIONS,
+                pool=["v0"],
+                max_entities_per_call=5,
+                excerpt_window_chars=50,
+                prompt_template=_MINIMAL_TEMPLATE,
+            ),
+            resource_provider=SimpleNamespace(  # ty: ignore[invalid-argument-type]
+                model_registry=FakeModelRegistry({"v0": facade}), run_config=RunConfig()
+            ),
+        )
+        return generator, client
+
+    @pytest.mark.parametrize("async_mode", [False, True])
+    @pytest.mark.parametrize(
+        ("policy", "invalid_responses", "succeeds"),
+        [
+            ({}, 5, True),
+            ({"max_conversation_restarts": 0}, 1, False),
+            ({"max_conversation_restarts": 1}, 1, True),
+            ({"max_conversation_restarts": 0, "max_conversation_correction_steps": 1}, 1, True),
+            ({"max_conversation_restarts": 1, "max_conversation_correction_steps": 1}, 3, True),
+            ({"max_conversation_restarts": 1, "max_conversation_correction_steps": 1}, 4, False),
+        ],
+    )
+    def test_honors_recovery_policy(
+        self,
+        generator_and_client: tuple[ChunkedValidationGenerator, Mock],
+        async_mode: bool,
+        policy: dict[str, int],
+        invalid_responses: int,
+        succeeds: bool,
+    ) -> None:
+        generator, client = generator_and_client
+        generator.resource_provider.run_config = RunConfig.model_validate(policy)
+        row = _build_row(
+            text="Alice",
+            seed_entities=[_entity_span("a", "Alice", "first_name", 0, 5)],
+            candidates=_candidates_schema(("a", "Alice", "first_name")),
+        )
+        request = client.acompletion if async_mode else client.completion
+        request.side_effect = [
+            ChatCompletionResponse(message=AssistantMessage(content="not JSON"))
+        ] * invalid_responses + [
+            ChatCompletionResponse(
+                message=AssistantMessage(content='```json\n{"decisions":[{"id":"a","decision":"keep"}]}\n```')
+            )
+        ]
+        if succeeds:
+            out = asyncio.run(generator.agenerate(row)) if async_mode else generator.generate(row)
+            assert out[COL_VALIDATION_DECISIONS]["decisions"][0]["decision"] == "keep"
+            assert request.call_count == invalid_responses + 1
+        else:
+            with pytest.raises(ModelGenerationValidationFailureError):
+                if async_mode:
+                    asyncio.run(generator.agenerate(row))
+                else:
+                    generator.generate(row)
+            assert COL_VALIDATION_DECISIONS not in row
+            assert request.call_count == invalid_responses
+        assert (client.completion if async_mode else client.acompletion).call_count == 0
+
     def test_generate_bridges_sync_unavailable_to_agenerate(self) -> None:
         spans = [_entity_span("a", "Alice", "first_name", 0, 5)]
         candidates = _candidates_schema(("a", "Alice", "first_name"))
@@ -751,7 +837,7 @@ class TestChunkedValidationGenerator:
                 prompt_template=_MINIMAL_TEMPLATE,
             ),
             resource_provider=SimpleNamespace(  # ty: ignore[invalid-argument-type]
-                model_registry=FakeModelRegistry({"v0": facade})
+                model_registry=FakeModelRegistry({"v0": facade}), run_config=RunConfig()
             ),
         )
 
@@ -953,6 +1039,19 @@ class TestChunkedValidateRowMissingIdMirrorsSingleCall:
 
 
 class TestChunkedValidateRowGuardsBadConfig:
+    @pytest.mark.parametrize("field", ["max_conversation_restarts", "max_correction_steps"])
+    def test_negative_recovery_limit_is_rejected(self, field: str) -> None:
+        with pytest.raises(ValidationError, match=field):
+            ChunkedValidationParams.model_validate(
+                {
+                    "pool": ["v0"],
+                    "max_entities_per_call": 5,
+                    "excerpt_window_chars": 20,
+                    "prompt_template": _MINIMAL_TEMPLATE,
+                    field: -1,
+                }
+            )
+
     def test_pool_alias_missing_from_models_raises_helpful_error(self) -> None:
         spans = [_entity_span("a", "Alice", "first_name", 0, 5)]
         candidates = _candidates_schema(("a", "Alice", "first_name"))
@@ -1010,6 +1109,7 @@ class TestMakeChunkedValidationGenerator:
         out = fn(row, params, {"v0": facade})
         assert isinstance(out, dict)
         assert out[COL_VALIDATION_DECISIONS]["decisions"][0]["id"] == "a"
+        assert facade.calls[0]["kwargs"] == {"max_conversation_restarts": 0, "max_correction_steps": 0}
 
     def test_generator_is_sync_callable_returning_dict(self) -> None:
         """Regression: DD's default thread-pool engine calls the wrapper
