@@ -218,7 +218,11 @@ def run_replace_pipeline(
         output_df[COL_REPLACEMENT_MAP_SOURCE] = REPLACEMENT_MAP_SOURCE_LLM
     else:
         _log_stats(output_df[COL_REPLACEMENT_MAP])
-    output_df[COL_REPLACED_TEXT] = [result.value(d) for d in targets]
+    shown = output_df[COL_TEXT] if COL_TEXT in output_df.columns else repeat("", len(targets))
+    # A row whose detected text is missing keeps the detection frame's own stringification (``<NA>`` for ``pd.NA``).
+    output_df[COL_REPLACED_TEXT] = [
+        str(text) if not isinstance(text, str) and pd.isna(text) else result.value(d) for d, text in zip(targets, shown)
+    ]
     output_df[COL_REPLACEMENT_APPLICATION] = [result.value(d, "application") for d in targets]
     tracker.log_final()
     return ReplacementResult(output_df, failures, detected[0], elapsed[0])
