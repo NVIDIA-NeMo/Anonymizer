@@ -123,6 +123,8 @@ from anonymizer import DEFAULT_ENTITY_LABELS
 print(DEFAULT_ENTITY_LABELS)
 ```
 
+Validation and augmentation use context to recognize personal names, including short names, lowercase or uppercase names, and personal initials with or without a following surname. A letter used as a variable, grade, unit, or list marker is not a personal name. Initials are never expanded into inferred names; labels still follow your configured label scope.
+
 The label settings serve different purposes:
 
 - `entity_labels` defines **which entity types** are in scope, such as `api_key`.
