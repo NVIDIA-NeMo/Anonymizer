@@ -809,15 +809,34 @@ class Anonymizer:
                 selected_models=self._selected_models.detection,
                 **detection_options,
             )
-            if config.replace is not None:
-                logger.info("🔄 Running replacement")
+            return result
+
+        def detect_then_announce(frame: pd.DataFrame) -> EntityDetectionResult:
+            result = detect(frame)
+            logger.info("🔄 Running replacement")
             return result
 
         t0 = time.perf_counter()
-        if config.replace is not None:
+        if config.replace is not None and self._replace_runner.__class__.run is not ReplacementWorkflow.run:
+            # A caller's runner overrides run(): detect, then call that override with the detection frame.
+            detection_result = detect(input_df)
+            detection_elapsed = time.perf_counter() - t0
+            detected_df, detection_failures = detection_result.dataframe, list(detection_result.failed_records)
+            t0 = time.perf_counter()
+            logger.info("🔄 Running replacement")
+            replace_result = self._replace_runner.run(
+                detected_df,
+                replace_method=config.replace,
+                model_configs=self._model_configs,
+                selected_models=self._selected_models.replace,
+                preview_num_records=preview_num_records,
+            )
+            final_df, post_detection_failures = replace_result.dataframe, list(replace_result.failed_records)
+            replacement_elapsed = time.perf_counter() - t0
+        elif config.replace is not None:
             replace_result = self._replace_runner.run_with_detection(
                 input_df,
-                detect=detect,
+                detect=detect_then_announce,
                 replace_method=config.replace,
                 model_configs=self._model_configs,
                 selected_models=self._selected_models.replace,
