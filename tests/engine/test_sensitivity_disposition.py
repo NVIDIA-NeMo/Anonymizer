@@ -37,6 +37,7 @@ from anonymizer.engine.rewrite.sensitivity_disposition import (
     SensitivityDispositionWorkflow,
     _get_sensitivity_disposition_prompt,
     _number_disposition_entities,
+    _parse_numbered_lines,
     _verify_disposition_coverage,
     build_numbered_entities,
     verify_disposition_coverage,
@@ -169,6 +170,42 @@ def test_build_numbered_entities_one_id_per_value_label_pair() -> None:
 def test_build_numbered_entities_preserves_non_ascii_values() -> None:
     explicit, _ = build_numbered_entities({"entities_by_value": [{"value": "José", "labels": ["first_name"]}]}, None)
     assert "José" in explicit
+
+
+@pytest.mark.parametrize(
+    "separator",
+    ["\u2028", "\u2029", "\u0085", "\n"],
+    ids=["line-separator", "paragraph-separator", "next-line", "newline"],
+)
+def test_numbered_entities_round_trip_embedded_separators(separator: str) -> None:
+    value = f"José{separator}García"
+    evidence = f"worked on{separator}the S3 team"
+    latent_entity = {**_STUB_LATENT["latent_entities"][0], "evidence": [evidence]}
+    explicit, latent = build_numbered_entities(
+        {"entities_by_value": [{"value": value, "labels": ["first_name"]}, {"value": "Portland", "labels": ["city"]}]},
+        {"latent_entities": [latent_entity]},
+    )
+
+    explicit_rows = _parse_numbered_lines(explicit)
+    latent_rows = _parse_numbered_lines(latent)
+    assert [entry["id"] for entry in explicit_rows + latent_rows] == [1, 2, 3]
+    assert explicit_rows[0]["value"] == value
+    assert explicit_rows[1]["value"] == "Portland"
+    assert latent_rows[0]["evidence"] == [evidence]
+
+    row = {
+        COL_RAW_SENSITIVITY_DISPOSITION: {
+            "sensitivity_disposition": [
+                {"id": i, "sensitivity": "medium", "protection_method_suggestion": "generalize"} for i in range(1, 4)
+            ]
+        },
+        COL_DISPOSITION_EXPLICIT_ENTITIES: explicit,
+        COL_DISPOSITION_LATENT_ENTITIES: latent,
+        COL_ENTITY_CLASSIFICATION: {"first_name": "direct_identifier", "city": "quasi_identifier"},
+    }
+    result = _verify_disposition_coverage(row)
+    assert result[COL_DISPOSITION_COVERAGE] is True
+    assert result[COL_SENSITIVITY_DISPOSITION]["sensitivity_disposition"][0]["entity_value"] == value
 
 
 def test_build_numbered_entities_marks_empty_lists() -> None:
