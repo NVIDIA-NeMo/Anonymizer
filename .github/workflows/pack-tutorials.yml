@@ -18,7 +18,7 @@ jobs:
 
     steps:
       - name: Download artifact from previous step
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v8
         with:
           name: notebooks
           path: anonymizer_tutorial
