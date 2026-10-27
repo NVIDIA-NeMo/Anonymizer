@@ -165,8 +165,16 @@ def test_run_in_memory_records_tracks_dropped_caller_id_and_survivor_order() -> 
             COL_TAGGED_TEXT: surviving_texts,
         }
     )
+
+    def create(config_builder, **_kwargs):
+        seed = pd.read_parquet(config_builder.get_seed_config().source.path)
+        key_column = next(c for c in seed.columns if c.startswith("_anonymizer_source_"))
+        survivors = seed[seed[RECORD_ID_COLUMN].isin(surviving_ids)]
+        echoed = detected.assign(**{key_column: survivors[key_column].tolist()})
+        return SimpleNamespace(load_dataset=Mock(return_value=echoed))
+
     data_designer = Mock(spec=DataDesigner)
-    data_designer.create.return_value = SimpleNamespace(load_dataset=Mock(return_value=detected))
+    data_designer.create.side_effect = create
 
     result = Anonymizer(data_designer=data_designer).run(
         config=AnonymizerConfig(replace=Redact(), emit_telemetry=False),

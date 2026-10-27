@@ -32,6 +32,7 @@ from anonymizer.engine.constants import (
     COL_TEXT,
     COL_UTILITY_SCORE,
     COL_WEIGHTED_LEAKAGE_RATE,
+    RECORD_ID_COLUMN,
 )
 from anonymizer.engine.evaluation.detection_judge import DetectionJudgeWorkflow
 from anonymizer.engine.graph_core.stages import run_stages
@@ -51,8 +52,8 @@ from anonymizer.engine.rewrite.sensitivity_disposition import SensitivityDisposi
 from anonymizer.engine.rewrite.workflow_utils import derive_seed_columns, select_seed_cols
 from anonymizer.engine.row_partitioning import (
     ROW_ORDER_COL,
+    align_on_record_ids,
     merge_and_reorder,
-    resolve_source_positions,
     restore_diagnostic_columns,
     split_rows,
 )
@@ -135,12 +136,33 @@ def _join_new_columns(
     overwrite: bool = False,
     seed_cols: list[str] | None = None,
 ) -> pd.DataFrame:
-    """Copy stage outputs onto their surviving source rows, excluding seed columns."""
-    positions = resolve_source_positions(target, source, source_positions)
-    target = target.iloc[list(positions)].copy().reset_index(drop=True)
-    skip = set(seed_cols or ())
+    """Copy columns from source into target using positional alignment.
+
+    When the adapter drops rows (tracked via ``failed_records``), source
+    will be shorter than target. We align on ``RECORD_ID_COLUMN`` to
+    drop the failed rows from target, then join the new columns from
+    source onto the surviving rows.
+
+    Set ``overwrite=True`` to update existing columns that the workflow
+    produced (e.g. re-evaluate after repair). Seed columns passed through
+    the adapter are excluded from overwrite to prevent re-serialization artifacts.
+    """
+    del source_positions  # accepted for caller compatibility; main's contract aligns on RECORD_ID_COLUMN
+    if len(source) != len(target):
+        dropped = len(target) - len(source)
+        logger.warning(
+            "Row count mismatch: target=%d, source=%d; dropping %d failed row(s).",
+            len(target),
+            len(source),
+            dropped,
+        )
+        target, source = align_on_record_ids(target, source, RECORD_ID_COLUMN)
+
+    skip = set(seed_cols) if seed_cols else set()
     for col in source.columns:
-        if col not in skip and (col not in target.columns or overwrite):
+        if col in skip:
+            continue
+        if col not in target.columns or overwrite:
             target[col] = source[col].values
     return target
 

@@ -53,6 +53,20 @@ def merge_and_reorder(*parts: pd.DataFrame) -> pd.DataFrame:
     )
 
 
+def align_on_record_ids(
+    target: pd.DataFrame, source: pd.DataFrame, id_column: str
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Keep the target rows whose ids survive in source and reorder source to match, in target order."""
+    surviving_ids = set(source[id_column].astype(str))
+    target = target[target[id_column].astype(str).isin(surviving_ids)].reset_index(drop=True)
+    source = source.copy()
+    source.index = source[id_column].astype(str)
+    source = source.loc[target[id_column].astype(str)].reset_index(drop=True)
+    if len(source) != len(target):
+        raise AnonymizerWorkflowError("Unassociated workflow result has ambiguous source correspondence")
+    return target, source
+
+
 def resolve_source_positions(
     source: pd.DataFrame, returned: pd.DataFrame, positions: tuple[int, ...] | None
 ) -> tuple[int, ...]:
