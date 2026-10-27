@@ -499,8 +499,6 @@ class EntityDetectionWorkflow:
                 config.inference_parameters.extra_body = {}
             config.inference_parameters.extra_body["labels"] = labels
             config.inference_parameters.extra_body["threshold"] = gliner_detection_threshold
-            config.inference_parameters.extra_body["chunk_length"] = 384
-            config.inference_parameters.extra_body["overlap"] = 128
             config.inference_parameters.extra_body["flat_ner"] = False
             break
         return resolved

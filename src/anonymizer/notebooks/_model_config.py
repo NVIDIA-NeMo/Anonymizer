@@ -12,7 +12,7 @@ from pathlib import Path
 from data_designer.config.models import ModelProvider
 
 from anonymizer.engine.ndd.model_loader import parse_model_configs, parse_model_providers
-from anonymizer.notebooks.local_inference.gliner2 import MODEL_ID
+from anonymizer.notebooks.local_inference.gliner2.backend import DEFAULT_CHUNK_LENGTH, DEFAULT_OVERLAP, MODEL_ID
 
 LOCAL_ALIAS = "local-gliner2-pii"
 LOCAL_PROVIDER = "notebook-local-gliner2"
@@ -66,6 +66,7 @@ def build_notebook_model_configuration(
             "inference_parameters": {
                 "max_parallel_requests": 8,
                 "timeout": 120,
+                "extra_body": {"chunk_length": DEFAULT_CHUNK_LENGTH, "overlap": DEFAULT_OVERLAP},
             },
         }
     )

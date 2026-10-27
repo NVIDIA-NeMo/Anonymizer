@@ -44,6 +44,8 @@ All branches except `main` must follow one of these patterns:
 <author>/<issue-id>-<description>
 <author>/<type>/<description>
 <author>/<type>/<issue-id>-<description>
+<author>/<topic>/<type>/<description>
+<author>/<topic>/<type>/<issue-id>-<description>
 ```
 
 Rules:
@@ -52,6 +54,10 @@ Rules:
 - `<issue-id>`: Optional GitHub issue number prefix, such as `123-`.
 - `<description>`: Short lowercase description with alphanumeric characters and hyphens.
 - `<type>`: Optional category. Valid types are `feature`, `bugfix`, `hotfix`, `release`, `docs`, `chore`, and `test`.
+- `<topic>`: Optional compound name for work on a long-lived feature line, lowercase with alphanumeric
+  characters and hyphens (for example `graph-sdk`). Use it for branches that target that feature line's
+  integration branch rather than `main`, so related work groups under one prefix; it is always followed by
+  a `<type>`.
 
 Examples:
 
@@ -61,6 +67,7 @@ Examples:
 | `jsmith/123-add-login-feature`    | Yes                  |
 | `jsmith/feature/123-add-login`    | Yes                  |
 | `aagonzales/bugfix/456-fix-crash` | Yes                  |
+| `jsmith/graph-sdk/bugfix/handoff` | Yes, topic branch    |
 | `feature/add-login`               | No, missing author   |
 | `JSmith/123-Add-Login`            | No, use lowercase    |
 
