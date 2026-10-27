@@ -47,6 +47,7 @@ from anonymizer.engine.detection.entity_label_examples import resolve_entity_lab
 from anonymizer.engine.ndd.adapter import FailedRecord, WorkflowRunResult
 from anonymizer.engine.ndd.model_loader import (
     load_default_model_selection,
+    parse_model_configs,
     resolve_model_alias,
     resolve_model_aliases,
 )
@@ -371,9 +372,45 @@ def test_inject_detector_params_does_not_mutate_input_configs(
     assert updated[0].inference_parameters.extra_body is not None
     assert updated[0].inference_parameters.extra_body["labels"] == ["email", "phone_number"]
     assert updated[0].inference_parameters.extra_body["threshold"] == 0.42
-    assert updated[0].inference_parameters.extra_body["chunk_length"] == 384
-    assert updated[0].inference_parameters.extra_body["overlap"] == 128
+    assert "chunk_length" not in updated[0].inference_parameters.extra_body
+    assert "overlap" not in updated[0].inference_parameters.extra_body
     assert updated[0].inference_parameters.extra_body["flat_ner"] is False
+
+
+def test_default_model_pool_defers_chunk_settings_to_local_server() -> None:
+    parsed = parse_model_configs(None)
+    updated = EntityDetectionWorkflow(adapter=Mock())._inject_detector_params(
+        model_configs=parsed.model_configs,
+        selected_models=parsed.selected_models.detection,
+        labels=["first_name"],
+        gliner_detection_threshold=0.3,
+    )
+    detector = next(config for config in updated if config.alias == parsed.selected_models.detection.entity_detector)
+    assert detector.inference_parameters.extra_body is not None
+    assert "chunk_length" not in detector.inference_parameters.extra_body
+    assert "overlap" not in detector.inference_parameters.extra_body
+
+
+def test_inject_detector_params_preserves_chunk_settings_but_injects_labels_and_threshold(
+    stub_detector_model_configs: list[ModelConfig],
+    stub_detection_model_selection: DetectionModelSelection,
+) -> None:
+    configured = {"chunk_length": 128, "overlap": 32, "labels": ["old"], "threshold": 0.9}
+    stub_detector_model_configs[0].inference_parameters.extra_body = configured.copy()
+    updated = EntityDetectionWorkflow(adapter=Mock())._inject_detector_params(
+        model_configs=stub_detector_model_configs,
+        selected_models=stub_detection_model_selection,
+        labels=["first_name"],
+        gliner_detection_threshold=0.3,
+    )
+    assert stub_detector_model_configs[0].inference_parameters.extra_body == configured
+    assert updated[0].inference_parameters.extra_body == {
+        "chunk_length": 128,
+        "overlap": 32,
+        "labels": ["first_name"],
+        "threshold": 0.3,
+        "flat_ner": False,
+    }
 
 
 def test_inject_detector_params_no_matching_alias_leaves_configs_unchanged(
