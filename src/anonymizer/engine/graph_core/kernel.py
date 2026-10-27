@@ -19,6 +19,8 @@ from enum import StrEnum
 from types import MappingProxyType
 from typing import Any, Literal, NamedTuple
 
+from anonymizer.engine.graph_core.observe import activation
+
 
 class GraphRejection(Exception):
     """Typed rejection raised before any callback runs. Not an ``AnonymizerError``."""
@@ -127,7 +129,11 @@ class Status(StrEnum):
 
 @dataclass(frozen=True)
 class Entry:
-    """One accounting entry per actual dispatch."""
+    """One accounting entry per actual dispatch.
+
+    ``observed_requests`` is what the callable reported, ``None`` when it reported nothing. An invocation-scoped
+    call is one call over all its units, so its count is recorded once, on the first unit's entry.
+    """
 
     unit: int
     node: int
@@ -135,6 +141,7 @@ class Entry:
     reason: str = ""
     error: BaseException | None = field(default=None, repr=False, compare=False)
     ref: str = field(default_factory=lambda: secrets.token_hex(8))  # random, invocation-local
+    observed_requests: int | None = None
 
 
 @dataclass
@@ -169,6 +176,7 @@ class Completed(NamedTuple):
     unit: int
     node: int
     outputs: Mapping[str, Any]
+    observed: int | None = None
 
 
 class Failed(NamedTuple):
@@ -176,6 +184,7 @@ class Failed(NamedTuple):
     node: int
     reason: str
     error: BaseException | None = None
+    observed: int | None = None
 
 
 class Closed(NamedTuple):
@@ -210,18 +219,18 @@ def apply(state: State, event: Event) -> None:
             if state.cancelled or row.status[node] != Status.PENDING:
                 raise RuntimeError(f"dispatch refused: {row.status[node].value!r}, cancelled={state.cancelled}")
             row.status[node] = Status.RUNNING
-        case Completed(unit, node, outputs):
+        case Completed(unit, node, outputs, observed):
             row = state.rows[unit]
             if row.status[node] == Status.RUNNING:
                 row.status[node] = Status.SUCCEEDED
                 row.outputs[node] = outputs
-                state.history.append(Entry(unit, node, Status.SUCCEEDED))
-        case Failed(unit, node, reason, error):
+                state.history.append(Entry(unit, node, Status.SUCCEEDED, observed_requests=observed))
+        case Failed(unit, node, reason, error, observed):
             row = state.rows[unit]
             if row.status[node] == Status.RUNNING:
                 # Dependents stay pending and never run; the ledger reports them blocked.
                 row.status[node] = Status.FAILED
-                state.history.append(Entry(unit, node, Status.FAILED, reason, error))
+                state.history.append(Entry(unit, node, Status.FAILED, reason, error, observed_requests=observed))
 
 
 def unit_terminal(row: Row, cancelled: bool) -> Status:
@@ -257,12 +266,12 @@ def _outputs(node: Node, raw: Any) -> Mapping[str, Any]:
     return MappingProxyType(dict(raw))
 
 
-def _accept(state: State, node: Node, index: int, unit: int, raw: Any) -> None:
+def _accept(state: State, node: Node, index: int, unit: int, raw: Any, observed: int | None = None) -> None:
     """Complete the node with a returned value's outputs, or fail it as ``invalid_output``."""
     try:
-        event = Completed(unit, index, _outputs(node, raw))
+        event = Completed(unit, index, _outputs(node, raw), observed)
     except TypeError as exc:
-        event = Failed(unit, index, "invalid_output", exc)
+        event = Failed(unit, index, "invalid_output", exc, observed)
     apply(state, event)
 
 
@@ -270,12 +279,13 @@ def _run_target(plan: Plan, state: State, index: int, unit: int) -> None:
     """One call for one unit; a raised ``Exception`` fails the unit as ``raised``."""
     apply(state, Dispatched(unit, index))
     node = plan.nodes[index]
-    try:
-        raw = node.impl(**_inputs(plan, state.rows[unit], index))
-    except Exception as exc:
-        apply(state, Failed(unit, index, "raised", exc))
-        return
-    _accept(state, node, index, unit, raw)
+    with activation() as observed:
+        try:
+            raw = node.impl(**_inputs(plan, state.rows[unit], index))
+        except Exception as exc:
+            apply(state, Failed(unit, index, "raised", exc, observed.requests))
+            return
+    _accept(state, node, index, unit, raw, observed.requests)
 
 
 def _run_invocation(plan: Plan, state: State, index: int, units: list[int]) -> None:
@@ -284,26 +294,33 @@ def _run_invocation(plan: Plan, state: State, index: int, units: list[int]) -> N
         apply(state, Dispatched(unit, index))
     node = plan.nodes[index]
     calls = [_inputs(plan, state.rows[unit], index) for unit in units]
-    try:
-        raw = node.impl(**{port: tuple(args[port] for args in calls) for port in node.inputs})
-    except Exception as exc:
+    raised: Exception | None = None
+    raw: Any = None
+    with activation() as observed:
+        try:
+            raw = node.impl(**{port: tuple(args[port] for args in calls) for port in node.inputs})
+        except Exception as exc:
+            raised = exc
+    first = {units[0]: observed.requests}
+    if raised is not None:
         for unit in units:
-            apply(state, Failed(unit, index, "raised", exc))
+            apply(state, Failed(unit, index, "raised", raised, first.get(unit)))
         return
     if not isinstance(raw, Sequence) or isinstance(raw, (str, bytes)) or len(raw) != len(units):
         size = f" of length {len(raw)}" if hasattr(raw, "__len__") else ""
         error = TypeError(f"invocation operation returned {type(raw).__name__}{size}, expected {len(units)} entries")
         for unit in units:
-            apply(state, Failed(unit, index, "invalid_output", error))
+            apply(state, Failed(unit, index, "invalid_output", error, first.get(unit)))
         return
     for unit, entry in zip(units, raw):
+        count = first.get(unit)
         match entry:
             case None:
-                apply(state, Failed(unit, index, "missing_output"))
+                apply(state, Failed(unit, index, "missing_output", None, count))
             case Exception():
-                apply(state, Failed(unit, index, "raised", entry))
+                apply(state, Failed(unit, index, "raised", entry, count))
             case _:
-                _accept(state, node, index, unit, entry)
+                _accept(state, node, index, unit, entry, count)
 
 
 def execute(plan: Plan, state: State, cancelled: Callable[[], bool]) -> None:

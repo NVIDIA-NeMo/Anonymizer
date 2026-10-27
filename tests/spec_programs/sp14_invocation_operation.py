@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""SP-14 invocation-scoped operations: one call over all ready targets, per-target fan-out (E14.1-E14.11)."""
+"""SP-14 invocation-scoped operations: one call over all ready targets, per-target fan-out (E14.1-E14.15)."""
 
 from __future__ import annotations
 
@@ -10,6 +10,7 @@ import threading
 from anonymizer.engine.graph_core.authoring import ASSESSMENT, DATUM, TEXT, Assessment, Operation, Requests, Workflow
 from anonymizer.engine.graph_core.execution import prepare, protect
 from anonymizer.engine.graph_core.kernel import CancelToken
+from anonymizer.engine.graph_core.observe import report_requests
 from tests.spec_programs._builder import NAME, Checks, Recorder, graph, rejected, run
 
 TEXTS = (f"{NAME} one", f"{NAME} two", f"{NAME} three")
@@ -245,4 +246,43 @@ def program() -> list[dict[str, str]]:
         )
 
     c.guard("E14.11", cancel_before_invocation)
+
+    def observed(r) -> tuple[str, list[int | None]]:
+        return str(dict(r.summary().observed)["requests"]), [e.observed_requests for e in r.state.entries]
+
+    def per_target_reports() -> tuple[bool, str]:
+        def call(text: str) -> str:
+            report_requests(2)
+            return text.replace(NAME, "[NAME]")
+
+        r = run(g, Operation("call", call, requests=Requests.exact(2)))
+        total, entries = observed(r)
+        return total == "exact 6" and entries == [2, 2, 2], f"requests={total}, entries={entries}"
+
+    c.guard("E14.12", per_target_reports)
+
+    def opaque_without_report() -> tuple[bool, str]:
+        r = run(g, Operation("call", Recorder().transform().fn, requests=Requests.opaque()))
+        total, entries = observed(r)
+        return total == "unknown" and entries == [None, None, None], f"requests={total}, entries={entries}"
+
+    c.guard("E14.13", opaque_without_report)
+
+    def invocation_reports_once() -> tuple[bool, str]:
+        def call(text: tuple[str, ...]) -> list[str]:
+            report_requests(4)
+            return _replace(text)
+
+        r = run(g, Operation.per_invocation("inv", call, requests=Requests.exact(4)))
+        total, entries = observed(r)
+        return total == "exact 4" and entries == [4, None, None], f"requests={total}, entries={entries}"
+
+    c.guard("E14.14", invocation_reports_once)
+
+    def report_outside_run() -> tuple[bool, str]:
+        report_requests(5)
+        total, entries = observed(run(g, Recorder().transform()))
+        return total == "exact 0" and entries == [None, None, None], f"requests={total}, entries={entries}"
+
+    c.guard("E14.15", report_outside_run)
     return c.lines

@@ -261,6 +261,7 @@ class ProtectionResult:
         zero_or_unknown = Count(0 if silent else None, "exact" if silent else "unknown")
         binding = Count(sum(r.status != "not_started" for r in self.retrievals))
         total = binding if silent else Count(None, "unknown")
+        requests = self._observed_requests()
         return InspectionSummary(
             p.names,
             len(self.targets),
@@ -268,10 +269,29 @@ class ProtectionResult:
             tuple(sorted(Counter(o.terminal for o in self.outcomes).items())),
             tuple(sorted(Counter(o.qualification for o in self.outcomes).items())),
             tuple(sorted(Counter(o.reason for o in self.outcomes if o.reason).items())),
-            (("binding", binding), ("correction", zero_or_unknown), ("retry", zero_or_unknown), ("total", total)),
+            (
+                ("binding", binding),
+                ("correction", zero_or_unknown),
+                ("retry", zero_or_unknown),
+                ("total", total),
+                ("requests", requests),
+            ),
             sum(o.protected for o in self.outcomes),
             self.consistent,
         )
+
+    def _observed_requests(self) -> Count:
+        """Exact total when every dispatched step declared ``none`` or reported (an invocation step once), else unknown."""
+        ops = self.prepared.workflow.flatten()
+        total, covered = 0, True
+        for node in {e.node for e in self.state.entries}:
+            entries = [e for e in self.state.entries if e.node == node]
+            reports = [e.observed_requests for e in entries if e.observed_requests is not None]
+            total += sum(reports)
+            _, op = ops[node]
+            needed = 1 if op.scope == "invocation" else len(entries)
+            covered = covered and (op.requests.bound == "none" or len(reports) >= needed)
+        return Count(total) if covered else Count(None, "unknown")
 
     @cached_property
     def _positions(self) -> dict[Datum, int]:
