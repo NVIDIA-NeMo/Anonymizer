@@ -6,7 +6,7 @@ This guide covers local setup, common development commands, testing, documentati
 
 - Python 3.11+
 - Git
-- [uv](https://docs.astral.sh/uv/) for dependency management
+- [uv](https://docs.astral.sh/uv/) 0.13.4 or newer for dependency management
 - [gh](https://cli.github.com/) for optional GitHub CLI workflows
 
 Development tools such as Ruff, ty, pre-commit, pytest, and pytest-cov are installed by the development dependency group.

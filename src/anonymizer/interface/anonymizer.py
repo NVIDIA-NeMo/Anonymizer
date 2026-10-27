@@ -24,6 +24,7 @@ from anonymizer.config.anonymizer_config import (
     AnonymizerInput,
     EvaluateConfig,
     Rewrite,
+    TextRecordsInput,
 )
 from anonymizer.config.replace_strategies import Annotate, Hash, Redact, ReplaceMethod, Substitute
 from anonymizer.config.rewrite import PrivacyGoal
@@ -276,7 +277,7 @@ class Anonymizer:
         self,
         *,
         config: AnonymizerConfig,
-        data: AnonymizerInput,
+        data: AnonymizerInput | TextRecordsInput,
     ) -> AnonymizerResult:
         """Run the full anonymization pipeline (detection + replacement).
 
@@ -285,7 +286,7 @@ class Anonymizer:
 
         Args:
             config: Workflow behavior — replace strategy, entity labels, thresholds.
-            data: Input source with file path, text column, and optional data summary.
+            data: File-backed or in-memory records and optional dataset context.
         """
         self._validate_preflight_config(config)
         context = read_input(data)
@@ -317,7 +318,7 @@ class Anonymizer:
         self,
         *,
         config: AnonymizerConfig,
-        data: AnonymizerInput,
+        data: AnonymizerInput | TextRecordsInput,
         seed_path: str | Path,
     ) -> DataDesignerConfigBuilder:
         """Build (without running) the core detection workflow as a DataDesigner config.
@@ -424,7 +425,7 @@ class Anonymizer:
         self,
         *,
         config: AnonymizerConfig,
-        data: AnonymizerInput,
+        data: AnonymizerInput | TextRecordsInput,
         num_records: int = 10,
     ) -> PreviewResult:
         """Run the pipeline on a subset of records for quick inspection.
@@ -434,7 +435,7 @@ class Anonymizer:
 
         Args:
             config: Workflow behavior — replace strategy, entity labels, thresholds.
-            data: Input source with file path, text column, and optional data summary.
+            data: File-backed or in-memory records and optional dataset context.
             num_records: Maximum records to process (default 10).
         """
         self._validate_preflight_config(config)
@@ -451,6 +452,7 @@ class Anonymizer:
                 resolved_text_column=result.resolved_text_column,
                 failed_records=result.failed_records,
                 preview_num_records=num_records,
+                id_column=result.id_column,
                 replace_method=config.replace,
                 rewrite_config=result.rewrite_config,
                 entity_labels=config.detect.entity_labels,
@@ -673,11 +675,13 @@ class Anonymizer:
             dataframe=_build_user_dataframe(
                 renamed_trace,
                 resolved_text_column=text_column,
+                id_column=output.id_column,
                 compute_detection_validity=evaluate_config.compute_detection_validity,
             ),
             trace_dataframe=renamed_trace,
             resolved_text_column=text_column,
             failed_records=judged.failed_records,
+            id_column=output.id_column,
             replace_method=None if is_rewrite else replace_method,
             rewrite_config=rewrite_config,
             entity_labels=entity_labels,
@@ -702,7 +706,7 @@ class Anonymizer:
         self,
         *,
         config: AnonymizerConfig,
-        data: AnonymizerInput,
+        data: AnonymizerInput | TextRecordsInput,
         context: ResolvedInput,
         preview_num_records: int | None,
     ) -> AnonymizerResult:
@@ -741,7 +745,7 @@ class Anonymizer:
         self,
         *,
         config: AnonymizerConfig,
-        data: AnonymizerInput,
+        data: AnonymizerInput | TextRecordsInput,
         context: ResolvedInput,
         preview_num_records: int | None,
     ) -> AnonymizerResult:
@@ -916,10 +920,15 @@ class Anonymizer:
             validation_max_entities_per_call=config.detect.validation_max_entities_per_call,
         )
         result = AnonymizerResult(
-            dataframe=_build_user_dataframe(renamed_trace, resolved_text_column=text_col),
+            dataframe=_build_user_dataframe(
+                renamed_trace,
+                resolved_text_column=text_col,
+                id_column=context.resolved_id_column,
+            ),
             trace_dataframe=renamed_trace,
             resolved_text_column=text_col,
             failed_records=all_failures,
+            id_column=context.resolved_id_column,
             replace_method=config.replace,
             rewrite_config=admitted_goal,
             entity_labels=config.detect.entity_labels,
@@ -955,7 +964,7 @@ class Anonymizer:
         task: TaskEnum,
         status: TaskStatusEnum,
         config: AnonymizerConfig,
-        data: AnonymizerInput,
+        data: AnonymizerInput | TextRecordsInput,
         input_df: pd.DataFrame,
         result: AnonymizerResult | None,
         duration_sec: float,
@@ -998,7 +1007,7 @@ class Anonymizer:
         task: TaskEnum,
         status: TaskStatusEnum,
         config: AnonymizerConfig,
-        data: AnonymizerInput,
+        data: AnonymizerInput | TextRecordsInput,
         input_df: pd.DataFrame,
         result: AnonymizerResult | None,
         duration_sec: float,
@@ -1168,6 +1177,7 @@ def _build_user_dataframe(
     trace_dataframe: pd.DataFrame,
     *,
     resolved_text_column: str,
+    id_column: str | None = None,
     compute_detection_validity: bool = False,
 ) -> pd.DataFrame:
     """Filter trace dataframe to the public column set for the active mode.
@@ -1221,6 +1231,8 @@ def _build_user_dataframe(
             COL_FINAL_ENTITIES,
         }
 
+    if id_column is not None:
+        allowed.add(id_column)
     return t[[col for col in t.columns if col in allowed]].copy()
 
 
