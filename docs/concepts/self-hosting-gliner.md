@@ -20,7 +20,9 @@ different: its owner uses authenticated `GET /v1/models` readiness checks to ver
 ID and pinned revision before returning an `Anonymizer`.
 
 The detection workflow calls `POST /v1/chat/completions` and passes detector-specific fields alongside
-the normal OpenAI-compatible request:
+the normal OpenAI-compatible request. Anonymizer always sends `labels`, `threshold`, and `flat_ner`.
+`chunk_length` and `overlap` are optional: they are sent only when the detector model's
+`inference_parameters.extra_body` sets them, so servers must apply their own defaults when they are absent:
 
 ```json
 {
