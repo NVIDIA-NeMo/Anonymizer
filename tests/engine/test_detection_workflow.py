@@ -13,6 +13,7 @@ from data_designer.config.column_configs import LLMStructuredColumnConfig
 from data_designer.config.models import ModelConfig
 from data_designer.plugins.plugin import PluginType
 from data_designer.plugins.registry import PluginRegistry
+from jinja2 import Template
 
 from anonymizer.config.models import DetectionModelSelection
 from anonymizer.config.rewrite import PrivacyGoal
@@ -44,9 +45,11 @@ from anonymizer.engine.detection.detection_workflow import (
     _materialize_final_entities,
 )
 from anonymizer.engine.detection.entity_label_examples import resolve_entity_label_config
+from anonymizer.engine.detection.postprocess import TagNotation
 from anonymizer.engine.ndd.adapter import FailedRecord, WorkflowRunResult
 from anonymizer.engine.ndd.model_loader import (
     load_default_model_selection,
+    parse_model_configs,
     resolve_model_alias,
     resolve_model_aliases,
 )
@@ -371,9 +374,45 @@ def test_inject_detector_params_does_not_mutate_input_configs(
     assert updated[0].inference_parameters.extra_body is not None
     assert updated[0].inference_parameters.extra_body["labels"] == ["email", "phone_number"]
     assert updated[0].inference_parameters.extra_body["threshold"] == 0.42
-    assert updated[0].inference_parameters.extra_body["chunk_length"] == 384
-    assert updated[0].inference_parameters.extra_body["overlap"] == 128
+    assert "chunk_length" not in updated[0].inference_parameters.extra_body
+    assert "overlap" not in updated[0].inference_parameters.extra_body
     assert updated[0].inference_parameters.extra_body["flat_ner"] is False
+
+
+def test_default_model_pool_defers_chunk_settings_to_local_server() -> None:
+    parsed = parse_model_configs(None)
+    updated = EntityDetectionWorkflow(adapter=Mock())._inject_detector_params(
+        model_configs=parsed.model_configs,
+        selected_models=parsed.selected_models.detection,
+        labels=["first_name"],
+        gliner_detection_threshold=0.3,
+    )
+    detector = next(config for config in updated if config.alias == parsed.selected_models.detection.entity_detector)
+    assert detector.inference_parameters.extra_body is not None
+    assert "chunk_length" not in detector.inference_parameters.extra_body
+    assert "overlap" not in detector.inference_parameters.extra_body
+
+
+def test_inject_detector_params_preserves_chunk_settings_but_injects_labels_and_threshold(
+    stub_detector_model_configs: list[ModelConfig],
+    stub_detection_model_selection: DetectionModelSelection,
+) -> None:
+    configured = {"chunk_length": 128, "overlap": 32, "labels": ["old"], "threshold": 0.9}
+    stub_detector_model_configs[0].inference_parameters.extra_body = configured.copy()
+    updated = EntityDetectionWorkflow(adapter=Mock())._inject_detector_params(
+        model_configs=stub_detector_model_configs,
+        selected_models=stub_detection_model_selection,
+        labels=["first_name"],
+        gliner_detection_threshold=0.3,
+    )
+    assert stub_detector_model_configs[0].inference_parameters.extra_body == configured
+    assert updated[0].inference_parameters.extra_body == {
+        "chunk_length": 128,
+        "overlap": 32,
+        "labels": ["first_name"],
+        "threshold": 0.3,
+        "flat_ner": False,
+    }
 
 
 def test_inject_detector_params_no_matching_alias_leaves_configs_unchanged(
@@ -503,7 +542,64 @@ def test_validation_prompt_includes_label_examples() -> None:
     assert 'The entity label "occupation" refers only to a specific paid job title or profession' in prompt
     assert "AGE RULE:" in prompt
     assert "indicate duration, not age" in prompt
-    assert "tagged as a first_name but is not followed by a last_name, drop it" in prompt
+    assert "tagged as a first_name but is not followed by a last_name, drop it" not in prompt
+
+
+@pytest.mark.parametrize("notation", list(TagNotation))
+def test_validation_prompt_uses_context_for_personal_names(
+    notation: TagNotation,
+) -> None:
+    """Check prompt guidance, not whether a live model follows it."""
+    template = _get_validation_prompt(data_summary=None, labels=["first_name", "last_name"])
+    prompt = Template(template).render(**{COL_TAG_NOTATION: notation.value})
+
+    assert "Keep a supplied first_name or last_name label when context supports" in prompt
+    assert "lowercase, uppercase, or mixed case" in prompt
+    assert "capitalization alone neither proves nor rules out a name" in prompt
+    assert "Do not drop an initial solely because no surname follows" in prompt
+    assert "signatures, greetings, or name sequences" in prompt
+    assert "do not infer that role solely from word order" in prompt
+    assert "Never expand an initial into an inferred name" in prompt
+    assert '"First initial: Q." and "hi rose, can you review?" support personal-name uses' in prompt
+    assert '"a rose in the garden", "Grade: A", "4 m", and "ty for the help" do not' in prompt
+    assert "variables, grades, units, list markers, ordinary words, or chat abbreviations" in prompt
+    assert "Return ONLY the entries from the template" in prompt
+    assert "tagged as a first_name but is not followed by a last_name, drop it" not in prompt
+
+
+@pytest.mark.parametrize("notation", list(TagNotation))
+@pytest.mark.parametrize("strict_labels", [False, True])
+def test_augment_prompt_finds_contextual_personal_names(notation: TagNotation, strict_labels: bool) -> None:
+    """Check guidance in both label modes without making model-quality claims."""
+    template = _get_augment_prompt(
+        data_summary=None,
+        labels=["first_name", "last_name"],
+        strict_labels=strict_labels,
+    )
+    prompt = Template(template).render(**{COL_TAG_NOTATION: notation.value})
+
+    assert "Find untagged personal names" in prompt
+    assert "lowercase, uppercase, or mixed case" in prompt
+    assert "capitalization alone neither proves nor rules out a name" in prompt
+    assert "Do not skip an initial solely because no surname follows" in prompt
+    assert "signatures, greetings, or name sequences" in prompt
+    assert "Use context and the permitted labels to distinguish given names from surnames" in prompt
+    assert "do not infer that role solely from word order" in prompt
+    assert "Never expand an initial into an inferred name" in prompt
+    assert '"First initial: Q." and "hi rose, can you review?" support personal-name uses' in prompt
+    assert '"a rose in the garden", "Grade: A", "4 m", and "ty for the help" do not' in prompt
+    assert "variables, grades, units, list markers, ordinary words, or chat abbreviations" in prompt
+    assert "Do not repeat already-tagged entities" in prompt
+    if strict_labels:
+        assert "Use ONLY labels from this list" in prompt
+        assert "Do not create new labels" in prompt
+
+
+def test_contextual_personal_name_guidance_preserves_default_label_scope() -> None:
+    label_config = resolve_entity_label_config(entity_labels=None)
+
+    assert {"first_name", "last_name"} <= set(label_config.labels)
+    assert {"middle_name", "full_name", "name_initial"}.isdisjoint(label_config.labels)
 
 
 def test_validation_prompt_includes_data_summary() -> None:

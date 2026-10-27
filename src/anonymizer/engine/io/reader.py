@@ -9,7 +9,7 @@ import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from anonymizer.config.anonymizer_config import AnonymizerInput, infer_input_source_suffix
+from anonymizer.config.anonymizer_config import AnonymizerInput, TextRecordsInput, infer_input_source_suffix
 from anonymizer.engine.constants import (
     COL_ANY_HIGH_LEAKED,
     COL_FINAL_ENTITIES,
@@ -18,6 +18,7 @@ from anonymizer.engine.constants import (
     COL_TEXT,
     COL_UTILITY_SCORE,
     COL_WEIGHTED_LEAKAGE_RATE,
+    RECORD_ID_COLUMN,
 )
 from anonymizer.engine.io.constants import SUPPORTED_IO_FORMATS
 from anonymizer.engine.resolved_input import ResolvedInput
@@ -26,13 +27,31 @@ from anonymizer.interface.errors import AnonymizerIOError, InvalidInputError
 logger = logging.getLogger("anonymizer")
 
 
-def read_input(input_data: AnonymizerInput, *, nrows: int | None = None) -> ResolvedInput:
+def read_input(input_data: AnonymizerInput | TextRecordsInput, *, nrows: int | None = None) -> ResolvedInput:
     """Load input into a :class:`ResolvedInput` with the canonical internal text column.
 
     Args:
-        input_data: Input source definition.
+        input_data: File-backed input or ordered in-memory text records.
         nrows: Maximum rows to read.  ``None`` reads the entire file.
     """
+    if isinstance(input_data, TextRecordsInput):
+        records = input_data.records if nrows is None else input_data.records[: max(nrows, 0)]
+        record_ids = [record.id for record in records]
+        dataframe = pd.DataFrame(
+            {
+                "id": record_ids,
+                COL_TEXT: [record.text for record in records],
+                RECORD_ID_COLUMN: record_ids,
+            }
+        )
+        logger.info("📂 Loaded %d in-memory records", len(dataframe))
+        return ResolvedInput(
+            dataframe=dataframe,
+            requested_text_column="text",
+            resolved_text_column="text",
+            resolved_id_column="id",
+        )
+
     dataframe = _load_dataframe(input_data, nrows=nrows)
     selected_text_column = input_data.text_column
     if selected_text_column not in dataframe.columns:
@@ -72,7 +91,11 @@ def _validate_internal_column_collision(dataframe: pd.DataFrame, *, selected_tex
         )
 
 
-def _resolve_output_column_collisions(dataframe: pd.DataFrame, *, selected_text_column: str) -> ResolvedInput:
+def _resolve_output_column_collisions(
+    dataframe: pd.DataFrame,
+    *,
+    selected_text_column: str,
+) -> ResolvedInput:
     """Rename input columns whose names collide with Anonymizer output columns.
 
     The pipeline writes a known set of output columns derived from the text

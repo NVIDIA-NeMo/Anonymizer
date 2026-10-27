@@ -39,6 +39,32 @@ config = AnonymizerConfig(
 )
 ```
 
+### In-memory records
+
+Applications can pass typed records without first writing a CSV or Parquet file:
+
+```python
+from anonymizer import Anonymizer, AnonymizerConfig, Redact, TextRecord, TextRecordsInput
+
+result = Anonymizer().run(
+    config=AnonymizerConfig(replace=Redact()),
+    data=TextRecordsInput(
+        records=[
+            TextRecord(id="request-1", text="Email Alice at alice@example.com"),
+            TextRecord(id="request-2", text="Bob works at Acme"),
+        ],
+        data_summary="Application request logs",
+    ),
+)
+
+entities_by_id = dict(zip(result.dataframe["id"], result.dataframe["final_entities"], strict=True))
+```
+
+`result.dataframe` is the public result surface for validated entities. It
+retains IDs and input order for records that complete the pipeline. Dropped
+records use the same caller-provided IDs in `result.failed_records`. Use
+`result.trace_dataframe` only when you need internal pipeline diagnostics.
+
 ### `Detect` fields
 
 | Field | Default | Description |
@@ -96,6 +122,8 @@ To inspect the full list:
 from anonymizer import DEFAULT_ENTITY_LABELS
 print(DEFAULT_ENTITY_LABELS)
 ```
+
+Validation and augmentation use context to recognize personal names, including short names, lowercase or uppercase names, and personal initials with or without a following surname. A letter used as a variable, grade, unit, or list marker is not a personal name. Initials are never expanded into inferred names; labels still follow your configured label scope.
 
 The label settings serve different purposes:
 
