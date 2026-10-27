@@ -267,7 +267,7 @@ def _parse_numbered_lines(text: object) -> list[dict[str, Any]]:
     """Parse one-JSON-object-per-line entity text; the "(none)" placeholder yields no entries."""
     if not isinstance(text, str):
         return []
-    return [json.loads(line) for line in text.splitlines() if line.startswith("{")]
+    return [json.loads(line) for line in text.split("\n") if line.startswith("{")]
 
 
 def _normalize_identity_format(value: str) -> str:
