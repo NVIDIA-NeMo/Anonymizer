@@ -2872,7 +2872,9 @@ errors surface through the normal Data Designer model request. The notebook-mana
 different: its owner uses authenticated <code>GET /v1/models</code> readiness checks to verify the exact model
 ID and pinned revision before returning an <code>Anonymizer</code>.</p>
 <p>The detection workflow calls <code>POST /v1/chat/completions</code> and passes detector-specific fields alongside
-the normal OpenAI-compatible request:</p>
+the normal OpenAI-compatible request. Anonymizer always sends <code>labels</code>, <code>threshold</code>, and <code>flat_ner</code>.
+<code>chunk_length</code> and <code>overlap</code> are optional: they are sent only when the detector model's
+<code>inference_parameters.extra_body</code> sets them, so servers must apply their own defaults when they are absent:</p>
 <pre class="highlight"><code class="language-json">{
   "model": "fastino/gliner2-privacy-filter-PII-multi",
   "messages": [{"role": "user", "content": "&lt;input text&gt;"}],
