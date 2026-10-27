@@ -392,8 +392,6 @@ class RewriteWorkflow:
             if COL_REWRITE_REPLACEMENT_READY in df.columns
             else pd.Series(False, index=df.index)
         )
-        df.loc[replacement_unavailable, COL_REWRITTEN_TEXT] = None
-
         repair_columns = self._repair_wf.columns(
             selected_models=selected_models,
             privacy_goal=privacy_goal,
@@ -401,7 +399,7 @@ class RewriteWorkflow:
         )
 
         for iteration in range(evaluation.max_repair_iterations):
-            needs_repair_mask = df[COL_NEEDS_REPAIR].apply(bool) & ~replacement_unavailable
+            needs_repair_mask = df[COL_NEEDS_REPAIR].apply(bool)
             if not needs_repair_mask.any():
                 logger.info("Evaluate-repair loop: all rows pass at iteration %d", iteration)
                 break
@@ -458,8 +456,7 @@ class RewriteWorkflow:
             )
 
         # Compute needs_human_review from objective metrics after the loop exhausts.
-        df.loc[replacement_unavailable, COL_REWRITTEN_TEXT] = None
-        needs_review = df[COL_REWRITTEN_TEXT].isna()
+        needs_review = df[COL_REWRITTEN_TEXT].isna() | replacement_unavailable
         needs_review = needs_review | df[COL_ANY_HIGH_LEAKED].apply(bool)
         if evaluation.flag_utility_below is not None:
             needs_review = needs_review | (df[COL_UTILITY_SCORE].apply(float) < evaluation.flag_utility_below)
