@@ -63,6 +63,7 @@ from anonymizer.engine.replace.strategies import (
 )
 from anonymizer.engine.row_partitioning import resolve_source_positions
 from anonymizer.engine.schemas import EntitiesSchema
+from anonymizer.interface.errors import AnonymizerWorkflowError
 from anonymizer.logging import ProgressTracker
 
 logger = logging.getLogger("anonymizer")
@@ -156,11 +157,13 @@ def run_replace_pipeline(
     replace_method: ReplaceMethod,
     llm_workflow: LlmReplaceWorkflow | None,
     map_arguments: dict[str, Any],
+    reroute: Callable[[pd.DataFrame], ReplacementResult],
 ) -> ReplacementResult:
     """Run ``detect``, the Substitute map step and the per-target replace and verify as one invocation.
 
     A row the detector drops fails at ``detect`` and blocks the later steps. Output rows are the detection frame's
-    rows for the targets that reached the end.
+    rows for the targets that reached the end. A result that is not verifiably one input row per returned row (see
+    ``_resolve_positions``) fails every target at ``detect``, and ``reroute`` replaces over the detection frame as returned.
     """
     scope = GraphScope()
     graph = ProtectionGraph(scope, tuple(scope.datum(str(text)) for text in dataframe[COL_TEXT]))
@@ -168,6 +171,7 @@ def run_replace_pipeline(
     failures: list[FailedRecord] = []
     detected: list[EntityDetectionResult] = []
     owners: list[Datum] = []
+    unresolved: list[bool] = []
     elapsed: list[float] = []
 
     def run_detection(target: tuple[Datum, ...]) -> list[tuple[Mention, ...] | None]:
@@ -175,8 +179,10 @@ def run_replace_pipeline(
         detected.append(result := detect(dataframe))
         elapsed.append(time.perf_counter() - started)
         failures.extend(result.failed_records)
-        reported = result.source_positions or (None if len(result.dataframe) else ())  # () is the default: unassociated
-        positions = resolve_source_positions(dataframe, result.dataframe, reported)
+        positions = _resolve_positions(dataframe, result)
+        if positions is None:
+            unresolved.append(True)
+            return [None] * len(target)
         owners.extend(target[position] for position in positions)
         raw_entities = result.dataframe.get(COL_FINAL_ENTITIES, repeat({}, len(positions)))
         for datum, raw in zip(owners, raw_entities):
@@ -210,6 +216,9 @@ def run_replace_pipeline(
     )
     if not detected:  # no targets: the step never ran, but the detector still sees the (empty) input
         run_detection(())
+    if unresolved:
+        rerouted = reroute(detected[0].dataframe)
+        return ReplacementResult(rerouted.dataframe, [*failures, *rerouted.failed_records], detected[0], elapsed[0])
     targets = [d for d in graph.targets if result.outcome(d).available]
     row_of = {datum: row for row, datum in enumerate(owners)}
     output_df = detected[0].dataframe.iloc[[row_of[d] for d in targets]].reset_index(drop=True)
@@ -220,12 +229,34 @@ def run_replace_pipeline(
         _log_stats(output_df[COL_REPLACEMENT_MAP])
     shown = output_df[COL_TEXT] if COL_TEXT in output_df.columns else repeat("", len(targets))
     # A row whose detected text is missing keeps the detection frame's own stringification (``<NA>`` for ``pd.NA``).
-    output_df[COL_REPLACED_TEXT] = [
-        str(text) if not isinstance(text, str) and pd.isna(text) else result.value(d) for d, text in zip(targets, shown)
-    ]
+    output_df[COL_REPLACED_TEXT] = [str(text) if _missing(text) else result.value(d) for d, text in zip(targets, shown)]
     output_df[COL_REPLACEMENT_APPLICATION] = [result.value(d, "application") for d in targets]
     tracker.log_final()
     return ReplacementResult(output_df, failures, detected[0], elapsed[0])
+
+
+def _missing(text: object) -> bool:
+    return not isinstance(text, str) and bool(pd.isna(text))
+
+
+def _resolve_positions(dataframe: pd.DataFrame, result: EntityDetectionResult) -> tuple[int, ...] | None:
+    """One distinct input position per returned row, or ``None``.
+
+    Positions the detector did not report (the default ``()``) are accepted only if every returned row's text equals the
+    text of the input row at its position, a missing value equalling a missing value.
+    """
+    reported = result.source_positions
+    try:
+        positions = resolve_source_positions(
+            dataframe, result.dataframe, reported or (None if len(result.dataframe) else ())
+        )
+    except AnonymizerWorkflowError:
+        return None
+    if reported or COL_TEXT not in result.dataframe.columns:
+        return positions
+    given = [None if _missing(text) else text for text in result.dataframe[COL_TEXT]]
+    expected = [None if _missing(text) else text for text in dataframe[COL_TEXT].iloc[list(positions)]]
+    return positions if given == expected else None
 
 
 def _lower(
