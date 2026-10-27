@@ -47,6 +47,7 @@ def privacy_qa_high_and_low() -> dict:
                 "id": 2,
                 "question": "Can the city 'Seattle' be deduced?",
                 "sensitivity": "low",
+                "low_sensitivity_reason": "The retained detail adds no meaningful linkage in this synthetic context.",
                 "entity_label": "city",
                 "entity_value": "Seattle",
                 "category": "quasi_identifier",

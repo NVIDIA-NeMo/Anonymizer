@@ -28,11 +28,12 @@ from anonymizer.engine.schemas.detection import (
 )
 from anonymizer.engine.schemas.replace import EntityReplacementMapSchema, EntityReplacementSchema
 from anonymizer.engine.schemas.rewrite import (
-    CombinedRiskLevel,
     Domain,
     DomainClassificationSchema,
     EntityCategory,
     EntityDispositionSchema,
+    EntityLabelClassificationSchema,
+    EntityLabelClassificationsSchema,
     EntitySource,
     MeaningUnitImportance,
     MeaningUnitSchema,
@@ -52,10 +53,10 @@ from anonymizer.engine.schemas.rewrite import (
     RewriteOutputSchema,
     SensitivityDispositionSchema,
     SensitivityLevel,
-    StrictCombinedRiskLevel,
     StrictEntityDispositionSchema,
     StrictProtectionMethod,
     StrictSensitivityDispositionSchema,
+    StrictSensitivityLevel,
 )
 
 __all__ = [
@@ -83,11 +84,12 @@ __all__ = [
     "ValidationSkeletonDecisionSchema",
     "ValidationSkeletonSchema",
     # Rewrite
-    "CombinedRiskLevel",
     "Domain",
     "DomainClassificationSchema",
     "EntityCategory",
     "EntityDispositionSchema",
+    "EntityLabelClassificationSchema",
+    "EntityLabelClassificationsSchema",
     "EntitySource",
     "MeaningUnitImportance",
     "MeaningUnitSchema",
@@ -107,8 +109,8 @@ __all__ = [
     "RewriteOutputSchema",
     "SensitivityDispositionSchema",
     "SensitivityLevel",
-    "StrictCombinedRiskLevel",
     "StrictEntityDispositionSchema",
     "StrictProtectionMethod",
     "StrictSensitivityDispositionSchema",
+    "StrictSensitivityLevel",
 ]
