@@ -245,7 +245,6 @@ def _withhold_rewritten_text(df: pd.DataFrame) -> None:
         )
         df[COL_REWRITTEN_TEXT] = pd.Series(pd.array([None] * len(df), dtype=dtype), index=df.index)
         return
-    df.loc[_replacement_unavailable(df), COL_REWRITTEN_TEXT] = None
 
 
 # ---------------------------------------------------------------------------
@@ -458,7 +457,7 @@ class RewriteWorkflow:
             if rows.converged:
                 return
             df = rows.frame
-            needs_repair_mask = df[COL_NEEDS_REPAIR].apply(bool) & ~_replacement_unavailable(df)
+            needs_repair_mask = df[COL_NEEDS_REPAIR].apply(bool)
             if not needs_repair_mask.any():
                 logger.info("Evaluate-repair loop: all rows pass at iteration %d", iteration)
                 rows.converged = True
@@ -487,7 +486,9 @@ class RewriteWorkflow:
             # Compute needs_human_review from objective metrics after the loop exhausts.
             df = rows.frame
             _withhold_rewritten_text(df)
-            needs_review = df[COL_REWRITTEN_TEXT].isna() | df[COL_ANY_HIGH_LEAKED].apply(bool)
+            needs_review = (
+                df[COL_REWRITTEN_TEXT].isna() | _replacement_unavailable(df) | df[COL_ANY_HIGH_LEAKED].apply(bool)
+            )
             if evaluation.flag_utility_below is not None:
                 needs_review = needs_review | (df[COL_UTILITY_SCORE].apply(float) < evaluation.flag_utility_below)
             if evaluation.flag_leakage_above is not None:
