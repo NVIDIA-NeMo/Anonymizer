@@ -5,7 +5,7 @@
 Repair follows replacement readiness, never the candidate text: a blank or missing rewrite whose
 replacements were applied is repaired on both schedules, whether the missing cell reached the
 evaluator as `None`, NaN or `pd.NA` (that depends on the schedule and the pandas version). The released
-staged loop never repairs a withheld rewrite; the released combined graph repairs it like any other.
+staged loop and the combined graph both repair a rewrite with unavailable replacements like any other.
 """
 
 from __future__ import annotations
@@ -68,7 +68,7 @@ def _needs_repair(*, combined: bool, candidate: object, baseline: object, leaked
 
 @pytest.mark.parametrize(
     ("combined", "ready", "expected"),
-    [(False, True, True), (False, False, False), (True, True, True), (True, False, True)],
+    [(False, True, True), (False, False, True), (True, True, True), (True, False, True)],
     ids=["staged-ready", "staged-withheld", "combined-ready", "combined-withheld"],
 )
 def test_repair_decision_follows_replacement_readiness(combined: bool, ready: bool, expected: bool) -> None:
@@ -93,5 +93,5 @@ def test_passing_rewrite_is_not_repaired_whatever_its_text(combined: bool, candi
 def test_failing_withheld_rewrite_keeps_its_released_schedule(
     combined: bool, candidate: object, baseline: object
 ) -> None:
-    # Released: the staged loop never repairs a withheld rewrite; the combined graph repairs it.
-    assert _needs_repair(combined=combined, candidate=candidate, baseline=baseline, leaked=True) is combined
+    # An unavailable replacement is repaired on both schedules.
+    assert _needs_repair(combined=combined, candidate=candidate, baseline=baseline, leaked=True) is True

@@ -532,6 +532,16 @@ def test_extract_rewritten_text_from_dict_payload() -> None:
     assert result[COL_REWRITTEN_TEXT] == "Maria works at TechCorp"
 
 
+def test_extract_rewritten_text_preserves_draft_when_replacement_unavailable() -> None:
+    row = {
+        COL_FULL_REWRITE: {"rewritten_text": "Maria works at TechCorp"},
+        COL_REWRITE_REPLACEMENT_READY: False,
+    }
+    result = _extract_rewritten_text(row)
+    assert result[COL_REWRITTEN_TEXT] == "Maria works at TechCorp"
+    assert result[COL_REWRITE_REPLACEMENT_READY] is False
+
+
 def test_extract_rewritten_text_returns_none_on_failure() -> None:
     row = {COL_FULL_REWRITE: "not-a-valid-payload"}
     result = _extract_rewritten_text(row)

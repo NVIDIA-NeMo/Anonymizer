@@ -302,6 +302,7 @@ class RewriteEvaluationBinding(StageBinding):
                 and (
                     cast(RewriteCandidateValue, values["candidate"]).project() is None
                     or (not self.combined and bool(pd.isna(cast(RewriteCandidateValue, values["candidate"]).project())))
+                    or not bool(row.get(COL_REWRITE_REPLACEMENT_READY, True))
                     or metrics.high_leak
                     or (
                         self.criteria.flag_utility_below is not None
@@ -447,7 +448,7 @@ class RewriteEvaluationBinding(StageBinding):
             else pd.Series(False, index=frame.index)
         )
         _withhold_rewritten_text(frame, unavailable)
-        review = frame[COL_REWRITTEN_TEXT].isna() | frame[COL_ANY_HIGH_LEAKED].apply(bool)
+        review = frame[COL_REWRITTEN_TEXT].isna() | unavailable | frame[COL_ANY_HIGH_LEAKED].apply(bool)
         if evaluation.flag_utility_below is not None:
             review |= frame[COL_UTILITY_SCORE].apply(float) < evaluation.flag_utility_below
         if evaluation.flag_leakage_above is not None:
@@ -665,11 +666,7 @@ class RewriteEvaluationBinding(StageBinding):
         outcome = "ok"
         if name == "metrics":
             metric = (
-                RewriteControlValue(
-                    needs_repair=bool(row[self.state.needs_repair])
-                    and bool(row.get(COL_REWRITE_REPLACEMENT_READY, True)),
-                    iteration=self.iteration,
-                )
+                RewriteControlValue(needs_repair=bool(row[self.state.needs_repair]), iteration=self.iteration)
                 if self.opaque
                 else self._metric(bound, self.iteration)
             )
@@ -797,10 +794,10 @@ def _repairable(*, combined: bool, ready: bool) -> bool:
     Repair follows the replacement baseline, never the candidate text: a blank or missing candidate
     whose replacements were applied is repaired like any other failing rewrite, on both schedules
     (how the missing cell is encoded, `None` or NaN, depends on the schedule and the pandas version).
-    A withheld rewrite (no baseline) is never repaired by the staged loop and keeps its text null,
-    while the combined graph repairs and publishes it like any other failing rewrite.
+    A rewrite with unavailable replacements (no baseline) keeps its generated text, is repaired like any
+    other failing rewrite on both schedules, and is flagged for review.
     """
-    return combined or ready
+    return True
 
 
 def _withhold_rewritten_text(frame: pd.DataFrame, unavailable: pd.Series) -> None:
@@ -824,7 +821,6 @@ def _withhold_rewritten_text(frame: pd.DataFrame, unavailable: pd.Series) -> Non
         )
         frame[COL_REWRITTEN_TEXT] = pd.Series(pd.array([None] * len(frame), dtype=dtype), index=frame.index)
         return
-    frame.loc[unavailable, COL_REWRITTEN_TEXT] = None
 
 
 def _restore_arrow_dtypes(projected: pd.DataFrame, frame: pd.DataFrame) -> None:

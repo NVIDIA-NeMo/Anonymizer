@@ -207,12 +207,8 @@ def test_rewrite_output_dtypes_match_release(scripted_rewrite, tmp_path, combine
     assert {column: str(dtype) for column, dtype in frame.dtypes.items()} == RELEASED_DTYPES[(combined, preview)]
     assert result.failed_records == []
     assert frame["biography_rewritten"].iloc[0] == "Jane travels."
-    # A withheld rewrite stays null and flagged; Arrow-backed run output uses pd.NA like the release.
-    withheld = frame["biography_rewritten"].iloc[1]
-    if preview and _PANDAS3:
-        assert isinstance(withheld, float) and pd.isna(withheld)
-    else:
-        assert withheld is (None if preview else pd.NA)
+    # A rewrite with an unavailable replacement keeps its generated text and is flagged.
+    assert frame["biography_rewritten"].iloc[1] == "Jane travels."
     assert frame["needs_human_review"].tolist() == [False, True]
     for column in frame.columns:
         assert result.trace_dataframe[column].dtype == frame[column].dtype
