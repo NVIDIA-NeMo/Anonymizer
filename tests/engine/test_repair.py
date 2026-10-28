@@ -77,6 +77,18 @@ class TestLeakedItemsText:
 
 
 class TestRenderRepairPrompt:
+    def test_uses_original_text_when_baseline_is_none(self) -> None:
+        row = {
+            COL_TEXT: "Alice lives in Seattle.",
+            COL_REWRITE_BASELINE_TEXT: None,
+            COL_REWRITTEN_TEXT: "Maria lives in a city.",
+        }
+        params = RepairParams(privacy_goal_str=_STUB_PRIVACY_GOAL.to_prompt_string(), max_privacy_leak=1.0)
+
+        result = _render_repair_prompt(row, params)
+
+        assert "Alice lives in Seattle." in result
+
     def test_uses_pre_replaced_baseline_instead_of_original_sensitive_text(self) -> None:
         row = {
             COL_TEXT: "Alice lives in Seattle.",
