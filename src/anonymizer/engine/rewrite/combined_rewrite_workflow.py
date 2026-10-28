@@ -40,7 +40,6 @@ from anonymizer.engine.constants import (
     COL_UTILITY_SCORE,
     COL_WEIGHTED_LEAKAGE_RATE,
 )
-from anonymizer.engine.graph_core.stages import run_stages
 from anonymizer.engine.ndd.adapter import RECORD_ID_COLUMN, NddAdapter
 from anonymizer.engine.ndd.model_loader import resolve_model_alias
 from anonymizer.engine.replace.llm_replace_workflow import (
@@ -65,6 +64,7 @@ from anonymizer.engine.rewrite.rewrite_workflow import (
     _apply_passthrough_defaults,
     _has_entities,
     _join_new_columns,
+    _rewrite_lowered,
     _Rows,
 )
 from anonymizer.engine.rewrite.sensitivity_disposition import SensitivityDispositionWorkflow
@@ -544,14 +544,7 @@ class CombinedRewriteWorkflow(RewriteWorkflow):
                 ).drop(columns=graph.internal_columns, errors="ignore")
                 rows.failed.extend(run_result.failed_records)
 
-            run_stages("rewrite-combined", [("rewrite-combined", generate)])
-            entity_rows = rows.frame
-            _apply_passthrough_defaults(passthrough_rows)
-            result = RewriteResult(
-                dataframe=merge_and_reorder(entity_rows, passthrough_rows),
-                failed_records=rows.failed,
-                source_positions=tuple(sorted([*entity_rows[ROW_ORDER_COL], *passthrough_rows[ROW_ORDER_COL]])),
-            )
+            result = _rewrite_lowered(entity_rows, passthrough_rows, rows, generate, evaluation)
             measurement.update(
                 output_row_count=len(result.dataframe),
                 failed_record_count=len(result.failed_records),

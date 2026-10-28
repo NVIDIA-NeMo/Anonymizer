@@ -6,6 +6,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from typing import Any
 
 import pandas as pd
 import pyarrow as pa
@@ -35,8 +36,23 @@ from anonymizer.engine.constants import (
     RECORD_ID_COLUMN,
 )
 from anonymizer.engine.evaluation.detection_judge import DetectionJudgeWorkflow
+from anonymizer.engine.graph_core.authoring import (
+    DATUM,
+    TEXT,
+    Assessment,
+    Datum,
+    GraphScope,
+    Limits,
+    Operation,
+    ProtectionGraph,
+    Requests,
+    Workflow,
+)
+from anonymizer.engine.graph_core.execution import prepare, protect
+from anonymizer.engine.graph_core.kernel import register_kind
 from anonymizer.engine.graph_core.stages import run_stages
 from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter
+from anonymizer.engine.ndd.backend import per_target
 from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceWorkflow
 from anonymizer.engine.rewrite.domain_classification import DomainClassificationWorkflow
 from anonymizer.engine.rewrite.evaluate import EvaluateWorkflow
@@ -61,6 +77,8 @@ from anonymizer.engine.schemas import EntitiesByValueSchema
 from anonymizer.measurement import stage_timer
 
 logger = logging.getLogger("anonymizer.rewrite.workflow")
+
+REWRITE_METRICS = register_kind("rewrite-metrics", lambda v: isinstance(v, dict))
 
 _PASSTHROUGH_DEFAULTS: dict[str, object] = {
     COL_UTILITY_SCORE: 1.0,
@@ -221,12 +239,6 @@ class _Rows:
     converged: bool = False
 
 
-def _replacement_unavailable(df: pd.DataFrame) -> pd.Series:
-    if COL_REWRITE_REPLACEMENT_READY in df.columns:
-        return ~df[COL_REWRITE_REPLACEMENT_READY].apply(bool)
-    return pd.Series(False, index=df.index)
-
-
 def _withhold_rewritten_text(df: pd.DataFrame) -> None:
     """Null the rewritten text of rows whose replacements could not be applied.
 
@@ -245,6 +257,108 @@ def _withhold_rewritten_text(df: pd.DataFrame) -> None:
         )
         df[COL_REWRITTEN_TEXT] = pd.Series(pd.array([None] * len(df), dtype=dtype), index=df.index)
         return
+
+
+class RewriteUnavailable(Exception):
+    """A row's extracted rewrite is not text; the reason is the message."""
+
+
+def _rewrite_entry(row: dict[str, object]) -> dict[str, object] | RewriteUnavailable:
+    """One target's ``rewrite`` output: its text and the metrics ``assess-final`` reads."""
+    text = row[COL_REWRITTEN_TEXT]
+    if not isinstance(text, str):
+        return RewriteUnavailable("the rewritten text is not a string")
+    ready = bool(row[COL_REWRITE_REPLACEMENT_READY]) if COL_REWRITE_REPLACEMENT_READY in row else True
+    metrics = {
+        "utility_score": row.get(COL_UTILITY_SCORE),
+        "leakage_mass": row.get(COL_LEAKAGE_MASS),
+        "any_high_leaked": row.get(COL_ANY_HIGH_LEAKED),
+        "replacement_ready": ready,
+        "weighted_leakage_rate": row.get(COL_WEIGHTED_LEAKAGE_RATE),
+    }
+    return {"text": text, "metrics": metrics}
+
+
+def _assess_final(evaluation: EvaluationCriteria) -> Callable[..., Assessment]:
+    """The privacy criterion over the final candidate's metrics: no model call."""
+    limit = evaluation.flag_leakage_above
+
+    def assess(text: str, metrics: dict[str, Any], target: Datum) -> Assessment:
+        if bool(metrics["any_high_leaked"]):
+            reason = "high_leak"
+        elif not metrics["replacement_ready"]:
+            reason = "replacement_unavailable"
+        elif limit is not None and float(metrics["leakage_mass"]) > limit:
+            reason = "high_leakage"
+        else:
+            reason = ""
+        return Assessment(not reason, target, reason)
+
+    return assess
+
+
+def _rewrite_lowered(
+    entity_rows: pd.DataFrame,
+    passthrough_rows: pd.DataFrame,
+    rows: _Rows,
+    produce: Callable[[], None],
+    evaluation: EvaluationCriteria,
+) -> RewriteResult:
+    """Run ``produce`` (the frame stages, leaving the final candidates in ``rows.frame``) as the ``rewrite`` operation.
+
+    One target per entity row. ``assess-final`` qualifies each target from its final evaluation, and
+    ``needs_human_review`` is assigned from that record: not qualified, or utility below the flag.
+    """
+    scope = GraphScope()
+    graph = ProtectionGraph(scope, tuple(scope.datum(str(text)) for text in entity_rows[COL_TEXT]))
+    order = list(entity_rows[ROW_ORDER_COL])
+    position = {value: i for i, value in enumerate(order)}
+
+    def rewrite(target: tuple[Datum, ...]) -> list[dict[str, object] | RewriteUnavailable | None]:
+        produce()
+        # After a partial repair the frame is passing rows then repaired rows: key on the row order, not position.
+        rows.frame = rows.frame.sort_values(ROW_ORDER_COL).reset_index(drop=True)
+        records = rows.frame.to_dict("records")
+        entries = [_rewrite_entry(record) for record in records]
+        return per_target(entries, [position[record[ROW_ORDER_COL]] for record in records], len(target))
+
+    workflow = Workflow(
+        "rewrite",
+        (
+            Operation.per_invocation(
+                "rewrite", rewrite, {"target": DATUM}, {"text": TEXT, "metrics": REWRITE_METRICS}, Requests.opaque()
+            ),
+            Operation.verifier(
+                "assess-final",
+                _assess_final(evaluation),
+                {"text": TEXT, "metrics": REWRITE_METRICS, "target": DATUM},
+            ),
+        ),
+    )
+    limits = Limits(max_operations=2, max_targets=len(graph.targets), max_mentions=0, max_context_items=0)
+    result = protect(prepare(graph, workflow, limits=limits))
+    steps = [step for _, step in workflow.flatten()]
+    for entry in result.state.entries:
+        if (
+            entry.error is not None
+            and not steps[entry.node].is_verifier
+            and not isinstance(entry.error, RewriteUnavailable)
+        ):
+            raise entry.error
+
+    frame, target_of = rows.frame, dict(zip(order, graph.targets))
+    floor = evaluation.flag_utility_below
+    frame[COL_NEEDS_HUMAN_REVIEW] = [
+        result.outcome(target_of[record[ROW_ORDER_COL]]).qualification != "met"
+        or (floor is not None and float(record[COL_UTILITY_SCORE]) < floor)
+        for record in frame.to_dict("records")
+    ]
+    _apply_passthrough_defaults(passthrough_rows)
+    return RewriteResult(
+        dataframe=merge_and_reorder(frame, passthrough_rows),
+        failed_records=rows.failed,
+        source_positions=tuple(sorted([*frame[ROW_ORDER_COL], *passthrough_rows[ROW_ORDER_COL]])),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -304,43 +418,35 @@ class RewriteWorkflow:
                 return result
 
             rows = _Rows(entity_rows)
-            run_stages(
-                "rewrite",
-                [
-                    (
-                        "replacement-map",
-                        lambda: self._replacement_map(rows, model_configs, replace_model_selection),
-                    ),
-                    (
-                        "pipeline",
-                        lambda: self._pipeline(
-                            rows,
-                            model_configs=model_configs,
-                            selected_models=selected_models,
-                            privacy_goal=privacy_goal,
-                            data_summary=data_summary,
-                            preview_num_records=preview_num_records,
-                            strict_entity_protection=strict_entity_protection,
-                        ),
-                    ),
-                    *self._evaluate_repair_stages(
+            stages = [
+                ("replacement-map", lambda: self._replacement_map(rows, model_configs, replace_model_selection)),
+                (
+                    "pipeline",
+                    lambda: self._pipeline(
                         rows,
                         model_configs=model_configs,
                         selected_models=selected_models,
                         privacy_goal=privacy_goal,
-                        evaluation=evaluation,
+                        data_summary=data_summary,
                         preview_num_records=preview_num_records,
+                        strict_entity_protection=strict_entity_protection,
                     ),
-                ],
-            )
+                ),
+                *self._evaluate_repair_stages(
+                    rows,
+                    model_configs=model_configs,
+                    selected_models=selected_models,
+                    privacy_goal=privacy_goal,
+                    evaluation=evaluation,
+                    preview_num_records=preview_num_records,
+                ),
+            ]
 
-            # --- Merge and return ---
-            _apply_passthrough_defaults(passthrough_rows)
-            result = RewriteResult(
-                dataframe=merge_and_reorder(rows.frame, passthrough_rows),
-                failed_records=rows.failed,
-                source_positions=tuple(sorted([*rows.frame[ROW_ORDER_COL], *passthrough_rows[ROW_ORDER_COL]])),
-            )
+            def produce() -> None:
+                for _, stage in stages:
+                    stage()
+
+            result = _rewrite_lowered(entity_rows, passthrough_rows, rows, produce, evaluation)
             measurement.update(
                 output_row_count=len(result.dataframe),
                 failed_record_count=len(result.failed_records),
@@ -416,7 +522,7 @@ class RewriteWorkflow:
         evaluation: EvaluationCriteria,
         preview_num_records: int | None,
     ) -> list[tuple[str, Callable[[], None]]]:
-        """The initial evaluate, then one repair and one re-evaluate per allowed iteration, then the review flags.
+        """The initial evaluate, then one repair and one re-evaluate per allowed iteration, then the null-dtype guard.
 
         Every iteration is a stage that does nothing once no row needs repair, so the loop runs at most
         ``max_repair_iterations`` repairs and the initial evaluate runs even when that is 0.
@@ -482,24 +588,11 @@ class RewriteWorkflow:
             # Re-evaluate only repaired rows (passing rows' metrics are unchanged)
             rows.frame = pd.concat([rows.passing, evaluate(rows.failing, iteration + 1)], ignore_index=True)
 
-        def flag_for_review() -> None:
-            # Compute needs_human_review from objective metrics after the loop exhausts.
-            df = rows.frame
-            _withhold_rewritten_text(df)
-            needs_review = (
-                df[COL_REWRITTEN_TEXT].isna() | _replacement_unavailable(df) | df[COL_ANY_HIGH_LEAKED].apply(bool)
-            )
-            if evaluation.flag_utility_below is not None:
-                needs_review = needs_review | (df[COL_UTILITY_SCORE].apply(float) < evaluation.flag_utility_below)
-            if evaluation.flag_leakage_above is not None:
-                needs_review = needs_review | (df[COL_LEAKAGE_MASS].apply(float) > evaluation.flag_leakage_above)
-            df[COL_NEEDS_HUMAN_REVIEW] = needs_review
-
         stages: list[tuple[str, Callable[[], None]]] = [("evaluate-0", initial_evaluate)]
         for iteration in range(evaluation.max_repair_iterations):
             stages.append((f"repair-{iteration}", lambda i=iteration: repair(i)))
             stages.append((f"evaluate-{iteration + 1}", lambda i=iteration: reevaluate(i)))
-        stages.append(("flag-for-review", flag_for_review))
+        stages.append(("withhold-rewritten-text", lambda: _withhold_rewritten_text(rows.frame)))
         return stages
 
     def _run_final_judge(
