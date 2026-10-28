@@ -1,13 +1,14 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""SP-16 an invocation-scoped operation with an internal bounded loop and a covering verifier (E16.1-E16.9)."""
+"""SP-16 an invocation-scoped operation with an internal bounded loop and a covering verifier (E16.1-E16.11)."""
 
 from __future__ import annotations
 
 from types import SimpleNamespace
 from typing import Any
 
+import numpy as np
 import pandas as pd
 
 from anonymizer.engine.constants import (
@@ -70,6 +71,7 @@ def _lowered(
     produce: Any = None,
     review_dtype: Any = None,
     drop_ready: bool = True,
+    scramble: bool = False,
 ) -> Any:
     """Drive the lowered rewrite directly: each dict overrides a row's final metrics; thresholds as given."""
     records = []
@@ -83,7 +85,12 @@ def _lowered(
         frame[COL_NEEDS_HUMAN_REVIEW] = pd.Series([False] * len(frame), dtype=review_dtype)
     extra = pd.DataFrame({ROW_ORDER_COL: list(passthrough), COL_TEXT: [f"p{i}" for i in passthrough]})
     evaluation: Any = SimpleNamespace(flag_leakage_above=leak, flag_utility_below=util)
-    return _rewrite_lowered(frame.copy(), extra, _Rows(frame), produce or (lambda: None), evaluation)
+    state = _Rows(frame)
+
+    def reorder() -> None:  # partial repair order: the later rows first, then the earlier ones
+        state.frame = state.frame.iloc[::-1].reset_index(drop=True)
+
+    return _rewrite_lowered(frame.copy(), extra, state, reorder if scramble else produce or (lambda: None), evaluation)
 
 
 def _reviews(rows: list[dict[str, Any]], **kw: Any) -> list[bool]:
@@ -206,4 +213,42 @@ def program() -> list[dict[str, str]]:
         return absent == [False] and no == [True], f"ready absent review={absent}, ready false review={no}"
 
     c.guard("E16.9", ready_default)
+
+    def fan_out_order() -> tuple[bool, str]:
+        rows = [{COL_LEAKAGE_MASS: 0.9}, {}, {COL_UTILITY_SCORE: 0.01}]
+        out = _lowered(rows, leak=0.5, util=0.3, scramble=True).dataframe
+        text = list(out[COL_REWRITTEN_TEXT])
+        review = [bool(v) for v in out[COL_NEEDS_HUMAN_REVIEW]]
+        util = list(out[COL_UTILITY_SCORE])
+        return (
+            text == ["r0", "r1", "r2"] and review == [True, False, True] and util == [0.9, 0.9, 0.01],
+            f"texts={text}, review={review}, utility={util}",
+        )
+
+    c.guard("E16.10", fan_out_order)
+
+    def ready_coercion() -> tuple[bool, str]:
+        got = []
+        for value in (np.True_, np.False_, 1, 0):
+            got.append(_reviews([{"ready": 1, COL_REWRITE_REPLACEMENT_READY: value}], leak=0.5, util=0.1))
+        arrow = pd.array([True, False], dtype="bool[pyarrow]")
+        got.append(
+            _reviews(
+                [
+                    {"ready": 1, COL_REWRITE_REPLACEMENT_READY: arrow[0]},
+                    {"ready": 1, COL_REWRITE_REPLACEMENT_READY: arrow[1]},
+                ],
+                leak=0.5,
+                util=0.1,
+            )
+        )
+        return got == [
+            [False],
+            [True],
+            [False],
+            [True],
+            [False, True],
+        ], f"numpy, integer and arrow readiness review={got}"
+
+    c.guard("E16.11", ready_coercion)
     return c.lines
