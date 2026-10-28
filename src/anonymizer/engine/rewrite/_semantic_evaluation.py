@@ -302,6 +302,7 @@ class RewriteEvaluationBinding(StageBinding):
                 and (
                     cast(RewriteCandidateValue, values["candidate"]).project() is None
                     or (not self.combined and bool(pd.isna(cast(RewriteCandidateValue, values["candidate"]).project())))
+                    or not bool(row.get(COL_REWRITE_REPLACEMENT_READY, True))
                     or metrics.high_leak
                     or (
                         self.criteria.flag_utility_below is not None
