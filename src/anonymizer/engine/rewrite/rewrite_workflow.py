@@ -348,11 +348,14 @@ def _rewrite_lowered(
 
     frame, target_of = rows.frame, dict(zip(order, graph.targets))
     floor = evaluation.flag_utility_below
-    frame[COL_NEEDS_HUMAN_REVIEW] = [
+    review = [
         result.outcome(target_of[record[ROW_ORDER_COL]]).qualification != "met"
         or (floor is not None and float(record[COL_UTILITY_SCORE]) < floor)
         for record in frame.to_dict("records")
     ]
+    # The combined finalizer's column keeps its dtype under the overwrite.
+    dtype = frame[COL_NEEDS_HUMAN_REVIEW].dtype if COL_NEEDS_HUMAN_REVIEW in frame.columns else bool
+    frame[COL_NEEDS_HUMAN_REVIEW] = pd.Series(review, index=frame.index, dtype=dtype)
     _apply_passthrough_defaults(passthrough_rows)
     return RewriteResult(
         dataframe=merge_and_reorder(frame, passthrough_rows),
