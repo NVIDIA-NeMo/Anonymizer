@@ -793,10 +793,10 @@ def _repairable(*, combined: bool, ready: bool) -> bool:
     Repair follows the replacement baseline, never the candidate text: a blank or missing candidate
     whose replacements were applied is repaired like any other failing rewrite, on both schedules
     (how the missing cell is encoded, `None` or NaN, depends on the schedule and the pandas version).
-    A withheld rewrite (no baseline) is never repaired by the staged loop and keeps its text null,
-    while the combined graph repairs and publishes it like any other failing rewrite.
+    A rewrite with unavailable replacements (no baseline) keeps its generated text, is repaired like any
+    other failing rewrite on both schedules, and is flagged for review.
     """
-    return combined or ready
+    return True
 
 
 def _withhold_rewritten_text(frame: pd.DataFrame, unavailable: pd.Series) -> None:
