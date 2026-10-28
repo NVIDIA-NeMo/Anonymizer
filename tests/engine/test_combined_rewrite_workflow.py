@@ -28,6 +28,7 @@ from anonymizer.engine.constants import (
     COL_NEEDS_REPAIR,
     COL_REPAIR_ITERATIONS,
     COL_REPLACEMENT_APPLICATION,
+    COL_REWRITE_REPLACEMENT_READY,
     COL_REWRITTEN_TEXT,
     COL_REWRITTEN_TEXT_INITIAL,
     COL_REWRITTEN_TEXT_NEXT,
@@ -150,7 +151,9 @@ def test_graph_unrolls_conditional_repairs(
         assert previous.needs_repair in condition.columns
 
 
+@pytest.mark.parametrize("replacement_ready", [True, False])
 def test_finalizer_selects_last_executed_iteration(
+    replacement_ready: bool,
     stub_rewrite_model_selection: RewriteModelSelection,
     stub_replace_model_selection: ReplaceModelSelection,
 ) -> None:
@@ -162,6 +165,7 @@ def test_finalizer_selects_last_executed_iteration(
     )
     initial, repaired, skipped = graph.evaluation_states
     row = {
+        COL_REWRITE_REPLACEMENT_READY: replacement_ready,
         initial.rewritten_text: "Initial rewrite",
         initial.quality_reanswer: {"answers": []},
         initial.privacy_reanswer: {"answers": []},
@@ -196,7 +200,7 @@ def test_finalizer_selects_last_executed_iteration(
     assert result[COL_ANY_HIGH_LEAKED] is False
     assert result[COL_NEEDS_REPAIR] is False
     assert result[COL_REPAIR_ITERATIONS] == 1
-    assert result[COL_NEEDS_HUMAN_REVIEW] is False
+    assert result[COL_NEEDS_HUMAN_REVIEW] is (not replacement_ready)
 
 
 def test_combined_graph_preserves_malformed_rewrite_handling(
@@ -217,10 +221,12 @@ def test_combined_graph_preserves_malformed_rewrite_handling(
     assert result[COL_REWRITTEN_TEXT_INITIAL] is None
 
 
+@pytest.mark.parametrize("replacement_ready", [True, False])
 def test_conditional_repairs_execute_independently_per_row(
     tmp_path: Path,
     stub_rewrite_model_selection: RewriteModelSelection,
     stub_replace_model_selection: ReplaceModelSelection,
+    replacement_ready: bool,
 ) -> None:
     data_designer = DataDesigner(artifact_path=tmp_path / "artifacts", auto_configure_logging=False)
     adapter = NddAdapter(data_designer)
@@ -235,7 +241,7 @@ def test_conditional_repairs_execute_independently_per_row(
 
     with measurement_session(collector):
         result = adapter.run_workflow(
-            pd.DataFrame({_REPAIRS_NEEDED: [0, 1, 2, 3]}),
+            pd.DataFrame({_REPAIRS_NEEDED: [0, 1, 2, 3], COL_REWRITE_REPLACEMENT_READY: replacement_ready}),
             model_configs=[],
             columns=columns,
             workflow_name="rewrite-combined",
@@ -251,7 +257,7 @@ def test_conditional_repairs_execute_independently_per_row(
     ]
     assert result.dataframe[COL_REPAIR_ITERATIONS].tolist() == [0, 1, 2, 2]
     assert result.dataframe[COL_NEEDS_REPAIR].tolist() == [False, False, False, True]
-    assert result.dataframe[COL_NEEDS_HUMAN_REVIEW].tolist() == [False, False, False, True]
+    assert result.dataframe[COL_NEEDS_HUMAN_REVIEW].tolist() == [not replacement_ready] * 3 + [True]
     workflow_records = [record for record in collector.records if record["record_type"] == "ndd_workflow"]
     assert len(workflow_records) == 1
     assert workflow_records[0]["workflow_name"] == "rewrite-combined"
@@ -520,7 +526,7 @@ def test_conditional_graph_handles_larger_mixed_batches(
     )
 
     result = adapter.run_workflow(
-        pd.DataFrame({_REPAIRS_NEEDED: repairs_needed}),
+        pd.DataFrame({_REPAIRS_NEEDED: repairs_needed, COL_REWRITE_REPLACEMENT_READY: True}),
         model_configs=[],
         columns=_deterministic_columns(graph),
         workflow_name="rewrite-combined-scale-test",
