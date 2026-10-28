@@ -24,6 +24,7 @@ PROGRAMS = [
     "sp13_identity",
     "sp14_invocation_operation",
     "sp15_stage_sequence",
+    "sp16_bounded_operation",
 ]
 RETIRED_SP8 = [f"E8.{i}" for i in range(1, 6)]
 
