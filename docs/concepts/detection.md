@@ -39,6 +39,32 @@ config = AnonymizerConfig(
 )
 ```
 
+### In-memory records
+
+Applications can pass typed records without first writing a CSV or Parquet file:
+
+```python
+from anonymizer import Anonymizer, AnonymizerConfig, Redact, TextRecord, TextRecordsInput
+
+result = Anonymizer().run(
+    config=AnonymizerConfig(replace=Redact()),
+    data=TextRecordsInput(
+        records=[
+            TextRecord(id="request-1", text="Email Alice at alice@example.com"),
+            TextRecord(id="request-2", text="Bob works at Acme"),
+        ],
+        data_summary="Application request logs",
+    ),
+)
+
+entities_by_id = dict(zip(result.dataframe["id"], result.dataframe["final_entities"], strict=True))
+```
+
+`result.dataframe` is the public result surface for validated entities. It
+retains IDs and input order for records that complete the pipeline. Dropped
+records use the same caller-provided IDs in `result.failed_records`. Use
+`result.trace_dataframe` only when you need internal pipeline diagnostics.
+
 ### `Detect` fields
 
 | Field | Default | Description |
@@ -89,6 +115,8 @@ Anonymizer ships with a comprehensive default label set covering:
 - **Technical data** (e.g. `api_key`, `password`, `url`, `ipv4`, `ipv6`, `device_identifier`)
 - **Demographics** (e.g. `gender`, `race_ethnicity`, `religious_belief`, `political_view`, `language`)
 - **Financial** (e.g. `credit_debit_card`, `account_number`, `bank_routing_number`, `tax_id`)
+
+The `date` label includes complete dates and partial calendar references, such as a month (`March`), year (`2024`), month and year (`March 2024`), or day of the month (`the 15th`), when the surrounding text establishes their date meaning. Standalone numbers without date context and vague time words such as `today`, `now`, and `soon` are not dates.
 
 To inspect the full list:
 
