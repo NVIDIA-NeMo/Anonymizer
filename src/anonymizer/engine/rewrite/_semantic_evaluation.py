@@ -447,7 +447,7 @@ class RewriteEvaluationBinding(StageBinding):
             else pd.Series(False, index=frame.index)
         )
         _withhold_rewritten_text(frame, unavailable)
-        review = frame[COL_REWRITTEN_TEXT].isna() | frame[COL_ANY_HIGH_LEAKED].apply(bool)
+        review = frame[COL_REWRITTEN_TEXT].isna() | unavailable | frame[COL_ANY_HIGH_LEAKED].apply(bool)
         if evaluation.flag_utility_below is not None:
             review |= frame[COL_UTILITY_SCORE].apply(float) < evaluation.flag_utility_below
         if evaluation.flag_leakage_above is not None:
@@ -665,11 +665,7 @@ class RewriteEvaluationBinding(StageBinding):
         outcome = "ok"
         if name == "metrics":
             metric = (
-                RewriteControlValue(
-                    needs_repair=bool(row[self.state.needs_repair])
-                    and bool(row.get(COL_REWRITE_REPLACEMENT_READY, True)),
-                    iteration=self.iteration,
-                )
+                RewriteControlValue(needs_repair=bool(row[self.state.needs_repair]), iteration=self.iteration)
                 if self.opaque
                 else self._metric(bound, self.iteration)
             )
@@ -824,7 +820,6 @@ def _withhold_rewritten_text(frame: pd.DataFrame, unavailable: pd.Series) -> Non
         )
         frame[COL_REWRITTEN_TEXT] = pd.Series(pd.array([None] * len(frame), dtype=dtype), index=frame.index)
         return
-    frame.loc[unavailable, COL_REWRITTEN_TEXT] = None
 
 
 def _restore_arrow_dtypes(projected: pd.DataFrame, frame: pd.DataFrame) -> None:

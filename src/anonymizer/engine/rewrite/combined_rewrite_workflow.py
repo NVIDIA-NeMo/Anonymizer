@@ -31,6 +31,7 @@ from anonymizer.engine.constants import (
     COL_REPLACEMENT_MAP,
     COL_REPLACEMENT_MAP_RAW,
     COL_REPLACEMENT_MAP_SOURCE,
+    COL_REWRITE_REPLACEMENT_READY,
     COL_REWRITTEN_TEXT,
     COL_REWRITTEN_TEXT_INITIAL,
     COL_REWRITTEN_TEXT_NEXT,
@@ -340,6 +341,7 @@ def _finalization_column(
             )
         )
     )
+    required_columns.append(COL_REWRITE_REPLACEMENT_READY)
     side_effect_columns = [
         COL_QUALITY_QA_REANSWER,
         COL_PRIVACY_QA_REANSWER,
@@ -374,7 +376,11 @@ def _finalization_column(
         row[COL_NEEDS_REPAIR] = row.get(state.needs_repair)
         row[COL_REPAIR_ITERATIONS] = state.iteration
 
-        needs_review = row[COL_REWRITTEN_TEXT] is None or bool(row[COL_ANY_HIGH_LEAKED])
+        needs_review = (
+            row[COL_REWRITTEN_TEXT] is None
+            or not bool(row.get(COL_REWRITE_REPLACEMENT_READY, True))
+            or bool(row[COL_ANY_HIGH_LEAKED])
+        )
         if generator_params.flag_utility_below is not None:
             needs_review = needs_review or float(row[COL_UTILITY_SCORE]) < generator_params.flag_utility_below
         if generator_params.flag_leakage_above is not None:
