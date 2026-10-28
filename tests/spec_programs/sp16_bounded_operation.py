@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""SP-16 an invocation-scoped operation with an internal bounded loop and a covering verifier (E16.1-E16.11)."""
+"""SP-16 an invocation-scoped operation with an internal bounded loop and a covering verifier (E16.1-E16.13)."""
 
 from __future__ import annotations
 
@@ -72,6 +72,7 @@ def _lowered(
     review_dtype: Any = None,
     drop_ready: bool = True,
     scramble: bool = False,
+    drop: int | None = None,
 ) -> Any:
     """Drive the lowered rewrite directly: each dict overrides a row's final metrics; thresholds as given."""
     records = []
@@ -90,7 +91,11 @@ def _lowered(
     def reorder() -> None:  # partial repair order: the later rows first, then the earlier ones
         state.frame = state.frame.iloc[::-1].reset_index(drop=True)
 
-    return _rewrite_lowered(frame.copy(), extra, state, reorder if scramble else produce or (lambda: None), evaluation)
+    def dropper() -> None:  # the backend dropped one row's output
+        state.frame = state.frame[state.frame[ROW_ORDER_COL] != drop].reset_index(drop=True)
+
+    stage = reorder if scramble else dropper if drop is not None else produce or (lambda: None)
+    return _rewrite_lowered(frame.copy(), extra, state, stage, evaluation)
 
 
 def _reviews(rows: list[dict[str, Any]], **kw: Any) -> list[bool]:
@@ -251,4 +256,21 @@ def program() -> list[dict[str, str]]:
         ], f"numpy, integer and arrow readiness review={got}"
 
     c.guard("E16.11", ready_coercion)
+
+    def dropped_row() -> tuple[bool, str]:
+        out = _lowered([{}, {}, {}], leak=0.5, util=0.1, drop=1).dataframe
+        text = list(out[COL_REWRITTEN_TEXT])
+        review = [bool(v) for v in out[COL_NEEDS_HUMAN_REVIEW]]
+        return (
+            text == ["r0", "r2"] and review == [False, False],
+            f"surviving texts={text}, review={review}",
+        )
+
+    c.guard("E16.12", dropped_row)
+
+    def unmet_without_utility() -> tuple[bool, str]:
+        review = _reviews([{COL_ANY_HIGH_LEAKED: True, COL_UTILITY_SCORE: None}], leak=0.5, util=0.3)
+        return review == [True], f"not met with no utility, floor set: review={review}"
+
+    c.guard("E16.13", unmet_without_utility)
     return c.lines
