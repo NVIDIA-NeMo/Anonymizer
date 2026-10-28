@@ -309,10 +309,10 @@ def _null(preview: bool) -> Any:
 def test_staged_withheld_rewrite_stays_null_through_repair(tmp_path: Path, preview: bool) -> None:
     result = _scenario(tmp_path, "preview" if preview else "run", False, "mixed")
 
-    # Released staged loop: Alice is repaired, Bob (withheld) is never sent to repair and stays null.
-    assert result["rewritten"] == [_REPAIRED, _null(preview), "Nothing here."]
+    # Staged loop, as main: Alice and Bob (unavailable replacement) are both repaired, and Bob is flagged.
+    assert result["rewritten"] == [_REPAIRED, _REPAIRED, "Nothing here."]
     assert result["needs_human_review"] == [True, True, False]
-    assert result["repair_iterations"][1] == 0
+    assert result["repair_iterations"][1] == 3
     assert result["failed"] == 0
 
 
@@ -369,14 +369,12 @@ def test_all_withheld_batch_completes_like_release(
 ) -> None:
     result = _scenario(tmp_path, "preview" if preview else "run", combined, scenario)
 
-    # As released: the staged loop keeps every withheld rewrite null, while the combined graph
-    # repairs and publishes them when evaluation asks for repair (see the combined test above).
-    published = combined and scenario == "allwithheld-repair"
-    # An all-null preview column stays object (None) under either pandas, as released.
-    assert result["rewritten"] == ([_REPAIRED] * 2 if published else [None if preview else "<NA>"] * 2)
-    # Released dtypes; the released staged run aborted here, so it takes a partially withheld batch's dtype.
-    arrow = "large_string[pyarrow]" if _PANDAS3 and (published or not combined) else "string[pyarrow]"
-    assert result["rewritten_dtype"] == (("str" if _PANDAS3 and published else "object") if preview else arrow)
+    # As main: both schedules keep every unavailable rewrite's generated text, and repair and publish
+    # it when evaluation asks for repair.
+    assert result["rewritten"] == ([_REPAIRED] if scenario == "allwithheld-repair" else ["Jane travels."]) * 2
+    # The rewritten column holds text, so it takes a published batch's dtype.
+    arrow = "large_string[pyarrow]" if _PANDAS3 else "string[pyarrow]"
+    assert result["rewritten_dtype"] == (("str" if _PANDAS3 else "object") if preview else arrow)
     assert result["needs_human_review"] == [True, True]
     assert result["failed"] == 0
 
@@ -384,10 +382,10 @@ def test_all_withheld_batch_completes_like_release(
 def test_all_withheld_preview_beside_passthrough_keeps_release_dtypes(tmp_path: Path) -> None:
     result = _scenario(tmp_path, "preview", False, "allwithheld-passthrough")
 
-    # As released (its staged run aborted on this batch, see above): the withheld rewrites stay null
-    # beside the passthrough record, and preview keeps the released object columns (None cells) under
-    # either pandas: the public rewritten text and the trace baseline, set to None when withheld.
-    assert result["rewritten"] == [None, None, "Nothing here."]
+    # As main: the unavailable rewrites are repaired and published beside the passthrough record, and
+    # preview keeps the released object columns: the public rewritten text and the trace baseline
+    # (None when the replacement is unavailable).
+    assert result["rewritten"] == [_REPAIRED, _REPAIRED, "Nothing here."]
     assert result["rewritten_dtype"] == "object"
     assert result["baseline"] == [None, None, "<NaN>"]
     assert result["baseline_dtype"] == "object"

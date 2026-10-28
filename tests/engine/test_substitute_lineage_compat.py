@@ -332,7 +332,7 @@ def test_rewrite_scalar_schedule_preserves_numeric_value_and_review_flag(
     actual = result.dataframe[COL_REWRITTEN_TEXT].iloc[0]
     if case == "integer":
         assert actual == 42
-        assert isinstance(actual, (int, np.integer) if combined else (float, np.floating))
+        assert isinstance(actual, (int, np.integer))
     else:
         assert pd.isna(actual)
     expected_review = case != "integer" and (review or not combined)
