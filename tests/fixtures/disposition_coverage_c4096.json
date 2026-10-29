@@ -1,0 +1,2527 @@
+[
+ {
+  "row": "r05",
+  "entities_by_value": [
+   {
+    "value": "196 Route 417",
+    "labels": [
+     "street_address"
+    ]
+   },
+   {
+    "value": "33‑year‑old",
+    "labels": [
+     "age"
+    ]
+   },
+   {
+    "value": "Cheryl",
+    "labels": [
+     "first_name"
+    ]
+   },
+   {
+    "value": "Chicago suburbs",
+    "labels": [
+     "place_name"
+    ]
+   },
+   {
+    "value": "Clarendon Hills",
+    "labels": [
+     "city"
+    ]
+   },
+   {
+    "value": "DuPage County Historical Society",
+    "labels": [
+     "organization_name"
+    ]
+   },
+   {
+    "value": "English",
+    "labels": [
+     "language"
+    ]
+   },
+   {
+    "value": "Gray",
+    "labels": [
+     "last_name"
+    ]
+   },
+   {
+    "value": "History",
+    "labels": [
+     "field_of_study"
+    ]
+   },
+   {
+    "value": "Illinois",
+    "labels": [
+     "state"
+    ]
+   },
+   {
+    "value": "Irish American",
+    "labels": [
+     "race_ethnicity"
+    ]
+   },
+   {
+    "value": "Linda",
+    "labels": [
+     "first_name"
+    ]
+   },
+   {
+    "value": "Michael",
+    "labels": [
+     "first_name"
+    ]
+   },
+   {
+    "value": "Midwest History Review",
+    "labels": [
+     "organization_name"
+    ]
+   },
+   {
+    "value": "Robert",
+    "labels": [
+     "first_name"
+    ]
+   },
+   {
+    "value": "Smithsonian",
+    "labels": [
+     "organization_name"
+    ]
+   },
+   {
+    "value": "University of Chicago",
+    "labels": [
+     "university"
+    ]
+   },
+   {
+    "value": "atheist",
+    "labels": [
+     "religious_belief"
+    ]
+   },
+   {
+    "value": "early 20th‑century",
+    "labels": [
+     "date"
+    ]
+   },
+   {
+    "value": "historian",
+    "labels": [
+     "occupation"
+    ]
+   },
+   {
+    "value": "liberal political ideas",
+    "labels": [
+     "political_view"
+    ]
+   },
+   {
+    "value": "research assistant",
+    "labels": [
+     "occupation"
+    ]
+   }
+  ],
+  "latent_entities": [
+   {
+    "label": "gender",
+    "value": "woman"
+   },
+   {
+    "label": "education_level",
+    "value": "likely bachelor's-level degree"
+   }
+  ],
+  "sensitivity_disposition": [
+   {
+    "source": "tagged",
+    "entity_label": "street_address",
+    "entity_value": "196 Route 417",
+    "protection_method_suggestion": "generalize"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "age",
+    "entity_value": "33‑year‑old",
+    "protection_method_suggestion": "generalize"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "first_name",
+    "entity_value": "Cheryl",
+    "protection_method_suggestion": "replace"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "place_name",
+    "entity_value": "Chicago suburbs",
+    "protection_method_suggestion": "generalize"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "city",
+    "entity_value": "Clarendon Hills",
+    "protection_method_suggestion": "generalize"
+   }
+  ],
+  "rewritten_text": "Megan Gray is a historian in her 30s living in a small house in the Midwest. A first-generation Irish American, she grew up reading the local archives with her mother and spent her weekends volunteering at the DuPage County Historical Society. After graduating with honors in History from the University of Chicago, she took a research assistant position at the Smithsonian, where she focuses on early 20th-century urban migration. Megan writes her articles in English and contributes regularly to the regional journal Midwest History Review.\n\nOutside of work, Megan shares a small house with her older brother, Michael, and keeps close ties to her parents, Linda and Robert, who encouraged her passion for the past. She describes herself as an atheist and aligns with liberal political ideas, often participating in community forums about historic preservation. In her free time, she enjoys documenting oral histories from longtime residents of her region, hoping to turn her fieldwork into a book that will highlight the everyday lives of ordinary people."
+ },
+ {
+  "row": "r08",
+  "entities_by_value": [
+   {
+    "value": "2012",
+    "labels": [
+     "date"
+    ]
+   },
+   {
+    "value": "43",
+    "labels": [
+     "age"
+    ]
+   },
+   {
+    "value": "500 E Purdue Dr",
+    "labels": [
+     "street_address"
+    ]
+   },
+   {
+    "value": "BA",
+    "labels": [
+     "degree"
+    ]
+   },
+   {
+    "value": "Bowdoin College Library",
+    "labels": [
+     "organization_name"
+    ]
+   },
+   {
+    "value": "Casco Bay",
+    "labels": [
+     "place_name"
+    ]
+   },
+   {
+    "value": "Catholic",
+    "labels": [
+     "religious_belief"
+    ]
+   },
+   {
+    "value": "English",
+    "labels": [
+     "language"
+    ]
+   },
+   {
+    "value": "Harbor Books",
+    "labels": [
+     "organization_name"
+    ]
+   },
+   {
+    "value": "Hasty",
+    "labels": [
+     "last_name"
+    ]
+   },
+   {
+    "value": "History",
+    "labels": [
+     "field_of_study"
+    ]
+   },
+   {
+    "value": "Irish",
+    "labels": [
+     "race_ethnicity"
+    ]
+   },
+   {
+    "value": "Jonah",
+    "labels": [
+     "first_name"
+    ]
+   },
+   {
+    "value": "Kennebunkport Public Library",
+    "labels": [
+     "organization_name"
+    ]
+   },
+   {
+    "value": "Lily",
+    "labels": [
+     "first_name"
+    ]
+   },
+   {
+    "value": "MLS",
+    "labels": [
+     "degree"
+    ]
+   },
+   {
+    "value": "Maya",
+    "labels": [
+     "first_name"
+    ]
+   },
+   {
+    "value": "Portland Regional Library",
+    "labels": [
+     "organization_name"
+    ]
+   },
+   {
+    "value": "Richard",
+    "labels": [
+     "first_name"
+    ]
+   },
+   {
+    "value": "Simmons College",
+    "labels": [
+     "university"
+    ]
+   },
+   {
+    "value": "University of Maine",
+    "labels": [
+     "university"
+    ]
+   },
+   {
+    "value": "York County",
+    "labels": [
+     "county"
+    ]
+   },
+   {
+    "value": "local history",
+    "labels": [
+     "field_of_study"
+    ]
+   },
+   {
+    "value": "moderate",
+    "labels": [
+     "political_view"
+    ]
+   },
+   {
+    "value": "senior librarian",
+    "labels": [
+     "occupation"
+    ]
+   },
+   {
+    "value": "state historic preservation office",
+    "labels": [
+     "organization_name"
+    ]
+   },
+   {
+    "value": "town council",
+    "labels": [
+     "organization_name"
+    ]
+   }
+  ],
+  "latent_entities": [
+   {
+    "label": "marital_status",
+    "value": "married"
+   },
+   {
+    "label": "gender",
+    "value": "male"
+   }
+  ],
+  "sensitivity_disposition": [
+   {
+    "source": "tagged",
+    "entity_label": "date",
+    "entity_value": "2012",
+    "protection_method_suggestion": "generalize"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "age",
+    "entity_value": "43",
+    "protection_method_suggestion": "generalize"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "street_address",
+    "entity_value": "500 E Purdue Dr",
+    "protection_method_suggestion": "generalize"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "degree",
+    "entity_value": "BA",
+    "protection_method_suggestion": "leave_as_is"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "organization_name",
+    "entity_value": "Bowdoin College Library",
+    "protection_method_suggestion": "generalize"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "place_name",
+    "entity_value": "Casco Bay",
+    "protection_method_suggestion": "generalize"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "religious_belief",
+    "entity_value": "Catholic",
+    "protection_method_suggestion": "leave_as_is"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "language",
+    "entity_value": "English",
+    "protection_method_suggestion": "leave_as_is"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "organization_name",
+    "entity_value": "Harbor Books",
+    "protection_method_suggestion": "generalize"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "last_name",
+    "entity_value": "Hasty",
+    "protection_method_suggestion": "replace"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "first_name",
+    "entity_value": "Jonah",
+    "protection_method_suggestion": "replace"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "organization_name",
+    "entity_value": "Kennebunkport Public Library",
+    "protection_method_suggestion": "generalize"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "first_name",
+    "entity_value": "Lily",
+    "protection_method_suggestion": "replace"
+   }
+  ],
+  "rewritten_text": "Richard Donnelly, in his early 40s, has spent most of his adult life among the stacks of a public library, where he now serves as senior librarian. A native of York County, he grew up speaking English and identifies as Irish. After earning a BA in History from the University of Maine, he completed his MLS at Simmons College, and his early career saw him cataloguing collections at the Portland Regional Library and later at an academic library before returning home in the early 2010s. His keen eye for organization and a love of local history helped him launch the town’s digital archives project, a partnership that involved working with the state historic preservation office and a nonprofit group.\n\nOff the clock, Richard lives locally with his wife, Maya, and their two teenage children, Nora and Declan. A practicing Catholic, he attends Mass on Sundays and volunteers as a literacy tutor for adult learners. Politically, he describes himself as moderate and often contributes to town council discussions about public funding for cultural programs. In his spare time he enjoys sailing on nearby waters, collecting first-edition novels, and organizing the annual summer reading festival that brings together families from across York County."
+ },
+ {
+  "row": "r09",
+  "entities_by_value": [
+   {
+    "value": "2001",
+    "labels": [
+     "date_of_birth"
+    ]
+   },
+   {
+    "value": "25‑year‑old",
+    "labels": [
+     "age"
+    ]
+   },
+   {
+    "value": "481 SW 134 St.",
+    "labels": [
+     "street_address"
+    ]
+   },
+   {
+    "value": "California",
+    "labels": [
+     "state"
+    ]
+   },
+   {
+    "value": "Carlos",
+    "labels": [
+     "first_name"
+    ]
+   },
+   {
+    "value": "Catholic",
+    "labels": [
+     "religious_belief"
+    ]
+   },
+   {
+    "value": "English",
+    "labels": [
+     "language"
+    ]
+   },
+   {
+    "value": "Gulf Coast Construction",
+    "labels": [
+     "company_name"
+    ]
+   },
+   {
+    "value": "Long Beach",
+    "labels": [
+     "city"
+    ]
+   },
+   {
+    "value": "Long Beach City College",
+    "labels": [
+     "university"
+    ]
+   },
+   {
+    "value": "Luis",
+    "labels": [
+     "first_name"
+    ]
+   },
+   {
+    "value": "Maya",
+    "labels": [
+     "first_name"
+    ]
+   },
+   {
+    "value": "Mexican",
+    "labels": [
+     "race_ethnicity"
+    ]
+   },
+   {
+    "value": "Pacific Builders",
+    "labels": [
+     "company_name"
+    ]
+   },
+   {
+    "value": "Rodriguez",
+    "labels": [
+     "last_name"
+    ]
+   },
+   {
+    "value": "Yanely",
+    "labels": [
+     "first_name"
+    ]
+   },
+   {
+    "value": "associate’s degree",
+    "labels": [
+     "degree"
+    ]
+   },
+   {
+    "value": "civil engineering technology",
+    "labels": [
+     "field_of_study"
+    ]
+   },
+   {
+    "value": "construction worker",
+    "labels": [
+     "occupation"
+    ]
+   },
+   {
+    "value": "high school",
+    "labels": [
+     "education_level"
+    ]
+   },
+   {
+    "value": "labor rights",
+    "labels": [
+     "political_view"
+    ]
+   },
+   {
+    "value": "moderate Democrat",
+    "labels": [
+     "political_view"
+    ]
+   }
+  ],
+  "latent_entities": [],
+  "sensitivity_disposition": [
+   {
+    "source": "tagged",
+    "entity_label": "date_of_birth",
+    "entity_value": "2001",
+    "protection_method_suggestion": "leave_as_is"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "age",
+    "entity_value": "25‑year‑old",
+    "protection_method_suggestion": "leave_as_is"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "street_address",
+    "entity_value": "481 SW 134 St.",
+    "protection_method_suggestion": "replace"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "city",
+    "entity_value": "Long Beach",
+    "protection_method_suggestion": "generalize"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "state",
+    "entity_value": "California",
+    "protection_method_suggestion": "leave_as_is"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "first_name",
+    "entity_value": "Yanely",
+    "protection_method_suggestion": "replace"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "last_name",
+    "entity_value": "Rodriguez",
+    "protection_method_suggestion": "replace"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "occupation",
+    "entity_value": "construction worker",
+    "protection_method_suggestion": "leave_as_is"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "race_ethnicity",
+    "entity_value": "Mexican",
+    "protection_method_suggestion": "leave_as_is"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "university",
+    "entity_value": "Long Beach City College",
+    "protection_method_suggestion": "generalize"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "degree",
+    "entity_value": "associate’s degree",
+    "protection_method_suggestion": "leave_as_is"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "field_of_study",
+    "entity_value": "civil engineering technology",
+    "protection_method_suggestion": "leave_as_is"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "company_name",
+    "entity_value": "Gulf Coast Construction",
+    "protection_method_suggestion": "generalize"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "company_name",
+    "entity_value": "Pacific Builders",
+    "protection_method_suggestion": "generalize"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "language",
+    "entity_value": "English",
+    "protection_method_suggestion": "leave_as_is"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "religious_belief",
+    "entity_value": "Catholic",
+    "protection_method_suggestion": "leave_as_is"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "first_name",
+    "entity_value": "Carlos",
+    "protection_method_suggestion": "replace"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "first_name",
+    "entity_value": "Maya",
+    "protection_method_suggestion": "replace"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "first_name",
+    "entity_value": "Luis",
+    "protection_method_suggestion": "replace"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "education_level",
+    "entity_value": "high school",
+    "protection_method_suggestion": "leave_as_is"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "political_view",
+    "entity_value": "moderate Democrat",
+    "protection_method_suggestion": "leave_as_is"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "political_view",
+    "entity_value": "labor rights",
+    "protection_method_suggestion": "leave_as_is"
+   }
+  ]
+ },
+ {
+  "row": "r13",
+  "entities_by_value": [
+   {
+    "value": "35 years",
+    "labels": [
+     "marriage_duration"
+    ]
+   },
+   {
+    "value": "61",
+    "labels": [
+     "age"
+    ]
+   },
+   {
+    "value": "7 Mounds Rd",
+    "labels": [
+     "street_address"
+    ]
+   },
+   {
+    "value": "Appalachian Trail",
+    "labels": [
+     "place_name"
+    ]
+   },
+   {
+    "value": "B.S.",
+    "labels": [
+     "degree"
+    ]
+   },
+   {
+    "value": "Chicago",
+    "labels": [
+     "city"
+    ]
+   },
+   {
+    "value": "Christian church",
+    "labels": [
+     "religious_belief"
+    ]
+   },
+   {
+    "value": "Coopersburg",
+    "labels": [
+     "city"
+    ]
+   },
+   {
+    "value": "Emily",
+    "labels": [
+     "first_name"
+    ]
+   },
+   {
+    "value": "English",
+    "labels": [
+     "language"
+    ]
+   },
+   {
+    "value": "IBM",
+    "labels": [
+     "company_name"
+    ]
+   },
+   {
+    "value": "Irish American",
+    "labels": [
+     "nationality"
+    ]
+   },
+   {
+    "value": "Linda",
+    "labels": [
+     "first_name"
+    ]
+   },
+   {
+    "value": "London",
+    "labels": [
+     "city"
+    ]
+   },
+   {
+    "value": "Meridian Data Solutions",
+    "labels": [
+     "company_name"
+    ]
+   },
+   {
+    "value": "Michael",
+    "labels": [
+     "first_name"
+    ]
+   },
+   {
+    "value": "Penn State",
+    "labels": [
+     "university"
+    ]
+   },
+   {
+    "value": "Pennsylvania",
+    "labels": [
+     "state"
+    ]
+   },
+   {
+    "value": "Pfizer",
+    "labels": [
+     "company_name"
+    ]
+   },
+   {
+    "value": "Ph.D.",
+    "labels": [
+     "degree"
+    ]
+   },
+   {
+    "value": "Shane",
+    "labels": [
+     "first_name"
+    ]
+   },
+   {
+    "value": "University of Pennsylvania",
+    "labels": [
+     "university"
+    ]
+   },
+   {
+    "value": "Wile",
+    "labels": [
+     "last_name"
+    ]
+   },
+   {
+    "value": "engineer",
+    "labels": [
+     "occupation"
+    ]
+   },
+   {
+    "value": "mathematics",
+    "labels": [
+     "field_of_study"
+    ]
+   },
+   {
+    "value": "moderate",
+    "labels": [
+     "political_view"
+    ]
+   },
+   {
+    "value": "statistician",
+    "labels": [
+     "occupation"
+    ]
+   },
+   {
+    "value": "statistics",
+    "labels": [
+     "field_of_study"
+    ]
+   },
+   {
+    "value": "teacher",
+    "labels": [
+     "occupation"
+    ]
+   },
+   {
+    "value": "three grandchildren",
+    "labels": [
+     "family_count"
+    ]
+   }
+  ],
+  "latent_entities": [
+   {
+    "label": "gender",
+    "value": "male"
+   },
+   {
+    "label": "education_level",
+    "value": "doctoral-level education"
+   },
+   {
+    "label": "professional_role",
+    "value": "leader of a healthcare predictive-analytics team"
+   }
+  ],
+  "sensitivity_disposition": [
+   {
+    "source": "tagged",
+    "entity_label": "marriage_duration",
+    "entity_value": "35 years",
+    "protection_method_suggestion": "generalize"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "age",
+    "entity_value": "61",
+    "protection_method_suggestion": "generalize"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "street_address",
+    "entity_value": "7 Mounds Rd",
+    "protection_method_suggestion": "remove"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "place_name",
+    "entity_value": "Appalachian Trail",
+    "protection_method_suggestion": "leave_as_is"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "degree",
+    "entity_value": "B.S.",
+    "protection_method_suggestion": "leave_as_is"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "city",
+    "entity_value": "Chicago",
+    "protection_method_suggestion": "leave_as_is"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "religious_belief",
+    "entity_value": "Christian church",
+    "protection_method_suggestion": "leave_as_is"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "city",
+    "entity_value": "Coopersburg",
+    "protection_method_suggestion": "generalize"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "first_name",
+    "entity_value": "Emily",
+    "protection_method_suggestion": "replace"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "language",
+    "entity_value": "English",
+    "protection_method_suggestion": "leave_as_is"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "company_name",
+    "entity_value": "IBM",
+    "protection_method_suggestion": "generalize"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "nationality",
+    "entity_value": "Irish American",
+    "protection_method_suggestion": "leave_as_is"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "first_name",
+    "entity_value": "Linda",
+    "protection_method_suggestion": "replace"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "city",
+    "entity_value": "London",
+    "protection_method_suggestion": "leave_as_is"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "company_name",
+    "entity_value": "Meridian Data Solutions",
+    "protection_method_suggestion": "generalize"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "first_name",
+    "entity_value": "Michael",
+    "protection_method_suggestion": "replace"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "university",
+    "entity_value": "Penn State",
+    "protection_method_suggestion": "generalize"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "state",
+    "entity_value": "Pennsylvania",
+    "protection_method_suggestion": "leave_as_is"
+   }
+  ]
+ },
+ {
+  "row": "r14",
+  "entities_by_value": [
+   {
+    "value": "165 United States Highway 701 South",
+    "labels": [
+     "street_address"
+    ]
+   },
+   {
+    "value": "52‑year‑old",
+    "labels": [
+     "age"
+    ]
+   },
+   {
+    "value": "Anne",
+    "labels": [
+     "first_name"
+    ]
+   },
+   {
+    "value": "Christian",
+    "labels": [
+     "religious_belief"
+    ]
+   },
+   {
+    "value": "Democrat",
+    "labels": [
+     "political_view"
+    ]
+   },
+   {
+    "value": "English",
+    "labels": [
+     "language"
+    ]
+   },
+   {
+    "value": "German American",
+    "labels": [
+     "nationality"
+    ]
+   },
+   {
+    "value": "Harvard",
+    "labels": [
+     "university"
+    ]
+   },
+   {
+    "value": "History",
+    "labels": [
+     "field_of_study"
+    ]
+   },
+   {
+    "value": "Johnson",
+    "labels": [
+     "last_name"
+    ]
+   },
+   {
+    "value": "Mark",
+    "labels": [
+     "first_name"
+    ]
+   },
+   {
+    "value": "Midwest",
+    "labels": [
+     "place_name"
+    ]
+   },
+   {
+    "value": "Midwestern labor movements",
+    "labels": [
+     "field_of_study"
+    ]
+   },
+   {
+    "value": "Milwaukee",
+    "labels": [
+     "city"
+    ]
+   },
+   {
+    "value": "PhD",
+    "labels": [
+     "degree"
+    ]
+   },
+   {
+    "value": "University of Wisconsin–Madison",
+    "labels": [
+     "university"
+    ]
+   },
+   {
+    "value": "Wisconsin",
+    "labels": [
+     "state"
+    ]
+   },
+   {
+    "value": "Wisconsin Historical Society",
+    "labels": [
+     "organization_name"
+    ]
+   },
+   {
+    "value": "bachelor’s degree",
+    "labels": [
+     "degree"
+    ]
+   },
+   {
+    "value": "historian",
+    "labels": [
+     "occupation"
+    ]
+   },
+   {
+    "value": "senior researcher",
+    "labels": [
+     "occupation"
+    ]
+   },
+   {
+    "value": "teenagers",
+    "labels": [
+     "age"
+    ]
+   }
+  ],
+  "latent_entities": [
+   {
+    "label": "marital_status",
+    "value": "married"
+   },
+   {
+    "label": "parental_status",
+    "value": "parent of two teenagers"
+   }
+  ],
+  "sensitivity_disposition": [
+   {
+    "source": "tagged",
+    "entity_label": "street_address",
+    "entity_value": "165 United States Highway 701 South",
+    "protection_method_suggestion": "remove"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "age",
+    "entity_value": "52‑year‑old",
+    "protection_method_suggestion": "generalize"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "first_name",
+    "entity_value": "Anne",
+    "protection_method_suggestion": "replace"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "religious_belief",
+    "entity_value": "Christian",
+    "protection_method_suggestion": "leave_as_is"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "political_view",
+    "entity_value": "Democrat",
+    "protection_method_suggestion": "leave_as_is"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "language",
+    "entity_value": "English",
+    "protection_method_suggestion": "leave_as_is"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "nationality",
+    "entity_value": "German American",
+    "protection_method_suggestion": "leave_as_is"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "university",
+    "entity_value": "Harvard",
+    "protection_method_suggestion": "generalize"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "field_of_study",
+    "entity_value": "History",
+    "protection_method_suggestion": "leave_as_is"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "last_name",
+    "entity_value": "Johnson",
+    "protection_method_suggestion": "replace"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "first_name",
+    "entity_value": "Mark",
+    "protection_method_suggestion": "replace"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "place_name",
+    "entity_value": "Midwest",
+    "protection_method_suggestion": "leave_as_is"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "field_of_study",
+    "entity_value": "Midwestern labor movements",
+    "protection_method_suggestion": "generalize"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "city",
+    "entity_value": "Milwaukee",
+    "protection_method_suggestion": "generalize"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "degree",
+    "entity_value": "PhD",
+    "protection_method_suggestion": "leave_as_is"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "university",
+    "entity_value": "University of Wisconsin–Madison",
+    "protection_method_suggestion": "generalize"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "state",
+    "entity_value": "Wisconsin",
+    "protection_method_suggestion": "generalize"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "organization_name",
+    "entity_value": "Wisconsin Historical Society",
+    "protection_method_suggestion": "generalize"
+   }
+  ]
+ },
+ {
+  "row": "r16",
+  "entities_by_value": [
+   {
+    "value": "69‑year‑old",
+    "labels": [
+     "age"
+    ]
+   },
+   {
+    "value": "89 Prairie Ln",
+    "labels": [
+     "street_address"
+    ]
+   },
+   {
+    "value": "BA",
+    "labels": [
+     "degree"
+    ]
+   },
+   {
+    "value": "Buddhist",
+    "labels": [
+     "religious_belief"
+    ]
+   },
+   {
+    "value": "Columbia University",
+    "labels": [
+     "university"
+    ]
+   },
+   {
+    "value": "East River Press",
+    "labels": [
+     "company_name"
+    ]
+   },
+   {
+    "value": "English",
+    "labels": [
+     "field_of_study"
+    ]
+   },
+   {
+    "value": "Flushing",
+    "labels": [
+     "city"
+    ]
+   },
+   {
+    "value": "Ladda",
+    "labels": [
+     "first_name"
+    ]
+   },
+   {
+    "value": "MA",
+    "labels": [
+     "degree"
+    ]
+   },
+   {
+    "value": "New York City",
+    "labels": [
+     "city"
+    ]
+   },
+   {
+    "value": "Penguin Random House",
+    "labels": [
+     "company_name"
+    ]
+   },
+   {
+    "value": "Publishing",
+    "labels": [
+     "field_of_study"
+    ]
+   },
+   {
+    "value": "Queens",
+    "labels": [
+     "county"
+    ]
+   },
+   {
+    "value": "Republican",
+    "labels": [
+     "political_view"
+    ]
+   },
+   {
+    "value": "Somchai",
+    "labels": [
+     "first_name"
+    ]
+   },
+   {
+    "value": "The New York Times",
+    "labels": [
+     "company_name"
+    ]
+   },
+   {
+    "value": "United States",
+    "labels": [
+     "country"
+    ]
+   },
+   {
+    "value": "University of California, Los Angeles",
+    "labels": [
+     "university"
+    ]
+   },
+   {
+    "value": "Vongpradit",
+    "labels": [
+     "last_name"
+    ]
+   },
+   {
+    "value": "copy editor",
+    "labels": [
+     "occupation"
+    ]
+   },
+   {
+    "value": "investigative journalism",
+    "labels": [
+     "field_of_study"
+    ]
+   },
+   {
+    "value": "media ethics",
+    "labels": [
+     "field_of_study"
+    ]
+   },
+   {
+    "value": "publishing",
+    "labels": [
+     "field_of_study"
+    ]
+   },
+   {
+    "value": "senior editor",
+    "labels": [
+     "occupation"
+    ]
+   }
+  ],
+  "latent_entities": [
+   {
+    "label": "gender",
+    "value": "male"
+   },
+   {
+    "label": "marital_status",
+    "value": "married"
+   }
+  ],
+  "sensitivity_disposition": [
+   {
+    "source": "tagged",
+    "entity_label": "age",
+    "entity_value": "69‑year‑old",
+    "protection_method_suggestion": "generalize"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "street_address",
+    "entity_value": "89 Prairie Ln",
+    "protection_method_suggestion": "replace"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "degree",
+    "entity_value": "BA",
+    "protection_method_suggestion": "leave_as_is"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "religious_belief",
+    "entity_value": "Buddhist",
+    "protection_method_suggestion": "leave_as_is"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "university",
+    "entity_value": "Columbia University",
+    "protection_method_suggestion": "generalize"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "company_name",
+    "entity_value": "East River Press",
+    "protection_method_suggestion": "generalize"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "field_of_study",
+    "entity_value": "English",
+    "protection_method_suggestion": "leave_as_is"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "city",
+    "entity_value": "Flushing",
+    "protection_method_suggestion": "generalize"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "first_name",
+    "entity_value": "Ladda",
+    "protection_method_suggestion": "replace"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "degree",
+    "entity_value": "MA",
+    "protection_method_suggestion": "leave_as_is"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "city",
+    "entity_value": "New York City",
+    "protection_method_suggestion": "leave_as_is"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "company_name",
+    "entity_value": "Penguin Random House",
+    "protection_method_suggestion": "generalize"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "field_of_study",
+    "entity_value": "Publishing",
+    "protection_method_suggestion": "leave_as_is"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "county",
+    "entity_value": "Queens",
+    "protection_method_suggestion": "generalize"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "political_view",
+    "entity_value": "Republican",
+    "protection_method_suggestion": "leave_as_is"
+   }
+  ],
+  "rewritten_text": "Somchai Vongpradit is a senior editor in his late sixties who splits his time between his home at 42 Maple Ct in the New York metropolitan area and the bustling newsrooms of New York City. After earning a BA in English from the University of California, Los Angeles, and an MA in Publishing from a university, he began his career as a copy editor at The New York Times before moving on to a long stint at a major publishing house, where he helped shape dozens of nonfiction titles. He now leads the editorial team at a small publishing house, guiding new voices and overseeing the final polish of manuscripts that range from memoirs to investigative journalism.\n\nOutside the office, Somchai is a devoted Buddhist and an active member of his local temple, where he volunteers to teach writing workshops to youth. A lifelong Republican, he frequently writes op-eds on media ethics and free speech. He and his wife, Pim, have raised three children—two daughters and a son—who live throughout the United States, and they enjoy regular visits from six grandchildren who love hearing stories about his early days in the industry."
+ },
+ {
+  "row": "r18",
+  "entities_by_value": [
+   {
+    "value": "53 County Road N5578",
+    "labels": [
+     "street_address"
+    ]
+   },
+   {
+    "value": "65‑year‑old",
+    "labels": [
+     "age"
+    ]
+   },
+   {
+    "value": "Amir",
+    "labels": [
+     "last_name"
+    ]
+   },
+   {
+    "value": "Coastal Custom Woodworks",
+    "labels": [
+     "company_name"
+    ]
+   },
+   {
+    "value": "Collier County",
+    "labels": [
+     "county"
+    ]
+   },
+   {
+    "value": "Everglades",
+    "labels": [
+     "place_name"
+    ]
+   },
+   {
+    "value": "Everglades Carpentry",
+    "labels": [
+     "company_name"
+    ]
+   },
+   {
+    "value": "Florida",
+    "labels": [
+     "state"
+    ]
+   },
+   {
+    "value": "Gulf",
+    "labels": [
+     "place_name"
+    ]
+   },
+   {
+    "value": "Gulf Coast Builders",
+    "labels": [
+     "company_name"
+    ]
+   },
+   {
+    "value": "Iranian American",
+    "labels": [
+     "nationality"
+    ]
+   },
+   {
+    "value": "Kian",
+    "labels": [
+     "first_name"
+    ]
+   },
+   {
+    "value": "Laleh",
+    "labels": [
+     "first_name"
+    ]
+   },
+   {
+    "value": "Muslim",
+    "labels": [
+     "religious_belief"
+    ]
+   },
+   {
+    "value": "Naples",
+    "labels": [
+     "city"
+    ]
+   },
+   {
+    "value": "Reza",
+    "labels": [
+     "first_name"
+    ]
+   },
+   {
+    "value": "Sara",
+    "labels": [
+     "first_name"
+    ]
+   },
+   {
+    "value": "Tehran",
+    "labels": [
+     "city"
+    ]
+   },
+   {
+    "value": "University of Florida",
+    "labels": [
+     "university"
+    ]
+   },
+   {
+    "value": "associate’s degree",
+    "labels": [
+     "degree"
+    ]
+   },
+   {
+    "value": "carpenter",
+    "labels": [
+     "occupation"
+    ]
+   },
+   {
+    "value": "construction technology",
+    "labels": [
+     "field_of_study"
+    ]
+   },
+   {
+    "value": "environmental stewardship",
+    "labels": [
+     "political_view"
+    ]
+   },
+   {
+    "value": "progressive",
+    "labels": [
+     "political_view"
+    ]
+   },
+   {
+    "value": "workers’ rights",
+    "labels": [
+     "political_view"
+    ]
+   }
+  ],
+  "latent_entities": [
+   {
+    "label": "marital_status",
+    "value": "married"
+   }
+  ],
+  "sensitivity_disposition": [
+   {
+    "source": "tagged",
+    "entity_label": "street_address",
+    "entity_value": "53 County Road N5578",
+    "protection_method_suggestion": "replace"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "age",
+    "entity_value": "65‑year‑old",
+    "protection_method_suggestion": "generalize"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "last_name",
+    "entity_value": "Amir",
+    "protection_method_suggestion": "replace"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "company_name",
+    "entity_value": "Coastal Custom Woodworks",
+    "protection_method_suggestion": "generalize"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "county",
+    "entity_value": "Collier County",
+    "protection_method_suggestion": "generalize"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "place_name",
+    "entity_value": "Everglades",
+    "protection_method_suggestion": "leave_as_is"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "company_name",
+    "entity_value": "Everglades Carpentry",
+    "protection_method_suggestion": "generalize"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "state",
+    "entity_value": "Florida",
+    "protection_method_suggestion": "generalize"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "place_name",
+    "entity_value": "Gulf",
+    "protection_method_suggestion": "leave_as_is"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "company_name",
+    "entity_value": "Gulf Coast Builders",
+    "protection_method_suggestion": "generalize"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "nationality",
+    "entity_value": "Iranian American",
+    "protection_method_suggestion": "leave_as_is"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "first_name",
+    "entity_value": "Kian",
+    "protection_method_suggestion": "replace"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "first_name",
+    "entity_value": "Laleh",
+    "protection_method_suggestion": "replace"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "religious_belief",
+    "entity_value": "Muslim",
+    "protection_method_suggestion": "leave_as_is"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "city",
+    "entity_value": "Naples",
+    "protection_method_suggestion": "generalize"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "first_name",
+    "entity_value": "Reza",
+    "protection_method_suggestion": "replace"
+   }
+  ],
+  "rewritten_text": "Farid Rahimi is an experienced carpenter who lives in a coastal community in the southeastern United States. An Iranian American, he grew up hearing stories of his grandparents’ craft in Tehran and turned that heritage into a lifelong love of woodwork. After earning an associate’s degree in construction technology from the University of Florida, Farid began his career with a construction firm, later moving to a custom woodworking firm where he helped design and restore dozens of homes along the Gulf. He now runs his own carpentry shop, specializing in handmade furniture and historic renovation projects.\n\nFarid is a Muslim and a progressive who votes for candidates who support workers’ rights and environmental stewardship. He shares his home with his wife, Parisa, and their two adult children, Sara and Arman, who occasionally join him in the workshop on weekends. When he isn’t shaping oak or pine, Farid enjoys fishing in the Everglades and volunteering at the local community garden, where he mentors younger craftsmen and promotes sustainable building practices."
+ },
+ {
+  "row": "r20",
+  "entities_by_value": [
+   {
+    "value": "248 Beach Lane",
+    "labels": [
+     "street_address"
+    ]
+   },
+   {
+    "value": "57",
+    "labels": [
+     "age"
+    ]
+   },
+   {
+    "value": "Anita",
+    "labels": [
+     "first_name"
+    ]
+   },
+   {
+    "value": "Arjun",
+    "labels": [
+     "first_name"
+    ]
+   },
+   {
+    "value": "Bachelor of Arts",
+    "labels": [
+     "degree"
+    ]
+   },
+   {
+    "value": "Business",
+    "labels": [
+     "field_of_study"
+    ]
+   },
+   {
+    "value": "California",
+    "labels": [
+     "state"
+    ]
+   },
+   {
+    "value": "Coldwell Banker",
+    "labels": [
+     "company_name"
+    ]
+   },
+   {
+    "value": "Hindu",
+    "labels": [
+     "religious_belief"
+    ]
+   },
+   {
+    "value": "Indian American",
+    "labels": [
+     "nationality"
+    ]
+   },
+   {
+    "value": "Keller Williams",
+    "labels": [
+     "company_name"
+    ]
+   },
+   {
+    "value": "La Mesa",
+    "labels": [
+     "city"
+    ]
+   },
+   {
+    "value": "Maya",
+    "labels": [
+     "first_name"
+    ]
+   },
+   {
+    "value": "Patel",
+    "labels": [
+     "last_name"
+    ]
+   },
+   {
+    "value": "Raj",
+    "labels": [
+     "first_name"
+    ]
+   },
+   {
+    "value": "Republican",
+    "labels": [
+     "political_view"
+    ]
+   },
+   {
+    "value": "San Diego County",
+    "labels": [
+     "county"
+    ]
+   },
+   {
+    "value": "San Diego State University",
+    "labels": [
+     "university"
+    ]
+   },
+   {
+    "value": "Southern California",
+    "labels": [
+     "place_name"
+    ]
+   },
+   {
+    "value": "real estate agent",
+    "labels": [
+     "occupation"
+    ]
+   },
+   {
+    "value": "retired engineer",
+    "labels": [
+     "occupation"
+    ]
+   }
+  ],
+  "latent_entities": [
+   {
+    "label": "marital_status",
+    "value": "married"
+   }
+  ],
+  "sensitivity_disposition": [
+   {
+    "source": "tagged",
+    "entity_label": "street_address",
+    "entity_value": "248 Beach Lane",
+    "protection_method_suggestion": "replace"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "age",
+    "entity_value": "57",
+    "protection_method_suggestion": "generalize"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "first_name",
+    "entity_value": "Anita",
+    "protection_method_suggestion": "replace"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "first_name",
+    "entity_value": "Arjun",
+    "protection_method_suggestion": "replace"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "degree",
+    "entity_value": "Bachelor of Arts",
+    "protection_method_suggestion": "leave_as_is"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "field_of_study",
+    "entity_value": "Business",
+    "protection_method_suggestion": "leave_as_is"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "state",
+    "entity_value": "California",
+    "protection_method_suggestion": "leave_as_is"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "company_name",
+    "entity_value": "Coldwell Banker",
+    "protection_method_suggestion": "generalize"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "religious_belief",
+    "entity_value": "Hindu",
+    "protection_method_suggestion": "leave_as_is"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "nationality",
+    "entity_value": "Indian American",
+    "protection_method_suggestion": "leave_as_is"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "company_name",
+    "entity_value": "Keller Williams",
+    "protection_method_suggestion": "generalize"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "city",
+    "entity_value": "La Mesa",
+    "protection_method_suggestion": "generalize"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "first_name",
+    "entity_value": "Maya",
+    "protection_method_suggestion": "replace"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "last_name",
+    "entity_value": "Patel",
+    "protection_method_suggestion": "replace"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "first_name",
+    "entity_value": "Raj",
+    "protection_method_suggestion": "replace"
+   }
+  ]
+ },
+ {
+  "row": "r22",
+  "entities_by_value": [
+   {
+    "value": "174 Southside Dr",
+    "labels": [
+     "street_address"
+    ]
+   },
+   {
+    "value": "5th Avenue",
+    "labels": [
+     "street_address"
+    ]
+   },
+   {
+    "value": "62‑year‑old",
+    "labels": [
+     "age"
+    ]
+   },
+   {
+    "value": "Arizona",
+    "labels": [
+     "state"
+    ]
+   },
+   {
+    "value": "Carl",
+    "labels": [
+     "first_name"
+    ]
+   },
+   {
+    "value": "Denise",
+    "labels": [
+     "first_name"
+    ]
+   },
+   {
+    "value": "Desert Rose Bar",
+    "labels": [
+     "company_name"
+    ]
+   },
+   {
+    "value": "Elixir Lounge",
+    "labels": [
+     "company_name"
+    ]
+   },
+   {
+    "value": "James",
+    "labels": [
+     "first_name"
+    ]
+   },
+   {
+    "value": "Johnson",
+    "labels": [
+     "last_name"
+    ]
+   },
+   {
+    "value": "Mildred",
+    "labels": [
+     "first_name"
+    ]
+   },
+   {
+    "value": "Protestant",
+    "labels": [
+     "religious_belief"
+    ]
+   },
+   {
+    "value": "Sun Dial Bar",
+    "labels": [
+     "company_name"
+    ]
+   },
+   {
+    "value": "Tucson",
+    "labels": [
+     "city"
+    ]
+   },
+   {
+    "value": "University of Arizona",
+    "labels": [
+     "university"
+    ]
+   },
+   {
+    "value": "associate’s degree",
+    "labels": [
+     "degree"
+    ]
+   },
+   {
+    "value": "bartender",
+    "labels": [
+     "occupation"
+    ]
+   },
+   {
+    "value": "high school",
+    "labels": [
+     "education_level"
+    ]
+   },
+   {
+    "value": "hospitality",
+    "labels": [
+     "field_of_study"
+    ]
+   },
+   {
+    "value": "moderate",
+    "labels": [
+     "political_view"
+    ]
+   },
+   {
+    "value": "three years ago",
+    "labels": [
+     "date"
+    ]
+   }
+  ],
+  "latent_entities": [
+   {
+    "label": "marital_status",
+    "value": "widowed"
+   },
+   {
+    "label": "gender",
+    "value": "woman"
+   }
+  ],
+  "sensitivity_disposition": [
+   {
+    "source": "tagged",
+    "entity_label": "first_name",
+    "entity_value": "Mildred",
+    "protection_method_suggestion": "replace"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "last_name",
+    "entity_value": "Johnson",
+    "protection_method_suggestion": "replace"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "age",
+    "entity_value": "62‑year‑old",
+    "protection_method_suggestion": "generalize"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "city",
+    "entity_value": "Tucson",
+    "protection_method_suggestion": "generalize"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "state",
+    "entity_value": "Arizona",
+    "protection_method_suggestion": "leave_as_is"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "company_name",
+    "entity_value": "Sun Dial Bar",
+    "protection_method_suggestion": "generalize"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "street_address",
+    "entity_value": "5th Avenue",
+    "protection_method_suggestion": "leave_as_is"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "company_name",
+    "entity_value": "Elixir Lounge",
+    "protection_method_suggestion": "generalize"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "company_name",
+    "entity_value": "Desert Rose Bar",
+    "protection_method_suggestion": "generalize"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "degree",
+    "entity_value": "associate’s degree",
+    "protection_method_suggestion": "leave_as_is"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "field_of_study",
+    "entity_value": "hospitality",
+    "protection_method_suggestion": "leave_as_is"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "university",
+    "entity_value": "University of Arizona",
+    "protection_method_suggestion": "generalize"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "religious_belief",
+    "entity_value": "Protestant",
+    "protection_method_suggestion": "leave_as_is"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "political_view",
+    "entity_value": "moderate",
+    "protection_method_suggestion": "leave_as_is"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "street_address",
+    "entity_value": "174 Southside Dr",
+    "protection_method_suggestion": "replace"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "education_level",
+    "entity_value": "high school",
+    "protection_method_suggestion": "leave_as_is"
+   }
+  ]
+ },
+ {
+  "row": "r23",
+  "entities_by_value": [
+   {
+    "value": "189 Slash Pine Ct",
+    "labels": [
+     "street_address"
+    ]
+   },
+   {
+    "value": "95320",
+    "labels": [
+     "postcode"
+    ]
+   },
+   {
+    "value": "Atsa",
+    "labels": [
+     "first_name"
+    ]
+   },
+   {
+    "value": "CA",
+    "labels": [
+     "state"
+    ]
+   },
+   {
+    "value": "Catholic faith",
+    "labels": [
+     "religious_belief"
+    ]
+   },
+   {
+    "value": "Central Valley",
+    "labels": [
+     "place_name"
+    ]
+   },
+   {
+    "value": "Escalon",
+    "labels": [
+     "city"
+    ]
+   },
+   {
+    "value": "John",
+    "labels": [
+     "first_name"
+    ]
+   },
+   {
+    "value": "June 3 1953",
+    "labels": [
+     "date_of_birth"
+    ]
+   },
+   {
+    "value": "Lily",
+    "labels": [
+     "first_name"
+    ]
+   },
+   {
+    "value": "Michael",
+    "labels": [
+     "first_name"
+    ]
+   },
+   {
+    "value": "Modesto",
+    "labels": [
+     "city"
+    ]
+   },
+   {
+    "value": "Navajo",
+    "labels": [
+     "race_ethnicity"
+    ]
+   },
+   {
+    "value": "Navajo reservation",
+    "labels": [
+     "place_name"
+    ]
+   },
+   {
+    "value": "San Joaquin County",
+    "labels": [
+     "county"
+    ]
+   },
+   {
+    "value": "Sutter Medical Center",
+    "labels": [
+     "organization_name"
+    ]
+   },
+   {
+    "value": "Trinity Health",
+    "labels": [
+     "organization_name"
+    ]
+   },
+   {
+    "value": "University of California, Davis",
+    "labels": [
+     "university"
+    ]
+   },
+   {
+    "value": "Yazzie",
+    "labels": [
+     "last_name"
+    ]
+   },
+   {
+    "value": "Yuba City",
+    "labels": [
+     "city"
+    ]
+   },
+   {
+    "value": "full‑time",
+    "labels": [
+     "employment_status"
+    ]
+   },
+   {
+    "value": "libertarian views",
+    "labels": [
+     "political_view"
+    ]
+   },
+   {
+    "value": "nurse",
+    "labels": [
+     "occupation"
+    ]
+   },
+   {
+    "value": "nursing",
+    "labels": [
+     "field_of_study"
+    ]
+   },
+   {
+    "value": "part‑time",
+    "labels": [
+     "employment_status"
+    ]
+   },
+   {
+    "value": "retired",
+    "labels": [
+     "employment_status"
+    ]
+   },
+   {
+    "value": "sixties",
+    "labels": [
+     "age"
+    ]
+   }
+  ],
+  "latent_entities": [
+   {
+    "label": "marital_status",
+    "value": "married"
+   },
+   {
+    "label": "gender",
+    "value": "woman"
+   }
+  ],
+  "sensitivity_disposition": [
+   {
+    "source": "tagged",
+    "entity_label": "street_address",
+    "entity_value": "189 Slash Pine Ct",
+    "protection_method_suggestion": "replace"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "postcode",
+    "entity_value": "95320",
+    "protection_method_suggestion": "generalize"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "first_name",
+    "entity_value": "Atsa",
+    "protection_method_suggestion": "replace"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "state",
+    "entity_value": "CA",
+    "protection_method_suggestion": "leave_as_is"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "religious_belief",
+    "entity_value": "Catholic faith",
+    "protection_method_suggestion": "leave_as_is"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "place_name",
+    "entity_value": "Central Valley",
+    "protection_method_suggestion": "leave_as_is"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "city",
+    "entity_value": "Escalon",
+    "protection_method_suggestion": "generalize"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "first_name",
+    "entity_value": "John",
+    "protection_method_suggestion": "replace"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "date_of_birth",
+    "entity_value": "June 3 1953",
+    "protection_method_suggestion": "replace"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "first_name",
+    "entity_value": "Lily",
+    "protection_method_suggestion": "replace"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "first_name",
+    "entity_value": "Michael",
+    "protection_method_suggestion": "replace"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "city",
+    "entity_value": "Modesto",
+    "protection_method_suggestion": "generalize"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "race_ethnicity",
+    "entity_value": "Navajo",
+    "protection_method_suggestion": "generalize"
+   },
+   {
+    "source": "tagged",
+    "entity_label": "place_name",
+    "entity_value": "Navajo reservation",
+    "protection_method_suggestion": "generalize"
+   }
+  ]
+ }
+]

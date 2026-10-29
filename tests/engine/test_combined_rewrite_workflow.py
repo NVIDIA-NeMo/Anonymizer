@@ -70,6 +70,7 @@ def _deterministic_evaluation_column(state: EvaluationState) -> CustomColumnConf
         state.leakage_mass,
         state.weighted_leakage_rate,
         state.any_high_leaked,
+        state.retained,
         state.needs_repair,
     ]
 
@@ -87,6 +88,7 @@ def _deterministic_evaluation_column(state: EvaluationState) -> CustomColumnConf
         row[state.leakage_mass] = 1.0 if needs_repair else 0.0
         row[state.weighted_leakage_rate] = 1.0 if needs_repair else 0.0
         row[state.any_high_leaked] = needs_repair
+        row[state.retained] = []
         row[state.needs_repair] = needs_repair
         return row
 
