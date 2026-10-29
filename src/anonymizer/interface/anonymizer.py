@@ -3,14 +3,16 @@
 
 from __future__ import annotations
 
+import inspect
 import logging
 import os
 import re
 import time
 import uuid
 from collections import Counter
+from collections.abc import Callable
 from pathlib import Path
-from typing import TYPE_CHECKING, Protocol, TypeGuard, cast
+from typing import TYPE_CHECKING, Protocol, TypedDict, TypeGuard, cast
 
 from data_designer.config.models import ModelProvider
 from data_designer.config.run_config import RunConfig
@@ -146,6 +148,35 @@ def _initialize_logging() -> None:
     configure_logging()
 
 
+class _DetectionExampleKwargs(TypedDict, total=False):
+    entity_label_examples: dict[str, list[str]]
+
+
+def _accepts_entity_label_examples(method: Callable[..., object]) -> bool:
+    """Check keyword support; preserve forwarding when a callable cannot be inspected."""
+    try:
+        parameters = inspect.signature(method).parameters
+    except (TypeError, ValueError):
+        return True
+    parameter = parameters.get("entity_label_examples")
+    return any(parameter.kind is inspect.Parameter.VAR_KEYWORD for parameter in parameters.values()) or (
+        parameter is not None
+        and parameter.kind in (inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY)
+    )
+
+
+def _detection_example_kwargs(method: Callable[..., object], examples: dict[str, list[str]]) -> _DetectionExampleKwargs:
+    """Adapt pre-#275 detectors without dropping explicitly configured examples."""
+    if _accepts_entity_label_examples(method):
+        return {"entity_label_examples": examples}
+    if examples:
+        raise InvalidConfigError(
+            "The configured detection_workflow does not accept entity_label_examples. "
+            "Update the workflow to accept this keyword or remove detect.entity_label_examples."
+        )
+    return {}
+
+
 class Anonymizer:
     """Public facade for anonymization workflows."""
 
@@ -178,7 +209,10 @@ class Anonymizer:
                 applied to the Anonymizer-managed or caller-supplied DataDesigner
                 instance. Use this for DataDesigner execution knobs such as
                 ``buffer_size`` and ``max_in_flight_tasks``.
-            detection_workflow: Custom detection workflow (advanced/testing).
+            detection_workflow: Custom detection workflow (advanced/testing). Methods
+                without an ``entity_label_examples`` keyword remain supported when no
+                examples are configured; configuring examples raises ``InvalidConfigError``
+                if the method does not accept them.
             replace_runner: Custom replacement workflow (advanced/testing).
             rewrite_runner: Custom rewrite workflow (advanced/testing).
             combined_rewrite_runner: Custom combined rewrite workflow (advanced/testing).
@@ -308,7 +342,9 @@ class Anonymizer:
             validation_excerpt_window_chars=config.detect.validation_excerpt_window_chars,
             entity_labels=config.detect.entity_labels,
             excluded_entity_labels=config.detect.excluded_entity_labels,
-            entity_label_examples=config.detect.entity_label_examples,
+            **_detection_example_kwargs(
+                self._detection_workflow.build_detection_config, config.detect.entity_label_examples
+            ),
             data_summary=data.data_summary,
         )
 
@@ -342,7 +378,9 @@ class Anonymizer:
             validation_excerpt_window_chars=config.detect.validation_excerpt_window_chars,
             entity_labels=config.detect.entity_labels,
             excluded_entity_labels=config.detect.excluded_entity_labels,
-            entity_label_examples=config.detect.entity_label_examples,
+            **_detection_example_kwargs(
+                self._detection_workflow.build_detection_builder_for_seed, config.detect.entity_label_examples
+            ),
             data_summary=data_summary,
             job_index=job_index,
             num_jobs=num_jobs,
@@ -753,7 +791,7 @@ class Anonymizer:
             validation_excerpt_window_chars=config.detect.validation_excerpt_window_chars,
             entity_labels=config.detect.entity_labels,
             excluded_entity_labels=config.detect.excluded_entity_labels,
-            entity_label_examples=config.detect.entity_label_examples,
+            **_detection_example_kwargs(self._detection_workflow.run, config.detect.entity_label_examples),
             privacy_goal=config.rewrite.privacy_goal if config.rewrite else None,
             data_summary=data.data_summary,
             tag_latent_entities=config.rewrite is not None,

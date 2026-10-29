@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from types import SimpleNamespace
+from typing import cast
 from unittest.mock import Mock, patch
 
 import pandas as pd
@@ -40,7 +41,7 @@ from anonymizer.engine.ndd.adapter import FailedRecord
 from anonymizer.engine.ndd.model_loader import load_default_model_providers, validate_model_alias_references
 from anonymizer.engine.replace.replace_runner import ReplacementResult, ReplacementWorkflow
 from anonymizer.engine.rewrite.rewrite_workflow import RewriteResult, RewriteWorkflow
-from anonymizer.interface.anonymizer import Anonymizer, _resolve_model_providers
+from anonymizer.interface.anonymizer import Anonymizer, _accepts_entity_label_examples, _resolve_model_providers
 from anonymizer.interface.errors import InvalidConfigError, InvalidInputError
 
 
@@ -252,6 +253,204 @@ def test_preview_passes_entity_label_examples_to_detection_workflow(stub_input: 
     anonymizer.preview(config=config, data=stub_input, num_records=1)
 
     assert detection_wf.run.call_args.kwargs["entity_label_examples"] == examples
+
+
+class _Replay040DetectionWorkflow:
+    """Duck-types v0.4.0's EntityDetectionWorkflow.run()/build_* signatures exactly: no
+    entity_label_examples parameter, no **kwargs to swallow it (added in #275, after v0.4.0)."""
+
+    def __init__(self, result: EntityDetectionResult) -> None:
+        self._result = result
+        self.calls: list[str] = []
+        self.config_sentinel = Mock(name="config_sentinel")
+        self.builder_sentinel = Mock(name="builder_sentinel")
+
+    def run(
+        self,
+        dataframe: pd.DataFrame,
+        *,
+        model_configs: list[ModelConfig],
+        selected_models: object,
+        gliner_detection_threshold: float,
+        validation_max_entities_per_call: int = 20,
+        validation_excerpt_window_chars: int = 200,
+        validation_single_chunk_full_text: bool = True,
+        entity_labels: list[str] | None = None,
+        excluded_entity_labels: list[str] | None = None,
+        privacy_goal: object | None = None,
+        data_summary: str | None = None,
+        tag_latent_entities: bool = True,
+        compute_grouped_entities: bool | None = None,
+        preview_num_records: int | None = None,
+    ) -> EntityDetectionResult:
+        self.calls.append("run")
+        return self._result
+
+    def build_detection_config(
+        self,
+        dataframe: pd.DataFrame,
+        *,
+        seed_path: str | Path,
+        model_configs: list[ModelConfig],
+        selected_models: object,
+        gliner_detection_threshold: float,
+        validation_max_entities_per_call: int = 100,
+        validation_excerpt_window_chars: int = 500,
+        validation_single_chunk_full_text: bool = True,
+        entity_labels: list[str] | None = None,
+        excluded_entity_labels: list[str] | None = None,
+        data_summary: str | None = None,
+    ) -> Mock:
+        self.calls.append("config")
+        return self.config_sentinel
+
+    def build_detection_builder_for_seed(
+        self,
+        *,
+        seed_path: str | Path,
+        model_configs: list[ModelConfig],
+        selected_models: object,
+        gliner_detection_threshold: float,
+        validation_max_entities_per_call: int = 100,
+        validation_excerpt_window_chars: int = 500,
+        validation_single_chunk_full_text: bool = True,
+        entity_labels: list[str] | None = None,
+        excluded_entity_labels: list[str] | None = None,
+        data_summary: str | None = None,
+        job_index: int = 0,
+        num_jobs: int = 1,
+    ) -> Mock:
+        self.calls.append("builder")
+        return self.builder_sentinel
+
+
+# #311 supports legacy injection without examples; configured examples must be honored or rejected.
+@pytest.mark.parametrize("mode", ["run", "preview"])
+@pytest.mark.parametrize("rewrite", [False, True], ids=["replace", "rewrite"])
+def test_legacy_detection_workflow_without_examples(stub_input: AnonymizerInput, mode: str, rewrite: bool) -> None:
+    config = AnonymizerConfig(rewrite=Rewrite()) if rewrite else AnonymizerConfig(replace=Redact())
+    frame = pd.DataFrame({COL_TEXT: ["Alice"], COL_FINAL_ENTITIES: [{"entities": []}], COL_ENTITIES_BY_VALUE: [{}]})
+    detector = _Replay040DetectionWorkflow(EntityDetectionResult(dataframe=frame, failed_records=[]))
+    anonymizer = Anonymizer(detection_workflow=cast(EntityDetectionWorkflow, detector))
+
+    result = getattr(anonymizer, mode)(config=config, data=stub_input)
+
+    assert result.dataframe["text"].tolist() == ["Alice"]
+    assert result.failed_records == []
+    assert detector.calls == ["run"]
+
+
+def test_legacy_detection_exports_without_examples(stub_input: AnonymizerInput, tmp_path: Path) -> None:
+    config = AnonymizerConfig(replace=Redact())
+    detector = _Replay040DetectionWorkflow(
+        EntityDetectionResult(
+            dataframe=pd.DataFrame(
+                {COL_TEXT: ["Alice"], COL_FINAL_ENTITIES: [{"entities": []}], COL_ENTITIES_BY_VALUE: [{}]}
+            ),
+            failed_records=[],
+        )
+    )
+    anonymizer = Anonymizer(detection_workflow=cast(EntityDetectionWorkflow, detector))
+    seed_path = tmp_path / "seed.parquet"
+
+    assert anonymizer.export_detection_config(config=config, data=stub_input, seed_path=seed_path) is (
+        detector.config_sentinel
+    )
+    assert anonymizer.export_detection_builder_for_seed(config=config, seed_path=seed_path) is (
+        detector.builder_sentinel
+    )
+    assert detector.calls == ["config", "builder"]
+
+
+@pytest.mark.parametrize("mode", ["run", "preview", "export_detection_config", "export_detection_builder_for_seed"])
+@pytest.mark.parametrize("rewrite", [False, True], ids=["replace", "rewrite"])
+def test_legacy_detection_workflow_rejects_configured_examples(
+    stub_input: AnonymizerInput, tmp_path: Path, mode: str, rewrite: bool, caplog: pytest.LogCaptureFixture
+) -> None:
+    examples = {"vendor_api_key": ["acme_live_x"]}
+    config = AnonymizerConfig(
+        detect={"entity_labels": ["vendor_api_key"], "entity_label_examples": examples},
+        replace=None if rewrite else Redact(),
+        rewrite=Rewrite() if rewrite else None,
+    )
+    detector = _Replay040DetectionWorkflow(
+        EntityDetectionResult(
+            dataframe=pd.DataFrame(
+                {COL_TEXT: ["Alice"], COL_FINAL_ENTITIES: [{"entities": []}], COL_ENTITIES_BY_VALUE: [{}]}
+            ),
+            failed_records=[],
+        )
+    )
+    anonymizer = Anonymizer(detection_workflow=cast(EntityDetectionWorkflow, detector))
+
+    with pytest.raises(InvalidConfigError, match="does not accept entity_label_examples") as exc_info:
+        if mode == "export_detection_config":
+            anonymizer.export_detection_config(config=config, data=stub_input, seed_path=tmp_path / "seed.parquet")
+        elif mode == "export_detection_builder_for_seed":
+            anonymizer.export_detection_builder_for_seed(config=config, seed_path=tmp_path / "seed.parquet")
+        else:
+            getattr(anonymizer, mode)(config=config, data=stub_input)
+
+    assert detector.calls == []
+    assert "acme_live_x" not in str(exc_info.value)
+    assert "acme_live_x" not in caplog.text
+    assert "vendor_api_key" not in str(exc_info.value)
+    assert not (tmp_path / "seed.parquet").exists()
+
+
+class _DetectorSignatures:
+    @staticmethod
+    def keyword(*, entity_label_examples: object) -> None:
+        pass
+
+    @staticmethod
+    def positional_or_keyword(entity_label_examples: object) -> None:
+        pass
+
+    @staticmethod
+    def kwargs(**kwargs: object) -> None:
+        pass
+
+    @staticmethod
+    def positional_only(entity_label_examples: object, /) -> None:
+        pass
+
+    @staticmethod
+    def positional_only_with_kwargs(entity_label_examples: object, /, **kwargs: object) -> None:
+        pass
+
+    @staticmethod
+    def varargs(*entity_label_examples: object) -> None:
+        pass
+
+
+@pytest.mark.parametrize(
+    ("name", "accepts"),
+    [
+        ("keyword", True),
+        ("positional_or_keyword", True),
+        ("kwargs", True),
+        ("positional_only", False),
+        ("positional_only_with_kwargs", True),
+        ("varargs", False),
+    ],
+)
+def test_detector_signature_keyword_acceptance(name: str, accepts: bool) -> None:
+    assert _accepts_entity_label_examples(getattr(_DetectorSignatures, name)) is accepts
+
+
+@pytest.mark.parametrize("error", [TypeError, ValueError])
+def test_non_introspectable_detector_keeps_configured_examples(
+    stub_input: AnonymizerInput, error: type[Exception]
+) -> None:
+    examples = {"api_key": ["acme_live_x"]}
+    config = AnonymizerConfig(detect={"entity_label_examples": examples}, replace=Redact())
+    anonymizer, detector, _, _ = _make_anonymizer()
+
+    with patch("anonymizer.interface.anonymizer.inspect.signature", side_effect=error("opaque callable")):
+        anonymizer.run(config=config, data=stub_input)
+
+    assert detector.run.call_args.kwargs["entity_label_examples"] == examples
 
 
 def test_export_detection_paths_pass_entity_label_examples(
