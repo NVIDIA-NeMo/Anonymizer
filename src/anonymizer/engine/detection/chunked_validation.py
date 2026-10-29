@@ -102,6 +102,8 @@ class ChunkedValidationParams(BaseModel):
         max_parallel_chunks: Optional row-local cap on concurrently dispatched
             chunks. Plugin generators derive a default cap from validator model
             capacity.
+        max_conversation_restarts: Full conversation restarts allowed per alias.
+        max_correction_steps: Correction rounds allowed per conversation.
         single_chunk_full_text: If True, a row with one validation chunk sees
             the full tagged document. If False, even a single chunk uses the
             excerpt window. The default preserves production parity with the
@@ -125,6 +127,8 @@ class ChunkedValidationParams(BaseModel):
     max_entities_per_call: int = Field(gt=0)
     excerpt_window_chars: int = Field(gt=0)
     max_parallel_chunks: int | None = Field(default=None, gt=0)
+    max_conversation_restarts: int = Field(default=0, ge=0)
+    max_correction_steps: int = Field(default=0, ge=0)
     single_chunk_full_text: bool = True
     prompt_template: str = Field(repr=False)
     system_prompt: str | None = Field(default=None, repr=False)
@@ -305,6 +309,8 @@ def _dispatch_chunk(
     prompt: str,
     system_prompt: str | None,
     chunk_index: int,
+    max_conversation_restarts: int,
+    max_correction_steps: int,
 ) -> RawValidationDecisionsSchema:
     """Dispatch a single chunk with cross-alias failover across the pool.
 
@@ -313,8 +319,8 @@ def _dispatch_chunk(
     are the rest of the pool, tried in order on any terminal exception from
     the primary. Each facade carries its own transport-level retry policy
     (``RetryConfig.max_retries`` + exponential backoff on 5xx and connection
-    errors) and its own AIMD throttling on 429, so by the time an exception
-    escapes the facade call we consider that alias exhausted for this chunk.
+    errors) and its own AIMD throttling on 429. The supplied conversation
+    recovery limits apply before an alias is exhausted for this chunk.
 
     We use ``PydanticResponseRecipe`` so the facade appends JSON task
     instructions and parses the response into ``RawValidationDecisionsSchema``.
@@ -340,6 +346,8 @@ def _dispatch_chunk(
                 parser=recipe.parse,
                 system_prompt=final_system,
                 purpose=f"entity-validation-chunk-{chunk_index}-attempt-{attempt_index}",
+                max_conversation_restarts=max_conversation_restarts,
+                max_correction_steps=max_correction_steps,
             )
             if attempt_index > 0:
                 logger.info(
@@ -393,6 +401,8 @@ async def _dispatch_chunk_async(
     prompt: str,
     system_prompt: str | None,
     chunk_index: int,
+    max_conversation_restarts: int,
+    max_correction_steps: int,
 ) -> RawValidationDecisionsSchema:
     """Async equivalent of :func:`_dispatch_chunk`, preserving failover order."""
     recipe = PydanticResponseRecipe(data_type=RawValidationDecisionsSchema)
@@ -407,6 +417,8 @@ async def _dispatch_chunk_async(
                 parser=recipe.parse,
                 system_prompt=final_system,
                 purpose=f"entity-validation-chunk-{chunk_index}-attempt-{attempt_index}",
+                max_conversation_restarts=max_conversation_restarts,
+                max_correction_steps=max_correction_steps,
             )
             if attempt_index > 0:
                 logger.info(
@@ -549,6 +561,8 @@ def _build_dispatch_kwargs_per_chunk(
                 "prompt": prompt,
                 "system_prompt": params.system_prompt,
                 "chunk_index": chunk_index,
+                "max_conversation_restarts": params.max_conversation_restarts,
+                "max_correction_steps": params.max_correction_steps,
             }
         )
 
