@@ -94,17 +94,11 @@ _RETAINED_ACTIONS = {
 def _retained_items_text(retained: Any) -> str:
     """Format protected entities that survived verbatim, one line per entity."""
     items = normalize_payload(retained)
-    if not isinstance(items, list):
-        return ""
-    lines = []
-    for item in items:
-        if isinstance(item, list) and len(item) == 3:
-            value, label, method = (str(part) for part in item)
-            action = _RETAINED_ACTIONS.get(method, "protected")
-            lines.append(
-                f'- [RETAINED] {label}: "{value}" still appears verbatim; must be {action} (method: {method}).'
-            )
-    return "\n".join(lines)
+    return "\n".join(
+        f'- [RETAINED] {label}: "{value}" still appears verbatim; '
+        f"must be {_RETAINED_ACTIONS.get(method, 'protected')} (method: {method})."
+        for value, label, method in (items if isinstance(items, list) else [])
+    )
 
 
 def _render_repair_prompt(row: dict[str, Any], params: RepairParams) -> str:

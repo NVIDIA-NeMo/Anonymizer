@@ -108,7 +108,9 @@ def test_coverage_keys_tagged_on_value_and_latent_on_value_and_label() -> None:
 
 def test_coverage_normalizes_unicode_variants() -> None:
     entities = _entities(("196 Route 417", "street_address"), ("33‑year‑old", "age"))
-    disposition = _disposition(_entry("196 route 417", "street_address", "generalize"), _entry("33-year-old", "age", "x"))
+    disposition = _disposition(
+        _entry("196 route 417", "street_address", "generalize"), _entry("33-year-old", "age", "x")
+    )
     assert disposition_coverage(entities, None, disposition) == []
 
 
@@ -395,9 +397,7 @@ def _stub_combined_columns(
             required_columns=[previous.needs_repair, previous.rewritten_text, COL_SENSITIVITY_DISPOSITION]
         )
         def repair(row: dict[str, Any]) -> dict[str, Any]:
-            row[state.rewritten_text] = _strip_protected(
-                row[previous.rewritten_text], row[COL_SENSITIVITY_DISPOSITION]
-            )
+            row[state.rewritten_text] = _strip_protected(row[previous.rewritten_text], row[COL_SENSITIVITY_DISPOSITION])
             return row
 
         return CustomColumnConfig(

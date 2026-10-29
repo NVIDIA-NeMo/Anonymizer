@@ -40,15 +40,8 @@ from anonymizer.engine.rewrite.parsers import normalize_payload
 logger = logging.getLogger("anonymizer.rewrite.retention")
 
 _LEAVE_AS_IS = "leave_as_is"
-_CHAR_MAP = {
-    **dict.fromkeys(range(0x2010, 0x2016), "-"),
-    0x2212: "-",
-    0x2018: "'",
-    0x2019: "'",
-    0x02BC: "'",
-    0x201C: '"',
-    0x201D: '"',
-}
+# Dash variants (U+2010-2015, U+2212) fold to "-", single quotes to "'", double quotes to '"'.
+_CHAR_MAP = str.maketrans("\u2010\u2011\u2012\u2013\u2014\u2015\u2212\u2018\u2019\u02bc\u201c\u201d", "-------'''\"\"")
 
 
 def _normalize(text: str) -> str:
@@ -99,11 +92,10 @@ def disposition_coverage(entities_by_value: Any, latent_entities: Any, dispositi
     missing: list[tuple[str, str]] = []
     seen: set[object] = set()
     for item in _items(entities_by_value, "entities_by_value") or []:
-        value, key = str(item.get("value") or ""), _key(item.get("value"))
+        key = _key(item.get("value"))
         if key and key not in values and key not in seen:
             seen.add(key)
-            labels = item.get("labels") or [""]
-            missing.append((value, str(labels[0])))
+            missing.append((str(item.get("value")), str((item.get("labels") or [""])[0])))
     for item in _items(latent_entities, "latent_entities") or []:
         value, label = str(item.get("value") or ""), str(item.get("label") or "")
         pair = (_key(value), _key(label))
@@ -129,8 +121,7 @@ def retained_protected(disposition: Any, rewritten_text: Any) -> list[tuple[str,
     protected = [
         (_pattern(str(e.get("entity_value"))), e)
         for e in entries
-        if e.get("protection_method_suggestion") != _LEAVE_AS_IS
-        and _scannable(str(e.get("entity_value") or ""))
+        if e.get("protection_method_suggestion") != _LEAVE_AS_IS and _scannable(str(e.get("entity_value") or ""))
     ]
     for value in kept:
         if any(pattern.search(value) and _key(entry.get("entity_value")) != value for pattern, entry in protected):
@@ -170,17 +161,5 @@ def apply_review_gates(df: pd.DataFrame) -> pd.DataFrame:
 
     unparseable = sum(_items(raw, "sensitivity_disposition") is None for raw in dispositions)
     if unparseable:
-        logger.warning(
-            "Sensitivity disposition unavailable for %d of %d row(s); coverage and retention checks skipped there.",
-            unparseable,
-            len(df),
-        )
-    incomplete = sum(bool(row) for row in missing)
-    if incomplete:
-        logger.info(
-            "Disposition coverage incomplete on %d of %d row(s) (%d entities); flagged for review.",
-            incomplete,
-            len(df),
-            sum(len(row) for row in missing),
-        )
+        logger.warning("Disposition unavailable for %d of %d row(s); checks skipped there.", unparseable, len(df))
     return df
