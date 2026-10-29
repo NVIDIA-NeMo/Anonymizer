@@ -33,6 +33,7 @@ Common patterns and what they mean:
 | `reason` substring | Likely cause | Action |
 |---|---|---|
 | `max_tokens` | The model used its whole output budget, often on hidden reasoning, before finishing the answer | Raise `inference_parameters.max_tokens` for that alias in `models.yaml`. See [Models](concepts/models.md) |
+| `timed out` | Requests took longer than the alias's timeout, which is 60 seconds when `inference_parameters.timeout` is not set; large `max_tokens` budgets on reasoning models often need longer | Set `inference_parameters.timeout` for that alias in `models.yaml` (the bundled configs use 300). See [Models](concepts/models.md) |
 | `stopped early after other rows failed` | DataDesigner stopped the run after too many rows failed, so these rows never completed | Fix the first failures in the list; they are the cause. If the early stop is itself the problem, adjust the shutdown error rate in `data_designer_run_config` |
 | `does not match the source span` | The GLiNER server returned entity offsets that are inconsistent with the text | Restart the self-hosted GLiNER server from a current Anonymizer release (see the [self-hosting guide](concepts/self-hosting-gliner.md)); servers started from older code can return offsets that do not match the text |
 | `Record missing from workflow output` with no other cause, at `step="entity-detection"`, `step="replace-map-generation"` or `step="rewrite-*"` | Often rate limiting (429s) exhausting the retry budget of the model pool | See [Rate limits / dropped rows](#rate-limits-dropped-rows) below |
