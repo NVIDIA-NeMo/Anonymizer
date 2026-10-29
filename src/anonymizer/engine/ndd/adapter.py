@@ -47,8 +47,8 @@ TRACE_TASKS_BY_DEFAULT = True
 _MISSING_RECORD_REASON = "Record missing from workflow output"
 _STOPPED_EARLY_REASON = f"{_MISSING_RECORD_REASON}: not completed: run stopped early after other rows failed"
 _MAX_REASON_CHARS = 500
-_CAUSE_LINE = re.compile(r"\|\s*Cause:\s*(.+)")
-_SOLUTION_LINE = re.compile(r"\|\s*Solution:\s*(.+)")
+_CAUSE_LINE = re.compile(r"^\s*\|\s*Cause:\s*(.+)", re.MULTILINE)
+_SOLUTION_LINE = re.compile(r"^\s*\|\s*Solution:\s*(.+)", re.MULTILINE)
 # DataDesigner follows a cause's first sentence with detail text (a parse failure's validation detail, a
 # context-window error's provider message), and ends an unexpected-error solution with the raw exception.
 # Both can quote input text, so they are cut.

@@ -290,6 +290,50 @@ def test_unexpected_error_in_a_model_call_keeps_only_the_classified_text(tmp_pat
     _assert_quotes_no_input(list(reasons.values()), df)
 
 
+_SPOOFED_CAUSE = " | Cause: Marlborough Crescent resident Quillfeather-Ashworth"
+
+
+@custom_column_generator(required_columns=[COL_TEXT])
+def _fail_echoing_input_with_marker(row: dict[str, Any]) -> dict[str, Any]:
+    if "FAILS" in row[COL_TEXT]:
+        raise ValueError("bad row: " + row[COL_TEXT])
+    row["checked"] = "yes"
+    return row
+
+
+def test_provider_error_echoing_a_cause_marker_cannot_steer_the_reason(tmp_path: Path) -> None:
+    df = _inputs(3, bad={1})
+    df.loc[1, COL_TEXT] = "note" + _SPOOFED_CAUSE + " FAILS"
+
+    def script(_model: str, prompt: str, _earlier: int) -> tuple[int, str, str]:
+        if "FAILS" in prompt:
+            return 400, "Invalid request content: " + prompt[prompt.index("note") :][:200], ""
+        return COMPLETE
+
+    tagged, result = _run(tmp_path, script, df)
+
+    reasons = _reasons_by_position(tagged, result)
+    assert list(reasons) == [1]
+    assert reasons[1].startswith(f"{_PREFIX}: {_COLUMN}: ")
+    assert "malformed or missing required parameters" in reasons[1]
+    _assert_quotes_no_input(list(reasons.values()), df)
+
+
+def test_custom_column_exception_echoing_a_cause_marker_cannot_steer_the_reason(tmp_path: Path) -> None:
+    df = _inputs(3, bad={1})
+    df.loc[1, COL_TEXT] = "note" + _SPOOFED_CAUSE + " FAILS"
+    columns: list[ColumnConfigT] = [
+        CustomColumnConfig(name="checked", generator_function=_fail_echoing_input_with_marker)
+    ]
+
+    tagged, result = _run(tmp_path, lambda *_: COMPLETE, df, columns=columns)
+
+    reasons = _reasons_by_position(tagged, result)
+    assert list(reasons) == [1]
+    assert reasons[1].startswith(f"{_PREFIX}: checked: ")
+    _assert_quotes_no_input(list(reasons.values()), df)
+
+
 def test_row_dropped_without_an_error_keeps_the_generic_reason_when_other_errors_recovered(tmp_path: Path) -> None:
     df = _inputs(3, bad=set())
     df.loc[0, COL_TEXT] += " FLAKY"
