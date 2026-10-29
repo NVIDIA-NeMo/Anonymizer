@@ -15,9 +15,10 @@ from data_designer.config.column_types import ColumnConfigT
 from data_designer.config.models import ModelConfig
 from data_designer.interface.data_designer import DataDesigner
 
+from anonymizer.engine.constants import RECORD_ID_COLUMN
 from anonymizer.engine.detection.detection_workflow import _PrivatePromptLLMStructuredColumnConfig
 from anonymizer.engine.ndd import adapter as ndd_adapter
-from anonymizer.engine.ndd.adapter import RECORD_ID_COLUMN, NddAdapter
+from anonymizer.engine.ndd.adapter import NddAdapter
 from anonymizer.engine.schemas import AugmentedEntitiesSchema
 from anonymizer.interface.errors import AnonymizerWorkflowError
 

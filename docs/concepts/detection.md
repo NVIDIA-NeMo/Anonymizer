@@ -11,6 +11,8 @@ Entity detection is the first stage of every Anonymizer pipeline. Both replace a
 
 Detection combines a lightweight GLiNER2 PII model with LLM-based refinement. GLiNER2 produces an initial set of entity spans, an LLM validates those candidates by keeping, reclassifying, or dropping them based on context, and then an augmenter finds entities GLiNER2 missed. Augmented findings are merged directly and are not independently revalidated.
 
+Augmenter suggestions must match the source text and their supplied context exactly. If some do not, Anonymizer keeps the matching suggestions and asks the augmenter to correct only the others once. Suggestions that still do not match are dropped; the record and its other detections are retained. Transport errors or responses that do not match the required schema still fail the record.
+
 When rewrite is configured, an additional step identifies **latent entities** -- sensitive information inferable from context but not explicitly stated in the text.
 
 ### Example: standard vs. latent entities
@@ -73,14 +75,16 @@ records use the same caller-provided IDs in `result.failed_records`. Use
 | `entity_label_examples` | `{}` | User-configured positive examples organized by label. Examples for default labels extend their built-in examples; every referenced non-default label must also appear in an explicit `entity_labels` set. |
 | `excluded_entity_labels` | `None` | List of labels to exclude from detection, even if present in `entity_labels` or the default set. Excluded labels are removed from the active detection scope and filtered from the final entity output. |
 | `gliner_threshold` | `0.3` | GLiNER confidence threshold (0.0--1.0). Lower values detect more entities but may increase false positives. |
-| `validation_max_entities_per_call` | `100` | Maximum candidate entities per validator LLM call. Rows with more candidates are split into chunks. See [Chunked validation](#chunked-validation). |
+| `validation_max_entities_per_call` | `100` | Number of detected entities to validate per LLM call. This limit may be exceeded to keep detections covering the same text together. See [Chunked validation](#chunked-validation). |
 | `validation_excerpt_window_chars` | `500` | Characters of context included before and after a chunk's entity spans in the validator prompt. Bounds per-chunk prompt size; not the model's context-window limit. |
 
 ---
 
 ## Chunked validation
 
-When a row yields many entity candidates, validating them in a single LLM call can often exceed the model's context window or the provider's rate limits (tokens-per-minute or requests-per-minute quotas that many hosted models enforce). Anonymizer automatically splits validation for such rows: candidates are grouped in position order into chunks of at most `validation_max_entities_per_call`, and each chunk is validated independently with its own bounded text excerpt (`validation_excerpt_window_chars` before and after the chunk's span). Decisions are merged back into a single per-row set.
+When a row has many detected entities, Anonymizer splits validation across LLM calls using `validation_max_entities_per_call`. Detections that cover some of the same text stay together so the validator can compare them—for example, `San Diego` detected as a city and `Diego` detected as a first name. If keeping related detections together requires exceeding the limit, Anonymizer sends them in a separate call and logs a warning. The call must still fit the model's context window.
+
+Each response is bound to its request inventory. Multi-chunk requests receive a source excerpt with `validation_excerpt_window_chars` before and after the assigned spans. Only candidates assigned to that request are tagged; neighboring detections remain plain text. Single-chunk requests receive the full text supplied to detection by default (currently the whole document).
 
 The chunked path is always on; if a row has fewer candidates than the limit, it runs as a single call and is exactly equivalent to the unchunked behavior. Tuning guidance:
 

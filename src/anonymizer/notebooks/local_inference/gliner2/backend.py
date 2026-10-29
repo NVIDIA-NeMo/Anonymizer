@@ -19,6 +19,15 @@ DEFAULT_OVERLAP = 32
 MODEL_ID = "fastino/gliner2-privacy-filter-PII-multi"
 MODEL_REVISION = "59894c087cb2923b01f337d4ee72f6ff84d5bdd6"
 
+# Use checkpoint-native inference names without changing Anonymizer's label scope.
+_INFERENCE_LABELS = {
+    "user_name": "username",
+    "state": "state_or_region",
+    "postcode": "postal_code",
+    "bank_routing_number": "routing_number",
+    "credit_debit_card": "payment_card",
+}
+
 
 def resolve_device(requested: str) -> str:
     """Resolve and validate a notebook inference device."""
@@ -95,7 +104,7 @@ def _link_or_copy(source: str, destination: str) -> str:
 
 def overlap_policy(flat_ner: bool) -> str:
     """Translate the existing server flag to GLiNER2 overlap semantics."""
-    return "disallow" if flat_ner else "longest"
+    return "disallow" if flat_ner else "allow"
 
 
 def flatten_result(result: object) -> list[dict[str, Any]]:
@@ -150,9 +159,14 @@ def detect_entities_for_texts(
     if not chunk_records:
         return results
 
+    original_labels_by_inference_label: dict[str, list[str]] = {}
+    for label in dict.fromkeys(labels):
+        inference_label = _INFERENCE_LABELS.get(label, label)
+        original_labels_by_inference_label.setdefault(inference_label, []).append(label)
+
     raw_results = model.batch_extract_entities(
         [chunk for _, _, chunk in chunk_records],
-        labels,
+        list(original_labels_by_inference_label),
         batch_size=inference_batch_size,
         threshold=threshold,
         include_confidence=True,
@@ -168,7 +182,8 @@ def detect_entities_for_texts(
                 continue
             entity["start"] += offset
             entity["end"] += offset
-            results[text_index].append(entity)
+            for original_label in original_labels_by_inference_label.get(entity["label"], []):
+                results[text_index].append({**entity, "label": original_label})
     policy = overlap_policy(flat_ner)
     return [_resolve_document_overlaps(entities, policy) for entities in results]
 
@@ -241,7 +256,9 @@ def _resolve_document_overlaps(
             seen_entities.add(entity_key)
             distinct.append(row)
 
-    if policy == "longest":
+    if policy == "allow":
+        selected = distinct
+    elif policy == "longest":
         selected = [
             row
             for row in distinct

@@ -6,9 +6,8 @@
 Partition a row's validation candidates into chunks, build a small tagged
 excerpt around each chunk, render the validation prompt per chunk, and
 dispatch each chunk to an alias selected round-robin from a configured
-validator pool. The per-chunk decisions are merged into a
-``ValidationDecisionsSchema``-shaped payload consumed by
-``enrich_validation_decisions`.
+validator pool. Each response is bound to its request inventory and written to
+``COL_VALIDATION_INVENTORIES`` and ``COL_VALIDATION_DECISIONS`` for admission.
 
 Public entry point: :func:`make_chunked_validation_generator`, which
 produces a ``@custom_column_generator``-decorated function bound to a
@@ -36,6 +35,7 @@ import functools
 import logging
 from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
 from typing import Any
 
 from data_designer.config import custom_column_generator
@@ -44,29 +44,42 @@ from jinja2 import BaseLoader, Environment, StrictUndefined
 from pydantic import BaseModel, Field
 
 from anonymizer.engine.constants import (
-    COL_SEED_ENTITIES,
-    COL_SEED_TAGGED_TEXT,
-    COL_SEED_VALIDATION_CANDIDATES,
+    COL_SEED_DETECTION_RESULT,
     COL_TAG_NOTATION,
     COL_TEXT,
     COL_VALIDATION_DECISIONS,
+    COL_VALIDATION_INVENTORIES,
     COL_VALIDATION_SKELETON,
 )
+from anonymizer.engine.detection.admission import find_duplicate_assigned_aliases
 from anonymizer.engine.detection.postprocess import (
     EntitySpan,
     TagNotation,
     build_tagged_text,
+    group_overlapping_spans,
 )
 from anonymizer.engine.schemas import (
-    EntitiesSchema,
+    AdmissionRoute,
+    DetectionResult,
+    EffectiveLabelPolicy,
+    Observation,
     RawValidationDecisionsSchema,
-    ValidationCandidatesSchema,
-    ValidationDecisionsSchema,
-    ValidationSkeletonDecisionSchema,
-    ValidationSkeletonSchema,
+    SourceView,
+    ValidationInventoryEntry,
+    ValidationRequestDecisionSet,
+    ValidationRequestDecisionSets,
+    ValidationRequestInventory,
 )
 
 logger = logging.getLogger("anonymizer.detection.chunked_validation")
+
+# Prompt variable only; its request-specific excerpt is never stored as a row column.
+VALIDATION_EXCERPT_VAR = "_seed_tagged_text"
+
+
+class _SemanticValidationResponseError(RuntimeError):
+    """A parsed response violates its dispatched request inventory."""
+
 
 # Jinja2 environment used to render the per-chunk validation prompt.
 # The template mirrors the production prompt exactly: we substitute the same
@@ -96,7 +109,9 @@ class ChunkedValidationParams(BaseModel):
             (starting from the next position, wrapping around). Must be
             non-empty and every alias must also be present in the decorator's
             ``model_aliases`` so DataDesigner materialises the facade.
-        max_entities_per_call: Upper bound on candidates per chunk.
+        max_entities_per_call: Target upper bound on candidates per chunk.
+            An overlapping conflict group larger than this is sent alone,
+            intact, with a warning.
         excerpt_window_chars: Chars of surrounding raw text included in each
             chunk's excerpt on either side of the chunk span.
         max_parallel_chunks: Optional row-local cap on concurrently dispatched
@@ -128,101 +143,19 @@ class ChunkedValidationParams(BaseModel):
     single_chunk_full_text: bool = True
     prompt_template: str = Field(repr=False)
     system_prompt: str | None = Field(default=None, repr=False)
+    allowed_entity_labels: list[str] | None = None
+    excluded_entity_labels: list[str] = Field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class _PreparedValidationRequest:
+    inventory: ValidationRequestInventory
+    prompt: str
 
 
 # ---------------------------------------------------------------------------
 # Pure helpers (no DataDesigner, no LLM). Tested directly.
 # ---------------------------------------------------------------------------
-
-
-def order_candidates_by_position(
-    candidates: ValidationCandidatesSchema,
-    seed_entities: list[EntitySpan],
-) -> list[tuple[Any, EntitySpan]]:
-    """Pair each candidate with its matching seed entity and sort by text position.
-
-    Every candidate id must resolve to a seed entity. A missing id indicates an
-    upstream bug in ``merge_and_build_candidates`` or ``prepare_validation_inputs``
-    (both produce candidates whose ids come from ``EntitySpan.entity_id``). We
-    raise early with the offending id so the failure is easy to triage.
-    """
-    seed_by_id = {span.entity_id: span for span in seed_entities}
-    paired: list[tuple[Any, EntitySpan]] = []
-    for candidate in candidates.candidates:
-        seed = seed_by_id.get(candidate.id)
-        if seed is None:
-            raise ValueError(
-                f"Validation candidate id {candidate.id!r} has no matching seed entity. "
-                "Every candidate produced by merge_and_build_candidates or "
-                "prepare_validation_inputs must correspond to a seed entity with "
-                "start_position and end_position populated; this inconsistency "
-                "indicates a bug in one of those upstream generators."
-            )
-        paired.append((candidate, seed))
-    paired.sort(key=lambda pair: (pair[1].start_position, pair[1].end_position, pair[1].entity_id))
-    return paired
-
-
-def chunk_candidates(
-    ordered: Sequence[tuple[Any, EntitySpan]],
-    max_entities_per_call: int,
-) -> list[list[tuple[Any, EntitySpan]]]:
-    """Partition the ordered (candidate, seed) pairs into chunks of at most ``max_entities_per_call``.
-
-    Assumes ``max_entities_per_call > 0``; positivity is enforced upstream at
-    ``ChunkedValidationParams.max_entities_per_call`` and
-    ``AnonymizerDetectConfig.validation_max_entities_per_call`` (both
-    ``Field(gt=0)``).
-    """
-    return [list(ordered[i : i + max_entities_per_call]) for i in range(0, len(ordered), max_entities_per_call)]
-
-
-def build_chunk_excerpt(
-    *,
-    text: str,
-    chunk_spans: list[EntitySpan],
-    all_spans: list[EntitySpan],
-    window_chars: int,
-    notation: TagNotation,
-) -> str:
-    """Build a tagged text excerpt wide enough to give the LLM context around ``chunk_spans``.
-
-    The excerpt spans ``[min(chunk.start) - window, max(chunk.end) + window]``
-    clamped to the text bounds. Any entity from ``all_spans`` fully contained
-    in that window is re-tagged inside the excerpt so the surrounding context
-    matches the full-document view. The forced ``notation`` keeps tags stable
-    across chunks of the same row even when a local slice would otherwise
-    pick a different heuristic.
-    """
-    if not chunk_spans:
-        return ""
-    chunk_start = min(span.start_position for span in chunk_spans)
-    chunk_end = max(span.end_position for span in chunk_spans)
-    excerpt_start = max(0, chunk_start - window_chars)
-    excerpt_end = min(len(text), chunk_end + window_chars)
-    excerpt_raw = text[excerpt_start:excerpt_end]
-    in_window = [
-        EntitySpan(
-            entity_id=span.entity_id,
-            value=span.value,
-            label=span.label,
-            start_position=span.start_position - excerpt_start,
-            end_position=span.end_position - excerpt_start,
-            score=span.score,
-            source=span.source,
-        )
-        for span in all_spans
-        if span.start_position >= excerpt_start and span.end_position <= excerpt_end
-    ]
-    return build_tagged_text(excerpt_raw, in_window, notation=notation)
-
-
-def build_chunk_skeleton(chunk_candidates_: list[Any]) -> dict[str, Any]:
-    """Build the validation skeleton (``ValidationSkeletonSchema``) for a chunk."""
-    skeleton = ValidationSkeletonSchema(
-        decisions=[ValidationSkeletonDecisionSchema(id=c.id, value=c.value, label=c.label) for c in chunk_candidates_]
-    )
-    return skeleton.model_dump(mode="json")
 
 
 def render_chunk_prompt(
@@ -241,57 +174,216 @@ def render_chunk_prompt(
     compiled = _compile_template(template)
     return compiled.render(
         **{
-            COL_SEED_TAGGED_TEXT: excerpt,
+            VALIDATION_EXCERPT_VAR: excerpt,
             COL_VALIDATION_SKELETON: skeleton,
             COL_TAG_NOTATION: notation.value,
         }
     )
 
 
-def merge_chunk_decisions(
-    chunk_results: list[RawValidationDecisionsSchema],
-    candidates: ValidationCandidatesSchema,
-) -> dict[str, Any]:
-    """Flatten chunk decisions into a single ``ValidationDecisionsSchema`` payload.
+def build_validation_conflict_groups(
+    observations: Sequence[Observation],
+) -> list[tuple[Observation, ...]]:
+    """Build source-ordered connected components of overlapping observations."""
+    ordered = sorted(
+        (observation for observation in observations if observation.admission_route is AdmissionRoute.llm_validation),
+        key=lambda item: (
+            item.start_position,
+            item.end_position,
+            item.label.strip().casefold(),
+            item.detection_result_id,
+            item.observation_id,
+        ),
+    )
+    return group_overlapping_spans(
+        ordered,
+        start_position=lambda observation: observation.start_position,
+        end_position=lambda observation: observation.end_position,
+    )
 
-    Mirrors the single-call contract:
-    - Only decisions whose ids match a known candidate are retained. This is
-      consistent with ``enrich_validation_decisions``, which also filters to
-      valid ids; doing it here too keeps COL_VALIDATION_DECISIONS minimal.
-    - Null-decision entries are treated as "no answer" and do NOT reserve
-      the id, so if a later chunk yields a real verdict for the same id,
-      that verdict wins. The null entry itself never leaks through: downstream
-      ``apply_validation_decisions`` relies on candidate-not-in-output to
-      mean "keep unchanged", which would break if we emitted ``decision=null``.
-    - Among multiple real verdicts for the same id (shouldn't happen because
-      candidates partition cleanly, but kept as defence-in-depth), the first
-      wins.
-    """
-    candidate_lookup = {c.id: c for c in candidates.candidates}
-    valid_ids = set(candidate_lookup)
-    seen: set[str] = set()
-    merged_decisions: list[dict[str, Any]] = []
-    for result in chunk_results:
-        for decision in result.decisions:
-            if decision.id not in valid_ids or decision.id in seen:
-                continue
-            # Skip null-decision entries without marking the id as seen, so a
-            # later chunk with a real verdict for the same id can still win.
-            if decision.decision is None:
-                continue
-            cand = candidate_lookup[decision.id]
-            merged_decisions.append(
-                {
-                    "id": decision.id,
-                    "value": cand.value,
-                    "label": cand.label,
-                    "decision": decision.decision.value,
-                    "proposed_label": decision.proposed_label or "",
-                    "reason": decision.reason,
-                }
+
+def chunk_validation_conflict_groups(
+    groups: Sequence[tuple[Observation, ...]],
+    max_entities_per_call: int,
+) -> list[list[tuple[Observation, ...]]]:
+    """Pack whole conflict groups, sending an oversized group alone with a warning."""
+    chunks: list[list[tuple[Observation, ...]]] = []
+    current: list[tuple[Observation, ...]] = []
+    current_size = 0
+    for group in groups:
+        group_size = len(group)
+        if group_size > max_entities_per_call:
+            if current:
+                chunks.append(current)
+                current = []
+                current_size = 0
+            logger.warning(
+                "Validation conflict group has %d candidates, exceeding the configured target %d; "
+                "sending the group alone to keep overlapping alternatives together",
+                group_size,
+                max_entities_per_call,
             )
-            seen.add(decision.id)
-    return ValidationDecisionsSchema.model_validate({"decisions": merged_decisions}).model_dump(mode="json")
+            chunks.append([group])
+            continue
+        if current and current_size + group_size > max_entities_per_call:
+            chunks.append(current)
+            current = []
+            current_size = 0
+        current.append(group)
+        current_size += group_size
+    if current:
+        chunks.append(current)
+    return chunks
+
+
+def prepare_validation_requests(
+    *,
+    detection_result: DetectionResult,
+    canonical_text: str,
+    max_entities_per_call: int,
+    excerpt_window_chars: int,
+    single_chunk_full_text: bool,
+    notation: TagNotation,
+    prompt_template: str,
+    effective_label_policy: EffectiveLabelPolicy,
+) -> list[_PreparedValidationRequest]:
+    """Create immutable request inventories and conflict-aware prompts.
+
+    Only observations assigned to the request are tagged. Neighboring
+    observations in its source excerpt remain plain text without label hints.
+    Prompt offsets are relative to the untagged excerpt; inventory offsets
+    remain canonical source positions.
+    """
+    groups = build_validation_conflict_groups(detection_result.observations)
+    chunks = chunk_validation_conflict_groups(groups, max_entities_per_call)
+    prepared: list[_PreparedValidationRequest] = []
+    for request_index, chunk in enumerate(chunks, start=1):
+        observations = [observation for group in chunk for observation in group]
+        if len(chunks) == 1 and single_chunk_full_text:
+            context_start = detection_result.source_view.start_position
+            context_end = detection_result.source_view.end_position
+        else:
+            context_start = max(
+                detection_result.source_view.start_position,
+                min(item.start_position for item in observations) - excerpt_window_chars,
+            )
+            context_end = min(
+                detection_result.source_view.end_position,
+                max(item.end_position for item in observations) + excerpt_window_chars,
+            )
+
+        entries: list[ValidationInventoryEntry] = []
+        prompt_markers: list[EntitySpan] = []
+        next_alias = 1
+        next_group_alias = 1
+        for group in chunk:
+            conflict_group_id = None
+            if len(group) > 1:
+                conflict_group_id = f"g{next_group_alias}"
+                next_group_alias += 1
+                group_start = min(item.start_position for item in group)
+                group_end = max(item.end_position for item in group)
+                prompt_markers.append(
+                    EntitySpan(
+                        entity_id=conflict_group_id,
+                        value=canonical_text[group_start:group_end],
+                        label=f"NAGROUP_{conflict_group_id}",
+                        start_position=group_start - context_start,
+                        end_position=group_end - context_start,
+                        score=0.0,
+                        source="validation_prompt",
+                    )
+                )
+            else:
+                observation = group[0]
+                prompt_markers.append(
+                    EntitySpan(
+                        entity_id=observation.observation_id,
+                        value=observation.value,
+                        label=observation.label,
+                        start_position=observation.start_position - context_start,
+                        end_position=observation.end_position - context_start,
+                        score=observation.native_score or 0.0,
+                        source="validation_prompt",
+                    )
+                )
+            for observation in group:
+                entries.append(
+                    ValidationInventoryEntry(
+                        alias=f"c{next_alias}",
+                        conflict_group_id=conflict_group_id,
+                        observation_ref=observation.ref,
+                        value=observation.value,
+                        label=observation.label,
+                        start_position=observation.start_position,
+                        end_position=observation.end_position,
+                    )
+                )
+                next_alias += 1
+
+        context_view = SourceView(
+            source_text_ref=detection_result.source_view.source_text_ref,
+            start_position=context_start,
+            end_position=context_end,
+        )
+        source_context = canonical_text[context_start:context_end]
+        inventory = ValidationRequestInventory(
+            request_id=f"validation-request-{request_index}",
+            source_text_ref=detection_result.source_view.source_text_ref,
+            context_view=context_view,
+            source_context=source_context,
+            effective_label_policy=effective_label_policy,
+            entries=tuple(entries),
+        )
+        tagged_context = build_tagged_text(
+            source_context,
+            prompt_markers,
+            notation=notation,
+        )
+        skeleton = {
+            "decisions": [
+                {
+                    "id": entry.alias,
+                    "conflict_group_id": entry.conflict_group_id,
+                    "value": entry.value,
+                    "label": entry.label,
+                    "start_position": entry.start_position - context_start,
+                    "end_position": entry.end_position - context_start,
+                    "decision": None,
+                    "proposed_label": None,
+                    "reason": None,
+                }
+                for entry in inventory.entries
+            ]
+        }
+        prepared.append(
+            _PreparedValidationRequest(
+                inventory=inventory,
+                prompt=render_chunk_prompt(
+                    template=prompt_template,
+                    excerpt=tagged_context,
+                    skeleton=skeleton,
+                    notation=notation,
+                ),
+            )
+        )
+    return prepared
+
+
+def serialize_inventory_decisions(
+    chunk_results: list[RawValidationDecisionsSchema],
+    requests: list[_PreparedValidationRequest],
+) -> dict[str, Any]:
+    """Bind every parsed response to the immutable request that authorized it."""
+    return ValidationRequestDecisionSets(
+        responses=tuple(
+            ValidationRequestDecisionSet(
+                request_id=request.inventory.request_id,
+                decisions=tuple(result.decisions),
+            )
+            for result, request in zip(chunk_results, requests, strict=True)
+        )
+    ).model_dump(mode="json")
 
 
 # ---------------------------------------------------------------------------
@@ -305,6 +397,7 @@ def _dispatch_chunk(
     prompt: str,
     system_prompt: str | None,
     chunk_index: int,
+    assigned_aliases: tuple[str, ...],
 ) -> RawValidationDecisionsSchema:
     """Dispatch a single chunk with cross-alias failover across the pool.
 
@@ -319,57 +412,79 @@ def _dispatch_chunk(
     We use ``PydanticResponseRecipe`` so the facade appends JSON task
     instructions and parses the response into ``RawValidationDecisionsSchema``.
 
-    Single-alias pools run the loop exactly once and re-raise the original
-    exception (no alternate alias to try). Multi-alias pools get
-    ``len(pool)`` total attempts. If every pool member raises, the *last*
-    exception propagates so DataDesigner records the row as a
-    ``FailedRecord`` via ``NddAdapter._detect_missing_records``.
+    Transport failures try each pool member once. A duplicate assigned alias
+    is a semantic response failure: multi-alias pools advance to the next
+    alias, while a single-alias pool receives one bounded same-request retry.
+    If all permitted attempts fail, the last exception propagates so
+    DataDesigner records the row as a ``FailedRecord``.
 
     Each failover attempt is logged at WARNING so operators can correlate
     degraded pool members with run-level failure-rate spikes.
+    Logs include exception types, not messages, because messages may contain
+    source text or model output.
     """
     recipe = PydanticResponseRecipe(data_type=RawValidationDecisionsSchema)
     final_prompt = recipe.apply_recipe_to_user_prompt(prompt)
     final_system = recipe.apply_recipe_to_system_prompt(system_prompt)
 
     last_exc: BaseException | None = None
-    for attempt_index, (alias, facade) in enumerate(facades):
-        try:
-            output, _messages = facade.generate(
-                prompt=final_prompt,
-                parser=recipe.parse,
-                system_prompt=final_system,
-                purpose=f"entity-validation-chunk-{chunk_index}-attempt-{attempt_index}",
+    attempt_index = 0
+    for facade_index, (alias, facade) in enumerate(facades):
+        semantic_attempts = 2 if len(facades) == 1 else 1
+        for semantic_attempt in range(semantic_attempts):
+            try:
+                output, _messages = facade.generate(
+                    prompt=final_prompt,
+                    parser=recipe.parse,
+                    system_prompt=final_system,
+                    purpose=f"entity-validation-chunk-{chunk_index}-attempt-{attempt_index}",
+                )
+            except Exception as exc:  # noqa: BLE001 — failover is based on pool position
+                last_exc = exc
+                break
+            duplicate_aliases = find_duplicate_assigned_aliases(
+                decisions=output.decisions,
+                assigned_aliases=assigned_aliases,
             )
+            if duplicate_aliases:
+                last_exc = _SemanticValidationResponseError(
+                    f"validator response contains duplicate assigned aliases {duplicate_aliases}"
+                )
+                has_same_alias_retry = semantic_attempt + 1 < semantic_attempts
+                if has_same_alias_retry:
+                    logger.warning(
+                        "validator chunk %d: alias=%s returned duplicate assigned aliases; retrying same request",
+                        chunk_index,
+                        alias,
+                    )
+                    attempt_index += 1
+                    continue
+                break
             if attempt_index > 0:
                 logger.info(
-                    "validator chunk %d: recovered on failover alias=%s (attempt %d of %d)",
+                    "validator chunk %d: recovered on alias=%s after %d prior attempt(s)",
                     chunk_index,
                     alias,
-                    attempt_index + 1,
-                    len(facades),
+                    attempt_index,
                 )
             return output
-        except Exception as exc:  # noqa: BLE001 — we classify by failover position, not type
-            last_exc = exc
-            remaining = len(facades) - attempt_index - 1
-            if remaining > 0:
-                logger.warning(
-                    "validator chunk %d: alias=%s raised %s (%s); failing over to next pool member (%d remaining)",
-                    chunk_index,
-                    alias,
-                    type(exc).__name__,
-                    exc,
-                    remaining,
-                )
-            else:
-                logger.error(
-                    "validator chunk %d: alias=%s raised %s (%s); pool exhausted — row will be dropped",
-                    chunk_index,
-                    alias,
-                    type(exc).__name__,
-                    exc,
-                )
+        remaining = len(facades) - facade_index - 1
+        if remaining > 0:
+            logger.warning(
+                "validator chunk %d: alias=%s exhausted (%s); failing over (%d remaining)",
+                chunk_index,
+                alias,
+                type(last_exc).__name__ if last_exc is not None else "unknown error",
+                remaining,
+            )
+        else:
+            logger.error(
+                "validator chunk %d: alias=%s exhausted (%s); pool exhausted — row will be dropped",
+                chunk_index,
+                alias,
+                type(last_exc).__name__ if last_exc is not None else "unknown error",
+            )
+        attempt_index += 1
 
     # ``facades`` is non-empty by caller contract: ``chunked_validate_row``
     # builds it from the configured pool, and the config validator requires
@@ -393,6 +508,7 @@ async def _dispatch_chunk_async(
     prompt: str,
     system_prompt: str | None,
     chunk_index: int,
+    assigned_aliases: tuple[str, ...],
 ) -> RawValidationDecisionsSchema:
     """Async equivalent of :func:`_dispatch_chunk`, preserving failover order."""
     recipe = PydanticResponseRecipe(data_type=RawValidationDecisionsSchema)
@@ -400,43 +516,63 @@ async def _dispatch_chunk_async(
     final_system = recipe.apply_recipe_to_system_prompt(system_prompt)
 
     last_exc: BaseException | None = None
-    for attempt_index, (alias, facade) in enumerate(facades):
-        try:
-            output, _messages = await facade.agenerate(
-                prompt=final_prompt,
-                parser=recipe.parse,
-                system_prompt=final_system,
-                purpose=f"entity-validation-chunk-{chunk_index}-attempt-{attempt_index}",
+    attempt_index = 0
+    for facade_index, (alias, facade) in enumerate(facades):
+        semantic_attempts = 2 if len(facades) == 1 else 1
+        for semantic_attempt in range(semantic_attempts):
+            try:
+                output, _messages = await facade.agenerate(
+                    prompt=final_prompt,
+                    parser=recipe.parse,
+                    system_prompt=final_system,
+                    purpose=f"entity-validation-chunk-{chunk_index}-attempt-{attempt_index}",
+                )
+            except Exception as exc:  # noqa: BLE001 — failover is based on pool position
+                last_exc = exc
+                break
+            duplicate_aliases = find_duplicate_assigned_aliases(
+                decisions=output.decisions,
+                assigned_aliases=assigned_aliases,
             )
+            if duplicate_aliases:
+                last_exc = _SemanticValidationResponseError(
+                    f"validator response contains duplicate assigned aliases {duplicate_aliases}"
+                )
+                has_same_alias_retry = semantic_attempt + 1 < semantic_attempts
+                if has_same_alias_retry:
+                    logger.warning(
+                        "validator chunk %d: alias=%s returned duplicate assigned aliases; retrying same request",
+                        chunk_index,
+                        alias,
+                    )
+                    attempt_index += 1
+                    continue
+                break
             if attempt_index > 0:
                 logger.info(
-                    "validator chunk %d: recovered on failover alias=%s (attempt %d of %d)",
+                    "validator chunk %d: recovered on alias=%s after %d prior attempt(s)",
                     chunk_index,
                     alias,
-                    attempt_index + 1,
-                    len(facades),
+                    attempt_index,
                 )
             return output
-        except Exception as exc:  # noqa: BLE001 — we classify by failover position, not type
-            last_exc = exc
-            remaining = len(facades) - attempt_index - 1
-            if remaining > 0:
-                logger.warning(
-                    "validator chunk %d: alias=%s raised %s (%s); failing over to next pool member (%d remaining)",
-                    chunk_index,
-                    alias,
-                    type(exc).__name__,
-                    exc,
-                    remaining,
-                )
-            else:
-                logger.error(
-                    "validator chunk %d: alias=%s raised %s (%s); pool exhausted — row will be dropped",
-                    chunk_index,
-                    alias,
-                    type(exc).__name__,
-                    exc,
-                )
+        remaining = len(facades) - facade_index - 1
+        if remaining > 0:
+            logger.warning(
+                "validator chunk %d: alias=%s exhausted (%s); failing over (%d remaining)",
+                chunk_index,
+                alias,
+                type(last_exc).__name__ if last_exc is not None else "unknown error",
+                remaining,
+            )
+        else:
+            logger.error(
+                "validator chunk %d: alias=%s exhausted (%s); pool exhausted — row will be dropped",
+                chunk_index,
+                alias,
+                type(last_exc).__name__ if last_exc is not None else "unknown error",
+            )
+        attempt_index += 1
 
     if last_exc is None:
         raise RuntimeError(
@@ -446,113 +582,50 @@ async def _dispatch_chunk_async(
     raise last_exc
 
 
-def _build_dispatch_kwargs_per_chunk(
+def _build_lifecycle_dispatch_kwargs(
     row: dict[str, Any],
     params: ChunkedValidationParams,
     models: dict[str, Any],
-) -> tuple[ValidationCandidatesSchema, list[dict[str, Any]]]:
+) -> tuple[list[_PreparedValidationRequest], list[dict[str, Any]]]:
     missing_aliases = [alias for alias in params.pool if alias not in models]
     if missing_aliases:
         raise KeyError(
             f"Validator pool aliases {missing_aliases} not present in models dict. "
-            f"Ensure make_chunked_validation_generator was invoked with the same pool "
-            f"passed in ChunkedValidationParams.pool."
+            "Ensure the configured validation pool matches the available models."
         )
 
     text = str(row.get(COL_TEXT, ""))
-    candidates = ValidationCandidatesSchema.from_raw(row.get(COL_SEED_VALIDATION_CANDIDATES, {}))
-    seed_entities_schema = EntitiesSchema.from_raw(row.get(COL_SEED_ENTITIES, {}))
+    detection_result = DetectionResult.model_validate(row[COL_SEED_DETECTION_RESULT])
     notation_raw = row.get(COL_TAG_NOTATION) or TagNotation.sentinel.value
     notation = TagNotation(str(notation_raw))
-
-    if not candidates.candidates:
-        return candidates, []
-
-    all_spans = [
-        EntitySpan(
-            entity_id=entity.id,
-            value=entity.value,
-            label=entity.label,
-            start_position=entity.start_position,
-            end_position=entity.end_position,
-            score=entity.score,
-            source=entity.source,
-        )
-        for entity in seed_entities_schema.entities
-    ]
-
-    ordered = order_candidates_by_position(candidates, all_spans)
-    chunks = chunk_candidates(ordered, params.max_entities_per_call)
-
-    if len(chunks) == 1:
-        logger.debug(
-            "chunked validation: %d candidate(s) in 1 chunk (full-text excerpt), pool=%s",
-            len(ordered),
-            params.pool,
-        )
-    else:
-        logger.debug(
-            "chunked validation: %d candidate(s) in %d chunks (max=%d per chunk, window=%d chars), pool=%s",
-            len(ordered),
-            len(chunks),
-            params.max_entities_per_call,
-            params.excerpt_window_chars,
-            params.pool,
-        )
-
-    # Single-chunk rows preserve parity with the pre-chunking
-    # ``LLMStructuredColumnConfig`` path by sending the fully tagged
-    # document. The excerpt window is strictly a cost-control lever for
-    # multi-chunk dispatch (it bounds per-chunk input tokens); when we're
-    # only making one call there's no cost reason to clip, and clipping
-    # would silently narrow the context the validator sees. Computed once
-    # here because ``len(chunks) == 1`` is loop-invariant.
-    single_chunk_tagged_text = (
-        build_tagged_text(text, all_spans, notation=notation)
-        if len(chunks) == 1 and params.single_chunk_full_text
-        else None
+    requests = prepare_validation_requests(
+        detection_result=detection_result,
+        canonical_text=text,
+        max_entities_per_call=params.max_entities_per_call,
+        excerpt_window_chars=params.excerpt_window_chars,
+        single_chunk_full_text=params.single_chunk_full_text,
+        notation=notation,
+        prompt_template=params.prompt_template,
+        effective_label_policy=EffectiveLabelPolicy.from_labels(
+            allowed_labels=params.allowed_entity_labels,
+            excluded_labels=params.excluded_entity_labels,
+        ),
     )
 
     dispatch_kwargs_per_chunk: list[dict[str, Any]] = []
-    for chunk_index, chunk in enumerate(chunks):
-        chunk_candidates_ = [pair[0] for pair in chunk]
-        chunk_spans = [pair[1] for pair in chunk]
-        excerpt = (
-            single_chunk_tagged_text
-            if single_chunk_tagged_text is not None
-            else build_chunk_excerpt(
-                text=text,
-                chunk_spans=chunk_spans,
-                all_spans=all_spans,
-                window_chars=params.excerpt_window_chars,
-                notation=notation,
-            )
-        )
-        skeleton = build_chunk_skeleton(chunk_candidates_)
-        prompt = render_chunk_prompt(
-            template=params.prompt_template,
-            excerpt=excerpt,
-            skeleton=skeleton,
-            notation=notation,
-        )
-        # Round-robin across the validator pool. ``ChunkedValidationParams``
-        # guarantees ``pool`` is non-empty; ``chunk_index`` comes from
-        # ``enumerate`` so it's non-negative by construction. The rotated
-        # order (primary first, then the rest of the pool) is what
-        # ``_dispatch_chunk`` walks on cross-alias failover.
+    for chunk_index, request in enumerate(requests):
         start = chunk_index % len(params.pool)
         rotated_aliases = [params.pool[(start + offset) % len(params.pool)] for offset in range(len(params.pool))]
-        chunk_facades = [(alias, models[alias]) for alias in rotated_aliases]
         dispatch_kwargs_per_chunk.append(
             {
-                "facades": chunk_facades,
-                "prompt": prompt,
+                "facades": [(alias, models[alias]) for alias in rotated_aliases],
+                "prompt": request.prompt,
                 "system_prompt": params.system_prompt,
                 "chunk_index": chunk_index,
+                "assigned_aliases": tuple(entry.alias for entry in request.inventory.entries),
             }
         )
-
-    return candidates, dispatch_kwargs_per_chunk
+    return requests, dispatch_kwargs_per_chunk
 
 
 def _chunk_worker_count(params: ChunkedValidationParams, chunk_count: int) -> int:
@@ -581,7 +654,7 @@ def chunked_validate_row(
     The plugin's synchronous generator uses this path. Its asynchronous generator
     calls :func:`chunked_validate_row_async`.
     """
-    candidates, dispatch_kwargs_per_chunk = _build_dispatch_kwargs_per_chunk(row, params, models)
+    requests, dispatch_kwargs_per_chunk = _build_lifecycle_dispatch_kwargs(row, params, models)
 
     # Dispatch all chunks concurrently via a ThreadPoolExecutor. Per-alias
     # concurrency is still capped downstream by each facade's
@@ -594,7 +667,8 @@ def chunked_validate_row(
             futures = [executor.submit(_dispatch_chunk, **kwargs) for kwargs in dispatch_kwargs_per_chunk]
             chunk_results = [f.result() for f in futures]
 
-    row[COL_VALIDATION_DECISIONS] = merge_chunk_decisions(chunk_results, candidates)
+    row[COL_VALIDATION_INVENTORIES] = [request.inventory.model_dump(mode="json") for request in requests]
+    row[COL_VALIDATION_DECISIONS] = serialize_inventory_decisions(chunk_results, requests)
     return row
 
 
@@ -604,7 +678,7 @@ async def chunked_validate_row_async(
     models: dict[str, Any],
 ) -> dict[str, Any]:
     """Async-native chunked validation for plugin column generators."""
-    candidates, dispatch_kwargs_per_chunk = _build_dispatch_kwargs_per_chunk(row, params, models)
+    requests, dispatch_kwargs_per_chunk = _build_lifecycle_dispatch_kwargs(row, params, models)
     if not dispatch_kwargs_per_chunk:
         chunk_results: list[RawValidationDecisionsSchema] = []
     else:
@@ -613,7 +687,8 @@ async def chunked_validate_row_async(
             *[_bounded_dispatch_chunk_async(semaphore, kwargs) for kwargs in dispatch_kwargs_per_chunk]
         )
 
-    row[COL_VALIDATION_DECISIONS] = merge_chunk_decisions(chunk_results, candidates)
+    row[COL_VALIDATION_INVENTORIES] = [request.inventory.model_dump(mode="json") for request in requests]
+    row[COL_VALIDATION_DECISIONS] = serialize_inventory_decisions(chunk_results, requests)
     return row
 
 
@@ -629,8 +704,8 @@ def make_chunked_validation_generator(pool: list[str]) -> Any:
     DataDesigner knows which facades to materialise for the generator. Since
     the pool is config-driven (per-run), we generate the function dynamically.
     The required_columns are exhaustive for DataDesigner's DAG ordering: the
-    generator reads the raw text, seed entities (for positions), the candidate
-    list (what to decide), and the tag notation (for excerpt tagging).
+    generator reads the raw text, source-bound detector observations, and the
+    tag notation used to render request excerpts.
     """
     if not pool:
         raise ValueError("Cannot build chunked validation generator: pool is empty.")
@@ -638,10 +713,10 @@ def make_chunked_validation_generator(pool: list[str]) -> Any:
     @custom_column_generator(
         required_columns=[
             COL_TEXT,
-            COL_SEED_ENTITIES,
-            COL_SEED_VALIDATION_CANDIDATES,
+            COL_SEED_DETECTION_RESULT,
             COL_TAG_NOTATION,
         ],
+        side_effect_columns=[COL_VALIDATION_INVENTORIES],
         model_aliases=list(pool),
     )
     def chunked_validate(

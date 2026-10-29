@@ -3,16 +3,18 @@
 
 """Tests for chunked LLM validation.
 
-The module is layered: pure helpers (ordering, chunking, excerpts, prompt
-rendering, merging) are tested directly; the chunk dispatch is tested via a
-fake ``ModelFacade`` that records calls and returns preconfigured responses.
+Conflict grouping and prompt rendering are tested directly. Sync and async
+dispatch use lifecycle rows and fake model facades to test request binding,
+pool failover, concurrency, and chunk-size parity.
 """
 
 from __future__ import annotations
 
+import ast
 import asyncio
+import inspect
 import json
-import re
+import logging
 from types import SimpleNamespace
 from typing import Any, Callable
 
@@ -20,33 +22,44 @@ import pytest
 from data_designer.engine.models.clients.errors import SyncClientUnavailableError
 
 from anonymizer.engine.constants import (
-    COL_MERGED_TAGGED_TEXT,
-    COL_SEED_ENTITIES,
-    COL_SEED_VALIDATION_CANDIDATES,
+    COL_ADMISSION_RESULTS,
+    COL_RECONCILED_CANDIDATES,
+    COL_SEED_DETECTION_RESULT,
     COL_TAG_NOTATION,
     COL_TEXT,
     COL_VALIDATION_CANDIDATES,
     COL_VALIDATION_DECISIONS,
+    COL_VALIDATION_INVENTORIES,
     COL_VALIDATION_SKELETON,
 )
 from anonymizer.engine.detection.chunked_validation import (
+    VALIDATION_EXCERPT_VAR,
     ChunkedValidationParams,
-    build_chunk_excerpt,
-    build_chunk_skeleton,
-    chunk_candidates,
+    _dispatch_chunk,
+    _dispatch_chunk_async,
+    build_validation_conflict_groups,
+    chunk_validation_conflict_groups,
     chunked_validate_row,
     chunked_validate_row_async,
     make_chunked_validation_generator,
-    merge_chunk_decisions,
-    order_candidates_by_position,
+    prepare_validation_requests,
     render_chunk_prompt,
 )
-from anonymizer.engine.detection.postprocess import EntitySpan, TagNotation, apply_validation_decisions
+from anonymizer.engine.detection.custom_columns import admit_validation_decisions
+from anonymizer.engine.detection.postprocess import TagNotation
 from anonymizer.engine.schemas import (
-    EntitiesSchema,
-    RawValidationDecisionsSchema,
-    ValidationCandidateSchema,
-    ValidationCandidatesSchema,
+    AdmissionResults,
+    AdmissionRoute,
+    AdmissionStatus,
+    DetectionResult,
+    EffectiveLabelPolicy,
+    Observation,
+    RawValidationDecisionSchema,
+    SourceTextRef,
+    SourceView,
+    ValidationChoice,
+    ValidationRequestDecisionSets,
+    ValidationRequestInventory,
 )
 from anonymizer.engine.workflow_columns.detection.config import ChunkedValidationConfig
 from anonymizer.engine.workflow_columns.detection.impl import ChunkedValidationGenerator
@@ -162,161 +175,257 @@ class FakeModelRegistry:
         return self.models[model_alias]
 
 
-def _entity_span(entity_id: str, value: str, label: str, start: int, end: int) -> EntitySpan:
-    return EntitySpan(
-        entity_id=entity_id,
+def _lifecycle_observation(
+    observation_id: str,
+    value: str,
+    label: str,
+    start: int,
+    end: int,
+) -> Observation:
+    return Observation(
+        detection_result_id="r1",
+        observation_id=observation_id,
+        source_text_ref=SourceTextRef(record_id="record-1", field_id=COL_TEXT),
         value=value,
         label=label,
         start_position=start,
         end_position=end,
-        score=1.0,
-        source="detector",
+        source_kind="initial_detector",
+        source_instance="gliner-pii-detector",
+        admission_route=AdmissionRoute.llm_validation,
+        native_score=0.9,
     )
 
 
-def _candidates_schema(*candidates: tuple[str, str, str]) -> ValidationCandidatesSchema:
-    return ValidationCandidatesSchema(
-        candidates=[ValidationCandidateSchema(id=cid, value=val, label=lab) for cid, val, lab in candidates]
+def _detection_result(text: str, observations: list[Observation]) -> DetectionResult:
+    source_text_ref = SourceTextRef(record_id="record-1", field_id=COL_TEXT)
+    return DetectionResult(
+        detection_result_id="r1",
+        source_view=SourceView(
+            source_text_ref=source_text_ref,
+            start_position=0,
+            end_position=len(text),
+        ),
+        source_kind="initial_detector",
+        source_instance="gliner-pii-detector",
+        observations=tuple(observations),
     )
 
 
 # ---------------------------------------------------------------------------
-# Pure helpers: ordering / chunking / excerpt / skeleton / prompt / merge
+# Pure helpers: conflict grouping and request prompts
 # ---------------------------------------------------------------------------
 
 
-class TestOrderCandidatesByPosition:
-    def test_orders_by_start_then_end_then_id(self) -> None:
-        candidates = _candidates_schema(
-            ("a_10_13", "foo", "first_name"),
-            ("b_0_5", "bar", "email"),
-            ("c_10_12", "baz", "city"),
-        )
-        spans = [
-            _entity_span("a_10_13", "foo", "first_name", 10, 13),
-            _entity_span("b_0_5", "bar", "email", 0, 5),
-            _entity_span("c_10_12", "baz", "city", 10, 12),
+class TestValidationConflictGroups:
+    def test_builds_transitive_connected_components(self) -> None:
+        observations = [
+            _lifecycle_observation("o1", "Alice", "first_name", 0, 5),
+            _lifecycle_observation("o2", "ce John", "full_name", 3, 10),
+            _lifecycle_observation("o3", "hn", "last_name", 9, 11),
+            _lifecycle_observation("o4", "Bob", "first_name", 12, 15),
         ]
-        ordered = order_candidates_by_position(candidates, spans)
-        assert [pair[0].id for pair in ordered] == ["b_0_5", "c_10_12", "a_10_13"]
 
-    def test_missing_seed_raises_with_triage_hint(self) -> None:
-        candidates = _candidates_schema(("missing", "x", "y"))
-        with pytest.raises(ValueError, match="merge_and_build_candidates or prepare_validation_inputs"):
-            order_candidates_by_position(candidates, [])
+        groups = build_validation_conflict_groups(observations)
 
-
-class TestChunkCandidates:
-    def test_splits_into_chunks_of_at_most_n(self) -> None:
-        ordered = [(i, None) for i in range(5)]  # type: ignore[misc]
-        chunks = chunk_candidates(ordered, max_entities_per_call=2)  # ty: ignore[invalid-argument-type]
-        assert [len(c) for c in chunks] == [2, 2, 1]
-
-    def test_empty_input_yields_no_chunks(self) -> None:
-        assert chunk_candidates([], max_entities_per_call=10) == []
-
-    def test_tuple_input_returns_list_of_lists(self) -> None:
-        # Input-type tolerance: a sequence (not only a list) should work, and
-        # the declared ``list[list[...]]`` return contract must hold even
-        # when the caller hands in a tuple.
-        ordered: tuple[tuple[int, None], ...] = tuple((i, None) for i in range(3))  # type: ignore[misc]
-        chunks = chunk_candidates(ordered, max_entities_per_call=2)  # ty: ignore[invalid-argument-type]
-        assert chunks == [[(0, None), (1, None)], [(2, None)]]
-        assert all(isinstance(c, list) for c in chunks)
-
-
-class TestBuildChunkExcerpt:
-    def test_includes_fully_contained_neighbors_and_drops_outside_spans(self) -> None:
-        text = "Alice met Bob at Acme HQ in Seattle yesterday."
-        spans = [
-            _entity_span("alice_0_5", "Alice", "first_name", 0, 5),
-            _entity_span("bob_10_13", "Bob", "first_name", 10, 13),
-            _entity_span("acme_17_21", "Acme", "organization", 17, 21),
-            _entity_span("seattle_28_35", "Seattle", "city", 28, 35),
+        assert [[item.observation_id for item in group] for group in groups] == [
+            ["o1", "o2", "o3"],
+            ["o4"],
         ]
-        # Window 8 around Bob (10..13) => excerpt [2, 21]; contains Acme fully (17..21)
-        # but truncates 'Alice' (0..5) and excludes 'Seattle' (28..35).
-        excerpt = build_chunk_excerpt(
-            text=text,
-            chunk_spans=[spans[1]],
-            all_spans=spans,
-            window_chars=8,
-            notation=TagNotation.xml,
+
+    def test_chunking_keeps_groups_atomic_within_target(self) -> None:
+        overlap_group = (
+            _lifecycle_observation("o1", "Alice", "first_name", 0, 5),
+            _lifecycle_observation("o2", "Alice", "full_name", 0, 5),
         )
-        assert "<first_name>Bob</first_name>" in excerpt
-        assert "<organization>Acme</organization>" in excerpt
-        # Alice is partially in the window (end=5 inside, but start=0 before) → excluded
-        assert "first_name>Alice" not in excerpt
-        assert "Seattle" not in excerpt
+        singleton = (_lifecycle_observation("o3", "Bob", "first_name", 10, 13),)
 
-    def test_partially_contained_neighbor_is_excluded(self) -> None:
-        """A neighbor that only partially overlaps the excerpt window must not be re-tagged.
+        chunks = chunk_validation_conflict_groups([overlap_group, singleton], max_entities_per_call=2)
 
-        Tagging a truncated span would emit text that doesn't match the
-        entity's actual value, which is worse than omitting the tag entirely.
-        """
-        text = "PREFIX Alice SUFFIX"  # Alice at 7..12
-        spans = [_entity_span("a", "Alice", "first_name", 7, 12)]
-        # Excerpt window [8, 12] cuts off 'A' from Alice → partial, must be excluded.
-        excerpt = build_chunk_excerpt(
-            text=text,
-            chunk_spans=spans,
-            all_spans=spans,
-            window_chars=0,
-            notation=TagNotation.xml,
+        assert [[item.observation_id for group in chunk for item in group] for chunk in chunks] == [
+            ["o1", "o2"],
+            ["o3"],
+        ]
+
+    def test_oversized_transitive_group_is_sent_alone_between_other_groups(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        observations = [
+            _lifecycle_observation("before", "Bob", "first_name", 0, 3),
+            _lifecycle_observation("o1", "Alice", "first_name", 4, 9),
+            _lifecycle_observation("o2", "ce Johnson", "full_name", 7, 17),
+            _lifecycle_observation("o3", "on Smith", "last_name", 15, 23),
+            _lifecycle_observation("after", "Eve", "first_name", 24, 27),
+        ]
+        groups = build_validation_conflict_groups(observations)
+
+        with caplog.at_level(logging.WARNING, logger="anonymizer.detection.chunked_validation"):
+            chunks = chunk_validation_conflict_groups(groups, max_entities_per_call=2)
+
+        assert [[item.observation_id for group in chunk for item in group] for chunk in chunks] == [
+            ["before"],
+            ["o1", "o2", "o3"],
+            ["after"],
+        ]
+        assert "3 candidates" in caplog.text
+        assert "configured target 2" in caplog.text
+        assert all(item.value not in caplog.text for item in observations)
+
+    @pytest.mark.parametrize(
+        ("notation", "expected_marker"),
+        [
+            (TagNotation.xml, "<NAGROUP_g1>Alice</NAGROUP_g1>"),
+            (TagNotation.bracket, "[[Alice|NAGROUP_g1]]"),
+            (TagNotation.paren, "((SENSITIVE:NAGROUP_g1|Alice))"),
+            (
+                TagNotation.sentinel,
+                "<<SENSITIVE:NAGROUP_g1>>Alice<</SENSITIVE:NAGROUP_g1>>",
+            ),
+        ],
+    )
+    def test_request_inventory_uses_one_neutral_marker_per_overlap_group(
+        self,
+        notation: TagNotation,
+        expected_marker: str,
+    ) -> None:
+        text = "Alice met Bob"
+        detection_result = _detection_result(
+            text,
+            [
+                _lifecycle_observation("o1", "Alice", "first_name", 0, 5),
+                _lifecycle_observation("o2", "Alice", "full_name", 0, 5),
+                _lifecycle_observation("o3", "Bob", "first_name", 10, 13),
+            ],
         )
-        # chunk_spans IS Alice (7..12), so its own span is within. This test
-        # instead builds the partial case via a distinct chunk entity:
-        bob = _entity_span("b", "lice", "first_name", 8, 12)
-        chunk = [bob]
-        excerpt2 = build_chunk_excerpt(
-            text=text,
-            chunk_spans=chunk,
-            all_spans=[spans[0], bob],
-            window_chars=0,
-            notation=TagNotation.xml,
-        )
-        # 'Alice' at 7..12 starts before excerpt_start=8 → excluded.
-        # 'bob' (the chunk entity) has positions 8..12 which are within the window → included.
-        assert "<first_name>lice</first_name>" in excerpt2
-        assert "Alice" not in excerpt2
-        _ = excerpt  # suppress "unused" lint
 
-    def test_forces_requested_notation_over_heuristic(self) -> None:
-        text = "Alice met Bob at HQ"
-        spans = [_entity_span("alice_0_5", "Alice", "first_name", 0, 5)]
-        excerpt = build_chunk_excerpt(
-            text=text,
-            chunk_spans=spans,
-            all_spans=spans,
-            window_chars=100,
-            notation=TagNotation.paren,
-        )
-        assert "((SENSITIVE:first_name|Alice))" in excerpt
-        assert "<first_name>" not in excerpt
-
-    def test_empty_chunk_returns_empty_string(self) -> None:
-        assert (
-            build_chunk_excerpt(text="x", chunk_spans=[], all_spans=[], window_chars=5, notation=TagNotation.xml) == ""
+        requests = prepare_validation_requests(
+            detection_result=detection_result,
+            canonical_text=text,
+            max_entities_per_call=3,
+            excerpt_window_chars=20,
+            single_chunk_full_text=True,
+            notation=notation,
+            prompt_template=_MINIMAL_TEMPLATE,
+            effective_label_policy=EffectiveLabelPolicy(allowed_labels=("first_name", "full_name")),
         )
 
+        assert len(requests) == 1
+        request = requests[0]
+        assert expected_marker in request.prompt
+        tagged_context = request.prompt.split("|SKELETON:", maxsplit=1)[0]
+        assert tagged_context.count("NAGROUP_g1") == expected_marker.count("NAGROUP_g1")
+        assert [(entry.alias, entry.conflict_group_id) for entry in request.inventory.entries] == [
+            ("c1", "g1"),
+            ("c2", "g1"),
+            ("c3", None),
+        ]
+        assert [(entry.start_position, entry.end_position) for entry in request.inventory.entries] == [
+            (0, 5),
+            (0, 5),
+            (10, 13),
+        ]
 
-class TestBuildChunkSkeleton:
-    def test_skeleton_matches_chunk_only(self) -> None:
-        candidates = _candidates_schema(("a", "Alice", "first_name"), ("b", "Bob", "first_name"))
-        skeleton = build_chunk_skeleton([candidates.candidates[0]])
-        assert skeleton == {
-            "decisions": [
-                {
-                    "id": "a",
-                    "value": "Alice",
-                    "label": "first_name",
-                    "decision": None,
-                    "proposed_label": None,
-                    "reason": None,
-                }
-            ]
+    @pytest.mark.parametrize("notation", list(TagNotation))
+    @pytest.mark.parametrize("request_mode", ["full_view", "compact", "multiple"])
+    def test_prompt_offsets_index_the_untagged_excerpt_while_inventory_offsets_stay_canonical(
+        self, notation: TagNotation, request_mode: str
+    ) -> None:
+        text = "Prelude " * 20 + "Alice met Bob. " + "padding " * 12 + "Alice met Eve."
+        first_start = text.index("Alice")
+        second_start = text.rindex("Alice")
+        detection_result = _detection_result(
+            text,
+            [
+                _lifecycle_observation("o1", "Alice", "first_name", first_start, first_start + 5),
+                _lifecycle_observation("o2", "Alice", "full_name", first_start, first_start + 5),
+                _lifecycle_observation("o3", "Alice", "first_name", second_start, second_start + 5),
+            ],
+        )
+        detection_result = detection_result.model_copy(
+            update={
+                "source_view": SourceView(
+                    source_text_ref=detection_result.source_view.source_text_ref,
+                    start_position=40,
+                    end_position=len(text),
+                )
+            }
+        )
+        requests = prepare_validation_requests(
+            detection_result=detection_result,
+            canonical_text=text,
+            max_entities_per_call=2 if request_mode == "multiple" else 3,
+            excerpt_window_chars=7,
+            single_chunk_full_text=request_mode != "compact",
+            notation=notation,
+            prompt_template=_MINIMAL_TEMPLATE,
+            effective_label_policy=EffectiveLabelPolicy(),
+        )
+
+        assert len(requests) == (2 if request_mode == "multiple" else 1)
+        original_bounds = {
+            observation.observation_id: (observation.start_position, observation.end_position)
+            for observation in detection_result.observations
         }
+        for request in requests:
+            inventory = request.inventory
+            assert inventory.context_view.start_position > 0
+            skeleton_text = request.prompt.split("|SKELETON:", maxsplit=1)[1].split("|NOTATION:", maxsplit=1)[0]
+            skeleton = ast.literal_eval(skeleton_text)
+            for shown, entry in zip(skeleton["decisions"], inventory.entries, strict=True):
+                assert (entry.start_position, entry.end_position) == original_bounds[
+                    entry.observation_ref.observation_id
+                ]
+                assert shown["start_position"] == entry.start_position - inventory.context_view.start_position
+                assert shown["end_position"] == entry.end_position - inventory.context_view.start_position
+                assert inventory.source_context[shown["start_position"] : shown["end_position"]] == entry.value
+                assert text[entry.start_position : entry.end_position] == entry.value
+                assert shown["id"] == entry.alias
+                assert shown["conflict_group_id"] == entry.conflict_group_id
+
+    @pytest.mark.parametrize(
+        ("notation", "first_context", "second_context"),
+        [
+            (TagNotation.xml, "<first_name>Alice</first_name> met Bob", "Alice met <first_name>Bob</first_name>"),
+            (TagNotation.bracket, "[[Alice|first_name]] met Bob", "Alice met [[Bob|first_name]]"),
+            (TagNotation.paren, "((SENSITIVE:first_name|Alice)) met Bob", "Alice met ((SENSITIVE:first_name|Bob))"),
+            (
+                TagNotation.sentinel,
+                "<<SENSITIVE:first_name>>Alice<</SENSITIVE:first_name>> met Bob",
+                "Alice met <<SENSITIVE:first_name>>Bob<</SENSITIVE:first_name>>",
+            ),
+        ],
+    )
+    def test_other_requests_observations_stay_as_untagged_context(
+        self, notation: TagNotation, first_context: str, second_context: str
+    ) -> None:
+        text = "Alice met Bob"
+        requests = prepare_validation_requests(
+            detection_result=_detection_result(
+                text,
+                [
+                    _lifecycle_observation("o1", "Alice", "first_name", 0, 5),
+                    _lifecycle_observation("o2", "Bob", "first_name", 10, 13),
+                ],
+            ),
+            canonical_text=text,
+            max_entities_per_call=1,
+            excerpt_window_chars=50,
+            single_chunk_full_text=True,
+            notation=notation,
+            prompt_template=_MINIMAL_TEMPLATE,
+            effective_label_policy=EffectiveLabelPolicy(),
+        )
+
+        assert [request.prompt.split("|SKELETON:", maxsplit=1)[0] for request in requests] == [
+            f"TAGGED:{first_context}",
+            f"TAGGED:{second_context}",
+        ]
+        assert [
+            [entry.observation_ref.observation_id for entry in request.inventory.entries] for request in requests
+        ] == [
+            ["o1"],
+            ["o2"],
+        ]
 
 
 class TestRenderChunkPrompt:
@@ -338,59 +447,6 @@ class TestRenderChunkPrompt:
         assert "'id': 'a'" in rendered
 
 
-class TestMergeChunkDecisions:
-    def test_filters_unknown_ids_and_deduplicates(self) -> None:
-        candidates = _candidates_schema(("a", "Alice", "first_name"), ("b", "Bob", "first_name"))
-        chunk_one = RawValidationDecisionsSchema.model_validate(
-            {"decisions": [{"id": "a", "decision": "keep"}, {"id": "ghost", "decision": "drop"}]}
-        )
-        chunk_two = RawValidationDecisionsSchema.model_validate(
-            {"decisions": [{"id": "b", "decision": "drop"}, {"id": "a", "decision": "reclass"}]}
-        )
-        merged = merge_chunk_decisions([chunk_one, chunk_two], candidates)
-        ids = [d["id"] for d in merged["decisions"]]
-        assert ids == ["a", "b"]  # 'ghost' dropped; duplicate 'a' from chunk_two ignored
-        by_id = {d["id"]: d for d in merged["decisions"]}
-        assert by_id["a"]["decision"] == "keep"
-        assert by_id["b"]["decision"] == "drop"
-        assert by_id["a"]["value"] == "Alice"  # enriched from candidate
-        assert by_id["a"]["label"] == "first_name"
-
-    def test_drops_decisions_without_verdict(self) -> None:
-        """A decision with ``decision=None`` is equivalent to 'no answer' and must not leak through.
-
-        Downstream ``apply_validation_decisions`` interprets missing-id as
-        'keep unchanged'. Emitting a null-decision entry would break that.
-        """
-        candidates = _candidates_schema(("a", "Alice", "first_name"))
-        chunk = RawValidationDecisionsSchema.model_validate({"decisions": [{"id": "a", "decision": None}]})
-        merged = merge_chunk_decisions([chunk], candidates)
-        assert merged == {"decisions": []}
-
-    def test_later_real_verdict_wins_over_earlier_null_duplicate(self) -> None:
-        """A null-decision entry must not reserve the id against a later real verdict.
-
-        If an earlier chunk returns ``decision=None`` for id 'a' and a later
-        chunk returns ``decision='keep'`` for 'a', the merged payload should
-        retain the real verdict. Otherwise a transient "no answer" in one
-        chunk would suppress a valid answer from another.
-        """
-        candidates = _candidates_schema(("a", "Alice", "first_name"))
-        chunk_one = RawValidationDecisionsSchema.model_validate({"decisions": [{"id": "a", "decision": None}]})
-        chunk_two = RawValidationDecisionsSchema.model_validate({"decisions": [{"id": "a", "decision": "keep"}]})
-        merged = merge_chunk_decisions([chunk_one, chunk_two], candidates)
-        assert merged["decisions"] == [
-            {
-                "id": "a",
-                "value": "Alice",
-                "label": "first_name",
-                "decision": "keep",
-                "proposed_label": "",
-                "reason": None,
-            }
-        ]
-
-
 # ---------------------------------------------------------------------------
 # Async dispatch: chunked_validate_row end-to-end with fake facades
 # ---------------------------------------------------------------------------
@@ -399,27 +455,12 @@ class TestMergeChunkDecisions:
 def _build_row(
     *,
     text: str,
-    seed_entities: list[EntitySpan],
-    candidates: ValidationCandidatesSchema,
+    observations: list[Observation],
     notation: TagNotation = TagNotation.xml,
 ) -> dict[str, Any]:
     return {
         COL_TEXT: text,
-        COL_SEED_ENTITIES: EntitiesSchema(
-            entities=[
-                {
-                    "id": span.entity_id,
-                    "value": span.value,
-                    "label": span.label,
-                    "start_position": span.start_position,
-                    "end_position": span.end_position,
-                    "score": span.score,
-                    "source": span.source,
-                }
-                for span in seed_entities
-            ]
-        ).model_dump(mode="json"),
-        COL_SEED_VALIDATION_CANDIDATES: candidates.model_dump(mode="json"),
+        COL_SEED_DETECTION_RESULT: _detection_result(text, observations).model_dump(mode="json"),
         COL_TAG_NOTATION: notation.value,
     }
 
@@ -427,22 +468,247 @@ def _build_row(
 _MINIMAL_TEMPLATE = "TAGGED:{{ _seed_tagged_text }}|SKELETON:{{ _validation_skeleton }}|NOTATION:{{ _tag_notation }}"
 
 
-class TestChunkedValidateRowPoolOfOne:
-    def test_single_chunk_single_alias_dispatches_once_and_merges(self) -> None:
-        text = "Alice and Bob met."
-        spans = [
-            _entity_span("a", "Alice", "first_name", 0, 5),
-            _entity_span("b", "Bob", "first_name", 10, 13),
-        ]
-        candidates = _candidates_schema(("a", "Alice", "first_name"), ("b", "Bob", "first_name"))
-        row = _build_row(text=text, seed_entities=spans, candidates=candidates)
+class TestLifecycleValidationRequests:
+    def test_chunked_validation_persists_request_bound_inventories_and_decisions(self) -> None:
+        text = "Alice Johnson"
+        detection_result = _detection_result(
+            text,
+            [
+                _lifecycle_observation("o1", "Alice", "first_name", 0, 5),
+                _lifecycle_observation("o2", "Alice Johnson", "full_name", 0, 13),
+            ],
+        )
+        row = {
+            COL_TEXT: text,
+            COL_SEED_DETECTION_RESULT: detection_result.model_dump(mode="json"),
+            COL_TAG_NOTATION: TagNotation.xml.value,
+            VALIDATION_EXCERPT_VAR: "STALE ROW RENDERING MUST NOT REACH THE VALIDATOR",
+        }
 
         facade = FakeFacade(
             "v0",
             response={
                 "decisions": [
-                    {"id": "a", "decision": "keep", "proposed_label": "", "reason": "real"},
-                    {"id": "b", "decision": "drop", "proposed_label": "", "reason": "placeholder"},
+                    {"id": "c1", "decision": "keep"},
+                    {"id": "c2", "decision": "drop"},
+                ]
+            },
+        )
+        params = ChunkedValidationParams(
+            pool=["v0"],
+            max_entities_per_call=2,
+            excerpt_window_chars=20,
+            prompt_template=_MINIMAL_TEMPLATE,
+            allowed_entity_labels=["first_name", "full_name"],
+        )
+
+        output = chunked_validate_row(row, params, {"v0": facade})
+
+        assert len(facade.calls) == 1
+        assert "STALE ROW RENDERING" not in facade.calls[0]["prompt"]
+        assert "<NAGROUP_g1>Alice Johnson</NAGROUP_g1>" in facade.calls[0]["prompt"]
+        inventories = [ValidationRequestInventory.model_validate(item) for item in output[COL_VALIDATION_INVENTORIES]]
+        assert len(inventories) == 1
+        assert [entry.alias for entry in inventories[0].entries] == ["c1", "c2"]
+        decision_sets = ValidationRequestDecisionSets.model_validate(output[COL_VALIDATION_DECISIONS])
+        assert len(decision_sets.responses) == 1
+        assert decision_sets.responses[0].request_id == inventories[0].request_id
+        assert [item.id for item in decision_sets.responses[0].decisions] == ["c1", "c2"]
+
+    @pytest.mark.parametrize("run_async", [False, True])
+    def test_oversized_conflict_group_is_dispatched_intact(self, run_async: bool) -> None:
+        text = "Alice"
+        detection_result = _detection_result(
+            text,
+            [
+                _lifecycle_observation("o1", "Alice", "first_name", 0, 5),
+                _lifecycle_observation("o2", "Alice", "full_name", 0, 5),
+            ],
+        )
+        row = {
+            COL_TEXT: text,
+            COL_SEED_DETECTION_RESULT: detection_result.model_dump(mode="json"),
+            COL_TAG_NOTATION: TagNotation.xml.value,
+        }
+        facade = FakeFacade(
+            "v0", response={"decisions": [{"id": "c1", "decision": "keep"}, {"id": "c2", "decision": "drop"}]}
+        )
+        params = ChunkedValidationParams(
+            pool=["v0"],
+            max_entities_per_call=1,
+            excerpt_window_chars=20,
+            prompt_template=_MINIMAL_TEMPLATE,
+        )
+
+        if run_async:
+            output = asyncio.run(chunked_validate_row_async(row, params, {"v0": facade}))
+        else:
+            output = chunked_validate_row(row, params, {"v0": facade})
+
+        assert len(facade.calls) == 1
+        inventories = [ValidationRequestInventory.model_validate(item) for item in output[COL_VALIDATION_INVENTORIES]]
+        assert len(inventories) == 1
+        assert [entry.observation_ref.observation_id for entry in inventories[0].entries] == ["o1", "o2"]
+        responses = ValidationRequestDecisionSets.model_validate(output[COL_VALIDATION_DECISIONS]).responses
+        assert [decision.id for decision in responses[0].decisions] == ["c1", "c2"]
+
+    def test_duplicate_assigned_alias_retries_same_single_alias_request(self) -> None:
+        text = "Alice"
+        detection_result = _detection_result(
+            text,
+            [_lifecycle_observation("o1", "Alice", "first_name", 0, 5)],
+        )
+        row = {
+            COL_TEXT: text,
+            COL_SEED_DETECTION_RESULT: detection_result.model_dump(mode="json"),
+            COL_TAG_NOTATION: TagNotation.xml.value,
+        }
+        responses = iter(
+            [
+                {
+                    "decisions": [
+                        {"id": "c1", "decision": "drop"},
+                        {"id": "c1", "decision": "keep"},
+                    ]
+                },
+                {"decisions": [{"id": "c1", "decision": "keep"}]},
+            ]
+        )
+        facade = FakeFacade("v0", response=lambda _prompt: next(responses))
+        params = ChunkedValidationParams(
+            pool=["v0"],
+            max_entities_per_call=5,
+            excerpt_window_chars=20,
+            prompt_template=_MINIMAL_TEMPLATE,
+        )
+
+        output = chunked_validate_row(row, params, {"v0": facade})
+
+        assert len(facade.calls) == 2
+        decision_sets = ValidationRequestDecisionSets.model_validate(output[COL_VALIDATION_DECISIONS])
+        assert [item.decision for item in decision_sets.responses[0].decisions] == [ValidationChoice.keep]
+
+    def test_duplicate_assigned_alias_fails_over_to_next_pool_member(self) -> None:
+        text = "Alice"
+        detection_result = _detection_result(
+            text,
+            [_lifecycle_observation("o1", "Alice", "first_name", 0, 5)],
+        )
+        row = {
+            COL_TEXT: text,
+            COL_SEED_DETECTION_RESULT: detection_result.model_dump(mode="json"),
+            COL_TAG_NOTATION: TagNotation.xml.value,
+        }
+        invalid = FakeFacade(
+            "v0",
+            response={
+                "decisions": [
+                    {"id": "c1", "decision": "drop"},
+                    {"id": "c1", "decision": "keep"},
+                ]
+            },
+        )
+        valid = FakeFacade(
+            "v1",
+            response={"decisions": [{"id": "c1", "decision": "keep"}]},
+        )
+        params = ChunkedValidationParams(
+            pool=["v0", "v1"],
+            max_entities_per_call=5,
+            excerpt_window_chars=20,
+            prompt_template=_MINIMAL_TEMPLATE,
+        )
+
+        output = chunked_validate_row(row, params, {"v0": invalid, "v1": valid})
+
+        assert len(invalid.calls) == 1
+        assert len(valid.calls) == 1
+        decision_sets = ValidationRequestDecisionSets.model_validate(output[COL_VALIDATION_DECISIONS])
+        assert decision_sets.responses[0].decisions[0].decision is ValidationChoice.keep
+
+    def test_duplicate_assigned_alias_exhaustion_fails_the_row(self) -> None:
+        text = "Alice"
+        detection_result = _detection_result(
+            text,
+            [_lifecycle_observation("o1", "Alice", "first_name", 0, 5)],
+        )
+        row = {
+            COL_TEXT: text,
+            COL_SEED_DETECTION_RESULT: detection_result.model_dump(mode="json"),
+            COL_TAG_NOTATION: TagNotation.xml.value,
+        }
+        facade = FakeFacade(
+            "v0",
+            response={
+                "decisions": [
+                    {"id": "c1", "decision": "drop"},
+                    {"id": "c1", "decision": "keep"},
+                ]
+            },
+        )
+        params = ChunkedValidationParams(
+            pool=["v0"],
+            max_entities_per_call=5,
+            excerpt_window_chars=20,
+            prompt_template=_MINIMAL_TEMPLATE,
+        )
+
+        with pytest.raises(RuntimeError, match="duplicate assigned aliases"):
+            chunked_validate_row(row, params, {"v0": facade})
+        assert len(facade.calls) == 2
+
+    def test_async_path_uses_the_same_bounded_semantic_retry(self) -> None:
+        text = "Alice"
+        detection_result = _detection_result(
+            text,
+            [_lifecycle_observation("o1", "Alice", "first_name", 0, 5)],
+        )
+        row = {
+            COL_TEXT: text,
+            COL_SEED_DETECTION_RESULT: detection_result.model_dump(mode="json"),
+            COL_TAG_NOTATION: TagNotation.xml.value,
+        }
+        responses = iter(
+            [
+                {
+                    "decisions": [
+                        {"id": "c1", "decision": "drop"},
+                        {"id": "c1", "decision": "keep"},
+                    ]
+                },
+                {"decisions": [{"id": "c1", "decision": "keep"}]},
+            ]
+        )
+        facade = FakeFacade("v0", response=lambda _prompt: next(responses))
+        params = ChunkedValidationParams(
+            pool=["v0"],
+            max_entities_per_call=5,
+            excerpt_window_chars=20,
+            prompt_template=_MINIMAL_TEMPLATE,
+        )
+
+        output = asyncio.run(chunked_validate_row_async(row, params, {"v0": facade}))
+
+        assert len(facade.calls) == 2
+        decision_sets = ValidationRequestDecisionSets.model_validate(output[COL_VALIDATION_DECISIONS])
+        assert decision_sets.responses[0].decisions[0].decision is ValidationChoice.keep
+
+
+class TestChunkedValidateRowPoolOfOne:
+    def test_single_chunk_single_alias_dispatches_once_and_binds_response(self) -> None:
+        text = "Alice and Bob met."
+        spans = [
+            _lifecycle_observation("a", "Alice", "first_name", 0, 5),
+            _lifecycle_observation("b", "Bob", "first_name", 10, 13),
+        ]
+        row = _build_row(text=text, observations=spans)
+
+        facade = FakeFacade(
+            "v0",
+            response={
+                "decisions": [
+                    {"id": "c1", "decision": "keep", "proposed_label": "", "reason": "real"},
+                    {"id": "c2", "decision": "drop", "proposed_label": "", "reason": "placeholder"},
                 ]
             },
         )
@@ -456,20 +722,23 @@ class TestChunkedValidateRowPoolOfOne:
         out = chunked_validate_row(row, params, {"v0": facade})
 
         assert len(facade.calls) == 1
-        decisions = out[COL_VALIDATION_DECISIONS]["decisions"]
-        assert {d["id"]: d["decision"] for d in decisions} == {"a": "keep", "b": "drop"}
+        responses = ValidationRequestDecisionSets.model_validate(out[COL_VALIDATION_DECISIONS]).responses
+        assert len(responses) == 1
+        assert {decision.id: decision.decision for decision in responses[0].decisions} == {
+            "c1": ValidationChoice.keep,
+            "c2": ValidationChoice.drop,
+        }
 
     def test_numeric_value_echo_does_not_fail_response_parsing(self) -> None:
         text = "Reference 42."
-        spans = [_entity_span("id1", "42", "account_number", 10, 12)]
-        candidates = _candidates_schema(("id1", "42", "account_number"))
-        row = _build_row(text=text, seed_entities=spans, candidates=candidates)
+        spans = [_lifecycle_observation("id1", "42", "account_number", 10, 12)]
+        row = _build_row(text=text, observations=spans)
         facade = FakeFacade(
             "v0",
             response={
                 "decisions": [
                     {
-                        "id": "id1",
+                        "id": "c1",
                         "value": 42,
                         "decision": "keep",
                         "proposed_label": "",
@@ -487,27 +756,16 @@ class TestChunkedValidateRowPoolOfOne:
 
         out = chunked_validate_row(row, params, {"v0": facade})
 
-        assert out[COL_VALIDATION_DECISIONS]["decisions"] == [
-            {
-                "id": "id1",
-                "value": "42",
-                "label": "account_number",
-                "decision": "keep",
-                "proposed_label": "",
-                "reason": "numeric identifier",
-            }
-        ]
+        responses = ValidationRequestDecisionSets.model_validate(out[COL_VALIDATION_DECISIONS]).responses
+        assert len(responses[0].decisions) == 1
+        assert responses[0].decisions[0].id == "c1"
+        assert responses[0].decisions[0].decision is ValidationChoice.keep
+        inventory = ValidationRequestInventory.model_validate(out[COL_VALIDATION_INVENTORIES][0])
+        assert inventory.entries[0].value == "42"
+        assert inventory.entries[0].label == "account_number"
 
     def test_single_chunk_sends_single_chunk_tagged_text_not_windowed_excerpt(self) -> None:
-        """Single-chunk rows must receive the fully tagged document, not a windowed excerpt.
-
-        Regression: before this fix, every chunk — including a lone single
-        chunk — was routed through ``build_chunk_excerpt`` with the configured
-        window. That silently narrowed the validator's context relative to the
-        pre-chunking ``LLMStructuredColumnConfig`` path, which always served
-        the full ``_seed_tagged_text``. The excerpt window is a multi-chunk
-        cost-control lever; applying it to the single-call path is incorrect.
-        """
+        """A single chunk sees the full document unless compact excerpts are enabled."""
         prefix = "HEADER_MARKER_ALPHA " * 80
         suffix = " FOOTER_MARKER_OMEGA" * 80
         middle = "Alice met Bob."
@@ -516,21 +774,17 @@ class TestChunkedValidateRowPoolOfOne:
         bob_start = alice_start + 10
 
         spans = [
-            _entity_span("a", "Alice", "first_name", alice_start, alice_start + 5),
-            _entity_span("b", "Bob", "first_name", bob_start, bob_start + 3),
+            _lifecycle_observation("a", "Alice", "first_name", alice_start, alice_start + 5),
+            _lifecycle_observation("b", "Bob", "first_name", bob_start, bob_start + 3),
         ]
-        candidates = _candidates_schema(
-            ("a", "Alice", "first_name"),
-            ("b", "Bob", "first_name"),
-        )
-        row = _build_row(text=text, seed_entities=spans, candidates=candidates)
+        row = _build_row(text=text, observations=spans)
 
         facade = FakeFacade(
             "v0",
             response={
                 "decisions": [
-                    {"id": "a", "decision": "keep"},
-                    {"id": "b", "decision": "keep"},
+                    {"id": "c1", "decision": "keep"},
+                    {"id": "c2", "decision": "keep"},
                 ]
             },
         )
@@ -563,16 +817,12 @@ class TestChunkedValidateRowPoolOfOne:
         bob_start = alice_start + 10
 
         spans = [
-            _entity_span("a", "Alice", "first_name", alice_start, alice_start + 5),
-            _entity_span("b", "Bob", "first_name", bob_start, bob_start + 3),
+            _lifecycle_observation("a", "Alice", "first_name", alice_start, alice_start + 5),
+            _lifecycle_observation("b", "Bob", "first_name", bob_start, bob_start + 3),
         ]
-        candidates = _candidates_schema(
-            ("a", "Alice", "first_name"),
-            ("b", "Bob", "first_name"),
-        )
-        row = _build_row(text=text, seed_entities=spans, candidates=candidates)
+        row = _build_row(text=text, observations=spans)
 
-        facade = FakeFacade("v0", response={"decisions": [{"id": "a", "decision": "keep"}]})
+        facade = FakeFacade("v0", response={"decisions": [{"id": "c1", "decision": "keep"}]})
         params = ChunkedValidationParams(
             pool=["v0"],
             max_entities_per_call=10,
@@ -590,7 +840,7 @@ class TestChunkedValidateRowPoolOfOne:
         assert "END_ONLY_MARKER" not in prompt
 
     def test_empty_candidates_short_circuits_without_calls(self) -> None:
-        row = _build_row(text="hello", seed_entities=[], candidates=_candidates_schema())
+        row = _build_row(text="hello", observations=[])
         facade = FakeFacade("v0", response={"decisions": []})
         params = ChunkedValidationParams(
             pool=["v0"], max_entities_per_call=10, excerpt_window_chars=50, prompt_template=_MINIMAL_TEMPLATE
@@ -599,20 +849,20 @@ class TestChunkedValidateRowPoolOfOne:
         out = chunked_validate_row(row, params, {"v0": facade})
 
         assert facade.calls == []
-        assert out[COL_VALIDATION_DECISIONS] == {"decisions": []}
+        assert ValidationRequestDecisionSets.model_validate(out[COL_VALIDATION_DECISIONS]).responses == ()
+        assert out[COL_VALIDATION_INVENTORIES] == []
 
     def test_system_prompt_is_forwarded_to_facade(self) -> None:
         # ``ChunkedValidationParams.system_prompt`` must reach ``facade.generate``.
         # The recipe appends JSON task instructions before dispatch, so we assert
         # substring containment with a distinctive sentinel rather than equality.
         text = "Alice spoke."
-        spans = [_entity_span("a", "Alice", "first_name", 0, 5)]
-        candidates = _candidates_schema(("a", "Alice", "first_name"))
-        row = _build_row(text=text, seed_entities=spans, candidates=candidates)
+        spans = [_lifecycle_observation("a", "Alice", "first_name", 0, 5)]
+        row = _build_row(text=text, observations=spans)
 
         facade = FakeFacade(
             "v0",
-            response={"decisions": [{"id": "a", "decision": "keep", "proposed_label": "", "reason": "x"}]},
+            response={"decisions": [{"id": "c1", "decision": "keep", "proposed_label": "", "reason": "x"}]},
         )
         sentinel = "SYSPROMPT_SENTINEL_CHUNKED_VALIDATION_TEST"
         params = ChunkedValidationParams(
@@ -636,13 +886,12 @@ class TestChunkedValidateRowPoolOfOne:
         # when ``ChunkedValidationParams.system_prompt`` is left at its
         # default.
         text = "Alice spoke."
-        spans = [_entity_span("a", "Alice", "first_name", 0, 5)]
-        candidates = _candidates_schema(("a", "Alice", "first_name"))
-        row = _build_row(text=text, seed_entities=spans, candidates=candidates)
+        spans = [_lifecycle_observation("a", "Alice", "first_name", 0, 5)]
+        row = _build_row(text=text, observations=spans)
 
         facade = FakeFacade(
             "v0",
-            response={"decisions": [{"id": "a", "decision": "keep", "proposed_label": "", "reason": "x"}]},
+            response={"decisions": [{"id": "c1", "decision": "keep", "proposed_label": "", "reason": "x"}]},
         )
         params = ChunkedValidationParams(
             pool=["v0"],
@@ -663,9 +912,8 @@ class TestChunkedValidateRowPoolOfOne:
 class TestChunkedValidateRowPoolOfTwoRoundRobin:
     def test_chunks_assigned_round_robin_across_pool(self) -> None:
         text = "A B C D E F" + " " * 50  # pad so excerpts don't overlap
-        spans = [_entity_span(f"e{i}", chr(ord("A") + i), "first_name", i * 2, i * 2 + 1) for i in range(6)]
-        candidates = _candidates_schema(*[(f"e{i}", chr(ord("A") + i), "first_name") for i in range(6)])
-        row = _build_row(text=text, seed_entities=spans, candidates=candidates)
+        spans = [_lifecycle_observation(f"e{i}", chr(ord("A") + i), "first_name", i * 2, i * 2 + 1) for i in range(6)]
+        row = _build_row(text=text, observations=spans)
 
         def make_response(chunk_size: int) -> Callable[[str], dict]:
             def _respond(prompt: str) -> dict:
@@ -694,9 +942,10 @@ class TestChunkedValidateRowAsync:
     def test_async_path_uses_agenerate_and_caps_parallel_chunks(self) -> None:
         async def run() -> AsyncTrackingFacade:
             text = "A B C D" + " " * 50
-            spans = [_entity_span(f"e{i}", chr(ord("A") + i), "first_name", i * 2, i * 2 + 1) for i in range(4)]
-            candidates = _candidates_schema(*[(f"e{i}", chr(ord("A") + i), "first_name") for i in range(4)])
-            row = _build_row(text=text, seed_entities=spans, candidates=candidates)
+            spans = [
+                _lifecycle_observation(f"e{i}", chr(ord("A") + i), "first_name", i * 2, i * 2 + 1) for i in range(4)
+            ]
+            row = _build_row(text=text, observations=spans)
             facade = AsyncTrackingFacade("v0", response={"decisions": []})
             params = ChunkedValidationParams(
                 pool=["v0"],
@@ -715,11 +964,10 @@ class TestChunkedValidateRowAsync:
 
     def test_async_primary_failure_falls_over_to_secondary(self) -> None:
         async def run() -> tuple[dict[str, Any], AsyncTrackingFacade, AsyncTrackingFacade]:
-            spans = [_entity_span("a", "Alice", "first_name", 0, 5)]
-            candidates = _candidates_schema(("a", "Alice", "first_name"))
-            row = _build_row(text="Alice", seed_entities=spans, candidates=candidates)
+            spans = [_lifecycle_observation("a", "Alice", "first_name", 0, 5)]
+            row = _build_row(text="Alice", observations=spans)
             v0 = AsyncTrackingFacade("v0", raise_on_call=True)
-            v1 = AsyncTrackingFacade("v1", response={"decisions": [{"id": "a", "decision": "keep"}]})
+            v1 = AsyncTrackingFacade("v1", response={"decisions": [{"id": "c1", "decision": "keep"}]})
             params = ChunkedValidationParams(
                 pool=["v0", "v1"],
                 max_entities_per_call=5,
@@ -731,17 +979,17 @@ class TestChunkedValidateRowAsync:
             return out, v0, v1
 
         out, v0, v1 = asyncio.run(run())
-        assert out[COL_VALIDATION_DECISIONS]["decisions"][0]["id"] == "a"
+        responses = ValidationRequestDecisionSets.model_validate(out[COL_VALIDATION_DECISIONS]).responses
+        assert responses[0].decisions[0].id == "c1"
         assert len(v0.calls) == 1
         assert len(v1.calls) == 1
 
 
 class TestChunkedValidationGenerator:
     def test_generate_bridges_sync_unavailable_to_agenerate(self) -> None:
-        spans = [_entity_span("a", "Alice", "first_name", 0, 5)]
-        candidates = _candidates_schema(("a", "Alice", "first_name"))
-        row = _build_row(text="Alice", seed_entities=spans, candidates=candidates)
-        facade = SyncUnavailableFacade("v0", response={"decisions": [{"id": "a", "decision": "keep"}]})
+        spans = [_lifecycle_observation("a", "Alice", "first_name", 0, 5)]
+        row = _build_row(text="Alice", observations=spans)
+        facade = SyncUnavailableFacade("v0", response={"decisions": [{"id": "c1", "decision": "keep"}]})
         generator = ChunkedValidationGenerator(
             ChunkedValidationConfig(
                 name=COL_VALIDATION_DECISIONS,
@@ -757,27 +1005,22 @@ class TestChunkedValidationGenerator:
 
         out = generator.generate(row)
 
-        assert out[COL_VALIDATION_DECISIONS]["decisions"][0]["id"] == "a"
+        responses = ValidationRequestDecisionSets.model_validate(out[COL_VALIDATION_DECISIONS]).responses
+        assert responses[0].decisions[0].id == "c1"
         assert facade.sync_calls == 1
         assert facade.async_calls == 1
 
 
 class TestChunkedValidateRowMultiChunkReassembly:
-    def test_decisions_merged_across_chunks(self) -> None:
+    def test_decisions_remain_bound_to_each_chunk_inventory(self) -> None:
         text = "one two three four five"
         spans = [
-            _entity_span("c1", "one", "first_name", 0, 3),
-            _entity_span("c2", "two", "first_name", 4, 7),
-            _entity_span("c3", "three", "first_name", 8, 13),
-            _entity_span("c4", "four", "first_name", 14, 18),
+            _lifecycle_observation("c1", "one", "first_name", 0, 3),
+            _lifecycle_observation("c2", "two", "first_name", 4, 7),
+            _lifecycle_observation("c3", "three", "first_name", 8, 13),
+            _lifecycle_observation("c4", "four", "first_name", 14, 18),
         ]
-        candidates = _candidates_schema(
-            ("c1", "one", "first_name"),
-            ("c2", "two", "first_name"),
-            ("c3", "three", "first_name"),
-            ("c4", "four", "first_name"),
-        )
-        row = _build_row(text=text, seed_entities=spans, candidates=candidates)
+        row = _build_row(text=text, observations=spans)
 
         def responder_for(alias: str) -> Callable[[str], dict]:
             def respond(prompt: str) -> dict:
@@ -801,13 +1044,19 @@ class TestChunkedValidateRowMultiChunkReassembly:
             prompt_template=_MINIMAL_TEMPLATE,
         )
         out = chunked_validate_row(row, params, {"v0": v0, "v1": v1})
-        decisions = {d["id"]: d for d in out[COL_VALIDATION_DECISIONS]["decisions"]}
+        responses = ValidationRequestDecisionSets.model_validate(out[COL_VALIDATION_DECISIONS]).responses
+        assert len(responses) == 2
+        assert [[decision.id for decision in response.decisions] for response in responses] == [
+            ["c1", "c2"],
+            ["c1", "c2"],
+        ]
+        decisions = _decisions_by_observation(out)
         assert set(decisions) == {"c1", "c2", "c3", "c4"}
         # Chunk 0 (c1,c2) → v0; chunk 1 (c3,c4) → v1.
-        assert decisions["c1"]["reason"] == "v0"
-        assert decisions["c2"]["reason"] == "v0"
-        assert decisions["c3"]["reason"] == "v1"
-        assert decisions["c4"]["reason"] == "v1"
+        assert decisions["c1"].reason == "v0"
+        assert decisions["c2"].reason == "v0"
+        assert decisions["c3"].reason == "v1"
+        assert decisions["c4"].reason == "v1"
 
 
 class TestChunkedValidateRowFailurePropagation:
@@ -818,11 +1067,10 @@ class TestChunkedValidateRowFailurePropagation:
         ``NddAdapter._detect_missing_records`` — no unscrubbed passthrough.
         """
         spans = [
-            _entity_span("a", "Alice", "first_name", 0, 5),
-            _entity_span("b", "Bob", "first_name", 10, 13),
+            _lifecycle_observation("a", "Alice", "first_name", 0, 5),
+            _lifecycle_observation("b", "Bob", "first_name", 10, 13),
         ]
-        candidates = _candidates_schema(("a", "Alice", "first_name"), ("b", "Bob", "first_name"))
-        row = _build_row(text="Alice and Bob", seed_entities=spans, candidates=candidates)
+        row = _build_row(text="Alice and Bob", observations=spans)
 
         v0 = FakeFacade("v0", raise_on_call=True)
         v1 = FakeFacade("v1", raise_on_call=True)
@@ -838,15 +1086,55 @@ class TestChunkedValidateRowFailurePropagation:
             chunked_validate_row(row, params, {"v0": v0, "v1": v1})
 
 
+def test_dispatch_requires_assigned_aliases() -> None:
+    for dispatch in (_dispatch_chunk, _dispatch_chunk_async):
+        assert inspect.signature(dispatch).parameters["assigned_aliases"].default is inspect.Parameter.empty
+
+
+@pytest.mark.parametrize("run_async", [False, True])
+@pytest.mark.parametrize("recover", [False, True])
+def test_failover_logs_exception_type_without_source_text(
+    run_async: bool, recover: bool, caplog: pytest.LogCaptureFixture
+) -> None:
+    secret = "sensitive-exception-message"
+
+    def fail(_prompt: str) -> dict[str, Any]:
+        raise RuntimeError(secret)
+
+    row = _build_row(text="Alice", observations=[_lifecycle_observation("o1", "Alice", "first_name", 0, 5)])
+    pool = ["primary", "secondary"] if recover else ["primary"]
+    models = {
+        "primary": FakeFacade("primary", response=fail),
+        "secondary": FakeFacade("secondary", response={"decisions": [{"id": "c1", "decision": "keep"}]}),
+    }
+    params = ChunkedValidationParams(
+        pool=pool, max_entities_per_call=5, excerpt_window_chars=50, prompt_template=_MINIMAL_TEMPLATE
+    )
+
+    def run() -> dict[str, Any]:
+        if run_async:
+            return asyncio.run(chunked_validate_row_async(row, params, models))
+        return chunked_validate_row(row, params, models)
+
+    with caplog.at_level(logging.WARNING, logger="anonymizer.detection.chunked_validation"):
+        if recover:
+            run()
+        else:
+            with pytest.raises(RuntimeError, match=secret):
+                run()
+
+    assert "RuntimeError" in caplog.text
+    assert secret not in caplog.text
+
+
 class TestChunkedValidateRowCrossAliasFailover:
     def test_primary_alias_failure_falls_over_to_secondary(self) -> None:
         """Primary raises, secondary in pool returns a valid response → chunk succeeds, row does not fail."""
-        spans = [_entity_span("a", "Alice", "first_name", 0, 5)]
-        candidates = _candidates_schema(("a", "Alice", "first_name"))
-        row = _build_row(text="Alice", seed_entities=spans, candidates=candidates)
+        spans = [_lifecycle_observation("a", "Alice", "first_name", 0, 5)]
+        row = _build_row(text="Alice", observations=spans)
 
         v0 = FakeFacade("v0", raise_on_call=True)
-        v1 = FakeFacade("v1", response={"decisions": [{"id": "a", "decision": "keep"}]})
+        v1 = FakeFacade("v1", response={"decisions": [{"id": "c1", "decision": "keep"}]})
         params = ChunkedValidationParams(
             pool=["v0", "v1"],
             max_entities_per_call=5,
@@ -854,10 +1142,11 @@ class TestChunkedValidateRowCrossAliasFailover:
             prompt_template=_MINIMAL_TEMPLATE,
         )
         out = chunked_validate_row(row, params, {"v0": v0, "v1": v1})
-        decisions = out[COL_VALIDATION_DECISIONS]["decisions"]
+        responses = ValidationRequestDecisionSets.model_validate(out[COL_VALIDATION_DECISIONS]).responses
+        decisions = responses[0].decisions
         assert len(decisions) == 1
-        assert decisions[0]["id"] == "a"
-        assert decisions[0]["decision"] == "keep"
+        assert decisions[0].id == "c1"
+        assert decisions[0].decision is ValidationChoice.keep
         # Each alias was tried exactly once for this single-chunk row.
         assert len(v0.calls) == 1
         assert len(v1.calls) == 1
@@ -868,9 +1157,8 @@ class TestChunkedValidateRowCrossAliasFailover:
         This keeps the behavioural guarantee that pools of size 1 behave
         exactly as the pre-failover dispatch did: no hidden extra attempts.
         """
-        spans = [_entity_span("a", "Alice", "first_name", 0, 5)]
-        candidates = _candidates_schema(("a", "Alice", "first_name"))
-        row = _build_row(text="Alice", seed_entities=spans, candidates=candidates)
+        spans = [_lifecycle_observation("a", "Alice", "first_name", 0, 5)]
+        row = _build_row(text="Alice", observations=spans)
 
         v0 = FakeFacade("v0", raise_on_call=True)
         params = ChunkedValidationParams(
@@ -891,26 +1179,19 @@ class TestChunkedValidateRowCrossAliasFailover:
         chunk 0 and chunk 2 succeed on v0 (their primary) directly.
         """
         spans = [
-            _entity_span("a", "Alice", "first_name", 0, 5),
-            _entity_span("b", "Bob", "first_name", 10, 13),
-            _entity_span("c", "Carol", "first_name", 20, 25),
+            _lifecycle_observation("a", "Alice", "first_name", 0, 5),
+            _lifecycle_observation("b", "Bob", "first_name", 10, 13),
+            _lifecycle_observation("c", "Carol", "first_name", 18, 23),
         ]
-        candidates = _candidates_schema(
-            ("a", "Alice", "first_name"),
-            ("b", "Bob", "first_name"),
-            ("c", "Carol", "first_name"),
-        )
-        row = _build_row(text="Alice and Bob and Carol", seed_entities=spans, candidates=candidates)
+        row = _build_row(text="Alice and Bob and Carol", observations=spans)
 
         def v0_response(prompt: str) -> dict:
             # The chunk's skeleton is serialized into the prompt; pick the id
             # from there. We can't use the raw text excerpt to distinguish
             # chunks because the text is short enough that every chunk's
             # excerpt window covers the whole string.
-            for candidate_id in ("a", "b", "c"):
-                if f"'id': '{candidate_id}'" in prompt:
-                    return {"decisions": [{"id": candidate_id, "decision": "keep"}]}
-            raise AssertionError(f"no known candidate id found in prompt: {prompt!r}")
+            assert "'id': 'c1'" in prompt
+            return {"decisions": [{"id": "c1", "decision": "keep"}]}
 
         v0 = FakeFacade("v0", response=v0_response)
         v1 = FakeFacade("v1", raise_on_call=True)
@@ -921,7 +1202,9 @@ class TestChunkedValidateRowCrossAliasFailover:
             prompt_template=_MINIMAL_TEMPLATE,
         )
         out = chunked_validate_row(row, params, {"v0": v0, "v1": v1})
-        decisions = {d["id"]: d["decision"] for d in out[COL_VALIDATION_DECISIONS]["decisions"]}
+        decisions = {
+            observation_id: decision.decision for observation_id, decision in _decisions_by_observation(out).items()
+        }
         assert decisions == {"a": "keep", "b": "keep", "c": "keep"}
         # v0 serviced all three chunks: chunk 0 + chunk 2 directly, chunk 1 via failover.
         assert len(v0.calls) == 3
@@ -929,17 +1212,16 @@ class TestChunkedValidateRowCrossAliasFailover:
         assert len(v1.calls) == 1
 
 
-class TestChunkedValidateRowMissingIdMirrorsSingleCall:
-    def test_decision_for_non_candidate_id_is_dropped(self) -> None:
-        """Matches single-call contract: ``enrich_validation_decisions`` filters to candidate ids."""
-        spans = [_entity_span("a", "Alice", "first_name", 0, 5)]
-        candidates = _candidates_schema(("a", "Alice", "first_name"))
-        row = _build_row(text="Alice", seed_entities=spans, candidates=candidates)
+class TestChunkedValidateRowUnknownAlias:
+    def test_unknown_alias_is_preserved_without_an_observation_mapping(self) -> None:
+        """Raw responses retain unknown aliases; only assigned aliases identify observations."""
+        spans = [_lifecycle_observation("a", "Alice", "first_name", 0, 5)]
+        row = _build_row(text="Alice", observations=spans)
         facade = FakeFacade(
             "v0",
             response={
                 "decisions": [
-                    {"id": "a", "decision": "keep"},
+                    {"id": "c1", "decision": "keep"},
                     {"id": "unknown", "decision": "drop"},
                 ]
             },
@@ -948,15 +1230,15 @@ class TestChunkedValidateRowMissingIdMirrorsSingleCall:
             pool=["v0"], max_entities_per_call=5, excerpt_window_chars=20, prompt_template=_MINIMAL_TEMPLATE
         )
         out = chunked_validate_row(row, params, {"v0": facade})
-        ids = [d["id"] for d in out[COL_VALIDATION_DECISIONS]["decisions"]]
-        assert ids == ["a"]
+        responses = ValidationRequestDecisionSets.model_validate(out[COL_VALIDATION_DECISIONS]).responses
+        assert [decision.id for decision in responses[0].decisions] == ["c1", "unknown"]
+        assert set(_decisions_by_observation(out)) == {"a"}
 
 
 class TestChunkedValidateRowGuardsBadConfig:
     def test_pool_alias_missing_from_models_raises_helpful_error(self) -> None:
-        spans = [_entity_span("a", "Alice", "first_name", 0, 5)]
-        candidates = _candidates_schema(("a", "Alice", "first_name"))
-        row = _build_row(text="Alice", seed_entities=spans, candidates=candidates)
+        spans = [_lifecycle_observation("a", "Alice", "first_name", 0, 5)]
+        row = _build_row(text="Alice", observations=spans)
         params = ChunkedValidationParams(
             pool=["missing_alias"],
             max_entities_per_call=5,
@@ -979,16 +1261,16 @@ class TestMakeChunkedValidationGenerator:
         assert meta["model_aliases"] == ["v0", "v1"]
         assert set(meta["required_columns"]) == {
             COL_TEXT,
-            COL_SEED_ENTITIES,
-            COL_SEED_VALIDATION_CANDIDATES,
+            COL_SEED_DETECTION_RESULT,
             COL_TAG_NOTATION,
         }
+        assert meta["side_effect_columns"] == [COL_VALIDATION_INVENTORIES]
         # Must not declare columns we deliberately don't read; an over-broad
         # required_columns would distort DAG ordering elsewhere. In particular
-        # the post-augmentation views (COL_MERGED_TAGGED_TEXT, COL_VALIDATION_CANDIDATES)
+        # the post-augmentation views (COL_RECONCILED_CANDIDATES, COL_VALIDATION_CANDIDATES)
         # are downstream of this step and would create a cycle if declared.
         assert COL_VALIDATION_SKELETON not in meta["required_columns"]
-        assert COL_MERGED_TAGGED_TEXT not in meta["required_columns"]
+        assert COL_RECONCILED_CANDIDATES not in meta["required_columns"]
         assert COL_VALIDATION_CANDIDATES not in meta["required_columns"]
 
     def test_factory_rejects_empty_pool(self) -> None:
@@ -999,17 +1281,17 @@ class TestMakeChunkedValidationGenerator:
         """The DD-exposed wrapper is sync; calling it directly must return a
         dict populated by the row logic (not a coroutine).
         """
-        spans = [_entity_span("a", "Alice", "first_name", 0, 5)]
-        candidates = _candidates_schema(("a", "Alice", "first_name"))
-        row = _build_row(text="Alice", seed_entities=spans, candidates=candidates)
+        spans = [_lifecycle_observation("a", "Alice", "first_name", 0, 5)]
+        row = _build_row(text="Alice", observations=spans)
         fn = make_chunked_validation_generator(["v0"])
-        facade = FakeFacade("v0", response={"decisions": [{"id": "a", "decision": "keep"}]})
+        facade = FakeFacade("v0", response={"decisions": [{"id": "c1", "decision": "keep"}]})
         params = ChunkedValidationParams(
             pool=["v0"], max_entities_per_call=5, excerpt_window_chars=20, prompt_template=_MINIMAL_TEMPLATE
         )
         out = fn(row, params, {"v0": facade})
         assert isinstance(out, dict)
-        assert out[COL_VALIDATION_DECISIONS]["decisions"][0]["id"] == "a"
+        responses = ValidationRequestDecisionSets.model_validate(out[COL_VALIDATION_DECISIONS]).responses
+        assert responses[0].decisions[0].id == "c1"
 
     def test_generator_is_sync_callable_returning_dict(self) -> None:
         """Regression: DD's default thread-pool engine calls the wrapper
@@ -1031,109 +1313,76 @@ class TestMakeChunkedValidationGenerator:
 # ---------------------------------------------------------------------------
 
 
-def _selective_facade(alias: str, decisions_by_id: dict[str, dict[str, Any]]) -> FakeFacade:
-    """Return a facade whose response depends on the ids embedded in each chunk's prompt.
-
-    The prompt renders ``_validation_skeleton`` as Python ``str(dict)``; we
-    parse ``'id': 'X'`` tokens back out to select which decisions to return.
-    This makes the LLM behaviour a pure function of the *candidate ids in
-    the chunk*, not of chunk shape or sequencing -- which is exactly the
-    assumption a real deterministic validator would satisfy when re-run.
-    """
-
-    def respond(prompt: str) -> dict[str, Any]:
-        ids = re.findall(r"'id':\s*'([^']+)'", prompt)
-        return {"decisions": [decisions_by_id[i] for i in ids if i in decisions_by_id]}
-
-    return FakeFacade(alias, response=respond)
-
-
-def _summarize(validated: list[EntitySpan]) -> list[tuple[str, str]]:
-    return [(e.entity_id, e.label) for e in validated]
-
-
-def _tally(before: list[EntitySpan], after: list[EntitySpan], decisions: dict) -> dict[str, int]:
-    """Count keep/reclass/drop/untouched relative to the decisions the LLM returned."""
-    before_labels = {e.entity_id: e.label for e in before}
-    after_ids = {e.entity_id for e in after}
-    decided_ids: dict[str, dict[str, str]] = {d["id"]: d for d in decisions["decisions"]}
-    counts = {"keep": 0, "reclass": 0, "drop": 0, "untouched": 0}
-    for entity_id, original_label in before_labels.items():
-        decision = decided_ids.get(entity_id)
-        if decision is None:
-            counts["untouched"] += 1
-            continue
-        verdict = decision.get("decision")
-        if verdict == "drop":
-            assert entity_id not in after_ids, f"drop decision for {entity_id} did not remove it"
-            counts["drop"] += 1
-        elif verdict == "reclass":
-            counts["reclass"] += 1
-        elif verdict == "keep":
-            counts["keep"] += 1
-    return counts
-
-
-def _normalize_decisions(doc: dict) -> list[tuple[str, str, str]]:
-    return sorted((d["id"], d.get("decision") or "", d.get("proposed_label") or "") for d in doc["decisions"])
+def _decisions_by_observation(row: dict[str, Any]) -> dict[str, RawValidationDecisionSchema]:
+    inventories = {
+        inventory.request_id: inventory
+        for inventory in (ValidationRequestInventory.model_validate(item) for item in row[COL_VALIDATION_INVENTORIES])
+    }
+    responses = ValidationRequestDecisionSets.model_validate(row[COL_VALIDATION_DECISIONS]).responses
+    assert len(responses) == len(inventories)
+    decisions: dict[str, RawValidationDecisionSchema] = {}
+    for response in responses:
+        inventory = inventories[response.request_id]
+        refs_by_alias = {entry.alias: entry.observation_ref for entry in inventory.entries}
+        for decision in response.decisions:
+            if decision.id in refs_by_alias:
+                observation_id = refs_by_alias[decision.id].observation_id
+                assert observation_id not in decisions
+                decisions[observation_id] = decision
+    return decisions
 
 
 class TestChunkedValidationRegression:
-    """Partitioning must not change outcomes when the LLM is deterministic per candidate.
+    """Partitioning preserves decisions mapped through each request's own aliases."""
 
-    Guards the most important property we promised when we switched from a
-    single ``LLMStructuredColumnConfig`` to the chunked validation plugin
-    dispatch: given the same set of per-id decisions, chunk sizing is an
-    implementation detail of *how* we talk to the validator, not *what*
-    entities survive validation.
-    """
-
-    SCENARIO_TEXT = (
-        # Positions referenced below are into this exact string.
-        "Alice met Bob in Chicago at Acme HQ; Doe introduced Eve to the team later."
-        # 0    5    10   15  20      28    34       43       53  56
-    )
+    SCENARIO_TEXT = "Alice met Bob in Chicago at Acme HQ; Doe introduced Eve to the team later."
 
     @pytest.fixture
-    def scenario(self) -> tuple[list[EntitySpan], ValidationCandidatesSchema, dict[str, dict[str, Any]]]:
-        spans = [
-            _entity_span("a", "Alice", "first_name", 0, 5),
-            _entity_span("b", "Bob", "first_name", 10, 13),
-            _entity_span("c", "Chicago", "city", 17, 24),
-            _entity_span("d", "Acme", "organization", 28, 32),
-            _entity_span("e", "Doe", "last_name", 37, 40),
-            _entity_span("f", "Eve", "first_name", 54, 57),
+    def scenario(self) -> tuple[list[Observation], dict[str, dict[str, Any]]]:
+        values_and_labels = [
+            ("Alice", "first_name"),
+            ("Bob", "first_name"),
+            ("Chicago", "city"),
+            ("Acme", "organization"),
+            ("Doe", "last_name"),
+            ("Eve", "first_name"),
         ]
-        candidates = _candidates_schema(
-            ("a", "Alice", "first_name"),
-            ("b", "Bob", "first_name"),
-            ("c", "Chicago", "city"),
-            ("d", "Acme", "organization"),
-            ("e", "Doe", "last_name"),
-            ("f", "Eve", "first_name"),
-        )
-        # Deterministic per-id decisions covering all branches.
-        # ``f`` intentionally has no decision: downstream must keep it as-is,
-        # regardless of whether it lands in its own chunk or shares one.
-        decisions_by_id: dict[str, dict[str, Any]] = {
-            "a": {"id": "a", "decision": "keep"},
-            "b": {"id": "b", "decision": "drop"},
-            "c": {"id": "c", "decision": "reclass", "proposed_label": "location"},
-            "d": {"id": "d", "decision": "keep"},
-            "e": {"id": "e", "decision": "reclass", "proposed_label": "surname"},
+        observations = [
+            _lifecycle_observation(
+                f"o{index}", value, label, self.SCENARIO_TEXT.index(value), self.SCENARIO_TEXT.index(value) + len(value)
+            )
+            for index, (value, label) in enumerate(values_and_labels, start=1)
+        ]
+        decisions_by_value: dict[str, dict[str, Any]] = {
+            "Alice": {"decision": "keep"},
+            "Bob": {"decision": "drop"},
+            "Chicago": {"decision": "reclass", "proposed_label": "location"},
+            "Acme": {"decision": "keep"},
+            "Doe": {"decision": "reclass", "proposed_label": "surname"},
+            # Eve is omitted to exercise fallback independently of chunk boundaries.
         }
-        return spans, candidates, decisions_by_id
+        return observations, decisions_by_value
 
     def _run(
         self,
         *,
-        spans: list[EntitySpan],
-        candidates: ValidationCandidatesSchema,
-        decisions_by_id: dict[str, dict[str, Any]],
+        observations: list[Observation],
+        decisions_by_value: dict[str, dict[str, Any]],
         max_per_call: int,
-    ) -> tuple[dict, list[EntitySpan], int]:
-        row = _build_row(text=self.SCENARIO_TEXT, seed_entities=spans, candidates=candidates)
-        facade = _selective_facade("solo", decisions_by_id)
+    ) -> tuple[dict[str, tuple[ValidationChoice | None, str]], list[tuple[str, str]], int]:
+        def respond(prompt: str) -> dict[str, Any]:
+            skeleton_text = prompt.split("|SKELETON:", maxsplit=1)[1].split("|NOTATION:", maxsplit=1)[0]
+            skeleton = ast.literal_eval(skeleton_text)
+            return {
+                "decisions": [
+                    {"id": entry["id"], **decisions_by_value[entry["value"]]}
+                    for entry in skeleton["decisions"]
+                    if entry["value"] in decisions_by_value
+                ]
+            }
+
+        row = _build_row(text=self.SCENARIO_TEXT, observations=observations)
+        facade = FakeFacade("solo", response=respond)
         params = ChunkedValidationParams(
             pool=["solo"],
             max_entities_per_call=max_per_call,
@@ -1141,49 +1390,54 @@ class TestChunkedValidationRegression:
             prompt_template=_MINIMAL_TEMPLATE,
         )
         out = chunked_validate_row(row, params, {"solo": facade})
-        decisions_doc = out[COL_VALIDATION_DECISIONS]
-        validated = apply_validation_decisions(spans, decisions_doc)
-        return decisions_doc, validated, len(facade.calls)
+        normalized = {
+            observation_id: (decision.decision, decision.proposed_label or "")
+            for observation_id, decision in _decisions_by_observation(out).items()
+        }
+        admit_validation_decisions(out)
+        admissions = AdmissionResults.model_validate(out[COL_ADMISSION_RESULTS])
+        assert len(admissions.results) == len(observations)
+        assert admissions.results[-1].status is AdmissionStatus.fallback_protected
+        observations_by_ref = {observation.ref: observation for observation in observations}
+        retained: list[tuple[str, str]] = []
+        for result in admissions.results:
+            if result.status is AdmissionStatus.rejected:
+                continue
+            assert result.effective_label is not None
+            retained.append((observations_by_ref[result.observation_ref].value, result.effective_label))
+        return normalized, retained, len(facade.calls)
 
     def test_multi_chunk_matches_single_chunk(self, scenario) -> None:
-        spans, candidates, decisions_by_id = scenario
-
-        # 1 chunk -- stands in for the "legacy single-call" path: all
-        # candidates fit into one validator call, no partitioning.
-        single_doc, single_validated, single_calls = self._run(
-            spans=spans, candidates=candidates, decisions_by_id=decisions_by_id, max_per_call=10
+        observations, decisions_by_value = scenario
+        single_decisions, single_validated, single_calls = self._run(
+            observations=observations, decisions_by_value=decisions_by_value, max_per_call=10
         )
-        # 3 chunks of size 2 -- pool-of-one with real partitioning.
-        multi_doc, multi_validated, multi_calls = self._run(
-            spans=spans, candidates=candidates, decisions_by_id=decisions_by_id, max_per_call=2
+        multi_decisions, multi_validated, multi_calls = self._run(
+            observations=observations, decisions_by_value=decisions_by_value, max_per_call=2
         )
 
-        # Sanity: the two configurations actually differ in *how* they call
-        # the validator. Without this the test is trivially satisfiable.
         assert single_calls == 1
         assert multi_calls == 3
-
-        # Decisions merged back together are identical (order-insensitive).
-        assert _normalize_decisions(single_doc) == _normalize_decisions(multi_doc)
-
-        # Final per-entity outcomes (surviving ids + their post-validation
-        # labels) are identical. This is the ``COL_DETECTED_ENTITIES`` parity
-        # claim: downstream stages cannot tell the two runs apart.
-        assert _summarize(single_validated) == _summarize(multi_validated)
-
-        # Keep/reclass/drop/untouched tallies match the fixed decision set.
-        expected_tally = {"keep": 2, "reclass": 2, "drop": 1, "untouched": 1}
-        assert _tally(spans, single_validated, single_doc) == expected_tally
-        assert _tally(spans, multi_validated, multi_doc) == expected_tally
-
-        # Concrete post-validation outcome, pinned so a regression in
-        # ``apply_validation_decisions`` or chunk merging is caught
-        # precisely, not just "something changed".
-        assert _summarize(multi_validated) == [
-            ("a", "first_name"),  # keep
-            ("c", "location"),  # reclass
-            ("d", "organization"),  # keep
-            ("e", "surname"),  # reclass
-            ("f", "first_name"),  # untouched (no decision)
-            # "b" dropped
-        ]
+        assert (
+            single_decisions
+            == multi_decisions
+            == {
+                "o1": (ValidationChoice.keep, ""),
+                "o2": (ValidationChoice.drop, ""),
+                "o3": (ValidationChoice.reclass, "location"),
+                "o4": (ValidationChoice.keep, ""),
+                "o5": (ValidationChoice.reclass, "surname"),
+            }
+        )
+        assert "o6" not in multi_decisions
+        assert (
+            single_validated
+            == multi_validated
+            == [
+                ("Alice", "first_name"),
+                ("Chicago", "location"),
+                ("Acme", "organization"),
+                ("Doe", "surname"),
+                ("Eve", "first_name"),
+            ]
+        )
