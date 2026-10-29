@@ -49,11 +49,58 @@ _STOPPED_EARLY_REASON = f"{_MISSING_RECORD_REASON}: not completed: run stopped e
 _MAX_REASON_CHARS = 500
 _CAUSE_LINE = re.compile(r"^\s*\|\s*Cause:\s*(.+)", re.MULTILINE)
 _SOLUTION_LINE = re.compile(r"^\s*\|\s*Solution:\s*(.+)", re.MULTILINE)
-# DataDesigner follows a cause's first sentence with detail text (a parse failure's validation detail, a
-# context-window error's provider message), and ends an unexpected-error solution with the raw exception.
-# Both can quote input text, so they are cut.
-_SENTENCE_END = re.compile(r"(?<=\.)\s")
-_RAW_EXCEPTION_TEXT = re.compile(r"(?<=details):.*", re.IGNORECASE)
+# Task traces retain only strings. Exception text can impersonate even a complete classified error,
+# so these markers select fixed summaries; captured cause/solution text is never returned to users.
+_SAFE_FAILURE_SUMMARIES = {
+    r"The API key provided for model .+ was found to be invalid or expired while .+": (
+        "The API key is invalid or expired; Verify the model provider's API key"
+    ),
+    r"You have exceeded the rate limit for model .+ while .+": "Model rate limit exceeded; Wait and try again",
+    r"The request to model .+ timed out while .+": (
+        "The model request timed out; Check your connection or increase inference_parameters.timeout"
+    ),
+    r"Local request admission for model .+ timed out while .+": (
+        "Local request admission timed out; The provider request was not sent. "
+        "Reduce concurrency or tune max_parallel_requests and RunConfig.max_in_flight_tasks"
+    ),
+    r"The specified model .+ could not be found while .+": (
+        "The model could not be found; Check the model name and provider configuration"
+    ),
+    r"Your API key was found to lack the necessary permissions to use model .+ while .+": (
+        "The API key lacks model permissions; Check the model provider's API key"
+    ),
+    r"One or more of the parameters you provided were found to be unsupported by model .+ while .+": (
+        "The model does not support the request parameters; Check the model provider's documentation"
+    ),
+    r"Model provider .+ rejected the request for model .+ with HTTP status .+ while .+": (
+        "The model provider rejected the request; Check the model name, credentials, configuration and quota"
+    ),
+    r"Model provider .+ reported insufficient credits or quota for model .+ while .+": (
+        "The model provider reported insufficient credits or quota; Add credits or increase quota"
+    ),
+    r"The input data for model .+ was found to exceed its supported context width while .+": (
+        "The input data exceeds the model's supported context width; Reduce input or completion length"
+    ),
+    r"The request for model .+ was found to be malformed or missing required parameters while .+": (
+        "The request was malformed or missing required parameters; Check the model's request parameters"
+    ),
+    r"Connection to model .+ hosted on model provider .+ failed while .+": (
+        "Connection to the model failed; Check your network, proxy and firewall settings"
+    ),
+    r"An unexpected error occurred while .+": "An unexpected error occurred; Review the stack trace for more details",
+    r"An unexpected API error occurred with model .+ while .+": (
+        "An unexpected API error occurred; Try again or check with the model provider"
+    ),
+    r"Model .+ is currently experiencing internal server issues while .+": (
+        "The model provider is experiencing internal server issues; Try again later"
+    ),
+    r"Model .+ is not a multimodal model, but it looks like you are trying to provide multimodal context while .+": (
+        "The model does not support multimodal context; Check the request parameters"
+    ),
+    r"The request to model .+ failed despite correct request format while .+": (
+        "The model could not process the request; Try again later"
+    ),
+}
 # Anonymizer's own failure text, safe to show because it carries only offsets.
 _KNOWN_FAILURE = re.compile(r"Detector entity text does not match the source span at offsets \[\d+, \d+\)")
 
@@ -695,7 +742,7 @@ def _failure_reasons_by_record(
 
 
 def _failure_reason(trace: _TaskTrace) -> str:
-    """Render only DataDesigner's classified cause and solution text, never the underlying exception message."""
+    """Classify untrusted trace text into fixed diagnostics, never echoing the underlying exception message."""
     prefix = f"{_MISSING_RECORD_REASON}: {_trace_attr(trace, 'column')}: "
     error = str(_trace_attr(trace, "error") or "")
     cause_match = _CAUSE_LINE.search(error)
@@ -703,10 +750,22 @@ def _failure_reason(trace: _TaskTrace) -> str:
         known = _KNOWN_FAILURE.search(error)
         return f"{prefix}{known.group(0) if known else 'generation failed'}"
     solution_match = _SOLUTION_LINE.search(error)
-    reason = prefix + _SENTENCE_END.split(cause_match.group(1).strip(), maxsplit=1)[0].rstrip(".")
-    if solution_match is not None:
-        reason = f"{reason}; {' '.join(_RAW_EXCEPTION_TEXT.sub('', solution_match.group(1)).split())}"
+    reason = prefix + _summarize_failure(cause_match.group(1), solution_match.group(1) if solution_match else "")
     return reason if len(reason) <= _MAX_REASON_CHARS else f"{reason[: _MAX_REASON_CHARS - 3]}..."
+
+
+def _summarize_failure(cause: str, solution: str) -> str:
+    if re.fullmatch(r"The model output from .+ could not be parsed into the requested format while .+", cause):
+        summary = "The model output could not be parsed into the requested format"
+        if solution.startswith("The response appears to have been cut off because the model context window"):
+            return f"{summary}; Reduce input or schema size, or use a model with a larger context window"
+        if solution.startswith("The response appears to have been cut off because it reached max_tokens"):
+            return f"{summary}; Increase inference_parameters.max_tokens in the model config"
+        return f"{summary}; Simplify or modify the output schema and try again"
+    for pattern, summary in _SAFE_FAILURE_SUMMARIES.items():
+        if re.fullmatch(pattern, cause):
+            return summary
+    return "generation failed"
 
 
 def _extract_workflow_model_aliases(columns: list[ColumnConfigT]) -> list[str]:

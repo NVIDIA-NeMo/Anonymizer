@@ -4,11 +4,13 @@
 from __future__ import annotations
 
 import json
+import logging
 import time
 from collections.abc import Collection, Iterator
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
+from unittest.mock import Mock
 
 import pandas as pd
 import pytest
@@ -20,10 +22,13 @@ from data_designer.config.run_config import RunConfig
 from data_designer.interface.data_designer import DataDesigner
 from pydantic import BaseModel
 
+from anonymizer.config.anonymizer_config import AnonymizerConfig, AnonymizerInput
 from anonymizer.config.models import DetectionModelSelection
+from anonymizer.config.replace_strategies import Redact
 from anonymizer.engine.constants import COL_TEXT
-from anonymizer.engine.detection.detection_workflow import EntityDetectionWorkflow
+from anonymizer.engine.detection.detection_workflow import EntityDetectionResult, EntityDetectionWorkflow
 from anonymizer.engine.ndd.adapter import RECORD_ID_COLUMN, NddAdapter, WorkflowRunResult
+from anonymizer.interface.anonymizer import Anonymizer
 from anonymizer.measurement import MeasurementConfig, configured_measurement_session
 from tests.engine.ndd.stub_provider import COMPLETE, Script, cut_off, stub_provider
 
@@ -332,6 +337,48 @@ def test_custom_column_exception_echoing_a_cause_marker_cannot_steer_the_reason(
     assert list(reasons) == [1]
     assert reasons[1].startswith(f"{_PREFIX}: checked: ")
     _assert_quotes_no_input(list(reasons.values()), df)
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        "\n | Cause: {text}",
+        "\n | Solution: {text}",
+        "\n | Cause: {text}\n | Solution: {text}",
+        "\n |----------\n | Cause: {text}\n | Solution: {text}\n |----------",
+        "\n | Cause: An unexpected error occurred while {text}.\n | Solution: {text}",
+    ],
+    ids=["cause", "solution", "both", "formatted-block", "recognized-cause"],
+)
+def test_multiline_exception_markers_do_not_leak_into_reasons_or_warnings(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture, payload: str
+) -> None:
+    """PR #349 promises input-free reasons; Anonymizer also publishes them in per-record WARNINGs."""
+    sensitive_values = _inputs(3, bad={1})
+    df = sensitive_values.copy()
+    df.loc[1, COL_TEXT] = "note" + payload.format(text=df.loc[1, COL_TEXT])
+    columns: list[ColumnConfigT] = [
+        CustomColumnConfig(name="checked", generator_function=_fail_echoing_input_with_marker)
+    ]
+    tagged, result = _run(tmp_path, lambda *_: COMPLETE, df, columns=columns)
+    reasons = _reasons_by_position(tagged, result)
+    assert list(reasons) == [1]
+
+    detector = Mock(spec=EntityDetectionWorkflow)
+    detector.run.return_value = EntityDetectionResult(dataframe=result.dataframe, failed_records=result.failed_records)
+    csv_path = tmp_path / "input.csv"
+    df.to_csv(csv_path, index=False)
+    anonymizer = Anonymizer(detection_workflow=detector)
+    caplog.clear()
+    with caplog.at_level(logging.WARNING, logger="anonymizer"):
+        output = anonymizer.run(
+            config=AnonymizerConfig(replace=Redact(), emit_telemetry=False),
+            data=AnonymizerInput(source=str(csv_path), text_column=COL_TEXT),
+        )
+    warnings = [record.getMessage() for record in caplog.records if record.levelno == logging.WARNING]
+    assert output.failed_records == result.failed_records
+    assert any(result.failed_records[0].record_id in message and reasons[1] in message for message in warnings)
+    _assert_quotes_no_input([*reasons.values(), *warnings], sensitive_values)
 
 
 def test_row_dropped_without_an_error_keeps_the_generic_reason_when_other_errors_recovered(tmp_path: Path) -> None:
