@@ -130,7 +130,7 @@ model_configs:
     model: gpt-5
     provider: openai
     inference_parameters:
-      max_tokens: 4096
+      max_tokens: 16384
       temperature: 0.3
   - alias: claude-sonnet
     model: anthropic/claude-sonnet-4
@@ -148,6 +148,8 @@ anonymizer = Anonymizer(
 ```
 
 You can pass `model_configs` as either a YAML file path or a YAML string.
+
+Reasoning models need a larger `max_tokens` than non-reasoning ones because hidden reasoning spends the budget before the answer is written; the bundled configs use 8192-16384. Raise `inference_parameters.max_tokens` for an alias when dropped rows' `failed_records` reason names `max_tokens`.
 
 Roles you don't override keep their default alias selections, but those aliases must still exist in your `model_configs` pool.
 
