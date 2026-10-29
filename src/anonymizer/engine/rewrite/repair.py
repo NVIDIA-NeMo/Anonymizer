@@ -20,6 +20,7 @@ from anonymizer.engine.constants import (
     COL_LEAKED_PRIVACY_ITEMS,
     COL_PRIVACY_QA,
     COL_PRIVACY_QA_REANSWER,
+    COL_RETAINED_PROTECTED_ENTITIES,
     COL_REWRITE_BASELINE_TEXT,
     COL_REWRITTEN_TEXT,
     COL_REWRITTEN_TEXT_NEXT,
@@ -30,6 +31,7 @@ from anonymizer.engine.ndd.adapter import NddAdapter
 from anonymizer.engine.ndd.model_loader import resolve_model_alias
 from anonymizer.engine.prompt_utils import substitute_placeholders
 from anonymizer.engine.rewrite.parsers import (
+    normalize_payload,
     parse_privacy_answers,
     parse_privacy_qa,
 )
@@ -78,6 +80,30 @@ def _leaked_items_text(
                     f"(confidence_leakage_occurred: {answer.confidence:.2f}; reason: {answer.reason})"
                     f"{evidence_str}"
                 )
+    return "\n".join(lines)
+
+
+_RETAINED_ACTIONS = {
+    "replace": "replaced",
+    "generalize": "generalized",
+    "remove": "removed",
+    "suppress_inference": "removed",
+}
+
+
+def _retained_items_text(retained: Any) -> str:
+    """Format protected entities that survived verbatim, one line per entity."""
+    items = normalize_payload(retained)
+    if not isinstance(items, list):
+        return ""
+    lines = []
+    for item in items:
+        if isinstance(item, list) and len(item) == 3:
+            value, label, method = (str(part) for part in item)
+            action = _RETAINED_ACTIONS.get(method, "protected")
+            lines.append(
+                f'- [RETAINED] {label}: "{value}" still appears verbatim; must be {action} (method: {method}).'
+            )
     return "\n".join(lines)
 
 
@@ -189,12 +215,14 @@ Provide ONLY the rewritten text.
 # ---------------------------------------------------------------------------
 
 
-@custom_column_generator(required_columns=[COL_PRIVACY_QA_REANSWER, COL_PRIVACY_QA])
+@custom_column_generator(required_columns=[COL_PRIVACY_QA_REANSWER, COL_PRIVACY_QA, COL_RETAINED_PROTECTED_ENTITIES])
 def _inject_leaked_items_column(row: dict[str, Any]) -> dict[str, Any]:
-    """Format leaked privacy items into a text block for the repair prompt."""
+    """Format leaked privacy items and verbatim-retained entities into a text block for the repair prompt."""
     privacy_answers = parse_privacy_answers(row.get(COL_PRIVACY_QA_REANSWER))
     privacy_qa = parse_privacy_qa(row.get(COL_PRIVACY_QA))
-    row[COL_LEAKED_PRIVACY_ITEMS] = _leaked_items_text(privacy_answers, privacy_qa)
+    leaked = _leaked_items_text(privacy_answers, privacy_qa)
+    retained = _retained_items_text(row.get(COL_RETAINED_PROTECTED_ENTITIES))
+    row[COL_LEAKED_PRIVACY_ITEMS] = "\n".join(part for part in (leaked, retained) if part)
     return row
 
 

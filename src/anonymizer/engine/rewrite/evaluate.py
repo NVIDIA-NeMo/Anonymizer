@@ -24,7 +24,9 @@ from anonymizer.engine.constants import (
     COL_QUALITY_QA,
     COL_QUALITY_QA_COMPARE,
     COL_QUALITY_QA_REANSWER,
+    COL_RETAINED_PROTECTED_ENTITIES,
     COL_REWRITTEN_TEXT,
+    COL_SENSITIVITY_DISPOSITION,
     COL_UTILITY_SCORE,
     COL_WEIGHTED_LEAKAGE_RATE,
 )
@@ -38,6 +40,7 @@ from anonymizer.engine.rewrite.parsers import (
     parse_quality_compare,
     parse_quality_qa,
 )
+from anonymizer.engine.rewrite.retention import has_items, retained_protected
 from anonymizer.engine.schemas.rewrite import (
     PrivacyAnswer,
     PrivacyAnswerItemSchema,
@@ -428,9 +431,14 @@ def determine_repair_needs(
     leakage_mass: float,
     repair_any_high_leak: bool,
     effective_threshold: float,
+    retained: bool = False,
 ) -> bool:
-    """Decide whether a single row needs repair."""
-    if repair_any_high_leak and any_high_leaked:
+    """Decide whether a single row needs repair.
+
+    A protected entity surviving verbatim (``retained``) always needs repair,
+    independent of the leakage threshold.
+    """
+    if retained or (repair_any_high_leak and any_high_leaked):
         return True
     return leakage_mass > effective_threshold
 
@@ -525,7 +533,15 @@ def _compute_metrics_columns(row: dict[str, Any], generator_params: MetricsParam
     return row
 
 
-@custom_column_generator(required_columns=[COL_ANY_HIGH_LEAKED, COL_LEAKAGE_MASS])
+@custom_column_generator(required_columns=[COL_SENSITIVITY_DISPOSITION, COL_REWRITTEN_TEXT])
+def _retained_protected_column(row: dict[str, Any]) -> dict[str, Any]:
+    """List protected disposition entries whose value survives verbatim in the rewrite."""
+    retained = retained_protected(row.get(COL_SENSITIVITY_DISPOSITION), row.get(COL_REWRITTEN_TEXT))
+    row[COL_RETAINED_PROTECTED_ENTITIES] = [list(item) for item in retained]
+    return row
+
+
+@custom_column_generator(required_columns=[COL_ANY_HIGH_LEAKED, COL_LEAKAGE_MASS, COL_RETAINED_PROTECTED_ENTITIES])
 def _determine_repair_needs_column(row: dict[str, Any], generator_params: RepairNeedsParams) -> dict[str, Any]:
     """Set _needs_repair flag based on evaluation criteria."""
     row[COL_NEEDS_REPAIR] = determine_repair_needs(
@@ -533,6 +549,7 @@ def _determine_repair_needs_column(row: dict[str, Any], generator_params: Repair
         leakage_mass=float(row.get(COL_LEAKAGE_MASS, 0.0)),
         repair_any_high_leak=generator_params.repair_any_high_leak,
         effective_threshold=generator_params.effective_threshold,
+        retained=has_items(row.get(COL_RETAINED_PROTECTED_ENTITIES)),
     )
     return row
 
@@ -589,7 +606,12 @@ class EvaluateWorkflow:
                 generator_function=_compute_metrics_columns,
                 generator_params=MetricsParams(sensitivity_weights=evaluation.sensitivity_weights),
             ),
-            # Step 5 -- Determine repair needs (pure Python)
+            # Step 5 -- Protected values surviving verbatim (pure Python)
+            CustomColumnConfig(
+                name=COL_RETAINED_PROTECTED_ENTITIES,
+                generator_function=_retained_protected_column,
+            ),
+            # Step 6 -- Determine repair needs (pure Python)
             CustomColumnConfig(
                 name=COL_NEEDS_REPAIR,
                 generator_function=_determine_repair_needs_column,
