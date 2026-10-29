@@ -39,6 +39,71 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("anonymizer.ndd")
 
+# DataDesigner records the cause of a failed task only while task tracing is on.
+# Tracing keeps one small record per task attempt for the whole run, so this
+# switch turns it off for every run when memory at very large row counts matters.
+TRACE_TASKS_BY_DEFAULT = True
+
+_MISSING_RECORD_REASON = "Record missing from workflow output"
+_STOPPED_EARLY_REASON = f"{_MISSING_RECORD_REASON}: not completed: run stopped early after other rows failed"
+_MAX_REASON_CHARS = 500
+_CAUSE_LINE = re.compile(r"^\s*\|\s*Cause:\s*(.+)", re.MULTILINE)
+_SOLUTION_LINE = re.compile(r"^\s*\|\s*Solution:\s*(.+)", re.MULTILINE)
+# Task traces retain only strings. Exception text can impersonate even a complete classified error,
+# so these markers select fixed summaries; captured cause/solution text is never returned to users.
+_SAFE_FAILURE_SUMMARIES = {
+    r"The API key provided for model .+ was found to be invalid or expired while .+": (
+        "The API key is invalid or expired; Verify the model provider's API key"
+    ),
+    r"You have exceeded the rate limit for model .+ while .+": "Model rate limit exceeded; Wait and try again",
+    r"The request to model .+ timed out while .+": (
+        "The model request timed out; Check your connection or increase inference_parameters.timeout"
+    ),
+    r"Local request admission for model .+ timed out while .+": (
+        "Local request admission timed out; The provider request was not sent. "
+        "Reduce concurrency or tune max_parallel_requests and RunConfig.max_in_flight_tasks"
+    ),
+    r"The specified model .+ could not be found while .+": (
+        "The model could not be found; Check the model name and provider configuration"
+    ),
+    r"Your API key was found to lack the necessary permissions to use model .+ while .+": (
+        "The API key lacks model permissions; Check the model provider's API key"
+    ),
+    r"One or more of the parameters you provided were found to be unsupported by model .+ while .+": (
+        "The model does not support the request parameters; Check the model provider's documentation"
+    ),
+    r"Model provider .+ rejected the request for model .+ with HTTP status .+ while .+": (
+        "The model provider rejected the request; Check the model name, credentials, configuration and quota"
+    ),
+    r"Model provider .+ reported insufficient credits or quota for model .+ while .+": (
+        "The model provider reported insufficient credits or quota; Add credits or increase quota"
+    ),
+    r"The input data for model .+ was found to exceed its supported context width while .+": (
+        "The input data exceeds the model's supported context width; Reduce input or completion length"
+    ),
+    r"The request for model .+ was found to be malformed or missing required parameters while .+": (
+        "The request was malformed or missing required parameters; Check the model's request parameters"
+    ),
+    r"Connection to model .+ hosted on model provider .+ failed while .+": (
+        "Connection to the model failed; Check your network, proxy and firewall settings"
+    ),
+    r"An unexpected error occurred while .+": "An unexpected error occurred; Review the stack trace for more details",
+    r"An unexpected API error occurred with model .+ while .+": (
+        "An unexpected API error occurred; Try again or check with the model provider"
+    ),
+    r"Model .+ is currently experiencing internal server issues while .+": (
+        "The model provider is experiencing internal server issues; Try again later"
+    ),
+    r"Model .+ is not a multimodal model, but it looks like you are trying to provide multimodal context while .+": (
+        "The model does not support multimodal context; Check the request parameters"
+    ),
+    r"The request to model .+ failed despite correct request format while .+": (
+        "The model could not process the request; Try again later"
+    ),
+}
+# Anonymizer's own failure text, safe to show because it carries only offsets.
+_KNOWN_FAILURE = re.compile(r"Detector entity text does not match the source span at offsets \[\d+, \d+\)")
+
 _TRACEABLE_LLM_COLUMN_TYPES = (LLMTextColumnConfig, LLMStructuredColumnConfig)
 _MODEL_TRACE_COLUMN: ContextVar[str | None] = ContextVar("anonymizer_dd_model_trace_column", default=None)
 _MODEL_TRACE_PURPOSE: ContextVar[str | None] = ContextVar("anonymizer_dd_model_trace_purpose", default=None)
@@ -462,6 +527,8 @@ class NddAdapter:
                 else workflow_input_df
             ),
             output_df=output_df,
+            task_traces=task_traces,
+            buffer_size=record_count if preview_num_records is not None else _run_buffer_size(self._data_designer),
         )
         _success_model_usage = usage_probe.model_usage()
         with self._run_lock:
@@ -574,6 +641,8 @@ class NddAdapter:
         workflow_name: str,
         input_df: pd.DataFrame,
         output_df: pd.DataFrame,
+        task_traces: list[_TaskTrace] | None = None,
+        buffer_size: int | None = None,
     ) -> list[FailedRecord]:
         if RECORD_ID_COLUMN not in input_df.columns:
             logger.warning(
@@ -620,17 +689,83 @@ class NddAdapter:
                 for record_id in input_df[RECORD_ID_COLUMN].astype(str).tolist()
             ]
 
-        input_ids = set(input_df[RECORD_ID_COLUMN].astype(str).tolist())
+        ordered_ids = input_df[RECORD_ID_COLUMN].astype(str).tolist()
         output_ids = set(output_df[RECORD_ID_COLUMN].astype(str).tolist())
-        missing_ids = sorted(input_ids - output_ids)
+        missing_ids = sorted(set(ordered_ids) - output_ids)
+        reasons = _failure_reasons_by_record(
+            record_ids=ordered_ids,
+            task_traces=task_traces or [],
+            buffer_size=buffer_size or len(ordered_ids),
+        )
+        default_reason = _STOPPED_EARLY_REASON if reasons else _MISSING_RECORD_REASON
         return [
-            FailedRecord(
-                record_id=record_id,
-                step=workflow_name,
-                reason="Record missing from workflow output",
-            )
+            FailedRecord(record_id=record_id, step=workflow_name, reason=reasons.get(record_id, default_reason))
             for record_id in missing_ids
         ]
+
+
+def _run_buffer_size(data_designer: DataDesigner) -> int | None:
+    buffer_size = getattr(getattr(data_designer, "run_config", None), "buffer_size", None)
+    return buffer_size if isinstance(buffer_size, int) else None
+
+
+def _failure_reasons_by_record(
+    *,
+    record_ids: list[str],
+    task_traces: list[_TaskTrace],
+    buffer_size: int,
+) -> dict[str, str]:
+    """Map each record to the reason of its last failed task, leaving out rows whose failure later recovered."""
+    last_error: dict[int, _TaskTrace] = {}
+    for trace in task_traces:
+        status = _trace_attr(trace, "status")
+        row_group = _trace_attr(trace, "row_group")
+        row_index = _trace_attr(trace, "row_index")
+        if status not in ("error", "ok") or not isinstance(row_group, int):
+            continue
+        start = row_group * buffer_size
+        positions = (
+            range(start, min(start + buffer_size, len(record_ids))) if row_index is None else [start + row_index]
+        )
+        for position in positions:
+            if status == "error":
+                last_error[position] = trace
+            elif (earlier := last_error.get(position)) is not None and _trace_attr(earlier, "column") == _trace_attr(
+                trace, "column"
+            ):
+                del last_error[position]
+    return {
+        record_ids[position]: _failure_reason(trace)
+        for position, trace in last_error.items()
+        if position < len(record_ids)
+    }
+
+
+def _failure_reason(trace: _TaskTrace) -> str:
+    """Classify untrusted trace text into fixed diagnostics, never echoing the underlying exception message."""
+    prefix = f"{_MISSING_RECORD_REASON}: {_trace_attr(trace, 'column')}: "
+    error = str(_trace_attr(trace, "error") or "")
+    cause_match = _CAUSE_LINE.search(error)
+    if cause_match is None:
+        known = _KNOWN_FAILURE.search(error)
+        return f"{prefix}{known.group(0) if known else 'generation failed'}"
+    solution_match = _SOLUTION_LINE.search(error)
+    reason = prefix + _summarize_failure(cause_match.group(1), solution_match.group(1) if solution_match else "")
+    return reason if len(reason) <= _MAX_REASON_CHARS else f"{reason[: _MAX_REASON_CHARS - 3]}..."
+
+
+def _summarize_failure(cause: str, solution: str) -> str:
+    if re.fullmatch(r"The model output from .+ could not be parsed into the requested format while .+", cause):
+        summary = "The model output could not be parsed into the requested format"
+        if solution.startswith("The response appears to have been cut off because the model context window"):
+            return f"{summary}; Reduce input or schema size, or use a model with a larger context window"
+        if solution.startswith("The response appears to have been cut off because it reached max_tokens"):
+            return f"{summary}; Increase inference_parameters.max_tokens in the model config"
+        return f"{summary}; Simplify or modify the output schema and try again"
+    for pattern, summary in _SAFE_FAILURE_SUMMARIES.items():
+        if re.fullmatch(pattern, cause):
+            return summary
+    return "generation failed"
 
 
 def _extract_workflow_model_aliases(columns: list[ColumnConfigT]) -> list[str]:
@@ -1035,7 +1170,7 @@ def _model_trace_usage(response: Any) -> Any:
 
 @contextmanager
 def _temporary_dd_task_trace(data_designer: DataDesigner, *, collector: Any | None) -> Iterator[None]:
-    if collector is None or not collector.dd_task_trace_enabled:
+    if not TRACE_TASKS_BY_DEFAULT and (collector is None or not collector.dd_task_trace_enabled):
         yield
         return
 
