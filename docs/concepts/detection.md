@@ -196,6 +196,12 @@ The validator receives the full resolved examples: built-in plus configured exam
 
 `entity_label_examples` is currently configured through the Python `Detect` API; the CLI does not provide a mapping syntax for this field.
 
+When injecting a custom `detection_workflow` into `Anonymizer`, older methods without
+an `entity_label_examples` keyword continue to work when no examples are configured.
+If examples are configured, `run()`, `preview()`, and the detection export methods raise
+`InvalidConfigError` when the corresponding detector method cannot accept them. Update
+the custom method to accept the keyword or remove `Detect.entity_label_examples`.
+
 ### Excluding entity labels
 
 Use `excluded_entity_labels` to omit specific labels from detection without having to enumerate the entire label set. Excluded labels are removed from the active label set before GLiNER runs. If a model still emits an excluded label, final filtering prevents it from appearing in detection results.
