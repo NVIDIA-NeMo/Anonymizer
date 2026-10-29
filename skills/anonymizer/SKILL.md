@@ -75,7 +75,7 @@ read `docs/troubleshooting.md` or the
 [published troubleshooting guide](https://nvidia-nemo.github.io/Anonymizer/dev/troubleshooting/).
 
 - **`anonymizer` not installed:** Tell the user `nemo-anonymizer` is not in this Python environment (requires Python ≥ 3.11). Ask if they want you to install it (`pip install nemo-anonymizer`) or do it themselves. Do not install without permission.
-- **Model/provider setup:** Plain `Anonymizer()` ships with bundled `models.yaml` and `providers.yaml` (see `src/anonymizer/config/default_model_configs/`). For the default path, confirm `OPENROUTER_API_KEY` is set. Pass custom `model_configs` or `model_providers` only for non-default endpoints or model pools. See `docs/concepts/models.md` or the [published models guide](https://nvidia-nemo.github.io/Anonymizer/dev/concepts/models/).
+- **Model/provider setup:** Plain `Anonymizer()` ships with bundled `models.yaml` and `providers.yaml` (see `src/anonymizer/config/default_model_configs/`). For the default path, confirm `OPENROUTER_API_KEY` is set. Pass custom `model_configs` or `model_providers` only for non-default endpoints or model pools. A custom setup is two objects: `model_providers` (name, endpoint, API key) and `model_configs` (aliases that each name a provider). A custom `model_providers` replaces the bundled list, so keep `local-gliner2` in it as long as any model config, including the bundled detector entry, uses that provider. Reasoning models need a larger `inference_parameters.max_tokens` than non-reasoning ones because hidden reasoning spends the budget; the bundled configs use 8192-16384. Raise it when dropped rows' reason names `max_tokens`. Pair a large budget with `inference_parameters.timeout` (the bundled configs use 300 seconds; unset, requests time out after 60), and raise the timeout when dropped rows' reason says `timed out`. See `docs/concepts/models.md` or the [published models guide](https://nvidia-nemo.github.io/Anonymizer/dev/concepts/models/).
 - **LLM calls failing at preview:** Check for a missing or invalid API key, a network problem, or a wrong endpoint URL. See `docs/troubleshooting.md` "Validation passed but `preview` errors at LLM call" or the [published troubleshooting guide](https://nvidia-nemo.github.io/Anonymizer/dev/troubleshooting/).
 - **Local / on-prem GLiNER2:** Clone or download `tools/serve_gliner.py` from the Anonymizer repo, start the server, add a provider with `endpoint: http://localhost:8001/v1`, and point the `fastino/gliner2-privacy-filter-PII-multi` detector config at that provider (`local-gliner2` in the bundled defaults) with `skip_health_check: true`. Preflight errors about missing aliases usually mean `model_configs` lists only the detector. Include the full default pool. A wrong endpoint or stopped server raises an actionable configuration error before detection starts. See [`docs/concepts/self-hosting-gliner.md`](../../docs/concepts/self-hosting-gliner.md) or the [published self-hosting guide](https://nvidia-nemo.github.io/Anonymizer/dev/concepts/self-hosting-gliner/).
 
@@ -184,9 +184,11 @@ def main() -> None:
         # trace_dataframe is a superset of dataframe — it has the user-facing
         # columns plus internal columns (validation decisions, sensitivity
         # dispositions, etc.) that explain why entities were kept, dropped,
-        # or rewritten.
-        result.trace_dataframe.to_parquet("preview.parquet")
-        print("Saved: preview.parquet (load with pd.read_parquet)")
+        # or rewritten. Some internal columns do not round-trip through
+        # parquet, so save the trace frame as a pickle.
+        result.dataframe.to_parquet("preview.parquet")
+        result.trace_dataframe.to_pickle("preview_trace.pkl")
+        print("Saved: preview.parquet (pd.read_parquet), preview_trace.pkl (pd.read_pickle)")
 
     # Failure-first protocol: dropped rows are infra issues, not strategy issues.
     if result.failed_records:
