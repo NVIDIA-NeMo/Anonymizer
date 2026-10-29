@@ -57,7 +57,7 @@ _PRIVACY_GOAL = PrivacyGoal(
 )
 _REPLACE_PATCH = "anonymizer.engine.rewrite.rewrite_workflow.LlmReplaceWorkflow"
 _STUB_REWRITE = "stub_rewrite"
-_FIXTURE = Path(__file__).parents[1] / "fixtures" / "disposition_coverage_c4096.json"
+_FIXTURE = Path(__file__).parents[1] / "fixtures" / "disposition_coverage_recorded.json"
 
 
 def _entities(*pairs: tuple[str, str]) -> dict[str, Any]:
@@ -77,7 +77,7 @@ def _retained_values(disposition: dict[str, Any], text: str) -> list[str]:
 
 
 # ---------------------------------------------------------------------------
-# Pure functions: coverage (probes 1-2)
+# Pure functions: coverage
 # ---------------------------------------------------------------------------
 
 
@@ -127,7 +127,7 @@ def test_coverage_accepts_json_strings() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Pure functions: retention (probes 4-5)
+# Pure functions: retention
 # ---------------------------------------------------------------------------
 
 
@@ -181,7 +181,7 @@ def test_retention_regex_metacharacters_are_escaped() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Repair trigger and prompt (probes 3, 6)
+# Repair trigger and prompt
 # ---------------------------------------------------------------------------
 
 
@@ -244,8 +244,32 @@ def test_repair_prompt_unchanged_when_nothing_retained(answer: str, retained: An
     assert _inject_leaked_items_column(dict(row))[COL_LEAKED_PRIVACY_ITEMS] == baseline
 
 
+def test_combined_repair_column_reads_the_iteration_retained_column(
+    stub_rewrite_model_selection: RewriteModelSelection,
+    stub_replace_model_selection: ReplaceModelSelection,
+) -> None:
+    graph = CombinedRewriteWorkflow(adapter=Mock()).build_graph(
+        selected_models=stub_rewrite_model_selection,
+        replace_model_selection=stub_replace_model_selection,
+        privacy_goal=_PRIVACY_GOAL,
+        evaluation=EvaluationCriteria(max_repair_iterations=1),
+    )
+    previous, state = graph.evaluation_states[0], graph.repair_states[0]
+    column = next(column for column in graph.columns if column.name == state.leaked_items)
+    assert isinstance(column, CustomColumnConfig)
+    assert previous.retained in column.generator_function.custom_column_metadata["required_columns"]
+
+    row = {
+        previous.privacy_reanswer: {"answers": []},
+        COL_PRIVACY_QA: {"items": []},
+        previous.retained: [["Alice", "first_name", "replace"]],
+    }
+    text = column.generator_function(row)[state.leaked_items]
+    assert text == '- [RETAINED] first_name: "Alice" still appears verbatim; must be replaced (method: replace).'
+
+
 # ---------------------------------------------------------------------------
-# Recorded disposition replay (probe 7)
+# Recorded disposition replay
 # ---------------------------------------------------------------------------
 
 _EXPECTED_MISSING = {
@@ -652,6 +676,65 @@ def test_mixed_frame_flags_land_on_right_records(
     assert [list(item) for item in retained["latent-retained"]] == [["a hospital", "employer", "suppress_inference"]]
     assert [list(item) for item in retained["repair"]] == [["Alice", "first_name", "replace"]]
     assert retained["incomplete"] == [] and retained["clean"] == []
+
+
+@pytest.mark.parametrize("combined", [False, True], ids=["staged", "combined"])
+def test_mixed_frame_with_repairs_keeps_flags_on_right_records(
+    tmp_path: Path,
+    combined: bool,
+    stub_rewrite_model_selection: RewriteModelSelection,
+    stub_replace_model_selection: ReplaceModelSelection,
+) -> None:
+    no_entities = {"entities_by_value": []}
+    dataframe = _frame(
+        [
+            _row("passthrough-1", None, "unused", entities=no_entities),
+            _row("gap-repaired", _PARTIAL, "Alice works at Acme."),
+            _row("clean-1", _FULL, "Someone works at a company."),
+            _row("repaired", _FULL, "Alice works at a company."),
+            _row("gap-passing", _PARTIAL, "Someone works at a company."),
+            _row("passthrough-2", None, "unused", entities=no_entities),
+            _row("clean-2", _FULL, "Someone works at a company."),
+        ]
+    )
+    result, spy = _run(
+        tmp_path,
+        dataframe,
+        combined=combined,
+        evaluation=EvaluationCriteria(max_repair_iterations=2),
+        rewrite_selection=stub_rewrite_model_selection,
+        replace_selection=stub_replace_model_selection,
+    )
+
+    if not combined:
+        # Failing rows are concatenated after passing rows, so the frame is reordered before the gates run.
+        names = [call.kwargs["workflow_name"] for call in spy.call_args_list]
+        assert "rewrite-repair-0" in names
+    assert _by_id(result, COL_REPAIR_ITERATIONS) == {
+        "passthrough-1": 0,
+        "gap-repaired": 1,
+        "clean-1": 0,
+        "repaired": 1,
+        "gap-passing": 0,
+        "passthrough-2": 0,
+        "clean-2": 0,
+    }
+    assert _by_id(result, COL_NEEDS_HUMAN_REVIEW) == {
+        "passthrough-1": False,
+        "gap-repaired": True,
+        "clean-1": False,
+        "repaired": False,
+        "gap-passing": True,
+        "passthrough-2": False,
+        "clean-2": False,
+    }
+    rewritten = _by_id(result, COL_REWRITTEN_TEXT)
+    assert rewritten["gap-repaired"] == "Alice works at someone."
+    assert rewritten["repaired"] == "someone works at a company."
+    missing = _by_id(result, COL_DISPOSITION_MISSING_ENTITIES)
+    assert [list(item) for item in missing["gap-repaired"]] == [["Alice", "first_name"]]
+    assert [list(item) for item in missing["gap-passing"]] == [["Alice", "first_name"]]
+    assert missing["repaired"] == [] and missing["clean-1"] == [] and missing["clean-2"] == []
 
 
 @pytest.mark.parametrize("combined", [False, True], ids=["staged", "combined"])
