@@ -85,6 +85,7 @@ def _make_anonymizer(
         }
     )
     rewrite_runner = Mock(spec=RewriteWorkflow)
+    stub_run_with_detection(rewrite_runner)
     rewrite_runner.run.return_value = rewrite_return or RewriteResult(
         dataframe=_rewrite_df,
         failed_records=[],
@@ -252,7 +253,7 @@ def test_rewrite_run_passes_entity_label_examples_to_detection_workflow(stub_inp
     assert detection_wf.run.call_args.kwargs["entity_label_examples"] == examples
     assert detection_wf.run.call_args.kwargs["tag_latent_entities"] is True
     assert result.entity_labels == ["vendor_api_key"]
-    assert "entity_label_examples" not in rewrite_runner.run.call_args.kwargs
+    assert "entity_label_examples" not in rewrite_runner.run_with_detection.call_args.kwargs
     assert "acme_live_abc123" not in (result.dataframe.to_json() or "")
 
 
@@ -1019,8 +1020,8 @@ def test_run_rewrite_calls_rewrite_runner(stub_input: AnonymizerInput) -> None:
 
     anonymizer.run(config=config, data=stub_input)
 
-    rewrite_runner.run.assert_called_once()
-    call_kwargs = rewrite_runner.run.call_args.kwargs
+    rewrite_runner.run_with_detection.assert_called_once()
+    call_kwargs = rewrite_runner.run_with_detection.call_args.kwargs
     assert config.rewrite is not None
     assert call_kwargs["privacy_goal"] == config.rewrite.privacy_goal
     assert call_kwargs["evaluation"] == config.rewrite.evaluation
@@ -1030,13 +1031,14 @@ def test_run_rewrite_uses_combined_runner_when_enabled(stub_input: AnonymizerInp
     config = AnonymizerConfig(rewrite=Rewrite(use_combined_graph=True))
     anonymizer, _, _, rewrite_runner = _make_anonymizer()
     combined_runner = Mock(spec=RewriteWorkflow)
+    stub_run_with_detection(combined_runner)
     combined_runner.run.return_value = rewrite_runner.run.return_value
     anonymizer._combined_rewrite_runner = combined_runner
 
     anonymizer.run(config=config, data=stub_input)
 
-    rewrite_runner.run.assert_not_called()
-    combined_runner.run.assert_called_once()
+    rewrite_runner.run_with_detection.assert_not_called()
+    combined_runner.run_with_detection.assert_called_once()
 
 
 def test_run_rewrite_rejects_missing_privacy_goal_before_workflows(stub_input: AnonymizerInput) -> None:
@@ -1049,7 +1051,7 @@ def test_run_rewrite_rejects_missing_privacy_goal_before_workflows(stub_input: A
         anonymizer.run(config=config, data=stub_input)
 
     detection_workflow.run.assert_not_called()
-    rewrite_runner.run.assert_not_called()
+    rewrite_runner.run_with_detection.assert_not_called()
 
 
 def test_run_rewrite_output_columns(stub_input: AnonymizerInput) -> None:

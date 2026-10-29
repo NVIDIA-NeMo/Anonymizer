@@ -65,8 +65,10 @@ Validation runs before augmentation, not after: GLiNER is high-recall/low-precis
 
 ```
 input_df
-  → EntityDetectionWorkflow.run()              # same as above, plus latent entity tagging
-  → RewriteWorkflow.run()                      # engine/rewrite/rewrite_workflow.py
+  → one graph invocation: RewriteWorkflow.run_with_detection()   # engine/rewrite/rewrite_workflow.py
+      detect (invocation-scoped step)          # engine/detection/detect_step.py; EntityDetectionWorkflow.run(),
+                                               # same as above, plus latent entity tagging
+      rewrite (rows with entities only; the rest keep default metrics)
         LlmReplaceWorkflow.generate_map_only() # build replacement map for prompt
         → single NDD adapter call (pipeline_columns):
               DomainClassificationWorkflow    → _domain, _domain_supplement
@@ -85,7 +87,7 @@ Later, `Anonymizer.evaluate()` runs the non-critical judge steps:
                                               (only when EvaluateConfig.compute_detection_validity=True)
 ```
 
-Records with no detected entities skip all LLM sub-workflows and pass through with default metrics (utility=1.0, leakage=0.0).
+Records with no detected entities skip all LLM sub-workflows and pass through with default metrics (utility=1.0, leakage=0.0). A runner that overrides `run()` keeps the older path: the facade calls `EntityDetectionWorkflow.run()` and then that `run()` with the detection frame.
 
 ## Config Pattern
 

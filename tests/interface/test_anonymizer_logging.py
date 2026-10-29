@@ -98,6 +98,7 @@ def _make_logging_anonymizer(
         }
     )
     rewrite_runner = Mock(spec=RewriteWorkflow)
+    stub_run_with_detection(rewrite_runner)
     rewrite_runner.run.return_value = RewriteResult(dataframe=_rewrite_df, failed_records=[])
     _rewrite_eval_df = _rewrite_df.copy()
     _rewrite_eval_df[COL_ENTITIES_BY_VALUE] = [

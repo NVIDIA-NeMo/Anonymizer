@@ -437,6 +437,7 @@ def test_anonymizer_records_per_record_measurement_without_raw_pii(tmp_path: Pat
         failed_records=[],
     )
     rewrite_runner = Mock(spec=RewriteWorkflow)
+    stub_run_with_detection(rewrite_runner)
     rewrite_runner.run.return_value = RewriteResult(dataframe=pd.DataFrame(), failed_records=[])
     anonymizer = Anonymizer(
         detection_workflow=detection_workflow,

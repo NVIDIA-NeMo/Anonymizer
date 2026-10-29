@@ -817,7 +817,7 @@ class Anonymizer:
 
         def detect_then_announce(frame: pd.DataFrame) -> EntityDetectionResult:
             result = detect(frame)
-            logger.info("🔄 Running replacement")
+            logger.info("🔄 Running replacement" if config.replace is not None else "✏️ Running rewrite pipeline")
             return result
 
         t0 = time.perf_counter()
@@ -857,19 +857,13 @@ class Anonymizer:
             post_detection_failures = replace_result.failed_records[len(detection_failures) :]
         else:
             assert config.rewrite is not None
-            detection_result = detect(input_df)
-            detection_elapsed = time.perf_counter() - t0
-            detected_df, detection_failures = detection_result.dataframe, list(detection_result.failed_records)
-            t0 = time.perf_counter()
             privacy_goal = admitted_goal
             if privacy_goal is None:
                 raise InvalidConfigError("rewrite.privacy_goal must not be None")
-            logger.info("✏️ Running rewrite pipeline")
             rewrite_runner = (
                 self._combined_rewrite_runner if config.rewrite.use_combined_graph else self._rewrite_runner
             )
-            rewrite_result = rewrite_runner.run(
-                detected_df,
+            rewrite_options: dict[str, Any] = dict(
                 model_configs=self._model_configs,
                 selected_models=self._selected_models.rewrite,
                 replace_model_selection=self._selected_models.replace,
@@ -879,8 +873,29 @@ class Anonymizer:
                 preview_num_records=preview_num_records,
                 strict_entity_protection=config.rewrite.strict_entity_protection,
             )
-            final_df, post_detection_failures = rewrite_result.dataframe, list(rewrite_result.failed_records)
-            replacement_elapsed = time.perf_counter() - t0
+            if rewrite_runner.__class__.run not in (RewriteWorkflow.run, CombinedRewriteWorkflow.run):
+                # A caller's runner overrides run(): detect, then call that override with the detection frame.
+                detection_result = detect(input_df)
+                detection_elapsed = time.perf_counter() - t0
+                detected_df, detection_failures = detection_result.dataframe, list(detection_result.failed_records)
+                t0 = time.perf_counter()
+                logger.info("✏️ Running rewrite pipeline")
+                rewrite_result = rewrite_runner.run(detected_df, **rewrite_options)
+                post_detection_failures = list(rewrite_result.failed_records)
+                replacement_elapsed = time.perf_counter() - t0
+            else:
+                rewrite_result = rewrite_runner.run_with_detection(
+                    input_df, detect=detect_then_announce, **rewrite_options
+                )
+                assert rewrite_result.detection is not None
+                detected_df, detection_failures = (
+                    rewrite_result.detection.dataframe,
+                    list(rewrite_result.detection.failed_records),
+                )
+                detection_elapsed = rewrite_result.detection_elapsed
+                replacement_elapsed = time.perf_counter() - t0 - detection_elapsed
+                post_detection_failures = rewrite_result.failed_records[len(detection_failures) :]
+            final_df = rewrite_result.dataframe
         entity_count = _count_entities(detected_df)
         detection_failed = len(detection_failures)
         logger.info(
