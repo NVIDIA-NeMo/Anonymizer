@@ -10,10 +10,11 @@ import re
 import time
 import uuid
 from collections import Counter
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Protocol, TypeGuard, cast
+from typing import TYPE_CHECKING, Any, NamedTuple, Protocol, TypeGuard, cast
 
+import pandas as pd
 from data_designer.config.models import ModelProvider
 from data_designer.config.run_config import RunConfig
 from data_designer.interface.data_designer import DataDesigner
@@ -60,6 +61,19 @@ from anonymizer.engine.evaluation.entity_coverage_judge import EntityCoverageWor
 from anonymizer.engine.evaluation.replace.attribute_fidelity_judge import AttributeFidelityJudgeWorkflow
 from anonymizer.engine.evaluation.replace.relational_consistency_judge import RelationalConsistencyJudgeWorkflow
 from anonymizer.engine.evaluation.replace.type_fidelity_judge import TypeFidelityJudgeWorkflow
+from anonymizer.engine.graph_core.authoring import (
+    DATUM,
+    TEXT,
+    Assessment,
+    GraphScope,
+    Limits,
+    Operation,
+    ProtectionGraph,
+    Requests,
+    Workflow,
+)
+from anonymizer.engine.graph_core.execution import ProtectionResult, prepare, protect
+from anonymizer.engine.graph_core.kernel import register_kind
 from anonymizer.engine.io.reader import read_input
 from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter
 from anonymizer.engine.ndd.model_loader import (
@@ -96,10 +110,103 @@ from anonymizer.telemetry import (
 )
 
 if TYPE_CHECKING:
-    import pandas as pd
     from data_designer.config.config_builder import DataDesignerConfigBuilder
 
 logger = logging.getLogger("anonymizer")
+
+
+REPLACE_METRICS = register_kind("replace-metrics", lambda v: isinstance(v, dict))
+REWRITE_METRICS = register_kind("rewrite-metrics", lambda v: isinstance(v, dict))
+COVERAGE_METRICS = register_kind("coverage-metrics", lambda v: isinstance(v, dict))
+
+# Non-covering verifiers by verdict column: (verifier name, reason when the verdict is not 1.0).
+_ASSESSMENTS = {
+    COL_JUDGE_EVALUATION: ("rewrite-judge", ""),
+    COL_DETECTION_VALID: ("detection-validity", "detection_invalid"),
+    COL_TYPE_FIDELITY_VALID: ("type-fidelity", "type_fidelity_invalid"),
+    COL_RELATIONAL_CONSISTENCY_VALID: ("relational-consistency", "relational_inconsistent"),
+    COL_ATTRIBUTE_FIDELITY_VALID: ("attribute-fidelity", "attribute_fidelity_invalid"),
+}
+
+
+class _Judge(NamedTuple):
+    """One judge body: the runner call over the whole frame, its output port and the verdict columns it returns."""
+
+    name: str
+    port: str
+    kind: str
+    columns: tuple[str, ...]
+    run: Callable[[pd.DataFrame], tuple[pd.DataFrame, list[FailedRecord]]]
+
+
+def _verdict(port: str, column: str, reason: str, *, graded: bool = True) -> Callable[..., Assessment]:
+    """A model-free verifier over ``port``'s per-row metrics: ``None`` or NaN is unavailable, else ``== 1.0``.
+
+    ``True == 1.0``, so one comparison serves boolean verdicts and fractions; ``graded=False`` records availability.
+    """
+
+    def verify(target: Any, **ports: Any) -> Assessment:
+        value = ports[port].get(column)
+        if value is None or value is pd.NA or (isinstance(value, float) and value != value):
+            return Assessment(None, target, "judge_unavailable")
+        satisfied = not graded or bool(value == 1.0)
+        return Assessment(satisfied, target, "" if satisfied else reason)
+
+    return verify
+
+
+def _evaluate_on_graph(
+    frame: pd.DataFrame, candidate_column: str, judges: Sequence[_Judge]
+) -> tuple[pd.DataFrame, list[FailedRecord], ProtectionResult]:
+    """Run each judge body over the whole frame as one invocation, then the model-free verifiers per row.
+
+    A row is a target whose datum is its candidate text; nothing reads it. Each body fans its returned frame out by
+    position, so a row a judge dropped or could not score carries ``None`` verdicts, never a failed target. Only
+    entity coverage is a covering verifier. The output frame is the last body's, unfiltered; a body's own error is
+    raised as 0.4.0 raised it.
+    """
+    texts = frame[candidate_column] if candidate_column in frame.columns else [None] * len(frame)
+    scope = GraphScope()
+    graph = ProtectionGraph(scope, tuple(scope.datum("" if text is None else str(text)) for text in texts))
+    failures: list[FailedRecord] = []
+    current = frame
+
+    def body(judge: _Judge) -> Callable[[tuple], list[dict[str, Any]]]:
+        def judge_rows(target: tuple) -> list[dict[str, Any]]:
+            nonlocal current
+            current, failed = judge.run(current)
+            failures.extend(failed)
+            present = [c for c in judge.columns if c in current.columns]
+            return current[present].to_dict("records") if present else [{} for _ in range(len(current))]
+
+        return judge_rows
+
+    bodies = [
+        Operation.per_invocation(j.name, body(j), {"target": DATUM}, {j.port: j.kind}, Requests.opaque())
+        for j in judges
+    ]
+    verifiers: list[Operation] = []
+    for judge in judges:
+        for column in judge.columns:
+            inputs = {judge.port: judge.kind, "target": DATUM}
+            if column == COL_ENTITY_COVERAGE:
+                verify = _verdict(judge.port, column, "entities_leaked")
+                verifiers.insert(0, Operation.verifier("coverage", verify, {"text": TEXT, **inputs}))
+            else:
+                name, reason = _ASSESSMENTS[column]
+                verify = _verdict(judge.port, column, reason, graded=column != COL_JUDGE_EVALUATION)
+                verifiers.append(Operation.verifier(name, verify, inputs))
+    operations = (*bodies, *verifiers)
+    workflow = Workflow("evaluate", operations)
+    limits = Limits(max_operations=len(operations), max_targets=len(graph.targets), max_mentions=0, max_context_items=0)
+    result = protect(prepare(graph, workflow, limits=limits))
+    if not graph.targets:  # no targets: the bodies never ran, but the judges still see the (empty) frame
+        for operation in bodies:
+            operation.fn(target=())
+    for entry in result.state.entries:
+        if entry.error is not None and not operations[entry.node].is_verifier:
+            raise entry.error
+    return current, failures, result
 
 
 def _has_entities_for_evaluation(raw: object) -> bool:
@@ -563,71 +670,103 @@ class Anonymizer:
         internal_df = _unrename_output_columns(output.trace_dataframe, resolved_text_column=text_column)
 
         if rewrite_config is not None:
-            logger.info(LOG_INDENT + "⚖️ Running rewrite judges")
-            stage_start = time.perf_counter()
-            rewrite_result = self._rewrite_runner.evaluate(
+
+            def run_rewrite_judges(df: pd.DataFrame) -> tuple[pd.DataFrame, list[FailedRecord]]:
+                logger.info(LOG_INDENT + "⚖️ Running rewrite judges")
+                stage_start = time.perf_counter()
+                rewrite_result = self._rewrite_runner.evaluate(
+                    df,
+                    model_configs=self._model_configs,
+                    selected_models=self._selected_models.evaluate,
+                    privacy_goal=rewrite_config,
+                    compute_detection_validity=evaluate_config.compute_detection_validity,
+                )
+                entity_mask = (
+                    rewrite_result.dataframe[COL_ENTITIES_BY_VALUE].apply(_has_entities_for_evaluation)
+                    if COL_ENTITIES_BY_VALUE in rewrite_result.dataframe.columns
+                    else None
+                )
+                rewrite_checks = [("rewrite judge", COL_JUDGE_EVALUATION, entity_mask)]
+                if evaluate_config.compute_detection_validity:
+                    rewrite_checks.append(("detection validity", COL_DETECTION_VALID, None))
+                _log_unavailable_scores(
+                    rewrite_result.dataframe,
+                    rewrite_checks,
+                    group_label="Rewrite evaluation",
+                )
+                logger.info(
+                    LOG_INDENT + "📋 Rewrite judges complete [%.1fs]",
+                    time.perf_counter() - stage_start,
+                )
+                return rewrite_result.dataframe, list(rewrite_result.failed_records)
+
+            def run_coverage(df: pd.DataFrame) -> tuple[pd.DataFrame, list[FailedRecord]]:
+                coverage_wf = EntityCoverageWorkflow(
+                    adapter=self._adapter,
+                    entity_labels=entity_labels,
+                    excluded_entity_labels=excluded_entity_labels,
+                    data_summary=data_summary,
+                )
+                logger.info(LOG_INDENT + "🔎 Running entity coverage")
+                stage_start = time.perf_counter()
+                judged, coverage_failed = coverage_wf.run_non_critical(
+                    df,
+                    model_configs=self._model_configs,
+                    selected_models=self._selected_models.evaluate,
+                )
+                _log_unavailable_scores(
+                    judged,
+                    [("entity coverage", COL_ENTITY_COVERAGE, None)],
+                    group_label="Entity coverage",
+                )
+                logger.info(
+                    LOG_INDENT + "📋 Entity coverage complete [%.1fs]",
+                    time.perf_counter() - stage_start,
+                )
+                return judged, coverage_failed
+
+            rewrite_columns = (
+                COL_JUDGE_EVALUATION,
+                *((COL_DETECTION_VALID,) if evaluate_config.compute_detection_validity else ()),
+            )
+            judged_df, all_failed, _ = _evaluate_on_graph(
                 internal_df,
-                model_configs=self._model_configs,
-                selected_models=self._selected_models.evaluate,
-                privacy_goal=rewrite_config,
-                compute_detection_validity=evaluate_config.compute_detection_validity,
+                COL_REWRITTEN_TEXT,
+                [
+                    _Judge("rewrite-judges", "rewrite_metrics", REWRITE_METRICS, rewrite_columns, run_rewrite_judges),
+                    _Judge(
+                        "coverage-judge", "coverage_metrics", COVERAGE_METRICS, (COL_ENTITY_COVERAGE,), run_coverage
+                    ),
+                ],
             )
-            entity_mask = (
-                rewrite_result.dataframe[COL_ENTITIES_BY_VALUE].apply(_has_entities_for_evaluation)
-                if COL_ENTITIES_BY_VALUE in rewrite_result.dataframe.columns
-                else None
-            )
-            rewrite_checks = [("rewrite judge", COL_JUDGE_EVALUATION, entity_mask)]
-            if evaluate_config.compute_detection_validity:
-                rewrite_checks.append(("detection validity", COL_DETECTION_VALID, None))
-            _log_unavailable_scores(
-                rewrite_result.dataframe,
-                rewrite_checks,
-                group_label="Rewrite evaluation",
-            )
-            logger.info(
-                LOG_INDENT + "📋 Rewrite judges complete [%.1fs]",
-                time.perf_counter() - stage_start,
-            )
-            all_failed: list[FailedRecord] = list(rewrite_result.failed_records)
-            coverage_wf = EntityCoverageWorkflow(
-                adapter=self._adapter,
-                entity_labels=entity_labels,
-                excluded_entity_labels=excluded_entity_labels,
-                data_summary=data_summary,
-            )
-            logger.info(LOG_INDENT + "🔎 Running entity coverage")
-            stage_start = time.perf_counter()
-            judged_df, coverage_failed = coverage_wf.run_non_critical(
-                rewrite_result.dataframe,
-                model_configs=self._model_configs,
-                selected_models=self._selected_models.evaluate,
-            )
-            _log_unavailable_scores(
-                judged_df,
-                [("entity coverage", COL_ENTITY_COVERAGE, None)],
-                group_label="Entity coverage",
-            )
-            logger.info(
-                LOG_INDENT + "📋 Entity coverage complete [%.1fs]",
-                time.perf_counter() - stage_start,
-            )
-            all_failed.extend(coverage_failed)
         else:
             if replace_method is None:
                 raise ValueError("Replace evaluation requires an associated replace method.")
-            logger.info(LOG_INDENT + "⚖️ Running replace judges")
-            stage_start = time.perf_counter()
-            replace_result = self._replace_runner.evaluate(
-                internal_df,
-                replace_method=replace_method,
-                model_configs=self._model_configs,
-                selected_models=self._selected_models.evaluate,
-                entity_labels=entity_labels,
-                excluded_entity_labels=excluded_entity_labels,
-                compute_detection_validity=evaluate_config.compute_detection_validity,
-                data_summary=data_summary,
-            )
+
+            def run_replace_judges(df: pd.DataFrame) -> tuple[pd.DataFrame, list[FailedRecord]]:
+                logger.info(LOG_INDENT + "⚖️ Running replace judges")
+                stage_start = time.perf_counter()
+                replace_result = self._replace_runner.evaluate(
+                    df,
+                    replace_method=replace_method,
+                    model_configs=self._model_configs,
+                    selected_models=self._selected_models.evaluate,
+                    entity_labels=entity_labels,
+                    excluded_entity_labels=excluded_entity_labels,
+                    compute_detection_validity=evaluate_config.compute_detection_validity,
+                    data_summary=data_summary,
+                )
+                _log_unavailable_scores(
+                    replace_result.dataframe,
+                    replace_checks,
+                    group_label="Replace evaluation",
+                )
+                logger.info(
+                    LOG_INDENT + "📋 Replace judges complete [%.1fs]",
+                    time.perf_counter() - stage_start,
+                )
+                return replace_result.dataframe, replace_result.failed_records
+
             replace_checks = [("entity coverage", COL_ENTITY_COVERAGE, None)]
             if evaluate_config.compute_detection_validity:
                 replace_checks.append(("detection validity", COL_DETECTION_VALID, None))
@@ -639,16 +778,19 @@ class Anonymizer:
                         ("attribute fidelity", COL_ATTRIBUTE_FIDELITY_VALID, None),
                     ]
                 )
-            _log_unavailable_scores(
-                replace_result.dataframe,
-                replace_checks,
-                group_label="Replace evaluation",
+            judged_df, all_failed, _ = _evaluate_on_graph(
+                internal_df,
+                COL_REPLACED_TEXT,
+                [
+                    _Judge(
+                        "replace-judges",
+                        "replace_metrics",
+                        REPLACE_METRICS,
+                        tuple(column for _, column, _ in replace_checks),
+                        run_replace_judges,
+                    )
+                ],
             )
-            logger.info(
-                LOG_INDENT + "📋 Replace judges complete [%.1fs]",
-                time.perf_counter() - stage_start,
-            )
-            judged_df, all_failed = replace_result.dataframe, replace_result.failed_records
         renamed_trace = _rename_output_columns(judged_df, resolved_text_column=text_column)
         result = AnonymizerResult(
             dataframe=_build_user_dataframe(
