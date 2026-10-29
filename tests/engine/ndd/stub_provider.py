@@ -46,7 +46,11 @@ def stub_provider(script: Script) -> Iterator[ModelProvider]:
                     "created": 0,
                     "model": body["model"],
                     "choices": [
-                        {"index": 0, "finish_reason": finish_reason, "message": {"role": "assistant", "content": content}}
+                        {
+                            "index": 0,
+                            "finish_reason": finish_reason,
+                            "message": {"role": "assistant", "content": content},
+                        }
                     ],
                     "usage": {"prompt_tokens": 3, "completion_tokens": 4, "total_tokens": 7},
                 }
