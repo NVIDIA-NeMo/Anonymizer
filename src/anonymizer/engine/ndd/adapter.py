@@ -39,6 +39,18 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("anonymizer.ndd")
 
+# DataDesigner records the cause of a failed task only while task tracing is on.
+# Tracing keeps one small record per task attempt for the whole run, so this
+# switch turns it off for every run when memory at very large row counts matters.
+TRACE_TASKS_BY_DEFAULT = True
+
+_MISSING_RECORD_REASON = "Record missing from workflow output"
+_STOPPED_EARLY_REASON = f"{_MISSING_RECORD_REASON}: not completed: run stopped early after other rows failed"
+_MAX_REASON_CHARS = 500
+_CAUSE_LINE = re.compile(r"\|\s*Cause:\s*(.+)")
+_SOLUTION_LINE = re.compile(r"\|\s*Solution:\s*(.+)")
+_VALIDATION_DETAIL = re.compile(r"\s*Validation detail:.*", re.DOTALL)
+
 _TRACEABLE_LLM_COLUMN_TYPES = (LLMTextColumnConfig, LLMStructuredColumnConfig)
 _MODEL_TRACE_COLUMN: ContextVar[str | None] = ContextVar("anonymizer_dd_model_trace_column", default=None)
 _MODEL_TRACE_PURPOSE: ContextVar[str | None] = ContextVar("anonymizer_dd_model_trace_purpose", default=None)
@@ -462,6 +474,8 @@ class NddAdapter:
                 else workflow_input_df
             ),
             output_df=output_df,
+            task_traces=task_traces,
+            buffer_size=record_count if preview_num_records is not None else _run_buffer_size(self._data_designer),
         )
         _success_model_usage = usage_probe.model_usage()
         with self._run_lock:
@@ -574,6 +588,8 @@ class NddAdapter:
         workflow_name: str,
         input_df: pd.DataFrame,
         output_df: pd.DataFrame,
+        task_traces: list[_TaskTrace] | None = None,
+        buffer_size: int | None = None,
     ) -> list[FailedRecord]:
         if RECORD_ID_COLUMN not in input_df.columns:
             logger.warning(
@@ -620,17 +636,71 @@ class NddAdapter:
                 for record_id in input_df[RECORD_ID_COLUMN].astype(str).tolist()
             ]
 
-        input_ids = set(input_df[RECORD_ID_COLUMN].astype(str).tolist())
+        ordered_ids = input_df[RECORD_ID_COLUMN].astype(str).tolist()
         output_ids = set(output_df[RECORD_ID_COLUMN].astype(str).tolist())
-        missing_ids = sorted(input_ids - output_ids)
+        missing_ids = sorted(set(ordered_ids) - output_ids)
+        reasons, had_errors = _failure_reasons_by_record(
+            record_ids=ordered_ids,
+            task_traces=task_traces or [],
+            buffer_size=buffer_size or len(ordered_ids),
+        )
+        default_reason = _STOPPED_EARLY_REASON if had_errors else _MISSING_RECORD_REASON
         return [
-            FailedRecord(
-                record_id=record_id,
-                step=workflow_name,
-                reason="Record missing from workflow output",
-            )
+            FailedRecord(record_id=record_id, step=workflow_name, reason=reasons.get(record_id, default_reason))
             for record_id in missing_ids
         ]
+
+
+def _run_buffer_size(data_designer: DataDesigner) -> int | None:
+    buffer_size = getattr(getattr(data_designer, "run_config", None), "buffer_size", None)
+    return buffer_size if isinstance(buffer_size, int) else None
+
+
+def _failure_reasons_by_record(
+    *,
+    record_ids: list[str],
+    task_traces: list[_TaskTrace],
+    buffer_size: int,
+) -> tuple[dict[str, str], bool]:
+    """Map each record to the reason of its last failed task, and say whether any task failed."""
+    last_error: dict[int, _TaskTrace] = {}
+    had_errors = False
+    for trace in task_traces:
+        status = _trace_attr(trace, "status")
+        row_group = _trace_attr(trace, "row_group")
+        row_index = _trace_attr(trace, "row_index")
+        had_errors = had_errors or status == "error"
+        if status not in ("error", "ok") or not isinstance(row_group, int):
+            continue
+        start = row_group * buffer_size
+        positions = (
+            range(start, min(start + buffer_size, len(record_ids))) if row_index is None else [start + row_index]
+        )
+        for position in positions:
+            if status == "error":
+                last_error[position] = trace
+            elif (earlier := last_error.get(position)) is not None and _trace_attr(earlier, "column") == _trace_attr(
+                trace, "column"
+            ):
+                del last_error[position]
+    reasons = {
+        record_ids[position]: _failure_reason(trace)
+        for position, trace in last_error.items()
+        if position < len(record_ids)
+    }
+    return reasons, had_errors
+
+
+def _failure_reason(trace: _TaskTrace) -> str:
+    error = str(_trace_attr(trace, "error") or "")
+    cause_match = _CAUSE_LINE.search(error)
+    solution_match = _SOLUTION_LINE.search(error)
+    # The validation detail quotes the model's output, which can contain input text.
+    cause = " ".join(_VALIDATION_DETAIL.sub("", cause_match.group(1) if cause_match else error).split())
+    reason = f"{_MISSING_RECORD_REASON}: {_trace_attr(trace, 'column')}: {cause or 'task failed'}"
+    if solution_match is not None:
+        reason = f"{reason.rstrip('.')}; {' '.join(solution_match.group(1).split())}"
+    return reason if len(reason) <= _MAX_REASON_CHARS else f"{reason[: _MAX_REASON_CHARS - 3]}..."
 
 
 def _extract_workflow_model_aliases(columns: list[ColumnConfigT]) -> list[str]:
@@ -1035,7 +1105,7 @@ def _model_trace_usage(response: Any) -> Any:
 
 @contextmanager
 def _temporary_dd_task_trace(data_designer: DataDesigner, *, collector: Any | None) -> Iterator[None]:
-    if collector is None or not collector.dd_task_trace_enabled:
+    if not TRACE_TASKS_BY_DEFAULT and (collector is None or not collector.dd_task_trace_enabled):
         yield
         return
 

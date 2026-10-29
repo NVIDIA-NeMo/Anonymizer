@@ -241,8 +241,8 @@ class Anonymizer:
     ) -> AnonymizerResult:
         """Run the full anonymization pipeline (detection + replacement).
 
-        No LLM evaluation judges run here — call :meth:`evaluate` on the
-        result's ``trace_dataframe`` when you want the Judge Agreement scores.
+        No LLM evaluation judges run here — pass the result to
+        :meth:`evaluate` when you want the Judge Agreement scores.
 
         Args:
             config: Workflow behavior — replace strategy, entity labels, thresholds.
@@ -357,8 +357,8 @@ class Anonymizer:
     ) -> PreviewResult:
         """Run the pipeline on a subset of records for quick inspection.
 
-        No LLM evaluation judges run here — call :meth:`evaluate` on the
-        result's ``trace_dataframe`` when you want the Judge Agreement scores.
+        No LLM evaluation judges run here — pass the result to
+        :meth:`evaluate` when you want the Judge Agreement scores.
 
         Args:
             config: Workflow behavior — replace strategy, entity labels, thresholds.
@@ -830,7 +830,7 @@ class Anonymizer:
         if all_failures:
             logger.warning("%d record(s) failed during pipeline processing.", len(all_failures))
             for f in all_failures:
-                logger.debug("  %s (%s: %s)", f.record_id, f.step, f.reason)
+                logger.warning("  %s (%s: %s)", f.record_id, f.step, " ".join(f.reason.split()))
         text_col = context.resolved_text_column
         renamed_trace = _rename_output_columns(final_df, resolved_text_column=text_col)
         logger.info("🎉 Pipeline complete — %d records processed, %d total failures", num_records, len(all_failures))
