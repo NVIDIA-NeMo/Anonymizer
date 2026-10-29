@@ -8,10 +8,12 @@ import time
 from collections.abc import Collection, Iterator
 from contextlib import contextmanager
 from pathlib import Path
+from typing import Any
 
 import pandas as pd
 import pytest
-from data_designer.config.column_configs import LLMStructuredColumnConfig
+from data_designer.config import custom_column_generator
+from data_designer.config.column_configs import CustomColumnConfig, ExpressionColumnConfig, LLMStructuredColumnConfig
 from data_designer.config.column_types import ColumnConfigT
 from data_designer.config.models import ModelConfig
 from data_designer.config.run_config import RunConfig
@@ -216,6 +218,97 @@ def test_row_that_recovers_then_fails_names_the_later_column(tmp_path: Path) -> 
     assert list(reasons) == [1]
     assert "first_step" not in reasons[1]
     assert reasons[1].startswith(f"{_PREFIX}: second_step: ")
+
+
+@custom_column_generator(required_columns=[COL_TEXT])
+def _fail_echoing_input(row: dict[str, Any]) -> dict[str, Any]:
+    if "FAILS" in row[COL_TEXT]:
+        raise KeyError(row[COL_TEXT])
+    row["checked"] = "yes"
+    return row
+
+
+@custom_column_generator(required_columns=[COL_TEXT], model_aliases=["m"])
+def _parse_with_failing_parser(row: dict[str, Any], generator_params: None, models: dict[str, Any]) -> dict[str, Any]:
+    def parser(_reply: str) -> str:
+        raise ValueError(f"cannot use {row[COL_TEXT]!r}")
+
+    if "FAILS" in row[COL_TEXT]:
+        models["m"].generate(prompt=row[COL_TEXT], parser=parser)
+    row["parsed"] = "yes"
+    return row
+
+
+def _fail_marked_rows_with_plain_reply(_model: str, _prompt: str, _earlier: int) -> tuple[int, str, str]:
+    return 200, "plain reply", "stop"
+
+
+@pytest.mark.parametrize("collector", [False, True])
+def test_unclassified_error_reason_names_the_column_without_message_text(tmp_path: Path, collector: bool) -> None:
+    df = _inputs(4, bad={1, 2})
+    columns: list[ColumnConfigT] = [CustomColumnConfig(name="checked", generator_function=_fail_echoing_input)]
+
+    tagged, result = _run(tmp_path, _fail_marked_rows, df, columns=columns, collector=collector)
+
+    reasons = _reasons_by_position(tagged, result)
+    assert sorted(reasons) == [1, 2]
+    for reason in reasons.values():
+        assert reason == f"{_PREFIX}: checked: generation failed"
+    _assert_quotes_no_input(list(reasons.values()), df)
+
+
+def test_context_window_error_reason_does_not_quote_the_provider_message(tmp_path: Path) -> None:
+    df = _inputs(3, bad={1})
+
+    def script(_model: str, prompt: str, _earlier: int) -> tuple[int, str, str]:
+        if "FAILS" in prompt:
+            message = "This model's maximum context length is 10 tokens. " + prompt[prompt.index("Hollingsworth") :]
+            return 400, message[:240], ""
+        return COMPLETE
+
+    tagged, result = _run(tmp_path, script, df)
+
+    reasons = _reasons_by_position(tagged, result)
+    assert list(reasons) == [1]
+    assert reasons[1].startswith(f"{_PREFIX}: {_COLUMN}: ")
+    assert "context width" in reasons[1]
+    _assert_quotes_no_input(list(reasons.values()), df)
+
+
+def test_unexpected_error_in_a_model_call_keeps_only_the_classified_text(tmp_path: Path) -> None:
+    df = _inputs(3, bad={1})
+    columns: list[ColumnConfigT] = [
+        CustomColumnConfig(name="parsed", generator_function=_parse_with_failing_parser, generator_params=None)
+    ]
+
+    tagged, result = _run(tmp_path, _fail_marked_rows_with_plain_reply, df, columns=columns)
+
+    reasons = _reasons_by_position(tagged, result)
+    assert list(reasons) == [1]
+    assert reasons[1].startswith(f"{_PREFIX}: parsed: An unexpected error occurred")
+    assert "Review the stack trace" in reasons[1]
+    _assert_quotes_no_input(list(reasons.values()), df)
+
+
+def test_row_dropped_without_an_error_keeps_the_generic_reason_when_other_errors_recovered(tmp_path: Path) -> None:
+    df = _inputs(3, bad=set())
+    df.loc[0, COL_TEXT] += " FLAKY"
+    df.loc[1, COL_TEXT] += " DROP"
+
+    def script(_model: str, prompt: str, earlier: int) -> tuple[int, str, str]:
+        if "FLAKY" in prompt and earlier < 4:
+            return 503, "temporarily unavailable", ""
+        return COMPLETE
+
+    columns: list[ColumnConfigT] = [
+        *_columns(_COLUMN),
+        # Renders empty for marked rows, which DataDesigner then drops without recording an error.
+        ExpressionColumnConfig(name="screened", expr="{% if 'DROP' not in " + COL_TEXT + " %}kept{% endif %}"),
+    ]
+
+    tagged, result = _run(tmp_path, script, df, columns=columns, collector=True)
+
+    assert _reasons_by_position(tagged, result) == {1: _PREFIX}
 
 
 def test_detector_offset_mismatch_reason_is_reported(tmp_path: Path) -> None:

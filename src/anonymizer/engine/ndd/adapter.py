@@ -49,7 +49,13 @@ _STOPPED_EARLY_REASON = f"{_MISSING_RECORD_REASON}: not completed: run stopped e
 _MAX_REASON_CHARS = 500
 _CAUSE_LINE = re.compile(r"\|\s*Cause:\s*(.+)")
 _SOLUTION_LINE = re.compile(r"\|\s*Solution:\s*(.+)")
-_VALIDATION_DETAIL = re.compile(r"\s*Validation detail:.*", re.DOTALL)
+# DataDesigner follows a cause's first sentence with detail text (a parse failure's validation detail, a
+# context-window error's provider message), and ends an unexpected-error solution with the raw exception.
+# Both can quote input text, so they are cut.
+_SENTENCE_END = re.compile(r"(?<=\.)\s")
+_RAW_EXCEPTION_TEXT = re.compile(r"(?<=details):.*", re.IGNORECASE)
+# Anonymizer's own failure text, safe to show because it carries only offsets.
+_KNOWN_FAILURE = re.compile(r"Detector entity text does not match the source span at offsets \[\d+, \d+\)")
 
 _TRACEABLE_LLM_COLUMN_TYPES = (LLMTextColumnConfig, LLMStructuredColumnConfig)
 _MODEL_TRACE_COLUMN: ContextVar[str | None] = ContextVar("anonymizer_dd_model_trace_column", default=None)
@@ -639,12 +645,12 @@ class NddAdapter:
         ordered_ids = input_df[RECORD_ID_COLUMN].astype(str).tolist()
         output_ids = set(output_df[RECORD_ID_COLUMN].astype(str).tolist())
         missing_ids = sorted(set(ordered_ids) - output_ids)
-        reasons, had_errors = _failure_reasons_by_record(
+        reasons = _failure_reasons_by_record(
             record_ids=ordered_ids,
             task_traces=task_traces or [],
             buffer_size=buffer_size or len(ordered_ids),
         )
-        default_reason = _STOPPED_EARLY_REASON if had_errors else _MISSING_RECORD_REASON
+        default_reason = _STOPPED_EARLY_REASON if reasons else _MISSING_RECORD_REASON
         return [
             FailedRecord(record_id=record_id, step=workflow_name, reason=reasons.get(record_id, default_reason))
             for record_id in missing_ids
@@ -661,15 +667,13 @@ def _failure_reasons_by_record(
     record_ids: list[str],
     task_traces: list[_TaskTrace],
     buffer_size: int,
-) -> tuple[dict[str, str], bool]:
-    """Map each record to the reason of its last failed task, and say whether any task failed."""
+) -> dict[str, str]:
+    """Map each record to the reason of its last failed task, leaving out rows whose failure later recovered."""
     last_error: dict[int, _TaskTrace] = {}
-    had_errors = False
     for trace in task_traces:
         status = _trace_attr(trace, "status")
         row_group = _trace_attr(trace, "row_group")
         row_index = _trace_attr(trace, "row_index")
-        had_errors = had_errors or status == "error"
         if status not in ("error", "ok") or not isinstance(row_group, int):
             continue
         start = row_group * buffer_size
@@ -683,23 +687,25 @@ def _failure_reasons_by_record(
                 trace, "column"
             ):
                 del last_error[position]
-    reasons = {
+    return {
         record_ids[position]: _failure_reason(trace)
         for position, trace in last_error.items()
         if position < len(record_ids)
     }
-    return reasons, had_errors
 
 
 def _failure_reason(trace: _TaskTrace) -> str:
+    """Render only DataDesigner's classified cause and solution text, never the underlying exception message."""
+    prefix = f"{_MISSING_RECORD_REASON}: {_trace_attr(trace, 'column')}: "
     error = str(_trace_attr(trace, "error") or "")
     cause_match = _CAUSE_LINE.search(error)
+    if cause_match is None:
+        known = _KNOWN_FAILURE.search(error)
+        return f"{prefix}{known.group(0) if known else 'generation failed'}"
     solution_match = _SOLUTION_LINE.search(error)
-    # The validation detail quotes the model's output, which can contain input text.
-    cause = " ".join(_VALIDATION_DETAIL.sub("", cause_match.group(1) if cause_match else error).split())
-    reason = f"{_MISSING_RECORD_REASON}: {_trace_attr(trace, 'column')}: {cause or 'task failed'}"
+    reason = prefix + _SENTENCE_END.split(cause_match.group(1).strip(), maxsplit=1)[0].rstrip(".")
     if solution_match is not None:
-        reason = f"{reason.rstrip('.')}; {' '.join(solution_match.group(1).split())}"
+        reason = f"{reason}; {' '.join(_RAW_EXCEPTION_TEXT.sub('', solution_match.group(1)).split())}"
     return reason if len(reason) <= _MAX_REASON_CHARS else f"{reason[: _MAX_REASON_CHARS - 3]}..."
 
 
