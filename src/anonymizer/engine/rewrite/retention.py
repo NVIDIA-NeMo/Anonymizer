@@ -40,6 +40,7 @@ from anonymizer.engine.rewrite.parsers import normalize_payload
 logger = logging.getLogger("anonymizer.rewrite.retention")
 
 _LEAVE_AS_IS = "leave_as_is"
+_METHOD = "protection_method_suggestion"
 # Dash variants (U+2010-2015, U+2212) fold to "-", single quotes to "'", double quotes to '"'.
 _CHAR_MAP = str.maketrans("\u2010\u2011\u2012\u2013\u2014\u2015\u2212\u2018\u2019\u02bc\u201c\u201d", "-------'''\"\"")
 
@@ -117,22 +118,19 @@ def retained_protected(disposition: Any, rewritten_text: Any) -> list[tuple[str,
     if entries is None or not isinstance(rewritten_text, str):
         return []
     text = _normalize(rewritten_text)
-    kept = {_key(e.get("entity_value")) for e in entries if e.get("protection_method_suggestion") == _LEAVE_AS_IS}
+    kept = {_key(e.get("entity_value")) for e in entries if e.get(_METHOD) == _LEAVE_AS_IS}
     protected = [
         (_pattern(str(e.get("entity_value"))), e)
         for e in entries
-        if e.get("protection_method_suggestion") != _LEAVE_AS_IS and _scannable(str(e.get("entity_value") or ""))
+        if e.get(_METHOD) != _LEAVE_AS_IS and _scannable(str(e.get("entity_value") or ""))
     ]
     for value in kept:
         if any(pattern.search(value) and _key(entry.get("entity_value")) != value for pattern, entry in protected):
             text = _pattern(value).sub(" ", text)
     retained: list[tuple[str, str, str]] = []
     for pattern, entry in protected:
-        item = (
-            str(entry.get("entity_value")),
-            str(entry.get("entity_label") or ""),
-            str(entry.get("protection_method_suggestion") or ""),
-        )
+        value, label, method = (str(entry.get(k) or "") for k in ("entity_value", "entity_label", _METHOD))
+        item = (value, label, method)
         if item not in retained and pattern.search(text):
             retained.append(item)
     return retained
@@ -155,9 +153,9 @@ def apply_review_gates(df: pd.DataFrame) -> pd.DataFrame:
         )
     ]
     df[COL_DISPOSITION_MISSING_ENTITIES] = [[list(item) for item in row] for row in missing]
-    flagged = pd.Series([bool(row) for row in missing], index=df.index)
-    flagged |= df.get(COL_RETAINED_PROTECTED_ENTITIES, empty).map(has_items).astype(bool)
-    df[COL_NEEDS_HUMAN_REVIEW] = df[COL_NEEDS_HUMAN_REVIEW].apply(bool) | flagged
+    retained = df.get(COL_RETAINED_PROTECTED_ENTITIES, empty)
+    # Set flags in place so the column keeps its dtype (bool[pyarrow] on the combined path).
+    df.loc[[bool(row) or has_items(raw) for row, raw in zip(missing, retained)], COL_NEEDS_HUMAN_REVIEW] = True
 
     unparseable = sum(_items(raw, "sensitivity_disposition") is None for raw in dispositions)
     if unparseable:

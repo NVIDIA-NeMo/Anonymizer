@@ -48,7 +48,7 @@ from anonymizer.engine.rewrite.combined_rewrite_workflow import CombinedRewriteW
 from anonymizer.engine.rewrite.evaluate import EvaluateWorkflow, _determine_repair_needs_column
 from anonymizer.engine.rewrite.parsers import parse_privacy_answers, parse_privacy_qa
 from anonymizer.engine.rewrite.repair import _inject_leaked_items_column, _leaked_items_text
-from anonymizer.engine.rewrite.retention import disposition_coverage, retained_protected
+from anonymizer.engine.rewrite.retention import apply_review_gates, disposition_coverage, retained_protected
 from anonymizer.engine.rewrite.rewrite_workflow import RewriteWorkflow
 
 _PRIVACY_GOAL = PrivacyGoal(
@@ -680,3 +680,19 @@ def test_all_passthrough_frame_is_unchanged(
     assert COL_DISPOSITION_MISSING_ENTITIES not in result.columns
     assert COL_RETAINED_PROTECTED_ENTITIES not in result.columns
     assert result[COL_NEEDS_HUMAN_REVIEW].tolist() == [False, False]
+
+
+@pytest.mark.parametrize("dtype", ["bool", "bool[pyarrow]"])
+def test_review_gates_keep_needs_human_review_dtype(dtype: str) -> None:
+    disposition = {"sensitivity_disposition": [{"entity_value": "Alice", "protection_method_suggestion": "replace"}]}
+    df = pd.DataFrame(
+        {
+            COL_ENTITIES_BY_VALUE: [{"entities_by_value": [{"value": "Bob", "labels": ["first_name"]}]}, None],
+            COL_SENSITIVITY_DISPOSITION: [disposition, disposition],
+            COL_RETAINED_PROTECTED_ENTITIES: [[], [["Alice", "first_name", "replace"]]],
+            COL_NEEDS_HUMAN_REVIEW: pd.Series([False, False], dtype=dtype),
+        }
+    )
+    out = apply_review_gates(df)
+    assert str(out[COL_NEEDS_HUMAN_REVIEW].dtype) == dtype
+    assert out[COL_NEEDS_HUMAN_REVIEW].tolist() == [True, True]
