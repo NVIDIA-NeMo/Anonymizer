@@ -1,18 +1,21 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""SP-16 an invocation-scoped operation with an internal bounded loop and a covering verifier (E16.1-E16.13)."""
+"""SP-16 an invocation-scoped operation with an internal bounded loop and a covering verifier (E16.1-E16.18)."""
 
 from __future__ import annotations
 
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import Mock
 
 import numpy as np
 import pandas as pd
 
 from anonymizer.engine.constants import (
     COL_ANY_HIGH_LEAKED,
+    COL_ENTITIES_BY_VALUE,
+    COL_FINAL_ENTITIES,
     COL_LEAKAGE_MASS,
     COL_NEEDS_HUMAN_REVIEW,
     COL_REWRITE_REPLACEMENT_READY,
@@ -20,10 +23,15 @@ from anonymizer.engine.constants import (
     COL_TEXT,
     COL_UTILITY_SCORE,
 )
+from anonymizer.engine.detection.detect_step import resolve_positions
+from anonymizer.engine.detection.detection_workflow import EntityDetectionResult
 from anonymizer.engine.graph_core.authoring import DATUM, TEXT, Assessment, Operation, Requests
 from anonymizer.engine.graph_core.observe import report_requests
-from anonymizer.engine.rewrite.rewrite_workflow import _rewrite_lowered, _Rows
+from anonymizer.engine.ndd.failed_record import FailedRecord
+from anonymizer.engine.rewrite.combined_rewrite_workflow import CombinedRewriteWorkflow
+from anonymizer.engine.rewrite.rewrite_workflow import RewriteWorkflow, _rewrite_lowered, _Rows
 from anonymizer.engine.row_partitioning import ROW_ORDER_COL
+from anonymizer.measurement import measurement_session
 from tests.spec_programs._builder import Checks, graph, run
 
 TEXTS = ("alpha", "beta", "gamma")
@@ -96,6 +104,56 @@ def _lowered(
 
     stage = reorder if scramble else dropper if drop is not None else produce or (lambda: None)
     return _rewrite_lowered(frame.copy(), extra, state, stage, evaluation)
+
+
+_DETECTION_FAILURE = FailedRecord("d1", "detect", "dropped")
+_REWRITE_FAILURE = FailedRecord("w1", "rewrite", "dropped")
+
+
+def _detection(
+    texts: list[str],
+    *,
+    entity_rows: tuple[int, ...],
+    positions: tuple[int, ...] = (),
+    failures: tuple[FailedRecord, ...] = (),
+) -> EntityDetectionResult:
+    """A detector result over ``texts``; the rows listed in ``entity_rows`` carry one detected entity."""
+    has = [
+        {"entities_by_value": [{"value": "x"}]} if i in entity_rows else {"entities_by_value": []}
+        for i in range(len(texts))
+    ]
+    frame = pd.DataFrame({COL_TEXT: texts, COL_ENTITIES_BY_VALUE: has, COL_FINAL_ENTITIES: [{}] * len(texts)})
+    return EntityDetectionResult(frame, list(failures), positions)
+
+
+def _stubbed(
+    workflow: RewriteWorkflow, *, fail_row: int | None = None, failure: FailedRecord = _REWRITE_FAILURE
+) -> Any:
+    """Replace the model stages: every row is rewritten, except ``fail_row`` which is dropped and reported."""
+
+    def produce(rows: _Rows, **_options: Any) -> Any:
+        def stage() -> None:
+            frame = rows.frame.copy()
+            frame[COL_REWRITTEN_TEXT] = [f"r{o}" for o in frame[ROW_ORDER_COL]]
+            frame.loc[:, list(_METRICS)] = list(_METRICS.values())
+            if fail_row is not None:
+                frame = frame[frame[ROW_ORDER_COL] != fail_row].reset_index(drop=True)
+                rows.failed.append(failure)
+            rows.frame = frame
+
+        return stage
+
+    setattr(workflow, "_produce", produce)
+    return workflow
+
+
+_OPTIONS: dict[str, Any] = {
+    "evaluation": SimpleNamespace(flag_leakage_above=None, flag_utility_below=None),
+    "model_configs": [],
+    "selected_models": None,
+    "replace_model_selection": None,
+    "privacy_goal": None,
+}
 
 
 def _reviews(rows: list[dict[str, Any]], **kw: Any) -> list[bool]:
@@ -273,4 +331,70 @@ def program() -> list[dict[str, str]]:
         return review == [True], f"not met with no utility, floor set: review={review}"
 
     c.guard("E16.13", unmet_without_utility)
+
+    def failure_order() -> tuple[bool, str]:
+        texts = ["a", "b", "c", "d", "e"]
+        detection = _detection(
+            ["a", "c", "d", "e"], entity_rows=(0, 1, 2), positions=(0, 2, 3, 4), failures=(_DETECTION_FAILURE,)
+        )
+        workflow = _stubbed(RewriteWorkflow(Mock()), fail_row=2, failure=_REWRITE_FAILURE)
+        result = workflow.run_with_detection(pd.DataFrame({COL_TEXT: texts}), detect=lambda _: detection, **_OPTIONS)
+        out = list(result.dataframe[COL_TEXT])
+        return (
+            result.failed_records == [_DETECTION_FAILURE, _REWRITE_FAILURE]
+            and "b" not in out
+            and "d" not in out
+            and out == ["a", "c", "e"]
+            and result.detection is detection,
+            f"failures={[f.step for f in result.failed_records]}, output texts={out}",
+        )
+
+    c.guard("E16.14", failure_order)
+
+    def reroute_failures() -> tuple[bool, str]:
+        detection = _detection(["c", "a", "b"], entity_rows=(0, 1, 2), failures=(_DETECTION_FAILURE,))
+        workflow = _stubbed(RewriteWorkflow(Mock()), fail_row=1, failure=_REWRITE_FAILURE)
+        frame = pd.DataFrame({COL_TEXT: ["a", "b", "c"]})
+        result = workflow.run_with_detection(frame, detect=lambda _: detection, **_OPTIONS)
+        return (
+            result.failed_records == [_DETECTION_FAILURE, _REWRITE_FAILURE] and result.detection is detection,
+            f"rerouted failures={[f.step for f in result.failed_records]}",
+        )
+
+    c.guard("E16.15", reroute_failures)
+
+    def position_resolution() -> tuple[bool, str]:
+        source = pd.DataFrame({COL_TEXT: ["a", "b"]})
+        differs = _detection(["a", "x"], entity_rows=())
+        same = _detection(["a", "b"], entity_rows=())
+        missing_source = pd.DataFrame({COL_TEXT: ["a", None]})
+        missing = _detection(["a", "b"], entity_rows=())
+        missing.dataframe[COL_TEXT] = pd.Series(["a", np.nan], dtype=object)
+        got = (
+            resolve_positions(source, differs),
+            resolve_positions(source, same),
+            resolve_positions(missing_source, missing),
+        )
+        return got == (None, (0, 1), (0, 1)), f"differing text={got[0]}, equal text={got[1]}, missing values={got[2]}"
+
+    c.guard("E16.16", position_resolution)
+
+    def positions_include_passthrough() -> tuple[bool, str]:
+        detection = _detection(["a", "b", "c"], entity_rows=(0, 2), positions=(0, 1, 2))
+        workflow = _stubbed(RewriteWorkflow(Mock()))
+        frame = pd.DataFrame({COL_TEXT: ["a", "b", "c"]})
+        result = workflow.run_with_detection(frame, detect=lambda _: detection, **_OPTIONS)
+        return result.source_positions == (0, 1, 2), f"source positions={result.source_positions}"
+
+    c.guard("E16.17", positions_include_passthrough)
+
+    def combined_stage_name() -> tuple[bool, str]:
+        detection = _detection(["a", "b"], entity_rows=(0, 1), positions=(0, 1))
+        workflow = _stubbed(CombinedRewriteWorkflow(Mock()))
+        with measurement_session() as collector:
+            workflow.run_with_detection(pd.DataFrame({COL_TEXT: ["a", "b"]}), detect=lambda _: detection, **_OPTIONS)
+        stages = [r["stage"] for r in collector.records if "stage" in r]
+        return stages == ["CombinedRewriteWorkflow.run"], f"recorded stages={stages}"
+
+    c.guard("E16.18", combined_stage_name)
     return c.lines
