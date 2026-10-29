@@ -33,6 +33,7 @@ from anonymizer.engine.constants import (
     COL_REPLACEMENT_MAP_SOURCE,
     COL_TEXT,
 )
+from anonymizer.engine.detection.detect_step import DetectState, accepted_mentions, detect_step, missing
 from anonymizer.engine.detection.detection_workflow import EntityDetectionResult
 from anonymizer.engine.graph_core.authoring import (
     DATUM,
@@ -62,7 +63,7 @@ from anonymizer.engine.replace.strategies import (
     _parse_replacements,
     apply_replacements_to_spans,
 )
-from anonymizer.engine.row_partitioning import resolve_source_positions, try_resolve_source_positions
+from anonymizer.engine.row_partitioning import resolve_source_positions
 from anonymizer.engine.schemas import EntitiesSchema
 from anonymizer.logging import ProgressTracker
 from anonymizer.measurement import record_stage
@@ -162,36 +163,13 @@ def run_replace_pipeline(
 
     A row the detector drops fails at ``detect`` and blocks the later steps. Output rows are the detection frame's
     rows for the targets that reached the end. A result that is not verifiably one input row per returned row (see
-    ``_resolve_positions``) fails every target at ``detect``, and ``reroute`` replaces over the detection frame as returned.
+    ``resolve_positions``) fails every target at ``detect``, and ``reroute`` replaces over the detection frame as returned.
     """
     scope = GraphScope()
     graph = ProtectionGraph(scope, tuple(scope.datum(str(text)) for text in dataframe[COL_TEXT]))
-    rows: dict[Datum, EntitiesSchema] = {}
-    failures: list[FailedRecord] = []
-    detected: list[EntityDetectionResult] = []
-    owners: list[Datum] = []
-    unresolved: list[bool] = []
-    elapsed: list[float] = []
-
-    def run_detection(target: tuple[Datum, ...]) -> list[tuple[Mention, ...] | None]:
-        started = time.perf_counter()
-        detected.append(result := detect(dataframe))
-        elapsed.append(time.perf_counter() - started)
-        failures.extend(result.failed_records)
-        positions = _resolve_positions(dataframe, result)
-        if positions is None:
-            unresolved.append(True)
-            return [None] * len(target)
-        surviving = [target[position] for position in positions]
-        owners.extend(surviving)
-        raw_entities = result.dataframe.get(COL_FINAL_ENTITIES, repeat({}, len(positions)))
-        for datum, raw in zip(surviving, raw_entities):
-            rows[datum] = EntitiesSchema.from_raw(raw)
-        return per_target([tuple(_accepted_mentions(d, rows[d])) for d in surviving], positions, len(target))
-
-    detect_step = Operation.per_invocation(
-        "detect", run_detection, {"target": DATUM}, {"mentions": MENTIONS}, Requests.opaque()
-    )
+    state = DetectState()
+    failures, detected, owners, elapsed = state.failures, state.detected, state.owners, state.elapsed
+    detect_op = detect_step(dataframe, detect, state)
     tracker = ProgressTracker(total=len(graph.targets), label="Replacement")
     map_step = build_map = None
     if isinstance(replace_method, Substitute):
@@ -208,17 +186,17 @@ def run_replace_pipeline(
 
     started = time.perf_counter()
     _, result = _protect_rows(
-        (graph, rows),
+        (graph, state.rows),
         type(replace_method).__name__.lower(),
         build_map,
         isinstance(replace_method, Annotate),
         map_step,
-        detect_step,
+        detect_op,
     )
     replace_elapsed = time.perf_counter() - started - sum(elapsed)  # detection records its own stage
     if not detected:  # no targets: the step never ran, but the detector still sees the (empty) input
-        run_detection(())
-    if unresolved:
+        detect_op.fn(())
+    if state.unresolved:
         rerouted = reroute(detected[0].dataframe)
         return ReplacementResult(rerouted.dataframe, [*failures, *rerouted.failed_records], detected[0], elapsed[0])
     targets = [d for d in graph.targets if result.outcome(d).available]
@@ -231,7 +209,7 @@ def run_replace_pipeline(
         _log_stats(output_df[COL_REPLACEMENT_MAP])
     shown = output_df[COL_TEXT] if COL_TEXT in output_df.columns else repeat("", len(targets))
     # A row whose detected text is missing keeps the detection frame's own stringification (``<NA>`` for ``pd.NA``).
-    output_df[COL_REPLACED_TEXT] = [str(text) if _missing(text) else result.value(d) for d, text in zip(targets, shown)]
+    output_df[COL_REPLACED_TEXT] = [str(text) if missing(text) else result.value(d) for d, text in zip(targets, shown)]
     output_df[COL_REPLACEMENT_APPLICATION] = [result.value(d, "application") for d in targets]
     tracker.log_final()
     record_stage(
@@ -243,29 +221,6 @@ def run_replace_pipeline(
         failed_record_count=len(failures) - len(detected[0].failed_records),
     )
     return ReplacementResult(output_df, failures, detected[0], elapsed[0])
-
-
-def _missing(text: object) -> bool:
-    return not isinstance(text, str) and bool(pd.isna(text))
-
-
-def _resolve_positions(dataframe: pd.DataFrame, result: EntityDetectionResult) -> tuple[int, ...] | None:
-    """One distinct input position per returned row, or ``None``.
-
-    Positions the detector did not report (the default ``()``) are accepted only if every returned row's text equals the
-    text of the input row at its position, a missing value equalling a missing value.
-    """
-    reported = result.source_positions
-    positions = try_resolve_source_positions(
-        dataframe, result.dataframe, reported or (None if len(result.dataframe) else ())
-    )
-    if positions is None:
-        return None
-    if reported or COL_TEXT not in result.dataframe.columns:
-        return positions
-    given = [None if _missing(text) else text for text in result.dataframe[COL_TEXT]]
-    expected = [None if _missing(text) else text for text in dataframe[COL_TEXT].iloc[list(positions)]]
-    return positions if given == expected else None
 
 
 def _lower(
@@ -281,7 +236,7 @@ def _lower(
     for text, raw in zip(texts, raw_entities):
         datum = scope.datum(str(text))
         rows[datum] = entities = EntitiesSchema.from_raw(raw)
-        mentions.extend(_accepted_mentions(datum, entities))
+        mentions.extend(accepted_mentions(datum, entities))
     return ProtectionGraph(scope, tuple(rows), tuple(mentions)), rows
 
 
@@ -291,12 +246,12 @@ def _protect_rows(
     build_map: Callable[[int, EntitiesSchema], dict[str, Any]] | None,
     annotate: bool,
     map_step: Operation | None = None,
-    detect_step: Operation | None = None,
+    detect_op: Operation | None = None,
 ) -> tuple[ProtectionGraph, ProtectionResult]:
     """Run ``replace`` then the patch verifier over every lowered row.
 
     Each row's map comes from ``map_step``'s ``replacement_map`` port when there is one, else from ``build_map``;
-    ``detect_step``, when given, runs first and supplies the mentions and row entities the graph does not declare.
+    ``detect_op``, when given, runs first and supplies the mentions and row entities the graph does not declare.
     """
     graph, rows = lowered
     positions = {target: position for position, target in enumerate(graph.targets)}
@@ -335,7 +290,7 @@ def _protect_rows(
             },
         ),
     )
-    operations = (*(s for s in (detect_step, map_step) if s is not None), *operations)
+    operations = (*(s for s in (detect_op, map_step) if s is not None), *operations)
     workflow = Workflow(name, operations, release="annotation" if annotate else "protected")
     # The facade admits the workload it was given, as 0.4.0 did: its limits are sized to the input.
     limits = Limits(
@@ -355,19 +310,6 @@ def _run(graph: ProtectionGraph, workflow: Workflow, limits: Limits) -> Protecti
         if entry.error is not None and not steps[entry.node].is_verifier:
             raise entry.error
     return result
-
-
-def _accepted_mentions(datum: Datum, entities: EntitiesSchema) -> list[Mention]:
-    """Exact, non-overlapping spans in start order: the output regions the graph owns."""
-    accepted: list[Mention] = []
-    cursor = 0
-    text = datum.text
-    for e in sorted(entities.entities, key=lambda e: e.start_position):
-        start, end = e.start_position, e.end_position
-        if start >= cursor and start < end <= len(text) and text[start:end] == e.value:
-            accepted.append(Mention(datum, start, end, e.label or "", e.value))
-            cursor = end
-    return accepted
 
 
 def _verify_patches(
