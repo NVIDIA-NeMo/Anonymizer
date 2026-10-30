@@ -33,6 +33,7 @@ from anonymizer.engine.constants import (
     COL_REPLACEMENT_MAP,
     COL_REPLACEMENT_MAP_RAW,
     COL_REPLACEMENT_MAP_SOURCE,
+    COL_RETAINED_PROTECTED_ENTITIES,
     COL_REWRITE_REPLACEMENT_READY,
     COL_REWRITTEN_TEXT,
     COL_REWRITTEN_TEXT_INITIAL,
@@ -54,6 +55,7 @@ from anonymizer.engine.rewrite.evaluate import EvaluateWorkflow
 from anonymizer.engine.rewrite.parsers import normalize_payload
 from anonymizer.engine.rewrite.qa_generation import QAGenerationWorkflow
 from anonymizer.engine.rewrite.repair import RepairWorkflow
+from anonymizer.engine.rewrite.retention import apply_review_gates, has_items
 from anonymizer.engine.rewrite.rewrite_generation import (
     RewriteGenerationWorkflow,
     restore_empty_skipped_span_label_counts,
@@ -83,6 +85,7 @@ class EvaluationState:
     leakage_mass: str
     weighted_leakage_rate: str
     any_high_leaked: str
+    retained: str
     needs_repair: str
 
 
@@ -121,6 +124,7 @@ def _evaluation_state(iteration: int, rewritten_text: str) -> EvaluationState:
         leakage_mass=_iteration_column(COL_LEAKAGE_MASS, iteration),
         weighted_leakage_rate=_iteration_column(COL_WEIGHTED_LEAKAGE_RATE, iteration),
         any_high_leaked=_iteration_column(COL_ANY_HIGH_LEAKED, iteration),
+        retained=_iteration_column(COL_RETAINED_PROTECTED_ENTITIES, iteration),
         needs_repair=_iteration_column(COL_NEEDS_REPAIR, iteration),
     )
 
@@ -270,6 +274,7 @@ def _evaluation_columns(
         COL_LEAKAGE_MASS: state.leakage_mass,
         COL_WEIGHTED_LEAKAGE_RATE: state.weighted_leakage_rate,
         COL_ANY_HIGH_LEAKED: state.any_high_leaked,
+        COL_RETAINED_PROTECTED_ENTITIES: state.retained,
         COL_NEEDS_REPAIR: state.needs_repair,
     }
     return [
@@ -297,6 +302,7 @@ def _repair_columns(
         COL_WEIGHTED_LEAKAGE_RATE: previous.weighted_leakage_rate,
         COL_ANY_HIGH_LEAKED: previous.any_high_leaked,
         COL_UTILITY_SCORE: previous.utility_score,
+        COL_RETAINED_PROTECTED_ENTITIES: previous.retained,
         COL_LEAKED_PRIVACY_ITEMS: state.leaked_items,
         COL_REWRITTEN_TEXT_NEXT: state.rewritten_text,
     }
@@ -329,6 +335,7 @@ def _finalization_column(
                 state.leakage_mass,
                 state.weighted_leakage_rate,
                 state.any_high_leaked,
+                state.retained,
                 state.needs_repair,
             )
         )
@@ -342,6 +349,7 @@ def _finalization_column(
         COL_LEAKAGE_MASS,
         COL_WEIGHTED_LEAKAGE_RATE,
         COL_ANY_HIGH_LEAKED,
+        COL_RETAINED_PROTECTED_ENTITIES,
         COL_NEEDS_REPAIR,
         COL_REPAIR_ITERATIONS,
         COL_NEEDS_HUMAN_REVIEW,
@@ -364,6 +372,7 @@ def _finalization_column(
         row[COL_LEAKAGE_MASS] = row.get(state.leakage_mass)
         row[COL_WEIGHTED_LEAKAGE_RATE] = row.get(state.weighted_leakage_rate)
         row[COL_ANY_HIGH_LEAKED] = row.get(state.any_high_leaked)
+        row[COL_RETAINED_PROTECTED_ENTITIES] = normalize_payload(row.get(state.retained))
         row[COL_NEEDS_REPAIR] = row.get(state.needs_repair)
         row[COL_REPAIR_ITERATIONS] = state.iteration
 
@@ -371,6 +380,7 @@ def _finalization_column(
             row[COL_REWRITTEN_TEXT] is None
             or not bool(row.get(COL_REWRITE_REPLACEMENT_READY, True))
             or bool(row[COL_ANY_HIGH_LEAKED])
+            or has_items(row[COL_RETAINED_PROTECTED_ENTITIES])
         )
         if generator_params.flag_utility_below is not None:
             needs_review = needs_review or float(row[COL_UTILITY_SCORE]) < generator_params.flag_utility_below
@@ -532,6 +542,7 @@ class CombinedRewriteWorkflow(RewriteWorkflow):
             restore_empty_skipped_span_label_counts(run_result.dataframe)
             entity_rows = _join_new_columns(entity_rows, run_result.dataframe)
             entity_rows = entity_rows.drop(columns=graph.internal_columns, errors="ignore")
+            entity_rows = apply_review_gates(entity_rows)
             _apply_passthrough_defaults(passthrough_rows)
             result = RewriteResult(
                 dataframe=merge_and_reorder(entity_rows, passthrough_rows),

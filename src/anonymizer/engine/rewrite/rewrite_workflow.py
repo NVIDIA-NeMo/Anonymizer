@@ -24,6 +24,7 @@ from anonymizer.engine.constants import (
     COL_QUALITY_QA_COMPARE,
     COL_QUALITY_QA_REANSWER,
     COL_REPAIR_ITERATIONS,
+    COL_RETAINED_PROTECTED_ENTITIES,
     COL_REWRITE_REPLACEMENT_READY,
     COL_REWRITTEN_TEXT,
     COL_REWRITTEN_TEXT_NEXT,
@@ -40,6 +41,7 @@ from anonymizer.engine.rewrite.final_judge import FinalJudgeWorkflow
 from anonymizer.engine.rewrite.parsers import normalize_payload
 from anonymizer.engine.rewrite.qa_generation import QAGenerationWorkflow
 from anonymizer.engine.rewrite.repair import RepairWorkflow
+from anonymizer.engine.rewrite.retention import apply_review_gates
 from anonymizer.engine.rewrite.rewrite_generation import (
     RewriteGenerationWorkflow,
     restore_empty_skipped_span_label_counts,
@@ -65,6 +67,7 @@ _EVALUATION_PAYLOAD_COLUMNS = (
     COL_QUALITY_QA_REANSWER,
     COL_PRIVACY_QA_REANSWER,
     COL_QUALITY_QA_COMPARE,
+    COL_RETAINED_PROTECTED_ENTITIES,
 )
 
 
@@ -463,6 +466,7 @@ class RewriteWorkflow:
         if evaluation.flag_leakage_above is not None:
             needs_review = needs_review | (df[COL_LEAKAGE_MASS].apply(float) > evaluation.flag_leakage_above)
         df[COL_NEEDS_HUMAN_REVIEW] = needs_review
+        df = apply_review_gates(df)
 
         return df, all_failed
 

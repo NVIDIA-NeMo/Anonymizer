@@ -259,7 +259,7 @@ def test_evaluate_columns_pipeline(
         evaluation=EvaluationCriteria(),
     )
 
-    assert len(cols) == 5
+    assert len(cols) == 6
     for col in cols:
         assert isinstance(col, CustomColumnConfig)
     assert cols[3].name == COL_UTILITY_SCORE

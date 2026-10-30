@@ -152,7 +152,11 @@ Use `preview.trace_dataframe` for the full pipeline trace (domain, disposition, 
 
 ## Working with flagged records
 
-Records with `needs_human_review=True` exceeded automated thresholds for leakage or utility. To investigate and resolve:
+Records with `needs_human_review=True` exceeded automated thresholds for leakage or utility, or failed one of two deterministic checks on the protection plan.
+
+The two deterministic checks leave their evidence in trace columns. `_disposition_missing_entities` lists detected or latent entities (value and label) that the sensitivity disposition never covered; the rewrite only acts on entities the disposition lists, so these rows are flagged rather than repaired. `_retained_protected_entities` lists entities the disposition marked for protection (any method other than `leave_as_is`) whose original value still appears verbatim in the rewrite (value, label, method); a non-empty list triggers repair under every `risk_tolerance` and flags the record if the value survives the last repair. The verbatim check matches whole words after Unicode, quote, dash, whitespace, and case normalization, so a protected value that is also a common word (for example "History") is reported whenever the rewrite uses that word.
+
+To investigate and resolve:
 
 **Diagnose:** Use `trace_dataframe` to inspect the flagged record's intermediate columns — disposition, leakage breakdown, repair iterations, and judge evaluation.
 
