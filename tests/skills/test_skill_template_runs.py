@@ -153,13 +153,12 @@ def run_template(
     def run(strategy: str, *args: str) -> str:
         source = _fill_placeholders(_choose_strategy(_load_template(), strategy), workdir / "input.csv")
         namespace: dict[str, Any] = {
-            "__name__": "anonymize_template",
+            "__name__": "__main__",
             "__file__": str(workdir / "anonymize_template.py"),
         }
-        exec(compile(source, "anonymize_template.py", "exec"), namespace)  # noqa: S102
         monkeypatch.setattr(sys, "argv", ["anonymize_template.py", *args])
         capsys.readouterr()
-        namespace["main"]()
+        exec(compile(source, "anonymize_template.py", "exec"), namespace)  # noqa: S102
         return capsys.readouterr().out
 
     return run
@@ -224,8 +223,9 @@ def test_template_run_resolves_every_alias_through_custom_providers(
     pool_by_alias = {config.alias: config.model for config in parse_model_configs(_stub_model_configs()).model_configs}
     assert endpoint.models_seen <= pool
     assert pool_by_alias[selected.detection.entity_detector] in endpoint.models_seen
-    assert pool_by_alias[selected.rewrite.rewriter] in endpoint.models_seen
-    assert any(pool_by_alias[alias] in endpoint.models_seen for alias in selected.detection.entity_validator)
+    # These roles share a model; their response schemas prove both requests reached the stub (#352).
+    assert frozenset({"rewritten_text"}) in endpoint.response_shapes_seen
+    assert frozenset({"decisions"}) in endpoint.response_shapes_seen
 
 
 def test_custom_provider_setup_follows_the_skill_bullet(endpoint: StubEndpoint) -> None:
