@@ -98,5 +98,13 @@ def aggregate_measurement_scalars(records: tuple[MeasurementRecord, ...]) -> dic
             continue
         accumulator.update(extract_scalar_metrics(record))
     aggregated = accumulator.metrics()
+    rat_records = [record for record in records if record.record_type == "rat_bench_reidentification"]
+    namespace = metric_path(_SCALAR_METRIC_PREFIX, "rat_bench_reidentification")
+    for field_name in ("rows_requested", "rows_scored", "rows_missing", "rows_excluded"):
+        if any(getattr(record, field_name) is None for record in rat_records):
+            aggregated.pop(metric_path(namespace, field_name), None)
+    if len(rat_records) > 1:
+        for field_name in ("reidentification_rate_ci95_low_pct", "reidentification_rate_ci95_high_pct"):
+            aggregated.pop(metric_path(namespace, field_name), None)
     aggregated[metric_path(_SCALAR_METRIC_PREFIX, "record_count")] = len(records)
     return aggregated

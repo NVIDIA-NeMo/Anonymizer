@@ -769,10 +769,16 @@ Replace judge evaluation:
 RAT measurements may include `rows_requested`, `rows_scored`, `rows_missing`, and
 `rows_excluded`. When `rows_requested` is present, the re-identification rate uses
 that denominator; older records retain `rows_processed` as the denominator.
-`rows_scored` excludes `reid_error_rows` from the processed count.
+`rows_scored` excludes `reid_error_rows` from the processed count. Failed rows
+are excluded from the scored count. Scored, failed, missing, and excluded counts
+must fit within `rows_requested` when supplied. Scalar totals for an optional
+count are omitted if any RAT record lacks it. The scalar rate remains an
+unweighted mean of per-record rates, each using its own requested or legacy
+processed-row denominator.
 
 The optional `reidentification_rate_ci95_low_pct` and
 `reidentification_rate_ci95_high_pct` fields must appear together and contain the
-reported rate. Both use percentages. Sanitized tables retain the fields, and
-scalar summaries retain the last reported interval. An interval is not averaged
-or recomputed across multiple records; it does not describe a pooled estimate.
+reported rate. Both use finite percentages within [0, 100]; producers must clamp
+rounding outside that range. Sanitized tables retain each record's interval.
+Scalar summaries include the interval only for a single RAT record. Intervals
+are not averaged or recomputed across multiple records.

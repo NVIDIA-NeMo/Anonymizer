@@ -303,9 +303,6 @@ class RatBenchReidentificationMeasurement(_MeasurementEnvelope):
             raise ValueError("rows_processed cannot exceed rows_requested")
         if self.rows_scored is not None and self.rows_scored != self.rows_processed - self.reid_error_rows:
             raise ValueError("rows_scored must equal rows_processed minus reid_error_rows")
-        for count in (self.rows_missing, self.rows_excluded):
-            if count is not None and self.rows_requested is not None and count > self.rows_requested:
-                raise ValueError("missing or excluded rows cannot exceed rows_requested")
         if self.reidentified_rows > self.rows_processed:
             raise ValueError("reidentified_rows cannot exceed rows_processed")
         if self.direct_reidentified_rows + self.correctmatch_reidentified_rows != self.reidentified_rows:
@@ -314,6 +311,11 @@ class RatBenchReidentificationMeasurement(_MeasurementEnvelope):
             )
         if self.reid_error_rows > self.rows_processed:
             raise ValueError("reid_error_rows cannot exceed rows_processed")
+        if self.rows_requested is not None:
+            scored = self.rows_processed - self.reid_error_rows
+            accounted = scored + self.rows_failed + (self.rows_missing or 0) + (self.rows_excluded or 0)
+            if accounted > self.rows_requested:
+                raise ValueError("scored, failed, missing, and excluded rows cannot exceed rows_requested")
         if self.correct_guess_count + self.incorrect_guess_count != self.total_guess_count:
             raise ValueError("correct_guess_count plus incorrect_guess_count must equal total_guess_count")
 
