@@ -47,7 +47,7 @@ from anonymizer.engine.ndd.adapter import RECORD_ID_COLUMN, NddAdapter
 from anonymizer.engine.rewrite.combined_rewrite_workflow import CombinedRewriteWorkflow, EvaluationState, RepairState
 from anonymizer.engine.rewrite.evaluate import EvaluateWorkflow, _determine_repair_needs_column
 from anonymizer.engine.rewrite.parsers import parse_privacy_answers, parse_privacy_qa
-from anonymizer.engine.rewrite.repair import _inject_leaked_items_column, _leaked_items_text
+from anonymizer.engine.rewrite.repair import _inject_leaked_items_column, _leaked_items_text, _retained_items_text
 from anonymizer.engine.rewrite.retention import apply_review_gates, disposition_coverage, retained_protected
 from anonymizer.engine.rewrite.rewrite_workflow import RewriteWorkflow
 
@@ -244,7 +244,19 @@ def test_repair_prompt_unchanged_when_nothing_retained(answer: str, retained: An
     assert _inject_leaked_items_column(dict(row))[COL_LEAKED_PRIVACY_ITEMS] == baseline
 
 
+def _as_numpy_arrays(value: Any) -> Any:
+    return np.array([np.array(item, dtype=object) for item in value], dtype=object)
+
+
+def _as_pyarrow_list(value: Any) -> Any:
+    import pyarrow as pa
+
+    return pa.array([[list(item) for item in value]], type=pa.list_(pa.list_(pa.string())))[0]
+
+
+@pytest.mark.parametrize("shape", [list, _as_numpy_arrays, _as_pyarrow_list], ids=["list", "numpy", "pyarrow"])
 def test_combined_repair_column_reads_the_iteration_retained_column(
+    shape: Any,
     stub_rewrite_model_selection: RewriteModelSelection,
     stub_replace_model_selection: ReplaceModelSelection,
 ) -> None:
@@ -262,7 +274,7 @@ def test_combined_repair_column_reads_the_iteration_retained_column(
     row = {
         previous.privacy_reanswer: {"answers": []},
         COL_PRIVACY_QA: {"items": []},
-        previous.retained: [["Alice", "first_name", "replace"]],
+        previous.retained: shape([["Alice", "first_name", "replace"]]),
     }
     text = column.generator_function(row)[state.leaked_items]
     assert text == '- [RETAINED] first_name: "Alice" still appears verbatim; must be replaced (method: replace).'
@@ -779,3 +791,61 @@ def test_review_gates_keep_needs_human_review_dtype(dtype: str) -> None:
     out = apply_review_gates(df)
     assert str(out[COL_NEEDS_HUMAN_REVIEW].dtype) == dtype
     assert out[COL_NEEDS_HUMAN_REVIEW].tolist() == [True, True]
+
+
+@pytest.mark.parametrize("shape", [_as_numpy_arrays, _as_pyarrow_list], ids=["numpy", "pyarrow"])
+def test_staged_repair_seed_carries_retained_line_for_adapter_shaped_cells(
+    tmp_path: Path,
+    shape: Any,
+    stub_rewrite_model_selection: RewriteModelSelection,
+    stub_replace_model_selection: ReplaceModelSelection,
+) -> None:
+    adapter = NddAdapter(DataDesigner(artifact_path=tmp_path / "artifacts", auto_configure_logging=False))
+    real_run = adapter.run_workflow
+    seeds: dict[str, pd.DataFrame] = {}
+
+    def run_workflow(seed: pd.DataFrame, **kwargs: Any) -> Any:
+        seeds[kwargs["workflow_name"]] = seed.copy()
+        result = real_run(seed, **kwargs)
+        if kwargs["workflow_name"].startswith("rewrite-evaluate"):
+            frame = result.dataframe
+            frame[COL_RETAINED_PROTECTED_ENTITIES] = frame[COL_RETAINED_PROTECTED_ENTITIES].map(shape)
+        return result
+
+    adapter.run_workflow = Mock(side_effect=run_workflow)  # type: ignore[method-assign]
+    workflow = RewriteWorkflow(adapter)
+    for name in ("_domain_wf", "_disposition_wf", "_qa_wf"):
+        setattr(workflow, name, Mock(columns=Mock(return_value=[])))
+    workflow._rewrite_gen_wf = Mock(
+        columns=Mock(
+            return_value=[CustomColumnConfig(name=COL_REWRITTEN_TEXT, generator_function=_stub_staged_rewrite)]
+        )
+    )
+    evaluation = EvaluationCriteria(max_repair_iterations=1)
+    workflow._evaluate_wf = Mock(columns=Mock(return_value=_stub_evaluate_columns(evaluation)))
+
+    @custom_column_generator(required_columns=[COL_REWRITTEN_TEXT, COL_RETAINED_PROTECTED_ENTITIES])
+    def repair(row: dict[str, Any]) -> dict[str, Any]:
+        row[COL_REWRITTEN_TEXT_NEXT] = row[COL_REWRITTEN_TEXT]
+        return row
+
+    workflow._repair_wf = Mock(
+        columns=Mock(return_value=[CustomColumnConfig(name=COL_REWRITTEN_TEXT_NEXT, generator_function=repair)])
+    )
+    with patch(_REPLACE_PATCH) as replace_cls:
+        replace_cls.return_value.generate_map_only.side_effect = lambda df, **_: Mock(
+            dataframe=df.copy(), failed_records=[]
+        )
+        workflow.run(
+            _frame([_row("retained", _FULL, "Alice works at a company.")]),
+            model_configs=[],
+            selected_models=stub_rewrite_model_selection,
+            replace_model_selection=stub_replace_model_selection,
+            privacy_goal=_PRIVACY_GOAL,
+            evaluation=evaluation,
+        )
+
+    seeded = seeds["rewrite-repair-0"][COL_RETAINED_PROTECTED_ENTITIES].iloc[0]
+    assert _retained_items_text(seeded) == (
+        '- [RETAINED] first_name: "Alice" still appears verbatim; must be replaced (method: replace).'
+    )

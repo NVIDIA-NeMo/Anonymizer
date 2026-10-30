@@ -54,6 +54,8 @@ def _to_python(raw: Any) -> Any:
         return {key: _to_python(value) for key, value in raw.items()}
     if isinstance(raw, (list, tuple)):
         return [_to_python(value) for value in raw]
+    if hasattr(raw, "as_py") and callable(raw.as_py):
+        return _to_python(raw.as_py())
     if hasattr(raw, "tolist") and callable(raw.tolist):
         return _to_python(raw.tolist())
     if hasattr(raw, "item") and callable(raw.item):
