@@ -185,6 +185,8 @@ def test_finalizer_selects_last_executed_iteration(
         repaired.any_high_leaked: False,
         repaired.needs_repair: False,
         skipped.needs_repair: None,
+        COL_REWRITTEN_TEXT: "forged preexisting terminal",
+        COL_UTILITY_SCORE: 0.123,
     }
     finalizer = graph.columns[-1]
     assert isinstance(finalizer, CustomColumnConfig)

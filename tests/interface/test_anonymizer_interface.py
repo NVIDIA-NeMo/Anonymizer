@@ -3,8 +3,10 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from types import SimpleNamespace
+from typing import cast
 from unittest.mock import Mock, patch
 
 import pandas as pd
@@ -42,6 +44,7 @@ from anonymizer.engine.replace.replace_runner import ReplacementResult, Replacem
 from anonymizer.engine.rewrite.rewrite_workflow import RewriteResult, RewriteWorkflow
 from anonymizer.interface.anonymizer import Anonymizer, _resolve_model_providers
 from anonymizer.interface.errors import InvalidConfigError, InvalidInputError
+from tests.conftest import stub_run_with_detection
 
 
 @pytest.fixture
@@ -65,6 +68,7 @@ def _make_anonymizer(
         {COL_TEXT: ["Alice works at Acme"], COL_REPLACED_TEXT: ["[REDACTED] works at [REDACTED]"]}
     )
     replace_runner = Mock(spec=ReplacementWorkflow)
+    stub_run_with_detection(replace_runner)
     replace_runner.run.return_value = replace_return or ReplacementResult(
         dataframe=_replace_df,
         failed_records=[],
@@ -81,6 +85,7 @@ def _make_anonymizer(
         }
     )
     rewrite_runner = Mock(spec=RewriteWorkflow)
+    stub_run_with_detection(rewrite_runner)
     rewrite_runner.run.return_value = rewrite_return or RewriteResult(
         dataframe=_rewrite_df,
         failed_records=[],
@@ -163,8 +168,16 @@ def test_run_in_memory_records_tracks_dropped_caller_id_and_survivor_order() -> 
             COL_TAGGED_TEXT: surviving_texts,
         }
     )
+
+    def create(config_builder, **_kwargs):
+        seed = pd.read_parquet(config_builder.get_seed_config().source.path)
+        key_column = next(c for c in seed.columns if c.startswith("_anonymizer_source_"))
+        survivors = seed[seed[RECORD_ID_COLUMN].isin(surviving_ids)]
+        echoed = detected.assign(**{key_column: survivors[key_column].tolist()})
+        return SimpleNamespace(load_dataset=Mock(return_value=echoed))
+
     data_designer = Mock(spec=DataDesigner)
-    data_designer.create.return_value = SimpleNamespace(load_dataset=Mock(return_value=detected))
+    data_designer.create.side_effect = create
 
     result = Anonymizer(data_designer=data_designer).run(
         config=AnonymizerConfig(replace=Redact(), emit_telemetry=False),
@@ -223,7 +236,7 @@ def test_run_passes_entity_label_examples_only_to_detection_workflow(stub_input:
     assert detection_wf.run.call_args.kwargs["entity_label_examples"] == examples
     assert result.entity_labels == ["vendor_api_key"]
     assert not hasattr(result, "entity_label_examples")
-    assert "entity_label_examples" not in replace_runner.run.call_args.kwargs
+    assert "entity_label_examples" not in replace_runner.run_with_detection.call_args.kwargs
     assert "acme_live_abc123" not in (result.dataframe.to_json() or "")
 
 
@@ -240,7 +253,7 @@ def test_rewrite_run_passes_entity_label_examples_to_detection_workflow(stub_inp
     assert detection_wf.run.call_args.kwargs["entity_label_examples"] == examples
     assert detection_wf.run.call_args.kwargs["tag_latent_entities"] is True
     assert result.entity_labels == ["vendor_api_key"]
-    assert "entity_label_examples" not in rewrite_runner.run.call_args.kwargs
+    assert "entity_label_examples" not in rewrite_runner.run_with_detection.call_args.kwargs
     assert "acme_live_abc123" not in (result.dataframe.to_json() or "")
 
 
@@ -252,6 +265,147 @@ def test_preview_passes_entity_label_examples_to_detection_workflow(stub_input: 
     anonymizer.preview(config=config, data=stub_input, num_records=1)
 
     assert detection_wf.run.call_args.kwargs["entity_label_examples"] == examples
+
+
+class _Replay040DetectionWorkflow:
+    """Duck-types v0.4.0's EntityDetectionWorkflow.run()/build_* signatures exactly: no
+    entity_label_examples parameter, no **kwargs to swallow it (added in #275, after v0.4.0)."""
+
+    def __init__(self, result: EntityDetectionResult) -> None:
+        self._result = result
+        self.config_sentinel = Mock(name="config_sentinel")
+        self.builder_sentinel = Mock(name="builder_sentinel")
+
+    def run(
+        self,
+        dataframe: pd.DataFrame,
+        *,
+        model_configs: list[ModelConfig],
+        selected_models: object,
+        gliner_detection_threshold: float,
+        validation_max_entities_per_call: int = 20,
+        validation_excerpt_window_chars: int = 200,
+        validation_single_chunk_full_text: bool = True,
+        entity_labels: list[str] | None = None,
+        excluded_entity_labels: list[str] | None = None,
+        privacy_goal: object | None = None,
+        data_summary: str | None = None,
+        tag_latent_entities: bool = True,
+        compute_grouped_entities: bool | None = None,
+        preview_num_records: int | None = None,
+    ) -> EntityDetectionResult:
+        return self._result
+
+    def build_detection_config(
+        self,
+        dataframe: pd.DataFrame,
+        *,
+        seed_path: str | Path,
+        model_configs: list[ModelConfig],
+        selected_models: object,
+        gliner_detection_threshold: float,
+        validation_max_entities_per_call: int = 100,
+        validation_excerpt_window_chars: int = 500,
+        validation_single_chunk_full_text: bool = True,
+        entity_labels: list[str] | None = None,
+        excluded_entity_labels: list[str] | None = None,
+        data_summary: str | None = None,
+    ) -> Mock:
+        return self.config_sentinel
+
+    def build_detection_builder_for_seed(
+        self,
+        *,
+        seed_path: str | Path,
+        model_configs: list[ModelConfig],
+        selected_models: object,
+        gliner_detection_threshold: float,
+        validation_max_entities_per_call: int = 100,
+        validation_excerpt_window_chars: int = 500,
+        validation_single_chunk_full_text: bool = True,
+        entity_labels: list[str] | None = None,
+        excluded_entity_labels: list[str] | None = None,
+        data_summary: str | None = None,
+        job_index: int = 0,
+        num_jobs: int = 1,
+    ) -> Mock:
+        return self.builder_sentinel
+
+
+def test_run_withholds_entity_label_examples_from_a_pre_275_detection_workflow(
+    stub_input: AnonymizerInput,
+) -> None:
+    """A caller-supplied detection_workflow with v0.4.0's exact signature must not get a TypeError."""
+    examples = {"vendor_api_key": ["acme_live_abc123"]}
+    config = AnonymizerConfig(
+        detect={"entity_labels": ["vendor_api_key"], "entity_label_examples": examples},
+        replace=Redact(),
+    )
+    detection_result = EntityDetectionResult(
+        dataframe=pd.DataFrame({COL_TEXT: ["Alice works at Acme"], COL_FINAL_ENTITIES: [{"entities": []}]}),
+        failed_records=[],
+    )
+    stub = cast(EntityDetectionWorkflow, _Replay040DetectionWorkflow(detection_result))
+    anonymizer = Anonymizer(detection_workflow=stub)
+
+    result = anonymizer.run(config=config, data=stub_input)
+
+    assert result is not None
+
+
+def test_run_warns_once_when_entity_label_examples_withheld(
+    stub_input: AnonymizerInput, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A counts-only WARNING fires when configured examples are dropped for a legacy detection_workflow."""
+    config = AnonymizerConfig(
+        detect={"entity_labels": ["vendor_api_key"], "entity_label_examples": {"vendor_api_key": ["acme_live_x"]}},
+        replace=Redact(),
+    )
+    detection_result = EntityDetectionResult(
+        dataframe=pd.DataFrame({COL_TEXT: ["Alice works at Acme"], COL_FINAL_ENTITIES: [{"entities": []}]}),
+        failed_records=[],
+    )
+    stub = cast(EntityDetectionWorkflow, _Replay040DetectionWorkflow(detection_result))
+    anonymizer = Anonymizer(detection_workflow=stub)
+
+    with caplog.at_level(logging.WARNING, logger="anonymizer"):
+        anonymizer.run(config=config, data=stub_input)
+
+    messages = {r.getMessage() for r in caplog.records if "entity_label_examples configured" in r.getMessage()}
+    assert messages == {
+        "entity_label_examples configured for 1 label(s) but withheld: the configured detection_workflow "
+        "does not accept this keyword argument"
+    }
+    assert "acme_live_x" not in next(iter(messages))
+
+
+def test_export_detection_paths_withhold_entity_label_examples_from_a_pre_275_detection_workflow(
+    stub_input: AnonymizerInput,
+    tmp_path: Path,
+) -> None:
+    """A caller-supplied detection_workflow with v0.4.0's exact build_* signatures must not get a TypeError.
+
+    Asserts on the stub's returned sentinels (not just "no exception") so this test actually exercises
+    the withholding branch: a stub whose build_* methods accept ``**kwargs`` would pass
+    ``entity_label_examples`` through unnoticed and still return *something*, but it would not be this
+    stub's sentinel unless the call actually reached the stub body with a signature it accepts.
+    """
+    config = AnonymizerConfig(
+        detect={"entity_labels": ["vendor_api_key"], "entity_label_examples": {"vendor_api_key": ["x"]}},
+        replace=Redact(),
+    )
+    detection_result = EntityDetectionResult(dataframe=pd.DataFrame({COL_TEXT: []}), failed_records=[])
+    stub_impl = _Replay040DetectionWorkflow(detection_result)
+    stub = cast(EntityDetectionWorkflow, stub_impl)
+    anonymizer = Anonymizer(detection_workflow=stub)
+    seed_path = tmp_path / "seed.parquet"
+
+    assert anonymizer.export_detection_config(config=config, data=stub_input, seed_path=seed_path) is (
+        stub_impl.config_sentinel
+    )
+    assert anonymizer.export_detection_builder_for_seed(config=config, seed_path=seed_path) is (
+        stub_impl.builder_sentinel
+    )
 
 
 def test_export_detection_paths_pass_entity_label_examples(
@@ -833,7 +987,7 @@ def test_run_raises_invalid_config_before_workflows(
         anonymizer.run(config=AnonymizerConfig(replace=Substitute()), data=stub_input)
 
     detection_wf.run.assert_not_called()
-    replace_runner.run.assert_not_called()
+    replace_runner.run_with_detection.assert_not_called()
 
 
 def test_preview_raises_invalid_config_before_workflows(
@@ -852,7 +1006,7 @@ def test_preview_raises_invalid_config_before_workflows(
         anonymizer.preview(config=AnonymizerConfig(rewrite=Rewrite()), data=stub_input, num_records=1)
 
     detection_wf.run.assert_not_called()
-    replace_runner.run.assert_not_called()
+    replace_runner.run_with_detection.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -866,8 +1020,8 @@ def test_run_rewrite_calls_rewrite_runner(stub_input: AnonymizerInput) -> None:
 
     anonymizer.run(config=config, data=stub_input)
 
-    rewrite_runner.run.assert_called_once()
-    call_kwargs = rewrite_runner.run.call_args.kwargs
+    rewrite_runner.run_with_detection.assert_called_once()
+    call_kwargs = rewrite_runner.run_with_detection.call_args.kwargs
     assert config.rewrite is not None
     assert call_kwargs["privacy_goal"] == config.rewrite.privacy_goal
     assert call_kwargs["evaluation"] == config.rewrite.evaluation
@@ -877,13 +1031,14 @@ def test_run_rewrite_uses_combined_runner_when_enabled(stub_input: AnonymizerInp
     config = AnonymizerConfig(rewrite=Rewrite(use_combined_graph=True))
     anonymizer, _, _, rewrite_runner = _make_anonymizer()
     combined_runner = Mock(spec=RewriteWorkflow)
+    stub_run_with_detection(combined_runner)
     combined_runner.run.return_value = rewrite_runner.run.return_value
     anonymizer._combined_rewrite_runner = combined_runner
 
     anonymizer.run(config=config, data=stub_input)
 
-    rewrite_runner.run.assert_not_called()
-    combined_runner.run.assert_called_once()
+    rewrite_runner.run_with_detection.assert_not_called()
+    combined_runner.run_with_detection.assert_called_once()
 
 
 def test_run_rewrite_rejects_missing_privacy_goal_before_workflows(stub_input: AnonymizerInput) -> None:
@@ -896,7 +1051,7 @@ def test_run_rewrite_rejects_missing_privacy_goal_before_workflows(stub_input: A
         anonymizer.run(config=config, data=stub_input)
 
     detection_workflow.run.assert_not_called()
-    rewrite_runner.run.assert_not_called()
+    rewrite_runner.run_with_detection.assert_not_called()
 
 
 def test_run_rewrite_output_columns(stub_input: AnonymizerInput) -> None:

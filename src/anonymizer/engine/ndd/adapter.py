@@ -30,6 +30,9 @@ from data_designer.config.utils.constants import TRACE_COLUMN_POSTFIX
 from data_designer.config.utils.trace_type import TraceType
 
 from anonymizer.engine.constants import RECORD_ID_COLUMN
+from anonymizer.engine.graph_core.observe import report_requests
+from anonymizer.engine.ndd._source_frame import WorkflowSourceFrame
+from anonymizer.engine.ndd.failed_record import FailedRecord as FailedRecord
 from anonymizer.interface.errors import AnonymizerWorkflowError
 from anonymizer.measurement import current_collector, record_ndd_workflow
 
@@ -52,20 +55,13 @@ def _normalize_column_for_data_designer(column: ColumnConfigT) -> ColumnConfigT:
 
 
 @dataclass(frozen=True)
-class FailedRecord:
-    """A record that did not appear in workflow output."""
-
-    record_id: str
-    step: str
-    reason: str
-
-
-@dataclass(frozen=True)
 class WorkflowRunResult:
     """Result of a single NDD workflow execution."""
 
     dataframe: pd.DataFrame
     failed_records: list[FailedRecord]
+    source_positions: tuple[int, ...] | None = None
+    observed_requests: int | None = None
 
 
 @dataclass(frozen=True)
@@ -279,7 +275,7 @@ class NddAdapter:
         self._run_lock = RLock()
         self._input_tokens_lock = Lock()
         self._cumulative_input_tokens: int = 0
-        logger.debug("NDD adapter: artifact_path=%s", getattr(data_designer, "_artifact_path", "unknown"))
+        logger.debug("NDD adapter initialized")
 
     @property
     def total_input_tokens(self) -> int:
@@ -345,9 +341,10 @@ class NddAdapter:
             `WorkflowRunResult` with the output DataFrame and any `FailedRecord` entries.
         """
         workflow_input_df = self._attach_record_ids(df=df)
-        logger.debug("NDD workflow '%s' starting with %d records", workflow_name, len(workflow_input_df))
+        source_frame = WorkflowSourceFrame.capture(workflow_input_df)
+        logger.debug("NDD workflow starting with %d records", len(workflow_input_df))
         col_names = [c.name for c in columns]
-        logger.debug("NDD workflow '%s': %d columns %s", workflow_name, len(col_names), col_names)
+        logger.debug("NDD workflow column count: %d", len(col_names))
         available_model_aliases = [m.alias for m in model_configs]
         model_aliases = _extract_workflow_model_aliases(columns) or available_model_aliases
         record_count = (
@@ -374,7 +371,7 @@ class NddAdapter:
 
         with tempfile.TemporaryDirectory(prefix=f"anonymizer_{workflow_name}_") as tmp_dir:
             seed_path = str(Path(tmp_dir) / "seed.parquet")
-            seed_source = LocalFileSeedSource.from_dataframe(workflow_input_df, seed_path)
+            seed_source = LocalFileSeedSource.from_dataframe(source_frame.seed(), seed_path)
 
             config_builder = DataDesignerConfigBuilder(model_configs=model_configs)
             config_builder.with_seed_dataset(seed_source, sampling_strategy=SamplingStrategy.ORDERED)
@@ -387,7 +384,12 @@ class NddAdapter:
 
             task_traces: list[_TaskTrace] = []
             try:
-                with self._run_lock, usage_probe, _temporary_dd_task_trace(self._data_designer, collector=collector):
+                with (
+                    self._run_lock,
+                    usage_probe,
+                    _temporary_dd_task_trace(self._data_designer, collector=collector),
+                    source_frame.bind_generators(self._data_designer),
+                ):
                     if preview_num_records is None:
                         run_results = self._data_designer.create(
                             config_builder,
@@ -406,17 +408,16 @@ class NddAdapter:
                             output_df = workflow_input_df.iloc[0:0].copy()
                         else:
                             output_df = preview_results.dataset
+                    output_df, source_positions = source_frame.project(output_df, requested=record_count)
             except Exception as exc:
                 logger.warning(
-                    "Workflow failed for %d input record(s) on model(s) %s: %s",
+                    "Workflow failed for %d input record(s).",
                     record_count,
-                    available_model_aliases,
-                    exc,
                 )
                 logger.debug(
-                    "Workflow '%s' failure context: columns=%s",
-                    workflow_name,
-                    col_names,
+                    "Workflow failure context: input_records=%d column_count=%d",
+                    record_count,
+                    len(col_names),
                 )
                 try:
                     usage_probe.flush_private_trace_records()
@@ -425,6 +426,7 @@ class NddAdapter:
                 _error_model_usage = usage_probe.model_usage()
                 with self._run_lock:
                     self._add_input_tokens(_error_model_usage)
+                _report_observed_requests(_error_model_usage)
                 record_ndd_workflow(
                     workflow_name=workflow_name,
                     model_aliases=model_aliases,
@@ -453,19 +455,21 @@ class NddAdapter:
             )
             usage_probe.flush_private_trace_records()
 
-        logger.debug("NDD workflow '%s' returned %d records", workflow_name, len(output_df))
-        failed_records = self._detect_missing_records(
-            workflow_name=workflow_name,
-            input_df=(
-                workflow_input_df.iloc[:preview_num_records].copy()
-                if preview_num_records is not None
-                else workflow_input_df
-            ),
-            output_df=output_df,
-        )
+        logger.debug("NDD workflow returned %d records", len(output_df))
+        surviving_positions = set(source_positions)
+        missing = workflow_input_df.iloc[[index for index in range(record_count) if index not in surviving_positions]]
+        failed_records = [
+            FailedRecord(
+                record_id=record_id,
+                step=workflow_name,
+                reason="Record missing from workflow output",
+            )
+            for record_id in sorted(missing[RECORD_ID_COLUMN].astype(str).tolist())
+        ]
         _success_model_usage = usage_probe.model_usage()
         with self._run_lock:
             self._add_input_tokens(_success_model_usage)
+        observed_requests = _report_observed_requests(_success_model_usage)
         record_ndd_workflow(
             workflow_name=workflow_name,
             model_aliases=model_aliases,
@@ -479,7 +483,12 @@ class NddAdapter:
             column_names=col_names,
             model_usage=_success_model_usage,
         )
-        return WorkflowRunResult(dataframe=output_df, failed_records=failed_records)
+        return WorkflowRunResult(
+            dataframe=output_df,
+            failed_records=failed_records,
+            source_positions=source_positions,
+            observed_requests=observed_requests,
+        )
 
     def build_config(
         self,
@@ -567,70 +576,6 @@ class NddAdapter:
         row_data = {**row.to_dict(), "__row_idx__": row.name}
         serialized = json.dumps(row_data, default=str, sort_keys=True, separators=(",", ":"))
         return uuid.uuid5(uuid.NAMESPACE_URL, serialized).hex
-
-    def _detect_missing_records(
-        self,
-        *,
-        workflow_name: str,
-        input_df: pd.DataFrame,
-        output_df: pd.DataFrame,
-    ) -> list[FailedRecord]:
-        if RECORD_ID_COLUMN not in input_df.columns:
-            logger.warning(
-                "Missing-record detection skipped: input DataFrame lacks the record-tracking "
-                "column, so the adapter cannot verify whether any of %d input record(s) were "
-                "dropped.",
-                len(input_df),
-            )
-            logger.debug(
-                "Workflow '%s' detection skipped: input missing '%s'; input_columns=%s",
-                workflow_name,
-                RECORD_ID_COLUMN,
-                list(input_df.columns),
-            )
-            return []
-        if RECORD_ID_COLUMN not in output_df.columns:
-            input_cols = set(input_df.columns)
-            output_cols = set(output_df.columns)
-            other_dropped = sorted((input_cols - output_cols) - {RECORD_ID_COLUMN})
-            added = sorted(output_cols - input_cols)
-            logger.warning(
-                "Missing-record detection disabled: workflow output does not contain "
-                "the record-tracking column, so all %d input record(s) are being marked as "
-                "failed. This typically means seed-column pass-through is disabled or a "
-                "user-supplied column config overwrote it. Other input columns that were "
-                "also dropped: %s. Columns added by the workflow: %s.",
-                len(input_df),
-                other_dropped,
-                added,
-            )
-            logger.debug(
-                "Workflow '%s' detection disabled: output missing '%s'; input_columns=%s output_columns=%s",
-                workflow_name,
-                RECORD_ID_COLUMN,
-                list(input_df.columns),
-                list(output_df.columns),
-            )
-            return [
-                FailedRecord(
-                    record_id=record_id,
-                    step=workflow_name,
-                    reason=f"Output is missing required tracking column '{RECORD_ID_COLUMN}'",
-                )
-                for record_id in input_df[RECORD_ID_COLUMN].astype(str).tolist()
-            ]
-
-        input_ids = set(input_df[RECORD_ID_COLUMN].astype(str).tolist())
-        output_ids = set(output_df[RECORD_ID_COLUMN].astype(str).tolist())
-        missing_ids = sorted(input_ids - output_ids)
-        return [
-            FailedRecord(
-                record_id=record_id,
-                step=workflow_name,
-                reason="Record missing from workflow output",
-            )
-            for record_id in missing_ids
-        ]
 
 
 def _extract_workflow_model_aliases(columns: list[ColumnConfigT]) -> list[str]:
@@ -906,6 +851,26 @@ def _get_model_usage_snapshot_by_alias(model_registry: object) -> Mapping[str, o
             }
         snapshot[str(model_alias)] = payload
     return snapshot or None
+
+
+def _report_observed_requests(model_usage: Mapping[str, Any] | None) -> int | None:
+    """Report this run's request count to the running graph step, or return ``None`` if the probe cannot tell.
+
+    The count is DataDesigner model requests as the usage probe reports them, not strictly LLM calls made through
+    DataDesigner; counting those strictly needs further work.
+    """
+    reported = [
+        usage["request_usage"]
+        for usage in (model_usage or {}).values()
+        if isinstance(usage, Mapping) and isinstance(usage.get("request_usage"), Mapping)
+    ]
+    if not reported:
+        return None
+    total = sum(
+        int(r.get("total_requests") or r.get("successful_requests", 0) + r.get("failed_requests", 0)) for r in reported
+    )
+    report_requests(total)
+    return total
 
 
 def _model_usage_as_json(stats: object) -> Any:

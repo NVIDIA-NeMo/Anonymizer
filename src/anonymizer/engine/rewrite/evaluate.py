@@ -336,11 +336,10 @@ def _normalize_answer_items(
     missing_ids = [item_id for item_id in expected_ids if item_id not in by_id]
     if missing_ids or duplicate_ids or extra_ids:
         logger.warning(
-            "Evaluator returned malformed %s set; missing=%s duplicate=%s extra=%s. Applying conservative normalization.",
-            label,
-            missing_ids,
-            sorted(set(duplicate_ids)),
-            sorted(set(extra_ids)),
+            "Evaluator returned malformed set; missing=%d duplicate=%d extra=%d. Applying conservative normalization.",
+            len(missing_ids),
+            len(set(duplicate_ids)),
+            len(set(extra_ids)),
         )
 
     for item_id in missing_ids:

@@ -7,20 +7,16 @@ import json
 import logging
 from collections import Counter
 from dataclasses import dataclass
-from itertools import repeat
 
 import pandas as pd
 
 from anonymizer.config.replace_strategies import LocalReplaceMethod
 from anonymizer.engine.constants import (
     COL_FINAL_ENTITIES,
-    COL_REPLACED_TEXT,
-    COL_REPLACEMENT_APPLICATION,
-    COL_REPLACEMENT_MAP,
     COL_TEXT,
 )
+from anonymizer.engine.detection.postprocess import EntitySpan
 from anonymizer.engine.schemas import EntitiesSchema
-from anonymizer.logging import ProgressTracker
 
 logger = logging.getLogger("anonymizer")
 
@@ -57,94 +53,10 @@ def apply_local_replace_strategy(
     text_column: str = COL_TEXT,
     entities_column: str = COL_FINAL_ENTITIES,
 ) -> pd.DataFrame:
-    """Apply deterministic local replace strategy on detected entities."""
-    output_df = dataframe.copy()
-    tracker = ProgressTracker(total=len(output_df), label="Replacement")
+    """Apply deterministic local replace strategy on detected entities (runs on the graph kernel)."""
+    from anonymizer.engine.replace.route import run_local_route
 
-    _debug = logger.isEnabledFor(logging.DEBUG)
-    total_label_counts: Counter[str] = Counter()
-    replacement_maps = []
-    entity_values = output_df[entities_column] if entities_column in output_df.columns else repeat({}, len(output_df))
-    for idx, raw_entities in enumerate(entity_values):
-        rmap = _build_local_replacement_map(
-            entities=EntitiesSchema.from_raw(raw_entities),
-            strategy=strategy,
-        )
-        replacement_maps.append(rmap)
-        if _debug:
-            row_counts: Counter[str] = Counter()
-            for r in rmap.get("replacements", []):
-                row_counts[r.get("label", "unknown")] += 1
-            total_label_counts += row_counts
-            n = sum(row_counts.values())
-            summary = ", ".join(f"{l}={c}" for l, c in row_counts.most_common()) if row_counts else "(none)"
-            logger.debug("  record %d: %d replacements — %s", idx, n, summary)
-        tracker.record_success()
-    output_df[COL_REPLACEMENT_MAP] = replacement_maps
-
-    if _debug:
-        total = sum(total_label_counts.values())
-        summary = ", ".join(f"{label}={count}" for label, count in total_label_counts.most_common())
-        logger.debug("replacement stats: %d unique entities replaced (%s)", total, summary)
-
-    _apply_replacement_maps_to_dataframe(
-        output_df,
-        text_column=text_column,
-        entities_column=entities_column,
-        replacement_map_column=COL_REPLACEMENT_MAP,
-    )
-
-    tracker.log_final()
-    return output_df
-
-
-def apply_replacement_map(
-    dataframe: pd.DataFrame,
-    *,
-    text_column: str = COL_TEXT,
-    entities_column: str = COL_FINAL_ENTITIES,
-    replacement_map_column: str = COL_REPLACEMENT_MAP,
-) -> pd.DataFrame:
-    """Apply pre-generated replacement map to text."""
-    output_df = dataframe.copy()
-    _apply_replacement_maps_to_dataframe(
-        output_df,
-        text_column=text_column,
-        entities_column=entities_column,
-        replacement_map_column=replacement_map_column,
-    )
-    return output_df
-
-
-def _apply_replacement_maps_to_dataframe(
-    dataframe: pd.DataFrame,
-    *,
-    text_column: str,
-    entities_column: str,
-    replacement_map_column: str,
-) -> None:
-    """Apply aligned replacement-map columns and write replacement results in place."""
-    text_values = dataframe[text_column] if text_column in dataframe.columns else repeat("", len(dataframe))
-    entity_values = dataframe[entities_column] if entities_column in dataframe.columns else repeat({}, len(dataframe))
-    map_values = (
-        dataframe[replacement_map_column]
-        if replacement_map_column in dataframe.columns
-        else repeat({"replacements": []}, len(dataframe))
-    )
-
-    replaced_texts = []
-    applications = []
-    for text, raw_entities, raw_map in zip(text_values, entity_values, map_values, strict=True):
-        replaced_text, application = apply_replacements_to_spans(
-            text=str(text),
-            entities=EntitiesSchema.from_raw(raw_entities),
-            replacements=_parse_replacements(raw_map),
-            allow_value_fallback=True,
-        )
-        replaced_texts.append(replaced_text)
-        applications.append(application.to_metrics())
-    dataframe[COL_REPLACED_TEXT] = replaced_texts
-    dataframe[COL_REPLACEMENT_APPLICATION] = applications
+    return run_local_route(dataframe, strategy=strategy, text_column=text_column, entities_column=entities_column)
 
 
 def _build_local_replacement_map(
@@ -166,11 +78,6 @@ def _build_local_replacement_map(
     return {"replacements": replacements}
 
 
-def _apply_replacement_map_to_text(text: str, entities: EntitiesSchema, replacements: list[ReplacementEntry]) -> str:
-    """Compatibility wrapper around the canonical offset replacement primitive."""
-    return apply_replacements_to_spans(text, entities, replacements, allow_value_fallback=True)[0]
-
-
 def apply_replacements_to_spans(
     text: str,
     entities: EntitiesSchema,
@@ -184,25 +91,43 @@ def apply_replacements_to_spans(
     entity value.  Tuple matches are label-aware.  The legacy value-only fallback
     is available only when the value has one unambiguous synthetic value.
     """
-    targeted = len(entities.entities)
-    if not entities.entities:
-        return text, ReplacementApplication(0, 0, 0, {})
-
-    by_value_label, by_value = _index_replacements(replacements)
-
-    spans = sorted(
-        ((entity.start_position, entity.end_position, entity.value, entity.label) for entity in entities.entities),
-        key=lambda item: item[0],
+    spans = tuple(
+        (entity.start_position, entity.end_position, entity.value, entity.label) for entity in entities.entities
     )
+    return _apply_span_entries(text, spans, replacements, allow_value_fallback=allow_value_fallback)
+
+
+def apply_entity_spans(
+    text: str,
+    entities: tuple[EntitySpan, ...],
+    replacements: list[ReplacementEntry],
+    *,
+    allow_value_fallback: bool,
+) -> tuple[str, ReplacementApplication]:
+    """Apply immutable graph detections through the canonical replacement algorithm."""
+    spans = tuple((e.start_position, e.end_position, e.value, e.label) for e in entities)
+    return _apply_span_entries(text, spans, replacements, allow_value_fallback=allow_value_fallback)
+
+
+def _apply_span_entries(
+    text: str,
+    spans: tuple[tuple[int, int, str, str], ...],
+    replacements: list[ReplacementEntry],
+    *,
+    allow_value_fallback: bool,
+) -> tuple[str, ReplacementApplication]:
+    if not spans:
+        return text, ReplacementApplication(0, 0, 0, {})
+    by_value_label, by_value = _index_replacements(replacements)
     replaced, applied, skipped = _apply_indexed_replacements(
         text,
-        spans,
+        sorted(spans, key=lambda item: item[0]),
         by_value_label=by_value_label,
         by_value=by_value,
         allow_value_fallback=allow_value_fallback,
     )
     return replaced, ReplacementApplication(
-        targeted_span_count=targeted,
+        targeted_span_count=len(spans),
         applied_span_count=applied,
         skipped_span_count=sum(skipped.values()),
         skipped_span_label_counts=dict(sorted(skipped.items())),

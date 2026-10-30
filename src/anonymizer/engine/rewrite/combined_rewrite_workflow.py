@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -40,6 +41,7 @@ from anonymizer.engine.constants import (
     COL_UTILITY_SCORE,
     COL_WEIGHTED_LEAKAGE_RATE,
 )
+from anonymizer.engine.detection.detection_workflow import EntityDetectionResult
 from anonymizer.engine.ndd.adapter import RECORD_ID_COLUMN, NddAdapter
 from anonymizer.engine.ndd.model_loader import resolve_model_alias
 from anonymizer.engine.replace.llm_replace_workflow import (
@@ -64,10 +66,12 @@ from anonymizer.engine.rewrite.rewrite_workflow import (
     _apply_passthrough_defaults,
     _has_entities,
     _join_new_columns,
+    _rewrite_lowered,
+    _Rows,
 )
 from anonymizer.engine.rewrite.sensitivity_disposition import SensitivityDispositionWorkflow
 from anonymizer.engine.rewrite.workflow_utils import derive_seed_columns, select_seed_cols
-from anonymizer.engine.row_partitioning import merge_and_reorder, split_rows
+from anonymizer.engine.row_partitioning import ROW_ORDER_COL, merge_and_reorder, split_rows
 from anonymizer.engine.schemas import EntitiesByValueSchema, EntityReplacementMapSchema
 from anonymizer.measurement import stage_timer
 
@@ -509,19 +513,64 @@ class CombinedRewriteWorkflow(RewriteWorkflow):
             )
             if entity_rows.empty:
                 _apply_passthrough_defaults(passthrough_rows)
-                result = RewriteResult(dataframe=merge_and_reorder(passthrough_rows), failed_records=[])
+                result = RewriteResult(
+                    dataframe=merge_and_reorder(passthrough_rows),
+                    failed_records=[],
+                    source_positions=tuple(sorted(passthrough_rows[ROW_ORDER_COL])),
+                )
                 measurement.update(output_row_count=len(result.dataframe), failed_record_count=0)
                 return result
 
-            graph = self.build_graph(
+            rows = _Rows(entity_rows)
+            produce = self._produce(
+                rows,
+                model_configs=model_configs,
                 selected_models=selected_models,
                 replace_model_selection=replace_model_selection,
                 privacy_goal=privacy_goal,
                 evaluation=evaluation,
                 data_summary=data_summary,
+                preview_num_records=preview_num_records,
                 strict_entity_protection=strict_entity_protection,
             )
-            seed = select_seed_cols(entity_rows, derive_seed_columns(graph.columns, entity_rows))
+            result = _rewrite_lowered(entity_rows, passthrough_rows, rows, produce, evaluation)
+            measurement.update(
+                output_row_count=len(result.dataframe),
+                failed_record_count=len(result.failed_records),
+            )
+            return result
+
+    def run_with_detection(
+        self, dataframe: pd.DataFrame, *, detect: Callable[[pd.DataFrame], EntityDetectionResult], **options: Any
+    ) -> RewriteResult:
+        """``RewriteWorkflow.run_with_detection`` with the combined graph; ``options`` are ``run``'s keywords."""
+        return self._run_detected(dataframe, detect, "CombinedRewriteWorkflow.run", options)
+
+    def _produce(
+        self,
+        rows: _Rows,
+        *,
+        model_configs: list[ModelConfig],
+        selected_models: RewriteModelSelection,
+        replace_model_selection: ReplaceModelSelection,
+        privacy_goal: PrivacyGoal,
+        evaluation: EvaluationCriteria,
+        data_summary: str | None = None,
+        preview_num_records: int | None = None,
+        strict_entity_protection: bool = False,
+    ) -> Callable[[], None]:
+        """One combined workflow call over ``rows``, leaving the final candidates in ``rows.frame``."""
+        graph = self.build_graph(
+            selected_models=selected_models,
+            replace_model_selection=replace_model_selection,
+            privacy_goal=privacy_goal,
+            evaluation=evaluation,
+            data_summary=data_summary,
+            strict_entity_protection=strict_entity_protection,
+        )
+
+        def generate() -> None:
+            seed = select_seed_cols(rows.frame, derive_seed_columns(graph.columns, rows.frame))
             run_result = self._adapter.run_workflow(
                 seed,
                 model_configs=model_configs,
@@ -530,15 +579,9 @@ class CombinedRewriteWorkflow(RewriteWorkflow):
                 preview_num_records=preview_num_records,
             )
             restore_empty_skipped_span_label_counts(run_result.dataframe)
-            entity_rows = _join_new_columns(entity_rows, run_result.dataframe)
-            entity_rows = entity_rows.drop(columns=graph.internal_columns, errors="ignore")
-            _apply_passthrough_defaults(passthrough_rows)
-            result = RewriteResult(
-                dataframe=merge_and_reorder(entity_rows, passthrough_rows),
-                failed_records=run_result.failed_records,
-            )
-            measurement.update(
-                output_row_count=len(result.dataframe),
-                failed_record_count=len(result.failed_records),
-            )
-            return result
+            rows.frame = _join_new_columns(
+                rows.frame, run_result.dataframe, source_positions=run_result.source_positions
+            ).drop(columns=graph.internal_columns, errors="ignore")
+            rows.failed.extend(run_result.failed_records)
+
+        return generate

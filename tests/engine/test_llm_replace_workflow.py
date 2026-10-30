@@ -294,7 +294,7 @@ def test_filter_replacement_map_debug_log_does_not_leak_pii(
             raw_map=raw_map, parsed_entities=parsed_entities, record_id="row-abc123"
         )
 
-    assert "Replacement map record" in caplog.text
+    assert "Replacement map: requested=" in caplog.text
     assert "requested=3" in caplog.text
     _assert_no_pii_in_logs(caplog)
     assert len(result["replacements"]) == 3
@@ -303,7 +303,7 @@ def test_filter_replacement_map_debug_log_does_not_leak_pii(
 def test_filter_replacement_map_anomaly_summaries_do_not_leak_pii(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """Unrequested-by-label / unfilled-by-label extras must name the LABEL, not the value."""
+    """Anomaly logs expose counts while retaining labels and values in returned maps."""
     parsed_entities = EntitiesByValueSchema.model_validate(
         {
             "entities_by_value": [
@@ -322,10 +322,10 @@ def test_filter_replacement_map_anomaly_summaries_do_not_leak_pii(
     with caplog.at_level(logging.DEBUG, logger="anonymizer"):
         _filter_replacement_map_to_input_entities(raw_map=raw_map, parsed_entities=parsed_entities, record_id="row-xyz")
 
-    assert "unrequested_by_label" in caplog.text
-    assert "unfilled_by_label" in caplog.text
-    assert "organization_name" in caplog.text
-    assert "phone_number" in caplog.text
+    assert "unrequested=1" in caplog.text
+    assert "unfilled=1" in caplog.text
+    assert "organization_name" not in caplog.text
+    assert "phone_number" not in caplog.text
 
     _assert_no_pii_in_logs(caplog, extra_secrets=("Acme Corp", "NovaCorp"))
 
@@ -361,14 +361,14 @@ def test_filter_replacement_map_repairs_synthetic_original_collisions_without_pi
         ]
     }
     assert "synthetic-original collision" in caplog.text
-    assert "date" in caplog.text
+    assert "date" not in caplog.text
     _assert_no_pii_in_logs(caplog, extra_secrets=("1979-01-01", "1980-02-02", "1991-03-04"))
 
 
 def test_filter_replacement_map_empty_warning_does_not_leak_pii(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """The empty-after-filtering WARNING must report counts + labels only."""
+    """The empty-after-filtering WARNING must report counts only."""
     parsed_entities = EntitiesByValueSchema.model_validate(
         {
             "entities_by_value": [
@@ -388,6 +388,6 @@ def test_filter_replacement_map_empty_warning_does_not_leak_pii(
         )
 
     assert "Replacement map empty after filtering" in caplog.text
-    assert "first_name" in caplog.text
+    assert "first_name" not in caplog.text
     _assert_no_pii_in_logs(caplog, extra_secrets=("Acme Corp", "NovaCorp"))
     assert result == {"replacements": []}

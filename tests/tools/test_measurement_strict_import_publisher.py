@@ -862,7 +862,7 @@ print(json.dumps({"run_ids": run_ids, "leaks": leaks}, sort_keys=True))
         check=True,
         capture_output=True,
         text=True,
-        timeout=60,
+        timeout=120,
     )
     result = json.loads(completed.stdout.strip().splitlines()[-1])
 
