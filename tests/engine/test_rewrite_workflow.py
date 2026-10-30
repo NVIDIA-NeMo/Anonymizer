@@ -4,12 +4,17 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
+from typing import Any
 from unittest.mock import Mock, patch
 
 import numpy as np
 import pandas as pd
 import pytest
+from data_designer.config import custom_column_generator
+from data_designer.config.column_configs import CustomColumnConfig
 from data_designer.config.models import ModelConfig
+from data_designer.interface.data_designer import DataDesigner
 
 from anonymizer.config.models import ReplaceModelSelection, RewriteModelSelection
 from anonymizer.config.rewrite import EvaluationCriteria, PrivacyGoal
@@ -21,10 +26,15 @@ from anonymizer.engine.constants import (
     COL_ENTITIES_BY_VALUE,
     COL_JUDGE_EVALUATION,
     COL_LEAKAGE_MASS,
+    COL_LEAKED_PRIVACY_ITEMS,
     COL_NEEDS_HUMAN_REVIEW,
     COL_NEEDS_REPAIR,
+    COL_PRIVACY_QA,
     COL_PRIVACY_QA_REANSWER,
+    COL_QUALITY_QA_COMPARE,
+    COL_QUALITY_QA_REANSWER,
     COL_REPAIR_ITERATIONS,
+    COL_RETAINED_PROTECTED_ENTITIES,
     COL_REWRITE_REPLACEMENT_READY,
     COL_REWRITTEN_TEXT,
     COL_REWRITTEN_TEXT_NEXT,
@@ -32,7 +42,8 @@ from anonymizer.engine.constants import (
     COL_UTILITY_SCORE,
     COL_WEIGHTED_LEAKAGE_RATE,
 )
-from anonymizer.engine.ndd.adapter import RECORD_ID_COLUMN, FailedRecord, WorkflowRunResult
+from anonymizer.engine.ndd.adapter import RECORD_ID_COLUMN, FailedRecord, NddAdapter, WorkflowRunResult
+from anonymizer.engine.rewrite.repair import RepairWorkflow
 from anonymizer.engine.rewrite.rewrite_workflow import RewriteWorkflow, _detection_valid_fraction, _join_new_columns
 
 _REPLACE_PATCH = "anonymizer.engine.rewrite.rewrite_workflow.LlmReplaceWorkflow"
@@ -567,6 +578,271 @@ def test_repair_loop_runs_up_to_max_iterations(
     workflow_names = [call.kwargs["workflow_name"] for call in adapter.run_workflow.call_args_list]
     repair_calls = [n for n in workflow_names if "repair" in n]
     assert len(repair_calls) == max_iters
+
+
+_PRIVACY_QA = {"items": []}
+
+
+class _ScriptedAdapter:
+    """Adapter-shaped stub: each step returns its seed plus only the columns that step produces.
+
+    ``repairs_needed`` maps a record id to the number of repairs after which it passes evaluation.
+    Repair ``N`` returns ``"<record id> repaired N"`` so every iteration's output is distinct.
+    """
+
+    def __init__(self, repairs_needed: dict[str, int]) -> None:
+        self.repairs_needed = repairs_needed
+        self.seeds: dict[str, pd.DataFrame] = {}
+
+    def run_workflow(self, seed: pd.DataFrame, *, workflow_name: str, **_: object) -> WorkflowRunResult:
+        self.seeds[workflow_name] = seed.copy()
+        output = seed.copy()
+        record_ids = output[RECORD_ID_COLUMN].astype(str)
+        iteration = int(workflow_name.rsplit("-", 1)[1]) if workflow_name[-1].isdigit() else 0
+        if workflow_name == "rewrite-pipeline":
+            output[COL_REWRITTEN_TEXT] = [f"{record_id} initial" for record_id in record_ids]
+            output[COL_PRIVACY_QA] = [dict(_PRIVACY_QA) for _ in record_ids]
+        elif workflow_name.startswith("rewrite-evaluate-"):
+            needs_repair = [iteration < self.repairs_needed[record_id] for record_id in record_ids]
+            output[COL_PRIVACY_QA_REANSWER] = [{"answers": []} for _ in record_ids]
+            output[COL_UTILITY_SCORE] = 0.9
+            output[COL_LEAKAGE_MASS] = [2.0 if flag else 0.0 for flag in needs_repair]
+            output[COL_WEIGHTED_LEAKAGE_RATE] = 0.0
+            output[COL_ANY_HIGH_LEAKED] = False
+            output[COL_RETAINED_PROTECTED_ENTITIES] = [[] for _ in record_ids]
+            output[COL_NEEDS_REPAIR] = needs_repair
+        elif workflow_name.startswith("rewrite-repair-"):
+            output[COL_LEAKED_PRIVACY_ITEMS] = f"leaked items {iteration}"
+            output[COL_REWRITTEN_TEXT_NEXT] = [f"{record_id} repaired {iteration}" for record_id in record_ids]
+        return WorkflowRunResult(dataframe=output, failed_records=[])
+
+    @property
+    def workflow_names(self) -> list[str]:
+        return list(self.seeds)
+
+
+def _run_scripted(
+    adapter: _ScriptedAdapter,
+    *,
+    max_repair_iterations: int,
+    model_configs: list[ModelConfig],
+    rewrite_selection: RewriteModelSelection,
+    replace_selection: ReplaceModelSelection,
+) -> pd.DataFrame:
+    record_ids = list(adapter.repairs_needed)
+    dataframe = pd.DataFrame(
+        {
+            RECORD_ID_COLUMN: record_ids,
+            COL_TEXT: [f"Alice works at Acme ({record_id})" for record_id in record_ids],
+            COL_ENTITIES_BY_VALUE: [
+                {"entities_by_value": [{"value": "Alice", "labels": ["first_name"]}]} for _ in record_ids
+            ],
+        }
+    )
+    with patch(_REPLACE_PATCH) as mock_replace_cls:
+        _mock_replace(mock_replace_cls, dataframe.copy())
+        result = RewriteWorkflow(adapter=Mock(wraps=adapter)).run(
+            dataframe,
+            model_configs=model_configs,
+            selected_models=rewrite_selection,
+            replace_model_selection=replace_selection,
+            privacy_goal=_PRIVACY_GOAL,
+            evaluation=EvaluationCriteria(max_repair_iterations=max_repair_iterations),
+        )
+    return result.dataframe
+
+
+def _by_id(dataframe: pd.DataFrame, column: str) -> dict[str, object]:
+    return dict(zip(dataframe[RECORD_ID_COLUMN].astype(str), dataframe[column]))
+
+
+def test_repair_loop_keeps_each_iterations_repaired_text(
+    stub_model_configs: list[ModelConfig],
+    stub_rewrite_model_selection: RewriteModelSelection,
+    stub_replace_model_selection: ReplaceModelSelection,
+) -> None:
+    adapter = _ScriptedAdapter({"rec": 99})
+
+    result = _run_scripted(
+        adapter,
+        max_repair_iterations=3,
+        model_configs=stub_model_configs,
+        rewrite_selection=stub_rewrite_model_selection,
+        replace_selection=stub_replace_model_selection,
+    )
+
+    row = result.iloc[0]
+    assert row[COL_REWRITTEN_TEXT] == "rec repaired 2"
+    assert row[COL_REWRITTEN_TEXT_NEXT] == "rec repaired 2"
+    assert row[COL_LEAKED_PRIVACY_ITEMS] == "leaked items 2"
+    assert row[COL_REPAIR_ITERATIONS] == 3
+    evaluated = [adapter.seeds[f"rewrite-evaluate-{n}"][COL_REWRITTEN_TEXT].tolist() for n in (1, 2, 3)]
+    assert evaluated == [["rec repaired 0"], ["rec repaired 1"], ["rec repaired 2"]]
+    repaired = [adapter.seeds[f"rewrite-repair-{n}"][COL_REWRITTEN_TEXT].tolist() for n in (0, 1, 2)]
+    assert repaired == [["rec initial"], ["rec repaired 0"], ["rec repaired 1"]]
+
+
+def test_repair_join_keeps_seed_columns(
+    stub_model_configs: list[ModelConfig],
+    stub_rewrite_model_selection: RewriteModelSelection,
+    stub_replace_model_selection: ReplaceModelSelection,
+) -> None:
+    adapter = _ScriptedAdapter({"rec": 99})
+
+    result = _run_scripted(
+        adapter,
+        max_repair_iterations=2,
+        model_configs=stub_model_configs,
+        rewrite_selection=stub_rewrite_model_selection,
+        replace_selection=stub_replace_model_selection,
+    )
+
+    # The repair seed carries the privacy QA as a JSON string; the frame must keep its own dict.
+    assert isinstance(adapter.seeds["rewrite-repair-1"][COL_PRIVACY_QA].iloc[0], str)
+    assert result[COL_PRIVACY_QA].iloc[0] == _PRIVACY_QA
+
+
+def test_repair_loop_mixed_rows_keep_their_last_repair(
+    stub_model_configs: list[ModelConfig],
+    stub_rewrite_model_selection: RewriteModelSelection,
+    stub_replace_model_selection: ReplaceModelSelection,
+) -> None:
+    adapter = _ScriptedAdapter({"thrice": 99, "passing": 0, "once": 1, "twice": 2})
+
+    result = _run_scripted(
+        adapter,
+        max_repair_iterations=3,
+        model_configs=stub_model_configs,
+        rewrite_selection=stub_rewrite_model_selection,
+        replace_selection=stub_replace_model_selection,
+    )
+
+    assert result[RECORD_ID_COLUMN].tolist() == ["thrice", "passing", "once", "twice"]
+    assert _by_id(result, COL_REWRITTEN_TEXT) == {
+        "thrice": "thrice repaired 2",
+        "passing": "passing initial",
+        "once": "once repaired 0",
+        "twice": "twice repaired 1",
+    }
+    assert _by_id(result, COL_REPAIR_ITERATIONS) == {"thrice": 3, "passing": 0, "once": 1, "twice": 2}
+    assert adapter.seeds["rewrite-repair-1"][RECORD_ID_COLUMN].tolist() == ["thrice", "twice"]
+    assert adapter.seeds["rewrite-repair-2"][RECORD_ID_COLUMN].tolist() == ["thrice"]
+
+
+def test_repair_loop_stops_after_successful_repair(
+    stub_model_configs: list[ModelConfig],
+    stub_rewrite_model_selection: RewriteModelSelection,
+    stub_replace_model_selection: ReplaceModelSelection,
+) -> None:
+    adapter = _ScriptedAdapter({"rec": 2})
+
+    result = _run_scripted(
+        adapter,
+        max_repair_iterations=3,
+        model_configs=stub_model_configs,
+        rewrite_selection=stub_rewrite_model_selection,
+        replace_selection=stub_replace_model_selection,
+    )
+
+    assert adapter.workflow_names == [
+        "rewrite-pipeline",
+        "rewrite-evaluate-0",
+        "rewrite-repair-0",
+        "rewrite-evaluate-1",
+        "rewrite-repair-1",
+        "rewrite-evaluate-2",
+    ]
+    assert result[COL_REWRITTEN_TEXT].iloc[0] == "rec repaired 1"
+    assert result[COL_REPAIR_ITERATIONS].iloc[0] == 2
+    assert not bool(result[COL_NEEDS_REPAIR].iloc[0])
+
+
+_REPAIRS_NEEDED = "repairs_needed"
+
+
+@custom_column_generator(
+    required_columns=[COL_REWRITTEN_TEXT, _REPAIRS_NEEDED],
+    side_effect_columns=[
+        COL_PRIVACY_QA_REANSWER,
+        COL_QUALITY_QA_COMPARE,
+        COL_UTILITY_SCORE,
+        COL_LEAKAGE_MASS,
+        COL_WEIGHTED_LEAKAGE_RATE,
+        COL_ANY_HIGH_LEAKED,
+        COL_RETAINED_PROTECTED_ENTITIES,
+        COL_NEEDS_REPAIR,
+    ],
+)
+def _deterministic_evaluation(row: dict[str, Any]) -> dict[str, Any]:
+    needs_repair = int(str(row[COL_REWRITTEN_TEXT]).rsplit("-", 1)[1]) < int(row[_REPAIRS_NEEDED])
+    row[COL_QUALITY_QA_REANSWER] = {"answers": []}
+    row[COL_PRIVACY_QA_REANSWER] = {"answers": []}
+    row[COL_QUALITY_QA_COMPARE] = {"per_item": []}
+    row[COL_UTILITY_SCORE] = 0.9
+    row[COL_LEAKAGE_MASS] = 2.0 if needs_repair else 0.0
+    row[COL_WEIGHTED_LEAKAGE_RATE] = 0.0
+    row[COL_ANY_HIGH_LEAKED] = False
+    row[COL_RETAINED_PROTECTED_ENTITIES] = []
+    row[COL_NEEDS_REPAIR] = needs_repair
+    return row
+
+
+@custom_column_generator(required_columns=[COL_LEAKED_PRIVACY_ITEMS, COL_REWRITTEN_TEXT])
+def _deterministic_repair(row: dict[str, Any]) -> dict[str, Any]:
+    stem, version = str(row[COL_REWRITTEN_TEXT]).rsplit("-", 1)
+    row[COL_REWRITTEN_TEXT_NEXT] = f"{stem}-{int(version) + 1}"
+    return row
+
+
+def test_repair_loop_through_real_adapter_keeps_each_repair(
+    tmp_path: Path,
+    stub_rewrite_model_selection: RewriteModelSelection,
+) -> None:
+    adapter = NddAdapter(DataDesigner(artifact_path=tmp_path / "artifacts", auto_configure_logging=False))
+    workflow = RewriteWorkflow(adapter)
+    workflow._evaluate_wf = Mock(
+        columns=Mock(
+            return_value=[
+                CustomColumnConfig(name=COL_QUALITY_QA_REANSWER, generator_function=_deterministic_evaluation)
+            ]
+        )
+    )
+    leaked_items = RepairWorkflow(adapter).columns(
+        selected_models=stub_rewrite_model_selection,
+        privacy_goal=_PRIVACY_GOAL,
+        effective_threshold=1.0,
+    )[0]
+    workflow._repair_wf = Mock(
+        columns=Mock(
+            return_value=[
+                leaked_items,
+                CustomColumnConfig(name=COL_REWRITTEN_TEXT_NEXT, generator_function=_deterministic_repair),
+            ]
+        )
+    )
+    dataframe = pd.DataFrame(
+        {
+            RECORD_ID_COLUMN: ["twice", "exhausted"],
+            COL_TEXT: ["Alice works at Acme", "Bob works at Beta"],
+            COL_REWRITTEN_TEXT: ["twice-0", "exhausted-0"],
+            COL_PRIVACY_QA: [dict(_PRIVACY_QA), dict(_PRIVACY_QA)],
+            _REPAIRS_NEEDED: [2, 5],
+        }
+    )
+
+    result, failed = workflow._run_evaluate_repair_loop(
+        dataframe,
+        model_configs=[],
+        selected_models=stub_rewrite_model_selection,
+        privacy_goal=_PRIVACY_GOAL,
+        evaluation=EvaluationCriteria(max_repair_iterations=3),
+        preview_num_records=None,
+    )
+
+    assert failed == []
+    assert _by_id(result, COL_REWRITTEN_TEXT) == {"twice": "twice-2", "exhausted": "exhausted-3"}
+    assert _by_id(result, COL_REPAIR_ITERATIONS) == {"twice": 2, "exhausted": 3}
+    assert _by_id(result, COL_PRIVACY_QA) == {"twice": _PRIVACY_QA, "exhausted": _PRIVACY_QA}
 
 
 def test_replacement_unavailable_can_be_repaired(

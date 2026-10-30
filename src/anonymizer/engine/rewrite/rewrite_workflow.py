@@ -430,7 +430,7 @@ class RewriteWorkflow:
             all_failed.extend(repair_result.failed_records)
 
             repaired = repair_result.dataframe
-            failing_rows = _join_new_columns(failing_rows, repaired)
+            failing_rows = _join_new_columns(failing_rows, repaired, overwrite=True, seed_cols=repair_seed_cols)
             if COL_REWRITTEN_TEXT_NEXT in failing_rows.columns:
                 failing_rows[COL_REWRITTEN_TEXT] = failing_rows[COL_REWRITTEN_TEXT_NEXT]
             failing_rows[COL_REPAIR_ITERATIONS] = failing_rows[COL_REPAIR_ITERATIONS].apply(lambda x: int(x) + 1)
