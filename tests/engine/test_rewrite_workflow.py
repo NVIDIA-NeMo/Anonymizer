@@ -34,6 +34,7 @@ from anonymizer.engine.constants import (
     COL_QUALITY_QA_COMPARE,
     COL_QUALITY_QA_REANSWER,
     COL_REPAIR_ITERATIONS,
+    COL_RETAINED_PROTECTED_ENTITIES,
     COL_REWRITE_REPLACEMENT_READY,
     COL_REWRITTEN_TEXT,
     COL_REWRITTEN_TEXT_NEXT,
@@ -608,6 +609,7 @@ class _ScriptedAdapter:
             output[COL_LEAKAGE_MASS] = [2.0 if flag else 0.0 for flag in needs_repair]
             output[COL_WEIGHTED_LEAKAGE_RATE] = 0.0
             output[COL_ANY_HIGH_LEAKED] = False
+            output[COL_RETAINED_PROTECTED_ENTITIES] = [[] for _ in record_ids]
             output[COL_NEEDS_REPAIR] = needs_repair
         elif workflow_name.startswith("rewrite-repair-"):
             output[COL_LEAKED_PRIVACY_ITEMS] = f"leaked items {iteration}"
@@ -767,6 +769,7 @@ _REPAIRS_NEEDED = "repairs_needed"
         COL_LEAKAGE_MASS,
         COL_WEIGHTED_LEAKAGE_RATE,
         COL_ANY_HIGH_LEAKED,
+        COL_RETAINED_PROTECTED_ENTITIES,
         COL_NEEDS_REPAIR,
     ],
 )
@@ -779,6 +782,7 @@ def _deterministic_evaluation(row: dict[str, Any]) -> dict[str, Any]:
     row[COL_LEAKAGE_MASS] = 2.0 if needs_repair else 0.0
     row[COL_WEIGHTED_LEAKAGE_RATE] = 0.0
     row[COL_ANY_HIGH_LEAKED] = False
+    row[COL_RETAINED_PROTECTED_ENTITIES] = []
     row[COL_NEEDS_REPAIR] = needs_repair
     return row
 
