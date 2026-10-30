@@ -763,3 +763,22 @@ Replace judge evaluation:
   `sum_{family}_judged_record_count`, `sum_{family}_valid_record_count`,
   `micro_{family}_valid_rate`, and `sum_{invalid_count_field}`. These rates are
   computed from summed counts, not medians of case-level rates.
+
+### RAT summary denominators and intervals
+
+RAT measurements may include `rows_requested`, `rows_scored`, `rows_missing`, and
+`rows_excluded`. When `rows_requested` is present, the re-identification rate uses
+that denominator; older records retain `rows_processed` as the denominator.
+`rows_scored` excludes `reid_error_rows` from the processed count. Failed rows
+are excluded from the scored count. Scored, failed, missing, and excluded counts
+must fit within `rows_requested` when supplied. Scalar totals for an optional
+count are omitted if any RAT record lacks it. The scalar rate remains an
+unweighted mean of per-record rates, each using its own requested or legacy
+processed-row denominator.
+
+The optional `reidentification_rate_ci95_low_pct` and
+`reidentification_rate_ci95_high_pct` fields must appear together and contain the
+reported rate. Both use finite percentages within [0, 100]; producers must clamp
+rounding outside that range. Sanitized tables retain each record's interval.
+Scalar summaries include the interval only for a single RAT record. Intervals
+are not averaged or recomputed across multiple records.
