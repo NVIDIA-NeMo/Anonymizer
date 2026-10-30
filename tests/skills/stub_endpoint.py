@@ -247,9 +247,11 @@ class _Handler(BaseHTTPRequestHandler):
         body = json.loads(raw) if raw else {}
         model = str(body.get("model", ""))
         text = _messages_text(body)
+        schema = _response_schema(text)
         with self.server.lock:
             self.server.models_seen.add(model)
-        schema = _response_schema(text)
+            if schema is not None:
+                self.server.response_shapes_seen.add(frozenset(schema.get("properties") or {}))
         if "gliner" in model:
             users = [m.get("content") for m in body.get("messages", []) if m.get("role") == "user"]
             content = json.dumps(_detector_payload(users[-1] if users and isinstance(users[-1], str) else text))
@@ -269,6 +271,7 @@ class StubEndpoint(ThreadingHTTPServer):
         super().__init__(("127.0.0.1", 0), _Handler)
         self.lock = threading.Lock()
         self.models_seen: set[str] = set()
+        self.response_shapes_seen: set[frozenset[str]] = set()
         self._thread = threading.Thread(target=self.serve_forever, daemon=True)
 
     @property
