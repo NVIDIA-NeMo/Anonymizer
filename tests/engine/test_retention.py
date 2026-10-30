@@ -165,13 +165,35 @@ def test_retention_matching(value: str, text: str, expected: bool) -> None:
     assert bool(retained_protected(disposition, text)) is expected
 
 
-def test_protected_value_inside_kept_value_is_masked() -> None:
+def test_protected_value_inside_kept_value_is_exempt() -> None:
     disposition = _disposition(
         _entry("Florida", "state", "generalize"),
         _entry("Florida State University", "organization_name", "leave_as_is"),
     )
     assert retained_protected(disposition, "She studied at Florida State University.") == []
     assert _retained_values(disposition, "She studied at Florida State University in Florida.") == ["Florida"]
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Florida State University Foundation",
+        "FLORIDA\nSTATE UNIVERSITY FOUNDATION",
+        "Florida State University and Florida State University Foundation",
+    ],
+)
+def test_kept_phrase_does_not_hide_a_longer_protected_value(text: str) -> None:
+    """#353 promises to flag surviving protected values, including names extending beyond kept spans."""
+    disposition = _disposition(
+        _entry("Florida", "state", "generalize"),
+        _entry("Florida State University", "organization_name", "leave_as_is"),
+        _entry("Florida State University Foundation", "organization_name", "replace"),
+        _entry("University Foundation", "organization_name", "remove"),
+    )
+    assert _retained_values(disposition, text) == [
+        "Florida State University Foundation",
+        "University Foundation",
+    ]
 
 
 def test_retention_regex_metacharacters_are_escaped() -> None:

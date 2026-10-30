@@ -110,8 +110,9 @@ def retained_protected(disposition: Any, rewritten_text: Any) -> list[tuple[str,
     """Return ``(value, label, method)`` for each protected disposition entry whose value survives verbatim.
 
     Entries marked ``leave_as_is`` are never reported, and a kept value that
-    contains a protected value is masked first, so a kept "Florida State
-    University" does not count as a retained "Florida". Values shorter than two
+    contains a protected match exempts that match, so a kept "Florida State
+    University" does not count as a retained "Florida". Matches that extend
+    beyond a kept span are still reported. Values shorter than two
     non-space characters or without any alphanumeric character are skipped.
     """
     entries = _items(disposition, "sensitivity_disposition")
@@ -124,15 +125,22 @@ def retained_protected(disposition: Any, rewritten_text: Any) -> list[tuple[str,
         for e in entries
         if e.get(_METHOD) != _LEAVE_AS_IS and _scannable(str(e.get("entity_value") or ""))
     ]
-    for value in kept:
-        if any(pattern.search(value) and _key(entry.get("entity_value")) != value for pattern, entry in protected):
-            text = _pattern(value).sub(" ", text)
+    kept_spans = [
+        (value, match.start(), match.end()) for value in kept if value for match in _pattern(value).finditer(text)
+    ]
     retained: list[tuple[str, str, str]] = []
     for pattern, entry in protected:
         value, label, method = (str(entry.get(k) or "") for k in ("entity_value", "entity_label", _METHOD))
         item = (value, label, method)
-        if item not in retained and pattern.search(text):
-            retained.append(item)
+        if item in retained:
+            continue
+        for match in pattern.finditer(text):
+            if not any(
+                kept_value != _key(value) and start <= match.start() and match.end() <= end
+                for kept_value, start, end in kept_spans
+            ):
+                retained.append(item)
+                break
     return retained
 
 
