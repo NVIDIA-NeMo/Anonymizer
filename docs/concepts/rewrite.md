@@ -17,7 +17,7 @@ The text is then rewritten to reduce identifiability, applying targeted transfor
 
 ## Key concepts
 
-**Sensitivity** measures the intrinsic re-identification damage an entity causes if it appears in the output — independently of what else is retained. It is not the protection decision itself; rather, it feeds the downstream leakage scoring system.
+**Sensitivity** measures an entity’s privacy risk in the context of the document, considering the information retained alongside it. It determines the protection decision: entities rated `low` must use `leave_as_is`, while entities rated `medium` or `high` must receive protection. Sensitivity also feeds downstream leakage scoring.
 
 | Level | Meaning | Examples | Leakage weight |
 |-------|---------|---------|----------------|
