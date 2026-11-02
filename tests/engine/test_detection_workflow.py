@@ -28,6 +28,7 @@ from anonymizer.engine.constants import (
     COL_LATENT_ENTITIES,
     COL_MERGED_ENTITIES,
     COL_RAW_DETECTED,
+    COL_REGEX_DETECTION_RESULTS,
     COL_SEED_DETECTION_RESULT,
     COL_SEED_ENTITIES,
     COL_SEED_ENTITIES_JSON,
@@ -1231,6 +1232,7 @@ def test_validation_column_is_chunked_validation_plugin(
         COL_TEXT,
         COL_SEED_DETECTION_RESULT,
         COL_TAG_NOTATION,
+        COL_REGEX_DETECTION_RESULTS,
     }
 
 

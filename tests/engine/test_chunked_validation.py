@@ -24,6 +24,7 @@ from data_designer.engine.models.clients.errors import SyncClientUnavailableErro
 from anonymizer.engine.constants import (
     COL_ADMISSION_RESULTS,
     COL_RECONCILED_CANDIDATES,
+    COL_REGEX_DETECTION_RESULTS,
     COL_SEED_DETECTION_RESULT,
     COL_TAG_NOTATION,
     COL_TEXT,
@@ -1263,6 +1264,7 @@ class TestMakeChunkedValidationGenerator:
             COL_TEXT,
             COL_SEED_DETECTION_RESULT,
             COL_TAG_NOTATION,
+            COL_REGEX_DETECTION_RESULTS,
         }
         assert meta["side_effect_columns"] == [COL_VALIDATION_INVENTORIES]
         # Must not declare columns we deliberately don't read; an over-broad

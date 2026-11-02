@@ -19,6 +19,9 @@ from anonymizer.engine.constants import (
     COL_INITIAL_TAGGED_TEXT,
     COL_RAW_DETECTED,
     COL_RECONCILED_CANDIDATES,
+    COL_REGEX_ACCEPTED_ENTITIES,
+    COL_REGEX_DETECTION_RESULTS,
+    COL_REGEX_VALIDATION_TRACE,
     COL_SEED_DETECTION_RESULT,
     COL_SEED_ENTITIES,
     COL_SEED_ENTITIES_JSON,
@@ -31,6 +34,7 @@ from anonymizer.engine.constants import (
     RECORD_ID_COLUMN,
     SEED_DETECTION_RESULT_ID,
 )
+from anonymizer.engine.detection.regex_detection import ResolvedRegexRule
 
 
 class AugmentationConfig(SingleColumnConfig):
@@ -42,6 +46,8 @@ class AugmentationConfig(SingleColumnConfig):
     system_prompt: str | None = Field(default=None, repr=False)
     allowed_entity_labels: list[str] | None = None
     excluded_entity_labels: list[str] = Field(default_factory=list)
+    enabled: bool = True
+    regex_constrained_entity_labels: list[str] = Field(default_factory=list)
 
     @staticmethod
     def get_column_emoji() -> str:
@@ -55,6 +61,7 @@ class AugmentationConfig(SingleColumnConfig):
             COL_INITIAL_TAGGED_TEXT,
             COL_SEED_ENTITIES_JSON,
             COL_TAG_NOTATION,
+            COL_ADMITTED_CANDIDATES,
         ]
 
     @property
@@ -85,6 +92,7 @@ class DetectionTransformConfig(SingleColumnConfig):
     operation: DetectionTransformOperation
     excluded_entity_labels: list[str] = Field(default_factory=list)
     allowed_entity_labels: list[str] | None = None
+    regex_constrained_entity_labels: list[str] = Field(default_factory=list)
     detection_result_id: str = SEED_DETECTION_RESULT_ID
     source_instance: str = "gliner"
 
@@ -94,17 +102,20 @@ class DetectionTransformConfig(SingleColumnConfig):
             RECORD_ID_COLUMN,
             COL_TEXT,
             COL_RAW_DETECTED,
+            COL_REGEX_DETECTION_RESULTS,
         ],
         DetectionTransformOperation.PREPARE_VALIDATION_INPUTS: [COL_TEXT, COL_SEED_ENTITIES],
         DetectionTransformOperation.ADMIT_VALIDATION_DECISIONS: [
             COL_SEED_DETECTION_RESULT,
             COL_VALIDATION_DECISIONS,
             COL_VALIDATION_INVENTORIES,
+            COL_REGEX_DETECTION_RESULTS,
         ],
         DetectionTransformOperation.APPLY_VALIDATION_TO_SEED_ENTITIES: [
             COL_TEXT,
             COL_SEED_DETECTION_RESULT,
             COL_ADMISSION_RESULTS,
+            COL_REGEX_DETECTION_RESULTS,
         ],
         DetectionTransformOperation.MERGE_AND_BUILD_CANDIDATES: [
             COL_TEXT,
@@ -171,6 +182,7 @@ class ChunkedValidationConfig(SingleColumnConfig):
             COL_TEXT,
             COL_SEED_DETECTION_RESULT,
             COL_TAG_NOTATION,
+            COL_REGEX_DETECTION_RESULTS,
         ]
 
     @property
@@ -179,3 +191,24 @@ class ChunkedValidationConfig(SingleColumnConfig):
 
     def get_model_aliases(self) -> list[str]:
         return list(self.pool)
+
+
+class RegexDetectionConfig(SingleColumnConfig):
+    """Serializable local regex-detection column configuration."""
+
+    column_type: Literal["anonymizer-regex-detection"] = "anonymizer-regex-detection"
+    rules: list[ResolvedRegexRule]
+    timeout_seconds: float = Field(gt=0)
+    max_matches_per_rule: int = Field(gt=0)
+
+    @staticmethod
+    def get_column_emoji() -> str:
+        return "A"
+
+    @property
+    def required_columns(self) -> list[str]:
+        return [RECORD_ID_COLUMN, COL_TEXT]
+
+    @property
+    def side_effect_columns(self) -> list[str]:
+        return [COL_REGEX_ACCEPTED_ENTITIES, COL_REGEX_VALIDATION_TRACE, COL_REGEX_DETECTION_RESULTS]

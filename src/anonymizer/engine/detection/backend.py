@@ -7,16 +7,28 @@ import json
 import logging
 import math
 from dataclasses import dataclass
-from typing import SupportsFloat, SupportsIndex, SupportsInt
+from typing import Any, SupportsFloat, SupportsIndex, SupportsInt
 
+from anonymizer.engine.constants import COL_REGEX_DETECTION_RESULTS, COL_SEED_DETECTION_RESULT
 from anonymizer.engine.schemas import (
     AdmissionRoute,
     DetectionResult,
+    DetectionResultBatch,
     Observation,
     SourceView,
 )
 
 logger = logging.getLogger(__name__)
+
+
+def load_seed_detection_results(row: dict[str, Any]) -> DetectionResultBatch:
+    """Load the initial detector and independent per-rule regex results."""
+    return DetectionResultBatch(
+        results=(
+            DetectionResult.model_validate(row[COL_SEED_DETECTION_RESULT]),
+            *(DetectionResult.model_validate(result) for result in row.get(COL_REGEX_DETECTION_RESULTS, [])),
+        )
+    )
 
 
 @dataclass(frozen=True)

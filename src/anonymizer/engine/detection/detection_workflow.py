@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import ClassVar, cast
 
 import pandas as pd
+from data_designer.config.base import SkipConfig
 from data_designer.config.column_configs import LLMStructuredColumnConfig, LLMTextColumnConfig
 from data_designer.config.column_types import ColumnConfigT
 from data_designer.config.config_builder import DataDesignerConfigBuilder
@@ -18,7 +19,9 @@ from data_designer.config.models import ModelConfig
 from pydantic import Field
 
 from anonymizer.config.anonymizer_config import Detect as AnonymizerDetectConfig
+from anonymizer.config.anonymizer_config import resolve_effective_detection_labels
 from anonymizer.config.models import DetectionModelSelection
+from anonymizer.config.regex import BuiltinRegex, RegexRule
 from anonymizer.config.rewrite import PrivacyGoal
 from anonymizer.engine.constants import (
     COL_ADMISSION_RESULTS,
@@ -31,6 +34,7 @@ from anonymizer.engine.constants import (
     COL_LATENT_ENTITIES,
     COL_MERGED_ENTITIES,
     COL_RAW_DETECTED,
+    COL_REGEX_ENTITIES,
     COL_SEED_ENTITIES,
     COL_SEED_ENTITIES_JSON,
     COL_SEED_VALIDATION_CANDIDATES,
@@ -50,6 +54,13 @@ from anonymizer.engine.detection.postprocess import (
     normalize_label,
     normalize_labels,
 )
+from anonymizer.engine.detection.regex_detection import (
+    DEFAULT_MAX_MATCHES_PER_RULE,
+    DEFAULT_REGEX_TIMEOUT_SECONDS,
+    resolve_regex_constrained_labels,
+    resolve_regex_rules,
+    validate_exportable_regex_rules,
+)
 from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter
 from anonymizer.engine.ndd.model_loader import resolve_model_alias, resolve_model_aliases
 from anonymizer.engine.prompt_utils import substitute_placeholders
@@ -63,6 +74,7 @@ from anonymizer.engine.workflow_columns.detection.config import (
     ChunkedValidationConfig,
     DetectionTransformConfig,
     DetectionTransformOperation,
+    RegexDetectionConfig,
 )
 from anonymizer.measurement import stage_timer
 
@@ -112,6 +124,8 @@ class EntityDetectionWorkflow:
         entity_labels: list[str] | None = None,
         excluded_entity_labels: list[str] | None = None,
         entity_label_examples: dict[str, list[str]] | None = None,
+        builtin_regexes: bool = True,
+        regex_rules: list[BuiltinRegex | RegexRule] | None = None,
         data_summary: str | None = None,
         preview_num_records: int | None = None,
         _resolved_label_config: ResolvedEntityLabelConfig | None = None,
@@ -134,6 +148,8 @@ class EntityDetectionWorkflow:
             entity_labels=entity_labels,
             excluded_entity_labels=excluded_entity_labels,
             entity_label_examples=entity_label_examples,
+            builtin_regexes=builtin_regexes,
+            regex_rules=regex_rules,
             data_summary=data_summary,
             _resolved_label_config=_resolved_label_config,
         )
@@ -159,6 +175,8 @@ class EntityDetectionWorkflow:
         entity_labels: list[str] | None = None,
         excluded_entity_labels: list[str] | None = None,
         entity_label_examples: dict[str, list[str]] | None = None,
+        builtin_regexes: bool = True,
+        regex_rules: list[BuiltinRegex | RegexRule] | None = None,
         data_summary: str | None = None,
         _resolved_label_config: ResolvedEntityLabelConfig | None = None,
     ) -> tuple[list[ModelConfig], list[ColumnConfigT]]:
@@ -168,16 +186,37 @@ class EntityDetectionWorkflow:
         and :meth:`build_detection_config` (which exports it for an external runtime),
         so both paths run exactly the same workflow.
         """
+        custom_rules = regex_rules or []
+        labels = _resolve_detection_labels(
+            entity_labels,
+            regex_rules=custom_rules,
+            excluded_entity_labels=set(excluded_entity_labels or []),
+        )
         label_config = _resolved_label_config or resolve_entity_label_config(
-            entity_labels=entity_labels,
+            entity_labels=labels,
             excluded_entity_labels=excluded_entity_labels,
             entity_label_examples=entity_label_examples,
         )
-        labels = label_config.labels
+        label_config.strict_labels = entity_labels is not None
+        label_config.labels = labels
+        for label in labels:
+            label_config.validator_examples.setdefault(label, [])
+        regex_constrained_labels = resolve_regex_constrained_labels(
+            labels=labels,
+            builtin_regexes=builtin_regexes,
+            rules=custom_rules,
+        )
+        normalized_regex_constrained_labels = normalize_labels(regex_constrained_labels)
+        model_labels = [label for label in labels if normalize_label(label) not in normalized_regex_constrained_labels]
+        resolved_regex_rules = resolve_regex_rules(
+            labels=labels,
+            builtin_regexes=builtin_regexes,
+            rules=custom_rules,
+        )
         workflow_model_configs = self._inject_detector_params(
             model_configs=model_configs,
             selected_models=selected_models,
-            labels=labels,
+            labels=model_labels,
             gliner_detection_threshold=gliner_detection_threshold,
         )
 
@@ -208,6 +247,12 @@ class EntityDetectionWorkflow:
         columns = cast(
             list[ColumnConfigT],
             [
+                RegexDetectionConfig(
+                    name=COL_REGEX_ENTITIES,
+                    rules=resolved_regex_rules,
+                    timeout_seconds=DEFAULT_REGEX_TIMEOUT_SECONDS,
+                    max_matches_per_rule=DEFAULT_MAX_MATCHES_PER_RULE,
+                ),
                 DetectionTransformConfig(
                     name=COL_DETECTOR_SOURCE,
                     operation=DetectionTransformOperation.PREPARE_DETECTOR_SOURCE,
@@ -217,12 +262,17 @@ class EntityDetectionWorkflow:
                     name=COL_RAW_DETECTED,
                     prompt=_jinja(COL_DETECTOR_SOURCE, key="text"),
                     model_alias=detection_alias,
+                    skip=SkipConfig(when=f"{{{{ {COL_DETECTOR_SOURCE} == {COL_DETECTOR_SOURCE} }}}}", value="")
+                    if not model_labels
+                    else None,
                 ),
                 DetectionTransformConfig(
                     name=COL_SEED_ENTITIES,
                     operation=DetectionTransformOperation.PARSE_DETECTED_ENTITIES,
                     detection_result_id=SEED_DETECTION_RESULT_ID,
                     source_instance=detection_alias,
+                    regex_constrained_entity_labels=sorted(regex_constrained_labels),
+                    propagate_skip=False,
                 ),
                 DetectionTransformConfig(
                     name=COL_SEED_VALIDATION_CANDIDATES,
@@ -249,6 +299,7 @@ class EntityDetectionWorkflow:
                     operation=DetectionTransformOperation.ADMIT_VALIDATION_DECISIONS,
                     allowed_entity_labels=labels if label_config.strict_labels else None,
                     excluded_entity_labels=list(excluded_entity_labels or []),
+                    regex_constrained_entity_labels=sorted(regex_constrained_labels),
                 ),
                 DetectionTransformConfig(
                     name=COL_SEED_ENTITIES_JSON,
@@ -258,13 +309,15 @@ class EntityDetectionWorkflow:
                     name=COL_AUGMENTED_ENTITIES,
                     prompt_template=_get_augment_prompt(
                         data_summary=data_summary,
-                        labels=labels,
+                        labels=model_labels,
                         strict_labels=label_config.strict_labels,
                         configured_examples=label_config.augmenter_examples,
                     ),
                     model_alias=augmenter_alias,
                     allowed_entity_labels=labels if label_config.strict_labels else None,
                     excluded_entity_labels=list(excluded_entity_labels or []),
+                    enabled=bool(model_labels),
+                    regex_constrained_entity_labels=sorted(regex_constrained_labels),
                 ),
                 DetectionTransformConfig(
                     name=COL_MERGED_ENTITIES,
@@ -292,6 +345,8 @@ class EntityDetectionWorkflow:
         entity_labels: list[str] | None = None,
         excluded_entity_labels: list[str] | None = None,
         entity_label_examples: dict[str, list[str]] | None = None,
+        builtin_regexes: bool = True,
+        regex_rules: list[BuiltinRegex | RegexRule] | None = None,
         data_summary: str | None = None,
     ) -> DataDesignerConfigBuilder:
         """Build (without executing) the core detection workflow as a DataDesigner
@@ -299,6 +354,7 @@ class EntityDetectionWorkflow:
         as :meth:`detect_and_validate_entities` (culminating in final entities); the
         external runtime supplies the model providers and the seed dataset.
         """
+        validate_exportable_regex_rules(regex_rules)
         workflow_model_configs, columns = self._build_detection_spec(
             model_configs=model_configs,
             selected_models=selected_models,
@@ -309,6 +365,8 @@ class EntityDetectionWorkflow:
             entity_labels=entity_labels,
             excluded_entity_labels=excluded_entity_labels,
             entity_label_examples=entity_label_examples,
+            builtin_regexes=builtin_regexes,
+            regex_rules=regex_rules,
             data_summary=data_summary,
         )
         return self._adapter.build_config(
@@ -331,6 +389,8 @@ class EntityDetectionWorkflow:
         entity_labels: list[str] | None = None,
         excluded_entity_labels: list[str] | None = None,
         entity_label_examples: dict[str, list[str]] | None = None,
+        builtin_regexes: bool = True,
+        regex_rules: list[BuiltinRegex | RegexRule] | None = None,
         data_summary: str | None = None,
         job_index: int = 0,
         num_jobs: int = 1,
@@ -343,6 +403,7 @@ class EntityDetectionWorkflow:
         orchestrator), the plugin column configs remain serializable and the model aliases
         are resolved by the runtime's providers.
         """
+        validate_exportable_regex_rules(regex_rules)
         workflow_model_configs, columns = self._build_detection_spec(
             model_configs=model_configs,
             selected_models=selected_models,
@@ -353,6 +414,8 @@ class EntityDetectionWorkflow:
             entity_labels=entity_labels,
             excluded_entity_labels=excluded_entity_labels,
             entity_label_examples=entity_label_examples,
+            builtin_regexes=builtin_regexes,
+            regex_rules=regex_rules,
             data_summary=data_summary,
         )
         return self._adapter.build_config_for_seed(
@@ -434,6 +497,8 @@ class EntityDetectionWorkflow:
         entity_labels: list[str] | None = None,
         excluded_entity_labels: list[str] | None = None,
         entity_label_examples: dict[str, list[str]] | None = None,
+        builtin_regexes: bool = True,
+        regex_rules: list[BuiltinRegex | RegexRule] | None = None,
         privacy_goal: PrivacyGoal | None = None,
         data_summary: str | None = None,
         tag_latent_entities: bool = True,
@@ -455,11 +520,17 @@ class EntityDetectionWorkflow:
                 raise ValueError("privacy_goal is required when tag_latent_entities=True (rewrite mode)")
 
             compute_grouped = True if compute_grouped_entities is None else compute_grouped_entities
+            effective_labels = _resolve_detection_labels(
+                entity_labels,
+                regex_rules=regex_rules,
+                excluded_entity_labels=excluded_entity_labels,
+            )
             label_config = resolve_entity_label_config(
-                entity_labels=entity_labels,
+                entity_labels=effective_labels,
                 excluded_entity_labels=excluded_entity_labels,
                 entity_label_examples=entity_label_examples,
             )
+            label_config.strict_labels = entity_labels is not None
             detected_result = self.detect_and_validate_entities(
                 dataframe,
                 model_configs=model_configs,
@@ -471,6 +542,8 @@ class EntityDetectionWorkflow:
                 entity_labels=entity_labels,
                 excluded_entity_labels=excluded_entity_labels,
                 entity_label_examples=entity_label_examples,
+                builtin_regexes=builtin_regexes,
+                regex_rules=regex_rules,
                 data_summary=data_summary,
                 preview_num_records=preview_num_records,
                 _resolved_label_config=label_config,
@@ -542,6 +615,24 @@ class EntityDetectionWorkflow:
         return resolved
 
 
+def _resolve_detection_labels(
+    entity_labels: list[str] | None,
+    *,
+    regex_rules: list[BuiltinRegex | RegexRule] | None = None,
+    excluded_entity_labels: list[str] | set[str] | None = None,
+) -> list[str]:
+    labels = resolve_effective_detection_labels(
+        entity_labels,
+        regex_rules=regex_rules,
+        excluded_entity_labels=excluded_entity_labels,
+    )
+    if not labels:
+        logger.warning(
+            "excluded_entity_labels removed all labels from the effective detection set. No entities will be detected."
+        )
+    return labels
+
+
 def _materialize_final_entities(
     raw: object,
     *,
@@ -595,7 +686,7 @@ def _filter_excluded_latent_entities(raw: object, excluded_entity_labels: list[s
         return [
             entity
             for entity in raw
-            if not isinstance(entity, dict) or str(entity.get("label", "")).strip().casefold() not in excluded
+            if not isinstance(entity, dict) or normalize_label(str(entity.get("label", ""))) not in excluded
         ]
 
     return raw

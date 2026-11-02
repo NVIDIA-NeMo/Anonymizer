@@ -15,11 +15,14 @@ from anonymizer.engine.schemas import (
     AdmissionResult,
     AdmissionRoute,
     AdmissionStatus,
+    AdmittedCandidate,
     DetectionResult,
+    DetectionResultBatch,
     EffectiveLabelPolicy,
     Observation,
     ObservationRef,
     RawValidationDecisionSchema,
+    SourceTextRef,
     ValidationChoice,
     ValidationInventoryEntry,
     ValidationRequestDecisionSets,
@@ -32,10 +35,12 @@ logger = logging.getLogger("anonymizer.detection.admission")
 
 def apply_validation_admission(
     *,
-    detection_result: DetectionResult,
+    detection_result: DetectionResult | DetectionResultBatch,
     inventories: tuple[ValidationRequestInventory, ...],
     decision_sets: ValidationRequestDecisionSets,
     effective_label_policy: EffectiveLabelPolicy,
+    regex_constrained_entity_labels: Sequence[str] = (),
+    regex_evidence_candidates: Sequence[AdmittedCandidate] = (),
 ) -> tuple[AdmissionResult, ...]:
     """Consume request-scoped validation decisions into terminal outcomes once."""
     if any(inventory.effective_label_policy != effective_label_policy for inventory in inventories):
@@ -111,7 +116,69 @@ def apply_validation_admission(
         if admission is None:
             raise ValueError("an LLM-validated observation was not assigned to a validation request")
         results.append(admission)
-    return tuple(_apply_label_eligibility(result, effective_label_policy) for result in results)
+    eligible = tuple(_apply_label_eligibility(result, effective_label_policy) for result in results)
+    return _apply_regex_label_eligibility(
+        results=eligible,
+        observations_by_ref=observations_by_ref,
+        constrained_labels=regex_constrained_entity_labels,
+        evidence_candidates=regex_evidence_candidates,
+        source_text_ref=detection_result.source_view.source_text_ref,
+    )
+
+
+def _apply_regex_label_eligibility(
+    *,
+    results: tuple[AdmissionResult, ...],
+    observations_by_ref: dict[ObservationRef, Observation],
+    constrained_labels: Sequence[str],
+    evidence_candidates: Sequence[AdmittedCandidate],
+    source_text_ref: SourceTextRef,
+) -> tuple[AdmissionResult, ...]:
+    """Restrict regex-only labels before any overlap can erase alternatives."""
+    constrained = {_normalize_label(label) for label in constrained_labels}
+    if not constrained:
+        return results
+    evidence = {
+        (
+            observations_by_ref[result.observation_ref].start_position,
+            observations_by_ref[result.observation_ref].end_position,
+            _normalize_label(result.effective_label or ""),
+        )
+        for result in results
+        if result.status is AdmissionStatus.accepted
+        and observations_by_ref[result.observation_ref].source_kind in {"regex_user", "regex_builtin"}
+        and _normalize_label(observations_by_ref[result.observation_ref].label)
+        == _normalize_label(result.effective_label or "")
+    }
+    evidence.update(
+        (candidate.start_position, candidate.end_position, _normalize_label(candidate.label))
+        for candidate in evidence_candidates
+        if candidate.source_text_ref == source_text_ref
+        and any(origin.source_kind in {"regex_user", "regex_builtin"} for origin in candidate.accepted_origins)
+    )
+    constrained_results: list[AdmissionResult] = []
+    for result in results:
+        observation = observations_by_ref[result.observation_ref]
+        label = _normalize_label(result.effective_label or "")
+        original_regex_fallback = (
+            result.status is AdmissionStatus.fallback_protected
+            and observation.source_kind in {"regex_user", "regex_builtin"}
+            and label == _normalize_label(observation.label)
+        )
+        if (
+            result.status is not AdmissionStatus.rejected
+            and label in constrained
+            and (observation.start_position, observation.end_position, label) not in evidence
+            and not original_regex_fallback
+        ):
+            result = AdmissionResult(
+                observation_ref=result.observation_ref,
+                route=result.route,
+                status=AdmissionStatus.rejected,
+                reason=AdmissionReason.missing_regex_evidence,
+            )
+        constrained_results.append(result)
+    return tuple(constrained_results)
 
 
 def _apply_label_eligibility(

@@ -13,6 +13,7 @@ from anonymizer.engine.schemas import (
     AdmissionStatus,
     AdmittedCandidate,
     DetectionResult,
+    DetectionResultBatch,
     NativeScore,
     ObservationRef,
     SourceTextRef,
@@ -37,7 +38,7 @@ def normalize_candidate_label(label: str) -> str:
 def materialize_admitted_candidates(
     *,
     canonical_text: str,
-    detection_result: DetectionResult,
+    detection_result: DetectionResult | DetectionResultBatch,
     admission_results: AdmissionResults,
 ) -> tuple[AdmittedCandidate, ...]:
     """Turn eligible terminal admissions into source-bound candidates.
