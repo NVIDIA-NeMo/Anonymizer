@@ -33,6 +33,7 @@ from anonymizer.engine.constants import (
     COL_PRIVACY_QA_REANSWER,
     COL_QUALITY_QA_COMPARE,
     COL_QUALITY_QA_REANSWER,
+    COL_RAW_SENSITIVITY_DISPOSITION,
     COL_REPAIR_ITERATIONS,
     COL_REWRITE_REPLACEMENT_READY,
     COL_REWRITTEN_TEXT,
@@ -336,12 +337,20 @@ def test_calls_sub_workflows_in_order(
             replace_model_selection=stub_replace_model_selection,
             privacy_goal=_PRIVACY_GOAL,
             evaluation=_EVALUATION,
+            data_summary="Customer support conversations",
         )
 
     workflow_names = [call.kwargs["workflow_name"] for call in adapter.run_workflow.call_args_list]
     assert workflow_names[0] == "rewrite-pipeline"
     assert workflow_names[1].startswith("rewrite-evaluate")
     assert "rewrite-final-judge" not in workflow_names
+
+    disposition = next(
+        column
+        for column in adapter.run_workflow.call_args_list[0].kwargs["columns"]
+        if column.name == COL_RAW_SENSITIVITY_DISPOSITION
+    )
+    assert "<data_summary>\nCustomer support conversations\n</data_summary>" in disposition.prompt
 
     assert len(result.dataframe) == 1
 

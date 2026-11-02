@@ -309,6 +309,7 @@ class RewriteWorkflow:
                     selected_models=selected_models,
                     privacy_goal=privacy_goal,
                     strict_entity_protection=strict_entity_protection,
+                    data_summary=data_summary,
                 ),
                 *self._qa_wf.columns(selected_models=selected_models),
                 *self._rewrite_gen_wf.columns(
