@@ -3109,7 +3109,7 @@
               <summary>Source code in <code>src/anonymizer/notebooks/local_inference/gliner2/backend.py</code></summary>
               <pre class="highlight"><code class="language-python">def resolve_device(requested: str) -&gt; str:
     """Resolve and validate a notebook inference device."""
-    import torch  # ty: ignore[unresolved-import] -- installed in the isolated server environment
+    import torch
 
     normalized = requested.strip().lower()
     if normalized not in SUPPORTED_DEVICES:
@@ -3151,7 +3151,7 @@
               <summary>Source code in <code>src/anonymizer/notebooks/local_inference/gliner2/backend.py</code></summary>
               <pre class="highlight"><code class="language-python">def load_model(device: str) -&gt; Any:
     """Download the pinned checkpoint and load it on ``device``."""
-    from gliner2 import GLiNER2  # ty: ignore[unresolved-import] -- isolated server dependency
+    from gliner2 import GLiNER2
     from huggingface_hub import snapshot_download
 
     snapshot_path = snapshot_download(repo_id=MODEL_ID, revision=MODEL_REVISION)
