@@ -102,5 +102,12 @@ include = ["src", "tests", "tests_e2e", "docs", "scripts", "tools"]
 python-version = "3.11"
 root = ["src", ".", "tools/measurement"]
 
+[[tool.ty.overrides]]
+include = ["src/anonymizer/notebooks/local_inference/gliner2/backend.py"]
+
+[tool.ty.overrides.analysis]
+# Notebook dependencies may be absent; inline ignores fail when they are installed.
+allowed-unresolved-imports = ["torch", "gliner2"]
+
 [tool.coverage.run]
 omit = []
