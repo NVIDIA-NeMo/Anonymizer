@@ -105,6 +105,18 @@ def _has_entities_for_evaluation(raw: object) -> bool:
     return bool(EntitiesByValueSchema.from_raw(raw).entities_by_value)
 
 
+def _flag_missed_entities(df: pd.DataFrame) -> pd.DataFrame:
+    """Set needs_human_review on rows whose coverage judge reported missed entities."""
+    if COL_NEEDS_HUMAN_REVIEW not in df.columns or COL_MISSED_ENTITIES not in df.columns:
+        return df
+    missed = df[COL_MISSED_ENTITIES].map(lambda value: isinstance(value, (list, tuple)) and len(value) > 0)
+    if not missed.any():
+        return df
+    flagged = df.copy()
+    flagged.loc[missed.astype(bool), COL_NEEDS_HUMAN_REVIEW] = True
+    return flagged
+
+
 def _log_unavailable_scores(
     dataframe: pd.DataFrame,
     checks: list[tuple[str, str, pd.Series | None]],
@@ -546,6 +558,7 @@ class Anonymizer:
                 time.perf_counter() - stage_start,
             )
             all_failed.extend(coverage_failed)
+            judged_df = _flag_missed_entities(judged_df)
             renamed_trace = _rename_output_columns(judged_df, resolved_text_column=text_column)
             result = AnonymizerResult(
                 dataframe=_build_user_dataframe(

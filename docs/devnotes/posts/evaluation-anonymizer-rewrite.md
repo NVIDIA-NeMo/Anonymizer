@@ -42,7 +42,7 @@ flowchart TD
     E --> F[Post-hoc evaluation\nCoverage · privacy · quality · style]
 ```
 
-Automatic rewrite evaluation scores each generated text for privacy leakage and preserved meaning. If leakage triggers the configured repair criteria, Anonymizer rewrites the text and evaluates it again, stopping when it passes or reaches the maximum number of repair iterations. It then flags outputs for human review when residual leakage or low utility meets the configured review criteria. Post-hoc evaluation is an optional, separate step that you run by calling `evaluate()` after anonymization. It adds informational judge outputs without rewriting the text again or changing the existing human-review decision, and you can configure a different LLM for each judge role. See [Part 1](evaluation-anonymizer-replace.md#anonymization-and-evaluation-as-separate-steps) for more about this workflow.
+Automatic rewrite evaluation scores each generated text for privacy leakage and preserved meaning. If leakage triggers the configured repair criteria, Anonymizer rewrites the text and evaluates it again, stopping when it passes or reaches the maximum number of repair iterations. It then flags outputs for human review when residual leakage or low utility meets the configured review criteria. Post-hoc evaluation is an optional, separate step that you run by calling `evaluate()` after anonymization. It adds informational judge outputs without rewriting the text again, and leaves the human-review decision unchanged except that rows whose coverage judge reports missed entities are also flagged, and you can configure a different LLM for each judge role. See [Part 1](evaluation-anonymizer-replace.md#anonymization-and-evaluation-as-separate-steps) for more about this workflow.
 
 ```python
 from anonymizer import Anonymizer, AnonymizerConfig, AnonymizerInput, EvaluateConfig, Rewrite
@@ -166,7 +166,7 @@ After repair ends, `needs_human_review` becomes `True` when the rewrite is missi
 
 | Output column | Meaning |
 |---|---|
-| `needs_human_review` | Final review flag based on the rewrite metrics |
+| `needs_human_review` | Final review flag based on the rewrite metrics; `evaluate()` also sets it when `missed_entities` is non-empty |
 
 </div>
 
@@ -180,7 +180,7 @@ The report includes entity coverage and a holistic rewrite judgment, with detect
 
 ### Entity Coverage: Were All In-Scope Entities Detected?
 
-Entity coverage works the same way in Rewrite and Replace modes: an independent judge identifies literal sensitive values covered by the configured entity types and measures how many Anonymizer detected. It does not include latent entities—sensitive information implied rather than explicitly stated—or other clues that can only be inferred. See [Part 1: Entity Coverage](evaluation-anonymizer-replace.md#entity-coverage-were-all-in-scope-entities-detected) for the calculation, output columns, and interpretation guidance.
+Entity coverage works the same way in Rewrite and Replace modes: an independent judge identifies literal sensitive values covered by the configured entity types and measures how many Anonymizer detected. It does not include latent entities—sensitive information implied rather than explicitly stated—or other clues that can only be inferred. See [Part 1: Entity Coverage](evaluation-anonymizer-replace.md#entity-coverage-were-all-in-scope-entities-detected) for the calculation, output columns, and interpretation guidance. In Rewrite mode, `evaluate()` also sets `needs_human_review=True` on any row whose `missed_entities` is non-empty.
 
 ### Privacy: Did the Rewrite Reduce Linkage Risk?
 
