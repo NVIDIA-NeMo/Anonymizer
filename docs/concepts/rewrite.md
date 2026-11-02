@@ -191,6 +191,12 @@ The entity-classification LLM runs only for records containing labels outside th
 category table. If you omit `selected_models.rewrite.entity_classifier`, it uses the effective
 `disposition_analyzer` alias, including your override. Set it explicitly to use a separate model.
 
+Every requested custom label must have a classification. Conflicting categories for the
+same label are rejected; identical duplicate classifications are accepted. Invalid responses
+receive one correction attempt with validation feedback. If that attempt is also invalid,
+the record fails and is reported through the workflow's failed records instead of continuing
+to sensitivity disposition with incomplete or contradictory classifications.
+
 ---
 
 ## Evaluating rewrite output

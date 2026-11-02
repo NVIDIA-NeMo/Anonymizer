@@ -3,13 +3,19 @@
 
 from __future__ import annotations
 
+import json
+from functools import partial
 from pathlib import Path
 from typing import Any
+from unittest.mock import Mock
 
 import pandas as pd
 import pytest
 from data_designer.config import custom_column_generator
-from data_designer.config.column_configs import CustomColumnConfig, LLMStructuredColumnConfig
+from data_designer.config.column_configs import CustomColumnConfig
+from data_designer.engine.models.clients.types import AssistantMessage, ChatCompletionResponse
+from data_designer.engine.models.errors import ModelGenerationValidationFailureError
+from data_designer.engine.models.facade import ModelFacade
 from data_designer.interface.data_designer import DataDesigner
 
 from anonymizer.config.models import RewriteModelSelection
@@ -27,6 +33,7 @@ from anonymizer.engine.rewrite.entity_classification import (
     EntityClassificationWorkflow,
     _classify_labels_locally,
     _get_entity_classification_prompt,
+    _make_classification_column,
     _merge_entity_classifications,
     _unique_labels,
     classify_labels_locally,
@@ -39,12 +46,11 @@ def test_columns_returns_exactly_three_in_order(
     cols = EntityClassificationWorkflow().columns(selected_models=stub_rewrite_model_selection)
     assert len(cols) == 3
     assert isinstance(cols[0], CustomColumnConfig)
-    assert isinstance(cols[1], LLMStructuredColumnConfig)
+    assert isinstance(cols[1], CustomColumnConfig)
     assert isinstance(cols[2], CustomColumnConfig)
     assert cols[0].name == COL_ENTITY_CLASSIFICATION_LOCAL
     assert cols[1].name == COL_ENTITY_CLASSIFICATION_LLM
     assert cols[2].name == COL_ENTITY_CLASSIFICATION
-    assert cols[1].model_alias == stub_rewrite_model_selection.entity_classifier
 
 
 def test_prompt_references_unmapped_labels_column() -> None:
@@ -219,3 +225,63 @@ def test_classification_skips_only_rows_without_custom_labels(
         "category": "direct_identifier",
     }
     assert pd.isna(classifications.iloc[2])
+
+
+@pytest.mark.parametrize(
+    "categories", [[], ["direct_identifier", "quasi_identifier"], ["quasi_identifier", "direct_identifier"]]
+)
+@pytest.mark.parametrize("recover", [True, False])
+def test_classification_corrects_once_then_succeeds_or_fails(categories: list[str], recover: bool) -> None:
+    invalid = {"classifications": [{"label": "custom_widget_id", "category": category} for category in categories]}
+    valid = {"classifications": [{"label": "custom_widget_id", "category": "direct_identifier"}]}
+    model = Mock(spec=ModelFacade)
+    model.model_name = "test"
+    model.model_provider_name = "test"
+    model._get_mcp_facade.return_value = None
+    model.completion.side_effect = [
+        ChatCompletionResponse(message=AssistantMessage(content=json.dumps(payload)))
+        for payload in (invalid, valid if recover else invalid)
+    ]
+    model.generate = partial(ModelFacade.generate, model)
+    generate = _make_classification_column("classifier")
+    row = {COL_ENTITY_CLASSIFICATION_UNMAPPED_LABELS: ["custom_widget_id"]}
+    if recover:
+        result = generate(row, generator_params=None, models={"classifier": model})
+        assert result[COL_ENTITY_CLASSIFICATION_LLM] == valid
+    else:
+        with pytest.raises(ModelGenerationValidationFailureError, match="custom_widget_id"):
+            generate(row, generator_params=None, models={"classifier": model})
+    assert model.completion.call_count == 2
+    messages = model.completion.call_args.args[0]
+    assert "custom_widget_id" in str(messages[2])
+    assert "complete classifications list" in str(messages[2])
+
+
+@pytest.mark.parametrize(
+    "categories", [[], ["direct_identifier", "quasi_identifier"], ["quasi_identifier", "direct_identifier"]]
+)
+def test_merge_rejects_missing_or_conflicting_custom_labels(categories: list[str]) -> None:
+    row = {
+        COL_ENTITY_CLASSIFICATION_UNMAPPED_LABELS: ["custom_widget_id"],
+        COL_ENTITY_CLASSIFICATION_LLM: {
+            "classifications": [{"label": "custom_widget_id", "category": category} for category in categories]
+        },
+    }
+    with pytest.raises(ValueError, match="custom_widget_id"):
+        _merge_entity_classifications(row)
+    assert COL_ENTITY_CLASSIFICATION not in row
+
+
+def test_merge_accepts_identical_duplicates() -> None:
+    result = _merge_entity_classifications(
+        {
+            COL_ENTITY_CLASSIFICATION_UNMAPPED_LABELS: ["custom_widget_id"],
+            COL_ENTITY_CLASSIFICATION_LLM: {
+                "classifications": [
+                    {"label": "custom_widget_id", "category": "direct_identifier"},
+                    {"label": "custom_widget_id", "category": "direct_identifier"},
+                ]
+            },
+        }
+    )
+    assert result[COL_ENTITY_CLASSIFICATION] == {"custom_widget_id": "direct_identifier"}
