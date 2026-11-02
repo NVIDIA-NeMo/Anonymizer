@@ -43,6 +43,12 @@ class RegexValidationResult:
     valid: bool
     reason: str | None = None
 
+    def __post_init__(self) -> None:
+        if not isinstance(self.valid, bool):
+            raise TypeError("RegexValidationResult.valid must be a bool.")
+        if self.reason is not None and not isinstance(self.reason, str):
+            raise TypeError("RegexValidationResult.reason must be a string or None.")
+
 
 RegexValidatorReturn: TypeAlias = bool | RegexValidationResult
 RegexValidatorCallable: TypeAlias = Callable[[RegexCandidate], RegexValidatorReturn]
@@ -170,14 +176,14 @@ def _minimum_match_width(pattern: str) -> int:
         source.ignore_space = bool(info.flags & _regex_core.VERBOSE)
         try:
             parsed = _regex_core._parse_pattern(source, info)
-            _reject_match_reset(parsed, _regex_core)
+            _reject_unsupported_constructs(parsed, _regex_core)
             return _minimum_node_width(parsed, _regex_core)
         except _regex_core._UnscopedFlagSet:
             global_flags = info.global_flags
 
 
-def _reject_match_reset(node: Any, core: Any) -> None:
-    """Reject ``\\K`` anywhere in the parsed regex tree.
+def _reject_unsupported_constructs(node: Any, core: Any) -> None:
+    """Reject match resets and fuzzy matching anywhere in the parsed tree.
 
     Width analysis intentionally treats assertions as zero-width and does not
     otherwise need to descend into them. Keep this validation separate so a
@@ -186,14 +192,16 @@ def _reject_match_reset(node: Any, core: Any) -> None:
     """
     if isinstance(node, core.Keep):
         raise ValueError("Regex patterns must not use unsupported match reset \\K.")
+    if isinstance(node, core.Fuzzy):
+        raise ValueError("Regex patterns must not use unsupported fuzzy matching.")
 
     for attribute in ("items", "branches", "subpattern", "yes_item", "no_item"):
         child = getattr(node, attribute, None)
         if isinstance(child, (list, tuple)):
             for item in child:
-                _reject_match_reset(item, core)
+                _reject_unsupported_constructs(item, core)
         elif isinstance(child, core.RegexBase):
-            _reject_match_reset(child, core)
+            _reject_unsupported_constructs(child, core)
 
 
 def _minimum_node_width(node: Any, core: Any) -> int:

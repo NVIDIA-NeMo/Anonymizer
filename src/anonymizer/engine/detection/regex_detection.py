@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import inspect
 import ipaddress
+from collections import Counter
 from collections.abc import Iterable
 from dataclasses import dataclass
 from functools import lru_cache
@@ -216,6 +217,8 @@ def detect_regex_entities(
                     end = start + len(trimmed)
                     if end <= start:
                         continue
+                if rule.source == "regex_builtin" and rule.label == "credit_debit_card":
+                    end = start + len(_trim_credit_card(text[start:end]))
                 value = text[start:end]
                 validation = _run_local_validator(
                     text=text,
@@ -319,14 +322,19 @@ def build_regex_detection_results(
 
 def _trim_url_trailing_punctuation(value: str) -> str:
     """Remove prose punctuation while preserving balanced URL delimiters."""
-    trimmed = value.rstrip(_URL_TRAILING_PUNCTUATION)
-    while trimmed:
-        closing = trimmed[-1]
+    counts = Counter(value)
+    end = len(value)
+    while end:
+        closing = value[end - 1]
+        if closing in _URL_TRAILING_PUNCTUATION:
+            end -= 1
+            continue
         opening = _URL_DELIMITER_PAIRS.get(closing)
-        if opening is None or trimmed.count(closing) <= trimmed.count(opening):
+        if opening is None or counts[closing] <= counts[opening]:
             break
-        trimmed = trimmed[:-1].rstrip(_URL_TRAILING_PUNCTUATION)
-    return trimmed
+        counts[closing] -= 1
+        end -= 1
+    return value[:end]
 
 
 def _run_local_validator(
@@ -439,13 +447,21 @@ def _entry_point_provider(entry_point: Any) -> str:
     return str(getattr(entry_point, "value", "unknown package"))
 
 
-def validate_exportable_regex_rules(rules: list[BuiltinRegex | RegexRule] | None) -> None:
-    """Require named validators for enabled rules in portable workflow exports."""
+def validate_exportable_regex_rules(
+    rules: list[BuiltinRegex | RegexRule] | None,
+    *,
+    active_labels: Iterable[str] | None = None,
+) -> None:
+    """Require named validators for enabled, in-scope exported rules."""
+    active = None if active_labels is None else {normalize_entity_label(label) for label in active_labels}
     callable_labels = sorted(
         {
             rule.label
             for rule in rules or []
-            if isinstance(rule, RegexRule) and rule.enabled and callable(rule.validator)
+            if isinstance(rule, RegexRule)
+            and rule.enabled
+            and callable(rule.validator)
+            and (active is None or rule.label in active)
         }
     )
     if callable_labels:
@@ -457,7 +473,25 @@ def validate_exportable_regex_rules(rules: list[BuiltinRegex | RegexRule] | None
 
 
 def _validate_credit_card(candidate: RegexCandidate) -> bool:
-    digits = "".join(char for char in candidate.value if char in "0123456789")
+    return _passes_card_checksum(candidate.value)
+
+
+def _trim_credit_card(value: str) -> str:
+    """Prefer the longest valid card, recovering only at complete digit groups.
+
+    A greedy built-in match can include an adjacent numeric code. Never recover
+    a checksum-valid prefix by cutting inside a contiguous run of digits.
+    """
+    if _passes_card_checksum(value):
+        return value
+    for index in range(len(value) - 1, 0, -1):
+        if value[index] in " -" and _passes_card_checksum(value[:index]):
+            return value[:index]
+    return value
+
+
+def _passes_card_checksum(value: str) -> bool:
+    digits = "".join(char for char in value if char in "0123456789")
     if not 13 <= len(digits) <= 19 or len(set(digits)) == 1:
         return False
     total = 0

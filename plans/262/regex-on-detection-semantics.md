@@ -39,3 +39,26 @@ full suite, lint and type checks. No new live inference is needed for integratio
 Do not include native schema enforcement or PR #267 prompt changes. Review the
 diff against #305 before replacing #265's branch; retain the backup and use a
 lease for any eventual history rewrite.
+
+## Remaining review fixes
+
+- Recover built-in payment cards at complete digit-group boundaries when a
+  trailing numeric code makes the longest candidate fail Luhn; never truncate
+  inside a contiguous digit run, and prefer a valid full-length candidate.
+- Trim URL punctuation in linear time with one delimiter count and one final
+  slice, preserving existing balanced-delimiter behavior.
+- Validate the runtime types of local validator result fields without coercion.
+- Apply exportability checks only to enabled rules in the effective label scope.
+- Explicitly reject fuzzy matching constructs, including nested forms, with an
+  unsupported-syntax error; document this conservative width-analysis boundary.
+
+Add failing regressions first, including both export builders and both regex
+admission routes. Run all tests and repository checks after the fixes, and use
+an offline URL scaling probe rather than timing-sensitive CI assertions.
+
+The review regressions reproduced 23 failures before the implementation fixes.
+The URL probe with 4k/8k/16k/32k trailing punctuation pairs took median
+0.69/1.34/2.68/5.41 ms locally, consistent with linear scaling. These are offline
+diagnostics, not performance guarantees or CI thresholds. End-to-end preview
+and create tests also verify that the recovered card is redacted without
+consuming its trailing numeric code; unexpected model calls fail those tests.

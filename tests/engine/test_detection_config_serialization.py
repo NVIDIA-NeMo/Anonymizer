@@ -7,7 +7,7 @@ import json
 import subprocess
 import sys
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 from unittest.mock import Mock, patch
 
 import pandas as pd
@@ -21,7 +21,7 @@ from data_designer.interface.data_designer import DataDesigner
 from data_designer.plugins import Plugin
 
 from anonymizer.config.models import DetectionModelSelection
-from anonymizer.config.regex import RegexRule
+from anonymizer.config.regex import BuiltinRegex, RegexCandidate, RegexRule
 from anonymizer.config.replace_strategies import Redact
 from anonymizer.engine.constants import (
     COL_ADMISSION_RESULTS,
@@ -392,11 +392,23 @@ def test_regex_constrained_detection_config_round_trips_with_model_columns_skipp
 
 
 @pytest.mark.parametrize("preview_num_records", [2, None], ids=["preview", "create"])
+@pytest.mark.parametrize("card_with_code", [False, True], ids=["custom-ticket", "builtin-card-with-code"])
 def test_regex_constrained_matches_survive_skipped_model_columns_in_data_designer(
     tmp_path: Path,
     preview_num_records: int | None,
+    card_with_code: bool,
 ) -> None:
-    input_df = pd.DataFrame({COL_TEXT: ["TKT-123", "nothing"]})
+    value = "4111 1111 1111 1111" if card_with_code else "TKT-123"
+    label = "credit_debit_card" if card_with_code else "ticket"
+    suffix = " 123" if card_with_code else ""
+    rule = (
+        BuiltinRegex(label=label, validate_matches_with_llm=False, detect_additional_matches=False)
+        if card_with_code
+        else RegexRule(
+            label=label, pattern=r"TKT-\d+", validate_matches_with_llm=False, detect_additional_matches=False
+        )
+    )
+    input_df = pd.DataFrame({COL_TEXT: [value + suffix, "nothing"]})
     model_configs = [
         ModelConfig(
             alias="known",
@@ -418,16 +430,9 @@ def test_regex_constrained_matches_survive_skipped_model_columns_in_data_designe
         model_configs=model_configs,
         selected_models=selected_models,
         gliner_detection_threshold=0.3,
-        entity_labels=["ticket"],
-        builtin_regexes=False,
-        regex_rules=[
-            RegexRule(
-                label="ticket",
-                pattern=r"TKT-\d+",
-                validate_matches_with_llm=False,
-                detect_additional_matches=False,
-            )
-        ],
+        entity_labels=[label],
+        builtin_regexes=card_with_code,
+        regex_rules=[rule],
     )
     payload = builder.get_builder_config().to_json()
     assert payload is not None
@@ -470,9 +475,55 @@ def test_regex_constrained_matches_survive_skipped_model_columns_in_data_designe
             for entity in detection["entities"]
         ]
         for detection in detected
-    ] == [[("TKT-123", "ticket", 0, 7)], []]
+    ] == [[(value, label, 0, len(value))], []]
 
     replacement_input = result.dataframe[[COL_TEXT]].copy()
     replacement_input[COL_FINAL_ENTITIES] = detected
     replaced = apply_local_replace_strategy(replacement_input, strategy=Redact())
-    assert replaced[COL_REPLACED_TEXT].tolist() == ["[REDACTED_TICKET]", "nothing"]
+    assert replaced[COL_REPLACED_TEXT].tolist() == [f"[REDACTED_{label.upper()}]{suffix}", "nothing"]
+
+
+@pytest.mark.parametrize("builder_kind", ["dataframe", "seed"])
+@pytest.mark.parametrize("rule_scope", ["excluded", "disabled", "out_of_scope", "active"])
+def test_export_checks_callable_validators_only_for_active_rules(
+    tmp_path: Path, builder_kind: str, rule_scope: str
+) -> None:
+    def validator(candidate: RegexCandidate) -> bool:
+        return bool(candidate.value)
+
+    seed_path = tmp_path / "seed.parquet"
+    dataframe = pd.DataFrame({COL_TEXT: ["Alice"]})
+    dataframe.to_parquet(seed_path, index=False)
+    models = parse_model_configs(None)
+    workflow = EntityDetectionWorkflow(adapter=NddAdapter(data_designer=cast(DataDesigner, Mock())))
+    kwargs: dict[str, Any] = dict(
+        seed_path=seed_path,
+        model_configs=models.model_configs,
+        selected_models=models.selected_models.detection,
+        gliner_detection_threshold=0.3,
+        entity_labels=["first_name"] if rule_scope == "out_of_scope" else ["first_name", "ticket"],
+        excluded_entity_labels=["ticket"] if rule_scope == "excluded" else None,
+        builtin_regexes=False,
+        regex_rules=[
+            RegexRule(label="ticket", pattern=r"TKT-\d+", validator=validator, enabled=rule_scope != "disabled")
+        ],
+    )
+    if rule_scope == "active":
+        with pytest.raises(ValueError, match="registered validator names"):
+            if builder_kind == "dataframe":
+                workflow.build_detection_config(dataframe, **kwargs)
+            else:
+                workflow.build_detection_builder_for_seed(**kwargs)
+    else:
+        builder = (
+            workflow.build_detection_config(dataframe, **kwargs)
+            if builder_kind == "dataframe"
+            else workflow.build_detection_builder_for_seed(**kwargs)
+        )
+        payload = builder.get_builder_config().to_json()
+        assert payload is not None
+        restored = DataDesignerConfigBuilder.from_config(payload)
+        assert (
+            next(column for column in restored.get_column_configs() if isinstance(column, RegexDetectionConfig)).rules
+            == []
+        )

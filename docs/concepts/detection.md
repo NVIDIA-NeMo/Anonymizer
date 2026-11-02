@@ -152,14 +152,24 @@ the match value, offsets, named groups, adjacent context, and rule ID. Result
 `reason` is optional diagnostic metadata; never put source values or other PII
 in it. A false result discards only that match. Exceptions fail the record;
 validators must not be asynchronous.
+`RegexValidationResult.valid` must be a Boolean and `reason` must be a string
+or `None`; malformed results fail the record rather than being coerced.
+
+The built-in payment-card recognizer prefers the longest checksum-valid match.
+If a trailing numeric code invalidates that match, it tries shorter candidates
+only at complete digit-group boundaries, never inside a contiguous digit run.
+Custom patterns retain their explicitly matched spans.
 
 For exported builders, use a validator name registered by a trusted installed
 package under `nemo_anonymizer.regex_validators`; direct callables are
-in-process only. Names must be unique. Imported validators execute trusted
+in-process only. Disabled or excluded rules do not impose this export restriction.
+Names must be unique. Imported validators execute trusted
 Python code, so do not load registrations from untrusted packages.
 
-Patterns use the third-party `regex` dialect. Invalid, zero-width, or oversized
-patterns are rejected during configuration. Runtime matching has a per-rule
+Patterns use the third-party `regex` dialect, except that fuzzy matching groups
+and match reset (`\K`) are unsupported. Invalid, zero-width, or oversized
+patterns are rejected during configuration, as are constructs whose consumed
+width cannot be established conservatively. Runtime matching has a per-rule
 timeout and match-count limit; exceeding either fails the record rather than
 silently omitting detections. This is not a sandbox for arbitrary validator
 code.
