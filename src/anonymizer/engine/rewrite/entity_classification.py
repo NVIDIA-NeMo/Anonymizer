@@ -3,12 +3,16 @@
 
 from __future__ import annotations
 
+import json
 import logging
+from functools import partial
 from typing import Any
 
 from data_designer.config import SkipConfig, custom_column_generator
-from data_designer.config.column_configs import CustomColumnConfig, LLMStructuredColumnConfig
+from data_designer.config.column_configs import CustomColumnConfig
 from data_designer.config.column_types import ColumnConfigT
+from data_designer.engine.models.parsers.errors import ParserException
+from data_designer.engine.models.recipes.response_recipes import PydanticResponseRecipe
 
 from anonymizer.config.models import RewriteModelSelection
 from anonymizer.engine.constants import (
@@ -83,7 +87,7 @@ def _classify_labels_locally(row: dict[str, Any]) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-def _get_entity_classification_prompt() -> str:
+def _get_entity_classification_prompt(labels: list[str] | None = None) -> str:
     prompt = """Classify each entity label below as either a direct identifier or a quasi-identifier.
 
 DIRECT IDENTIFIERS uniquely identify an individual (or their account/device) on their own.
@@ -99,13 +103,70 @@ document — this is a fixed taxonomy decision, not a contextual risk assessment
 <<LABELS>>
 </labels_to_classify>
 
+Return one classification for every requested label. Do not include unrequested labels.
+
 If <labels_to_classify> is empty, return an empty classifications list."""
     return substitute_placeholders(
         prompt,
         {
-            "<<LABELS>>": _jinja(COL_ENTITY_CLASSIFICATION_UNMAPPED_LABELS),
+            "<<LABELS>>": json.dumps(labels, ensure_ascii=False)
+            if labels is not None
+            else _jinja(COL_ENTITY_CLASSIFICATION_UNMAPPED_LABELS),
         },
     )
+
+
+def _validate_classifications(result: EntityLabelClassificationsSchema, requested: set[str]) -> None:
+    categories: dict[str, str] = {}
+    conflicts: set[str] = set()
+    for item in result.classifications:
+        if item.label not in requested:
+            continue
+        if item.label in categories and categories[item.label] != item.category:
+            conflicts.add(item.label)
+        categories[item.label] = item.category
+    errors = []
+    if conflicts:
+        errors.append(f"Conflicting classifications for requested custom labels: {', '.join(sorted(conflicts))}.")
+    missing = requested - categories.keys()
+    if missing:
+        errors.append(f"Missing classifications for requested custom labels: {', '.join(sorted(missing))}.")
+    if errors:
+        raise ValueError(
+            " ".join(errors)
+            + " Return the complete classifications list with exactly one entry per requested label, "
+            + 'using category "direct_identifier" or "quasi_identifier". Do not include unrequested labels.'
+        )
+
+
+def _parse_classifications(response: str, *, requested: set[str]) -> EntityLabelClassificationsSchema:
+    recipe = PydanticResponseRecipe(data_type=EntityLabelClassificationsSchema)
+    result = EntityLabelClassificationsSchema.model_validate(recipe.parse(response))
+    try:
+        _validate_classifications(result, requested)
+    except ValueError as exc:
+        raise ParserException(str(exc), source=response) from exc
+    return result
+
+
+def _make_classification_column(classifier_alias: str) -> Any:
+    @custom_column_generator(
+        required_columns=[COL_ENTITY_CLASSIFICATION_UNMAPPED_LABELS],
+        model_aliases=[classifier_alias],
+    )
+    def _classify(row: dict[str, Any], generator_params: Any, models: dict) -> dict[str, Any]:
+        labels = normalize_payload(row[COL_ENTITY_CLASSIFICATION_UNMAPPED_LABELS])
+        recipe = PydanticResponseRecipe(data_type=EntityLabelClassificationsSchema)
+        result, _ = models[classifier_alias].generate(
+            prompt=recipe.apply_recipe_to_user_prompt(_get_entity_classification_prompt(labels)),
+            parser=partial(_parse_classifications, requested=set(labels)),
+            max_correction_steps=1,
+            max_conversation_restarts=0,
+        )
+        row[COL_ENTITY_CLASSIFICATION_LLM] = result.model_dump(mode="json")
+        return row
+
+    return _classify
 
 
 # ---------------------------------------------------------------------------
@@ -128,7 +189,8 @@ def _merge_entity_classifications(row: dict[str, Any]) -> dict[str, Any]:
         EntityLabelClassificationsSchema.model_validate(llm_raw) if llm_raw else EntityLabelClassificationsSchema()
     )
     merged = dict(local)
-    requested_labels = set(row.get(COL_ENTITY_CLASSIFICATION_UNMAPPED_LABELS) or [])
+    requested_labels = set(normalize_payload(row.get(COL_ENTITY_CLASSIFICATION_UNMAPPED_LABELS)) or [])
+    _validate_classifications(llm_result, requested_labels - set(local) - DEFAULT_ENTITY_LABEL_CATEGORY.keys())
     for item in llm_result.classifications:
         if item.label in local or item.label in DEFAULT_ENTITY_LABEL_CATEGORY or item.label not in requested_labels:
             logger.warning("Ignoring classification for unrequested or locally resolved label %r.", item.label)
@@ -162,11 +224,9 @@ class EntityClassificationWorkflow:
                 name=COL_ENTITY_CLASSIFICATION_LOCAL,
                 generator_function=_classify_labels_locally,
             ),
-            LLMStructuredColumnConfig(
+            CustomColumnConfig(
                 name=COL_ENTITY_CLASSIFICATION_LLM,
-                prompt=_get_entity_classification_prompt(),
-                model_alias=classifier_alias,
-                output_format=EntityLabelClassificationsSchema,
+                generator_function=_make_classification_column(classifier_alias),
                 skip=SkipConfig(
                     when=substitute_placeholders(
                         "{{ not <<UNMAPPED_LABELS>> }}",
