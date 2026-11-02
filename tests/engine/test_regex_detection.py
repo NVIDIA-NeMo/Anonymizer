@@ -779,3 +779,92 @@ def test_export_ignores_callable_validator_on_disabled_custom_rule() -> None:
         return bool(candidate.value)
 
     validate_exportable_regex_rules([RegexRule(label="ticket", pattern=r"TKT-\d+", validator=validator, enabled=False)])
+
+
+@pytest.mark.parametrize("llm_validation", [False, True])
+@pytest.mark.parametrize(
+    ("value", "suffix"),
+    [
+        ("4111 1111 1111 1111", " 123"),
+        ("4111-1111-1111-1111", "-123"),
+        ("4111111111111111", " 123"),
+        ("4111 1111 1111 1111", " 1234"),
+        ("4222 2222 2222 2", " 123"),
+        ("4000 0000 0000 0000 006", ""),
+    ],
+)
+def test_builtin_card_keeps_valid_group_boundary_before_numeric_code(
+    value: str, suffix: str, llm_validation: bool
+) -> None:
+    text = f"Card {value}{suffix}."
+    rules = resolve_regex_rules(
+        labels=["credit_debit_card"],
+        builtin_regexes=True,
+        rules=[
+            BuiltinRegex(
+                label="credit_debit_card", validate_matches_with_llm=llm_validation, detect_additional_matches=False
+            )
+        ],
+    )
+    result = detect_regex_entities(text, rules=rules)
+    entities = result.llm_entities if llm_validation else result.accepted_entities
+    assert [(entity.value, entity.start_position, entity.end_position) for entity in entities] == [
+        (value, 5, 5 + len(value))
+    ]
+    assert text[entities[0].start_position : entities[0].end_position] == value
+
+
+@pytest.mark.parametrize(
+    "value", ["4111111111111111123", "41111111111111111234", "4111 1111 1111 1112 123", "0000 0000 0000 0000 000"]
+)
+def test_builtin_card_does_not_recover_inside_digit_run_or_accept_invalid_card(value: str) -> None:
+    result = detect_regex_entities(
+        value, rules=resolve_regex_rules(labels=["credit_debit_card"], builtin_regexes=True, rules=[])
+    )
+    assert result.llm_entities == result.accepted_entities == []
+
+
+def test_custom_card_pattern_retains_its_explicit_span() -> None:
+    value = "4111 1111 1111 1111 123"
+    rules = resolve_regex_rules(
+        labels=["credit_debit_card"],
+        builtin_regexes=False,
+        rules=[RegexRule(label="credit_debit_card", pattern=value, validate_matches_with_llm=False)],
+    )
+    assert [entity.value for entity in detect_regex_entities(value, rules=rules).accepted_entities] == [value]
+
+
+def test_url_trimming_does_not_rescan_each_suffix() -> None:
+    class NoRescanUrl(str):
+        def rstrip(self, chars: str | None = None) -> str:
+            return NoRescanUrl(super().rstrip(chars))
+
+        def count(self, *args: Any, **kwargs: Any) -> int:
+            raise AssertionError("URL trimming must not repeatedly scan suffixes")
+
+    value = NoRescanUrl("https://example.com/(balanced)" + ")." * 10000)
+    assert regex_detection._trim_url_trailing_punctuation(value) == "https://example.com/(balanced)"
+
+
+@pytest.mark.parametrize("closing", [")", "]", "}", "）", "】", "》", "」", "』"])
+def test_url_trimming_handles_long_unbalanced_delimiters(closing: str) -> None:
+    value = "https://example.com/path" + closing * 20000 + "."
+    assert regex_detection._trim_url_trailing_punctuation(value) == "https://example.com/path"
+
+
+@pytest.mark.parametrize("malformed", [{"valid": "false"}, {"valid": True, "reason": 123}])
+def test_malformed_local_validation_result_fails_without_echoing_values(
+    malformed: dict[str, Any], caplog: pytest.LogCaptureFixture
+) -> None:
+    def validator(candidate: RegexCandidate) -> RegexValidationResult:
+        return RegexValidationResult(**malformed)
+
+    rules = resolve_regex_rules(
+        labels=["token"],
+        builtin_regexes=False,
+        rules=[RegexRule(label="token", pattern="private-token", validator=validator, validate_matches_with_llm=False)],
+    )
+    with pytest.raises(RuntimeError, match="with TypeError") as exc:
+        detect_regex_entities("private-token", rules=rules)
+    assert "private-token" not in str(exc.value)
+    assert "private-token" not in caplog.text

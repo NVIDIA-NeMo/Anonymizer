@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+from typing import Any
 
 import pytest
 from pydantic import ValidationError
@@ -19,7 +20,7 @@ from anonymizer.config.anonymizer_config import (
     infer_input_source_suffix,
     resolve_effective_detection_labels,
 )
-from anonymizer.config.regex import BuiltinRegex, RegexCandidate, RegexRule
+from anonymizer.config.regex import BuiltinRegex, RegexCandidate, RegexRule, RegexValidationResult
 from anonymizer.config.replace_strategies import (
     Annotate,
     Hash,
@@ -565,6 +566,26 @@ def test_regex_rule_allows_consuming_lookarounds() -> None:
 
     assert lookahead.pattern == r"(?=CASE-[0-9]+)CASE-[0-9]+"
     assert lookbehind.pattern == r"(?<=CASE-)[0-9]+"
+
+
+@pytest.mark.parametrize(
+    "pattern", [r"(?b)(?:abc){e<=1}", r"x|(?:abc){e<=1}", r"(?=(?:abc){e<=1})abc", r"(?:abc){d<=3}"]
+)
+def test_regex_rule_rejects_fuzzy_syntax_explicitly(pattern: str) -> None:
+    with pytest.raises(ValidationError, match="unsupported fuzzy matching"):
+        RegexRule(label="token", pattern=pattern)
+
+
+def test_regex_rule_allows_best_match_flag_without_fuzzy_group() -> None:
+    assert RegexRule(label="token", pattern=r"(?b)abc").pattern == r"(?b)abc"
+
+
+@pytest.mark.parametrize(
+    ("valid", "reason"), [("false", None), (0, None), (1, None), (None, None), (True, 123), (False, [])]
+)
+def test_regex_validation_result_rejects_nonconforming_fields(valid: Any, reason: Any) -> None:
+    with pytest.raises(TypeError, match=r"RegexValidationResult\.(valid|reason)"):
+        RegexValidationResult(valid=valid, reason=reason)
 
 
 def test_regex_rule_width_analysis_supports_regex_dialect_and_inline_flags() -> None:

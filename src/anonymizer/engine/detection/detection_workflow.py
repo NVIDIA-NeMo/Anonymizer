@@ -354,7 +354,12 @@ class EntityDetectionWorkflow:
         as :meth:`detect_and_validate_entities` (culminating in final entities); the
         external runtime supplies the model providers and the seed dataset.
         """
-        validate_exportable_regex_rules(regex_rules)
+        validate_exportable_regex_rules(
+            regex_rules,
+            active_labels=resolve_effective_detection_labels(
+                entity_labels, regex_rules=regex_rules, excluded_entity_labels=excluded_entity_labels
+            ),
+        )
         workflow_model_configs, columns = self._build_detection_spec(
             model_configs=model_configs,
             selected_models=selected_models,
@@ -403,7 +408,12 @@ class EntityDetectionWorkflow:
         orchestrator), the plugin column configs remain serializable and the model aliases
         are resolved by the runtime's providers.
         """
-        validate_exportable_regex_rules(regex_rules)
+        validate_exportable_regex_rules(
+            regex_rules,
+            active_labels=resolve_effective_detection_labels(
+                entity_labels, regex_rules=regex_rules, excluded_entity_labels=excluded_entity_labels
+            ),
+        )
         workflow_model_configs, columns = self._build_detection_spec(
             model_configs=model_configs,
             selected_models=selected_models,
