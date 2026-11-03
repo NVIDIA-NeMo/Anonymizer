@@ -34,12 +34,13 @@ class _GlinerDetectionBackend:
         canonical_text: str,
         raw_output: object,
     ) -> DetectionResult:
-        """Convert raw output to observations, skipping malformed or mismatched spans.
+        """Convert raw output to observations, rejecting source-text mismatches.
 
         Whitespace is trimmed from source bounds before publishing each value.
         GLiNER derives text and offsets from the same span, so a text mismatch
         indicates inconsistent source text or offset mapping at the integration
-        boundary. Skip that span, log only its offsets, and retain other spans.
+        boundary. Fail the record rather than silently lose protection, and
+        include only offsets in the error to avoid exposing source text.
         """
         if source_view.end_position > len(canonical_text):
             raise ValueError(
@@ -71,12 +72,10 @@ class _GlinerDetectionBackend:
             canonical_end = source_view.start_position + view_relative_end
             source_value = canonical_text[canonical_start:canonical_end]
             if detector_text.casefold() != source_value.strip().casefold():
-                logger.warning(
-                    "Skipping GLiNER entity whose text does not match source offsets [%d, %d)",
-                    canonical_start,
-                    canonical_end,
+                raise ValueError(
+                    "Detector entity text does not match the source span at offsets "
+                    f"[{canonical_start}, {canonical_end})"
                 )
-                continue
             canonical_start += len(source_value) - len(source_value.lstrip())
             canonical_end -= len(source_value) - len(source_value.rstrip())
             candidates.append((canonical_start, canonical_end, label, score, raw_index))

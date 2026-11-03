@@ -330,21 +330,29 @@ def test_gliner_backend_maps_view_relative_offsets_to_canonical_source() -> None
     assert (observation.start_position, observation.end_position) == (7, 12)
 
 
-def test_gliner_backend_skips_source_mismatch_without_losing_valid_observations(
-    caplog: pytest.LogCaptureFixture,
+@pytest.mark.parametrize(
+    ("text", "mismatched_text", "start", "end"),
+    [
+        ("Alice met Bob", "Carol", 0, 5),
+        ("😀 Alice and Bob", "Alice", 3, 8),
+    ],
+    ids=["different-value", "utf16-style-offsets"],
+)
+def test_gliner_backend_rejects_source_mismatch_even_with_valid_observations(
+    text: str, mismatched_text: str, start: int, end: int
 ) -> None:
-    with caplog.at_level(logging.WARNING, logger="anonymizer.engine.detection.backend"):
-        result = _build_result(
-            canonical_text="Alice met Bob",
+    bob_start = text.index("Bob")
+    with pytest.raises(ValueError) as exc_info:
+        _build_result(
+            canonical_text=text,
             raw_entities=[
-                {"text": "Carol", "label": "first_name", "start": 0, "end": 5, "score": 0.9},
-                {"text": "Bob", "label": "first_name", "start": 10, "end": 13, "score": 0.8},
+                {"text": "Bob", "label": "first_name", "start": bob_start, "end": bob_start + 3, "score": 0.8},
+                {"text": mismatched_text, "label": "first_name", "start": start, "end": end, "score": 0.9},
             ],
         )
 
-    assert [(item.value, item.start_position, item.end_position) for item in result.observations] == [("Bob", 10, 13)]
-    assert "source offsets [0, 5)" in caplog.text
-    assert all(value not in caplog.text for value in ("Alice", "Carol", "Bob", "first_name"))
+    assert str(exc_info.value) == (f"Detector entity text does not match the source span at offsets [{start}, {end})")
+    assert all(value not in str(exc_info.value) for value in ("Alice", "Carol", "Bob", "first_name"))
 
 
 def test_gliner_backend_publishes_empty_result_for_no_valid_observations() -> None:
