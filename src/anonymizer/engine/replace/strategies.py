@@ -67,7 +67,7 @@ def apply_local_replace_strategy(
     entity_values = output_df[entities_column] if entities_column in output_df.columns else repeat({}, len(output_df))
     for idx, raw_entities in enumerate(entity_values):
         rmap = _build_local_replacement_map(
-            entities=EntitiesSchema.from_raw(raw_entities),
+            entities=EntitiesSchema.from_raw(raw_entities, strict=True),
             strategy=strategy,
         )
         replacement_maps.append(rmap)
@@ -137,7 +137,7 @@ def _apply_replacement_maps_to_dataframe(
     for text, raw_entities, raw_map in zip(text_values, entity_values, map_values, strict=True):
         replaced_text, application = apply_replacements_to_spans(
             text=str(text),
-            entities=EntitiesSchema.from_raw(raw_entities),
+            entities=EntitiesSchema.from_raw(raw_entities, strict=True),
             replacements=_parse_replacements(raw_map),
             allow_value_fallback=True,
         )
