@@ -32,6 +32,7 @@ from anonymizer.engine.constants import (
 from anonymizer.engine.detection.augmentation import (
     _find_exact_occurrences,
     _ground_augmentation_items,
+    _ground_item,
     _repair_message,
     augment_row,
     augment_row_async,
@@ -317,6 +318,45 @@ def test_grounding_materializes_every_exact_contextual_occurrence() -> None:
         ("May", 9, 12),
         ("May", 41, 44),
     ]
+
+
+@pytest.mark.parametrize(
+    ("text", "value", "before", "after", "starts", "failures"),
+    [
+        ("May now", "May", "", " now", (0,), ()),
+        ("Ask May", "May", "Ask ", "", (4,), ()),
+        ("May", "May", "", "", (0,), ()),
+        ("May now", "May", "Ask ", " now", (), ("non_verbatim_context",)),
+        ("Ask May", "May", "Ask ", " later", (), ("non_verbatim_context",)),
+        ("May now", "May", "", " now!", (), ("non_verbatim_context",)),
+        ("Ask May", "May", "!Ask ", "", (), ("non_verbatim_context",)),
+        ("Éva met Éva", "Éva", "", " met Éva", (0,), ()),
+        ("Éva met Éva", "Éva", "Éva met ", "", (8,), ()),
+    ],
+)
+def test_context_matching_respects_source_edges(
+    text: str,
+    value: str,
+    before: str,
+    after: str,
+    starts: tuple[int, ...],
+    failures: tuple[str, ...],
+) -> None:
+    actual_failures, actual_starts = _ground_item(
+        view_text=text, value=value, context_before=before, context_after=after
+    )
+    assert tuple(failure.value for failure in actual_failures) == failures
+    assert actual_starts == starts
+
+
+def test_context_matching_retains_all_matches_in_a_repetitive_record() -> None:
+    unit = "Ask May now. "
+    repetitions = 2000
+    failures, starts = _ground_item(
+        view_text=unit * repetitions, value="May", context_before="Ask ", context_after=" now."
+    )
+    assert failures == ()
+    assert starts == tuple(index * len(unit) + 4 for index in range(repetitions))
 
 
 def test_empty_context_is_valid_only_when_value_is_the_entire_view() -> None:

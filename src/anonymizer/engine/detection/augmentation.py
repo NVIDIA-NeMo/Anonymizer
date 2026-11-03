@@ -293,8 +293,8 @@ def _ground_item(
     if not context_before and not context_after and value != view_text:
         return (AugmentationGroundingFailureCategory.missing_context,), ()
 
-    before_matches = [start for start in starts if view_text[:start].endswith(context_before)]
-    after_matches = [start for start in starts if view_text[start + len(value) :].startswith(context_after)]
+    before_matches = [start for start in starts if view_text.endswith(context_before, 0, start)]
+    after_matches = [start for start in starts if view_text.startswith(context_after, start + len(value))]
     failures: list[AugmentationGroundingFailureCategory] = []
     if context_before and not before_matches:
         failures.append(AugmentationGroundingFailureCategory.non_verbatim_context)
@@ -307,7 +307,7 @@ def _ground_item(
     matches = tuple(
         start
         for start in starts
-        if view_text[:start].endswith(context_before) and view_text[start + len(value) :].startswith(context_after)
+        if view_text.endswith(context_before, 0, start) and view_text.startswith(context_after, start + len(value))
     )
     if not failures and not matches:
         failures.append(AugmentationGroundingFailureCategory.zero_contextual_matches)
