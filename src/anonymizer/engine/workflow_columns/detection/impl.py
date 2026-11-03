@@ -14,6 +14,14 @@ from data_designer.engine.column_generators.generators.base import (
     ColumnGeneratorWithModelRegistry,
 )
 
+from anonymizer.engine.constants import (
+    COL_REGEX_ACCEPTED_ENTITIES,
+    COL_REGEX_DETECTION_RESULTS,
+    COL_REGEX_ENTITIES,
+    COL_REGEX_VALIDATION_TRACE,
+    COL_TEXT,
+    RECORD_ID_COLUMN,
+)
 from anonymizer.engine.detection.augmentation import augment_row, augment_row_async
 from anonymizer.engine.detection.chunked_validation import (
     ChunkedValidationParams,
@@ -29,11 +37,14 @@ from anonymizer.engine.detection.custom_columns import (
     prepare_detector_source,
     prepare_validation_inputs,
 )
+from anonymizer.engine.detection.regex_detection import build_regex_detection_results, detect_regex_entities
+from anonymizer.engine.schemas import EntitiesSchema, SourceTextRef
 from anonymizer.engine.workflow_columns.detection.config import (
     AugmentationConfig,
     ChunkedValidationConfig,
     DetectionTransformConfig,
     DetectionTransformOperation,
+    RegexDetectionConfig,
 )
 
 _TRANSFORMS: dict[DetectionTransformOperation, Callable[[dict[str, Any]], dict[str, Any]]] = {
@@ -107,12 +118,14 @@ class DetectionTransformGenerator(ColumnGeneratorCellByCell[DetectionTransformCo
                 data,
                 detection_result_id=self.config.detection_result_id,
                 source_instance=self.config.source_instance,
+                regex_constrained_entity_labels=self.config.regex_constrained_entity_labels,
             )
         if operation == DetectionTransformOperation.ADMIT_VALIDATION_DECISIONS:
             return admit_validation_decisions(
                 data,
                 allowed_entity_labels=self.config.allowed_entity_labels,
                 excluded_entity_labels=self.config.excluded_entity_labels,
+                regex_constrained_entity_labels=self.config.regex_constrained_entity_labels,
             )
         return _TRANSFORMS[operation](data)
 
@@ -162,6 +175,8 @@ class AugmentationGenerator(ColumnGeneratorWithModelRegistry[AugmentationConfig]
             allowed_entity_labels=self.config.allowed_entity_labels,
             excluded_entity_labels=self.config.excluded_entity_labels,
             system_prompt=self.config.system_prompt,
+            enabled=self.config.enabled,
+            regex_constrained_entity_labels=self.config.regex_constrained_entity_labels,
         )
 
     async def agenerate(self, data: dict[str, Any]) -> dict[str, Any]:  # ty: ignore[invalid-method-override]
@@ -173,7 +188,38 @@ class AugmentationGenerator(ColumnGeneratorWithModelRegistry[AugmentationConfig]
             allowed_entity_labels=self.config.allowed_entity_labels,
             excluded_entity_labels=self.config.excluded_entity_labels,
             system_prompt=self.config.system_prompt,
+            enabled=self.config.enabled,
+            regex_constrained_entity_labels=self.config.regex_constrained_entity_labels,
         )
+
+
+class RegexDetectionGenerator(ColumnGeneratorCellByCell[RegexDetectionConfig]):
+    """Run bounded local recognition and publish source-bound observations."""
+
+    def generate(self, data: dict[str, Any]) -> dict[str, Any]:
+        text = str(data[COL_TEXT])
+        result = detect_regex_entities(
+            text,
+            rules=self.config.rules,
+            timeout_seconds=self.config.timeout_seconds,
+            max_matches_per_rule=self.config.max_matches_per_rule,
+        )
+        data[COL_REGEX_ENTITIES] = EntitiesSchema(
+            entities=[entity.as_dict() for entity in result.llm_entities]
+        ).model_dump(mode="json")
+        data[COL_REGEX_ACCEPTED_ENTITIES] = EntitiesSchema(
+            entities=[entity.as_dict() for entity in result.accepted_entities]
+        ).model_dump(mode="json")
+        data[COL_REGEX_VALIDATION_TRACE] = [entry.as_dict() for entry in result.validation_trace]
+        data[COL_REGEX_DETECTION_RESULTS] = [
+            item.model_dump(mode="json")
+            for item in build_regex_detection_results(
+                text=text,
+                source_text_ref=SourceTextRef(record_id=str(data[RECORD_ID_COLUMN]), field_id=COL_TEXT),
+                matches=result,
+            )
+        ]
+        return data
 
 
 def _derive_max_parallel_chunks(models: dict[str, Any]) -> int:

@@ -9,7 +9,14 @@ Entity detection is the first stage of every Anonymizer pipeline. Both replace a
 
 ## How it works
 
-Detection combines a lightweight GLiNER2 PII model with LLM-based refinement. GLiNER2 produces an initial set of entity spans, an LLM validates those candidates by keeping, reclassifying, or dropping them based on context, and then an augmenter finds entities GLiNER2 missed. Augmented findings are merged directly and are not independently revalidated.
+Detection combines local regex recognizers, a lightweight GLiNER2 PII model, and LLM-based refinement. Regex and GLiNER2 findings retain independent source identities and admission routes. An LLM keeps, reclassifies, or drops candidates requiring contextual validation; locally accepted regex matches bypass that call but still obey label exclusions. An augmenter then finds missing entities. Augmented findings are not independently revalidated.
+
+After admission, identical label/span candidates are combined with their accepted
+provenance intact. Overlaps are resolved once: longer spans win first; source
+priority breaks equal-span ties (custom regex, built-in regex, GLiNER, augmenter).
+A rejected claim never removes an independently accepted match at the same span.
+Detections are occurrence-specific: accepting one occurrence does not copy its
+label to every occurrence of the same text.
 
 Augmenter suggestions must match the source text and their supplied context exactly. If some do not, Anonymizer keeps the matching suggestions and asks the augmenter to correct only the others once. Suggestions that still do not match are dropped; the record and its other detections are retained. Transport errors or responses that do not match the required schema still fail the record.
 
@@ -75,10 +82,94 @@ records use the same caller-provided IDs in `result.failed_records`. Use
 | `entity_label_examples` | `{}` | User-configured positive examples organized by label. Examples for default labels extend their built-in examples; every referenced non-default label must also appear in an explicit `entity_labels` set. |
 | `excluded_entity_labels` | `None` | List of labels to exclude from detection, even if present in `entity_labels` or the default set. Excluded labels are removed from the active detection scope and filtered from the final entity output. |
 | `gliner_threshold` | `0.3` | GLiNER confidence threshold (0.0--1.0). Lower values detect more entities but may increase false positives. |
+| `builtin_regexes` | `True` | Enable built-in recognizers for supported labels in the effective detection scope. |
+| `regex_rules` | `[]` | Custom `RegexRule` patterns and per-label `BuiltinRegex` settings. |
 | `validation_max_entities_per_call` | `100` | Number of detected entities to validate per LLM call. This limit may be exceeded to keep detections covering the same text together. See [Chunked validation](#chunked-validation). |
 | `validation_excerpt_window_chars` | `500` | Characters of context included before and after a chunk's entity spans in the validator prompt. Bounds per-chunk prompt size; not the model's context-window limit. |
 
 ---
+
+## Regex recognition
+
+Built-ins cover `credit_debit_card`, `email`, `ipv4`, `ipv6`,
+`mac_address`, and `url`. They run only for active labels and use local
+structural checks (such as IP parsing and the card-number Luhn checksum).
+Format validity is not proof that a value identifies a person; contextual
+LLM validation is enabled by default.
+
+The URL recognizer supports explicit `http://`, `https://`, `ftp://`, `ftps://`,
+`sftp://`, `ws://`, and `wss://` addresses, plus `www.` forms. Explicit-scheme
+addresses may use internal single-label hosts or `localhost`, as well as DNS
+names and IP addresses. Recognition and structural validation are entirely
+local: no URL is fetched or resolved. Arbitrary bare domains, scheme-relative
+references (`//host/path`), JSON-escaped addresses, `file://`, and cloud-storage
+locators such as `s3://` are not covered by this built-in. Custom rules can
+cover these forms. When `detect_additional_matches=False`, this scope is also
+the label's detection limit; neither GLiNER nor augmentation fills its gaps.
+Surrounding prose punctuation is trimmed while balanced delimiters are kept;
+ambiguous literal trailing punctuation can require a custom rule with exact
+match boundaries.
+
+Use the same `regex_rules` list to configure built-ins or add custom patterns:
+
+```python
+from anonymizer import BuiltinRegex, Detect, RegexRule
+
+Detect(
+    regex_rules=[
+        BuiltinRegex(label="email", validate_matches_with_llm=False),
+        BuiltinRegex(label="url", enabled=False),
+        RegexRule(label="support_case", pattern=r"CASE-[0-9]{8}"),
+    ],
+)
+```
+
+`Detect(builtin_regexes=False)` disables all built-ins without disabling custom
+rules. With `entity_labels=None`, enabled custom rules extend the default label
+set. With an explicit `entity_labels` list, every enabled custom rule's label
+must appear in it. Exclusions always win, including for directly accepted rules.
+
+Each enabled rule has two independent controls:
+
+| Setting | Default | Effect when false |
+| --- | --- | --- |
+| `validate_matches_with_llm` | `True` | Locally valid matches are admitted directly, without contextual validation. |
+| `detect_additional_matches` | `True` | Regex supplies every candidate span for the label; GLiNER and augmentation cannot introduce other spans for it. |
+
+Enabled rules sharing a label must agree on `detect_additional_matches`.
+When it is false, a model reclassification or augmentation suggestion needs
+accepted, unchanged-label regex evidence at the exact source span. A rejected
+regex match cannot authorize another claim. If a validator omits a decision,
+the original regex span can retain fallback protection, but grants no accepted
+authority to other claims.
+
+Custom rules may include a synchronous `validator` callable accepting
+`RegexCandidate` and returning `bool` or `RegexValidationResult`. It receives
+the match value, offsets, named groups, adjacent context, and rule ID. Result
+`reason` is optional diagnostic metadata; never put source values or other PII
+in it. A false result discards only that match. Exceptions fail the record;
+validators must not be asynchronous.
+`RegexValidationResult.valid` must be a Boolean and `reason` must be a string
+or `None`; malformed results fail the record rather than being coerced.
+
+The built-in payment-card recognizer prefers the longest checksum-valid match.
+If a trailing numeric code invalidates that match, it tries shorter candidates
+only at complete digit-group boundaries, never inside a contiguous digit run.
+Custom patterns retain their explicitly matched spans.
+
+For exported builders, use a validator name registered by a trusted installed
+package under `nemo_anonymizer.regex_validators`; direct callables are
+in-process only. Disabled or excluded rules do not impose this export restriction.
+Names must be unique. Imported validators execute trusted
+Python code, so do not load registrations from untrusted packages.
+
+Patterns use the third-party `regex` dialect, except that fuzzy matching groups
+and match reset (`\K`) are unsupported. Invalid, zero-width, or oversized
+patterns are rejected during configuration, as are constructs whose consumed
+width cannot be established conservatively. Runtime matching has a per-rule
+timeout and match-count limit; exceeding either fails the record rather than
+silently omitting detections. This is not a sandbox for arbitrary validator
+code.
 
 ## Chunked validation
 
