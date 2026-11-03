@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""SP-14 invocation-scoped operations: one call over all ready targets, per-target fan-out (E14.1-E14.20)."""
+"""SP-14 phase-scoped operations: one call over all ready targets, per-target fan-out (E14.1-E14.21)."""
 
 from __future__ import annotations
 
@@ -408,4 +408,18 @@ def program() -> list[dict[str, str]]:
         )
 
     c.guard("E14.20", adapter_helper_reports)
+
+    def phase_scoped_name() -> tuple[bool, str]:
+        rec = Recorder()
+        r = run(g, Operation.phase_scoped("transform", rec.invocation_transform().fn))
+        old = Operation("old", rec.invocation_transform().fn, scope="invocation")  # ty: ignore[invalid-argument-type]
+        return (
+            rec.count() == 1
+            and len(rec.calls[0][1]) == 3
+            and [t for _, t in r.content()] == _replace(TEXTS)
+            and old.scope == "phase_scoped",
+            f"calls={rec.count()}, tuple size={len(rec.calls[0][1])}, old spelling scope={old.scope}",
+        )
+
+    c.guard("E14.21", phase_scoped_name)
     return c.lines

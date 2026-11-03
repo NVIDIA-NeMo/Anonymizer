@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""SP-17 covering verifiers and invocation-scoped bodies with their own ports (E17.1-E17.9)."""
+"""SP-17 covering verifiers and phase-scoped bodies with their own ports (E17.1-E17.9)."""
 
 from __future__ import annotations
 

@@ -124,8 +124,8 @@ def _planned(ops: tuple[tuple[str, Operation], ...], targets: int) -> Count:
         return Count(None, "opaque")
     if "unknown" in bounds:
         return Count(None, "unknown")
-    per_target = sum((op.requests.count or 0) for _, op in ops if op.scope != "invocation")
-    total = per_target * targets + sum((op.requests.count or 0) for _, op in ops if op.scope == "invocation")
+    per_target = sum((op.requests.count or 0) for _, op in ops if op.scope != "phase_scoped")
+    total = per_target * targets + sum((op.requests.count or 0) for _, op in ops if op.scope == "phase_scoped")
     return Count(total, "upper" if "upper" in bounds else "exact")
 
 
@@ -208,7 +208,7 @@ class InspectionSummary:
 
 @dataclass(frozen=True)
 class ProtectionResult:
-    """Reconciled result: the canonical record every projection derives from without rerunning work."""
+    """Reconciled result of one invocation: per-target outcomes and the run state the accessors below read."""
 
     prepared: PreparedProtection = field(repr=False)
     state: k.State = field(repr=False)
@@ -289,7 +289,7 @@ class ProtectionResult:
             reports = [e.observed_requests for e in entries if e.observed_requests is not None]
             total += sum(reports)
             _, op = ops[node]
-            needed = 1 if op.scope == "invocation" else len(entries)
+            needed = 1 if op.scope == "phase_scoped" else len(entries)
             covered = covered and (op.requests.bound == "none" or len(reports) >= needed)
         return Count(total) if covered else Count(None, "unknown")
 

@@ -71,7 +71,7 @@ class Node:
     inputs: Mapping[str, str]
     outputs: Mapping[str, str]
     impl: Callable[..., Any] = field(repr=False, compare=False)
-    scope: Literal["target", "invocation"] = "target"
+    scope: Literal["target", "phase_scoped"] = "target"
 
 
 class Source(NamedTuple):
@@ -131,7 +131,7 @@ class Status(StrEnum):
 class Entry:
     """One accounting entry per actual dispatch.
 
-    ``observed_requests`` is what the callable reported, ``None`` when it reported nothing. An invocation-scoped
+    ``observed_requests`` is what the callable reported, ``None`` when it reported nothing. A phase-scoped
     call is one call over all its units, so its count is recorded once, on the first unit's entry.
     """
 
@@ -331,7 +331,7 @@ def execute(plan: Plan, state: State, cancelled: Callable[[], bool]) -> None:
     """
     for index, node in enumerate(plan.nodes):
         ready = [unit for unit, row in enumerate(state.rows) if _ready(row, index)]
-        if node.scope == "invocation":
+        if node.scope == "phase_scoped":
             if ready:
                 if cancelled():
                     apply(state, CancelRequested())

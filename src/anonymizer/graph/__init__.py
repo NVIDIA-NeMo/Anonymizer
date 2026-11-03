@@ -5,8 +5,8 @@
 
 Declare datums and the relations between them, compose operations into a workflow, call :func:`prepare` to
 admit the workflow before any operation runs, then call :func:`protect` to run it synchronously on the calling
-thread. Callers register the artifact kinds their operations produce with :func:`register_kind`; the kernel
-defines none.
+thread. The kernel registers the kinds ``text``, ``mentions``, ``context``, ``datum`` and ``assessment``; callers
+register any other kind their operations produce with :func:`register_kind`.
 """
 
 from __future__ import annotations

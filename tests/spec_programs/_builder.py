@@ -59,7 +59,7 @@ class Recorder:
     def invocation_transform(
         self, name: str = "transform", fn: Callable[[tuple[str, ...]], Sequence[Any]] | None = None
     ) -> Operation:
-        """An invocation-scoped transform; each call records the whole text tuple it received."""
+        """A phase-scoped transform; each call records the whole text tuple it received."""
 
         def call(text: tuple[str, ...]) -> Sequence[Any]:
             self.calls.append((name, text, threading.get_ident()))

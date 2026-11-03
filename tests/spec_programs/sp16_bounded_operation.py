@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""SP-16 an invocation-scoped operation with an internal bounded loop and a covering verifier (E16.1-E16.18)."""
+"""SP-16 a phase-scoped operation with an internal bounded loop and a covering verifier (E16.1-E16.18)."""
 
 from __future__ import annotations
 

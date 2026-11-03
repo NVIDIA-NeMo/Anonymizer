@@ -3,7 +3,7 @@
 
 """The ``detect`` step shared by the Replace and Rewrite invocations.
 
-One invocation-scoped operation calls the caller's detector over the whole input frame and returns each surviving
+One phase-scoped operation calls the caller's detector over the whole input frame and returns each surviving
 row's accepted mentions. The caller reads what the detector returned from a ``DetectState``.
 """
 
@@ -61,9 +61,7 @@ def detect_step(
             state.rows[datum] = EntitiesSchema.from_raw(raw)
         return per_target([tuple(accepted_mentions(d, state.rows[d])) for d in surviving], positions, len(target))
 
-    return Operation.per_invocation(
-        "detect", run_detection, {"target": DATUM}, {"mentions": MENTIONS}, Requests.opaque()
-    )
+    return Operation.phase_scoped("detect", run_detection, {"target": DATUM}, {"mentions": MENTIONS}, Requests.opaque())
 
 
 def missing(text: object) -> bool:
