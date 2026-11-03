@@ -557,6 +557,7 @@ class TestLifecycleValidationRequests:
         assert len(facade.calls) == 2
         decision_sets = ValidationRequestDecisionSets.model_validate(output[COL_VALIDATION_DECISIONS])
         assert [item.decision for item in decision_sets.responses[0].decisions] == [ValidationChoice.keep]
+        assert decision_sets.responses[0].decisions[0].decision is ValidationChoice.keep
 
     def test_duplicate_assigned_alias_fails_over_to_next_pool_member(self) -> None:
         text = "Alice"
@@ -626,42 +627,6 @@ class TestLifecycleValidationRequests:
         with pytest.raises(RuntimeError, match="duplicate assigned aliases"):
             asyncio.run(chunked_validate_row_async(row, params, {"v0": facade}))
         assert len(facade.calls) == 2
-
-    def test_async_path_uses_the_same_bounded_semantic_retry(self) -> None:
-        text = "Alice"
-        detection_result = _detection_result(
-            text,
-            [_lifecycle_observation("o1", "Alice", "first_name", 0, 5)],
-        )
-        row = {
-            COL_TEXT: text,
-            COL_SEED_DETECTION_RESULT: detection_result.model_dump(mode="json"),
-            COL_TAG_NOTATION: TagNotation.xml.value,
-        }
-        responses = iter(
-            [
-                {
-                    "decisions": [
-                        {"id": "c1", "decision": "drop"},
-                        {"id": "c1", "decision": "keep"},
-                    ]
-                },
-                {"decisions": [{"id": "c1", "decision": "keep"}]},
-            ]
-        )
-        facade = FakeFacade("v0", response=lambda _prompt: next(responses))
-        params = ChunkedValidationParams(
-            pool=["v0"],
-            max_entities_per_call=5,
-            excerpt_window_chars=20,
-            prompt_template=_MINIMAL_TEMPLATE,
-        )
-
-        output = asyncio.run(chunked_validate_row_async(row, params, {"v0": facade}))
-
-        assert len(facade.calls) == 2
-        decision_sets = ValidationRequestDecisionSets.model_validate(output[COL_VALIDATION_DECISIONS])
-        assert decision_sets.responses[0].decisions[0].decision is ValidationChoice.keep
 
 
 class TestChunkedValidateRowPoolOfOne:
