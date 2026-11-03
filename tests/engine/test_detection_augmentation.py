@@ -188,7 +188,7 @@ def _run_augmentation(
     ("bounds", "has_groups"),
     [([], False), ([(0, 5)], False), ([(0, 5), (5, 11)], False), ([(0, 5), (3, 11)], True), ([(0, 11), (6, 11)], True)],
 )
-def test_group_prompt_guidance_depends_on_seed_spans_not_literal_markers(
+def test_plain_prompt_ignores_seed_spans_and_preserves_literal_source(
     use_async: bool, bounds: list[tuple[int, int]], has_groups: bool
 ) -> None:
     text = "Santa Clara mentions the literal NAGROUP_g99."
@@ -214,8 +214,10 @@ def test_group_prompt_guidance_depends_on_seed_spans_not_literal_markers(
     }
     result = asyncio.run(augment_row_async(**kwargs)) if use_async else augment_row(**kwargs)
     prompt = facade.calls[0]["prompt"]
-    assert ("A tag named NAGROUP_gN" in prompt) is has_groups
-    assert ("never return it as a label" in prompt) is has_groups
+    assert "A tag named NAGROUP_gN" not in prompt
+    assert "never return it as a label" not in prompt
+    assert "Already-detected entities:" not in prompt
+    assert f"Input text: {text}" in prompt
     assert "has_overlap_groups" not in result
     assert "NAGROUP_g99" in prompt  # Literal source content is still present, but does not enable the rule.
 
@@ -640,3 +642,94 @@ def test_finalization_does_not_propagate_equal_values_or_split_full_names() -> N
         (item["value"], item["label"], item["start_position"], item["end_position"])
         for item in row[COL_DETECTED_ENTITIES]["entities"]
     ] == [("John Smith", "full_name", 0, 10)]
+
+
+@pytest.mark.parametrize(
+    ("value", "label", "before", "after", "expected_value", "expected_label", "origin_count"),
+    [
+        ("Clara", "city", "Santa ", " office", "Clara", "city", 2),
+        ("Clara", "first_name", "Santa ", " office", "Clara", "city", 1),
+        ("Santa Clara", "city", "", " office", "Santa Clara", "city", 1),
+    ],
+)
+def test_plain_rediscovery_uses_shared_reconciliation(
+    value: str,
+    label: str,
+    before: str,
+    after: str,
+    expected_value: str,
+    expected_label: str,
+    origin_count: int,
+) -> None:
+    text = "Santa Clara office"
+    ref = ObservationRef(detection_result_id=SEED_DETECTION_RESULT_ID, observation_id="o1")
+    seed = AdmittedCandidate(
+        source_text_ref=_view(text).source_text_ref,
+        value="Clara",
+        label="city",
+        start_position=6,
+        end_position=11,
+        lineage=(ref,),
+        accepted_origins=(
+            AcceptedOrigin(
+                observation_ref=ref,
+                source_kind="initial_detector",
+                source_instance="gliner",
+                route=AdmissionRoute.llm_validation,
+            ),
+        ),
+        has_fallback_protection=False,
+    )
+    row: dict[str, Any] = {
+        RECORD_ID_COLUMN: "record-1",
+        COL_TEXT: text,
+        COL_ADMITTED_CANDIDATES: AdmittedCandidates(candidates=(seed,)).model_dump(mode="json"),
+    }
+    augment_row(
+        row=row,
+        prompt_template=_get_augment_prompt(data_summary=None, labels=["city", "first_name"]),
+        model_alias="augmenter-model",
+        facade=_FakeFacade(
+            [_output({"value": value, "label": label, "context_before": before, "context_after": after})]
+        ),
+        allowed_entity_labels=["city", "first_name"],
+        excluded_entity_labels=[],
+    )
+    merge_and_build_candidates(row)
+    finalize_entities(row)
+    candidates = AdmittedCandidates.model_validate(row[COL_RECONCILED_CANDIDATES]).candidates
+    assert [(item.value, item.label) for item in candidates] == [(expected_value, expected_label)]
+    assert len(candidates[0].accepted_origins) == origin_count
+    for item in row[COL_DETECTED_ENTITIES]["entities"]:
+        assert text[item["start_position"] : item["end_position"]] == item["value"]
+
+
+@pytest.mark.parametrize("omit_organization", [False, True])
+def test_organization_control_omission_is_distinct_from_reconciliation(omit_organization: bool) -> None:
+    # Synthetic analogue of the reported Gemma omission; no live-model recall assertion.
+    text = "Contact Cedar Labs today."
+    output = (
+        _output()
+        if omit_organization
+        else _output(
+            {"value": "Cedar Labs", "label": "organization", "context_before": "Contact ", "context_after": " today."}
+        )
+    )
+    row = augment_row(
+        row={
+            RECORD_ID_COLUMN: "record-1",
+            COL_TEXT: text,
+            COL_ADMITTED_CANDIDATES: AdmittedCandidates().model_dump(mode="json"),
+        },
+        prompt_template=_get_augment_prompt(data_summary=None, labels=["organization"]),
+        model_alias="augmenter-model",
+        facade=_FakeFacade([output]),
+        allowed_entity_labels=["organization"],
+        excluded_entity_labels=[],
+    )
+    observations = DetectionResult.model_validate(row[COL_AUGMENTATION_DETECTION_RESULT]).observations
+    merge_and_build_candidates(row)
+    finalize_entities(row)
+    expected = [] if omit_organization else ["Cedar Labs"]
+    assert [item.value for item in observations] == expected
+    assert [item["value"] for item in row[COL_DETECTED_ENTITIES]["entities"]] == expected
