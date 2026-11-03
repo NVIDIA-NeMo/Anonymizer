@@ -32,6 +32,7 @@ from anonymizer.engine.constants import (
     COL_REPLACEMENT_MAP,
     COL_REPLACEMENT_MAP_SOURCE,
     COL_TEXT,
+    RECORD_ID_COLUMN,
 )
 from anonymizer.engine.detection.detect_step import DetectState, accepted_mentions, detect_step, missing
 from anonymizer.engine.detection.detection_workflow import EntityDetectionResult
@@ -201,7 +202,13 @@ def run_replace_pipeline(
         return ReplacementResult(rerouted.dataframe, [*failures, *rerouted.failed_records], detected[0], elapsed[0])
     targets = [d for d in graph.targets if result.outcome(d).available]
     row_of = {datum: row for row, datum in enumerate(owners)}
-    output_df = detected[0].dataframe.iloc[[row_of[d] for d in targets]].reset_index(drop=True)
+    frame = detected[0].dataframe
+    ids = list((frame[RECORD_ID_COLUMN] if RECORD_ID_COLUMN in frame.columns else frame.index).astype(str))
+    # A returned row with no output is a failed record; ``missing_output`` rows were reported by their own step.
+    for a in result.attempts:
+        if a.status == "failed" and a.reason != "missing_output" and a.target in row_of and a.target not in targets:
+            failures.append(FailedRecord(ids[row_of[a.target]], a.operation, a.reason))
+    output_df = frame.iloc[[row_of[d] for d in targets]].reset_index(drop=True)
     output_df[COL_REPLACEMENT_MAP] = [result.value(d, "replacement_map") for d in targets]
     if map_step:
         output_df[COL_REPLACEMENT_MAP_SOURCE] = REPLACEMENT_MAP_SOURCE_LLM

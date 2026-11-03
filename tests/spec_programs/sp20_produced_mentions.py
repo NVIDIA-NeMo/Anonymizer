@@ -9,9 +9,11 @@ from typing import Any
 
 import pandas as pd
 
-from anonymizer.engine.constants import COL_FINAL_ENTITIES, COL_TEXT
+from anonymizer.config.replace_strategies import Redact
+from anonymizer.engine.constants import COL_FINAL_ENTITIES, COL_REPLACED_TEXT, COL_TEXT
 from anonymizer.engine.detection.detect_step import DetectState, detect_step
 from anonymizer.engine.detection.detection_workflow import EntityDetectionResult
+from anonymizer.engine.detection.postprocess import EntitySpan, apply_augmented_entities
 from anonymizer.engine.graph_core.authoring import (
     DATUM,
     MENTIONS,
@@ -23,6 +25,8 @@ from anonymizer.engine.graph_core.authoring import (
     Workflow,
 )
 from anonymizer.engine.graph_core.execution import ProtectionResult, prepare, protect
+from anonymizer.engine.replace.replace_runner import ReplacementResult
+from anonymizer.engine.replace.route import run_replace_pipeline
 from tests.spec_programs._builder import Checks
 
 TEXTS = ("Alice met Bob.", "Carol left.")
@@ -58,6 +62,24 @@ def _run(produce: Any, *, per_invocation: bool = False, texts: tuple[str, ...] =
 
 def _outcomes(r: ProtectionResult, targets: tuple) -> list[tuple[str, str]]:
     return [(o.terminal, o.reason) for o in map(r.outcome, targets)]
+
+
+def _redact(texts: list[str], entities: list[list[dict]]):
+    """The Replace route with Redact over ``texts``, the detector returning ``entities`` per row."""
+
+    def detect(df: pd.DataFrame) -> EntityDetectionResult:
+        found = df.assign(**{COL_FINAL_ENTITIES: [{"entities": e} for e in entities]})
+        return EntityDetectionResult(found, [], tuple(range(len(df))))
+
+    frame = pd.DataFrame({COL_TEXT: texts})
+    return run_replace_pipeline(
+        frame,
+        detect=detect,
+        replace_method=Redact(),
+        llm_workflow=None,
+        map_arguments={},
+        reroute=lambda df: ReplacementResult(df, []),
+    )
 
 
 def program() -> list[dict[str, str]]:
@@ -119,4 +141,30 @@ def program() -> list[dict[str, str]]:
     r4 = protect(prepare(ProtectionGraph(scope, targets), Workflow("w", (step,))))
     out4 = _outcomes(r4, targets)
     c.check("E20.4", out4 == [("failed", "overlapping_output_ownership"), ("success", "")], f"outcomes={out4}")
+
+    # E20.5 built-in name splitting and augmentation match case-insensitively; every row is still redacted.
+    john = "John Smith wrote from john@x.org today."
+    alice = "Alice met alice."
+    full = EntitySpan("full_name_0_10", "John Smith", "full_name", 0, 10, 0.9, "detector")
+    built = [
+        apply_augmented_entities(john, [full], {"entities": []}),
+        apply_augmented_entities(alice, [], {"entities": [{"value": "Alice", "label": "first_name"}]}),
+    ]
+    r5 = _redact([john, alice], [[e.as_dict() for e in row] for row in built])
+    shown5 = list(r5.dataframe[COL_REPLACED_TEXT])
+    c.check(
+        "E20.5",
+        len(shown5) == 2 and "john@" not in shown5[0] and "alice" not in shown5[1].lower() and not r5.failed_records,
+        f"rows={shown5}, failed={r5.failed_records}",
+    )
+
+    # E20.6 a detected span that fails acceptance makes its row a failed record naming the reason; others proceed.
+    bad = [{"value": "Bob", "label": "first_name", "start_position": 10, "end_position": 14}]
+    r6 = _redact(["Alice met Bob.", "Carol left."], [bad, []])
+    reasons = [(f.step, f.reason) for f in r6.failed_records]
+    c.check(
+        "E20.6",
+        list(r6.dataframe[COL_TEXT]) == ["Carol left."] and reasons == [("detect", "mention_slice_mismatch")],
+        f"rows={list(r6.dataframe[COL_TEXT])}, failed={reasons}",
+    )
     return c.lines
