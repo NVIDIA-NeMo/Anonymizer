@@ -11,20 +11,15 @@ from typing import Any
 import pandas as pd
 import pytest
 
-from anonymizer.config.rewrite import _RISK_TOLERANCE_BUNDLES, EvaluationCriteria, RiskTolerance
+from anonymizer.config.rewrite import _RISK_TOLERANCE_BUNDLES, EvaluationCriteria, Finding, RiskTolerance
 from anonymizer.engine.constants import (
     COL_ANY_HIGH_LEAKED,
     COL_LEAKAGE_MASS,
-    COL_PRIVACY_QA,
-    COL_PRIVACY_QA_REANSWER,
     COL_REWRITE_REPLACEMENT_READY,
     COL_REWRITTEN_TEXT,
-    COL_SENSITIVITY_DISPOSITION,
     COL_UTILITY_SCORE,
 )
-from anonymizer.engine.rewrite.findings import _RULES, Finding, needs_human_review, needs_repair, present_findings
-from anonymizer.engine.rewrite.qa_generation import generate_privacy_qa_from_disposition
-from anonymizer.engine.schemas.rewrite import PrivacyAnswersSchema, SensitivityDispositionSchema
+from anonymizer.engine.rewrite.findings import needs_human_review, needs_repair, present_findings
 
 _NAN = math.nan
 _MISSING = object()
@@ -42,66 +37,41 @@ def _row(**overrides: Any) -> dict[str, Any]:
     return {key: value for key, value in row.items() if value is not _MISSING}
 
 
-@pytest.mark.parametrize(
-    ("finding", "overrides", "expected"),
-    [
-        (Finding.rewrite_missing, {}, False),
-        (Finding.rewrite_missing, {COL_REWRITTEN_TEXT: None}, True),
-        (Finding.rewrite_missing, {COL_REWRITTEN_TEXT: _NAN}, True),
-        (Finding.replacement_unavailable, {COL_REWRITE_REPLACEMENT_READY: False}, True),
-        (Finding.replacement_unavailable, {COL_REWRITE_REPLACEMENT_READY: None}, True),
-        (Finding.replacement_unavailable, {COL_REWRITE_REPLACEMENT_READY: _MISSING}, False),
-        (Finding.high_leak, {COL_ANY_HIGH_LEAKED: True}, True),
-        (Finding.high_leak, {COL_ANY_HIGH_LEAKED: None}, False),
-        (Finding.leakage_above_threshold, {COL_LEAKAGE_MASS: 1.0}, False),
-        (Finding.leakage_above_threshold, {COL_LEAKAGE_MASS: 1.01}, True),
-        (Finding.leakage_above_threshold, {COL_LEAKAGE_MASS: _NAN}, False),
-        (Finding.utility_below_flag, {COL_UTILITY_SCORE: 0.5}, False),
-        (Finding.utility_below_flag, {COL_UTILITY_SCORE: 0.49}, True),
-        (Finding.utility_below_flag, {COL_UTILITY_SCORE: _NAN}, False),
-        (Finding.unavailable_evidence, {}, False),
-        (Finding.unavailable_evidence, {COL_LEAKAGE_MASS: _NAN}, True),
-        (Finding.unavailable_evidence, {COL_UTILITY_SCORE: _NAN}, True),
-        (Finding.unavailable_evidence, {COL_ANY_HIGH_LEAKED: _MISSING}, True),
-    ],
-)
+_LOW = EvaluationCriteria(risk_tolerance=RiskTolerance.low)
+_REPAIR, _FLAG_LEAKAGE, _FLAG_UTILITY = _LOW.repair_threshold, _LOW.flag_leakage_above, _LOW.flag_utility_below
+_CASES = [
+    (Finding.rewrite_missing, {}, False),
+    (Finding.rewrite_missing, {COL_REWRITTEN_TEXT: None}, True),
+    (Finding.rewrite_missing, {COL_REWRITTEN_TEXT: _NAN}, True),
+    (Finding.replacement_unavailable, {COL_REWRITE_REPLACEMENT_READY: False}, True),
+    (Finding.replacement_unavailable, {COL_REWRITE_REPLACEMENT_READY: None}, True),
+    (Finding.replacement_unavailable, {COL_REWRITE_REPLACEMENT_READY: _MISSING}, False),
+    (Finding.high_leak, {COL_ANY_HIGH_LEAKED: True}, True),
+    (Finding.high_leak, {COL_ANY_HIGH_LEAKED: None}, False),
+    (Finding.leakage_above_repair, {COL_LEAKAGE_MASS: _REPAIR}, False),
+    (Finding.leakage_above_repair, {COL_LEAKAGE_MASS: _REPAIR + 0.01}, True),
+    (Finding.leakage_above_repair, {COL_LEAKAGE_MASS: _NAN}, False),
+    (Finding.leakage_above_flag, {COL_LEAKAGE_MASS: _FLAG_LEAKAGE}, False),
+    (Finding.leakage_above_flag, {COL_LEAKAGE_MASS: _FLAG_LEAKAGE + 0.01}, True),
+    (Finding.leakage_above_flag, {COL_LEAKAGE_MASS: None}, False),
+    (Finding.utility_below_flag, {COL_UTILITY_SCORE: _FLAG_UTILITY}, False),
+    (Finding.utility_below_flag, {COL_UTILITY_SCORE: _FLAG_UTILITY - 0.01}, True),
+    (Finding.utility_below_flag, {COL_UTILITY_SCORE: _NAN}, False),
+    (Finding.unavailable_evidence, {}, False),
+    (Finding.unavailable_evidence, {COL_LEAKAGE_MASS: _NAN}, True),
+    (Finding.unavailable_evidence, {COL_UTILITY_SCORE: _NAN}, True),
+    (Finding.unavailable_evidence, {COL_ANY_HIGH_LEAKED: _MISSING}, True),
+]
+
+
+@pytest.mark.parametrize(("finding", "overrides", "expected"), _CASES)
 def test_finding_rule(finding: Finding, overrides: dict[str, Any], expected: bool) -> None:
-    present = present_findings(_row(**overrides), [finding], leakage_above=1.0, utility_below=0.5)
-    assert (finding in present) is expected
+    assert (finding in present_findings(_row(**overrides), _LOW)) is expected
 
 
-@pytest.mark.parametrize(("answer", "expected"), [("yes", True), ("no", False)])
-def test_protected_leak_rule(answer: str, expected: bool) -> None:
-    entity = {"source": "tagged", "category": "direct_identifier", "sensitivity": "high", "entity_label": "first_name"}
-    disposition = SensitivityDispositionSchema.model_validate(
-        {
-            "sensitivity_disposition": [
-                {**entity, "id": 1, "entity_value": "Alice", "protection_reason": "Names the patient directly.",
-                 "protection_method_suggestion": "replace", "combined_risk_level": "high"},
-                {**entity, "id": 2, "entity_value": "Bob", "protection_reason": "Public figure, no risk here.",
-                 "protection_method_suggestion": "leave_as_is", "combined_risk_level": "low"},
-            ]
-        }
-    )  # fmt: skip
-    answers = PrivacyAnswersSchema.model_validate(
-        {"answers": [{"id": 1, "answer": answer, "confidence": 1.0, "reason": "stub"}]}
-    )
-    row = _row(
-        **{
-            COL_SENSITIVITY_DISPOSITION: disposition,
-            COL_PRIVACY_QA: generate_privacy_qa_from_disposition(disposition),
-            COL_PRIVACY_QA_REANSWER: answers,
-        }
-    )
-    present = present_findings(row, [Finding.protected_leak], leakage_above=1.0, utility_below=0.5)
-    assert (Finding.protected_leak in present) is expected
-
-
-def test_every_finding_has_a_rule_and_presets_name_only_known_findings() -> None:
-    assert set(_RULES) == set(Finding)
+def test_every_finding_holds_somewhere_and_unavailable_evidence_only_flags() -> None:
+    assert {finding for finding, _, expected in _CASES if expected} == set(Finding)
     for bundle in _RISK_TOLERANCE_BUNDLES.values():
-        assert set(bundle.repair_on) | set(bundle.flag_on) <= set(Finding)
-        assert Finding.protected_leak not in set(bundle.repair_on) | set(bundle.flag_on)
         assert Finding.unavailable_evidence in bundle.flag_on
         assert Finding.unavailable_evidence not in bundle.repair_on
 
@@ -121,7 +91,7 @@ def _outcome(decide: Callable[..., bool], *args: Any) -> bool | type[Exception]:
 
 
 def _unavailable(row: dict[str, Any]) -> bool:
-    return bool(present_findings(row, [Finding.unavailable_evidence], leakage_above=0.0, utility_below=0.0))
+    return Finding.unavailable_evidence in present_findings(row, EvaluationCriteria())
 
 
 def _old_repair(row: dict[str, Any], ev: EvaluationCriteria) -> bool:
