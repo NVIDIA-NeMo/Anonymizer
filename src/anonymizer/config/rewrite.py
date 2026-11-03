@@ -8,6 +8,8 @@ from enum import Enum
 
 from pydantic import BaseModel, Field, field_validator
 
+from anonymizer.engine.rewrite.findings import Finding
+
 
 class RiskTolerance(str, Enum):
     """Risk tolerance presets for leakage mass thresholds.
@@ -43,38 +45,53 @@ DEFAULT_PRESERVE_TEXT = "General utility, content quality, and semantic meaning 
 
 @dataclass(frozen=True)
 class _RiskToleranceBundle:
-    """Internal: all derived evaluation parameters for a risk_tolerance preset."""
+    """Internal: all derived evaluation parameters for a risk_tolerance preset.
+
+    ``repair_on`` and ``flag_on`` name the findings (see ``Finding``) that send a
+    row to repair and flag it for human review. ``leakage_above_threshold`` is
+    measured against ``repair_threshold`` for repair and ``flag_leakage_above``
+    for review.
+    """
 
     repair_threshold: float
-    repair_any_high_leak: bool
     flag_utility_below: float
     flag_leakage_above: float
+    repair_on: tuple[Finding, ...]
+    flag_on: tuple[Finding, ...] = (
+        Finding.rewrite_missing,
+        Finding.replacement_unavailable,
+        Finding.high_leak,
+        Finding.utility_below_flag,
+        Finding.leakage_above_threshold,
+    )
 
+
+_REPAIR_HIGH_LEAK_OR_MASS = (Finding.high_leak, Finding.leakage_above_threshold)
 
 _RISK_TOLERANCE_BUNDLES: dict[RiskTolerance, _RiskToleranceBundle] = {
     RiskTolerance.minimal: _RiskToleranceBundle(
         repair_threshold=0.6,
-        repair_any_high_leak=True,
         flag_utility_below=0.6,
         flag_leakage_above=1.0,
+        repair_on=_REPAIR_HIGH_LEAK_OR_MASS,
     ),
     RiskTolerance.low: _RiskToleranceBundle(
         repair_threshold=1.0,
-        repair_any_high_leak=True,
         flag_utility_below=0.5,
         flag_leakage_above=2.0,
+        repair_on=_REPAIR_HIGH_LEAK_OR_MASS,
     ),
     RiskTolerance.moderate: _RiskToleranceBundle(
         repair_threshold=1.5,
-        repair_any_high_leak=True,
         flag_utility_below=0.4,
         flag_leakage_above=2.5,
+        repair_on=_REPAIR_HIGH_LEAK_OR_MASS,
     ),
     RiskTolerance.high: _RiskToleranceBundle(
         repair_threshold=2.0,
-        repair_any_high_leak=False,
         flag_utility_below=0.3,
         flag_leakage_above=3.0,
+        repair_on=(Finding.leakage_above_threshold,),
     ),
 }
 
@@ -137,7 +154,17 @@ class EvaluationCriteria(BaseModel):
     @property
     def repair_any_high_leak(self) -> bool:
         """Whether any single high-sensitivity leak triggers repair."""
-        return self._bundle.repair_any_high_leak
+        return Finding.high_leak in self._bundle.repair_on
+
+    @property
+    def repair_on(self) -> tuple[Finding, ...]:
+        """Findings that send a row to repair."""
+        return self._bundle.repair_on
+
+    @property
+    def flag_on(self) -> tuple[Finding, ...]:
+        """Findings that flag a row for human review."""
+        return self._bundle.flag_on
 
     @property
     def flag_utility_below(self) -> float:

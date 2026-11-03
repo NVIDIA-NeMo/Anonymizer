@@ -152,7 +152,7 @@ Use `preview.trace_dataframe` for the full pipeline trace (domain, disposition, 
 
 ## Working with flagged records
 
-Records with `needs_human_review=True` exceeded automated thresholds for leakage or utility. To investigate and resolve:
+Repair and review decisions are made from named *findings* about each evaluated record: `high_leak` (a high-sensitivity entity can still be deduced), `leakage_above_threshold` (leakage mass above the preset's repair or review threshold), `utility_below_flag` (utility score below the preset's review floor), `replacement_unavailable` (no usable replacement map was produced), and `rewrite_missing` (no rewritten text). Each `risk_tolerance` preset lists which findings send a record to repair and which flag it for human review: every preset flags all five, and every preset except `high` repairs on `high_leak` as well as `leakage_above_threshold`. A record has `needs_human_review=True` when any of its preset's flag findings holds after the repair loop. To investigate and resolve:
 
 **Diagnose:** Use `trace_dataframe` to inspect the flagged record's intermediate columns — disposition, leakage breakdown, repair iterations, and judge evaluation.
 
