@@ -164,6 +164,24 @@ def _output(*entities: dict[str, str]) -> AugmentedEntitiesSchema:
     return AugmentedEntitiesSchema.model_validate({"entities": list(entities)})
 
 
+def _run_augmentation(
+    row: dict[str, Any],
+    facade: _FakeFacade,
+    *,
+    use_async: bool = False,
+    allowed_entity_labels: tuple[str, ...] = ("first_name",),
+) -> dict[str, Any]:
+    kwargs: dict[str, Any] = {
+        "row": row,
+        "prompt_template": "Source: {{ __nemo_anonymizer_text_input__ }}",
+        "model_alias": "augmenter-model",
+        "facade": facade,
+        "allowed_entity_labels": list(allowed_entity_labels),
+        "excluded_entity_labels": [],
+    }
+    return asyncio.run(augment_row_async(**kwargs)) if use_async else augment_row(**kwargs)
+
+
 @pytest.mark.parametrize("use_async", [False, True])
 @pytest.mark.parametrize(
     ("bounds", "has_groups"),
@@ -210,14 +228,7 @@ def test_value_edge_whitespace_becomes_context_not_part_of_the_span(value: str) 
     text = f"Ask {value} now"
     output = _output({"value": value, "context_before": "Ask ", "context_after": " now", "label": "first_name"})
     facade = _FakeFacade([output])
-    row = augment_row(
-        row={RECORD_ID_COLUMN: "record-1", COL_TEXT: text},
-        prompt_template="Source: {{ __nemo_anonymizer_text_input__ }}",
-        model_alias="augmenter-model",
-        facade=facade,
-        allowed_entity_labels=["first_name"],
-        excluded_entity_labels=[],
-    )
+    row = _run_augmentation({RECORD_ID_COLUMN: "record-1", COL_TEXT: text}, facade)
     assert len(facade.calls) == 1
     observations = DetectionResult.model_validate(row[COL_AUGMENTATION_DETECTION_RESULT]).observations
     start = text.index("Alice")
@@ -359,14 +370,7 @@ def test_augmentation_retries_failed_items_once_and_publishes_lifecycle_state() 
     facade = _FakeFacade([bad, good])
     row: dict[str, Any] = {RECORD_ID_COLUMN: "record-1", COL_TEXT: "Ask May now"}
 
-    result = augment_row(
-        row=row,
-        prompt_template="Source: {{ __nemo_anonymizer_text_input__ }}",
-        model_alias="augmenter-model",
-        facade=facade,
-        allowed_entity_labels=["first_name"],
-        excluded_entity_labels=[],
-    )
+    result = _run_augmentation(row, facade)
 
     assert len(facade.calls) == 2
     repair_prompt = facade.calls[1]["prompt"]
@@ -411,15 +415,7 @@ def test_targeted_retry_preserves_grounded_items_and_records_only_safe_diagnosti
         COL_TEXT: text,
         COL_SEED_ENTITIES_JSON: json.dumps(seed_state["entities"]),
     }
-    kwargs: dict[str, Any] = {
-        "row": row,
-        "prompt_template": "Source: {{ __nemo_anonymizer_text_input__ }}",
-        "model_alias": "augmenter-model",
-        "facade": facade,
-        "allowed_entity_labels": ["first_name"],
-        "excluded_entity_labels": [],
-    }
-    result = asyncio.run(augment_row_async(**kwargs)) if use_async else augment_row(**kwargs)
+    result = _run_augmentation(row, facade, use_async=use_async)
     assert json.loads(result[COL_SEED_ENTITIES_JSON]) == seed_state["entities"]
     assert len(facade.calls) == 2
     repair_prompt = facade.calls[1]["prompt"]
@@ -466,15 +462,11 @@ def test_targeted_retry_preserves_grounded_items_and_records_only_safe_diagnosti
 @pytest.mark.parametrize("use_async", [False, True])
 def test_all_grounding_failures_return_empty_augmentation(use_async: bool) -> None:
     invalid = _output({"value": "MAY", "context_before": "Ask ", "context_after": " now", "label": "first_name"})
-    kwargs: dict[str, Any] = {
-        "row": {RECORD_ID_COLUMN: "record-1", COL_TEXT: "Ask May now"},
-        "prompt_template": "Source: {{ __nemo_anonymizer_text_input__ }}",
-        "model_alias": "augmenter-model",
-        "facade": _FakeFacade([invalid, invalid]),
-        "allowed_entity_labels": ["first_name"],
-        "excluded_entity_labels": [],
-    }
-    result = asyncio.run(augment_row_async(**kwargs)) if use_async else augment_row(**kwargs)
+    result = _run_augmentation(
+        {RECORD_ID_COLUMN: "record-1", COL_TEXT: "Ask May now"},
+        _FakeFacade([invalid, invalid]),
+        use_async=use_async,
+    )
     assert result[COL_AUGMENTED_ENTITIES] == {"entities": []}
     assert DetectionResult.model_validate(result[COL_AUGMENTATION_DETECTION_RESULT]).observations == ()
     assert [attempt["outcome"] for attempt in result[COL_AUGMENTATION_ATTEMPTS]["attempts"]] == [
@@ -509,14 +501,7 @@ def test_ungroundable_augmentation_preserves_admitted_gliner_candidates_through_
         COL_ADMITTED_CANDIDATES: AdmittedCandidates(candidates=(seed,)).model_dump(mode="json"),
     }
     invalid = _output({"value": "MAY", "context_before": "Ask ", "context_after": " now", "label": "first_name"})
-    augment_row(
-        row=row,
-        prompt_template="Source: {{ __nemo_anonymizer_text_input__ }}",
-        model_alias="augmenter-model",
-        facade=_FakeFacade([invalid, invalid]),
-        allowed_entity_labels=["first_name"],
-        excluded_entity_labels=[],
-    )
+    _run_augmentation(row, _FakeFacade([invalid, invalid]))
     merge_and_build_candidates(row)
     assert AdmittedCandidates.model_validate(row[COL_RECONCILED_CANDIDATES]).candidates == (seed,)
     assert [
@@ -528,13 +513,9 @@ def test_corrections_receive_ids_after_merging_in_source_order() -> None:
     text = "Ask Alice now. Ask Bob later."
     alice = {"value": "Alice", "context_before": "Ask ", "context_after": " now.", "label": "first_name"}
     bob = {"value": "Bob", "context_before": "Ask ", "context_after": " later.", "label": "first_name"}
-    row = augment_row(
-        row={RECORD_ID_COLUMN: "record-1", COL_TEXT: text},
-        prompt_template="Source: {{ __nemo_anonymizer_text_input__ }}",
-        model_alias="augmenter-model",
-        facade=_FakeFacade([_output(bob, {**alice, "value": "ALICE"}), _output(alice)]),
-        allowed_entity_labels=["first_name"],
-        excluded_entity_labels=[],
+    row = _run_augmentation(
+        {RECORD_ID_COLUMN: "record-1", COL_TEXT: text},
+        _FakeFacade([_output(bob, {**alice, "value": "ALICE"}), _output(alice)]),
     )
     observations = DetectionResult.model_validate(row[COL_AUGMENTATION_DETECTION_RESULT]).observations
     assert [(item.observation_id, item.value) for item in observations] == [("o1", "Alice"), ("o2", "Bob")]
@@ -553,19 +534,12 @@ def test_real_augmentation_failures_still_raise(use_async: bool, failure_kind: s
             return _output({"value": "missing required fields"}), []
 
     invalid = _output({"value": "MAY", "context_before": "Ask ", "context_after": " now", "label": "first_name"})
-    kwargs: dict[str, Any] = {
-        "row": {RECORD_ID_COLUMN: "record-1", COL_TEXT: "Ask May now"},
-        "prompt_template": "Source: {{ __nemo_anonymizer_text_input__ }}",
-        "model_alias": "augmenter-model",
-        "facade": FailingFacade([invalid] if on_retry else []),
-        "allowed_entity_labels": ["first_name"],
-        "excluded_entity_labels": [],
-    }
     with pytest.raises(ConnectionError if failure_kind == "transport" else ValidationError):
-        if use_async:
-            asyncio.run(augment_row_async(**kwargs))
-        else:
-            augment_row(**kwargs)
+        _run_augmentation(
+            {RECORD_ID_COLUMN: "record-1", COL_TEXT: "Ask May now"},
+            FailingFacade([invalid] if on_retry else []),
+            use_async=use_async,
+        )
 
 
 def test_out_of_scope_augmentation_label_is_rejected_without_retry() -> None:
@@ -573,14 +547,7 @@ def test_out_of_scope_augmentation_label_is_rejected_without_retry() -> None:
     facade = _FakeFacade([output])
     row: dict[str, Any] = {RECORD_ID_COLUMN: "record-1", COL_TEXT: "Ask May now"}
 
-    result = augment_row(
-        row=row,
-        prompt_template="Source: {{ __nemo_anonymizer_text_input__ }}",
-        model_alias="augmenter-model",
-        facade=facade,
-        allowed_entity_labels=["first_name"],
-        excluded_entity_labels=[],
-    )
+    result = _run_augmentation(row, facade)
 
     assert len(facade.calls) == 1
     admissions = AdmissionResults.model_validate(result[COL_AUGMENTATION_ADMISSION_RESULTS])
@@ -595,14 +562,7 @@ def test_merge_consumes_grounded_augmentation_candidates() -> None:
         COL_TEXT: "Ask May now",
         COL_ADMITTED_CANDIDATES: {"candidates": []},
     }
-    augment_row(
-        row=row,
-        prompt_template="Source: {{ __nemo_anonymizer_text_input__ }}",
-        model_alias="augmenter-model",
-        facade=_FakeFacade([output]),
-        allowed_entity_labels=["first_name"],
-        excluded_entity_labels=[],
-    )
+    _run_augmentation(row, _FakeFacade([output]))
 
     merge_and_build_candidates(row)
 
@@ -627,13 +587,10 @@ def test_finalization_does_not_propagate_equal_values_or_split_full_names() -> N
         COL_TEXT: text,
         COL_ADMITTED_CANDIDATES: {"candidates": []},
     }
-    augment_row(
-        row=row,
-        prompt_template="Source: {{ __nemo_anonymizer_text_input__ }}",
-        model_alias="augmenter-model",
-        facade=_FakeFacade([output]),
-        allowed_entity_labels=["full_name", "first_name", "last_name"],
-        excluded_entity_labels=[],
+    _run_augmentation(
+        row,
+        _FakeFacade([output]),
+        allowed_entity_labels=("full_name", "first_name", "last_name"),
     )
     merge_and_build_candidates(row)
 
