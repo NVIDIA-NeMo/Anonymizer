@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping
 from typing import Any
 
 from pydantic import BaseModel, field_validator
@@ -116,3 +117,32 @@ class ModelSelection(BaseModel):
     replace: ReplaceModelSelection
     rewrite: RewriteModelSelection
     evaluate: EvaluateModelSelection
+
+    def with_overrides(self, overrides: Mapping[str, Mapping[str, Any]]) -> ModelSelection:
+        """Return a fully validated selection with per-workflow overrides applied."""
+        detection_overrides = overrides.get("detection", {})
+        replace_overrides = overrides.get("replace", {})
+        rewrite_overrides = overrides.get("rewrite", {})
+        evaluate_overrides = overrides.get("evaluate", {})
+        return type(self)(
+            detection=(
+                type(self.detection).model_validate({**self.detection.model_dump(), **detection_overrides})
+                if detection_overrides
+                else self.detection
+            ),
+            replace=(
+                type(self.replace).model_validate({**self.replace.model_dump(), **replace_overrides})
+                if replace_overrides
+                else self.replace
+            ),
+            rewrite=(
+                type(self.rewrite).model_validate({**self.rewrite.model_dump(), **rewrite_overrides})
+                if rewrite_overrides
+                else self.rewrite
+            ),
+            evaluate=(
+                type(self.evaluate).model_validate({**self.evaluate.model_dump(), **evaluate_overrides})
+                if evaluate_overrides
+                else self.evaluate
+            ),
+        )

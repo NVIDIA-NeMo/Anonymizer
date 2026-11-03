@@ -85,7 +85,7 @@ def _load_ruff_excludes(repo_root: str | None) -> list[str]:
             excludes = ruff_section.get("exclude", [])
             if excludes:
                 return excludes
-        except Exception:  # noqa: BLE001
+        except Exception:
             continue
     return []
 
@@ -149,7 +149,7 @@ def _has_header(head: str) -> bool:
 def _read_head(path: str, nbytes: int = 512) -> str:
     """Read the first *nbytes* of a file (fast, no full-file read)."""
     try:
-        with open(path, "r", encoding="utf-8", errors="replace") as f:
+        with open(path, encoding="utf-8", errors="replace") as f:
             return f.read(nbytes)
     except OSError:
         return ""
@@ -197,7 +197,7 @@ def _get_header_for_ext(ext: str) -> str:
 def _add_header(filepath: str) -> bool:
     """Add the copyright header to *filepath*. Returns True if modified."""
     try:
-        content = open(filepath, "r", encoding="utf-8").read()  # noqa: SIM115
+        content = open(filepath, encoding="utf-8").read()
     except (OSError, UnicodeDecodeError):
         return False
 

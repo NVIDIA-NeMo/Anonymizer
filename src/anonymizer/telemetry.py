@@ -26,7 +26,7 @@ import logging
 import os
 import platform
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import Enum
 from typing import TYPE_CHECKING, Any, ClassVar
 
@@ -249,7 +249,7 @@ class QueuedEvent:
 
 def _get_iso_timestamp(dt: datetime | None = None) -> str:
     if dt is None:
-        dt = datetime.now(timezone.utc)
+        dt = datetime.now(UTC)
     return dt.strftime("%Y-%m-%dT%H:%M:%S.") + f"{dt.microsecond // 1000:03d}Z"
 
 
@@ -333,7 +333,7 @@ class TelemetryHandler:
             return
         if not isinstance(event, AnonymizerEvent):
             return
-        self._events.append(QueuedEvent(event=event, timestamp=datetime.now(timezone.utc)))
+        self._events.append(QueuedEvent(event=event, timestamp=datetime.now(UTC)))
 
     def flush(self) -> None:
         if not (self._events or self._dlq):

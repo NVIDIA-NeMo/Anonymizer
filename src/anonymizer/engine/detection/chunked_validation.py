@@ -350,7 +350,8 @@ def _dispatch_chunk(
                     len(facades),
                 )
             return output
-        except Exception as exc:  # noqa: BLE001 — we classify by failover position, not type
+        # Failover position, rather than exception type, determines whether to retry.
+        except Exception as exc:
             last_exc = exc
             remaining = len(facades) - attempt_index - 1
             if remaining > 0:
@@ -417,7 +418,8 @@ async def _dispatch_chunk_async(
                     len(facades),
                 )
             return output
-        except Exception as exc:  # noqa: BLE001 — we classify by failover position, not type
+        # Failover position, rather than exception type, determines whether to retry.
+        except Exception as exc:
             last_exc = exc
             remaining = len(facades) - attempt_index - 1
             if remaining > 0:

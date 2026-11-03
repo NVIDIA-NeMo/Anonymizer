@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#MISE description="Build the wheel into dist/ using the version derived from git tags. Replaces the existing dist/ directory."
+#USAGE arg "[project]" help="Project directory to build" default="."
+
+set -euo pipefail
+
+project="${usage_project:-.}"
+rm -rf "$project/dist/"
+uv build --wheel "$project" --out-dir "$project/dist"

@@ -1,0 +1,38 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+[format]
+description = "Format and safely fix tracked Python files and rendered notebooks. Modifies files in place."
+run = "tools/codestyle/format.sh"
+
+["check:format"]
+description = "Check formatting of tracked Python files and rendered notebooks without modifying them."
+run = "tools/codestyle/format.sh --check"
+
+["check:lint"]
+description = "Check Ruff rules for tracked Python files and rendered notebooks without modifying them."
+run = "tools/codestyle/ruff_check.sh"
+
+["check:type"]
+description = "Run blocking ty checks across source, tests, tools, docs, and rendered notebooks."
+run = "uv run --locked --group docs tools/codestyle/typecheck.sh"
+
+["license:headers:fix"]
+description = "Add missing SPDX headers to repository files. Modifies files in place."
+run = "uv run tools/codestyle/copyright_fixer.py ."
+
+["check:license:headers"]
+description = "Check SPDX headers without modifying files."
+run = "uv run tools/codestyle/copyright_fixer.py --check ."
+
+["check:lock"]
+description = "Verify that uv.lock matches pyproject.toml."
+run = "uv lock --check"
+
+["lock:update"]
+description = "Regenerate uv.lock from project dependency metadata. Modifies uv.lock."
+run = "uv lock"
+
+[check]
+description = "Run the repository read-only quality checks."
+depends = ["check:format", "check:lint", "check:type", "check:lock", "check:license:headers"]

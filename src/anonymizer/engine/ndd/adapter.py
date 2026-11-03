@@ -10,7 +10,7 @@ import re
 import tempfile
 import time
 import uuid
-from collections.abc import Iterator, Mapping
+from collections.abc import Generator, Mapping
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
@@ -532,7 +532,7 @@ class NddAdapter:
         existing shared seed. ``num_jobs > 1`` selects one worker's ordered partition
         (``job_index`` of ``num_jobs``), matching how the orchestrator shards the seed.
         """
-        from data_designer.config.seed import PartitionBlock  # noqa: PLC0415
+        from data_designer.config.seed import PartitionBlock
 
         if num_jobs < 1:
             raise ValueError(f"num_jobs must be >= 1, got {num_jobs}")
@@ -1034,7 +1034,7 @@ def _model_trace_usage(response: Any) -> Any:
 
 
 @contextmanager
-def _temporary_dd_task_trace(data_designer: DataDesigner, *, collector: Any | None) -> Iterator[None]:
+def _temporary_dd_task_trace(data_designer: DataDesigner, *, collector: Any | None) -> Generator[None]:
     if collector is None or not collector.dd_task_trace_enabled:
         yield
         return
@@ -1069,7 +1069,7 @@ def _task_traces_from_result(result: Any) -> list[_TaskTrace]:
     if isinstance(raw_traces, list):
         return cast(list[_TaskTrace], raw_traces)
     try:
-        return cast(list[_TaskTrace], list(raw_traces))
+        return list(raw_traces)
     except TypeError:
         return []
 
