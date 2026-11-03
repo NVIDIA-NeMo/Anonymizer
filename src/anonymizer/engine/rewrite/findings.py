@@ -5,8 +5,8 @@
 
 Each risk-tolerance preset lists, as data, which findings send a row to repair and which flag it
 for human review (``_RISK_TOLERANCE_BUNDLES`` in ``anonymizer.config.rewrite``). To add a finding,
-add a ``Finding`` member there, its condition in ``present_findings`` here, and list it in the
-presets that should act on it.
+add a ``Finding`` member there (and to ``RepairFinding`` if repair can act on it), its condition in
+``present_findings`` here, and list it in the presets that should act on it.
 """
 
 from __future__ import annotations

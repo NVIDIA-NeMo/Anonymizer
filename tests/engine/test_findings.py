@@ -6,12 +6,18 @@ from __future__ import annotations
 import itertools
 import math
 from collections.abc import Callable
-from typing import Any
+from typing import Any, get_args
 
 import pandas as pd
 import pytest
 
-from anonymizer.config.rewrite import _RISK_TOLERANCE_BUNDLES, EvaluationCriteria, Finding, RiskTolerance
+from anonymizer.config.rewrite import (
+    _RISK_TOLERANCE_BUNDLES,
+    EvaluationCriteria,
+    Finding,
+    RepairFinding,
+    RiskTolerance,
+)
 from anonymizer.engine.constants import (
     COL_ANY_HIGH_LEAKED,
     COL_LEAKAGE_MASS,
@@ -74,6 +80,13 @@ def test_every_finding_holds_somewhere_and_unavailable_evidence_only_flags() -> 
     for bundle in _RISK_TOLERANCE_BUNDLES.values():
         assert Finding.unavailable_evidence in bundle.flag_on
         assert Finding.unavailable_evidence not in bundle.repair_on
+
+
+def test_presets_repair_only_on_repair_findings() -> None:
+    """Runtime mirror of the ``RepairFinding`` annotation, which ty enforces statically."""
+    assert Finding.unavailable_evidence not in get_args(RepairFinding)
+    for bundle in _RISK_TOLERANCE_BUNDLES.values():
+        assert set(bundle.repair_on) <= set(get_args(RepairFinding))
 
 
 # ---------------------------------------------------------------------------

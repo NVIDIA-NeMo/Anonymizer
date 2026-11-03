@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
+from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -44,7 +45,8 @@ DEFAULT_PRESERVE_TEXT = "General utility, content quality, and semantic meaning 
 class Finding(str, Enum):
     """Named conditions on an evaluated rewrite row that a preset can repair on or flag for review.
 
-    What each one means is written once, in ``present_findings`` (``anonymizer.engine.rewrite.findings``).
+    Any finding can flag a row for review; only a ``RepairFinding`` can send it to repair. What each
+    one means is written once, in ``present_findings`` (``anonymizer.engine.rewrite.findings``).
     """
 
     rewrite_missing = "rewrite_missing"
@@ -56,6 +58,10 @@ class Finding(str, Enum):
     unavailable_evidence = "unavailable_evidence"
 
 
+# The findings repair can act on: a preset's ``repair_on`` accepts only these, and ty rejects any other.
+RepairFinding = Literal[Finding.high_leak, Finding.leakage_above_repair]
+
+
 @dataclass(frozen=True)
 class _RiskToleranceBundle:
     """Internal: one risk_tolerance preset: its thresholds and the findings that act on a row."""
@@ -63,11 +69,11 @@ class _RiskToleranceBundle:
     repair_threshold: float
     flag_utility_below: float
     flag_leakage_above: float
-    repair_on: tuple[Finding, ...]
+    repair_on: tuple[RepairFinding, ...]
     flag_on: tuple[Finding, ...]
 
 
-# Every preset flags the same findings. ``unavailable_evidence`` flags but never repairs: a row
+# Every preset flags the same findings. ``unavailable_evidence`` is not a ``RepairFinding``: a row
 # whose metrics are missing or NaN cannot be judged, so it goes to a human instead.
 _FLAG_ON = (
     Finding.rewrite_missing,
@@ -171,7 +177,7 @@ class EvaluationCriteria(BaseModel):
         return Finding.high_leak in self._bundle.repair_on
 
     @property
-    def repair_on(self) -> tuple[Finding, ...]:
+    def repair_on(self) -> tuple[RepairFinding, ...]:
         """Findings that send a row to repair."""
         return self._bundle.repair_on
 
