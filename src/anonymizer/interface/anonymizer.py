@@ -1149,10 +1149,11 @@ def _build_user_dataframe(
     if id_column is not None:
         allowed.add(id_column)
     user_df = t[[col for col in t.columns if col in allowed]].copy()
-    if COL_FINAL_ENTITIES in user_df.columns and user_df[COL_FINAL_ENTITIES].dtype != object:
-        # run() can load this column as an Arrow struct, which pandas cannot read back from parquet;
-        # plain Python objects match preview() and round-trip.
-        user_df[COL_FINAL_ENTITIES] = user_df[COL_FINAL_ENTITIES].tolist()
+    for col in (COL_FINAL_ENTITIES, COL_JUDGE_EVALUATION):
+        if col in user_df.columns and user_df[col].dtype != object:
+            # run() can load final_entities, and Rewrite evaluate() judge_evaluation, as an Arrow struct, which
+            # pandas cannot read back from parquet; plain Python objects match preview() and round-trip.
+            user_df[col] = user_df[col].tolist()
     return user_df
 
 
