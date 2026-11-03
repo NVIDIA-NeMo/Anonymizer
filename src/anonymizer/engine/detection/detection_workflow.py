@@ -658,6 +658,8 @@ def _get_validation_prompt(
     configured_examples: dict[str, list[str]] | None = None,
 ) -> str:
     prompt = """Validate entity tags for privacy-sensitive information. For each entity in the template below, fill in the "decision" and "reason" fields. Fill in "proposed_label" only when decision is "reclass".
+
+Use surrounding text and field names to determine what the candidate actually represents. Keep or reclassify it only when the context supports both its entity label and its sensitivity under the guidance in this prompt. If it is not sensitive, drop it rather than reclassifying it.
 <<DATA_SUMMARY>>
 
 Here are all the valid entity classes with examples (only classes from this list can be proposed):
@@ -747,7 +749,22 @@ Output: {"decisions": [{"id": "first_name_3_7", "value": "name", "label": "first
 Input text: <<TAGGED_TEXT>>
 Template: <<VALIDATION_SKELETON>>
 """
-    context_section = f"\nData context: {data_summary}\n" if data_summary else ""
+    context_section = (
+        "\nThe data summary may describe the dataset and provide sensitivity rules. "
+        "Follow its explicit sensitivity rules when they conflict with the generic guidance or examples below. "
+        "For categories or situations it does not address, use the generic guidance below. "
+        "Do not infer that a value is non-sensitive merely because the data summary does not mention it. "
+        "An allowed entity label defines what can be detected; "
+        "it does not mean every instance of that category is sensitive.\n\n"
+        "Keep or reclassify a candidate only when its value is sensitive in the context shown, "
+        "applying explicit sensitivity rules from the data summary where provided "
+        "and otherwise using the generic guidance below. "
+        "Drop candidates that the data summary explicitly identifies as not sensitive, "
+        "even when their entity label is correct.\n\n"
+        f"Data summary: {data_summary}\n"
+        if data_summary
+        else ""
+    )
     return substitute_placeholders(
         prompt,
         {
@@ -822,12 +839,14 @@ Output: {"entities": [{"value": "Jane", "label": "first_name", "reason": "first 
         '    "J-O-H-N", "M, A, R, Y"\n'
     )
 
-    prompt = f"""Task: Find untagged sensitive entities in text (ignore already tagged entities). Focus on:
+    prompt = f"""Task: Find untagged sensitive entities in text (ignore already tagged entities).
+
+Use surrounding text and field names to determine what a value actually represents. Add it only when the context supports both its entity label and its sensitivity under the guidance in this prompt.<<SENSITIVITY_GUIDANCE>>
 - Direct identifiers: Uniquely identify entities (names, emails, IDs), records (transaction IDs, case numbers), resources (file paths, URLs), or instances (server names, hostnames)
 - Quasi-identifiers: Attributes that combine to narrow specificity (age, location, job title, timestamps, technical specs)
 - Technical secrets: Credentials (passwords, API keys, tokens), access (internal URLs, endpoints), proprietary terms
 
-We have the following type of data: <<DATA_SUMMARY>>
+Data summary: <<DATA_SUMMARY>>
 
 <<LABEL_BLOCK>>
 
@@ -882,10 +901,28 @@ Already-detected entities: <<SEED_ENTITIES>>
             + "\nThese examples are guidance, not an exhaustive format allowlist."
         )
     example_block = example_block.replace("<<TAG_NOTATION>>", COL_TAG_NOTATION)
+    sensitivity_guidance = (
+        "\n\nThe data summary may describe the dataset and provide sensitivity rules. "
+        "Follow its explicit sensitivity rules when they conflict with the generic guidance or examples below. "
+        "For categories or situations it does not address, use the generic guidance below. "
+        "Do not infer that a value is non-sensitive merely because the data summary does not mention it. "
+        "An allowed entity label defines what can be detected; "
+        "it does not mean every instance of that category is sensitive.\n\n"
+        "Add only values that are sensitive in the context shown, "
+        "applying explicit sensitivity rules from the data summary where provided "
+        "and otherwise using the generic guidance below. "
+        "Do not add a value merely because it matches an allowed label, "
+        "uniquely identifies a technical resource, or is a date, timestamp, location, URL, or organization name.\n\n"
+        "Use the following categories to guide your search, "
+        "subject to explicit sensitivity rules in the data summary:"
+        if data_summary
+        else "\n\nFocus on:"
+    )
     context_section = data_summary if data_summary else "Not provided"
     return substitute_placeholders(
         prompt,
         {
+            "<<SENSITIVITY_GUIDANCE>>": sensitivity_guidance,
             "<<LABEL_BLOCK>>": label_block,
             "<<EXAMPLE_BLOCK>>": example_block,
             "<<TAGGED_TEXT>>": _jinja(COL_INITIAL_TAGGED_TEXT),

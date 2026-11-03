@@ -545,7 +545,7 @@ def test_validation_prompt_includes_label_examples() -> None:
 
 def test_validation_prompt_includes_data_summary() -> None:
     prompt = _get_validation_prompt(data_summary="Medical records", labels=["first_name"])
-    assert "Data context: Medical records" in prompt
+    assert "Data summary: Medical records" in prompt
 
 
 def test_validation_prompt_adds_configured_examples_to_full_label_config() -> None:
