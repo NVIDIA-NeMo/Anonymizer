@@ -94,7 +94,7 @@ def prepare(
     if request_budget is not None and planned.value is not None and planned.value > request_budget:
         raise k.GraphRejection("over_request_budget")
     nodes = tuple(k.Node(name, op.inputs, op.outputs, op.fn, op.scope) for name, op in ops)
-    plan = k.compile_sequence(nodes, SEEDS)
+    plan = k.compile_sequence(nodes, {**SEEDS, "context": _context_kind(graph)})
     final_text = max((i for i, n in enumerate(nodes) if "text" in n.outputs), default=None)
     covering = frozenset(
         i
@@ -136,8 +136,24 @@ def _admit(
         ceiling = src.max_bytes is not None or limits.max_context_bytes is not None
         if k.kind(src.kind).measure is None and ceiling:
             raise k.GraphRejection("unsupported_context_kind", src.name)
+    _context_kind(graph)
     if not ops or any(name not in admitted for name, _ in ops):
         raise k.GraphRejection("capability_not_admitted")
+
+
+def _context_kind(graph: ProtectionGraph) -> str:
+    """The ``context`` seed kind: ``context`` for text items, else the one structured kind every item has.
+
+    A consumer reading ``context`` must declare this kind on its port, so a mismatch is rejected at compilation.
+    """
+    kinds = {i.kind if isinstance(i, ContextSource) else TEXT for cs in graph.context for i in cs.items} - {TEXT}
+    if not kinds:
+        return CONTEXT
+    if len(kinds) > 1 or any(
+        not isinstance(i, ContextSource) or i.kind == TEXT for cs in graph.context for i in cs.items
+    ):
+        raise k.GraphRejection("unsupported_context_kind", "mixed")
+    return kinds.pop()
 
 
 def _static_text(item: Datum | ContextView) -> str:
@@ -263,7 +279,8 @@ class ProtectionResult:
     def compose(self, parts: Sequence[Datum]) -> str:
         """Caller-authored composition: the candidate texts of ``parts`` in the caller's order, any subset.
 
-        A listed part without an available candidate is rejected as ``unavailable_input``, never dropped.
+        A listed part that did not succeed with an available candidate is rejected as ``unavailable_input``, never
+        dropped.
         """
         return "".join(self._available(d) for d in parts)
 
@@ -285,7 +302,7 @@ class ProtectionResult:
 
     def _available(self, target: Datum) -> str:
         o = self.outcome(target)
-        if not o.available:
+        if o.terminal != "success" or not o.available:
             raise k.GraphRejection("unavailable_input", o.reason or o.terminal)
         return self.value(target)
 
@@ -453,9 +470,13 @@ def _bind(g: ProtectionGraph, limits: Limits, cancelled: Any) -> tuple[list[Retr
             items = list(islice(iter(src.provider()), src.max_items + 1))
         except Exception:
             status = "failed"
-        if status == "ok" and not all(map(found.check, items)):
+        sizes = None
+        try:  # a check or measure that rejects or raises on an item makes it invalid
+            if status == "ok" and not all(map(found.check, items)):
+                status = "invalid_item"
+            sizes = [found.measure(t) for t in items] if status == "ok" and found.measure else None
+        except Exception:
             status = "invalid_item"
-        sizes = [found.measure(t) for t in items] if status == "ok" and found.measure else None
         if sizes is not None and None in sizes:
             status, sizes = "invalid_item", None
         size = sum(n or 0 for n in sizes) if sizes is not None else None

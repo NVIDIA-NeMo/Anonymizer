@@ -12,16 +12,19 @@ OPENING, FINDINGS, RECOMMENDATION = "Opening. ", "Findings. ", "Recommendation. 
 
 
 def _sections(order: tuple[int, ...] = (0, 1, 2), fail: str = ""):
-    """Three sections of one document, declared as targets in ``order``; the section ``fail`` fails."""
+    """Three sections of one document, declared as targets in ``order``; the section ``fail`` fails in a later step."""
     scope = GraphScope()
     parts = [scope.datum(t) for t in (OPENING, FINDINGS, RECOMMENDATION)]
 
     def op(text: str) -> str:
-        if text == fail:
-            raise RuntimeError("down")
         return text.upper()
 
-    r = run(ProtectionGraph(scope, tuple(parts[i] for i in order)), Operation("op", op))
+    def late(text: str) -> str:
+        if text == fail.upper():
+            raise RuntimeError("down")
+        return text
+
+    r = run(ProtectionGraph(scope, tuple(parts[i] for i in order)), Operation("op", op), Operation("late", late))
     return r, parts
 
 
@@ -45,8 +48,12 @@ def program() -> list[dict[str, str]]:
     code = rejected(lambda: failed.compose([f_recommendation, f_findings]))
     c.check("P1.3", code == "unavailable_input", f"code={code}")
     shuffled, (s_opening, s_findings, s_recommendation) = _sections(order=(2, 0, 1))
-    same = shuffled.compose([s_recommendation, s_findings]) == brief and shuffled.reconstruct(
-        [s_findings, s_recommendation, s_opening], {s_recommendation: 2, s_opening: 0, s_findings: 1}
-    ) == report
+    same = (
+        shuffled.compose([s_recommendation, s_findings]) == brief
+        and shuffled.reconstruct(
+            [s_findings, s_recommendation, s_opening], {s_recommendation: 2, s_opening: 0, s_findings: 1}
+        )
+        == report
+    )
     c.check("L5.1", same, f"declaration order changed, results equal={same}")
     return c.lines
