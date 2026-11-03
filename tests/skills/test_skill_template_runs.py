@@ -232,6 +232,30 @@ def test_substitute_run_with_entities_in_every_row_round_trips_through_parquet(
         assert saved_entities == list(run_cell["entities"])
 
 
+def test_rewrite_evaluate_with_entities_in_every_row_round_trips_through_parquet(
+    endpoint: StubEndpoint, workdir: Path
+) -> None:
+    anonymizer_ = Anonymizer(
+        model_providers=_stub_model_providers(endpoint),
+        model_configs=_stub_model_configs(),
+        artifact_path=workdir / "artifacts",
+    )
+    privacy_goal = anonymizer.PrivacyGoal(
+        protect=PLACEHOLDER_VALUES["protect"], preserve=PLACEHOLDER_VALUES["preserve"]
+    )
+    config = anonymizer.AnonymizerConfig(rewrite=anonymizer.Rewrite(privacy_goal=privacy_goal))
+    data = anonymizer.AnonymizerInput(source=str(workdir / "input.csv"), text_column="text")
+
+    evaluated = anonymizer_.evaluate(anonymizer_.run(config=config, data=data))
+    assert len(evaluated.dataframe) == len(INPUT_ROWS)
+    evaluated.dataframe.to_parquet(workdir / "output.parquet")
+
+    saved = pd.read_parquet(workdir / "output.parquet")
+    expected = evaluated.dataframe["judge_evaluation"].tolist()
+    assert all(isinstance(cell, dict) for cell in expected)
+    assert saved["judge_evaluation"].tolist() == expected
+
+
 def test_template_run_resolves_every_alias_through_custom_providers(
     run_template: Callable[..., str], endpoint: StubEndpoint
 ) -> None:
