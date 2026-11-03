@@ -60,7 +60,7 @@ Tasks:
    - `ChunkedValidationConfig`
 3. Add DataDesigner entry points in `pyproject.toml`.
 4. Replace detection `CustomColumnConfig` usage in `EntityDetectionWorkflow`.
-5. Keep `chunked_validate_row(...)` as the core validator implementation.
+5. Keep `chunked_validate_row_async(...)` as the core validator implementation.
 6. Add a serialization test that builds the detection workflow and confirms config JSON contains no serialized function names.
 
 Validation:

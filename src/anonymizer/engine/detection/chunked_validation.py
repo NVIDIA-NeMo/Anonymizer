@@ -443,7 +443,7 @@ def _build_dispatch_kwargs_per_chunk(
         # guarantees ``pool`` is non-empty; ``chunk_index`` comes from
         # ``enumerate`` so it's non-negative by construction. The rotated
         # order (primary first, then the rest of the pool) is what
-        # ``_dispatch_chunk`` walks on cross-alias failover.
+        # ``_dispatch_chunk_async`` walks on cross-alias failover.
         start = chunk_index % len(params.pool)
         rotated_aliases = [params.pool[(start + offset) % len(params.pool)] for offset in range(len(params.pool))]
         chunk_facades = [(alias, models[alias]) for alias in rotated_aliases]

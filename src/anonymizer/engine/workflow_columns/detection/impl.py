@@ -78,6 +78,9 @@ class ChunkedValidationGenerator(ColumnGeneratorWithModelRegistry[ChunkedValidat
             system_prompt=self.config.system_prompt,
         )
 
+    def generate(self, data: dict[str, Any]) -> dict[str, Any]:  # ty: ignore[invalid-method-override]
+        raise NotImplementedError("ChunkedValidationGenerator is async-only; use agenerate().")
+
     async def agenerate(self, data: dict[str, Any]) -> dict[str, Any]:  # ty: ignore[invalid-method-override]
         models = {alias: self.get_model(alias) for alias in self.config.pool}
         return await chunked_validate_row_async(data, self._params(models), models)

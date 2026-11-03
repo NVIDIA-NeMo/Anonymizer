@@ -110,9 +110,6 @@ class AsyncTrackingFacade(FakeFacade):
         self.active_calls = 0
         self.max_active_calls = 0
 
-    def generate(self, *, prompt, parser, system_prompt=None, purpose=None, **kwargs):
-        raise AssertionError("sync generate should not be used by async chunk validation")
-
     async def agenerate(self, *, prompt, parser, system_prompt=None, purpose=None, **kwargs):
         self.active_calls += 1
         self.max_active_calls = max(self.max_active_calls, self.active_calls)
@@ -361,7 +358,7 @@ class TestMergeChunkDecisions:
 
 
 # ---------------------------------------------------------------------------
-# Async dispatch: chunked_validate_row end-to-end with fake facades
+# Async dispatch: chunked_validate_row_async end-to-end with fake facades
 # ---------------------------------------------------------------------------
 
 
@@ -707,7 +704,7 @@ class TestChunkedValidateRowAsync:
 
 class TestChunkedValidationGenerator:
     @pytest.mark.parametrize("sync_entrypoint", [False, True])
-    def test_generation_uses_async_model(self, sync_entrypoint: bool) -> None:
+    def test_generation_requires_async_entrypoint(self, sync_entrypoint: bool) -> None:
         spans = [_entity_span("a", "Alice", "first_name", 0, 5)]
         candidates = _candidates_schema(("a", "Alice", "first_name"))
         row = _build_row(text="Alice", seed_entities=spans, candidates=candidates)
@@ -725,7 +722,13 @@ class TestChunkedValidationGenerator:
             ),
         )
 
-        out = generator.generate(row) if sync_entrypoint else asyncio.run(generator.agenerate(row))
+        if sync_entrypoint:
+            with pytest.raises(NotImplementedError, match="use agenerate"):
+                generator.generate(row)
+            assert facade.calls == []
+            return
+
+        out = asyncio.run(generator.agenerate(row))
 
         assert out[COL_VALIDATION_DECISIONS]["decisions"][0]["id"] == "a"
         assert len(facade.calls) == 1
