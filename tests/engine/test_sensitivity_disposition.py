@@ -409,6 +409,26 @@ def test_compact_disposition_rejects_incomplete_or_extra_coverage(count: int) ->
     assert COL_DISPOSITION_COVERAGE not in row
 
 
+def test_compact_equal_count_decisions_are_attached_by_id() -> None:
+    explicit, latent = build_numbered_entities(_TWO_ENTITIES, None)
+    # Identical decisions could reflect valid reasoning or a repeated mental referent.
+    # Compact output contains no echoed identity with which to distinguish those cases.
+    decisions = [{"id": i, "sensitivity": "medium", "protection_method_suggestion": "generalize"} for i in (1, 2)]
+    row = {
+        COL_RAW_SENSITIVITY_DISPOSITION: {"sensitivity_disposition": decisions},
+        COL_DISPOSITION_EXPLICIT_ENTITIES: explicit,
+        COL_DISPOSITION_LATENT_ENTITIES: latent,
+        COL_ENTITY_CLASSIFICATION: _CLASSIFICATIONS,
+    }
+    result = _verify_disposition_coverage(row)
+    entries = result[COL_SENSITIVITY_DISPOSITION]["sensitivity_disposition"]
+    inventory = _parse_numbered_lines(explicit)
+    assert [(entry["entity_value"], entry["entity_label"]) for entry in entries] == [
+        (entity["value"], entity["label"]) for entity in inventory
+    ]
+    assert result[COL_DISPOSITION_COVERAGE] is True
+
+
 @pytest.mark.parametrize("ids", [[1, 1], [2, 1], [1, 3]])
 def test_compact_response_rejects_duplicate_reordered_or_missing_ids(ids: list[int]) -> None:
     with pytest.raises(ValueError, match="IDs must be sequential"):
@@ -589,7 +609,9 @@ def _generate_compact_disposition(row: dict[str, Any]) -> dict[str, Any]:
     return row
 
 
+@pytest.mark.parametrize("incomplete_second_record", [False, True])
 def test_scheduler_propagates_normalized_disposition(
+    incomplete_second_record: bool,
     tmp_path: Path,
     stub_rewrite_model_selection: RewriteModelSelection,
 ) -> None:
@@ -615,7 +637,15 @@ def test_scheduler_propagates_normalized_disposition(
         pd.DataFrame(
             {
                 COL_ENTITIES_BY_VALUE: [
-                    {"entities_by_value": [{"value": value, "labels": ["last_name"]}]} for value in ["O.K.", "Kotu"]
+                    {
+                        "entities_by_value": [{"value": value, "labels": ["last_name"]}]
+                        + (
+                            [{"value": "Engineer", "labels": ["occupation"]}]
+                            if incomplete_second_record and value == "Kotu"
+                            else []
+                        )
+                    }
+                    for value in ["O.K.", "Kotu"]
                 ],
                 COL_LATENT_ENTITIES: [{"latent_entities": []}] * 2,
                 COL_ENTITY_CLASSIFICATION: [{"last_name": "direct_identifier"}] * 2,
@@ -626,8 +656,10 @@ def test_scheduler_propagates_normalized_disposition(
         workflow_name="disposition-normalization",
         preview_num_records=2,
     )
-    assert result.failed_records == []
-    assert len(result.dataframe) == 2
+    assert len(result.failed_records) == int(incomplete_second_record)
+    if incomplete_second_record:
+        assert result.failed_records[0].step == "disposition-normalization"
+    assert len(result.dataframe) == 2 - int(incomplete_second_record)
     for _, row in result.dataframe.iterrows():
         raw = normalize_payload(row[COL_RAW_SENSITIVITY_DISPOSITION])["sensitivity_disposition"][0]
         normalized = normalize_payload(row[COL_SENSITIVITY_DISPOSITION])["sensitivity_disposition"][0]
