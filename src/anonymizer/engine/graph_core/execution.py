@@ -268,13 +268,20 @@ class ProtectionResult:
         )
 
     def ledger(self) -> tuple[tuple[Datum, str, str], ...]:
-        """One terminal per target and operation, dispatched or not."""
-        stopped = k.Status.CANCELLED if self.state.cancelled else k.Status.BLOCKED
-        return tuple(
-            (d, name, {k.Status.PENDING: stopped}.get(status, status).value)
-            for u, d in enumerate(self.targets)
-            for name, status in zip(self.prepared.names, self.state.rows[u].status)
-        )
+        """One terminal per target and operation, dispatched or not.
+
+        A node that never ran is ``blocked`` when its target had already failed or closed, else ``cancelled`` if
+        the invocation was cancelled; a later cancellation does not relabel an earlier failure's blocked nodes.
+        """
+        ledger = []
+        for d, row in zip(self.targets, self.state.rows):
+            failed = bool(row.closed) or k.Status.FAILED in row.status
+            stopped = k.Status.CANCELLED if self.state.cancelled and not failed else k.Status.BLOCKED
+            ledger += [
+                (d, name, (stopped if s == k.Status.PENDING else s).value)
+                for name, s in zip(self.prepared.names, row.status)
+            ]
+        return tuple(ledger)
 
     def summary(self) -> InspectionSummary:
         p = self.prepared
@@ -463,14 +470,21 @@ def _reconcile(p: PreparedProtection, state: k.State, retrievals: tuple[Retrieva
     released = {d for d, (_, q, _) in zip(g.targets, verdicts) if q == "met"}
     if p.workflow.release != "protected":
         released = set()
-    changed = True
-    while changed:
-        before = len(released)
-        released -= {dep.dependent for dep in g.dependencies if dep.on not in released}
-        for grp in g.groups:
-            if not set(grp.members) <= released:
-                released -= set(grp.members)
-        changed = len(released) != before
+    # Worklist withholding: each target and each group is withheld at most once.
+    dependents: dict[Datum, list[Datum]] = {}
+    for dep in g.dependencies:
+        dependents.setdefault(dep.on, []).append(dep.dependent)
+    group_of = {m: i for i, grp in enumerate(g.groups) for m in grp.members}
+    withheld = [d for d in g.targets if d not in released]
+    spent: set[int] = set()
+    for d in withheld:  # grows while iterating
+        i = group_of.get(d, -1)
+        members = () if i < 0 or i in spent else g.groups[i].members
+        spent.add(i)
+        for nxt in (*dependents.get(d, ()), *members):
+            if nxt in released:
+                released.discard(nxt)
+                withheld.append(nxt)
     outcomes = []
     for u, (d, (terminal, qual, reason)) in enumerate(zip(g.targets, verdicts)):
         available = any("text" in out for out in state.rows[u].outputs.values())

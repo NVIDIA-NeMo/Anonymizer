@@ -205,21 +205,20 @@ class ProtectionGraph:
             raise GraphRejection(problem)
 
     def _check_acyclic(self) -> None:
-        edges: dict[Datum, set[Datum]] = {}
+        """Iterative topological sort: a target left with an unsatisfied dependency lies on a cycle."""
+        edges: dict[Datum, list[Datum]] = {}
+        waiting = dict.fromkeys(self.targets, 0)
         for dep in self.dependencies:
-            edges.setdefault(dep.dependent, set()).add(dep.on)
-        done: set[Datum] = set()
-
-        def visit(d: Datum, path: set[Datum]) -> None:
-            if d in path:
-                raise GraphRejection("dependency_cycle")
-            if d not in done:
-                for nxt in edges.get(d, ()):
-                    visit(nxt, path | {d})
-                done.add(d)
-
-        for d in list(edges):
-            visit(d, set())
+            edges.setdefault(dep.dependent, []).append(dep.on)
+            waiting[dep.on] += 1
+        ready = [d for d, n in waiting.items() if n == 0]
+        for d in ready:  # grows while iterating
+            for on in edges.get(d, ()):
+                waiting[on] -= 1
+                if waiting[on] == 0:
+                    ready.append(on)
+        if len(ready) != len(waiting):
+            raise GraphRejection("dependency_cycle")
 
 
 # ---------------------------------------------------------------- operations and workflows
