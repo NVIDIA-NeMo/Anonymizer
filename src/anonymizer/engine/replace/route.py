@@ -163,8 +163,10 @@ def run_replace_pipeline(
     """Run ``detect``, the Substitute map step and the per-target replace and verify as one invocation.
 
     A row the detector drops fails at ``detect`` and blocks the later steps. Output rows are the detection frame's
-    rows for the targets that reached the end. A result that is not verifiably one input row per returned row (see
-    ``resolve_positions``) fails every target at ``detect``, and ``reroute`` replaces over the detection frame as returned.
+    rows for the targets that reached the end; a row that fails at a step for any reason other than missing output
+    (which that step's workflow already reports) is returned as a failed record naming the step and the reason. A
+    result that is not verifiably one input row per returned row (see ``resolve_positions``) fails every target at
+    ``detect``, and ``reroute`` replaces over the detection frame as returned.
     """
     scope = GraphScope()
     graph = ProtectionGraph(scope, tuple(scope.datum(str(text)) for text in dataframe[COL_TEXT]))
