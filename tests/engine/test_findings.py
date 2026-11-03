@@ -102,10 +102,14 @@ def test_every_finding_has_a_rule_and_presets_name_only_known_findings() -> None
     for bundle in _RISK_TOLERANCE_BUNDLES.values():
         assert set(bundle.repair_on) | set(bundle.flag_on) <= set(Finding)
         assert Finding.protected_leak not in set(bundle.repair_on) | set(bundle.flag_on)
+        assert Finding.unavailable_evidence in bundle.flag_on
+        assert Finding.unavailable_evidence not in bundle.repair_on
 
 
 # ---------------------------------------------------------------------------
-# Equivalence with the inline formulas these findings replaced
+# Equivalence with the inline formulas these findings replaced. Since the
+# unavailable-evidence fix, missing or NaN metrics flag for review (where the
+# old formulas passed or raised) and never trigger repair (where they raised).
 # ---------------------------------------------------------------------------
 
 
@@ -114,6 +118,10 @@ def _outcome(decide: Callable[..., bool], *args: Any) -> bool | type[Exception]:
         return bool(decide(*args))
     except Exception as exc:
         return type(exc)
+
+
+def _unavailable(row: dict[str, Any]) -> bool:
+    return bool(present_findings(row, [Finding.unavailable_evidence], leakage_above=0.0, utility_below=0.0))
 
 
 def _old_repair(row: dict[str, Any], ev: EvaluationCriteria) -> bool:
@@ -152,15 +160,19 @@ def test_findings_reproduce_previous_formulas(risk_tolerance: RiskTolerance) -> 
     ev = EvaluationCriteria(risk_tolerance=risk_tolerance)
     for high, leakage in itertools.product(_FLAGS, (*_NUMBERS, _MISSING)):
         row = _row(**{COL_ANY_HIGH_LEAKED: high, COL_LEAKAGE_MASS: leakage})
-        assert _outcome(needs_repair, row, ev) == _outcome(_old_repair, row, ev), row
+        old = _outcome(_old_repair, row, ev)
+        assert _outcome(needs_repair, row, ev) == (False if old is TypeError else old), row
 
     # The combined path compared text with ``is None``; it never sees a float-NaN rewrite.
     grid = list(itertools.product(("rewritten", None), _FLAGS, _FLAGS[:4], _NUMBERS, _NUMBERS))
     for text, ready, high, utility, leakage in grid:
         row = _row(**dict(zip(_CLEAN, (text, ready, high, utility, leakage), strict=True)))
-        assert _outcome(needs_human_review, row, ev) == _outcome(_old_review_combined, row, ev), row
+        old = True if _unavailable(row) else _outcome(_old_review_combined, row, ev)
+        assert _outcome(needs_human_review, row, ev) == old, row
 
     values = itertools.product(("rewritten", None, _NAN), _FLAGS[:4], _FLAGS[:4], _NUMBERS, _NUMBERS)
     frame = pd.DataFrame([dict(zip(_CLEAN, row, strict=True)) for row in values])
     for df in (frame, frame.drop(columns=COL_REWRITE_REPLACEMENT_READY)):
-        assert [needs_human_review(row, ev) for row in df.to_dict("records")] == _old_review_staged(df, ev)
+        rows = df.to_dict("records")
+        old = [_unavailable(row) or flagged for row, flagged in zip(rows, _old_review_staged(df, ev), strict=True)]
+        assert [needs_human_review(row, ev) for row in rows] == old

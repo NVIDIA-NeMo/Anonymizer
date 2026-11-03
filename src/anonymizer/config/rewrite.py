@@ -50,7 +50,8 @@ class _RiskToleranceBundle:
     ``repair_on`` and ``flag_on`` name the findings (see ``Finding``) that send a
     row to repair and flag it for human review. ``leakage_above_threshold`` is
     measured against ``repair_threshold`` for repair and ``flag_leakage_above``
-    for review.
+    for review. ``unavailable_evidence`` flags but never repairs: a row whose
+    metrics are missing or NaN cannot be judged, so it goes to a human instead.
     """
 
     repair_threshold: float
@@ -63,6 +64,7 @@ class _RiskToleranceBundle:
         Finding.high_leak,
         Finding.utility_below_flag,
         Finding.leakage_above_threshold,
+        Finding.unavailable_evidence,
     )
 
 

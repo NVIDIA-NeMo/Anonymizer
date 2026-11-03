@@ -12,6 +12,7 @@ rule here, then list it in the presets that should act on it.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from enum import Enum
@@ -67,13 +68,18 @@ def _protected_leak(row: Mapping[str, Any]) -> bool:
     )
 
 
+def _number(value: Any) -> float:
+    """Unavailable evidence (None/NaN) reads as NaN, so it never passes or fails a threshold."""
+    return math.nan if pd.isna(value) else float(value)
+
+
 _RULES: dict[Finding, Callable[[Mapping[str, Any], _Limits], bool]] = {
     Finding.rewrite_missing: lambda row, _: bool(pd.isna(row.get(COL_REWRITTEN_TEXT))),
     Finding.replacement_unavailable: lambda row, _: not bool(row.get(COL_REWRITE_REPLACEMENT_READY, True)),
     Finding.high_leak: lambda row, _: bool(row.get(COL_ANY_HIGH_LEAKED)),
     Finding.protected_leak: lambda row, _: _protected_leak(row),
-    Finding.leakage_above_threshold: lambda row, limits: float(row.get(COL_LEAKAGE_MASS, 0.0)) > limits.leakage_above,
-    Finding.utility_below_flag: lambda row, limits: float(row[COL_UTILITY_SCORE]) < limits.utility_below,
+    Finding.leakage_above_threshold: lambda row, limits: _number(row.get(COL_LEAKAGE_MASS)) > limits.leakage_above,
+    Finding.utility_below_flag: lambda row, limits: _number(row.get(COL_UTILITY_SCORE)) < limits.utility_below,
     Finding.unavailable_evidence: lambda row, _: any(
         bool(pd.isna(row.get(column))) for column in (COL_LEAKAGE_MASS, COL_UTILITY_SCORE, COL_ANY_HIGH_LEAKED)
     ),
