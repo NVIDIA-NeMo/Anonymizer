@@ -8,6 +8,7 @@ import json
 from typing import Any
 
 import pytest
+from data_designer.engine.models.recipes.response_recipes import PydanticResponseRecipe
 from pydantic import ValidationError
 
 from anonymizer.engine.constants import (
@@ -87,6 +88,38 @@ def test_grounding_failure_categories_are_a_closed_set() -> None:
         AugmentationAttemptTrace.model_validate(
             {"attempt_index": 0, "outcome": "grounding_failure", "failures": [{"item_index": 1, "category": "typo"}]}
         )
+
+
+@pytest.mark.parametrize("extras", [{"confidence": 0.9}, {"failure_categories": ["non_verbatim_context"]}])
+def test_augmentation_parser_ignores_unknown_fields_before_grounding(extras: dict[str, Any]) -> None:
+    entity = {"value": "Alice", "label": "first_name", "context_before": "Ask ", "context_after": " now"}
+    recipe = PydanticResponseRecipe(data_type=AugmentedEntitiesSchema)
+    output = recipe.parse(json.dumps({"entities": [{**entity, **extras}], "decisions": []}))
+
+    assert isinstance(output, AugmentedEntitiesSchema)
+    assert output.model_dump() == {"entities": [{**entity, "reason": None}]}
+    text = "Ask Alice now"
+    grounded = _ground_augmentation_items(canonical_text=text, source_view=_view(text), output=output)
+    assert grounded.failures == ()
+    assert len(grounded.occurrences) == 1
+
+
+@pytest.mark.parametrize("entity", [{"value": "Alice"}, {"value": 123, "label": "first_name"}])
+def test_augmentation_schema_still_rejects_invalid_known_fields(entity: dict[str, Any]) -> None:
+    with pytest.raises(ValidationError):
+        AugmentedEntitiesSchema.model_validate({"entities": [{**entity, "confidence": 0.9}]})
+
+
+def test_ignored_context_typo_does_not_bypass_grounding() -> None:
+    text = "Ask Alice now"
+    output = AugmentedEntitiesSchema.model_validate(
+        {"entities": [{"value": "Alice", "label": "first_name", "context_befor": "Ask "}]}
+    )
+
+    grounded = _ground_augmentation_items(canonical_text=text, source_view=_view(text), output=output)
+
+    assert grounded.occurrences == ()
+    assert grounded.failures[0].category is AugmentationGroundingFailureCategory.missing_context
 
 
 def test_grounding_rejects_contexts_that_match_different_occurrences() -> None:

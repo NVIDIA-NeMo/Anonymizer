@@ -451,7 +451,7 @@ class ValidationDecisionsSchema(BaseModel):
 
 
 class AugmentedEntitySchema(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="ignore")
 
     value: str = Field(min_length=1)
     context_before: str = ""
@@ -461,7 +461,7 @@ class AugmentedEntitySchema(BaseModel):
 
 
 class AugmentedEntitiesSchema(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="ignore")
 
     entities: list[AugmentedEntitySchema] = Field(default_factory=list)
 
