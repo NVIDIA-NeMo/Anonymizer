@@ -153,13 +153,16 @@ def test_model_columns_await_async_facade(
 
 
 @pytest.mark.parametrize("error", [ModelTimeoutError("Timeout"), asyncio.CancelledError()])
-def test_model_failure_propagates(model_columns: list[CustomColumnConfig], error: BaseException) -> None:
-    column = model_columns[0]
+@pytest.mark.parametrize("index", range(4), ids=["quality-reanswer", "privacy-reanswer", "quality-compare", "repair"])
+def test_model_failure_propagates(
+    model_columns: list[CustomColumnConfig], model_row: dict[str, Any], index: int, error: BaseException
+) -> None:
+    column = model_columns[index]
     facade = Mock(agenerate=AsyncMock(side_effect=error))
     resources = Mock()
     resources.model_registry.get_model.return_value = facade
     generator = CustomColumnGenerator(column, resource_provider=resources)
-    row = {name: {"items": []} if name == COL_QUALITY_QA else "rewrite" for name in column.required_columns}
+    row = {name: model_row[name] for name in column.required_columns}
 
     with pytest.raises(type(error)):
         asyncio.run(generator.agenerate(row))
