@@ -166,10 +166,13 @@ Maintain overall coherence, consistency, and naturalness (utility score: <<UTILI
 Provide ONLY the rewritten text.
 </task>
 """
+    baseline = row.get(COL_REWRITE_BASELINE_TEXT)
+    if baseline is None:
+        baseline = row.get(COL_TEXT, "")
     replacements = {
         "<<PRIVACY_GOAL>>": params.privacy_goal_str,
         "<<MAX_PRIVACY_LEAK>>": str(params.max_privacy_leak),
-        "<<ORIGINAL_TEXT>>": str(row.get(COL_REWRITE_BASELINE_TEXT, row.get(COL_TEXT, ""))),
+        "<<ORIGINAL_TEXT>>": str(baseline),
         "<<REWRITTEN_TEXT>>": str(row.get(COL_REWRITTEN_TEXT, "")),
         "<<LEAKAGE_MASS>>": str(row.get(COL_LEAKAGE_MASS, 0.0)),
         "<<HIGH_WARN>>": "\nWARNING: HIGH-SENSITIVITY LEAK DETECTED - must be fixed!"
