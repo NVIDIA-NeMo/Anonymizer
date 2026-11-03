@@ -644,7 +644,7 @@ def test_augment_prompt_permissive_when_using_defaults() -> None:
     assert '"context_before"' in prompt
     assert '"context_after"' in prompt
     assert "a few words (two to five)" in prompt
-    assert "Never copy those tags" in prompt
+    assert "Never copy those tags" not in prompt
 
 
 def test_augment_prompt_strict_when_explicit_labels_provided() -> None:
@@ -660,10 +660,7 @@ def test_augment_prompt_strict_when_explicit_labels_provided() -> None:
 
 @pytest.mark.parametrize("notation", list(TagNotation))
 @pytest.mark.parametrize("strict_labels", [False, True])
-@pytest.mark.parametrize("has_overlap_groups", [False, True])
-def test_augment_prompt_examples_ground_context_across_entity_tags(
-    notation: TagNotation, strict_labels: bool, has_overlap_groups: bool
-) -> None:
+def test_plain_augment_prompt_examples_ground_exact_source(notation: TagNotation, strict_labels: bool) -> None:
     prompt = _get_augment_prompt(
         data_summary=None, labels=["first_name", "last_name", "city"], strict_labels=strict_labels
     )
@@ -675,7 +672,7 @@ def test_augment_prompt_examples_ground_context_across_entity_tags(
                 COL_TAG_NOTATION: notation.value,
                 COL_INITIAL_TAGGED_TEXT: "",
                 COL_SEED_ENTITIES_JSON: "[]",
-                "has_overlap_groups": has_overlap_groups,
+                COL_TEXT: "Literal <city>source</city> stays unchanged.",
             }
         )
     )
@@ -692,25 +689,15 @@ def test_augment_prompt_examples_ground_context_across_entity_tags(
         output=output,
     )
 
-    assert ("A tag named NAGROUP_gN" in rendered) is has_overlap_groups
-    assert ("the whole region as already tagged" in rendered) is has_overlap_groups
-    assert ("never return it as a label" in rendered) is has_overlap_groups
+    assert "NAGROUP" not in rendered
+    assert "Already-detected entities" not in rendered
+    assert "already-tagged" not in rendered
+    assert "engine-inserted" not in rendered
+    assert "Input text: Literal <city>source</city> stays unchanged." in rendered
     assert "a few words (two to five)" in rendered
     assert "Context does not have to identify a unique occurrence" in rendered
-    example_label = "NAGROUP_g1" if has_overlap_groups else "city"
-    assert _format_entity_tag(value="Santa Clara", label=example_label, notation=notation) in rendered
-    example_seeds = json.loads(
-        next(line for line in rendered.splitlines() if line.startswith("Already-detected entities: ")).removeprefix(
-            "Already-detected entities: "
-        )
-    )
-    assert example_seeds == (
-        [{"value": "Santa Clara", "label": "city"}, {"value": "Clara", "label": "first_name"}]
-        if has_overlap_groups
-        else [{"value": "Santa Clara", "label": "city"}]
-    )
     assert output.entities[1].context_after == " lives in Santa Clara. "
-    expected_values = ["Jane", "Doe"] if strict_labels else ["Jane", "Doe", "full-time"]
+    expected_values = ["Jane", "Doe", "Santa Clara"] if strict_labels else ["Jane", "Doe", "Santa Clara", "full-time"]
     assert result.failures == ()
     assert [item.value for item in result.grounded_entities.entities] == expected_values
     assert [
@@ -718,7 +705,7 @@ def test_augment_prompt_examples_ground_context_across_entity_tags(
         for item in result.occurrences
     ] == [(value, source.index(value), source.index(value) + len(value)) for value in expected_values]
     if not strict_labels:
-        assert output.entities[2].context_before == "in Santa Clara. She works "
+        assert output.entities[3].context_before == "in Santa Clara. She works "
 
 
 def test_augment_prompt_receives_only_configured_examples() -> None:
