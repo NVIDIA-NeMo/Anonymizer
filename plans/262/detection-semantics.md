@@ -9,9 +9,15 @@ implementation in [PR #265](https://github.com/NVIDIA-NeMo/Anonymizer/pull/265).
 No separate detection-semantics issue is required.
 
 > [!IMPORTANT]
-> This is a draft implementation plan. Inline **Review decision needed**
-> callouts identify passages that are not yet settled. They are intentionally
-> left beside the relevant design text so reviewers can comment in context.
+> Implemented in [PR #305](https://github.com/NVIDIA-NeMo/Anonymizer/pull/305).
+> This document retains the design rationale and historical baseline below;
+> the [detection guide](../../docs/concepts/detection.md) describes the current
+> user-facing behavior. The PR removes generic occurrence propagation and name
+> splitting, retains exact-span fallback for missing/unusable decisions in
+> successful responses, and fails unresolved duplicate-alias responses.
+> Augmenter extra fields are ignored; required fields and exact source grounding
+> remain checked. After rebasing onto main's async-only model execution, both
+> validation and augmentation plugins use `agenerate()`.
 
 ## Goal
 
@@ -29,9 +35,9 @@ The intended sequence is:
 1. **Completed:** [PR #282](https://github.com/NVIDIA-NeMo/Anonymizer/pull/282)
   makes validated source offsets, rather than detector-echoed text, determine
    entity values.
-2. Implement the lifecycle in this plan on `main` without changing the public
-  `Detect` API.
-3. Rebase [PR #267](https://github.com/NVIDIA-NeMo/Anonymizer/pull/267) so its
+2. **Implemented in PR #305:** the shared lifecycle without new public
+  `Detect` configuration fields.
+3. **Stacked follow-up:** [PR #267](https://github.com/NVIDIA-NeMo/Anonymizer/pull/267) targets the PR #305 branch so its
   clean-slate augmentation prompt uses the shared augmentation-admission and
    final-reconciliation contracts rather than a route-specific overlap filter.
 4. Rebase or reconstruct PR #265 on the resulting internal contracts.
@@ -56,9 +62,9 @@ produced it?
 Those are detection semantics. Establishing them now fixes existing correctness
 issues and gives the graph refactor a stable contract to preserve.
 
-## Current Lifecycle and Failure Modes
+## Historical Baseline and Failure Modes
 
-The current `main` workflow is approximately:
+The pre-PR #305 workflow was approximately:
 
 ```text
 GLiNER response
@@ -1054,23 +1060,22 @@ value               = canonical_text[canonical_start:canonical_end]
 ```
 
 > [!WARNING]
-> **Review decision needed — transitional grounding:** The augmenter still sees
-> seed-tagged text until PR #267, while grounding must resolve against canonical
-> source text. Confirm the smallest prompt change that reliably asks the model
-> to copy `value`, `context_before`, and `context_after` from the underlying
-> source without copying engine-inserted seed tags. PR #267 removes this
-> transitional mismatch by showing plain source text.
+> **Retained limitation — transitional grounding:** PR #305 keeps the seed-aware
+> tagged prompt and its instruction not to repeat supplied entities. Grounding
+> resolves against canonical source text, so model-generated contexts containing
+> inserted tags can fail grounding. PR #267 is the separately tested, stacked
+> plain-text prompt follow-up; its behavior is not part of PR #305 alone.
 >
 > It is technically possible to match the returned context against tagged text,
 > but those offsets are not canonical source offsets. The engine would then need
 > a deterministic rendered-text-to-source offset map and rules for context that
 > crosses inserted tags. Stripping tag-looking text afterward is unsafe because
 > equivalent text may have existed in the user's source. The simpler contract is
-> for the model to return canonical source substrings; what remains unsettled is
-> whether this PR should also show canonical text to the augmenter, or retain the
-> transitional tagged prompt and rely on an instruction to omit inserted tags.
+> for the model to return canonical source substrings. This PR retains the
+> transitional tagged prompt rather than introducing an offset map or silently
+> stripping engine tags from model output.
 >
-> Benchmark both variants on the same records. In particular, measure whether
+> Follow-up evaluation should compare both variants on the same records and measure whether
 > the plain-text prompt rediscovers already supplied seed entities rather than
 > finding genuinely missed entities.
 
