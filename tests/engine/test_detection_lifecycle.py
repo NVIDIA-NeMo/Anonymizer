@@ -153,52 +153,26 @@ def test_detection_result_allows_successful_empty_result() -> None:
 
 def test_detection_result_enforces_owned_unique_observations() -> None:
     observation = _observation()
-
-    with pytest.raises(ValidationError, match="observation IDs must be unique"):
-        DetectionResult(
-            detection_result_id="r1",
-            source_view=_source_view(),
-            source_kind="initial_detector",
-            source_instance="gliner-pii-detector",
-            observations=(observation, observation),
-        )
-
-    with pytest.raises(ValidationError, match="observation belongs to another result"):
-        DetectionResult(
-            detection_result_id="r2",
-            source_view=_source_view(),
-            source_kind="initial_detector",
-            source_instance="gliner-pii-detector",
-            observations=(observation,),
-        )
-
-    with pytest.raises(ValidationError, match="observation belongs to another source text"):
-        DetectionResult(
-            detection_result_id="r1",
-            source_view=_source_view(record_id="record-2"),
-            source_kind="initial_detector",
-            source_instance="gliner-pii-detector",
-            observations=(observation,),
-        )
-
-    with pytest.raises(ValidationError, match="observation belongs to another component"):
-        DetectionResult(
-            detection_result_id="r1",
-            source_view=_source_view(),
-            source_kind="augmenter",
-            source_instance="gliner-pii-detector",
-            observations=(observation,),
-        )
-
-    outside_view = _observation(start_position=16, end_position=21)
-    with pytest.raises(ValidationError, match="observation falls outside its source view"):
-        DetectionResult(
-            detection_result_id="r1",
-            source_view=_source_view(),
-            source_kind="initial_detector",
-            source_instance="gliner-pii-detector",
-            observations=(outside_view,),
-        )
+    common = {
+        "detection_result_id": "r1",
+        "source_view": _source_view(),
+        "source_kind": "initial_detector",
+        "source_instance": "gliner-pii-detector",
+        "observations": (observation,),
+    }
+    cases = [
+        ({"observations": (observation, observation)}, "observation IDs must be unique"),
+        ({"detection_result_id": "r2"}, "observation belongs to another result"),
+        ({"source_view": _source_view(record_id="record-2")}, "observation belongs to another source text"),
+        ({"source_kind": "augmenter"}, "observation belongs to another component"),
+        (
+            {"observations": (_observation(start_position=16, end_position=21),)},
+            "observation falls outside its source view",
+        ),
+    ]
+    for changes, error in cases:
+        with pytest.raises(ValidationError, match=error):
+            DetectionResult.model_validate({**common, **changes})
 
 
 def test_detection_result_round_trip_preserves_tuple_state() -> None:
@@ -253,25 +227,19 @@ def test_validation_inventory_binds_unique_aliases_to_context() -> None:
 
 
 def test_validation_inventory_entry_validates_its_own_geometry() -> None:
-    with pytest.raises(ValidationError, match="inventory entry must cover a non-empty span"):
-        ValidationInventoryEntry(
-            alias="c1",
-            observation_ref=_observation_ref(),
-            value="Alice",
-            label="first_name",
-            start_position=5,
-            end_position=5,
-        )
-
-    with pytest.raises(ValidationError, match="inventory entry value length must match"):
-        ValidationInventoryEntry(
-            alias="c1",
-            observation_ref=_observation_ref(),
-            value="Alice",
-            label="first_name",
-            start_position=0,
-            end_position=6,
-        )
+    for start, end, error in [
+        (5, 5, "inventory entry must cover a non-empty span"),
+        (0, 6, "inventory entry value length must match"),
+    ]:
+        with pytest.raises(ValidationError, match=error):
+            ValidationInventoryEntry(
+                alias="c1",
+                observation_ref=_observation_ref(),
+                value="Alice",
+                label="first_name",
+                start_position=start,
+                end_position=end,
+            )
 
 
 def test_validation_inventory_requires_matching_source_context() -> None:
@@ -458,61 +426,41 @@ def test_admitted_candidate_requires_matching_acceptance_provenance() -> None:
     assert restored.has_explicit_acceptance
 
     unrelated_ref = ObservationRef(detection_result_id="r1", observation_id="o2")
-    with pytest.raises(ValidationError, match="accepted origins must reference candidate lineage"):
-        AdmittedCandidate(
-            source_text_ref=_source_text_ref(),
-            value="Alice",
-            label="first_name",
-            start_position=0,
-            end_position=5,
-            lineage=(observation_ref,),
-            accepted_origins=(origin.model_copy(update={"observation_ref": unrelated_ref}),),
-            has_fallback_protection=False,
-        )
-
-    with pytest.raises(ValidationError, match="native scores must reference accepted origins"):
-        AdmittedCandidate(
-            source_text_ref=_source_text_ref(),
-            value="Alice",
-            label="first_name",
-            start_position=0,
-            end_position=5,
-            lineage=(observation_ref, unrelated_ref),
-            accepted_origins=(origin,),
-            native_scores=(
-                NativeScore(
-                    observation_ref=unrelated_ref,
-                    source_kind="initial_detector",
-                    source_instance="gliner-pii-detector",
-                    score=0.8,
-                ),
-            ),
-            has_fallback_protection=False,
-        )
+    unrelated_score = NativeScore(
+        observation_ref=unrelated_ref,
+        source_kind="initial_detector",
+        source_instance="gliner-pii-detector",
+        score=0.8,
+    )
+    for changes, error in [
+        (
+            {"accepted_origins": (origin.model_copy(update={"observation_ref": unrelated_ref}),)},
+            "accepted origins must reference candidate lineage",
+        ),
+        (
+            {"lineage": (observation_ref, unrelated_ref), "native_scores": (unrelated_score,)},
+            "native scores must reference accepted origins",
+        ),
+    ]:
+        with pytest.raises(ValidationError, match=error):
+            AdmittedCandidate.model_validate({**candidate.model_dump(), **changes})
 
 
 def test_admitted_candidate_requires_matching_value_length_and_protection_state() -> None:
-    with pytest.raises(ValidationError, match="candidate value length must match"):
-        AdmittedCandidate(
-            source_text_ref=_source_text_ref(),
-            value="Alice",
-            label="first_name",
-            start_position=0,
-            end_position=6,
-            lineage=(_observation_ref(),),
-            has_fallback_protection=True,
-        )
-
-    with pytest.raises(ValidationError, match="candidate requires an admitted protection state"):
-        AdmittedCandidate(
-            source_text_ref=_source_text_ref(),
-            value="Alice",
-            label="first_name",
-            start_position=0,
-            end_position=5,
-            lineage=(_observation_ref(),),
-            has_fallback_protection=False,
-        )
+    for end, fallback, error in [
+        (6, True, "candidate value length must match"),
+        (5, False, "candidate requires an admitted protection state"),
+    ]:
+        with pytest.raises(ValidationError, match=error):
+            AdmittedCandidate(
+                source_text_ref=_source_text_ref(),
+                value="Alice",
+                label="first_name",
+                start_position=0,
+                end_position=end,
+                lineage=(_observation_ref(),),
+                has_fallback_protection=fallback,
+            )
 
 
 def test_admitted_candidate_allows_fallback_without_accepted_origin() -> None:
