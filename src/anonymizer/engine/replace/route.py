@@ -70,8 +70,8 @@ from anonymizer.measurement import record_stage
 
 logger = logging.getLogger("anonymizer")
 
-REPLACEMENT_MAP = register_kind("replacement-map", lambda v: isinstance(v, dict))
-REPLACEMENT_APPLICATION = register_kind("replacement-application", lambda v: isinstance(v, dict))
+REPLACEMENT_MAP = register_kind("replacement-map", lambda v: isinstance(v, dict), copy=dict)
+REPLACEMENT_APPLICATION = register_kind("replacement-application", lambda v: isinstance(v, dict), copy=dict)
 
 
 def run_local_route(

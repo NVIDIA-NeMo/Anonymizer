@@ -8,8 +8,10 @@ Anonymizer owns identity, accounting and qualification here; the kernel owns top
 
 from __future__ import annotations
 
+import hashlib
+import secrets
 from collections import Counter
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields, replace
 from functools import cached_property
 from itertools import islice
 from typing import Any
@@ -32,6 +34,7 @@ from anonymizer.engine.graph_core.authoring import (
 )
 
 SEEDS = {"text": TEXT, "source": TEXT, "mentions": MENTIONS, "context": CONTEXT, "target": DATUM}
+_SEAL_KEY = secrets.token_bytes(32)
 
 
 @dataclass(frozen=True)
@@ -56,6 +59,8 @@ class PreparedProtection:
     names: tuple[str, ...]
     planned_requests: Count
     covering_verifiers: frozenset[int]
+    capabilities: frozenset[str] = frozenset()
+    seal: str = field(default="", repr=False)
 
     def summary(self) -> InspectionSummary:
         return InspectionSummary(self.names, len(self.graph.targets), self.planned_requests)
@@ -79,23 +84,8 @@ def prepare(
     """
     limits = limits or Limits()
     ops = workflow.flatten()
-    if len(ops) > limits.max_operations:
-        raise k.GraphRejection("over_limit", "max_operations")
-    if len(graph.targets) > limits.max_targets:
-        raise k.GraphRejection("over_limit", "max_targets")
-    if len(graph.mentions) > limits.max_mentions:
-        raise k.GraphRejection("over_limit", "max_mentions")
-    if limits.max_text_bytes is not None and any(utf8_size(d.text) > limits.max_text_bytes for d in graph.targets):
-        raise k.GraphRejection("over_byte_ceiling", "max_text_bytes")
-    static = [_static_text(i) for cs in graph.context for i in cs.items if not isinstance(i, ContextSource)]
-    sources = [i for cs in graph.context for i in cs.items if isinstance(i, ContextSource)]
-    if len(static) + sum(s.max_items for s in sources) > limits.max_context_items:
-        raise k.GraphRejection("over_limit", "max_context_items")
-    if limits.max_context_bytes is not None and sum(map(utf8_size, static)) > limits.max_context_bytes:
-        raise k.GraphRejection("over_byte_ceiling", "max_context_bytes")
-    admitted = {name for name, _ in ops} if capabilities is None else set(capabilities)
-    if not ops or any(name not in admitted for name, _ in ops):
-        raise k.GraphRejection("capability_not_admitted")
+    admitted = frozenset(name for name, _ in ops) if capabilities is None else frozenset(capabilities)
+    _admit(graph, ops, limits, admitted)
     planned = _planned(ops, len(graph.targets))
     if request_budget is not None and (planned.value is None or planned.bound == "opaque"):
         raise k.GraphRejection("hard_budget_without_visibility")  # never downgraded to soft
@@ -111,7 +101,37 @@ def prepare(
     )
     if planned.bound == "opaque":
         planned = Count(None, "unknown")
-    return PreparedProtection(graph, workflow, limits, plan, tuple(n for n, _ in ops), planned, covering)
+    names = tuple(n for n, _ in ops)
+    prepared = PreparedProtection(graph, workflow, limits, plan, names, planned, covering, admitted)
+    return replace(prepared, seal=_seal(prepared))
+
+
+def _seal(p: PreparedProtection) -> str:
+    """A process-local digest of the identities of everything admission produced."""
+    ids = repr(tuple(id(getattr(p, f.name)) for f in fields(p) if f.name != "seal"))
+    return hashlib.blake2b(ids.encode(), key=_SEAL_KEY).hexdigest()
+
+
+def _admit(
+    graph: ProtectionGraph, ops: tuple[tuple[str, Operation], ...], limits: Limits, admitted: frozenset[str]
+) -> None:
+    """The limit and capability checks, run at preparation and again before execution."""
+    if len(ops) > limits.max_operations:
+        raise k.GraphRejection("over_limit", "max_operations")
+    if len(graph.targets) > limits.max_targets:
+        raise k.GraphRejection("over_limit", "max_targets")
+    if len(graph.mentions) > limits.max_mentions:
+        raise k.GraphRejection("over_limit", "max_mentions")
+    if limits.max_text_bytes is not None and any(utf8_size(d.text) > limits.max_text_bytes for d in graph.targets):
+        raise k.GraphRejection("over_byte_ceiling", "max_text_bytes")
+    static = [_static_text(i) for cs in graph.context for i in cs.items if not isinstance(i, ContextSource)]
+    sources = [i for cs in graph.context for i in cs.items if isinstance(i, ContextSource)]
+    if len(static) + sum(s.max_items for s in sources) > limits.max_context_items:
+        raise k.GraphRejection("over_limit", "max_context_items")
+    if limits.max_context_bytes is not None and sum(map(utf8_size, static)) > limits.max_context_bytes:
+        raise k.GraphRejection("over_byte_ceiling", "max_context_bytes")
+    if not ops or any(name not in admitted for name, _ in ops):
+        raise k.GraphRejection("capability_not_admitted")
 
 
 def _static_text(item: Datum | ContextView) -> str:
@@ -313,8 +333,9 @@ def protect(prepared: PreparedProtection, *, cancel: k.CancelToken | None = None
     ``cancel`` stops new dispatches and retrievals; a frame nested in another inherits its
     cancellation.
     """
-    if not isinstance(prepared, PreparedProtection):
+    if not isinstance(prepared, PreparedProtection) or prepared.seal != _seal(prepared):
         raise k.GraphRejection("not_prepared")
+    _admit(prepared.graph, prepared.workflow.flatten(), prepared.limits, prepared.capabilities)
     return k.run_in_frame(_protect, prepared, token=cancel)
 
 
@@ -396,11 +417,12 @@ def _reconcile(p: PreparedProtection, state: k.State, retrievals: tuple[Retrieva
         status = k.unit_terminal(row, state.cancelled)
         terminal = "success" if status == k.Status.SUCCEEDED else status.value
         reason = "" if terminal == "success" else row.closed or failures.get(u, terminal)
+        # Unattributed, foreign or swapped evidence from any verifier destroys attribution.
+        assessments = [v for out in row.outputs.values() for v in out.values() if isinstance(v, Assessment)]
+        consistent = consistent and all(a.target == d for a in assessments)
         quals = []
         for i in p.covering_verifiers:
             a: Assessment | None = row.outputs.get(i, {}).get("assessment")
-            if a is not None and a.target is not None and a.target != d:
-                consistent = False  # foreign or swapped evidence destroys attribution
             quals.append(a.satisfied is True if a is not None else False)
         if terminal != "success":
             qual = "not_met"

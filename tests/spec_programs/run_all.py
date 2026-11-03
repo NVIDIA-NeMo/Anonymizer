@@ -27,6 +27,7 @@ PROGRAMS = [
     "sp16_bounded_operation",
     "sp17_covering_verifiers",
     "sp18_release",
+    "sp19_admission_integrity",
 ]
 RETIRED_SP8 = [f"E8.{i}" for i in range(1, 6)]
 

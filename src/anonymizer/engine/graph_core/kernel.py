@@ -28,6 +28,7 @@ class GraphRejection(Exception):
     def __init__(self, code: str, detail: str = "") -> None:
         super().__init__(f"{code}: {detail}" if detail else code)
         self.code = code
+        self.detail = detail
 
 
 # ---------------------------------------------------------------- artifact kinds (routes register their own)
@@ -35,21 +36,28 @@ class GraphRejection(Exception):
 
 @dataclass(frozen=True)
 class ArtifactKind:
-    """A registered value kind for typed ports: a membership check and an optional UTF-8 byte measure."""
+    """A registered value kind for typed ports: a membership check, an optional UTF-8 byte measure and an optional
+    copy applied to each accepted value, so the producer cannot change it afterwards."""
 
     name: str
     check: Callable[[Any], bool]
     measure: Callable[[Any], int | None] | None = None
+    copy: Callable[[Any], Any] | None = None
 
 
 _KINDS: dict[str, ArtifactKind] = {}
 _KINDS_LOCK = threading.Lock()
 
 
-def register_kind(name: str, check: Callable[[Any], bool], measure: Callable[[Any], int | None] | None = None) -> str:
+def register_kind(
+    name: str,
+    check: Callable[[Any], bool],
+    measure: Callable[[Any], int | None] | None = None,
+    copy: Callable[[Any], Any] | None = None,
+) -> str:
     """Register an artifact kind once; re-registering the same name returns it unchanged (idempotent by name)."""
     with _KINDS_LOCK:
-        _KINDS.setdefault(name, ArtifactKind(name, check, measure))
+        _KINDS.setdefault(name, ArtifactKind(name, check, measure, copy))
     return name
 
 
@@ -260,10 +268,13 @@ def _outputs(node: Node, raw: Any) -> Mapping[str, Any]:
         raw = {ports[0]: raw}
     if not isinstance(raw, Mapping) or set(raw) != set(ports):
         raise TypeError("output ports mismatch")
+    accepted: dict[str, Any] = {}
     for port, value in raw.items():
-        if not kind(node.outputs[port]).check(value):
+        found = kind(node.outputs[port])
+        if not found.check(value):
             raise TypeError(f"output port {port!r} is not of kind {node.outputs[port]!r}")
-    return MappingProxyType(dict(raw))
+        accepted[port] = found.copy(value) if found.copy else value
+    return MappingProxyType(accepted)
 
 
 def _accept(state: State, node: Node, index: int, unit: int, raw: Any, observed: int | None = None) -> None:

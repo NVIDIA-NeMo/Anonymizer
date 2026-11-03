@@ -225,6 +225,10 @@ class Requests:
     bound: RequestBound = "none"
     count: int | None = 0
 
+    def __post_init__(self) -> None:
+        if self.count is not None and (type(self.count) is not int or self.count < 0):
+            raise GraphRejection("invalid_request_count", repr(self.count))
+
     @classmethod
     def none(cls) -> Requests:
         return cls("none", 0)
@@ -274,6 +278,11 @@ class Operation:
     outputs: Mapping[str, str] = field(default_factory=lambda: MappingProxyType({"text": TEXT}))
     requests: Requests = Requests()
     scope: Literal["target", "invocation"] = "target"
+
+    def __post_init__(self) -> None:
+        # The caller keeps its own mappings; the admitted ports cannot change after preparation.
+        object.__setattr__(self, "inputs", MappingProxyType(dict(self.inputs)))
+        object.__setattr__(self, "outputs", MappingProxyType(dict(self.outputs)))
 
     @classmethod
     def verifier(

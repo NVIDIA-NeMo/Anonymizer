@@ -81,7 +81,7 @@ from anonymizer.measurement import record_stage, stage_timer
 
 logger = logging.getLogger("anonymizer.rewrite.workflow")
 
-REWRITE_METRICS = register_kind("rewrite-metrics", lambda v: isinstance(v, dict))
+REWRITE_METRICS = register_kind("rewrite-metrics", lambda v: isinstance(v, dict), copy=dict)
 
 _PASSTHROUGH_DEFAULTS: dict[str, object] = {
     COL_UTILITY_SCORE: 1.0,
