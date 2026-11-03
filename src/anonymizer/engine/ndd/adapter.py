@@ -10,6 +10,7 @@ import re
 import tempfile
 import time
 import uuid
+from collections import Counter
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -699,9 +700,12 @@ class NddAdapter:
             task_traces=task_traces or [],
             buffer_size=buffer_size or len(ordered_ids),
         )
-        default_reason = _untraced_reason(list(reasons.values())) if reasons else _MISSING_RECORD_REASON
+        untraced = [record_id for record_id in missing_ids if record_id not in reasons]
+        if untraced:
+            default_reason = _untraced_reason(list(reasons.values())) if reasons else _MISSING_RECORD_REASON
+            reasons.update(dict.fromkeys(untraced, default_reason))
         return [
-            FailedRecord(record_id=record_id, step=workflow_name, reason=reasons.get(record_id, default_reason))
+            FailedRecord(record_id=record_id, step=workflow_name, reason=reasons[record_id])
             for record_id in missing_ids
         ]
 
@@ -709,7 +713,7 @@ class NddAdapter:
 def _untraced_reason(reasons: list[str]) -> str:
     """Describe a row dropped without a trace by the most common classified cause among the other rows."""
     causes = [reason.removeprefix(f"{_MISSING_RECORD_REASON}: ") for reason in reasons]
-    return f"{_UNTRACED_REASON} (most common: {max(causes, key=causes.count)})"
+    return f"{_UNTRACED_REASON} (most common: {Counter(causes).most_common(1)[0][0]})"
 
 
 def _run_buffer_size(data_designer: DataDesigner) -> int | None:

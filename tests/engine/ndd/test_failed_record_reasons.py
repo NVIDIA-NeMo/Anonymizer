@@ -27,6 +27,7 @@ from anonymizer.config.models import DetectionModelSelection
 from anonymizer.config.replace_strategies import Redact
 from anonymizer.engine.constants import COL_TEXT
 from anonymizer.engine.detection.detection_workflow import EntityDetectionResult, EntityDetectionWorkflow
+from anonymizer.engine.ndd import adapter
 from anonymizer.engine.ndd.adapter import RECORD_ID_COLUMN, NddAdapter, WorkflowRunResult
 from anonymizer.interface.anonymizer import Anonymizer
 from anonymizer.measurement import MeasurementConfig, configured_measurement_session
@@ -421,6 +422,24 @@ def test_row_dropped_without_an_error_names_the_common_cause_not_an_early_stop(t
     assert reasons[1] == f"{_UNTRACED} (most common: {cause})"
     assert "stopped early" not in reasons[1] and "max_tokens" in reasons[1]
     _assert_quotes_no_input(list(reasons.values()), df)
+
+
+def test_untraced_reason_breaks_ties_by_first_recorded_cause() -> None:
+    reasons = [f"{_PREFIX}: b: x", f"{_PREFIX}: a: y", f"{_PREFIX}: a: y", f"{_PREFIX}: b: x"]
+
+    assert adapter._untraced_reason(reasons) == f"{_UNTRACED} (most common: b: x)"
+
+
+def test_untraced_summary_is_skipped_when_every_missing_row_has_a_trace(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(adapter, "_failure_reasons_by_record", lambda **_: {"1": "traced"})
+    monkeypatch.setattr(adapter, "_untraced_reason", Mock(side_effect=AssertionError("summary built")))
+    ids = pd.DataFrame({RECORD_ID_COLUMN: ["0", "1"]})
+
+    failed = NddAdapter._detect_missing_records(
+        Mock(), workflow_name="w", input_df=ids, output_df=ids.iloc[:1], task_traces=[]
+    )
+
+    assert [(f.record_id, f.reason) for f in failed] == [("1", "traced")]
 
 
 def test_detector_offset_mismatch_reason_is_reported(tmp_path: Path) -> None:
