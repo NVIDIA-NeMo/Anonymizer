@@ -202,15 +202,34 @@ def test_template_full_run_writes_output_parquet(
     assert "Wrote 3 rows to output.parquet" in output
     path = workdir / "output.parquet"
     assert pq.read_table(path).num_rows == 3
-    if strategy == "replace":
-        # Known gap: the Replace output frame carries a struct-typed ``final_entities`` column that pandas
-        # writes but cannot read back. The test fails once pandas reads the file, so the marker gets removed.
-        with pytest.raises(ValueError, match="is not recognized"):
-            pd.read_parquet(path)
-        pytest.xfail("pd.read_parquet cannot read back the Replace output frame")
     saved = pd.read_parquet(path)
     assert len(saved) == 3
-    assert "text_rewritten" in saved.columns
+    assert ("text_replaced" if strategy == "replace" else "text_rewritten") in saved.columns
+
+
+def test_substitute_run_with_entities_in_every_row_round_trips_through_parquet(
+    endpoint: StubEndpoint, workdir: Path
+) -> None:
+    anonymizer_ = Anonymizer(
+        model_providers=_stub_model_providers(endpoint),
+        model_configs=_stub_model_configs(),
+        artifact_path=workdir / "artifacts",
+    )
+    config = anonymizer.AnonymizerConfig(replace=anonymizer.Substitute())
+    data = anonymizer.AnonymizerInput(source=str(workdir / "input.csv"), text_column="text")
+
+    result = anonymizer_.run(config=config, data=data)
+    assert len(result.dataframe) == len(INPUT_ROWS)
+    assert all(len(cell["entities"]) > 0 for cell in result.dataframe["final_entities"])
+    result.dataframe.to_parquet(workdir / "output.parquet")
+
+    saved = pd.read_parquet(workdir / "output.parquet")
+    for saved_cell, run_cell in zip(saved["final_entities"], result.dataframe["final_entities"], strict=True):
+        # pd.read_parquet returns list cells as numpy arrays; their elements are the entity dicts.
+        saved_entities = list(saved_cell["entities"])
+        assert saved_entities
+        assert all(isinstance(entity, dict) for entity in saved_entities)
+        assert saved_entities == list(run_cell["entities"])
 
 
 def test_template_run_resolves_every_alias_through_custom_providers(
