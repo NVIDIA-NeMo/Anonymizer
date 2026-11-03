@@ -33,7 +33,7 @@ from anonymizer.measurement import MeasurementConfig, configured_measurement_ses
 from tests.engine.ndd.stub_provider import COMPLETE, Script, cut_off, stub_provider
 
 _PREFIX = "Record missing from workflow output"
-_STOPPED_EARLY = f"{_PREFIX}: not completed: run stopped early after other rows failed"
+_UNTRACED = f"{_PREFIX}: not completed: no error was recorded for this row; other rows in the run failed"
 _COLUMN = "_sensitivity_disposition"
 _MODEL = "stub-model"
 
@@ -161,7 +161,7 @@ def test_reasons_map_to_rows_across_row_groups(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize("collector", [False, True])
-def test_early_shutdown_rows_get_the_stopped_early_reason(tmp_path: Path, collector: bool) -> None:
+def test_early_shutdown_rows_name_the_most_common_cause(tmp_path: Path, collector: bool) -> None:
     # Rows 0-1 finish first, rows 2-7 fail next and trip the shutdown, rows 8-11 are still running.
     df = _inputs(12, bad=set(range(2, 8)), slow=set(range(8, 12)))
 
@@ -183,9 +183,10 @@ def test_early_shutdown_rows_get_the_stopped_early_reason(tmp_path: Path, collec
     )
 
     reasons = _reasons_by_position(tagged, result)
-    explained = {position: reason for position, reason in reasons.items() if reason != _STOPPED_EARLY}
+    explained = {position: reason for position, reason in reasons.items() if not reason.startswith(_UNTRACED)}
     assert 0 not in reasons and 1 not in reasons
-    assert all(reasons[position] == _STOPPED_EARLY for position in range(8, 12))
+    assert all(reasons[position].startswith(f"{_UNTRACED} (most common: {_COLUMN}: ") for position in range(8, 12))
+    assert all("max_tokens" in reasons[position] for position in range(8, 12))
     assert explained, "expected rows that failed before the shutdown to carry their cause"
     assert all(position in range(2, 8) for position in explained)
     assert all(reason.startswith(f"{_PREFIX}: {_COLUMN}: ") and "max_tokens" in reason for reason in explained.values())
@@ -400,6 +401,26 @@ def test_row_dropped_without_an_error_keeps_the_generic_reason_when_other_errors
     tagged, result = _run(tmp_path, script, df, columns=columns, collector=True)
 
     assert _reasons_by_position(tagged, result) == {1: _PREFIX}
+
+
+def test_row_dropped_without_an_error_names_the_common_cause_not_an_early_stop(tmp_path: Path) -> None:
+    df = _inputs(3, bad={0})
+    df.loc[1, COL_TEXT] += " DROP"
+    columns: list[ColumnConfigT] = [
+        *_columns(_COLUMN),
+        ExpressionColumnConfig(name="screened", expr="{% if 'DROP' not in " + COL_TEXT + " %}kept{% endif %}"),
+    ]
+
+    tagged, result = _run(
+        tmp_path, _fail_marked_rows, df, columns=columns, run_config=RunConfig(disable_early_shutdown=True)
+    )
+
+    reasons = _reasons_by_position(tagged, result)
+    assert set(reasons) == {0, 1}
+    cause = reasons[0].removeprefix(f"{_PREFIX}: ")
+    assert reasons[1] == f"{_UNTRACED} (most common: {cause})"
+    assert "stopped early" not in reasons[1] and "max_tokens" in reasons[1]
+    _assert_quotes_no_input(list(reasons.values()), df)
 
 
 def test_detector_offset_mismatch_reason_is_reported(tmp_path: Path) -> None:

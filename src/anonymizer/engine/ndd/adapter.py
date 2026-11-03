@@ -45,7 +45,9 @@ logger = logging.getLogger("anonymizer.ndd")
 TRACE_TASKS_BY_DEFAULT = True
 
 _MISSING_RECORD_REASON = "Record missing from workflow output"
-_STOPPED_EARLY_REASON = f"{_MISSING_RECORD_REASON}: not completed: run stopped early after other rows failed"
+_UNTRACED_REASON = (
+    f"{_MISSING_RECORD_REASON}: not completed: no error was recorded for this row; other rows in the run failed"
+)
 _MAX_REASON_CHARS = 500
 _CAUSE_LINE = re.compile(r"^\s*\|\s*Cause:\s*(.+)", re.MULTILINE)
 _SOLUTION_LINE = re.compile(r"^\s*\|\s*Solution:\s*(.+)", re.MULTILINE)
@@ -697,11 +699,17 @@ class NddAdapter:
             task_traces=task_traces or [],
             buffer_size=buffer_size or len(ordered_ids),
         )
-        default_reason = _STOPPED_EARLY_REASON if reasons else _MISSING_RECORD_REASON
+        default_reason = _untraced_reason(list(reasons.values())) if reasons else _MISSING_RECORD_REASON
         return [
             FailedRecord(record_id=record_id, step=workflow_name, reason=reasons.get(record_id, default_reason))
             for record_id in missing_ids
         ]
+
+
+def _untraced_reason(reasons: list[str]) -> str:
+    """Describe a row dropped without a trace by the most common classified cause among the other rows."""
+    causes = [reason.removeprefix(f"{_MISSING_RECORD_REASON}: ") for reason in reasons]
+    return f"{_UNTRACED_REASON} (most common: {max(causes, key=causes.count)})"
 
 
 def _run_buffer_size(data_designer: DataDesigner) -> int | None:
