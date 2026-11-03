@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from pathlib import Path
@@ -22,6 +23,7 @@ from data_designer.config.run_config import RunConfig
 from data_designer.config.seed_source import LocalFileSeedSource
 from data_designer.config.utils.constants import TRACE_COLUMN_POSTFIX
 from data_designer.config.utils.trace_type import TraceType
+from data_designer.engine.column_generators.generators.custom import CustomColumnGenerator
 from data_designer.interface.data_designer import DataDesigner
 
 import anonymizer.measurement as measurement
@@ -975,6 +977,14 @@ class _TraceModelFacade:
         messages = [{"role": "user", "content": [{"type": "text", "text": prompt}]}]
         return self.completion(messages).message.content
 
+    async def agenerate(self, prompt: str, **_kwargs: Any) -> str:
+        messages = [{"role": "user", "content": [{"type": "text", "text": prompt}]}]
+        return (await self.acompletion(messages)).message.content
+
+    async def acompletion(self, messages: list[dict[str, Any]]) -> SimpleNamespace:
+        await asyncio.sleep(0)
+        return _TraceModelFacade.completion(self, messages)
+
     def completion(self, _messages: list[dict[str, Any]]) -> SimpleNamespace:
         return SimpleNamespace(
             message=SimpleNamespace(content="custom response secret", reasoning_content="scratch", tool_calls=[]),
@@ -998,16 +1008,16 @@ class _CustomTraceDataDesigner:
         return self.resource_provider
 
     def preview(self, config_builder: object, *, num_records: int) -> SimpleNamespace:
-        resource_provider = self._create_resource_provider()
-        model = resource_provider.model_registry.get_model(model_alias="alias")
+        self._create_resource_provider()
+        return asyncio.run(self._preview(config_builder, num_records=num_records))
+
+    async def _preview(self, config_builder: object, *, num_records: int) -> SimpleNamespace:
+        resource_provider = self.resource_provider
         output = _seed_frame(config_builder, num_records)
         for column in cast(Any, config_builder).get_column_configs():
+            generator = CustomColumnGenerator(column, resource_provider=cast(Any, resource_provider))
             for row_index, row in output.iterrows():
-                generated = column.generator_function(
-                    row.to_dict(),
-                    generator_params=None,
-                    models={"alias": model},
-                )
+                generated = await generator.agenerate(row.to_dict())
                 for key, value in generated.items():
                     output.loc[row_index, key] = value
         return SimpleNamespace(dataset=output)
@@ -1036,7 +1046,7 @@ class _TaskTraceDataDesigner:
         return SimpleNamespace(dataset=_seed_frame(_config_builder, num_records), task_traces=self.task_traces)
 
 
-def _custom_trace_column(name: str, *, prompt: str, value: str) -> CustomColumnConfig:
+def _custom_trace_column(name: str, *, prompt: str, value: str, async_column: bool = False) -> CustomColumnConfig:
     @custom_column_generator(required_columns=["text"], model_aliases=["alias"])
     def generator(
         row: dict[str, Any],
@@ -1045,9 +1055,19 @@ def _custom_trace_column(name: str, *, prompt: str, value: str) -> CustomColumnC
     ) -> dict[str, str]:
         _ = row, generator_params
         models["alias"].generate(prompt)
-        return {name: value}
+        return {**row, name: value}
 
-    return CustomColumnConfig(name=name, generator_function=generator)
+    @custom_column_generator(required_columns=["text"], model_aliases=["alias"])
+    async def async_generator(
+        row: dict[str, Any],
+        generator_params: Any,
+        models: dict[str, Any],
+    ) -> dict[str, str]:
+        _ = row, generator_params
+        await models["alias"].agenerate(prompt)
+        return {**row, name: value}
+
+    return CustomColumnConfig(name=name, generator_function=async_generator if async_column else generator)
 
 
 def _local_custom_column(name: str, *, value: str) -> CustomColumnConfig:
@@ -1058,14 +1078,16 @@ def _local_custom_column(name: str, *, value: str) -> CustomColumnConfig:
         models: dict[str, Any],
     ) -> dict[str, str]:
         _ = row, generator_params, models
-        return {name: value}
+        return {**row, name: value}
 
     return CustomColumnConfig(name=name, generator_function=generator)
 
 
+@pytest.mark.parametrize("async_columns", [False, True])
 def test_ndd_adapter_writes_custom_column_private_model_facade_dd_trace(
     tmp_path: Path,
     trace_input_df: pd.DataFrame,
+    async_columns: bool,
 ) -> None:
     adapter = NddAdapter(data_designer=cast(DataDesigner, _CustomTraceDataDesigner()))
     trace_path = tmp_path / "trace.jsonl"
@@ -1079,13 +1101,18 @@ def test_ndd_adapter_writes_custom_column_private_model_facade_dd_trace(
             adapter,
             trace_input_df,
             [
-                _custom_trace_column("raw_detected", prompt="raw prompt secret", value="[]"),
-                _custom_trace_column("quality_check", prompt="quality prompt secret", value="ok"),
+                _custom_trace_column(
+                    "raw_detected", prompt="raw prompt secret", value="[]", async_column=async_columns
+                ),
+                _custom_trace_column(
+                    "quality_check", prompt="quality prompt secret", value="ok", async_column=async_columns
+                ),
             ],
         )
 
     traces = [json.loads(line) for line in trace_path.read_text(encoding="utf-8").splitlines()]
     traces_by_column = {trace["column_name"]: trace for trace in traces}
+    assert len(traces) == 2
     assert set(traces_by_column) == {"raw_detected", "quality_check"}
 
     raw_trace = traces_by_column["raw_detected"]
@@ -1097,6 +1124,7 @@ def test_ndd_adapter_writes_custom_column_private_model_facade_dd_trace(
     assert raw_trace["model_provider_name"] == "provider"
     assert raw_trace["model_provider_endpoint"] == "http://provider/v1"
     assert raw_trace["status"] == "completed"
+    assert raw_trace["is_async"] is async_columns
     assert raw_trace["messages"] == [{"role": "user", "content": [{"type": "text", "text": "raw prompt secret"}]}]
     assert raw_trace["response"]["content"] == "custom response secret"
     assert raw_trace["response"]["reasoning_content"] == "scratch"

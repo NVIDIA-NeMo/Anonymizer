@@ -444,14 +444,14 @@ def _make_quality_reanswer_column(evaluator_alias: str) -> Any:
         required_columns=[COL_QUALITY_QA, COL_REWRITTEN_TEXT],
         model_aliases=[evaluator_alias],
     )
-    def _quality_reanswer(row: dict[str, Any], generator_params: None, models: dict) -> dict[str, Any]:
+    async def _quality_reanswer(row: dict[str, Any], generator_params: None, models: dict) -> dict[str, Any]:
         qa = parse_quality_qa(row.get(COL_QUALITY_QA, {}))
         expected_ids = [item.id for item in qa.items]
 
         recipe = PydanticResponseRecipe(data_type=QualityAnswersSchema)
         prompt = recipe.apply_recipe_to_user_prompt(_render_quality_reanswer_prompt(row))
         parser = _make_quality_answer_parser(recipe, expected_ids)
-        result, _ = models[evaluator_alias].generate(prompt=prompt, parser=parser, max_correction_steps=3)
+        result, _ = await models[evaluator_alias].agenerate(prompt=prompt, parser=parser, max_correction_steps=3)
         row[COL_QUALITY_QA_REANSWER] = result.model_dump()
         return row
 
@@ -463,14 +463,14 @@ def _make_privacy_reanswer_column(evaluator_alias: str) -> Any:
         required_columns=[COL_PRIVACY_QA, COL_REWRITTEN_TEXT],
         model_aliases=[evaluator_alias],
     )
-    def _privacy_reanswer(row: dict[str, Any], generator_params: None, models: dict) -> dict[str, Any]:
+    async def _privacy_reanswer(row: dict[str, Any], generator_params: None, models: dict) -> dict[str, Any]:
         qa = parse_privacy_qa(row.get(COL_PRIVACY_QA))
         expected_ids = [item.id for item in qa.items]
 
         recipe = PydanticResponseRecipe(data_type=PrivacyAnswersSchema)
         prompt = recipe.apply_recipe_to_user_prompt(_render_privacy_reanswer_prompt(row))
         parser = _make_privacy_answer_parser(recipe, expected_ids)
-        result, _ = models[evaluator_alias].generate(prompt=prompt, parser=parser, max_correction_steps=3)
+        result, _ = await models[evaluator_alias].agenerate(prompt=prompt, parser=parser, max_correction_steps=3)
         row[COL_PRIVACY_QA_REANSWER] = result.model_dump()
         return row
 
@@ -482,14 +482,14 @@ def _make_quality_compare_column(evaluator_alias: str) -> Any:
         required_columns=[COL_QUALITY_QA, COL_QUALITY_QA_REANSWER],
         model_aliases=[evaluator_alias],
     )
-    def _quality_compare(row: dict[str, Any], generator_params: None, models: dict) -> dict[str, Any]:
+    async def _quality_compare(row: dict[str, Any], generator_params: None, models: dict) -> dict[str, Any]:
         qa = parse_quality_qa(row.get(COL_QUALITY_QA, {}))
         expected_ids = [item.id for item in qa.items]
 
         recipe = PydanticResponseRecipe(data_type=QACompareResultsSchema)
         prompt = recipe.apply_recipe_to_user_prompt(_render_quality_compare_prompt(row))
         parser = _make_qa_compare_parser(recipe, expected_ids)
-        result, _ = models[evaluator_alias].generate(prompt=prompt, parser=parser, max_correction_steps=3)
+        result, _ = await models[evaluator_alias].agenerate(prompt=prompt, parser=parser, max_correction_steps=3)
         row[COL_QUALITY_QA_COMPARE] = result.model_dump()
         return row
 

@@ -225,8 +225,8 @@ def _remap_custom_column(
             side_effect_columns=side_effect_columns,
             model_aliases=model_aliases,
         )
-        def remapped_generator(row: dict[str, Any], generator_params: Any, models: dict) -> dict[str, Any]:
-            generated = generator(_canonical_row(row, mapping), generator_params, models)
+        async def remapped_generator(row: dict[str, Any], generator_params: Any, models: dict) -> dict[str, Any]:
+            generated = await generator(_canonical_row(row, mapping), generator_params, models)
             return _copy_remapped_outputs(row, generated, outputs, mapping)
 
     elif column.generator_params is not None:

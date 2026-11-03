@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import importlib
+import inspect
 import json
 import logging
 import re
@@ -1042,13 +1043,25 @@ def _task_traces_from_result(result: Any) -> list[_TaskTrace]:
 def _custom_column_with_trace_context(column: CustomColumnConfig) -> ColumnConfigT:
     generator = column.generator_function
 
-    @wraps(generator)
-    def traced_generator(*args: Any, **kwargs: Any) -> Any:
-        token = _MODEL_TRACE_COLUMN.set(column.name)
-        try:
-            return generator(*args, **kwargs)
-        finally:
-            _MODEL_TRACE_COLUMN.reset(token)
+    if inspect.iscoroutinefunction(inspect.unwrap(generator)):
+
+        @wraps(generator)
+        async def traced_generator(*args: Any, **kwargs: Any) -> Any:
+            token = _MODEL_TRACE_COLUMN.set(column.name)
+            try:
+                return await generator(*args, **kwargs)
+            finally:
+                _MODEL_TRACE_COLUMN.reset(token)
+
+    else:
+
+        @wraps(generator)
+        def traced_generator(*args: Any, **kwargs: Any) -> Any:
+            token = _MODEL_TRACE_COLUMN.set(column.name)
+            try:
+                return generator(*args, **kwargs)
+            finally:
+                _MODEL_TRACE_COLUMN.reset(token)
 
     setattr(traced_generator, "custom_column_metadata", getattr(generator, "custom_column_metadata", {}))
     return cast(ColumnConfigT, column.model_copy(update={"generator_function": traced_generator}))
