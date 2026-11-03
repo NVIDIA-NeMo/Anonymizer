@@ -238,7 +238,7 @@ class Requests:
 
     def __post_init__(self) -> None:
         if self.count is not None and (type(self.count) is not int or self.count < 0):
-            raise GraphRejection("invalid_request_count", repr(self.count))
+            raise GraphRejection("invalid_request_count")
 
     @classmethod
     def none(cls) -> Requests:
