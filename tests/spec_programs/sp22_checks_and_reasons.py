@@ -59,12 +59,16 @@ def program() -> list[dict[str, str]]:
     evaluation: Any = type("E", (), {"flag_leakage_above": 0.5})()
     o4 = _protect_rewrite(g, rewrite, evaluation).outcome(a)
     review = _reviews([{COL_LEAKAGE_MASS: float("nan")}], leak=0.5)
-    want4 = (Reason("could_not_assess", "leakage_within_threshold", "assess-leakage_within_threshold", "metric_unavailable"),)
+    want4 = (
+        Reason("could_not_assess", "leakage_within_threshold", "assess-leakage_within_threshold", "metric_unavailable"),
+    )
     c.check("E22.4", o4.reasons == want4 and review == [True], f"reasons={o4.reasons}, review={review}")
 
     # E22.5 a Replace row with a span the map does not cover fails replacements_applied.
     entities = {"entities": [{"value": "Alice", "label": "first_name", "start_position": 0, "end_position": 5}]}
-    lowered = _lower(pd.DataFrame({COL_TEXT: ["Alice met Bob"], COL_FINAL_ENTITIES: [entities]}), COL_TEXT, COL_FINAL_ENTITIES)
+    lowered = _lower(
+        pd.DataFrame({COL_TEXT: ["Alice met Bob"], COL_FINAL_ENTITIES: [entities]}), COL_TEXT, COL_FINAL_ENTITIES
+    )
     graph5, r5 = _protect_rows(lowered, "replace", lambda i, rows: {}, False)
     o5 = r5.outcome(graph5.targets[0])
     want5 = (Reason("failed", "replacements_applied", "verify-patches"),)

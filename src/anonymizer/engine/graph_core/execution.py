@@ -515,17 +515,19 @@ def _reconcile(p: PreparedProtection, state: k.State, retrievals: tuple[Retrieva
         dependents.setdefault(dep.on, []).append(dep.dependent)
     group_of = {m: i for i, grp in enumerate(g.groups) for m in grp.members}
     withheld = [d for d in g.targets if d not in released]
-    withheld_by: dict[Datum, Datum] = {}
+    releasable = set(released)
+    withheld_by: dict[Datum, list[Datum]] = {}
     spent: set[int] = set()
     for d in withheld:  # grows while iterating
         i = group_of.get(d, -1)
         members = () if i < 0 or i in spent else g.groups[i].members
         spent.add(i)
         for nxt in (*dependents.get(d, ()), *members):
+            if nxt in releasable and nxt != d:
+                withheld_by.setdefault(nxt, []).append(d)
             if nxt in released:
                 released.discard(nxt)
                 withheld.append(nxt)
-                withheld_by[nxt] = d
     outcomes = []
     for u, (d, (terminal, qual, reasons)) in enumerate(zip(g.targets, verdicts)):
         available = any("text" in out for out in state.rows[u].outputs.values())
@@ -533,6 +535,9 @@ def _reconcile(p: PreparedProtection, state: k.State, retrievals: tuple[Retrieva
             reasons.append(Reason("withheld" if p.workflow.release == "protected" else "annotation"))
         failed = failures.get(u)
         error = failed.error if failed is not None and terminal != "success" else None
-        by = (withheld_by[d],) if d in withheld_by else ()
-        outcomes.append(TargetOutcome(terminal, qual, available, d in released, tuple(reasons), error, by))
+        outcomes.append(
+            TargetOutcome(
+                terminal, qual, available, d in released, tuple(reasons), error, tuple(withheld_by.get(d, ()))
+            )
+        )
     return ProtectionResult(p, state, retrievals, tuple(outcomes), consistent)
