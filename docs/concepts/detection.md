@@ -97,6 +97,19 @@ structural checks (such as IP parsing and the card-number Luhn checksum).
 Format validity is not proof that a value identifies a person; contextual
 LLM validation is enabled by default.
 
+The URL recognizer supports explicit `http://`, `https://`, `ftp://`, `ftps://`,
+`sftp://`, `ws://`, and `wss://` addresses, plus `www.` forms. Explicit-scheme
+addresses may use internal single-label hosts or `localhost`, as well as DNS
+names and IP addresses. Recognition and structural validation are entirely
+local: no URL is fetched or resolved. Arbitrary bare domains, scheme-relative
+references (`//host/path`), JSON-escaped addresses, `file://`, and cloud-storage
+locators such as `s3://` are not covered by this built-in. Custom rules can
+cover these forms. When `detect_additional_matches=False`, this scope is also
+the label's detection limit; neither GLiNER nor augmentation fills its gaps.
+Surrounding prose punctuation is trimmed while balanced delimiters are kept;
+ambiguous literal trailing punctuation can require a custom rule with exact
+match boundaries.
+
 Use the same `regex_rules` list to configure built-ins or add custom patterns:
 
 ```python

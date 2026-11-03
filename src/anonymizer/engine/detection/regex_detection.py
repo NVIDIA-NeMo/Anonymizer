@@ -36,6 +36,7 @@ DEFAULT_MAX_MATCHES_PER_RULE = 1000
 REGEX_VALIDATOR_ENTRYPOINT_GROUP = "nemo_anonymizer.regex_validators"
 _REGEX_SCORE = 1.0
 _CONTEXT_WINDOW = 64
+_URL_SCHEMES = ("http", "https", "ftp", "ftps", "sftp", "ws", "wss")
 _URL_TRAILING_PUNCTUATION = ".,;:!?>'\"。，、；：！？"
 _URL_DELIMITER_PAIRS = {
     ")": "(",
@@ -569,7 +570,7 @@ def _validate_url(candidate: RegexCandidate) -> bool:
         port = parsed.port
     except ValueError:
         return False
-    if parsed.scheme.lower() not in {"http", "https"} or not parsed.hostname:
+    if parsed.scheme.lower() not in _URL_SCHEMES or not parsed.hostname:
         return False
     if port is not None and not 1 <= port <= 65535:
         return False
@@ -587,7 +588,7 @@ def _validate_url(candidate: RegexCandidate) -> bool:
     dns_host = host[:-1] if host.endswith(".") else host
     if ":" in dns_host or _IPV4_SHAPED_HOST_RE.fullmatch(dns_host) is not None:
         return False
-    if len(dns_host) > 253 or "." not in dns_host:
+    if len(dns_host) > 253 or dns_host.isdigit():
         return False
     return all(_DNS_LABEL_RE.fullmatch(label) is not None for label in dns_host.split("."))
 
@@ -655,7 +656,7 @@ _BUILTIN_RULES: tuple[ResolvedRegexRule, ...] = (
     ResolvedRegexRule(
         rule_id="nemo-anonymizer.url.v1",
         label="url",
-        pattern=r"(?i)(?<![A-Za-z0-9_])(?:https?://|www\.)[^\s<>\"']+",
+        pattern=rf"(?i)(?<![A-Za-z0-9_+./:@-])(?:(?:{'|'.join(_URL_SCHEMES)})://|www\.)[^\s<>\"']+",
         validator_id="nemo-anonymizer.url.v1",
         source="regex_builtin",
     ),

@@ -62,3 +62,24 @@ The URL probe with 4k/8k/16k/32k trailing punctuation pairs took median
 diagnostics, not performance guarantees or CI thresholds. End-to-end preview
 and create tests also verify that the recovered card is redacted without
 consuming its trailing numeric code; unexpected model calls fail those tests.
+
+## Network URL coverage
+
+Extend the built-in URL recognizer to HTTP(S), FTP(S), SFTP, and WS(S), using
+one scheme allowlist for extraction and local validation. Accept well-formed
+single-label internal hosts when an explicit scheme makes the address
+unambiguous. Preserve source spans, existing punctuation behavior, custom-rule
+ownership, timeout limits, and port/IP/DNS structural checks. No DNS lookup or
+HTTP verification is performed. Django's scheme/structure separation informs
+this design; neither its code nor Presidio's TLD-list regex is copied.
+
+Keep bare domains, scheme-relative references, escaped JSON representations,
+file URLs and cloud-storage locators outside this bounded patch. Document that
+regex-only URL mode cannot rely on models to fill unsupported formats.
+
+Add failing-before regressions for every scheme, credentials, Unicode and IP
+hosts, internal hosts, prose boundaries, unsupported-prefix salvage and malformed
+addresses. Verify both direct admission and the default validation route, then
+run the full offline suite and repository checks. The user requested stopping
+the old live benchmarks, preserving their artifacts, and rerunning all eight
+frozen workloads for Luna, Super and Gemma with this patch and the timeout fix.
