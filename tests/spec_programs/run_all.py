@@ -31,6 +31,7 @@ PROGRAMS = [
     "sp20_produced_mentions",
     "sp21_ledger_scale",
     "sp22_checks_and_reasons",
+    "sp23_final_candidate",
 ]
 RETIRED_SP8 = [f"E8.{i}" for i in range(1, 6)]
 
