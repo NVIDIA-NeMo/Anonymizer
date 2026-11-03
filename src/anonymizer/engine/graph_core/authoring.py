@@ -106,14 +106,16 @@ class ContextView:
 class ContextSource:
     """A caller-owned provider retrieved once per invocation at binding.
 
-    ``provider()`` returns an iterable of texts. ``max_items`` is the declared cardinality bound; ``max_bytes`` is an
-    optional caller-supplied UTF-8 ceiling over the returned items (absent means none).
+    ``provider()`` returns an iterable of items of the registered artifact kind ``kind`` (default text), delivered to
+    consumers with their type. ``max_items`` is the declared cardinality bound; ``max_bytes`` is an optional
+    caller-supplied UTF-8 ceiling over the returned items (absent means none).
     """
 
     name: str
-    provider: Callable[[], Iterable[str]] = field(repr=False, compare=False)
+    provider: Callable[[], Iterable[Any]] = field(repr=False, compare=False)
     max_items: int
     max_bytes: int | None = None
+    kind: str = TEXT
 
 
 @dataclass(frozen=True)
