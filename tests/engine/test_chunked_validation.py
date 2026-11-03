@@ -17,26 +17,20 @@ from types import SimpleNamespace
 from typing import Any, Callable
 
 import pytest
-from data_designer.engine.models.clients.errors import SyncClientUnavailableError
 
 from anonymizer.engine.constants import (
-    COL_MERGED_TAGGED_TEXT,
     COL_SEED_ENTITIES,
     COL_SEED_VALIDATION_CANDIDATES,
     COL_TAG_NOTATION,
     COL_TEXT,
-    COL_VALIDATION_CANDIDATES,
     COL_VALIDATION_DECISIONS,
-    COL_VALIDATION_SKELETON,
 )
 from anonymizer.engine.detection.chunked_validation import (
     ChunkedValidationParams,
     build_chunk_excerpt,
     build_chunk_skeleton,
     chunk_candidates,
-    chunked_validate_row,
     chunked_validate_row_async,
-    make_chunked_validation_generator,
     merge_chunk_decisions,
     order_candidates_by_position,
     render_chunk_prompt,
@@ -59,9 +53,6 @@ from anonymizer.engine.workflow_columns.detection.impl import ChunkedValidationG
 class FakeFacade:
     """Test double for ``ModelFacade`` recording invocations and replaying canned responses.
 
-    Exposes both ``generate()`` and ``agenerate()`` so the plugin's synchronous
-    and asynchronous paths can share assertions.
-
     A canned response can be a ``dict`` (auto-wrapped in a ```json fence), a
     raw string, or a callable that receives the prompt and returns either.
     Set ``raise_on_call=True`` to simulate a terminal LLM failure.
@@ -82,7 +73,7 @@ class FakeFacade:
         self.calls: list[dict[str, Any]] = []
 
     def generate(self, *, prompt, parser, system_prompt=None, purpose=None, **kwargs):
-        return self._call(prompt=prompt, parser=parser, system_prompt=system_prompt, purpose=purpose, kwargs=kwargs)
+        raise AssertionError("sync model generation should not be used")
 
     async def agenerate(self, *, prompt, parser, system_prompt=None, purpose=None, **kwargs):
         return self._call(prompt=prompt, parser=parser, system_prompt=system_prompt, purpose=purpose, kwargs=kwargs)
@@ -130,28 +121,6 @@ class AsyncTrackingFacade(FakeFacade):
             return self._call(prompt=prompt, parser=parser, system_prompt=system_prompt, purpose=purpose, kwargs=kwargs)
         finally:
             self.active_calls -= 1
-
-
-class SyncUnavailableFacade(FakeFacade):
-    def __init__(
-        self,
-        alias: str,
-        response: dict | str | Callable[[str], dict | str] | None = None,
-        *,
-        max_parallel_requests: int = 1,
-    ) -> None:
-        super().__init__(alias, response, max_parallel_requests=max_parallel_requests)
-        self.request_timeout = 1.0
-        self.sync_calls = 0
-        self.async_calls = 0
-
-    def generate(self, *, prompt, parser, system_prompt=None, purpose=None, **kwargs):
-        self.sync_calls += 1
-        raise SyncClientUnavailableError("sync client unavailable")
-
-    async def agenerate(self, *, prompt, parser, system_prompt=None, purpose=None, **kwargs):
-        self.async_calls += 1
-        return self._call(prompt=prompt, parser=parser, system_prompt=system_prompt, purpose=purpose, kwargs=kwargs)
 
 
 class FakeModelRegistry:
@@ -453,7 +422,7 @@ class TestChunkedValidateRowPoolOfOne:
             prompt_template=_MINIMAL_TEMPLATE,
         )
 
-        out = chunked_validate_row(row, params, {"v0": facade})
+        out = asyncio.run(chunked_validate_row_async(row, params, {"v0": facade}))
 
         assert len(facade.calls) == 1
         decisions = out[COL_VALIDATION_DECISIONS]["decisions"]
@@ -485,7 +454,7 @@ class TestChunkedValidateRowPoolOfOne:
             prompt_template=_MINIMAL_TEMPLATE,
         )
 
-        out = chunked_validate_row(row, params, {"v0": facade})
+        out = asyncio.run(chunked_validate_row_async(row, params, {"v0": facade}))
 
         assert out[COL_VALIDATION_DECISIONS]["decisions"] == [
             {
@@ -541,7 +510,7 @@ class TestChunkedValidateRowPoolOfOne:
             prompt_template=_MINIMAL_TEMPLATE,
         )
 
-        chunked_validate_row(row, params, {"v0": facade})
+        asyncio.run(chunked_validate_row_async(row, params, {"v0": facade}))
 
         assert len(facade.calls) == 1
         prompt = facade.calls[0]["prompt"]
@@ -581,7 +550,7 @@ class TestChunkedValidateRowPoolOfOne:
             prompt_template=_MINIMAL_TEMPLATE,
         )
 
-        chunked_validate_row(row, params, {"v0": facade})
+        asyncio.run(chunked_validate_row_async(row, params, {"v0": facade}))
 
         prompt = facade.calls[0]["prompt"]
         assert "Alice" in prompt
@@ -596,13 +565,13 @@ class TestChunkedValidateRowPoolOfOne:
             pool=["v0"], max_entities_per_call=10, excerpt_window_chars=50, prompt_template=_MINIMAL_TEMPLATE
         )
 
-        out = chunked_validate_row(row, params, {"v0": facade})
+        out = asyncio.run(chunked_validate_row_async(row, params, {"v0": facade}))
 
         assert facade.calls == []
         assert out[COL_VALIDATION_DECISIONS] == {"decisions": []}
 
     def test_system_prompt_is_forwarded_to_facade(self) -> None:
-        # ``ChunkedValidationParams.system_prompt`` must reach ``facade.generate``.
+        # ``ChunkedValidationParams.system_prompt`` must reach ``facade.agenerate``.
         # The recipe appends JSON task instructions before dispatch, so we assert
         # substring containment with a distinctive sentinel rather than equality.
         text = "Alice spoke."
@@ -623,7 +592,7 @@ class TestChunkedValidateRowPoolOfOne:
             system_prompt=f"You are a validator. {sentinel}",
         )
 
-        chunked_validate_row(row, params, {"v0": facade})
+        asyncio.run(chunked_validate_row_async(row, params, {"v0": facade}))
 
         assert len(facade.calls) == 1
         forwarded = facade.calls[0]["system_prompt"]
@@ -652,7 +621,7 @@ class TestChunkedValidateRowPoolOfOne:
             # system_prompt intentionally omitted (default None)
         )
 
-        chunked_validate_row(row, params, {"v0": facade})
+        asyncio.run(chunked_validate_row_async(row, params, {"v0": facade}))
 
         assert len(facade.calls) == 1
         # The recipe maps ``None`` input to ``None`` output, so the facade
@@ -684,7 +653,7 @@ class TestChunkedValidateRowPoolOfTwoRoundRobin:
             excerpt_window_chars=50,
             prompt_template=_MINIMAL_TEMPLATE,
         )
-        chunked_validate_row(row, params, {"v0": v0, "v1": v1})
+        asyncio.run(chunked_validate_row_async(row, params, {"v0": v0, "v1": v1}))
         # 6 candidates / 2 per chunk = 3 chunks; round-robin → v0,v1,v0
         assert len(v0.calls) == 2
         assert len(v1.calls) == 1
@@ -737,11 +706,12 @@ class TestChunkedValidateRowAsync:
 
 
 class TestChunkedValidationGenerator:
-    def test_generate_bridges_sync_unavailable_to_agenerate(self) -> None:
+    @pytest.mark.parametrize("sync_entrypoint", [False, True])
+    def test_generation_uses_async_model(self, sync_entrypoint: bool) -> None:
         spans = [_entity_span("a", "Alice", "first_name", 0, 5)]
         candidates = _candidates_schema(("a", "Alice", "first_name"))
         row = _build_row(text="Alice", seed_entities=spans, candidates=candidates)
-        facade = SyncUnavailableFacade("v0", response={"decisions": [{"id": "a", "decision": "keep"}]})
+        facade = FakeFacade("v0", response={"decisions": [{"id": "a", "decision": "keep"}]})
         generator = ChunkedValidationGenerator(
             ChunkedValidationConfig(
                 name=COL_VALIDATION_DECISIONS,
@@ -755,11 +725,10 @@ class TestChunkedValidationGenerator:
             ),
         )
 
-        out = generator.generate(row)
+        out = generator.generate(row) if sync_entrypoint else asyncio.run(generator.agenerate(row))
 
         assert out[COL_VALIDATION_DECISIONS]["decisions"][0]["id"] == "a"
-        assert facade.sync_calls == 1
-        assert facade.async_calls == 1
+        assert len(facade.calls) == 1
 
 
 class TestChunkedValidateRowMultiChunkReassembly:
@@ -800,7 +769,7 @@ class TestChunkedValidateRowMultiChunkReassembly:
             excerpt_window_chars=50,
             prompt_template=_MINIMAL_TEMPLATE,
         )
-        out = chunked_validate_row(row, params, {"v0": v0, "v1": v1})
+        out = asyncio.run(chunked_validate_row_async(row, params, {"v0": v0, "v1": v1}))
         decisions = {d["id"]: d for d in out[COL_VALIDATION_DECISIONS]["decisions"]}
         assert set(decisions) == {"c1", "c2", "c3", "c4"}
         # Chunk 0 (c1,c2) → v0; chunk 1 (c3,c4) → v1.
@@ -835,7 +804,7 @@ class TestChunkedValidateRowFailurePropagation:
         # The last alias tried propagates; order is round-robin + wrap, so
         # chunk 0 starts at v0 → fails → v1 (fails, last) → raises "from v1".
         with pytest.raises(RuntimeError, match="forced failure from v1"):
-            chunked_validate_row(row, params, {"v0": v0, "v1": v1})
+            asyncio.run(chunked_validate_row_async(row, params, {"v0": v0, "v1": v1}))
 
 
 class TestChunkedValidateRowCrossAliasFailover:
@@ -853,7 +822,7 @@ class TestChunkedValidateRowCrossAliasFailover:
             excerpt_window_chars=50,
             prompt_template=_MINIMAL_TEMPLATE,
         )
-        out = chunked_validate_row(row, params, {"v0": v0, "v1": v1})
+        out = asyncio.run(chunked_validate_row_async(row, params, {"v0": v0, "v1": v1}))
         decisions = out[COL_VALIDATION_DECISIONS]["decisions"]
         assert len(decisions) == 1
         assert decisions[0]["id"] == "a"
@@ -880,7 +849,7 @@ class TestChunkedValidateRowCrossAliasFailover:
             prompt_template=_MINIMAL_TEMPLATE,
         )
         with pytest.raises(RuntimeError, match="forced failure from v0"):
-            chunked_validate_row(row, params, {"v0": v0})
+            asyncio.run(chunked_validate_row_async(row, params, {"v0": v0}))
         assert len(v0.calls) == 1
 
     def test_failover_wraps_starting_from_round_robin_primary(self) -> None:
@@ -920,7 +889,7 @@ class TestChunkedValidateRowCrossAliasFailover:
             excerpt_window_chars=50,
             prompt_template=_MINIMAL_TEMPLATE,
         )
-        out = chunked_validate_row(row, params, {"v0": v0, "v1": v1})
+        out = asyncio.run(chunked_validate_row_async(row, params, {"v0": v0, "v1": v1}))
         decisions = {d["id"]: d["decision"] for d in out[COL_VALIDATION_DECISIONS]["decisions"]}
         assert decisions == {"a": "keep", "b": "keep", "c": "keep"}
         # v0 serviced all three chunks: chunk 0 + chunk 2 directly, chunk 1 via failover.
@@ -947,7 +916,7 @@ class TestChunkedValidateRowMissingIdMirrorsSingleCall:
         params = ChunkedValidationParams(
             pool=["v0"], max_entities_per_call=5, excerpt_window_chars=20, prompt_template=_MINIMAL_TEMPLATE
         )
-        out = chunked_validate_row(row, params, {"v0": facade})
+        out = asyncio.run(chunked_validate_row_async(row, params, {"v0": facade}))
         ids = [d["id"] for d in out[COL_VALIDATION_DECISIONS]["decisions"]]
         assert ids == ["a"]
 
@@ -964,66 +933,7 @@ class TestChunkedValidateRowGuardsBadConfig:
             prompt_template=_MINIMAL_TEMPLATE,
         )
         with pytest.raises(KeyError, match="missing_alias"):
-            chunked_validate_row(row, params, {"v0": FakeFacade("v0", response={"decisions": []})})
-
-
-# ---------------------------------------------------------------------------
-# Factory: make_chunked_validation_generator
-# ---------------------------------------------------------------------------
-
-
-class TestMakeChunkedValidationGenerator:
-    def test_decorator_metadata_encodes_pool_and_required_columns(self) -> None:
-        fn = make_chunked_validation_generator(["v0", "v1"])
-        meta = fn.custom_column_metadata
-        assert meta["model_aliases"] == ["v0", "v1"]
-        assert set(meta["required_columns"]) == {
-            COL_TEXT,
-            COL_SEED_ENTITIES,
-            COL_SEED_VALIDATION_CANDIDATES,
-            COL_TAG_NOTATION,
-        }
-        # Must not declare columns we deliberately don't read; an over-broad
-        # required_columns would distort DAG ordering elsewhere. In particular
-        # the post-augmentation views (COL_MERGED_TAGGED_TEXT, COL_VALIDATION_CANDIDATES)
-        # are downstream of this step and would create a cycle if declared.
-        assert COL_VALIDATION_SKELETON not in meta["required_columns"]
-        assert COL_MERGED_TAGGED_TEXT not in meta["required_columns"]
-        assert COL_VALIDATION_CANDIDATES not in meta["required_columns"]
-
-    def test_factory_rejects_empty_pool(self) -> None:
-        with pytest.raises(ValueError, match="pool is empty"):
-            make_chunked_validation_generator([])
-
-    def test_generator_forwards_to_chunked_validate_row(self) -> None:
-        """The DD-exposed wrapper is sync; calling it directly must return a
-        dict populated by the row logic (not a coroutine).
-        """
-        spans = [_entity_span("a", "Alice", "first_name", 0, 5)]
-        candidates = _candidates_schema(("a", "Alice", "first_name"))
-        row = _build_row(text="Alice", seed_entities=spans, candidates=candidates)
-        fn = make_chunked_validation_generator(["v0"])
-        facade = FakeFacade("v0", response={"decisions": [{"id": "a", "decision": "keep"}]})
-        params = ChunkedValidationParams(
-            pool=["v0"], max_entities_per_call=5, excerpt_window_chars=20, prompt_template=_MINIMAL_TEMPLATE
-        )
-        out = fn(row, params, {"v0": facade})
-        assert isinstance(out, dict)
-        assert out[COL_VALIDATION_DECISIONS]["decisions"][0]["id"] == "a"
-
-    def test_generator_is_sync_callable_returning_dict(self) -> None:
-        """Regression: DD's default thread-pool engine calls the wrapper
-        synchronously and rejects coroutine returns with "must return a dict,
-        got coroutine". Guard against accidentally re-introducing an async
-        outer wrapper."""
-        import asyncio as _asyncio
-        import inspect as _inspect
-
-        fn = make_chunked_validation_generator(["v0"])
-        inner = _inspect.unwrap(fn)
-        assert not _asyncio.iscoroutinefunction(inner), (
-            "DD-exposed generator must be sync; an async outer wrapper breaks the default thread-pool engine."
-        )
+            asyncio.run(chunked_validate_row_async(row, params, {"v0": FakeFacade("v0", response={"decisions": []})}))
 
 
 # ---------------------------------------------------------------------------
@@ -1140,7 +1050,7 @@ class TestChunkedValidationRegression:
             excerpt_window_chars=200,
             prompt_template=_MINIMAL_TEMPLATE,
         )
-        out = chunked_validate_row(row, params, {"solo": facade})
+        out = asyncio.run(chunked_validate_row_async(row, params, {"solo": facade}))
         decisions_doc = out[COL_VALIDATION_DECISIONS]
         validated = apply_validation_decisions(spans, decisions_doc)
         return decisions_doc, validated, len(facade.calls)
