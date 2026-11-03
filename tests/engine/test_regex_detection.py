@@ -4,7 +4,8 @@
 from __future__ import annotations
 
 import gc
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Any
 from weakref import ref
@@ -51,6 +52,70 @@ def test_runtime_rejects_zero_width_match_that_bypasses_config_validation() -> N
 
     with pytest.raises(RuntimeError, match="produced a zero-width match"):
         detect_regex_entities("Z" * 20, rules=[rule])
+
+
+def test_matching_finishes_before_local_validation(monkeypatch: pytest.MonkeyPatch) -> None:
+    finished = False
+
+    def validator(candidate: RegexCandidate) -> bool:
+        assert finished, "Local validation ran while the timed match iterator was still active"
+        return True
+
+    rules = resolve_regex_rules(
+        labels=["ticket"],
+        builtin_regexes=False,
+        rules=[RegexRule(label="ticket", pattern=r"TKT-\d+", validator=validator)],
+    )
+    compiled = regex_detection._compile_pattern(rules[0].pattern)
+
+    class Pattern:
+        def finditer(self, text: str, *, timeout: float, concurrent: bool | None = None) -> Iterator[Any]:
+            nonlocal finished
+            yield from compiled.finditer(text, timeout=timeout, concurrent=concurrent)
+            finished = True
+
+    monkeypatch.setattr(regex_detection, "_compile_pattern", lambda _pattern: Pattern())
+    assert len(detect_regex_entities("TKT-123 TKT-456", rules=rules).llm_entities) == 2
+
+
+def test_match_collection_is_bounded_and_keeps_scan_nonconcurrent(monkeypatch: pytest.MonkeyPatch) -> None:
+    rules = resolve_regex_rules(
+        labels=["ticket"], builtin_regexes=False, rules=[RegexRule(label="ticket", pattern=r"TKT-\d+")]
+    )
+    compiled = regex_detection._compile_pattern(rules[0].pattern)
+    visited = 0
+
+    class Pattern:
+        def finditer(self, text: str, *, timeout: float, concurrent: bool | None = None) -> Iterator[Any]:
+            nonlocal visited
+            assert concurrent is False
+            for match in compiled.finditer(text, timeout=timeout, concurrent=concurrent):
+                visited += 1
+                assert visited <= 4, "Collected beyond the overflow-detection match"
+                yield match
+
+    monkeypatch.setattr(regex_detection, "_compile_pattern", lambda _pattern: Pattern())
+    with pytest.raises(RuntimeError, match="exceeded the maximum of 3 matches"):
+        detect_regex_entities(" ".join(["TKT-123"] * 20), rules=rules, max_matches_per_rule=3)
+    assert visited == 4
+
+
+def test_pathological_regex_still_times_out() -> None:
+    rules = resolve_regex_rules(
+        labels=["ticket"], builtin_regexes=False, rules=[RegexRule(label="ticket", pattern=r"(a+)+$")]
+    )
+    with pytest.raises(RuntimeError, match="timed out"):
+        detect_regex_entities("a" * 20000 + "!", rules=rules, timeout_seconds=0.005)
+
+
+@pytest.mark.parametrize("workers", [32, 64])
+def test_builtin_scans_under_parallel_row_load(workers: int) -> None:
+    labels = ["email", "ipv6", "url"]
+    rules = resolve_regex_rules(labels=labels, builtin_regexes=True, rules=[])
+    text = "tool output: completed normally; " * 300 + " user@example.org 2001:db8::1 https://example.org/path"
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        results = list(executor.map(lambda _: detect_regex_entities(text, rules=rules), range(100)))
+    assert all({entity.label for entity in result.llm_entities} == set(labels) for result in results)
 
 
 @pytest.mark.parametrize(

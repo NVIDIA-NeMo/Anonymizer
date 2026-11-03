@@ -392,12 +392,13 @@ def test_regex_constrained_detection_config_round_trips_with_model_columns_skipp
 
 
 @pytest.mark.parametrize("preview_num_records", [2, None], ids=["preview", "create"])
-@pytest.mark.parametrize("card_with_code", [False, True], ids=["custom-ticket", "builtin-card-with-code"])
+@pytest.mark.parametrize("workload", ["custom-ticket", "builtin-card-with-code", "all-builtins-100-rows"])
 def test_regex_constrained_matches_survive_skipped_model_columns_in_data_designer(
     tmp_path: Path,
     preview_num_records: int | None,
-    card_with_code: bool,
+    workload: str,
 ) -> None:
+    card_with_code = workload == "builtin-card-with-code"
     value = "4111 1111 1111 1111" if card_with_code else "TKT-123"
     label = "credit_debit_card" if card_with_code else "ticket"
     suffix = " 123" if card_with_code else ""
@@ -409,6 +410,25 @@ def test_regex_constrained_matches_survive_skipped_model_columns_in_data_designe
         )
     )
     input_df = pd.DataFrame({COL_TEXT: [value + suffix, "nothing"]})
+    values = [(value, label)]
+    rules: list[BuiltinRegex | RegexRule] = [rule]
+    labels = [label]
+    if workload == "all-builtins-100-rows":
+        values = [
+            ("4111 1111 1111 1111", "credit_debit_card"),
+            ("user@example.org", "email"),
+            ("192.0.2.10", "ipv4"),
+            ("2001:db8::1", "ipv6"),
+            ("00:1A:2B:3C:4D:5E", "mac_address"),
+            ("https://example.org/path", "url"),
+        ]
+        labels = [label for _, label in values]
+        rules = [
+            BuiltinRegex(label=label, validate_matches_with_llm=False, detect_additional_matches=False)
+            for label in labels
+        ]
+        text = "tool output: completed normally; " * 300 + " | ".join(value for value, _ in values)
+        input_df = pd.DataFrame({COL_TEXT: [f"Record {index}: {text}" for index in range(100)]})
     model_configs = [
         ModelConfig(
             alias="known",
@@ -430,9 +450,9 @@ def test_regex_constrained_matches_survive_skipped_model_columns_in_data_designe
         model_configs=model_configs,
         selected_models=selected_models,
         gliner_detection_threshold=0.3,
-        entity_labels=[label],
-        builtin_regexes=card_with_code,
-        regex_rules=[rule],
+        entity_labels=labels,
+        builtin_regexes=workload != "custom-ticket",
+        regex_rules=rules,
     )
     payload = builder.get_builder_config().to_json()
     assert payload is not None
@@ -459,10 +479,11 @@ def test_regex_constrained_matches_survive_skipped_model_columns_in_data_designe
             model_configs=restored.model_configs,
             columns=restored.get_column_configs(),
             workflow_name=f"regex-constrained-{'preview' if preview_num_records is not None else 'create'}",
-            preview_num_records=preview_num_records,
+            preview_num_records=len(input_df) if preview_num_records is not None else None,
         )
 
     assert result.failed_records == []
+    assert len(result.dataframe) == len(input_df)
     detected = result.dataframe[COL_DETECTED_ENTITIES].tolist()
     assert [
         [
@@ -475,12 +496,20 @@ def test_regex_constrained_matches_survive_skipped_model_columns_in_data_designe
             for entity in detection["entities"]
         ]
         for detection in detected
-    ] == [[(value, label, 0, len(value))], []]
+    ] == [
+        [(value, label, text.index(value), text.index(value) + len(value)) for value, label in values if value in text]
+        for text in input_df[COL_TEXT]
+    ]
 
     replacement_input = result.dataframe[[COL_TEXT]].copy()
     replacement_input[COL_FINAL_ENTITIES] = detected
     replaced = apply_local_replace_strategy(replacement_input, strategy=Redact())
-    assert replaced[COL_REPLACED_TEXT].tolist() == [f"[REDACTED_{label.upper()}]{suffix}", "nothing"]
+    expected_replaced = []
+    for text in input_df[COL_TEXT]:
+        for value, label in values:
+            text = text.replace(value, f"[REDACTED_{label.upper()}]")
+        expected_replaced.append(text)
+    assert replaced[COL_REPLACED_TEXT].tolist() == expected_replaced
 
 
 @pytest.mark.parametrize("builder_kind", ["dataframe", "seed"])
