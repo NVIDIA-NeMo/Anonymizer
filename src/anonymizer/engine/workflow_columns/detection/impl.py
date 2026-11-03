@@ -3,8 +3,6 @@
 
 from __future__ import annotations
 
-import asyncio
-import concurrent.futures
 from collections.abc import Callable
 from typing import Any
 
@@ -16,7 +14,6 @@ from data_designer.engine.column_generators.generators.base import (
 
 from anonymizer.engine.detection.chunked_validation import (
     ChunkedValidationParams,
-    chunked_validate_row,
     chunked_validate_row_async,
 )
 from anonymizer.engine.detection.custom_columns import (
@@ -41,60 +38,6 @@ _TRANSFORMS: dict[DetectionTransformOperation, Callable[[dict[str, Any]], dict[s
     DetectionTransformOperation.MERGE_AND_BUILD_CANDIDATES: merge_and_build_candidates,
     DetectionTransformOperation.APPLY_VALIDATION_AND_FINALIZE: apply_validation_and_finalize,
 }
-
-
-_BRIDGE_TIMEOUT_FLOOR_S = 60.0
-
-
-def _compute_bridge_timeout(
-    request_timeout: float,
-    max_correction_steps: int,
-    max_conversation_restarts: int = 0,
-) -> float:
-    attempts = (1 + max_conversation_restarts) * (1 + max_correction_steps)
-    return max(_BRIDGE_TIMEOUT_FLOOR_S, attempts * request_timeout * 1.5)
-
-
-class _AsyncBridgedModelFacade:
-    def __init__(self, facade: Any) -> None:
-        self._facade = facade
-
-    def generate(self, *args: Any, **kwargs: Any) -> tuple[Any, list]:
-        from data_designer.engine.models.clients.errors import SyncClientUnavailableError
-
-        try:
-            return self._facade.generate(*args, **kwargs)
-        except SyncClientUnavailableError:
-            pass
-
-        try:
-            asyncio.get_running_loop()
-        except RuntimeError:
-            pass
-        else:
-            raise RuntimeError("model.generate() cannot be bridged from the running event loop.")
-
-        from data_designer.engine.dataset_builders.utils.async_concurrency import ensure_async_engine_loop
-
-        timeout_override = kwargs.get("timeout")
-        request_timeout = float(timeout_override) if timeout_override is not None else self._facade.request_timeout
-        bridge_timeout = _compute_bridge_timeout(
-            request_timeout=request_timeout,
-            max_correction_steps=int(kwargs.get("max_correction_steps", 0) or 0),
-            max_conversation_restarts=int(kwargs.get("max_conversation_restarts", 0) or 0),
-        )
-        loop = ensure_async_engine_loop()
-        future = asyncio.run_coroutine_threadsafe(self._facade.agenerate(*args, **kwargs), loop)
-        try:
-            return future.result(timeout=bridge_timeout)
-        except concurrent.futures.TimeoutError as exc:
-            future.cancel()
-            from data_designer.engine.models.errors import ModelTimeoutError
-
-            raise ModelTimeoutError(f"model.generate() bridge timed out after {bridge_timeout:.0f}s") from exc
-
-    def __getattr__(self, name: str) -> Any:
-        return getattr(self._facade, name)
 
 
 class DetectionTransformGenerator(ColumnGeneratorCellByCell[DetectionTransformConfig]):
@@ -138,9 +81,7 @@ class ChunkedValidationGenerator(ColumnGeneratorWithModelRegistry[ChunkedValidat
         )
 
     def generate(self, data: dict[str, Any]) -> dict[str, Any]:  # ty: ignore[invalid-method-override]
-        raw_models = {alias: self.get_model(alias) for alias in self.config.pool}
-        models = {alias: _AsyncBridgedModelFacade(model) for alias, model in raw_models.items()}
-        return chunked_validate_row(data, self._params(raw_models), models)
+        raise NotImplementedError("ChunkedValidationGenerator is async-only; use agenerate().")
 
     async def agenerate(self, data: dict[str, Any]) -> dict[str, Any]:  # ty: ignore[invalid-method-override]
         models = {alias: self.get_model(alias) for alias in self.config.pool}

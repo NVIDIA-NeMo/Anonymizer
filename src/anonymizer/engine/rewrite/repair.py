@@ -166,10 +166,13 @@ Maintain overall coherence, consistency, and naturalness (utility score: <<UTILI
 Provide ONLY the rewritten text.
 </task>
 """
+    baseline = row.get(COL_REWRITE_BASELINE_TEXT)
+    if baseline is None:
+        baseline = row.get(COL_TEXT, "")
     replacements = {
         "<<PRIVACY_GOAL>>": params.privacy_goal_str,
         "<<MAX_PRIVACY_LEAK>>": str(params.max_privacy_leak),
-        "<<ORIGINAL_TEXT>>": str(row.get(COL_REWRITE_BASELINE_TEXT, row.get(COL_TEXT, ""))),
+        "<<ORIGINAL_TEXT>>": str(baseline),
         "<<REWRITTEN_TEXT>>": str(row.get(COL_REWRITTEN_TEXT, "")),
         "<<LEAKAGE_MASS>>": str(row.get(COL_LEAKAGE_MASS, 0.0)),
         "<<HIGH_WARN>>": "\nWARNING: HIGH-SENSITIVITY LEAK DETECTED - must be fixed!"
@@ -210,10 +213,10 @@ def _make_repair_column(repairer_alias: str) -> Any:
         ],
         model_aliases=[repairer_alias],
     )
-    def _repair_column(row: dict[str, Any], generator_params: RepairParams, models: dict) -> dict[str, Any]:
+    async def _repair_column(row: dict[str, Any], generator_params: RepairParams, models: dict) -> dict[str, Any]:
         recipe = PydanticResponseRecipe(data_type=RewriteOutputSchema)
         prompt = recipe.apply_recipe_to_user_prompt(_render_repair_prompt(row, generator_params))
-        result, _ = models[repairer_alias].generate(prompt=prompt, parser=recipe.parse, max_correction_steps=3)
+        result, _ = await models[repairer_alias].agenerate(prompt=prompt, parser=recipe.parse, max_correction_steps=3)
         row[COL_REWRITTEN_TEXT_NEXT] = result.rewritten_text
         return row
 
