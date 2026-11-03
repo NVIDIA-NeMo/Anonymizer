@@ -24,6 +24,16 @@ This experiment is confined to the integration branch; no public configuration c
 
 This reduces repeated identity text without changing protection decisions. It does not
 retry incomplete responses, batch inventories, or guarantee that omissions disappear.
+Incomplete coverage intentionally fails the record rather than continuing with partial
+protection decisions or returning a rewrite with `needs_human_review`. The adapter
+surfaces dropped rows as failed records; frequent failures can reduce batch output or
+trigger DataDesigner's early shutdown. This change adds no retry or flagged fallback.
+
+Sequential IDs and matching counts establish structural coverage, not semantic alignment.
+A model can attach a decision intended for another entity to a valid ID; reconstructing
+identity cannot detect that mistake. Removing echoed labels and values also removes a
+diagnostic signal that could expose duplicated or mismatched identities in full output.
+
 Old full raw payloads are no longer the model-response contract; normalized output stays
 compatible. Re-evaluate the same agent traces before porting to the disposition branch.
 
@@ -43,3 +53,16 @@ repository checks.
 - With the same JSON serialization, raw payload size fell from 144,748 to 75,289
   characters (48% smaller). This measures output size, not model token usage.
 - A fresh provider-backed run is still needed to measure omission rates and decision quality.
+
+## Review evidence and follow-up
+
+The reviewer reports omissions in 2 of 8 runs at `max_tokens=16384` and short
+responses in 9 of 10 recorded dispositions at `max_tokens=4096`, including responses
+well below the output ceiling. These observations motivate coverage enforcement;
+they do not establish omission rates for fresh compact-format generations.
+
+Synthetic regression tests cover incomplete counts, acceptance and reconstruction of
+valid equal-count decisions, and failed-record propagation through the real scheduler
+and adapter. The reviewer's exact inventory/decision fixtures have not been supplied
+locally; add sanitized fixtures when available, without document text or real PII.
+A fresh provider-backed comparison remains outstanding.
