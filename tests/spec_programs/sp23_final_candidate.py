@@ -32,7 +32,11 @@ def program() -> list[dict[str, str]]:
     rec = Recorder()
     r3 = run(g, rec.transform("A", str), rec.transform("B", lambda text: "b-text"), rec.verifier("check", "b-text"))
     o3 = r3.outcome(t)
-    c.check("E23.3", o3.available and o3.qualification == "not_met" and r3.content() == ((t, "b-text"),), f"available={o3.available}, {o3.qualification}")
+    c.check(
+        "E23.3",
+        o3.available and o3.qualification == "not_met" and r3.content() == ((t, "b-text"),),
+        f"available={o3.available}, {o3.qualification}",
+    )
 
     # E23.4 group {A, B}, B fails: A stays met, is withheld and names B; B carries its own reason.
     r4, (a, b) = _run(("a", "bad"), groups=((0, 1),))
