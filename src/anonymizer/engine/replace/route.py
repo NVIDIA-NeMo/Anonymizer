@@ -296,7 +296,7 @@ def _protect_rows(
     limits = Limits(
         max_operations=len(operations),
         max_targets=len(graph.targets),
-        max_mentions=len(graph.mentions),
+        max_mentions=sum(len(d.text) for d in graph.targets),
         max_context_items=0,
     )
     return graph, _run(graph, workflow, limits)

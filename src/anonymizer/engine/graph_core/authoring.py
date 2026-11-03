@@ -27,6 +27,27 @@ def utf8_size(text: str) -> int:
     return len(text.encode("utf-8"))
 
 
+def mention_problem(mentions: Iterable[object], target: Datum | None = None) -> str:
+    """The first rule ``mentions`` break, or "": each is a ``Mention`` (on ``target`` when given) whose offsets are a
+    valid half-open interval of its datum, whose claimed text matches that slice, and that overlaps no other."""
+    by_datum: dict[Datum, list[Mention]] = {}
+    for m in mentions:
+        if not isinstance(m, Mention):
+            return "invalid_output"
+        if target is not None and m.datum != target:
+            return "mention_not_on_target"
+        if not (type(m.start) is int and type(m.end) is int and 0 <= m.start < m.end <= len(m.datum.text)):
+            return "mention_out_of_range"
+        if m.text is not None and m.datum.text[m.start : m.end] != m.text:
+            return "mention_slice_mismatch"
+        by_datum.setdefault(m.datum, []).append(m)
+    for ms in by_datum.values():
+        ms.sort(key=lambda m: m.start)
+        if any(b.start < a.end for a, b in zip(ms, ms[1:])):
+            return "overlapping_output_ownership"
+    return ""
+
+
 # ---------------------------------------------------------------- data relationship graph
 
 
@@ -175,22 +196,13 @@ class ProtectionGraph:
         return d
 
     def _check_mentions(self, targets: set[Datum], declared: set[Datum]) -> None:
-        by_target: dict[Datum, list[Mention]] = {}
         for m in self.mentions:
             self._own(m.datum, None, "mention")
             if m.datum not in targets:
                 # Context must not supply a mention endpoint or replacement span.
                 raise GraphRejection("mention_not_on_target" if m.datum in declared else "unknown_reference")
-            if not (0 <= m.start < m.end <= len(m.datum.text)):
-                raise GraphRejection("mention_out_of_range")
-            if m.text is not None and m.datum.text[m.start : m.end] != m.text:
-                raise GraphRejection("mention_slice_mismatch")
-            by_target.setdefault(m.datum, []).append(m)
-        for ms in by_target.values():
-            ms.sort(key=lambda m: m.start)
-            for a, b in zip(ms, ms[1:]):
-                if b.start < a.end:
-                    raise GraphRejection("overlapping_output_ownership")
+        if problem := mention_problem(self.mentions):
+            raise GraphRejection(problem)
 
     def _check_acyclic(self) -> None:
         edges: dict[Datum, set[Datum]] = {}

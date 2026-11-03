@@ -319,7 +319,12 @@ def _protect_rewrite(
         ),
     )
     workflow = Workflow("rewrite", operations)
-    limits = Limits(max_operations=len(operations), max_targets=len(graph.targets), max_mentions=0, max_context_items=0)
+    limits = Limits(
+        max_operations=len(operations),
+        max_targets=len(graph.targets),
+        max_mentions=sum(len(d.text) for d in graph.targets),
+        max_context_items=0,
+    )
     result = protect(prepare(graph, workflow, limits=limits))
     steps = [step for _, step in workflow.flatten()]
     for entry in result.state.entries:

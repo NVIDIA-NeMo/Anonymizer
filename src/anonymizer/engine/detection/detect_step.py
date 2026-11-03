@@ -90,13 +90,6 @@ def resolve_positions(dataframe: pd.DataFrame, result: EntityDetectionResult) ->
 
 
 def accepted_mentions(datum: Datum, entities: EntitiesSchema) -> list[Mention]:
-    """Exact, non-overlapping spans in start order: the output regions the graph owns."""
-    accepted: list[Mention] = []
-    cursor = 0
-    text = datum.text
-    for e in sorted(entities.entities, key=lambda e: e.start_position):
-        start, end = e.start_position, e.end_position
-        if start >= cursor and start < end <= len(text) and text[start:end] == e.value:
-            accepted.append(Mention(datum, start, end, e.label or "", e.value))
-            cursor = end
-    return accepted
+    """Every entity as a mention in start order; an overlapping or mismatched span is rejected where it is accepted."""
+    ordered = sorted(entities.entities, key=lambda e: e.start_position)
+    return [Mention(datum, e.start_position, e.end_position, e.label or "", e.value) for e in ordered]

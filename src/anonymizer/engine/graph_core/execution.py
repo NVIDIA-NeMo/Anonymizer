@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import secrets
 from collections import Counter
+from collections.abc import Mapping
 from dataclasses import dataclass, field, fields, replace
 from functools import cached_property
 from itertools import islice
@@ -30,6 +31,7 @@ from anonymizer.engine.graph_core.authoring import (
     Operation,
     ProtectionGraph,
     Workflow,
+    mention_problem,
     utf8_size,
 )
 
@@ -367,8 +369,32 @@ def _protect(p: PreparedProtection) -> ProtectionResult:
     state = k.initial_state(p.plan, seeds)
     for u in closed:
         k.apply(state, k.Closed(u, "binding_failed"))
-    k.execute(p.plan, state, cancelled)
+    k.execute(p.plan, state, cancelled, _mention_review(p))
     return _reconcile(p, state, tuple(retrievals))
+
+
+def _mention_review(p: PreparedProtection) -> k.Review:
+    """Check produced mentions at acceptance: each publication's are valid for their target, and the publication
+    as a whole fits what remains of ``max_mentions`` after the declared and earlier accepted mentions."""
+    room = p.limits.max_mentions - len(p.graph.mentions)
+    ports = [[port for port, name in node.outputs.items() if name == MENTIONS] for node in p.plan.nodes]
+
+    def review(index: int, published: list[tuple[int, Mapping[str, Any]]]) -> dict[int, str]:
+        nonlocal room
+        failed: dict[int, str] = {}
+        count = 0
+        for unit, outputs in published:
+            for port in ports[index]:
+                if problem := mention_problem(outputs[port], p.graph.targets[unit]):
+                    failed[unit] = problem
+                    break
+                count += len(outputs[port])
+        if count > room:  # every target of an over-limit publication fails
+            return {unit: failed.get(unit, "over_limit") for unit, _ in published}
+        room -= count
+        return failed
+
+    return review
 
 
 def _bind(g: ProtectionGraph, limits: Limits, cancelled: Any) -> tuple[list[Retrieval], dict[str, tuple | None]]:
