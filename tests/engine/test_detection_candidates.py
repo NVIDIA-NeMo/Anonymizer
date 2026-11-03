@@ -221,32 +221,66 @@ def test_exact_identity_coalesces_normalized_labels_and_preserves_origins() -> N
     assert representative_source(result[0]) == "regex_user"
 
 
-def test_longer_coverage_wins_before_source_priority() -> None:
+@pytest.mark.parametrize(
+    ("text", "narrow_start", "narrow_end", "broad_start", "broad_end"),
+    [
+        ("john.smith@example.com", 5, 10, 0, 22),
+        ("john.smith@example.com", 0, 4, 0, 22),
+        ("ID: john.smith@example.com", 0, 8, 4, 26),
+    ],
+    ids=["earlier-start", "same-start", "later-start-partial-overlap"],
+)
+def test_longer_coverage_wins_before_source_priority(
+    text: str, narrow_start: int, narrow_end: int, broad_start: int, broad_end: int
+) -> None:
     narrow_regex = _candidate(
         result_id="r1",
         observation_id="o1",
-        value="Smith",
+        value=text[narrow_start:narrow_end],
         label="last_name",
-        start=5,
-        end=10,
+        start=narrow_start,
+        end=narrow_end,
         source_kind="regex_user",
         source_instance="custom-name",
     )
     broad_augmenter = _candidate(
         result_id="r2",
         observation_id="o1",
-        value="john.smith@example.com",
+        value=text[broad_start:broad_end],
         label="email",
-        start=0,
-        end=22,
+        start=broad_start,
+        end=broad_end,
         source_kind="augmenter",
         source_instance="augmenter",
     )
 
-    assert reconcile_candidates((narrow_regex, broad_augmenter)) == (broad_augmenter,)
+    for ordering in permutations((narrow_regex, broad_augmenter)):
+        assert reconcile_candidates(ordering) == (broad_augmenter,)
 
 
-def test_ineligible_longer_observation_cannot_suppress_allowed_shorter_observation() -> None:
+def test_longest_first_is_greedy_not_maximum_total_coverage() -> None:
+    text = "abcdefgh"
+    broad = _candidate(result_id="r1", observation_id="o1", value=text[:6], label="broad", start=0, end=6)
+    left = _candidate(result_id="r1", observation_id="o2", value=text[:4], label="left", start=0, end=4)
+    right = _candidate(result_id="r1", observation_id="o3", value=text[4:], label="right", start=4, end=8)
+
+    # The two touching spans cover more together, but the policy selects the longest first.
+    for ordering in permutations((broad, left, right)):
+        assert reconcile_candidates(ordering) == (broad,)
+
+
+@pytest.mark.parametrize(
+    "longer_decision",
+    [
+        RawValidationDecisionSchema(id="c1", decision=ValidationChoice.keep),
+        None,
+        RawValidationDecisionSchema(id="c1", decision=ValidationChoice.reclass, proposed_label="   "),
+    ],
+    ids=["explicit-keep", "missing-decision-fallback", "unusable-reclass-fallback"],
+)
+def test_ineligible_longer_observation_cannot_suppress_allowed_shorter_observation(
+    longer_decision: RawValidationDecisionSchema | None,
+) -> None:
     text = "Alice Smith"
     longer = _observation(
         result_id="r1",
@@ -299,7 +333,7 @@ def test_ineligible_longer_observation_cannot_suppress_allowed_shorter_observati
                 ValidationRequestDecisionSet(
                     request_id=inventory.request_id,
                     decisions=(
-                        RawValidationDecisionSchema(id="c1", decision=ValidationChoice.keep),
+                        *((longer_decision,) if longer_decision is not None else ()),
                         RawValidationDecisionSchema(id="c2", decision=ValidationChoice.keep),
                     ),
                 ),
@@ -308,6 +342,9 @@ def test_ineligible_longer_observation_cannot_suppress_allowed_shorter_observati
     )
 
     assert admissions[0].status is AdmissionStatus.rejected
+    assert admissions[0].reason is AdmissionReason.ineligible_label
+    assert admissions[0].effective_label is None
+    assert admissions[1].status is AdmissionStatus.accepted
     candidates = materialize_admitted_candidates(
         canonical_text=text,
         detection_result=result,
