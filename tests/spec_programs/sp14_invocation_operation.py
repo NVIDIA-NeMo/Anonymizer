@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import threading
 from collections.abc import Callable
+from dataclasses import replace
 from typing import Any
 
 from anonymizer.engine.graph_core.authoring import ASSESSMENT, DATUM, TEXT, Assessment, Operation, Requests, Workflow
@@ -150,9 +151,10 @@ def program() -> list[dict[str, str]]:
             blamed = (*target[1:], target[0]) if swap else target
             return [Assessment(NAME not in t, o) for t, o in zip(text, blamed)]
 
-        return Operation.per_invocation(
+        op = Operation.per_invocation(
             "verify", call, {"text": TEXT, "target": DATUM}, {"assessment": ASSESSMENT}, Requests.none()
         )
+        return replace(op, checks=("verify",))
 
     def keep_second(ts: tuple[str, ...]) -> list[str]:
         return [t if "two" in t else t.replace(NAME, "[NAME]") for t in ts]

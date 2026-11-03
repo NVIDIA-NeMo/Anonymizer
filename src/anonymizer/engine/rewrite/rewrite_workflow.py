@@ -269,7 +269,7 @@ class RewriteUnavailable(Exception):
 
 
 def _rewrite_entry(row: dict[str, object]) -> dict[str, object] | RewriteUnavailable:
-    """One target's ``rewrite`` output: its text and the metrics ``assess-final`` reads."""
+    """One target's ``rewrite`` output: its text and the metrics the final checks read."""
     text = row[COL_REWRITTEN_TEXT]
     if not isinstance(text, str):
         return RewriteUnavailable("the rewritten text is not a string")
@@ -284,22 +284,43 @@ def _rewrite_entry(row: dict[str, object]) -> dict[str, object] | RewriteUnavail
     return {"text": text, "metrics": metrics}
 
 
-def _assess_final(evaluation: EvaluationCriteria) -> Callable[..., Assessment]:
-    """The privacy criterion over the final candidate's metrics: no model call."""
+def _unavailable(value: Any) -> bool:
+    return value is None or (isinstance(value, float) and value != value)
+
+
+def _high_leak(metrics: dict[str, Any]) -> bool | None:
+    value = metrics["any_high_leaked"]
+    return None if _unavailable(value) else not bool(value)
+
+
+def _replacements_applied(metrics: dict[str, Any]) -> bool | None:
+    value = metrics["replacement_ready"]
+    return None if _unavailable(value) else bool(value)
+
+
+def _leakage_within(metrics: dict[str, Any], limit: float | None) -> bool | None:
+    value = metrics["leakage_mass"]
+    return None if _unavailable(value) else limit is None or float(value) <= limit
+
+
+def _final_checks(evaluation: EvaluationCriteria) -> tuple[Operation, ...]:
+    """The privacy criteria over the final candidate's metrics, one model-free verifier per check."""
     limit = evaluation.flag_leakage_above
+    predicates: dict[str, Callable[[dict[str, Any]], bool | None]] = {
+        "high_leak": _high_leak,
+        "replacements_applied": _replacements_applied,
+        "leakage_within_threshold": lambda metrics: _leakage_within(metrics, limit),
+    }
 
-    def assess(text: str, metrics: dict[str, Any], target: Datum) -> Assessment:
-        if bool(metrics["any_high_leaked"]):
-            reason = "high_leak"
-        elif not metrics["replacement_ready"]:
-            reason = "replacement_unavailable"
-        elif limit is not None and float(metrics["leakage_mass"]) > limit:
-            reason = "high_leakage"
-        else:
-            reason = ""
-        return Assessment(not reason, target, reason)
+    def verifier(check: str, predicate: Callable[[dict[str, Any]], bool | None]) -> Operation:
+        def assess(text: str, metrics: dict[str, Any], target: Datum) -> Assessment:
+            satisfied = predicate(metrics)
+            return Assessment(satisfied, target, "metric_unavailable" if satisfied is None else "")
 
-    return assess
+        inputs = {"text": TEXT, "metrics": REWRITE_METRICS, "target": DATUM}
+        return Operation.verifier(f"assess-{check}", assess, inputs, checks=(check,))
+
+    return tuple(verifier(check, predicate) for check, predicate in predicates.items())
 
 
 def _protect_rewrite(
@@ -308,17 +329,16 @@ def _protect_rewrite(
     evaluation: EvaluationCriteria,
     *leading: Operation,
 ) -> ProtectionResult:
-    """Run ``leading``, the ``rewrite`` operation and ``assess-final`` over ``graph``; raise a non-verifier error."""
+    """Run ``leading``, the ``rewrite`` operation and the final checks over ``graph``; raise a non-verifier error."""
+    checks = _final_checks(evaluation)
     operations = (
         *leading,
         Operation.per_invocation(
             "rewrite", rewrite, {"target": DATUM}, {"text": TEXT, "metrics": REWRITE_METRICS}, Requests.opaque()
         ),
-        Operation.verifier(
-            "assess-final", _assess_final(evaluation), {"text": TEXT, "metrics": REWRITE_METRICS, "target": DATUM}
-        ),
+        *checks,
     )
-    workflow = Workflow("rewrite", operations)
+    workflow = Workflow("rewrite", operations, requires=tuple(op.checks[0] for op in checks))
     limits = Limits(
         max_operations=len(operations),
         max_targets=len(graph.targets),
@@ -361,7 +381,7 @@ def _rewrite_lowered(
 ) -> RewriteResult:
     """Run ``produce`` (the frame stages, leaving the final candidates in ``rows.frame``) as the ``rewrite`` operation.
 
-    One target per entity row. ``assess-final`` qualifies each target from its final evaluation, and
+    One target per entity row. The final checks qualify each target from its final evaluation, and
     ``needs_human_review`` is assigned from that record: not qualified, or utility below the flag.
     """
     scope = GraphScope()
@@ -476,7 +496,7 @@ class RewriteWorkflow:
         stage: str,
         options: dict[str, Any],
     ) -> RewriteResult:
-        """Run ``detect``, then ``rewrite`` and ``assess-final`` over every input row as one invocation.
+        """Run ``detect``, then ``rewrite`` and the final checks over every input row as one invocation.
 
         ``rewrite`` splits the detection frame on its entities: rows with none take the passthrough defaults and the
         rest go through ``_produce``, the stages ``run`` uses. A row the detector drops fails at ``detect`` and is

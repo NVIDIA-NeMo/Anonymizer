@@ -11,7 +11,7 @@ import pandas as pd
 
 from anonymizer.engine.constants import COL_DETECTION_VALID, COL_ENTITY_COVERAGE, COL_JUDGE_EVALUATION
 from anonymizer.engine.graph_core.authoring import DATUM, TEXT, Assessment, Operation, Requests, Workflow
-from anonymizer.engine.graph_core.execution import prepare
+from anonymizer.engine.graph_core.execution import Reason, prepare
 from anonymizer.engine.graph_core.kernel import register_kind
 from anonymizer.engine.ndd.failed_record import FailedRecord
 from anonymizer.interface.anonymizer import COVERAGE_METRICS, REWRITE_METRICS, _evaluate_on_graph, _Judge
@@ -32,7 +32,7 @@ def _verifier(name: str, verdicts: dict[str, bool | None], reason: str) -> Opera
         verdict = verdicts[text.lower()]
         return Assessment(verdict, target, "" if verdict else reason)
 
-    return Operation.verifier(name, assess, {"text": TEXT, "target": DATUM})
+    return Operation.verifier(name, assess, {"text": TEXT, "target": DATUM}, checks=(name,))
 
 
 def _body(name: str, port: str, tag: str) -> Operation:
@@ -71,7 +71,7 @@ def program() -> list[dict[str, str]]:
     # E17.1 two covering verifiers: met only when both are satisfied; each reason stays readable per verifier.
     first = _verifier("first", {"alpha": True, "beta": True, "gamma": False}, "first_failed")
     second = _verifier("second", {"alpha": True, "beta": False, "gamma": True}, "second_failed")
-    prepared = prepare(g, Workflow("w", (_upper(), first, second)))
+    prepared = prepare(g, Workflow("w", (_upper(), first, second), requires=("first", "second")))
     r = run(g, _upper(), first, second)
     outcomes = [r.outcome(t) for t in (a, b, d)]
     reasons = [[r.state.rows[u].outputs[i]["assessment"].reason for i in (1, 2)] for u in range(3)]
@@ -79,7 +79,8 @@ def program() -> list[dict[str, str]]:
         "E17.1",
         prepared.covering_verifiers == {1, 2}
         and [o.qualification for o in outcomes] == ["met", "not_met", "not_met"]
-        and [o.reason for o in outcomes] == ["", "unsatisfied", "unsatisfied"]
+        and [o.reasons for o in outcomes]
+        == [(), (Reason("failed", "second", "second"),), (Reason("failed", "first", "first"),)]
         and reasons == [["", ""], ["", "second_failed"], ["first_failed", ""]]
         and set(r.protected) == {a},
         f"covering={sorted(prepared.covering_verifiers)}, qualification={[o.qualification for o in outcomes]}, "
@@ -93,13 +94,14 @@ def program() -> list[dict[str, str]]:
     c.check(
         "E17.2",
         [o.qualification for o in o2] == ["met", "not_met", "met"]
-        and o2[1].reason == "unsatisfied"
+        and o2[1].reasons == (Reason("could_not_assess", "unsure", "unsure"),)
         and o2[1].terminal == "success"
         and r2.state.rows[1].outputs[1]["assessment"].satisfied is None,
         f"qualification={[o.qualification for o in o2]}, reason={o2[1].reason}, terminal={o2[1].terminal}",
     )
 
-    # E17.3 only a verifier whose text input binds to the final text producer is covering.
+    # E17.3 only a verifier whose text input binds to the final text producer is covering; a required check that no
+    # covering verifier answers is missing.
     early = _verifier("early", dict.fromkeys(("alpha", "beta", "gamma"), True), "")
     tail = Operation("tail", lambda text: text + "!")
     no_text = Operation.verifier("no-text", lambda target: Assessment(True, target), {"target": DATUM})
@@ -111,7 +113,8 @@ def program() -> list[dict[str, str]]:
         "E17.3",
         p3.covering_verifiers == frozenset()
         and p3_late.covering_verifiers == {4}
-        and r3.outcome(a).qualification == "not_assessed"
+        and r3.outcome(a).qualification == "not_met"
+        and r3.outcome(a).reasons == (Reason("missing", "early"),)
         and r3.state.rows[0].outputs[1]["assessment"].satisfied is True,
         f"covering earlier-bound/no-text={sorted(p3.covering_verifiers)}, with a final-text verifier="
         f"{sorted(p3_late.covering_verifiers)}, qualification={r3.outcome(a).qualification}",
@@ -144,7 +147,8 @@ def program() -> list[dict[str, str]]:
         f"own ports: first verifier saw {own}, second saw {own_second}; shared port: both saw {shared}",
     )
 
-    # E17.5 coverage verdicts per row: 1.0 is met, a fraction leaked, None and NaN unavailable (never met).
+    # E17.5 coverage verdicts per row: 1.0 satisfied, a fraction leaked, None and NaN unavailable; evaluation
+    # requires no checks, so it qualifies nothing.
     nan = float("nan")
     coverage = _Judge("coverage", "metrics", COVERAGE_METRICS, (COL_ENTITY_COVERAGE,), _keep)
     _, _, r5 = _evaluate_on_graph(_frame(**{COL_ENTITY_COVERAGE: [1.0, 0.5, None, nan]}), "t", [coverage])
@@ -152,7 +156,7 @@ def program() -> list[dict[str, str]]:
     verdicts5 = [(a5.satisfied, a5.reason) for a5 in (r5.state.rows[i].outputs[1]["assessment"] for i in range(4))]
     c.check(
         "E17.5",
-        quals5 == ["met", "not_met", "not_met", "not_met"]
+        quals5 == ["not_assessed"] * 4
         and verdicts5
         == [(True, ""), (False, "entities_leaked"), (None, "judge_unavailable"), (None, "judge_unavailable")],
         f"qualification={quals5}, coverage assessments={verdicts5}",
@@ -185,7 +189,7 @@ def program() -> list[dict[str, str]]:
     ]
     c.check(
         "E17.6",
-        quals6 == ["met", "met", "met"]
+        quals6 == ["not_assessed"] * 3
         and detection6 == [(True, ""), (False, "detection_invalid"), (False, "detection_invalid")]
         and rewrite6 == [(True, ""), (None, "judge_unavailable"), (True, "")],
         f"qualification={quals6}, detection-validity={detection6}, rewrite-judge={rewrite6}",

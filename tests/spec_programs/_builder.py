@@ -72,7 +72,7 @@ class Recorder:
             self.calls.append((name, text, threading.get_ident()))
             return Assessment(needle not in text, target)
 
-        return Operation.verifier(name, call, {"text": "text", "target": "datum"})
+        return Operation.verifier(name, call, {"text": "text", "target": "datum"}, checks=(name,))
 
 
 def graph(*texts: str) -> tuple[ProtectionGraph, tuple]:
@@ -82,7 +82,9 @@ def graph(*texts: str) -> tuple[ProtectionGraph, tuple]:
 
 
 def run(g: ProtectionGraph, *ops: Operation, **prepare_kwargs: Any):
-    return protect(prepare(g, Workflow("w", ops), **prepare_kwargs))
+    """Run ``ops`` as one workflow that requires every check its verifiers declare."""
+    requires = tuple(dict.fromkeys(check for op in ops for check in op.checks))
+    return protect(prepare(g, Workflow("w", ops, requires=requires), **prepare_kwargs))
 
 
 def rejected(fn: Callable[[], Any]) -> str | None:

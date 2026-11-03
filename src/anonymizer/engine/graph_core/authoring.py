@@ -280,7 +280,7 @@ class Operation:
 
     Input ports bind by name to the latest earlier output, else to the per-target seeds ``text`` (current candidate),
     ``source`` (original text), ``mentions``, ``context`` and ``target``. An operation whose output kind is
-    ``assessment`` is a verifier.
+    ``assessment`` is a verifier; ``checks`` names the workflow requirements its assessment answers.
     """
 
     name: str
@@ -289,6 +289,7 @@ class Operation:
     outputs: Mapping[str, str] = field(default_factory=lambda: MappingProxyType({"text": TEXT}))
     requests: Requests = Requests()
     scope: Literal["target", "invocation"] = "target"
+    checks: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         # The caller keeps its own mappings; the admitted ports cannot change after preparation.
@@ -297,9 +298,15 @@ class Operation:
 
     @classmethod
     def verifier(
-        cls, name: str, fn: Callable[..., Any], inputs: Mapping[str, str] | None = None, requests: Requests = Requests()
+        cls,
+        name: str,
+        fn: Callable[..., Any],
+        inputs: Mapping[str, str] | None = None,
+        requests: Requests = Requests(),
+        checks: tuple[str, ...] = (),
     ) -> Operation:
-        return cls(name, fn, MappingProxyType(dict(inputs or {"text": TEXT})), {"assessment": ASSESSMENT}, requests)
+        inputs = MappingProxyType(dict(inputs or {"text": TEXT}))
+        return cls(name, fn, inputs, {"assessment": ASSESSMENT}, requests, checks=tuple(checks))
 
     @classmethod
     def per_invocation(
@@ -334,12 +341,14 @@ class Workflow:
     """Sequence composition; a nested ``Workflow`` is a declared, inspectable subgraph.
 
     ``release`` selects the result contract: ``protected`` output, or ``annotation`` output that retains source
-    text and is never Protected.
+    text and is never Protected. ``requires`` names the checks a target must pass to qualify; with none, no
+    target is assessed.
     """
 
     name: str
     steps: tuple[Operation | Workflow, ...]
     release: Literal["protected", "annotation"] = "protected"
+    requires: tuple[str, ...] = ()
 
     def flatten(self, prefix: str = "") -> tuple[tuple[str, Operation], ...]:
         out: list[tuple[str, Operation]] = []

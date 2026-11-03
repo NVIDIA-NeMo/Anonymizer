@@ -15,7 +15,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field, fields, replace
 from functools import cached_property
 from itertools import islice
-from typing import Any
+from typing import Any, Literal, cast
 
 from anonymizer.engine.graph_core import kernel as k
 from anonymizer.engine.graph_core.authoring import (
@@ -34,6 +34,10 @@ from anonymizer.engine.graph_core.authoring import (
     mention_problem,
     utf8_size,
 )
+
+Terminal = Literal["success", "failed", "cancelled", "blocked"]
+Qualification = Literal["met", "not_met", "not_assessed"]
+AttemptStatus = Literal["running", "succeeded", "failed", "blocked", "cancelled"]
 
 SEEDS = {"text": TEXT, "source": TEXT, "mentions": MENTIONS, "context": CONTEXT, "target": DATUM}
 _SEAL_KEY = secrets.token_bytes(32)
@@ -168,7 +172,7 @@ class Retrieval:
     """Binding accounting for one source, separate from execution attempts."""
 
     source: str
-    status: str  # ok | failed | overflow | over_byte_ceiling | invalid_item | not_started
+    status: Literal["ok", "failed", "overflow", "over_byte_ceiling", "invalid_item", "not_started"]
     declared_max_items: int
     observed_items: int | None
     observed_bytes: int | None
@@ -180,20 +184,41 @@ class Attempt:
 
     target: Datum
     operation: str
-    status: str
+    status: AttemptStatus
     reason: str = ""
     ref: str = ""
 
 
 @dataclass(frozen=True)
-class TargetOutcome:
-    """Execution terminal, criteria satisfaction and output availability, kept separate."""
+class Reason:
+    """Why a target did not qualify or release: a code, the check and verifier it concerns, and the verifier's
+    stated cause when it could not assess. Fields hold codes and declared names, never exception text."""
 
-    terminal: str  # success | failed | cancelled | blocked
-    qualification: str  # met | not_met | not_assessed
+    code: str
+    check: str = ""
+    verifier: str = ""
+    cause: str = ""
+
+
+@dataclass(frozen=True)
+class TargetOutcome:
+    """Execution terminal, criteria satisfaction and output availability, kept separate.
+
+    ``reason`` is the code of the last of ``reasons``. ``error`` is the exception that failed the target, for
+    re-raising; it is never rendered. ``withheld_by`` names the targets whose withholding withheld this one.
+    """
+
+    terminal: Terminal
+    qualification: Qualification
     available: bool
     protected: bool
-    reason: str = ""
+    reasons: tuple[Reason, ...] = ()
+    error: BaseException | None = field(default=None, repr=False, compare=False)
+    withheld_by: tuple[Datum, ...] = ()
+
+    @property
+    def reason(self) -> str:
+        return self.reasons[-1].code if self.reasons else ""
 
 
 @dataclass(frozen=True)
@@ -264,7 +289,8 @@ class ProtectionResult:
     def attempts(self) -> tuple[Attempt, ...]:
         names = self.prepared.names
         return tuple(
-            Attempt(self.targets[e.unit], names[e.node], e.status.value, e.reason, e.ref) for e in self.state.entries
+            Attempt(self.targets[e.unit], names[e.node], cast(AttemptStatus, e.status.value), e.reason, e.ref)
+            for e in self.state.entries
         )
 
     def ledger(self) -> tuple[tuple[Datum, str, str], ...]:
@@ -439,34 +465,47 @@ def _bind(g: ProtectionGraph, limits: Limits, cancelled: Any) -> tuple[list[Retr
 def _reconcile(p: PreparedProtection, state: k.State, retrievals: tuple[Retrieval, ...]) -> ProtectionResult:
     """Derive outcomes from the final state: terminal, qualification, then fixed-point release."""
     g = p.graph
+    requires = p.workflow.requires
+    checks_of = [[c for c in op.checks if c in requires] for _, op in p.workflow.flatten()]
     consistent = True
-    verdicts: list[tuple[str, str, str]] = []
-    failures: dict[int, str] = {}
+    verdicts: list[tuple[Terminal, Qualification, list[Reason]]] = []
+    failures: dict[int, k.Entry] = {}
     for e in state.entries:
         if e.status == k.Status.FAILED:
-            failures.setdefault(e.unit, e.reason)
+            failures.setdefault(e.unit, e)
     for u, d in enumerate(g.targets):
         row = state.rows[u]
         status = k.unit_terminal(row, state.cancelled)
-        terminal = "success" if status == k.Status.SUCCEEDED else status.value
-        reason = "" if terminal == "success" else row.closed or failures.get(u, terminal)
+        terminal: Terminal = "success" if status == k.Status.SUCCEEDED else cast(Terminal, status.value)
+        reasons: list[Reason] = []
+        if terminal != "success":
+            failed = failures.get(u)
+            reasons.append(Reason(row.closed or (failed.reason if failed else terminal)))
         # Unattributed, foreign or swapped evidence from any verifier destroys attribution.
         assessments = [v for out in row.outputs.values() for v in out.values() if isinstance(v, Assessment)]
         consistent = consistent and all(a.target == d for a in assessments)
-        quals = []
-        for i in p.covering_verifiers:
-            a: Assessment | None = row.outputs.get(i, {}).get("assessment")
-            quals.append(a.satisfied is True if a is not None else False)
+        qual: Qualification
         if terminal != "success":
             qual = "not_met"
-        elif not p.covering_verifiers:
+        elif not requires:
             qual = "not_assessed"
         else:
-            qual = "met" if all(quals) else "not_met"
-            reason = reason or ("" if qual == "met" else "unsatisfied")
-        verdicts.append((terminal, qual, reason))
+            covered: set[str] = set()
+            for i in sorted(p.covering_verifiers):
+                a: Assessment | None = row.outputs.get(i, {}).get("assessment")
+                if a is None:
+                    continue
+                name, checks = p.names[i], checks_of[i]
+                covered.update(checks)
+                if a.satisfied is False:
+                    reasons += [Reason("failed", c, name) for c in checks]
+                elif a.satisfied is None:
+                    reasons += [Reason("could_not_assess", c, name, a.reason) for c in checks]
+            reasons += [Reason("missing", c) for c in requires if c not in covered]
+            qual = "not_met" if reasons else "met"
+        verdicts.append((terminal, qual, reasons))
     if not consistent:  # the invocation is the whole call: nothing qualifies
-        verdicts = [(t, "not_met", "inconsistent_invocation") for t, _, _ in verdicts]
+        verdicts = [(t, "not_met", [*rs, Reason("inconsistent_invocation")]) for t, _, rs in verdicts]
     released = {d for d, (_, q, _) in zip(g.targets, verdicts) if q == "met"}
     if p.workflow.release != "protected":
         released = set()
@@ -476,6 +515,7 @@ def _reconcile(p: PreparedProtection, state: k.State, retrievals: tuple[Retrieva
         dependents.setdefault(dep.on, []).append(dep.dependent)
     group_of = {m: i for i, grp in enumerate(g.groups) for m in grp.members}
     withheld = [d for d in g.targets if d not in released]
+    withheld_by: dict[Datum, Datum] = {}
     spent: set[int] = set()
     for d in withheld:  # grows while iterating
         i = group_of.get(d, -1)
@@ -485,10 +525,14 @@ def _reconcile(p: PreparedProtection, state: k.State, retrievals: tuple[Retrieva
             if nxt in released:
                 released.discard(nxt)
                 withheld.append(nxt)
+                withheld_by[nxt] = d
     outcomes = []
-    for u, (d, (terminal, qual, reason)) in enumerate(zip(g.targets, verdicts)):
+    for u, (d, (terminal, qual, reasons)) in enumerate(zip(g.targets, verdicts)):
         available = any("text" in out for out in state.rows[u].outputs.values())
-        if qual == "met" and d not in released and not reason:
-            reason = "withheld" if p.workflow.release == "protected" else "annotation"
-        outcomes.append(TargetOutcome(terminal, qual, available, d in released, reason))
+        if qual == "met" and d not in released and not reasons:
+            reasons.append(Reason("withheld" if p.workflow.release == "protected" else "annotation"))
+        failed = failures.get(u)
+        error = failed.error if failed is not None and terminal != "success" else None
+        by = (withheld_by[d],) if d in withheld_by else ()
+        outcomes.append(TargetOutcome(terminal, qual, available, d in released, tuple(reasons), error, by))
     return ProtectionResult(p, state, retrievals, tuple(outcomes), consistent)
