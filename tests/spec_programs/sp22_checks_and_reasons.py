@@ -1,12 +1,13 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""SP-22 required checks and per-target reasons (E22.1-E22.5)."""
+"""SP-22 required checks and per-target reasons (E22.1-E22.7)."""
 
 from __future__ import annotations
 
 from typing import Any
 
+import numpy as np
 import pandas as pd
 
 from anonymizer.engine.constants import COL_FINAL_ENTITIES, COL_LEAKAGE_MASS, COL_TEXT
@@ -16,11 +17,12 @@ from anonymizer.engine.replace.route import _lower, _protect_rows
 from anonymizer.engine.rewrite.rewrite_workflow import _protect_rewrite
 from tests.spec_programs._builder import Checks, graph, run
 from tests.spec_programs.sp16_bounded_operation import _reviews
+from tests.spec_programs.sp18_release import _run
 
 CANARY = "canary-7f3e"
 
 
-def _check(name: str, satisfied: bool, *, attributed: bool = True) -> Operation:
+def _check(name: str, satisfied: Any, *, attributed: bool = True) -> Operation:
     def assess(text: str, target: Any) -> Assessment:
         return Assessment(satisfied, target if attributed else None)
 
@@ -73,4 +75,13 @@ def program() -> list[dict[str, str]]:
     o5 = r5.outcome(graph5.targets[0])
     want5 = (Reason("failed", "replacements_applied", "verify-patches"),)
     c.check("E22.5", o5.qualification == "not_met" and o5.reasons == want5, f"reasons={o5.reasons}")
+
+    # E22.6 a verdict that is neither True nor None fails its check (a numpy false is not a pass).
+    o6 = run(g, _check("one", np.False_)).outcome(a)
+    c.check("E22.6", o6.qualification == "not_met" and o6.reason == "failed", f"qualification={o6.qualification}")
+
+    # E22.7 a group member withheld by its group names every member that failed.
+    r7, ts7 = _run(("bad", "bad", "a"), groups=((0, 1, 2),))
+    by = r7.outcome(ts7[2]).withheld_by
+    c.check("E22.7", by == (ts7[0], ts7[1]), f"withheld_by={len(by)} targets")
     return c.lines

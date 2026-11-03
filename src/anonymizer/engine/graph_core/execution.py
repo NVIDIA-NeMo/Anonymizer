@@ -497,10 +497,10 @@ def _reconcile(p: PreparedProtection, state: k.State, retrievals: tuple[Retrieva
                     continue
                 name, checks = p.names[i], checks_of[i]
                 covered.update(checks)
-                if a.satisfied is False:
-                    reasons += [Reason("failed", c, name) for c in checks]
-                elif a.satisfied is None:
+                if a.satisfied is None:
                     reasons += [Reason("could_not_assess", c, name, a.reason) for c in checks]
+                elif a.satisfied is not True:
+                    reasons += [Reason("failed", c, name) for c in checks]
             reasons += [Reason("missing", c) for c in requires if c not in covered]
             qual = "not_met" if reasons else "met"
         verdicts.append((terminal, qual, reasons))
@@ -522,12 +522,21 @@ def _reconcile(p: PreparedProtection, state: k.State, retrievals: tuple[Retrieva
         i = group_of.get(d, -1)
         members = () if i < 0 or i in spent else g.groups[i].members
         spent.add(i)
-        for nxt in (*dependents.get(d, ()), *members):
-            if nxt in releasable and nxt != d:
+        for nxt in dependents.get(d, ()):
+            if nxt in releasable:
                 withheld_by.setdefault(nxt, []).append(d)
+        for nxt in (*dependents.get(d, ()), *members):
             if nxt in released:
                 released.discard(nxt)
                 withheld.append(nxt)
+    # A group member withheld only by its group names every member withheld for another cause.
+    for i in spent - {-1}:
+        members = g.groups[i].members
+        causes = [m for m in members if m not in releasable or m in withheld_by]
+        cause_set = set(causes)
+        for m in members:
+            if m not in cause_set:
+                withheld_by.setdefault(m, []).extend(causes)
     outcomes = []
     for u, (d, (terminal, qual, reasons)) in enumerate(zip(g.targets, verdicts)):
         available = any("text" in out for out in state.rows[u].outputs.values())
