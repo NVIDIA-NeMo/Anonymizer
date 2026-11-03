@@ -3,8 +3,8 @@
 
 """Tests for chunked LLM validation.
 
-Conflict grouping and prompt rendering are tested directly. Sync and async
-dispatch use lifecycle rows and fake model facades to test request binding,
+Conflict grouping and prompt rendering are tested directly. Async
+dispatch uses lifecycle rows and fake model facades to test request binding,
 pool failover, concurrency, and chunk-size parity.
 """
 
@@ -31,19 +31,15 @@ from pydantic import ValidationError
 
 from anonymizer.engine.constants import (
     COL_ADMISSION_RESULTS,
-    COL_RECONCILED_CANDIDATES,
     COL_SEED_DETECTION_RESULT,
     COL_TAG_NOTATION,
     COL_TEXT,
-    COL_VALIDATION_CANDIDATES,
     COL_VALIDATION_DECISIONS,
     COL_VALIDATION_INVENTORIES,
-    COL_VALIDATION_SKELETON,
 )
 from anonymizer.engine.detection.chunked_validation import (
     VALIDATION_EXCERPT_VAR,
     ChunkedValidationParams,
-    _dispatch_chunk,
     _dispatch_chunk_async,
     build_validation_conflict_groups,
     chunk_validation_conflict_groups,
@@ -493,8 +489,7 @@ class TestLifecycleValidationRequests:
         assert decision_sets.responses[0].request_id == inventories[0].request_id
         assert [item.id for item in decision_sets.responses[0].decisions] == ["c1", "c2"]
 
-    @pytest.mark.parametrize("run_async", [False, True])
-    def test_oversized_conflict_group_is_dispatched_intact(self, run_async: bool) -> None:
+    def test_oversized_conflict_group_is_dispatched_intact(self) -> None:
         text = "Alice"
         detection_result = _detection_result(
             text,
@@ -518,10 +513,7 @@ class TestLifecycleValidationRequests:
             prompt_template=_MINIMAL_TEMPLATE,
         )
 
-        if run_async:
-            output = asyncio.run(chunked_validate_row_async(row, params, {"v0": facade}))
-        else:
-            output = asyncio.run(chunked_validate_row_async(row, params, {"v0": facade}))
+        output = asyncio.run(chunked_validate_row_async(row, params, {"v0": facade}))
 
         assert len(facade.calls) == 1
         inventories = [ValidationRequestInventory.model_validate(item) for item in output[COL_VALIDATION_INVENTORIES]]
@@ -560,7 +552,7 @@ class TestLifecycleValidationRequests:
             prompt_template=_MINIMAL_TEMPLATE,
         )
 
-        output = chunked_validate_row(row, params, {"v0": facade})
+        output = asyncio.run(chunked_validate_row_async(row, params, {"v0": facade}))
 
         assert len(facade.calls) == 2
         decision_sets = ValidationRequestDecisionSets.model_validate(output[COL_VALIDATION_DECISIONS])
@@ -597,7 +589,7 @@ class TestLifecycleValidationRequests:
             prompt_template=_MINIMAL_TEMPLATE,
         )
 
-        output = chunked_validate_row(row, params, {"v0": invalid, "v1": valid})
+        output = asyncio.run(chunked_validate_row_async(row, params, {"v0": invalid, "v1": valid}))
 
         assert len(invalid.calls) == 1
         assert len(valid.calls) == 1
@@ -632,7 +624,7 @@ class TestLifecycleValidationRequests:
         )
 
         with pytest.raises(RuntimeError, match="duplicate assigned aliases"):
-            chunked_validate_row(row, params, {"v0": facade})
+            asyncio.run(chunked_validate_row_async(row, params, {"v0": facade}))
         assert len(facade.calls) == 2
 
     def test_async_path_uses_the_same_bounded_semantic_retry(self) -> None:
@@ -1144,15 +1136,11 @@ class TestChunkedValidateRowFailurePropagation:
 
 
 def test_dispatch_requires_assigned_aliases() -> None:
-    for dispatch in (_dispatch_chunk, _dispatch_chunk_async):
-        assert inspect.signature(dispatch).parameters["assigned_aliases"].default is inspect.Parameter.empty
+    assert inspect.signature(_dispatch_chunk_async).parameters["assigned_aliases"].default is inspect.Parameter.empty
 
 
-@pytest.mark.parametrize("run_async", [False, True])
 @pytest.mark.parametrize("recover", [False, True])
-def test_failover_logs_exception_type_without_source_text(
-    run_async: bool, recover: bool, caplog: pytest.LogCaptureFixture
-) -> None:
+def test_failover_logs_exception_type_without_source_text(recover: bool, caplog: pytest.LogCaptureFixture) -> None:
     secret = "sensitive-exception-message"
 
     def fail(_prompt: str) -> dict[str, Any]:
@@ -1169,9 +1157,7 @@ def test_failover_logs_exception_type_without_source_text(
     )
 
     def run() -> dict[str, Any]:
-        if run_async:
-            return asyncio.run(chunked_validate_row_async(row, params, models))
-        return chunked_validate_row(row, params, models)
+        return asyncio.run(chunked_validate_row_async(row, params, models))
 
     with caplog.at_level(logging.WARNING, logger="anonymizer.detection.chunked_validation"):
         if recover:

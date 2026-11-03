@@ -12,7 +12,7 @@ from data_designer.engine.column_generators.generators.base import (
     ColumnGeneratorWithModelRegistry,
 )
 
-from anonymizer.engine.detection.augmentation import augment_row, augment_row_async
+from anonymizer.engine.detection.augmentation import augment_row_async
 from anonymizer.engine.detection.chunked_validation import (
     ChunkedValidationParams,
     chunked_validate_row_async,
@@ -96,16 +96,7 @@ class AugmentationGenerator(ColumnGeneratorWithModelRegistry[AugmentationConfig]
         return GenerationStrategy.CELL_BY_CELL
 
     def generate(self, data: dict[str, Any]) -> dict[str, Any]:  # ty: ignore[invalid-method-override]
-        model = _AsyncBridgedModelFacade(self.get_model(self.config.model_alias))
-        return augment_row(
-            row=data,
-            prompt_template=self.config.prompt_template,
-            model_alias=self.config.model_alias,
-            facade=model,
-            allowed_entity_labels=self.config.allowed_entity_labels,
-            excluded_entity_labels=self.config.excluded_entity_labels,
-            system_prompt=self.config.system_prompt,
-        )
+        raise NotImplementedError("AugmentationGenerator is async-only; use agenerate().")
 
     async def agenerate(self, data: dict[str, Any]) -> dict[str, Any]:  # ty: ignore[invalid-method-override]
         return await augment_row_async(

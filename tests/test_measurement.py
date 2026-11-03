@@ -23,7 +23,6 @@ from data_designer.config.run_config import RunConfig
 from data_designer.config.utils.constants import TRACE_COLUMN_POSTFIX
 from data_designer.config.utils.trace_type import TraceType
 from data_designer.engine.column_generators.generators.custom import CustomColumnGenerator
-from data_designer.engine.models.clients.errors import SyncClientUnavailableError
 from data_designer.engine.observability import RuntimeCorrelation, runtime_correlation_provider
 from data_designer.interface.data_designer import DataDesigner
 
@@ -1051,9 +1050,8 @@ class _AugmentationTraceFacade(_TraceModelFacade):
     model_provider = SimpleNamespace(endpoint="http://provider/v1", provider_type="openai")
     request_timeout = 1.0
 
-    def __init__(self, replies: list[str | Exception], *, bridge: bool = False) -> None:
+    def __init__(self, replies: list[str | Exception]) -> None:
         self.replies = iter(replies)
-        self.bridge = bridge
 
     def completion(self, _messages: list[dict[str, Any]]) -> SimpleNamespace:
         reply = next(self.replies)
@@ -1073,21 +1071,15 @@ class _AugmentationTraceFacade(_TraceModelFacade):
         return response
 
     def generate(self, prompt: str, *, parser: Callable[[str], Any] | None = None, **kwargs: Any) -> Any:
-        if self.bridge and parser is not None:
-            raise SyncClientUnavailableError("async-only test client")
         response = self.completion([{"role": "user", "content": prompt}])
         return (parser(response.message.content), []) if parser else response.message.content
 
-    async def agenerate(self, prompt: str, *, parser: Callable[[str], Any], **kwargs: Any) -> tuple[Any, list]:
+    async def agenerate(self, prompt: str, *, parser: Callable[[str], Any] | None = None, **kwargs: Any) -> Any:
         response = await self.acompletion([{"role": "user", "content": prompt}])
-        return parser(response.message.content), []
+        return (parser(response.message.content), []) if parser else response.message.content
 
 
 class _PluginTraceDataDesigner(_CustomTraceDataDesigner):
-    def __init__(self, input_df: pd.DataFrame, *, facade: Any, execution: str) -> None:
-        super().__init__(input_df, facade=facade)
-        self.execution = execution
-
     def preview(self, config_builder: object, *, num_records: int) -> SimpleNamespace:
         provider = self._create_resource_provider()
         output = self.input_df.iloc[:num_records].copy()
@@ -1107,11 +1099,7 @@ class _PluginTraceDataDesigner(_CustomTraceDataDesigner):
                 try:
                     if isinstance(column, AugmentationConfig):
                         generator = AugmentationGenerator(column, resource_provider=cast(Any, provider))
-                        generated = (
-                            asyncio.run(generator.agenerate(row.to_dict()))
-                            if self.execution == "async"
-                            else generator.generate(row.to_dict())
-                        )
+                        generated = asyncio.run(generator.agenerate(row.to_dict()))
                     else:
                         generated = column.generator_function(
                             row.to_dict(),
@@ -1128,13 +1116,11 @@ class _PluginTraceDataDesigner(_CustomTraceDataDesigner):
 
 
 @pytest.mark.parametrize("trace_mode", ["none", "last_message", "all_messages"])
-@pytest.mark.parametrize("execution", ["sync", "async", "bridge"])
 @pytest.mark.parametrize("scenario", ["success", "correction", "transport_error", "parse_error"])
 def test_ndd_adapter_traces_augmentation_plugin_calls(
     tmp_path: Path,
     caplog: pytest.LogCaptureFixture,
     trace_mode: str,
-    execution: str,
     scenario: str,
 ) -> None:
     good = {
@@ -1156,7 +1142,7 @@ def test_ndd_adapter_traces_augmentation_plugin_calls(
     failing = scenario in {"transport_error", "parse_error"}
     if not failing:
         replies.append("custom response secret")
-    facade = _AugmentationTraceFacade(replies, bridge=execution == "bridge")
+    facade = _AugmentationTraceFacade(replies)
     input_df = pd.DataFrame(
         {
             COL_TEXT: ["Alice works at Acme"],
@@ -1167,7 +1153,7 @@ def test_ndd_adapter_traces_augmentation_plugin_calls(
             "text": ["Alice works at Acme"],
         }
     )
-    designer = _PluginTraceDataDesigner(input_df, facade=facade, execution=execution)
+    designer = _PluginTraceDataDesigner(input_df, facade=facade)
     adapter = NddAdapter(data_designer=cast(DataDesigner, designer))
     trace_path = tmp_path / "trace.jsonl"
     measurement_path = tmp_path / "measurement.jsonl"
@@ -1204,7 +1190,7 @@ def test_ndd_adapter_traces_augmentation_plugin_calls(
         assert len(augmentation) == (2 if scenario == "correction" else 1)
         assert len(traces) == len(augmentation) + (0 if failing else 1)
         assert all(x["trace_source"] == "anonymizer_private_model_facade" for x in augmentation)
-        assert all(x["is_async"] == (execution != "sync") for x in augmentation)
+        assert all(x["is_async"] for x in augmentation)
         assert augmentation[0]["status"] == ("error" if scenario == "transport_error" else "completed")
         assert "private prompt" in json.dumps(augmentation[0]["messages"])
         if scenario == "correction":
@@ -1226,6 +1212,15 @@ def test_ndd_adapter_traces_augmentation_plugin_calls(
         assert private not in caplog.text
     assert facade.completion == _AugmentationTraceFacade.completion.__get__(facade)
     assert facade.acompletion == _AugmentationTraceFacade.acompletion.__get__(facade)
+
+
+def test_augmentation_plugin_requires_async_entrypoint() -> None:
+    generator = AugmentationGenerator(
+        AugmentationConfig(name=COL_AUGMENTED_ENTITIES, model_alias="alias", prompt_template="prompt"),
+        resource_provider=cast(Any, SimpleNamespace()),
+    )
+    with pytest.raises(NotImplementedError, match="async-only; use agenerate"):
+        generator.generate({})
 
 
 def test_ndd_adapter_discovers_plugin_model_aliases() -> None:
