@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""SP-28 typed context bindings: structured kinds, compatibility before retrieval, invalid items (D.REQ9.s2)."""
+"""SP-28 typed context bindings: structured kinds, compatibility before retrieval, invalid items."""
 
 from __future__ import annotations
 
@@ -50,19 +50,19 @@ def program() -> list[dict[str, str]]:
     _bind(PERSONA, [persona], calls, seen)
     item = seen[0][0] if seen else None
     c.check(
-        "D.REQ9.1",
+        "E28.1",
         item is not None and item.text == persona and item.kind == PERSONA,
         f"delivered kind={getattr(item, 'kind', None)}, value type={type(getattr(item, 'text', None)).__name__}",
     )
     calls = []
     code = rejected(lambda: _bind(PERSONA, [persona], calls, [], consumer="context"))
-    c.check("D.REQ9.2", code == "port_kind_mismatch" and not calls, f"code={code}, provider calls={len(calls)}")
+    c.check("E28.2", code == "port_kind_mismatch" and not calls, f"code={code}, provider calls={len(calls)}")
     seen = []
     statuses = [
         _bind(PERSONA, [bad], [], seen).retrievals[0].status for bad in ({"name": "x"}, {"role": Unprintable()})
     ]
     c.check(
-        "D.REQ9.3",
+        "E28.3",
         statuses == ["invalid_item"] * 2 and not seen,
         f"statuses={statuses}, operation ran={bool(seen)}",
     )

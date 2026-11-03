@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""SP-29 assembly ordering: composition, reconstruction, conflicts, unavailable inputs (P1, L5)."""
+"""SP-29 assembly ordering: composition, reconstruction, conflicts, unavailable inputs."""
 
 from __future__ import annotations
 
@@ -36,17 +36,17 @@ def program() -> list[dict[str, str]]:
     report = r.reconstruct([recommendation, opening, findings], source)
     incomplete = rejected(lambda: r.reconstruct([opening, recommendation], source))
     c.check(
-        "P1.1",
+        "E29.1",
         brief == "RECOMMENDATION. FINDINGS. "
         and report == "OPENING. FINDINGS. RECOMMENDATION. "
         and incomplete == "missing_source_part",
         f"brief={brief!r}, report={report!r}, incomplete={incomplete}",
     )
     code = rejected(lambda: r.reconstruct([opening, findings, recommendation], {**source, findings: 0}))
-    c.check("P1.2", code == "conflicting_position", f"code={code}")
+    c.check("E29.2", code == "conflicting_position", f"code={code}")
     failed, (_, f_findings, f_recommendation) = _sections(fail=FINDINGS)
     code = rejected(lambda: failed.compose([f_recommendation, f_findings]))
-    c.check("P1.3", code == "unavailable_input", f"code={code}")
+    c.check("E29.3", code == "unavailable_input", f"code={code}")
     shuffled, (s_opening, s_findings, s_recommendation) = _sections(order=(2, 0, 1))
     same = (
         shuffled.compose([s_recommendation, s_findings]) == brief
@@ -55,5 +55,5 @@ def program() -> list[dict[str, str]]:
         )
         == report
     )
-    c.check("L5.1", same, f"declaration order changed, results equal={same}")
+    c.check("E29.4", same, f"declaration order changed, results equal={same}")
     return c.lines
