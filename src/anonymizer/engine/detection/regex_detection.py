@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from functools import lru_cache
 from hashlib import sha256
 from importlib.metadata import entry_points
+from itertools import islice
 from typing import Any
 from unicodedata import normalize
 from urllib.parse import urlsplit
@@ -198,7 +199,14 @@ def detect_regex_entities(
         pattern = _compile_pattern(rule.pattern)
         match_count = 0
         try:
-            matches = pattern.finditer(text, timeout=timeout_seconds)
+            # Finish the timed scan without GIL release or Python validation
+            # between matches: parallel row work can otherwise exhaust its budget.
+            matches = list(
+                islice(
+                    pattern.finditer(text, timeout=timeout_seconds, concurrent=False),
+                    max_matches_per_rule + 1,
+                )
+            )
             for match in matches:
                 start, end = match.span()
                 if end <= start:
