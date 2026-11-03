@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from functools import wraps
 from pathlib import Path
 from threading import Lock, RLock
-from typing import TYPE_CHECKING, Any, Literal, Protocol, TypedDict, TypeGuard, cast
+from typing import TYPE_CHECKING, Any, Literal, Protocol, TypedDict, cast
 
 from data_designer.config.column_configs import CustomColumnConfig, LLMStructuredColumnConfig, LLMTextColumnConfig
 from data_designer.config.column_types import ColumnConfigT
@@ -124,7 +124,9 @@ class _DDMessageTracePlan:
                 continue
 
             if _column_has_private_facade_model_calls(column):
-                configured_columns.append(_custom_column_with_trace_context(column))
+                configured_columns.append(
+                    _custom_column_with_trace_context(column) if isinstance(column, CustomColumnConfig) else column
+                )
                 private_columns.append(_PrivateFacadeTraceColumn(column_name=column.name))
                 continue
 
@@ -636,7 +638,7 @@ class NddAdapter:
 def _extract_workflow_model_aliases(columns: list[ColumnConfigT]) -> list[str]:
     aliases: list[str] = []
     for column in columns:
-        aliases.extend(_as_alias_list(getattr(column, "model_alias", None)))
+        aliases.extend(_as_alias_list(column.get_model_aliases()))
         generator = getattr(column, "generator_function", None)
         metadata = getattr(generator, "custom_column_metadata", None)
         if isinstance(metadata, dict):
@@ -741,9 +743,8 @@ class _DataDesignerUsageProbe:
             self._patch_model_facade(facade)
             return facade
 
-        # Temporary private DataDesigner shim: CustomColumnConfig receives
-        # ModelFacade objects directly and DD does not yet expose a public
-        # model-call event sink for those calls.
+        # Custom and plugin columns receive ModelFacade objects directly;
+        # DataDesigner has no public model-call event sink for those calls.
         setattr(model_registry, "get_model", wrapped_get_model)
         self._model_registry_patches.append((model_registry, get_model))
 
@@ -1089,8 +1090,8 @@ def _custom_column_with_trace_context(column: CustomColumnConfig) -> ColumnConfi
     return cast(ColumnConfigT, column.model_copy(update={"generator_function": traced_generator}))
 
 
-def _column_has_private_facade_model_calls(column: ColumnConfigT) -> TypeGuard[CustomColumnConfig]:
-    return isinstance(column, CustomColumnConfig) and bool(_extract_workflow_model_aliases([column]))
+def _column_has_private_facade_model_calls(column: ColumnConfigT) -> bool:
+    return bool(_extract_workflow_model_aliases([column]))
 
 
 def _column_type_name(column: ColumnConfigT) -> str:

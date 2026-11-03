@@ -39,8 +39,9 @@ from anonymizer.engine.constants import (
     COL_REWRITTEN_TEXT_NEXT,
     COL_UTILITY_SCORE,
     COL_WEIGHTED_LEAKAGE_RATE,
+    RECORD_ID_COLUMN,
 )
-from anonymizer.engine.ndd.adapter import RECORD_ID_COLUMN, NddAdapter
+from anonymizer.engine.ndd.adapter import NddAdapter
 from anonymizer.engine.ndd.model_loader import resolve_model_alias
 from anonymizer.engine.replace.llm_replace_workflow import (
     REPLACEMENT_MAP_SOURCE_LLM,

@@ -134,9 +134,9 @@ class Detect(BaseModel):
         default=100,
         gt=0,
         description=(
-            "Maximum number of candidate entities included in a single validator LLM call. "
-            "When a row has more candidates than this, validation is split into chunks that "
-            "are dispatched (round-robin) across the validator pool."
+            "Target maximum number of candidate entities per validator LLM call. "
+            "Overlapping alternatives stay in one chunk; a group larger than this target "
+            "is sent alone with a warning. Chunks are dispatched round-robin across the validator pool."
         ),
     )
     validation_excerpt_window_chars: int = Field(
