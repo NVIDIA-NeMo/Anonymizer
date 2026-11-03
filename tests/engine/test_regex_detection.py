@@ -236,6 +236,11 @@ def test_url_validator_accepts_uppercase_www_prefix() -> None:
         "http://999.999.999.999/path",
         "http://example..com/path",
         "http://example.com../path",
+        "ftp://bad_host/path",
+        "sftp://999.999.999.999/path",
+        "wss://[2001:db8:::1]/path",
+        "https://12345/path",
+        "https://example.org:65536/path",
     ],
 )
 def test_url_validator_rejects_malformed_hosts_without_llm_validation(address: str) -> None:
@@ -259,6 +264,14 @@ def test_url_validator_rejects_malformed_hosts_without_llm_validation(address: s
         "https://例子.公司/路径",
         "http://192.0.2.1/path",
         "http://[2001:db8::1]/docs",
+        "ftp://user:password@example.org:21/private/report.csv",
+        "FTPS://example.org./private/report.csv",
+        "sftp://buildbox:2222/private/report.csv",
+        "ws://localhost:8080/private?user=alice#session",
+        "wss://[2001:db8::1]:443/private",
+        "http://localhost/path",
+        "https://buildbox/private",
+        "ftp://例子.公司/路径?用户=甲#片段",
     ],
 )
 def test_url_validator_accepts_valid_hosts_without_llm_validation(address: str) -> None:
@@ -275,6 +288,41 @@ def test_url_validator_accepts_valid_hosts_without_llm_validation(address: str) 
         (entity.value, entity.start_position, entity.end_position, address[entity.start_position : entity.end_position])
         for entity in result.accepted_entities
     ] == [(address, 0, len(address), address)]
+
+
+@pytest.mark.parametrize("scheme", ["http", "https", "ftp", "ftps", "sftp", "ws", "wss"])
+def test_network_url_schemes_preserve_prose_boundaries(scheme: str) -> None:
+    address = f"{scheme}://example.org/private_(report)?user=alice#section"
+    text = f"See ({address}). Next sentence."
+    rules = resolve_regex_rules(labels=["url"], builtin_regexes=True, rules=[])
+
+    result = detect_regex_entities(text, rules=rules)
+
+    assert [(entity.value, entity.start_position, entity.end_position) for entity in result.llm_entities] == [
+        (address, text.index(address), text.index(address) + len(address))
+    ]
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "example.org/private",
+        "//example.org/private",
+        "file:///private/report.csv",
+        "s3://example.org/private",
+        "gs://example.org/private",
+        "git+https://example.org/private",
+        "s3://www.example.org/private",
+        r"https:\/\/example.org/private",
+    ],
+)
+def test_builtin_url_does_not_salvage_unsupported_locator_forms(text: str) -> None:
+    rules = resolve_regex_rules(labels=["url"], builtin_regexes=True, rules=[])
+
+    result = detect_regex_entities(text, rules=rules)
+
+    assert result.llm_entities == []
+    assert result.accepted_entities == []
 
 
 def test_custom_url_rule_preserves_its_explicit_match_boundary() -> None:
@@ -306,7 +354,7 @@ def test_custom_url_rule_preserves_its_explicit_match_boundary() -> None:
     [
         ("credit_debit_card", "Card 4111 1111 1111 1112."),
         ("ipv4", "Address 999.168.1.10."),
-        ("url", "Visit http://localhost/path."),
+        ("url", "Visit http:///path."),
     ],
 )
 def test_builtin_validators_reject_invalid_values(label: str, text: str) -> None:

@@ -392,7 +392,9 @@ def test_regex_constrained_detection_config_round_trips_with_model_columns_skipp
 
 
 @pytest.mark.parametrize("preview_num_records", [2, None], ids=["preview", "create"])
-@pytest.mark.parametrize("workload", ["custom-ticket", "builtin-card-with-code", "all-builtins-100-rows"])
+@pytest.mark.parametrize(
+    "workload", ["custom-ticket", "builtin-card-with-code", "all-builtins-100-rows", "network-urls"]
+)
 def test_regex_constrained_matches_survive_skipped_model_columns_in_data_designer(
     tmp_path: Path,
     preview_num_records: int | None,
@@ -413,7 +415,7 @@ def test_regex_constrained_matches_survive_skipped_model_columns_in_data_designe
     values = [(value, label)]
     rules: list[BuiltinRegex | RegexRule] = [rule]
     labels = [label]
-    if workload == "all-builtins-100-rows":
+    if workload in {"all-builtins-100-rows", "network-urls"}:
         values = [
             ("4111 1111 1111 1111", "credit_debit_card"),
             ("user@example.org", "email"),
@@ -422,13 +424,24 @@ def test_regex_constrained_matches_survive_skipped_model_columns_in_data_designe
             ("00:1A:2B:3C:4D:5E", "mac_address"),
             ("https://example.org/path", "url"),
         ]
-        labels = [label for _, label in values]
+        if workload == "network-urls":
+            values = [
+                ("http://localhost:8080/private", "url"),
+                ("https://buildbox/private", "url"),
+                ("ftp://user:password@example.org:21/report.csv", "url"),
+                ("ftps://例子.公司/路径", "url"),
+                ("sftp://internal-host:2222/private", "url"),
+                ("ws://192.0.2.10:8080/session", "url"),
+                ("wss://[2001:db8::1]/session", "url"),
+            ]
+        labels = sorted({label for _, label in values})
         rules = [
             BuiltinRegex(label=label, validate_matches_with_llm=False, detect_additional_matches=False)
             for label in labels
         ]
         text = "tool output: completed normally; " * 300 + " | ".join(value for value, _ in values)
-        input_df = pd.DataFrame({COL_TEXT: [f"Record {index}: {text}" for index in range(100)]})
+        records = 100 if workload == "all-builtins-100-rows" else 2
+        input_df = pd.DataFrame({COL_TEXT: [f"Record {index}: {text}" for index in range(records)]})
     model_configs = [
         ModelConfig(
             alias="known",
