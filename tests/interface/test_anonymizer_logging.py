@@ -597,7 +597,9 @@ def test_local_replace_logs_progress_for_large_datasets(tmp_path: Path, caplog: 
         }
     )
     detection_workflow = Mock(spec=EntityDetectionWorkflow)
-    detection_workflow.run.return_value = EntityDetectionResult(dataframe=det_df, failed_records=[])
+    detection_workflow.run.return_value = EntityDetectionResult(
+        dataframe=det_df, failed_records=[], source_positions=tuple(range(num_records))
+    )
     replace_runner = ReplacementWorkflow()
     anonymizer = Anonymizer(detection_workflow=detection_workflow, replace_runner=replace_runner)
     config = AnonymizerConfig(replace=Redact())

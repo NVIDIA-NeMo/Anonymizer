@@ -21,6 +21,13 @@ from anonymizer.engine.replace.llm_replace_workflow import (
 from anonymizer.engine.schemas.detection import EntitiesByValueSchema
 
 
+def _positional(dataframe: pd.DataFrame, failed_records: list) -> WorkflowRunResult:
+    """An adapter result that reports one source position per returned row, in input order."""
+    return WorkflowRunResult(
+        dataframe=dataframe, failed_records=failed_records, source_positions=tuple(range(len(dataframe)))
+    )
+
+
 def test_generate_map_only_returns_replacement_map(
     stub_model_configs: list[ModelConfig],
     stub_replace_model_selection: ReplaceModelSelection,
@@ -86,7 +93,7 @@ def test_generate_map_only_filters_hallucinated_replacements(
     stub_replace_model_selection: ReplaceModelSelection,
 ) -> None:
     adapter = Mock()
-    adapter.run_workflow.return_value = WorkflowRunResult(
+    adapter.run_workflow.return_value = _positional(
         dataframe=pd.DataFrame(
             {
                 COL_TEXT: ["Alice works at Acme"],
@@ -131,7 +138,7 @@ def test_generate_map_only_preserves_original_anonymizer_row_order_with_mixed_ro
     stub_replace_model_selection: ReplaceModelSelection,
 ) -> None:
     adapter = Mock()
-    adapter.run_workflow.return_value = WorkflowRunResult(
+    adapter.run_workflow.return_value = _positional(
         dataframe=pd.DataFrame(
             {
                 COL_TEXT: ["Alice works at Acme"],
@@ -187,7 +194,7 @@ def test_generate_map_only_strips_internal_prompt_columns(
     downstream of this workflow consumes them.
     """
     adapter = Mock()
-    adapter.run_workflow.return_value = WorkflowRunResult(
+    adapter.run_workflow.return_value = _positional(
         dataframe=pd.DataFrame(
             {
                 COL_TEXT: ["Alice works at Acme"],

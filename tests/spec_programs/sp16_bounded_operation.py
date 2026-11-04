@@ -375,7 +375,7 @@ def program() -> list[dict[str, str]]:
             resolve_positions(source, same),
             resolve_positions(missing_source, missing),
         )
-        return got == (None, (0, 1), (0, 1)), f"differing text={got[0]}, equal text={got[1]}, missing values={got[2]}"
+        return got == (None, None, None), f"differing text={got[0]}, equal text={got[1]}, missing values={got[2]}"
 
     c.guard("E16.16", position_resolution)
 

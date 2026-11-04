@@ -71,15 +71,15 @@ def align_on_record_ids(
 def resolve_source_positions(
     source: pd.DataFrame, returned: pd.DataFrame, positions: tuple[int, ...] | None
 ) -> tuple[int, ...]:
-    """Validate adapter positions; None denotes an unassociated legacy result.
+    """Validate adapter positions; None denotes a result that reports no positions.
 
-    Native adapter results always supply a tuple, including empty output. Legacy
-    injected/fake adapters retain positional alignment at equal length or unique
-    record-ID alignment after drops. Neither form establishes graph identity.
+    Native adapter results always supply a tuple, including empty output. A result
+    without positions corresponds only through unique record IDs; equal row counts
+    or equal text do not establish correspondence (``uncorrelated_output``).
     """
     if positions is None:
-        if len(source) == len(returned):
-            positions = tuple(range(len(source)))
+        if returned.empty:
+            positions = ()
         elif RECORD_ID_COLUMN in source and RECORD_ID_COLUMN in returned:
             original = source[RECORD_ID_COLUMN].astype(str).tolist()
             surviving = returned[RECORD_ID_COLUMN].astype(str).tolist()
@@ -88,7 +88,7 @@ def resolve_source_positions(
             lookup = {value: index for index, value in enumerate(original)}
             positions = tuple(lookup[value] for value in surviving)
         else:
-            raise AnonymizerWorkflowError("Workflow result is missing source correspondence")
+            raise AnonymizerWorkflowError("Workflow result has no source correspondence (uncorrelated_output)")
     if (
         type(positions) is not tuple
         or len(positions) != len(returned)

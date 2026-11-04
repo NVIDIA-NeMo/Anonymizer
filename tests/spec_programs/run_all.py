@@ -34,6 +34,7 @@ PROGRAMS = [
     "sp23_final_candidate",
     "sp28_typed_context",
     "sp29_assembly_order",
+    "sp31_result_correspondence",
 ]
 RETIRED_SP8 = [f"E8.{i}" for i in range(1, 6)]
 

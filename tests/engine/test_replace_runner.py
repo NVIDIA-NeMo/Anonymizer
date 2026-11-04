@@ -109,6 +109,7 @@ def test_substitute_runner_applies_generated_map(
             }
         ),
         failed_records=[FailedRecord(record_id="r1", step="replace-map-generation", reason="none")],
+        source_positions=(0,),
     )
     runner = ReplacementWorkflow(llm_workflow=llm_workflow)
     result = runner.run(
@@ -449,6 +450,7 @@ def test_runner_does_not_invoke_judges(
             }
         ),
         failed_records=[],
+        source_positions=(0,),
     )
     detection_judge = Mock()
     type_fidelity_judge = Mock()

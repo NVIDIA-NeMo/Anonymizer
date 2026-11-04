@@ -16,7 +16,7 @@ from itertools import repeat
 
 import pandas as pd
 
-from anonymizer.engine.constants import COL_FINAL_ENTITIES, COL_TEXT
+from anonymizer.engine.constants import COL_FINAL_ENTITIES
 from anonymizer.engine.detection.detection_workflow import EntityDetectionResult
 from anonymizer.engine.graph_core.authoring import DATUM, MENTIONS, Datum, Mention, Operation, Requests
 from anonymizer.engine.ndd.adapter import FailedRecord
@@ -69,22 +69,9 @@ def missing(text: object) -> bool:
 
 
 def resolve_positions(dataframe: pd.DataFrame, result: EntityDetectionResult) -> tuple[int, ...] | None:
-    """One distinct input position per returned row, or ``None``.
-
-    Positions the detector did not report (the default ``()``) are accepted only if every returned row's text equals the
-    text of the input row at its position, a missing value equalling a missing value.
-    """
-    reported = result.source_positions
-    positions = try_resolve_source_positions(
-        dataframe, result.dataframe, reported or (None if len(result.dataframe) else ())
-    )
-    if positions is None:
-        return None
-    if reported or COL_TEXT not in result.dataframe.columns:
-        return positions
-    given = [None if missing(text) else text for text in result.dataframe[COL_TEXT]]
-    expected = [None if missing(text) else text for text in dataframe[COL_TEXT].iloc[list(positions)]]
-    return positions if given == expected else None
+    """One distinct input position per returned row, or ``None``: the detector's reported positions, else unique
+    record IDs; positions it did not report (the default ``()``) are not inferred from equal text or row counts."""
+    return try_resolve_source_positions(dataframe, result.dataframe, result.source_positions or None)
 
 
 def accepted_mentions(datum: Datum, entities: EntitiesSchema) -> list[Mention]:
