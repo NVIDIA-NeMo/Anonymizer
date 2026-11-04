@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 from pathlib import Path
 from typing import Any
 from unittest.mock import Mock, patch
@@ -406,18 +407,23 @@ def test_run_reports_combined_failure_and_drops_only_failed_entity_row(
 
 
 def test_combined_and_legacy_paths_return_equivalent_repaired_result(
+    tmp_path: Path,
     stub_model_configs: list[ModelConfig],
     stub_rewrite_model_selection: RewriteModelSelection,
     stub_replace_model_selection: ReplaceModelSelection,
 ) -> None:
+    """Both paths keep the second repair's text when the first repair still fails evaluation."""
+    evaluation = EvaluationCriteria(max_repair_iterations=2)
     dataframe = pd.DataFrame(
         {
             COL_TEXT: ["Alice works at Acme"],
             COL_ENTITIES_BY_VALUE: [{"entities_by_value": [{"value": "Alice", "labels": ["first_name"]}]}],
+            COL_REWRITE_REPLACEMENT_READY: [True],
+            _REPAIRS_NEEDED: [2],
         }
     )
     pipeline = dataframe.copy()
-    pipeline[COL_REWRITTEN_TEXT] = "Initial rewrite"
+    pipeline[COL_REWRITTEN_TEXT] = "rewrite-0"
     evaluation_before = pd.DataFrame(
         {
             COL_NEEDS_REPAIR: [True],
@@ -427,11 +433,10 @@ def test_combined_and_legacy_paths_return_equivalent_repaired_result(
             COL_ANY_HIGH_LEAKED: [True],
         }
     )
-    repair = pd.DataFrame({COL_REWRITTEN_TEXT_NEXT: ["Repaired rewrite"]})
     evaluation_after = pd.DataFrame(
         {
             COL_NEEDS_REPAIR: [False],
-            COL_UTILITY_SCORE: [0.9],
+            COL_UTILITY_SCORE: [1.0],
             COL_LEAKAGE_MASS: [0.0],
             COL_WEIGHTED_LEAKAGE_RATE: [0.0],
             COL_ANY_HIGH_LEAKED: [False],
@@ -441,7 +446,9 @@ def test_combined_and_legacy_paths_return_equivalent_repaired_result(
     legacy_adapter.run_workflow.side_effect = [
         WorkflowRunResult(dataframe=pipeline, failed_records=[]),
         WorkflowRunResult(dataframe=evaluation_before, failed_records=[]),
-        WorkflowRunResult(dataframe=repair, failed_records=[]),
+        WorkflowRunResult(dataframe=pd.DataFrame({COL_REWRITTEN_TEXT_NEXT: ["rewrite-1"]}), failed_records=[]),
+        WorkflowRunResult(dataframe=evaluation_before.copy(), failed_records=[]),
+        WorkflowRunResult(dataframe=pd.DataFrame({COL_REWRITTEN_TEXT_NEXT: ["rewrite-2"]}), failed_records=[]),
         WorkflowRunResult(dataframe=evaluation_after, failed_records=[]),
     ]
     with patch(_REPLACE_PATCH) as replace_workflow:
@@ -455,32 +462,32 @@ def test_combined_and_legacy_paths_return_equivalent_repaired_result(
             selected_models=stub_rewrite_model_selection,
             replace_model_selection=stub_replace_model_selection,
             privacy_goal=_PRIVACY_GOAL,
-            evaluation=EvaluationCriteria(max_repair_iterations=2),
+            evaluation=evaluation,
         )
 
-    combined_output = dataframe.copy()
-    combined_output[COL_REWRITTEN_TEXT] = "Repaired rewrite"
-    combined_output[COL_UTILITY_SCORE] = 0.9
-    combined_output[COL_LEAKAGE_MASS] = 0.0
-    combined_output[COL_WEIGHTED_LEAKAGE_RATE] = 0.0
-    combined_output[COL_ANY_HIGH_LEAKED] = False
-    combined_output[COL_NEEDS_REPAIR] = False
-    combined_output[COL_REPAIR_ITERATIONS] = 1
-    combined_output[COL_NEEDS_HUMAN_REVIEW] = False
-    combined_adapter = Mock()
-    combined_adapter.run_workflow.return_value = WorkflowRunResult(
-        dataframe=combined_output,
-        failed_records=[],
-    )
-    combined_result = CombinedRewriteWorkflow(adapter=combined_adapter).run(
-        dataframe,
-        model_configs=stub_model_configs,
+    # The combined side runs the real graph finalizer through the real adapter, with deterministic
+    # evaluate/repair columns whose repair N writes "rewrite-{N + 1}".
+    combined_adapter = NddAdapter(DataDesigner(artifact_path=tmp_path / "artifacts", auto_configure_logging=False))
+    combined_workflow = CombinedRewriteWorkflow(adapter=combined_adapter)
+    graph = combined_workflow.build_graph(
         selected_models=stub_rewrite_model_selection,
         replace_model_selection=stub_replace_model_selection,
         privacy_goal=_PRIVACY_GOAL,
-        evaluation=EvaluationCriteria(max_repair_iterations=2),
+        evaluation=evaluation,
     )
+    deterministic_graph = dataclasses.replace(graph, columns=_deterministic_columns(graph))
+    with patch.object(combined_workflow, "build_graph", return_value=deterministic_graph):
+        combined_result = combined_workflow.run(
+            dataframe,
+            model_configs=[],
+            selected_models=stub_rewrite_model_selection,
+            replace_model_selection=stub_replace_model_selection,
+            privacy_goal=_PRIVACY_GOAL,
+            evaluation=evaluation,
+        )
 
+    assert legacy_result.dataframe[COL_REWRITTEN_TEXT].tolist() == ["rewrite-2"]
+    assert combined_result.dataframe[COL_REWRITTEN_TEXT].tolist() == ["rewrite-2"]
     output_columns = [
         COL_REWRITTEN_TEXT,
         COL_UTILITY_SCORE,
