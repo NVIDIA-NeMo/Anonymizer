@@ -3418,8 +3418,8 @@ instance. Use this for DataDesigner execution knobs such as
     <div class="doc doc-contents ">
 
         <p>Run the full anonymization pipeline (detection + replacement).</p>
-<p>No LLM evaluation judges run here — call :meth:<code>evaluate</code> on the
-result's <code>trace_dataframe</code> when you want the Judge Agreement scores.</p>
+<p>No LLM evaluation judges run here — pass the result to
+:meth:<code>evaluate</code> when you want the Judge Agreement scores.</p>
 
 
 <p><span class="doc-section-title">Parameters:</span></p>
@@ -3494,8 +3494,8 @@ result's <code>trace_dataframe</code> when you want the Judge Agreement scores.<
 ) -&gt; AnonymizerResult:
     """Run the full anonymization pipeline (detection + replacement).
 
-    No LLM evaluation judges run here — call :meth:`evaluate` on the
-    result's ``trace_dataframe`` when you want the Judge Agreement scores.
+    No LLM evaluation judges run here — pass the result to
+    :meth:`evaluate` when you want the Judge Agreement scores.
 
     Args:
         config: Workflow behavior — replace strategy, entity labels, thresholds.
@@ -3750,8 +3750,8 @@ the config. Runtime model providers remain external to the serialized config.</p
     <div class="doc doc-contents ">
 
         <p>Run the pipeline on a subset of records for quick inspection.</p>
-<p>No LLM evaluation judges run here — call :meth:<code>evaluate</code> on the
-result's <code>trace_dataframe</code> when you want the Judge Agreement scores.</p>
+<p>No LLM evaluation judges run here — pass the result to
+:meth:<code>evaluate</code> when you want the Judge Agreement scores.</p>
 
 
 <p><span class="doc-section-title">Parameters:</span></p>
@@ -3843,8 +3843,8 @@ result's <code>trace_dataframe</code> when you want the Judge Agreement scores.<
 ) -&gt; PreviewResult:
     """Run the pipeline on a subset of records for quick inspection.
 
-    No LLM evaluation judges run here — call :meth:`evaluate` on the
-    result's ``trace_dataframe`` when you want the Judge Agreement scores.
+    No LLM evaluation judges run here — pass the result to
+    :meth:`evaluate` when you want the Judge Agreement scores.
 
     Args:
         config: Workflow behavior — replace strategy, entity labels, thresholds.
