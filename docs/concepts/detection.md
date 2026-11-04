@@ -229,3 +229,16 @@ The detection pipeline uses three model roles, each mapped to a model alias in t
 | `latent_detector` | [`nemotron-30b-thinking`](https://openrouter.ai/nvidia/nemotron-3-nano-30b-a3b) | Identifies inferable entities (rewrite only). |
 
 See [Models](models.md) for how to override these.
+
+## Agent traces
+
+Use `Detect(format="agent_traces")` for conversation transcripts containing user,
+assistant, system/developer, reasoning, and tool-call/result content. This adds
+format guidance to validation and augmentation. It helps distinguish structural
+text from sensitive values, covers nested and escaped content, and requires exact
+source spans. Validation permits complete sensitive components within larger tokens
+while rejecting truncated or accidental substrings.
+
+The setting does not define which information is sensitive; use the data summary
+for dataset-specific sensitivity rules. The default `format=None` uses generic
+prompts. Unsupported format values are rejected.

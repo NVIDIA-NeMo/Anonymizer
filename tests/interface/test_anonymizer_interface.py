@@ -1254,3 +1254,26 @@ def test_evaluate_passes_detection_context_to_coverage_judge(stub_input: Anonymi
     assert mock_coverage_wf.call_args.kwargs["excluded_entity_labels"] == ["email"]
     assert evaluated.data_summary == "Customer support transcripts."
     assert evaluated.excluded_entity_labels == ["email"]
+
+
+@pytest.mark.parametrize("preview", [False, True])
+def test_agent_trace_format_reaches_detection(stub_input: AnonymizerInput, preview: bool) -> None:
+    config = AnonymizerConfig(detect={"format": "agent_traces"}, replace=Redact())
+    anonymizer, detection_wf, _, _ = _make_anonymizer()
+    if preview:
+        anonymizer.preview(config=config, data=stub_input, num_records=1)
+    else:
+        anonymizer.run(config=config, data=stub_input)
+    assert detection_wf.run.call_args.kwargs["data_format"] == "agent_traces"
+
+
+def test_agent_trace_format_reaches_exported_builders(stub_input: AnonymizerInput, tmp_path: Path) -> None:
+    config = AnonymizerConfig(detect={"format": "agent_traces"}, replace=Redact())
+    anonymizer, detection_wf, _, _ = _make_anonymizer()
+    detection_wf.build_detection_config.return_value = Mock()
+    detection_wf.build_detection_builder_for_seed.return_value = Mock()
+    seed_path = tmp_path / "seed.parquet"
+    anonymizer.export_detection_config(config=config, data=stub_input, seed_path=seed_path)
+    anonymizer.export_detection_builder_for_seed(config=config, seed_path=seed_path)
+    assert detection_wf.build_detection_config.call_args.kwargs["data_format"] == "agent_traces"
+    assert detection_wf.build_detection_builder_for_seed.call_args.kwargs["data_format"] == "agent_traces"

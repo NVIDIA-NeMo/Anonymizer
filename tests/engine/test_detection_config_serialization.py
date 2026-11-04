@@ -56,6 +56,7 @@ def test_detection_builder_round_trips_through_native_data_designer_config(tmp_p
         model_configs=parsed_models.model_configs,
         selected_models=parsed_models.selected_models.detection,
         gliner_detection_threshold=0.42,
+        data_format="agent_traces",
         validation_max_entities_per_call=7,
         validation_excerpt_window_chars=321,
         entity_labels=["first_name", "email"],
@@ -118,11 +119,13 @@ def test_detection_builder_round_trips_through_native_data_designer_config(tmp_p
     assert validation.excerpt_window_chars == 321
     assert validation.pool == parsed_models.selected_models.detection.entity_validator
     assert "Customer support messages" in validation.prompt_template
+    assert "AGENT-TRACE CONTENT:" in validation.prompt_template
     assert "Alicia" in validation.prompt_template
     assert "configured@example.test" not in validation.prompt_template
 
     augmenter = next(column for column in columns if column.name == COL_AUGMENTED_ENTITIES)
     assert isinstance(augmenter, LLMStructuredColumnConfig)
+    assert "AGENT-TRACE CONTENT:" in augmenter.prompt
     assert "first_name: Alicia" in augmenter.prompt
     assert "Michael, Isabella, Carlos, Wei" not in augmenter.prompt
     assert "configured@example.test" not in augmenter.prompt

@@ -484,3 +484,15 @@ def test_replace_json_schema_declares_kind_discriminator() -> None:
     replace_schema = AnonymizerConfig.model_json_schema()["properties"]["replace"]["anyOf"][0]
     assert replace_schema["discriminator"]["propertyName"] == "kind"
     assert set(replace_schema["discriminator"]["mapping"]) == {"annotate", "redact", "hash", "substitute"}
+
+
+def test_detect_format_round_trips() -> None:
+    assert Detect().format is None
+    detect = Detect(format="agent_traces")
+    assert Detect.model_validate_json(detect.model_dump_json()).format == "agent_traces"
+    assert Detect.model_json_schema()["properties"]["format"]["default"] is None
+
+
+def test_detect_format_rejects_unsupported_values() -> None:
+    with pytest.raises(ValueError, match="format"):
+        Detect.model_validate({"format": "unknown"})

@@ -43,6 +43,7 @@ regulatory and business context.
 
 # Usage Tips and Common Pitfalls
 
+- **`Detect.format="agent_traces"`** adds agent-transcript structure guidance to validation and augmentation, including sensitive values in tool content and complete sensitive components embedded in larger tokens. Use it for agent conversation traces. The default is `None`; sensitivity remains governed by prompt guidance and the optional data summary.
 - **`Detect.entity_labels=None` (the default) is permissive** — the augmenter LLM may invent labels not in `DEFAULT_ENTITY_LABELS`. Setting an explicit list switches to **strict mode** where *only* the listed labels are detected.
 - **Label terminology:** A **default label** is present in `DEFAULT_ENTITY_LABELS`, while any label not present in this list is called a  **non-default label**. An **explicit label set** is supplied through `entity_labels` and may contain either kind.
 - **`Detect.entity_label_examples` provides configured positive examples for detection.** For a default label, configured examples are appended to its built-in examples. Every non-default label referenced by `entity_label_examples` must also appear in the explicit `entity_labels` set. To keep every default while adding one, use `entity_labels=[*DEFAULT_ENTITY_LABELS, "clinical_facility"]`. Configured examples are soft detection guidance: they do not limit detection to the listed value formats, and they are not passed to substitution or evaluation. Keep configured examples concise and lists short to limit prompt growth, token cost, latency, and context-window pressure. Use synthetic values because configured examples are included in prompts, exported builders, provider requests, and explicitly enabled raw message traces.
@@ -124,6 +125,7 @@ def build_config() -> tuple[AnonymizerInput, AnonymizerConfig]:
     )
 
     detect = Detect(
+        # format="agent_traces",  # Enable for agent conversation transcripts.
         # Every non-default label referenced by entity_label_examples must also be in this explicit label set.
         # entity_labels=["clinical_facility", "diagnosis_code"],
         # entity_label_examples={

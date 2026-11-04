@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import urlparse
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -101,6 +101,10 @@ class Detect(BaseModel):
 
     model_config = ConfigDict(hide_input_in_errors=True)
 
+    format: Literal["agent_traces"] | None = Field(
+        default=None,
+        description="Input content format. agent_traces adds transcript guidance to validation and augmentation.",
+    )
     entity_labels: list[str] | None = Field(
         default=None,
         description=(

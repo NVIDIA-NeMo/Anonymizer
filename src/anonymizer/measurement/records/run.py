@@ -26,6 +26,7 @@ def _detect_config_metadata(detect: Any | None) -> dict[str, Any]:
     excluded = set(excluded_entity_labels or [])
     active_entity_labels = [label for label in configured_labels if label not in excluded]
     return {
+        "format": getattr(detect, "format", None),
         "gliner_threshold": getattr(detect, "gliner_threshold", None),
         "entity_label_source": "custom" if entity_labels is not None else "default",
         "entity_label_count": entity_label_count,
