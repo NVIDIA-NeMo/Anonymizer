@@ -52,9 +52,6 @@ class AugmentationConfig(SingleColumnConfig):
         return [
             RECORD_ID_COLUMN,
             COL_TEXT,
-            COL_INITIAL_TAGGED_TEXT,
-            COL_SEED_ENTITIES_JSON,
-            COL_TAG_NOTATION,
         ]
 
     @property
