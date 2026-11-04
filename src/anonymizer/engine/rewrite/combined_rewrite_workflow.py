@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass
 from typing import Any
 
@@ -37,6 +38,7 @@ from anonymizer.engine.constants import (
     COL_REWRITTEN_TEXT,
     COL_REWRITTEN_TEXT_INITIAL,
     COL_REWRITTEN_TEXT_NEXT,
+    COL_SENSITIVITY_DISPOSITION,
     COL_UTILITY_SCORE,
     COL_WEIGHTED_LEAKAGE_RATE,
 )
@@ -50,6 +52,7 @@ from anonymizer.engine.replace.llm_replace_workflow import (
     _get_replacement_mapping_prompt,
 )
 from anonymizer.engine.rewrite.domain_classification import DomainClassificationWorkflow
+from anonymizer.engine.rewrite.entity_classification import EntityClassificationWorkflow
 from anonymizer.engine.rewrite.evaluate import EvaluateWorkflow
 from anonymizer.engine.rewrite.parsers import normalize_payload
 from anonymizer.engine.rewrite.qa_generation import QAGenerationWorkflow
@@ -70,6 +73,8 @@ from anonymizer.engine.rewrite.workflow_utils import derive_seed_columns, select
 from anonymizer.engine.row_partitioning import merge_and_reorder, split_rows
 from anonymizer.engine.schemas import EntitiesByValueSchema, EntityReplacementMapSchema
 from anonymizer.measurement import stage_timer
+
+logger = logging.getLogger("anonymizer.rewrite.combined_workflow")
 
 
 @dataclass(frozen=True)
@@ -333,7 +338,7 @@ def _finalization_column(
             )
         )
     )
-    required_columns.append(COL_REWRITE_REPLACEMENT_READY)
+    required_columns.extend([COL_SENSITIVITY_DISPOSITION, COL_REWRITE_REPLACEMENT_READY])
     side_effect_columns = [
         COL_QUALITY_QA_REANSWER,
         COL_PRIVACY_QA_REANSWER,
@@ -410,12 +415,13 @@ class CombinedRewriteWorkflow(RewriteWorkflow):
         columns.extend(
             DomainClassificationWorkflow().columns(selected_models=selected_models, data_summary=data_summary)
         )
+        columns.extend(EntityClassificationWorkflow().columns(selected_models=selected_models))
         columns.extend(
             SensitivityDispositionWorkflow().columns(
                 selected_models=selected_models,
                 privacy_goal=privacy_goal,
-                data_summary=data_summary,
                 strict_entity_protection=strict_entity_protection,
+                data_summary=data_summary,
             )
         )
         columns.extend(QAGenerationWorkflow().columns(selected_models=selected_models))

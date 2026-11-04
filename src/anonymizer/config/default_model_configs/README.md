@@ -8,13 +8,18 @@ This directory contains the default model configurations used by the Anonymizer 
 - **`providers.yaml`** — Defines named API endpoints (provider name, endpoint, API key env var). Loaded automatically when `Anonymizer(model_providers=None)`.
 - **`detection.yaml`** — Maps detection workflow roles (e.g. `entity_detector`, `entity_validator`) to model aliases from `models.yaml`.
 - **`replace.yaml`** — Maps replacement workflow roles (e.g. `replacement_generator`) to model aliases from `models.yaml`.
-- **`rewrite.yaml`** — Maps rewrite workflow roles (`domain_classifier`, `disposition_analyzer`, `meaning_extractor`, `qa_generator`, `rewriter`, `evaluator`, `repairer`, `judge`) to model aliases from `models.yaml`.
+- **`rewrite.yaml`** — Maps rewrite workflow roles (`domain_classifier`, `entity_classifier`, `disposition_analyzer`, `meaning_extractor`, `qa_generator`, `rewriter`, `evaluator`, `repairer`) to model aliases from `models.yaml`.
 
 ## Relationship to `config/models.py`
 
-These YAML files are the single source of truth for default role-to-alias mappings. The pydantic classes in `config/models.py` (`DetectionModelSelection`, `ReplaceModelSelection`, etc.) define the schema (which roles exist and their types) but contain no hardcoded defaults.
+These YAML files are the single source of truth for default role-to-alias mappings. The pydantic classes in `config/models.py` (`DetectionModelSelection`, `ReplaceModelSelection`, etc.) define the schema (which roles exist and their types) without hardcoded model aliases. `RewriteModelSelection` defaults an omitted `entity_classifier` to its `disposition_analyzer` alias.
 
 At startup, `load_default_model_selection()` reads these YAML files and constructs the default `ModelSelection`. Users override roles via the unified YAML passed to `Anonymizer(model_configs=...)`.
+
+When a user omits `selected_models.rewrite.entity_classifier`, it follows the effective
+`disposition_analyzer` selection, including a user override. An explicit `entity_classifier`
+selection takes precedence. This role classifies custom explicit entity labels as direct or
+quasi-identifiers and skips the LLM call for records containing only default labels.
 
 The default `gliner-pii-detector` alias targets a compatible GLiNER2 server on loopback. Plain
 `Anonymizer()` is only the client and does not start that service. Tutorial notebooks use

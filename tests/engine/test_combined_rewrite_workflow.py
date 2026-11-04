@@ -11,7 +11,7 @@ import numpy as np
 import pandas as pd
 import pytest
 from data_designer.config import SkipConfig, custom_column_generator
-from data_designer.config.column_configs import CustomColumnConfig
+from data_designer.config.column_configs import CustomColumnConfig, LLMStructuredColumnConfig
 from data_designer.config.column_types import ColumnConfigT
 from data_designer.config.models import ModelConfig, ModelProvider
 from data_designer.interface.data_designer import DataDesigner
@@ -26,12 +26,14 @@ from anonymizer.engine.constants import (
     COL_LEAKAGE_MASS,
     COL_NEEDS_HUMAN_REVIEW,
     COL_NEEDS_REPAIR,
+    COL_RAW_SENSITIVITY_DISPOSITION,
     COL_REPAIR_ITERATIONS,
     COL_REPLACEMENT_APPLICATION,
     COL_REWRITE_REPLACEMENT_READY,
     COL_REWRITTEN_TEXT,
     COL_REWRITTEN_TEXT_INITIAL,
     COL_REWRITTEN_TEXT_NEXT,
+    COL_SENSITIVITY_DISPOSITION,
     COL_TAG_NOTATION,
     COL_TAGGED_TEXT,
     COL_TEXT,
@@ -239,7 +241,13 @@ def test_conditional_repairs_execute_independently_per_row(
 
     with measurement_session(collector):
         result = adapter.run_workflow(
-            pd.DataFrame({_REPAIRS_NEEDED: [0, 1, 2, 3], COL_REWRITE_REPLACEMENT_READY: replacement_ready}),
+            pd.DataFrame(
+                {
+                    _REPAIRS_NEEDED: [0, 1, 2, 3],
+                    COL_SENSITIVITY_DISPOSITION: [None] * 4,
+                    COL_REWRITE_REPLACEMENT_READY: replacement_ready,
+                }
+            ),
             model_configs=[],
             columns=columns,
             workflow_name="rewrite-combined",
@@ -524,7 +532,13 @@ def test_conditional_graph_handles_larger_mixed_batches(
     )
 
     result = adapter.run_workflow(
-        pd.DataFrame({_REPAIRS_NEEDED: repairs_needed, COL_REWRITE_REPLACEMENT_READY: True}),
+        pd.DataFrame(
+            {
+                _REPAIRS_NEEDED: repairs_needed,
+                COL_SENSITIVITY_DISPOSITION: [None] * len(repairs_needed),
+                COL_REWRITE_REPLACEMENT_READY: True,
+            }
+        ),
         model_configs=[],
         columns=_deterministic_columns(graph),
         workflow_name="rewrite-combined-scale-test",
@@ -660,3 +674,19 @@ def test_graph_validates_with_data_designer(
     )
 
     data_designer.validate(builder)
+
+
+def test_combined_graph_passes_summary_to_disposition(
+    stub_rewrite_model_selection: RewriteModelSelection,
+    stub_replace_model_selection: ReplaceModelSelection,
+) -> None:
+    graph = CombinedRewriteWorkflow(adapter=Mock()).build_graph(
+        selected_models=stub_rewrite_model_selection,
+        replace_model_selection=stub_replace_model_selection,
+        privacy_goal=_PRIVACY_GOAL,
+        evaluation=EvaluationCriteria(max_repair_iterations=0),
+        data_summary="Customer support conversations",
+    )
+    disposition = next(column for column in graph.columns if column.name == COL_RAW_SENSITIVITY_DISPOSITION)
+    assert isinstance(disposition, LLMStructuredColumnConfig)
+    assert "<data_summary>\nCustomer support conversations\n</data_summary>" in disposition.prompt
