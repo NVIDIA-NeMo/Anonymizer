@@ -4,12 +4,17 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
+from typing import Any
 from unittest.mock import Mock, patch
 
 import numpy as np
 import pandas as pd
 import pytest
+from data_designer.config import custom_column_generator
+from data_designer.config.column_configs import CustomColumnConfig
 from data_designer.config.models import ModelConfig
+from data_designer.interface.data_designer import DataDesigner
 
 from anonymizer.config.models import ReplaceModelSelection, RewriteModelSelection
 from anonymizer.config.rewrite import EvaluationCriteria, PrivacyGoal
@@ -21,9 +26,13 @@ from anonymizer.engine.constants import (
     COL_ENTITIES_BY_VALUE,
     COL_JUDGE_EVALUATION,
     COL_LEAKAGE_MASS,
+    COL_LEAKED_PRIVACY_ITEMS,
     COL_NEEDS_HUMAN_REVIEW,
     COL_NEEDS_REPAIR,
+    COL_PRIVACY_QA,
     COL_PRIVACY_QA_REANSWER,
+    COL_QUALITY_QA_COMPARE,
+    COL_QUALITY_QA_REANSWER,
     COL_REPAIR_ITERATIONS,
     COL_REWRITE_REPLACEMENT_READY,
     COL_REWRITTEN_TEXT,
@@ -32,8 +41,14 @@ from anonymizer.engine.constants import (
     COL_UTILITY_SCORE,
     COL_WEIGHTED_LEAKAGE_RATE,
 )
-from anonymizer.engine.ndd.adapter import RECORD_ID_COLUMN, FailedRecord, WorkflowRunResult
-from anonymizer.engine.rewrite.rewrite_workflow import RewriteWorkflow, _detection_valid_fraction, _join_new_columns
+from anonymizer.engine.ndd.adapter import RECORD_ID_COLUMN, FailedRecord, NddAdapter, WorkflowRunResult
+from anonymizer.engine.rewrite.repair import RepairWorkflow
+from anonymizer.engine.rewrite.rewrite_workflow import (
+    RewriteWorkflow,
+    _detection_valid_fraction,
+    _join_new_columns,
+    _Rows,
+)
 
 _REPLACE_PATCH = "anonymizer.engine.rewrite.rewrite_workflow.LlmReplaceWorkflow"
 
@@ -571,6 +586,101 @@ def test_repair_loop_runs_up_to_max_iterations(
     workflow_names = [call.kwargs["workflow_name"] for call in adapter.run_workflow.call_args_list]
     repair_calls = [n for n in workflow_names if "repair" in n]
     assert len(repair_calls) == max_iters
+
+
+_PRIVACY_QA = {"items": []}
+_REPAIRS_NEEDED = "repairs_needed"
+
+
+def _by_id(dataframe: pd.DataFrame, column: str) -> dict[str, object]:
+    return dict(zip(dataframe[RECORD_ID_COLUMN].astype(str), dataframe[column]))
+
+
+@custom_column_generator(
+    required_columns=[COL_REWRITTEN_TEXT, _REPAIRS_NEEDED],
+    side_effect_columns=[
+        COL_PRIVACY_QA_REANSWER,
+        COL_QUALITY_QA_COMPARE,
+        COL_UTILITY_SCORE,
+        COL_LEAKAGE_MASS,
+        COL_WEIGHTED_LEAKAGE_RATE,
+        COL_ANY_HIGH_LEAKED,
+        COL_NEEDS_REPAIR,
+    ],
+)
+def _deterministic_evaluation(row: dict[str, Any]) -> dict[str, Any]:
+    needs_repair = int(str(row[COL_REWRITTEN_TEXT]).rsplit("-", 1)[1]) < int(row[_REPAIRS_NEEDED])
+    row[COL_QUALITY_QA_REANSWER] = {"answers": []}
+    row[COL_PRIVACY_QA_REANSWER] = {"answers": []}
+    row[COL_QUALITY_QA_COMPARE] = {"per_item": []}
+    row[COL_UTILITY_SCORE] = 0.9
+    row[COL_LEAKAGE_MASS] = 2.0 if needs_repair else 0.0
+    row[COL_WEIGHTED_LEAKAGE_RATE] = 0.0
+    row[COL_ANY_HIGH_LEAKED] = False
+    row[COL_NEEDS_REPAIR] = needs_repair
+    return row
+
+
+@custom_column_generator(required_columns=[COL_LEAKED_PRIVACY_ITEMS, COL_REWRITTEN_TEXT])
+def _deterministic_repair(row: dict[str, Any]) -> dict[str, Any]:
+    stem, version = str(row[COL_REWRITTEN_TEXT]).rsplit("-", 1)
+    row[COL_REWRITTEN_TEXT_NEXT] = f"{stem}-{int(version) + 1}"
+    return row
+
+
+def test_repair_loop_through_real_adapter_keeps_each_repair(
+    tmp_path: Path,
+    stub_rewrite_model_selection: RewriteModelSelection,
+) -> None:
+    adapter = NddAdapter(DataDesigner(artifact_path=tmp_path / "artifacts", auto_configure_logging=False))
+    workflow = RewriteWorkflow(adapter)
+    workflow._evaluate_wf = Mock(
+        columns=Mock(
+            return_value=[
+                CustomColumnConfig(name=COL_QUALITY_QA_REANSWER, generator_function=_deterministic_evaluation)
+            ]
+        )
+    )
+    leaked_items = RepairWorkflow(adapter).columns(
+        selected_models=stub_rewrite_model_selection,
+        privacy_goal=_PRIVACY_GOAL,
+        effective_threshold=1.0,
+    )[0]
+    workflow._repair_wf = Mock(
+        columns=Mock(
+            return_value=[
+                leaked_items,
+                CustomColumnConfig(name=COL_REWRITTEN_TEXT_NEXT, generator_function=_deterministic_repair),
+            ]
+        )
+    )
+    rows = _Rows(
+        pd.DataFrame(
+            {
+                RECORD_ID_COLUMN: ["twice", "exhausted"],
+                COL_TEXT: ["Alice works at Acme", "Bob works at Beta"],
+                COL_REWRITTEN_TEXT: ["twice-0", "exhausted-0"],
+                COL_PRIVACY_QA: [dict(_PRIVACY_QA), dict(_PRIVACY_QA)],
+                _REPAIRS_NEEDED: [2, 5],
+            }
+        )
+    )
+
+    stages = workflow._evaluate_repair_stages(
+        rows,
+        model_configs=[],
+        selected_models=stub_rewrite_model_selection,
+        privacy_goal=_PRIVACY_GOAL,
+        evaluation=EvaluationCriteria(max_repair_iterations=3),
+        preview_num_records=None,
+    )
+    for _, stage in stages:
+        stage()
+
+    assert rows.failed == []
+    assert _by_id(rows.frame, COL_REWRITTEN_TEXT) == {"twice": "twice-2", "exhausted": "exhausted-3"}
+    assert _by_id(rows.frame, COL_REPAIR_ITERATIONS) == {"twice": 2, "exhausted": 3}
+    assert _by_id(rows.frame, COL_PRIVACY_QA) == {"twice": _PRIVACY_QA, "exhausted": _PRIVACY_QA}
 
 
 def test_replacement_unavailable_can_be_repaired(

@@ -726,7 +726,7 @@ class RewriteWorkflow:
                 len(df),
             )
             # Repair failing rows only
-            repaired = run_columns(rows.failing, repair_columns, f"rewrite-repair-{iteration}")
+            repaired = run_columns(rows.failing, repair_columns, f"rewrite-repair-{iteration}", overwrite=True)
             if COL_REWRITTEN_TEXT_NEXT in repaired.columns:
                 repaired[COL_REWRITTEN_TEXT] = repaired[COL_REWRITTEN_TEXT_NEXT]
             repaired[COL_REPAIR_ITERATIONS] = repaired[COL_REPAIR_ITERATIONS].apply(lambda x: int(x) + 1)
