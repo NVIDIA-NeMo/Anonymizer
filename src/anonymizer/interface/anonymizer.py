@@ -109,12 +109,10 @@ def _flag_missed_entities(df: pd.DataFrame) -> pd.DataFrame:
     """Set needs_human_review on rows whose coverage judge reported missed entities."""
     if COL_NEEDS_HUMAN_REVIEW not in df.columns or COL_MISSED_ENTITIES not in df.columns:
         return df
-    missed = df[COL_MISSED_ENTITIES].map(lambda value: isinstance(value, (list, tuple)) and len(value) > 0)
-    if not missed.any():
-        return df
-    flagged = df.copy()
-    flagged.loc[missed.astype(bool), COL_NEEDS_HUMAN_REVIEW] = True
-    return flagged
+    # .str.len() sizes list and array cells and gives NaN for None or NaN; astype(object) keeps .str
+    # usable when every cell is NaN.
+    missed = df[COL_MISSED_ENTITIES].astype(object).str.len().gt(0)
+    return df.assign(**{COL_NEEDS_HUMAN_REVIEW: df[COL_NEEDS_HUMAN_REVIEW].mask(missed, True)})
 
 
 def _log_unavailable_scores(
