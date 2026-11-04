@@ -52,6 +52,7 @@ class Finding(str, Enum):
     rewrite_missing = "rewrite_missing"
     replacement_unavailable = "replacement_unavailable"
     high_leak = "high_leak"
+    confirmed_leak = "confirmed_leak"
     leakage_above_repair = "leakage_above_repair"
     leakage_above_flag = "leakage_above_flag"
     utility_below_flag = "utility_below_flag"
@@ -59,7 +60,7 @@ class Finding(str, Enum):
 
 
 # The findings repair can act on: a preset's ``repair_on`` accepts only these, and ty rejects any other.
-RepairFinding = Literal[Finding.high_leak, Finding.leakage_above_repair]
+RepairFinding = Literal[Finding.high_leak, Finding.confirmed_leak, Finding.leakage_above_repair]
 
 
 @dataclass(frozen=True)
@@ -79,38 +80,41 @@ _FLAG_ON = (
     Finding.rewrite_missing,
     Finding.replacement_unavailable,
     Finding.high_leak,
+    Finding.confirmed_leak,
     Finding.leakage_above_flag,
     Finding.utility_below_flag,
     Finding.unavailable_evidence,
 )
 
+# confirmed_leak rows (#358 proposal): if #358 decides repair everywhere, add it to `high`'s repair_on;
+# if flag only, remove it from every repair_on.
 _RISK_TOLERANCE_BUNDLES: dict[RiskTolerance, _RiskToleranceBundle] = {
     RiskTolerance.minimal: _RiskToleranceBundle(
         repair_threshold=0.6,
         flag_utility_below=0.6,
         flag_leakage_above=1.0,
-        repair_on=(Finding.high_leak, Finding.leakage_above_repair),
+        repair_on=(Finding.high_leak, Finding.confirmed_leak, Finding.leakage_above_repair),
         flag_on=_FLAG_ON,
     ),
     RiskTolerance.low: _RiskToleranceBundle(
         repair_threshold=1.0,
         flag_utility_below=0.5,
         flag_leakage_above=2.0,
-        repair_on=(Finding.high_leak, Finding.leakage_above_repair),
+        repair_on=(Finding.high_leak, Finding.confirmed_leak, Finding.leakage_above_repair),
         flag_on=_FLAG_ON,
     ),
     RiskTolerance.moderate: _RiskToleranceBundle(
         repair_threshold=1.5,
         flag_utility_below=0.4,
         flag_leakage_above=2.5,
-        repair_on=(Finding.high_leak, Finding.leakage_above_repair),
+        repair_on=(Finding.high_leak, Finding.confirmed_leak, Finding.leakage_above_repair),
         flag_on=_FLAG_ON,
     ),
     RiskTolerance.high: _RiskToleranceBundle(
         repair_threshold=2.0,
         flag_utility_below=0.3,
         flag_leakage_above=3.0,
-        repair_on=(Finding.leakage_above_repair,),
+        repair_on=(Finding.leakage_above_repair,),  # #358: add Finding.confirmed_leak if repair everywhere.
         flag_on=_FLAG_ON,
     ),
 }

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import itertools
+import json
 import math
 from collections.abc import Callable
 from typing import Any, get_args
@@ -21,6 +22,7 @@ from anonymizer.config.rewrite import (
 from anonymizer.engine.constants import (
     COL_ANY_HIGH_LEAKED,
     COL_LEAKAGE_MASS,
+    COL_PRIVACY_QA_REANSWER,
     COL_REWRITE_REPLACEMENT_READY,
     COL_REWRITTEN_TEXT,
     COL_UTILITY_SCORE,
@@ -28,6 +30,8 @@ from anonymizer.engine.constants import (
 from anonymizer.engine.rewrite.findings import needs_human_review, needs_repair, present_findings
 
 _NAN = math.nan
+_NO = {"answers": [{"id": 1, "answer": "no", "confidence": 0.9, "reason": "removed"}]}
+_YES = {"answers": [*_NO["answers"], {"id": 2, "answer": "yes", "confidence": 0.9, "reason": "kept"}]}
 _MISSING = object()
 _CLEAN: dict[str, Any] = {
     COL_REWRITTEN_TEXT: "rewritten",
@@ -54,6 +58,13 @@ _CASES = [
     (Finding.replacement_unavailable, {COL_REWRITE_REPLACEMENT_READY: _MISSING}, False),
     (Finding.high_leak, {COL_ANY_HIGH_LEAKED: True}, True),
     (Finding.high_leak, {COL_ANY_HIGH_LEAKED: None}, False),
+    (Finding.confirmed_leak, {COL_PRIVACY_QA_REANSWER: _YES}, True),
+    (Finding.confirmed_leak, {COL_PRIVACY_QA_REANSWER: json.dumps(_YES)}, True),
+    (Finding.confirmed_leak, {COL_PRIVACY_QA_REANSWER: _NO}, False),
+    (Finding.confirmed_leak, {}, False),
+    (Finding.confirmed_leak, {COL_PRIVACY_QA_REANSWER: _NAN}, False),
+    (Finding.confirmed_leak, {COL_PRIVACY_QA_REANSWER: "not json"}, False),
+    (Finding.confirmed_leak, {COL_PRIVACY_QA_REANSWER: {"answers": "yes"}}, False),
     (Finding.leakage_above_repair, {COL_LEAKAGE_MASS: _REPAIR}, False),
     (Finding.leakage_above_repair, {COL_LEAKAGE_MASS: _REPAIR + 0.01}, True),
     (Finding.leakage_above_repair, {COL_LEAKAGE_MASS: _NAN}, False),
@@ -67,6 +78,7 @@ _CASES = [
     (Finding.unavailable_evidence, {COL_LEAKAGE_MASS: _NAN}, True),
     (Finding.unavailable_evidence, {COL_UTILITY_SCORE: _NAN}, True),
     (Finding.unavailable_evidence, {COL_ANY_HIGH_LEAKED: _MISSING}, True),
+    (Finding.unavailable_evidence, {COL_PRIVACY_QA_REANSWER: "not json"}, False),
 ]
 
 
@@ -102,6 +114,11 @@ def test_every_finding_holds_somewhere_and_unavailable_evidence_only_flags() -> 
     for bundle in _RISK_TOLERANCE_BUNDLES.values():
         assert Finding.unavailable_evidence in bundle.flag_on
         assert Finding.unavailable_evidence not in bundle.repair_on
+        assert Finding.confirmed_leak in bundle.flag_on
+    repairs_confirmed = {
+        tolerance for tolerance, b in _RISK_TOLERANCE_BUNDLES.items() if Finding.confirmed_leak in b.repair_on
+    }
+    assert repairs_confirmed == {RiskTolerance.minimal, RiskTolerance.low, RiskTolerance.moderate}
 
 
 def test_presets_repair_only_on_repair_findings() -> None:
@@ -115,6 +132,8 @@ def test_presets_repair_only_on_repair_findings() -> None:
 # Equivalence with the inline formulas these findings replaced. Since the
 # unavailable-evidence fix, missing or NaN metrics flag for review (where the
 # old formulas passed or raised) and never trigger repair (where they raised).
+# Since confirmed_leak (#358), a row with any privacy answer "yes" is flagged on
+# every preset and repaired on every preset except ``high``; rows without one match.
 # ---------------------------------------------------------------------------
 
 
@@ -163,21 +182,27 @@ _NUMBERS = (0.0, 0.45, 0.65, 1.2, 1.7, 2.2, 3.5, _NAN, None)
 @pytest.mark.parametrize("risk_tolerance", list(RiskTolerance))
 def test_findings_reproduce_previous_formulas(risk_tolerance: RiskTolerance) -> None:
     ev = EvaluationCriteria(risk_tolerance=risk_tolerance)
-    for high, leakage in itertools.product(_FLAGS, (*_NUMBERS, _MISSING)):
-        row = _row(**{COL_ANY_HIGH_LEAKED: high, COL_LEAKAGE_MASS: leakage})
+    repairs_confirmed = Finding.confirmed_leak in ev.repair_on
+    for high, leakage, answers in itertools.product(_FLAGS, (*_NUMBERS, _MISSING), (_NO, _YES)):
+        row = _row(**{COL_ANY_HIGH_LEAKED: high, COL_LEAKAGE_MASS: leakage, COL_PRIVACY_QA_REANSWER: answers})
         old = _outcome(_old_repair, row, ev)
-        assert _outcome(needs_repair, row, ev) == (False if old is TypeError else old), row
+        old = False if old is TypeError else old
+        assert _outcome(needs_repair, row, ev) == (old or (answers is _YES and repairs_confirmed)), row
 
     # The combined path compared text with ``is None``; it never sees a float-NaN rewrite.
-    grid = list(itertools.product(("rewritten", None), _FLAGS, _FLAGS[:4], _NUMBERS, _NUMBERS))
-    for text, ready, high, utility, leakage in grid:
-        row = _row(**dict(zip(_CLEAN, (text, ready, high, utility, leakage), strict=True)))
-        old = True if _unavailable(row) else _outcome(_old_review_combined, row, ev)
+    grid = list(itertools.product(("rewritten", None), _FLAGS, _FLAGS[:4], _NUMBERS, _NUMBERS, (_NO, _YES)))
+    for *values, answers in grid:
+        row = _row(**dict(zip(_CLEAN, values, strict=True)), **{COL_PRIVACY_QA_REANSWER: answers})
+        old = True if _unavailable(row) or answers is _YES else _outcome(_old_review_combined, row, ev)
         assert _outcome(needs_human_review, row, ev) == old, row
 
     values = itertools.product(("rewritten", None, _NAN), _FLAGS[:4], _FLAGS[:4], _NUMBERS, _NUMBERS)
     frame = pd.DataFrame([dict(zip(_CLEAN, row, strict=True)) for row in values])
+    frame[COL_PRIVACY_QA_REANSWER] = [_YES if i % 2 else _NO for i in range(len(frame))]
     for df in (frame, frame.drop(columns=COL_REWRITE_REPLACEMENT_READY)):
         rows = df.to_dict("records")
-        old = [_unavailable(row) or flagged for row, flagged in zip(rows, _old_review_staged(df, ev), strict=True)]
+        old = [
+            _unavailable(row) or row[COL_PRIVACY_QA_REANSWER] is _YES or flagged
+            for row, flagged in zip(rows, _old_review_staged(df, ev), strict=True)
+        ]
         assert [needs_human_review(row, ev) for row in rows] == old

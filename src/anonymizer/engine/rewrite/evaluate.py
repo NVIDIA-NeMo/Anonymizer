@@ -508,7 +508,7 @@ def _compute_metrics_columns(row: dict[str, Any], generator_params: MetricsParam
     return row
 
 
-@custom_column_generator(required_columns=[COL_ANY_HIGH_LEAKED, COL_LEAKAGE_MASS])
+@custom_column_generator(required_columns=[COL_ANY_HIGH_LEAKED, COL_LEAKAGE_MASS, COL_PRIVACY_QA_REANSWER])
 def _determine_repair_needs_column(row: dict[str, Any], generator_params: EvaluationCriteria) -> dict[str, Any]:
     """Set _needs_repair from the preset's repair findings."""
     row[COL_NEEDS_REPAIR] = needs_repair(row, generator_params)

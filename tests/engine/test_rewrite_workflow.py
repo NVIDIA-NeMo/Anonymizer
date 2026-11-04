@@ -309,6 +309,41 @@ def test_unavailable_leakage_flags_for_review(
     pd.testing.assert_frame_equal(flagged.drop(columns=unchanged), baseline.drop(columns=unchanged))
 
 
+_CONFIRMED_LEAK = {"answers": [{"id": 1, "answer": "yes", "confidence": 0.9, "reason": "kept verbatim"}]}
+
+
+def test_confirmed_leak_with_low_leakage_is_flagged_and_repaired(
+    stub_model_configs: list[ModelConfig],
+    stub_rewrite_model_selection: RewriteModelSelection,
+    stub_replace_model_selection: ReplaceModelSelection,
+    stub_df_with_entities: pd.DataFrame,
+    stub_replace_df: pd.DataFrame,
+    stub_pipeline_df: pd.DataFrame,
+    stub_eval_df: pd.DataFrame,
+) -> None:
+    from anonymizer.engine.rewrite.evaluate import _determine_repair_needs_column
+
+    eval_df = stub_eval_df.assign(**{COL_PRIVACY_QA_REANSWER: [_CONFIRMED_LEAK] * len(stub_eval_df)})
+    adapter = Mock()
+    adapter.run_workflow.side_effect = _standard_side_effect(stub_pipeline_df, eval_df)
+    with patch(_REPLACE_PATCH) as mock_replace_cls:
+        _mock_replace(mock_replace_cls, stub_replace_df)
+        result = RewriteWorkflow(adapter=adapter).run(
+            stub_df_with_entities,
+            model_configs=stub_model_configs,
+            selected_models=stub_rewrite_model_selection,
+            replace_model_selection=stub_replace_model_selection,
+            privacy_goal=_PRIVACY_GOAL,
+            evaluation=EvaluationCriteria(risk_tolerance="moderate", max_repair_iterations=0),
+        )
+
+    assert result.dataframe[COL_LEAKAGE_MASS].tolist() == [0.1]
+    assert result.dataframe[COL_NEEDS_HUMAN_REVIEW].tolist() == [True]
+    row = eval_df.iloc[0].to_dict()
+    moderate = EvaluationCriteria(risk_tolerance="moderate")
+    assert _determine_repair_needs_column(row, moderate)[COL_NEEDS_REPAIR] is True
+
+
 # ---------------------------------------------------------------------------
 # Tests: full pipeline call order
 # ---------------------------------------------------------------------------
