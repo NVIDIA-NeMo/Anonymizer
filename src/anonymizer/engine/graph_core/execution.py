@@ -333,7 +333,7 @@ class ProtectionResult:
         o = self.outcome(target)
         if o.terminal != "success" or not o.available:
             raise k.GraphRejection("unavailable_input", o.reason or o.terminal)
-        return self.value(target)
+        return self._final(target)
 
     @property
     def protected(self) -> dict[Datum, str]:
