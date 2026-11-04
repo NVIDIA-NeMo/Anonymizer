@@ -244,7 +244,7 @@ def _lower(
     mentions: list[Mention] = []
     for text, raw in zip(texts, raw_entities):
         datum = scope.datum(str(text))
-        rows[datum] = entities = EntitiesSchema.from_raw(raw)
+        rows[datum] = entities = EntitiesSchema.from_raw(raw, strict=True)
         mentions.extend(accepted_mentions(datum, entities))
     return ProtectionGraph(scope, tuple(rows), tuple(mentions)), rows
 

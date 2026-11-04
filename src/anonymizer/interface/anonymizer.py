@@ -210,11 +210,7 @@ def _evaluate_on_graph(
 
 def _has_entities_for_evaluation(raw: object) -> bool:
     """Return whether a row should receive entity-dependent evaluation scores."""
-    try:
-        return bool(EntitiesByValueSchema.from_raw(raw).entities_by_value)
-    except Exception:
-        # Malformed entity metadata should not hide a missing score.
-        return True
+    return bool(EntitiesByValueSchema.from_raw(raw).entities_by_value)
 
 
 def _log_unavailable_scores(
@@ -378,8 +374,8 @@ class Anonymizer:
     ) -> AnonymizerResult:
         """Run the full anonymization pipeline (detection + replacement).
 
-        No LLM evaluation judges run here — call :meth:`evaluate` on the
-        result's ``trace_dataframe`` when you want the Judge Agreement scores.
+        No LLM evaluation judges run here — pass the result to
+        :meth:`evaluate` when you want the Judge Agreement scores.
 
         Args:
             config: Workflow behavior — replace strategy, entity labels, thresholds.
@@ -527,8 +523,8 @@ class Anonymizer:
     ) -> PreviewResult:
         """Run the pipeline on a subset of records for quick inspection.
 
-        No LLM evaluation judges run here — call :meth:`evaluate` on the
-        result's ``trace_dataframe`` when you want the Judge Agreement scores.
+        No LLM evaluation judges run here — pass the result to
+        :meth:`evaluate` when you want the Judge Agreement scores.
 
         Args:
             config: Workflow behavior — replace strategy, entity labels, thresholds.
