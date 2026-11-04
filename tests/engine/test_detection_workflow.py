@@ -13,27 +13,36 @@ from data_designer.config.column_configs import LLMStructuredColumnConfig
 from data_designer.config.models import ModelConfig
 from data_designer.plugins.plugin import PluginType
 from data_designer.plugins.registry import PluginRegistry
+from jinja2 import Environment, StrictUndefined
 
 from anonymizer.config.models import DetectionModelSelection
 from anonymizer.config.rewrite import PrivacyGoal
 from anonymizer.engine.constants import (
+    COL_ADMISSION_RESULTS,
     COL_AUGMENTED_ENTITIES,
     COL_DETECTED_ENTITIES,
+    COL_DETECTOR_SOURCE,
     COL_ENTITIES_BY_VALUE,
     COL_FINAL_ENTITIES,
+    COL_INITIAL_TAGGED_TEXT,
     COL_LATENT_ENTITIES,
     COL_MERGED_ENTITIES,
+    COL_RAW_DETECTED,
+    COL_SEED_DETECTION_RESULT,
     COL_SEED_ENTITIES,
     COL_SEED_ENTITIES_JSON,
     COL_SEED_VALIDATION_CANDIDATES,
     COL_TAG_NOTATION,
     COL_TAGGED_TEXT,
     COL_TEXT,
-    COL_VALIDATED_ENTITIES,
     COL_VALIDATION_DECISIONS,
+    COL_VALIDATION_SKELETON,
     DEFAULT_ENTITY_LABELS,
     ENTITY_LABEL_EXAMPLES,
+    RECORD_ID_COLUMN,
 )
+from anonymizer.engine.detection.augmentation import _ground_augmentation_items
+from anonymizer.engine.detection.chunked_validation import VALIDATION_EXCERPT_VAR
 from anonymizer.engine.detection.detection_workflow import (
     EntityDetectionWorkflow,
     _filter_excluded_latent_entities,
@@ -44,6 +53,7 @@ from anonymizer.engine.detection.detection_workflow import (
     _materialize_final_entities,
 )
 from anonymizer.engine.detection.entity_label_examples import resolve_entity_label_config
+from anonymizer.engine.detection.postprocess import TagNotation, _format_entity_tag
 from anonymizer.engine.ndd.adapter import FailedRecord, WorkflowRunResult
 from anonymizer.engine.ndd.model_loader import (
     load_default_model_selection,
@@ -51,7 +61,7 @@ from anonymizer.engine.ndd.model_loader import (
     resolve_model_alias,
     resolve_model_aliases,
 )
-from anonymizer.engine.schemas import EntitiesSchema
+from anonymizer.engine.schemas import AugmentedEntitiesSchema, EntitiesSchema, SourceTextRef, SourceView
 from anonymizer.engine.workflow_columns.detection.config import (
     ChunkedValidationConfig,
     DetectionTransformConfig,
@@ -548,6 +558,44 @@ def test_validation_prompt_includes_data_summary() -> None:
     assert "Data context: Medical records" in prompt
 
 
+@pytest.mark.parametrize("notation", list(TagNotation))
+def test_validation_prompt_example_matches_conflict_skeleton_and_excerpt_offsets(notation: TagNotation) -> None:
+    prompt = _get_validation_prompt(data_summary=None, labels=["first_name", "age", "country", "city", "state"])
+    rendered = (
+        Environment(undefined=StrictUndefined)
+        .from_string(prompt)
+        .render(
+            {
+                COL_TAG_NOTATION: notation.value,
+                VALIDATION_EXCERPT_VAR: "",
+                COL_VALIDATION_SKELETON: "",
+            }
+        )
+    )
+    example = rendered.split("Example:")[-1].split("---")[0]
+    entries = json.loads(example.split("Template: ")[1].split("\nOutput:")[0])["decisions"]
+    output = json.loads(example.split("Output: ")[1].strip())["decisions"]
+    source = "My name is Amy, 35 in San Diego, California."
+
+    for entry in entries:
+        assert source[entry["start_position"] : entry["end_position"]] == entry["value"]
+        if entry["id"] in {"c4", "c5"}:
+            assert entry["conflict_group_id"] == "g1"
+        else:
+            assert entry["conflict_group_id"] is None
+        assert entry["decision"] is None
+    assert [entry["id"] for entry in entries] == [entry["id"] for entry in output]
+    alternatives = [entry for entry in entries if entry["conflict_group_id"] == "g1"]
+    assert [(entry["value"], entry["label"]) for entry in alternatives] == [
+        ("San Diego", "country"),
+        ("Diego", "first_name"),
+    ]
+    assert _format_entity_tag(value="San Diego", label="NAGROUP_g1", notation=notation) in example
+    assert output[3]["decision"] == "reclass"
+    assert output[3]["proposed_label"] == "city"
+    assert output[4]["decision"] == "drop"
+
+
 def test_validation_prompt_adds_configured_examples_to_full_label_config() -> None:
     label_config = resolve_entity_label_config(
         entity_labels=[*DEFAULT_ENTITY_LABELS, "vendor_api_key"],
@@ -577,6 +625,10 @@ def test_augment_prompt_permissive_when_using_defaults() -> None:
     assert "phone_number, age" in prompt
     assert "If no known label fits, create a concise snake_case label" in prompt
     assert "employment_status" in prompt
+    assert '"context_before"' in prompt
+    assert '"context_after"' in prompt
+    assert "a few words (two to five)" in prompt
+    assert "Never copy those tags" in prompt
 
 
 def test_augment_prompt_strict_when_explicit_labels_provided() -> None:
@@ -588,6 +640,69 @@ def test_augment_prompt_strict_when_explicit_labels_provided() -> None:
     assert "create a concise snake_case label" not in prompt
     assert "employment_status is NOT in the allowed list" in prompt
     assert "employment_status" not in prompt.split("Output:")[1]
+
+
+@pytest.mark.parametrize("notation", list(TagNotation))
+@pytest.mark.parametrize("strict_labels", [False, True])
+@pytest.mark.parametrize("has_overlap_groups", [False, True])
+def test_augment_prompt_examples_ground_context_across_entity_tags(
+    notation: TagNotation, strict_labels: bool, has_overlap_groups: bool
+) -> None:
+    prompt = _get_augment_prompt(
+        data_summary=None, labels=["first_name", "last_name", "city"], strict_labels=strict_labels
+    )
+    rendered = (
+        Environment(undefined=StrictUndefined)
+        .from_string(prompt)
+        .render(
+            {
+                COL_TAG_NOTATION: notation.value,
+                COL_INITIAL_TAGGED_TEXT: "",
+                COL_SEED_ENTITIES_JSON: "[]",
+                "has_overlap_groups": has_overlap_groups,
+            }
+        )
+    )
+    output_line = next(line for line in rendered.splitlines() if line.startswith("Output: "))
+    output = AugmentedEntitiesSchema.model_validate_json(output_line.removeprefix("Output: "))
+    source = "Jane Doe lives in Santa Clara. She works full-time."
+    result = _ground_augmentation_items(
+        canonical_text=source,
+        source_view=SourceView(
+            source_text_ref=SourceTextRef(record_id="prompt-example", field_id=COL_TEXT),
+            start_position=0,
+            end_position=len(source),
+        ),
+        output=output,
+    )
+
+    assert ("A tag named NAGROUP_gN" in rendered) is has_overlap_groups
+    assert ("the whole region as already tagged" in rendered) is has_overlap_groups
+    assert ("never return it as a label" in rendered) is has_overlap_groups
+    assert "a few words (two to five)" in rendered
+    assert "Context does not have to identify a unique occurrence" in rendered
+    example_label = "NAGROUP_g1" if has_overlap_groups else "city"
+    assert _format_entity_tag(value="Santa Clara", label=example_label, notation=notation) in rendered
+    example_seeds = json.loads(
+        next(line for line in rendered.splitlines() if line.startswith("Already-detected entities: ")).removeprefix(
+            "Already-detected entities: "
+        )
+    )
+    assert example_seeds == (
+        [{"value": "Santa Clara", "label": "city"}, {"value": "Clara", "label": "first_name"}]
+        if has_overlap_groups
+        else [{"value": "Santa Clara", "label": "city"}]
+    )
+    assert output.entities[1].context_after == " lives in Santa Clara. "
+    expected_values = ["Jane", "Doe"] if strict_labels else ["Jane", "Doe", "full-time"]
+    assert result.failures == ()
+    assert [item.value for item in result.grounded_entities.entities] == expected_values
+    assert [
+        (source[item.start_position : item.end_position], item.start_position, item.end_position)
+        for item in result.occurrences
+    ] == [(value, source.index(value), source.index(value) + len(value)) for value in expected_values]
+    if not strict_labels:
+        assert output.entities[2].context_before == "in Santa Clara. She works "
 
 
 def test_augment_prompt_receives_only_configured_examples() -> None:
@@ -762,8 +877,8 @@ def test_defaults_plus_non_default_examples_use_strict_augmentation(
     detector_config = next(config for config in call.kwargs["model_configs"] if config.alias == "gliner-pii-detector")
     assert "vendor_api_key" in detector_config.inference_parameters.extra_body["labels"]
     augmenter = next(column for column in call.kwargs["columns"] if column.name == COL_AUGMENTED_ENTITIES)
-    assert "Use ONLY labels from this list" in augmenter.prompt
-    assert "vendor_api_key: acme_live_abc123" in augmenter.prompt
+    assert "Use ONLY labels from this list" in augmenter.prompt_template
+    assert "vendor_api_key: acme_live_abc123" in augmenter.prompt_template
     assert "acme_live_abc123" not in repr(augmenter)
 
 
@@ -801,6 +916,12 @@ def test_resolve_entity_label_config_none_exclusions_is_noop() -> None:
 def test_resolve_entity_label_config_empty_result_raises() -> None:
     with pytest.raises(ValueError, match="effective detection label set is empty"):
         resolve_entity_label_config(entity_labels=["email"], excluded_entity_labels={"email"})
+
+
+@pytest.mark.parametrize("label", ["NAGROUP_g1", " nagroup_G42 "])
+def test_resolve_entity_label_config_rejects_reserved_prompt_labels(label: str) -> None:
+    with pytest.raises(ValueError, match="reserved for internal prompt markup"):
+        resolve_entity_label_config(entity_labels=["email", label])
 
 
 def test_materialize_final_entities_normalizes_configured_labels() -> None:
@@ -985,7 +1106,7 @@ def test_detection_workflow_plugins_are_discoverable() -> None:
             for plugin in PluginRegistry().get_plugins(PluginType.COLUMN_GENERATOR)
             if plugin.name.startswith("anonymizer-")
         }
-        assert {"anonymizer-detection-transform", "anonymizer-chunked-validation"} <= names
+        assert {"anonymizer-detection-transform", "anonymizer-chunked-validation", "anonymizer-augmentation"} <= names
     finally:
         PluginRegistry.reset()
 
@@ -1015,18 +1136,34 @@ def test_detection_workflow_uses_plugin_transform_columns(
     )
     columns = adapter.run_workflow.call_args.kwargs["columns"]
     expected_operations = {
+        COL_DETECTOR_SOURCE: DetectionTransformOperation.PREPARE_DETECTOR_SOURCE,
         COL_SEED_ENTITIES: DetectionTransformOperation.PARSE_DETECTED_ENTITIES,
         COL_SEED_VALIDATION_CANDIDATES: DetectionTransformOperation.PREPARE_VALIDATION_INPUTS,
-        COL_VALIDATED_ENTITIES: DetectionTransformOperation.ENRICH_VALIDATION_DECISIONS,
+        COL_ADMISSION_RESULTS: DetectionTransformOperation.ADMIT_VALIDATION_DECISIONS,
         COL_SEED_ENTITIES_JSON: DetectionTransformOperation.APPLY_VALIDATION_TO_SEED_ENTITIES,
         COL_MERGED_ENTITIES: DetectionTransformOperation.MERGE_AND_BUILD_CANDIDATES,
-        COL_DETECTED_ENTITIES: DetectionTransformOperation.APPLY_VALIDATION_AND_FINALIZE,
+        COL_DETECTED_ENTITIES: DetectionTransformOperation.FINALIZE_ENTITIES,
     }
     for name, operation in expected_operations.items():
         column = _find_column(columns, name)
         assert isinstance(column, DetectionTransformConfig)
         assert DetectionTransformOperation(column.operation) == operation
-    assert _find_column(columns, COL_MERGED_ENTITIES).excluded_entity_labels == ["email"]
+    parse_column = _find_column(columns, COL_SEED_ENTITIES)
+    source_column = _find_column(columns, COL_DETECTOR_SOURCE)
+    assert source_column.required_columns == [COL_TEXT]
+    assert source_column.drop is True
+    detector_column = _find_column(columns, COL_RAW_DETECTED)
+    assert detector_column.required_columns == [COL_DETECTOR_SOURCE]
+    assert isinstance(parse_column, DetectionTransformConfig)
+    assert parse_column.detection_result_id == "r1"
+    assert parse_column.source_instance == stub_detection_model_selection.entity_detector
+    assert RECORD_ID_COLUMN in parse_column.required_columns
+    assert COL_SEED_DETECTION_RESULT in parse_column.side_effect_columns
+    assert COL_ADMISSION_RESULTS not in _find_column(columns, COL_ADMISSION_RESULTS).side_effect_columns
+    assert _find_column(columns, COL_ADMISSION_RESULTS).excluded_entity_labels == ["email"]
+    assert _find_column(columns, COL_ADMISSION_RESULTS).allowed_entity_labels is None
+    assert COL_ADMISSION_RESULTS not in _find_column(columns, COL_DETECTED_ENTITIES).required_columns
+    assert _find_column(columns, COL_MERGED_ENTITIES).excluded_entity_labels == []
     assert all(getattr(column, "column_type", None) != "custom" for column in columns)
 
 
@@ -1092,8 +1229,7 @@ def test_validation_column_is_chunked_validation_plugin(
     assert validation_col.get_model_aliases() == list(stub_detection_model_selection.entity_validator)
     assert set(validation_col.required_columns) == {
         COL_TEXT,
-        COL_SEED_ENTITIES,
-        COL_SEED_VALIDATION_CANDIDATES,
+        COL_SEED_DETECTION_RESULT,
         COL_TAG_NOTATION,
     }
 
