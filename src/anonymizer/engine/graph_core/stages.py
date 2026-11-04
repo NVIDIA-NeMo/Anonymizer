@@ -25,7 +25,8 @@ STAGE_DONE = register_kind("stage-done", lambda v: v is True)
 def run_stages(name: str, stages: Sequence[tuple[str, Callable[[], None]]]) -> None:
     """Run ``stages`` in order as one kernel invocation, each an opaque operation over a single frame target.
 
-    The first error a stage raised is raised, as when the stages were called directly.
+    The first error a stage raised is raised, as when the stages were called directly. If an enclosing frame is
+    cancelled, the stages not yet started are skipped and nothing is raised.
     """
 
     def operation(stage_name: str, stage: Callable[[], None]) -> Operation:

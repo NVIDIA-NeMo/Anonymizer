@@ -290,10 +290,12 @@ class Operation:
     inputs: Mapping[str, str] = field(default_factory=lambda: MappingProxyType({"text": TEXT}))
     outputs: Mapping[str, str] = field(default_factory=lambda: MappingProxyType({"text": TEXT}))
     requests: Requests = Requests()
-    scope: Literal["target", "invocation"] = "target"
+    scope: Literal["target", "phase_scoped"] = "target"
     checks: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
+        if self.scope == "invocation":  # older spelling of "phase_scoped"
+            object.__setattr__(self, "scope", "phase_scoped")
         # The caller keeps its own mappings; the admitted ports cannot change after preparation.
         object.__setattr__(self, "inputs", MappingProxyType(dict(self.inputs)))
         object.__setattr__(self, "outputs", MappingProxyType(dict(self.outputs)))
@@ -311,7 +313,7 @@ class Operation:
         return cls(name, fn, inputs, {"assessment": ASSESSMENT}, requests, checks=tuple(checks))
 
     @classmethod
-    def per_invocation(
+    def phase_scoped(
         cls,
         name: str,
         fn: Callable[..., Any],
@@ -330,8 +332,10 @@ class Operation:
             MappingProxyType(dict(inputs or {"text": TEXT})),
             MappingProxyType(dict(outputs or {"text": TEXT})),
             requests,
-            "invocation",
+            "phase_scoped",
         )
+
+    per_invocation = phase_scoped  # older name
 
     @property
     def is_verifier(self) -> bool:

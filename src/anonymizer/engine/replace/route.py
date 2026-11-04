@@ -8,7 +8,7 @@ Each row lowers to one target datum whose exact, non-overlapping entity spans ar
 mention, checked by source-plus-patches reconstruction). The legacy DataFrame projection derives from
 the canonical result without rerunning work; Annotate output is an annotation result and is never Protected.
 
-Substitute runs as one invocation. Its invocation-scoped ``substitute-map`` step makes one ``LlmReplaceWorkflow`` call
+Substitute runs as one invocation. Its phase-scoped ``substitute-map`` step makes one ``LlmReplaceWorkflow`` call
 over the whole frame (DataDesigner batches it) and returns each row's replacement map; a row DataDesigner dropped gets
 no map and fails at that step. ``replace`` then reads the map from its ``replacement_map`` port, and the patch verifier
 runs per row.
@@ -146,7 +146,7 @@ def _substitute_map_step(
         by_owner = dict(zip(owners, per_target(entries, positions, len(owners))))
         return [by_owner.get(datum) for datum in target]
 
-    return Operation.per_invocation(
+    return Operation.phase_scoped(
         "substitute-map", generate_maps, {"target": DATUM}, {"replacement_map": REPLACEMENT_MAP}, Requests.opaque()
     )
 

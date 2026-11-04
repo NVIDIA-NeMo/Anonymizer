@@ -30,7 +30,7 @@ class BackendRun:
 
 
 class DataDesignerBackend:
-    """Owns one :class:`NddAdapter` and is the single place a graph step runs DataDesigner workflows."""
+    """Owns one :class:`NddAdapter`; ``LlmReplaceWorkflow`` runs its DataDesigner workflow through it."""
 
     def __init__(self, adapter: NddAdapter) -> None:
         self._adapter = adapter

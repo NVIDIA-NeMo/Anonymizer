@@ -182,8 +182,7 @@ def _evaluate_on_graph(
         return judge_rows
 
     bodies = [
-        Operation.per_invocation(j.name, body(j), {"target": DATUM}, {j.port: j.kind}, Requests.opaque())
-        for j in judges
+        Operation.phase_scoped(j.name, body(j), {"target": DATUM}, {j.port: j.kind}, Requests.opaque()) for j in judges
     ]
     verifiers: list[Operation] = []
     for judge in judges:

@@ -47,7 +47,7 @@ Public-API changes (re-exports, signatures, kwargs, default values) may require 
 ```
 input_df
   → one graph invocation: run_replace_pipeline()   # engine/replace/route.py
-      detect (invocation-scoped step)              → mentions per row
+      detect (phase-scoped step)              → mentions per row
         EntityDetectionWorkflow.run()              # engine/detection/detection_workflow.py
             GLiNER detection
             → parse + tag
@@ -66,8 +66,8 @@ Validation runs before augmentation, not after: GLiNER is high-recall/low-precis
 ```
 input_df
   → one graph invocation: RewriteWorkflow.run_with_detection()   # engine/rewrite/rewrite_workflow.py
-      detect (invocation-scoped step)          # engine/detection/detect_step.py; EntityDetectionWorkflow.run(),
-                                               # same as above, plus latent entity tagging
+      detect (phase-scoped step)          # engine/detection/detect_step.py; EntityDetectionWorkflow.run(),
+                                          # same as above, plus latent entity tagging
       rewrite (rows with entities only; the rest keep default metrics)
         LlmReplaceWorkflow.generate_map_only() # build replacement map for prompt
         → single NDD adapter call (pipeline_columns):

@@ -333,7 +333,7 @@ def _protect_rewrite(
     checks = _final_checks(evaluation)
     operations = (
         *leading,
-        Operation.per_invocation(
+        Operation.phase_scoped(
             "rewrite", rewrite, {"target": DATUM}, {"text": TEXT, "metrics": REWRITE_METRICS}, Requests.opaque()
         ),
         *checks,
@@ -360,7 +360,7 @@ def _protect_rewrite(
 def _flag_review(
     frame: pd.DataFrame, result: ProtectionResult, target_of: Mapping[int, Datum], evaluation: EvaluationCriteria
 ) -> None:
-    """Assign ``needs_human_review`` from each row's record: not qualified, or utility below the flag."""
+    """Assign ``needs_human_review``: the row's target outcome is not qualified, or its utility is below the flag."""
     floor = evaluation.flag_utility_below
     review = [
         result.outcome(target_of[record[ROW_ORDER_COL]]).qualification != "met"
@@ -382,7 +382,7 @@ def _rewrite_lowered(
     """Run ``produce`` (the frame stages, leaving the final candidates in ``rows.frame``) as the ``rewrite`` operation.
 
     One target per entity row. The final checks qualify each target from its final evaluation, and
-    ``needs_human_review`` is assigned from that record: not qualified, or utility below the flag.
+    ``needs_human_review`` is set when that outcome is not qualified or the row's utility is below the flag.
     """
     scope = GraphScope()
     graph = ProtectionGraph(scope, tuple(scope.datum(str(text)) for text in entity_rows[COL_TEXT]))
