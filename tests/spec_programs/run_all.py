@@ -31,6 +31,7 @@ PROGRAMS = [
     "sp20_produced_mentions",
     "sp21_ledger_scale",
     "sp22_checks_and_reasons",
+    "sp23_final_candidate",
     "sp28_typed_context",
     "sp29_assembly_order",
 ]

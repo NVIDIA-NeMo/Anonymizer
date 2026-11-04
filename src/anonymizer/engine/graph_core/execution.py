@@ -66,6 +66,7 @@ class PreparedProtection:
     planned_requests: Count
     covering_verifiers: frozenset[int]
     capabilities: frozenset[str] = frozenset()
+    final_text: int | None = None
     seal: str = field(default="", repr=False)
 
     def summary(self) -> InspectionSummary:
@@ -108,7 +109,7 @@ def prepare(
     if planned.bound == "opaque":
         planned = Count(None, "unknown")
     names = tuple(n for n, _ in ops)
-    prepared = PreparedProtection(graph, workflow, limits, plan, names, planned, covering, admitted)
+    prepared = PreparedProtection(graph, workflow, limits, plan, names, planned, covering, admitted, final_text)
     return replace(prepared, seal=_seal(prepared))
 
 
@@ -291,15 +292,18 @@ class ProtectionResult:
     def outcome(self, target: Datum) -> TargetOutcome:
         return self.outcomes[self._index(target)]
 
-    def value(self, target: Datum, port: str = "text") -> Any:
-        """Explicit content access: the latest value of ``port`` for ``target``, or None if never produced."""
+    def value(self, target: Datum, port: str = "text", producer: str | None = None) -> Any:
+        """Explicit port read: the latest value of ``port`` for ``target`` from any operation, or from the
+        operation named ``producer`` only; None if never produced."""
         outputs = self.state.rows[self._index(target)].outputs
+        if producer is not None:
+            return outputs.get(self.prepared.names.index(producer), {}).get(port)
         found = [out[port] for _, out in sorted(outputs.items()) if port in out]
         return found[-1] if found else None
 
     def content(self) -> tuple[tuple[Datum, str | None], ...]:
-        """Content projection: each target with its final candidate text (not a Protected claim)."""
-        return tuple((d, self.value(d) if o.available else None) for d, o in zip(self.targets, self.outcomes))
+        """Content projection: each target with the last text operation's output (not a Protected claim)."""
+        return tuple((d, self._final(d) if o.available else None) for d, o in zip(self.targets, self.outcomes))
 
     def compose(self, parts: Sequence[Datum]) -> str:
         """Caller-authored composition: the candidate texts of ``parts`` in the caller's order, any subset.
@@ -334,7 +338,7 @@ class ProtectionResult:
     @property
     def protected(self) -> dict[Datum, str]:
         """Only qualified, releasable output."""
-        return {d: self.value(d) for d, o in zip(self.targets, self.outcomes) if o.protected}
+        return {d: self._final(d) for d, o in zip(self.targets, self.outcomes) if o.protected}
 
     @property
     def attempts(self) -> tuple[Attempt, ...]:
@@ -398,6 +402,11 @@ class ProtectionResult:
             needed = 1 if op.scope == "invocation" else len(entries)
             covered = covered and (op.requests.bound == "none" or len(reports) >= needed)
         return Count(total) if covered else Count(None, "unknown")
+
+    def _final(self, target: Datum) -> Any:
+        """The final candidate: the last text operation's own output; earlier text is never substituted."""
+        final = self.prepared.final_text
+        return None if final is None else self.state.rows[self._index(target)].outputs.get(final, {}).get("text")
 
     @cached_property
     def _positions(self) -> dict[Datum, int]:
@@ -599,7 +608,7 @@ def _reconcile(p: PreparedProtection, state: k.State, retrievals: tuple[Retrieva
                 withheld_by.setdefault(m, []).extend(causes)
     outcomes = []
     for u, (d, (terminal, qual, reasons)) in enumerate(zip(g.targets, verdicts)):
-        available = any("text" in out for out in state.rows[u].outputs.values())
+        available = "text" in state.rows[u].outputs.get(p.final_text, {})
         if qual == "met" and d not in released and not reasons:
             reasons.append(Reason("withheld" if p.workflow.release == "protected" else "annotation"))
         failed = failures.get(u)
