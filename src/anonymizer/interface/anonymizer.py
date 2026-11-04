@@ -102,11 +102,7 @@ logger = logging.getLogger("anonymizer")
 
 def _has_entities_for_evaluation(raw: object) -> bool:
     """Return whether a row should receive entity-dependent evaluation scores."""
-    try:
-        return bool(EntitiesByValueSchema.from_raw(raw).entities_by_value)
-    except Exception:
-        # Malformed entity metadata should not hide a missing score.
-        return True
+    return bool(EntitiesByValueSchema.from_raw(raw).entities_by_value)
 
 
 def _log_unavailable_scores(

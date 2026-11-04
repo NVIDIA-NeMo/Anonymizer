@@ -34,8 +34,8 @@ class EntitiesSchema(BaseModel):
     entities: list[EntitySchema] = Field(default_factory=list)
 
     @classmethod
-    def from_raw(cls, raw: object) -> EntitiesSchema:
-        return _parse_raw_wrapper(cls, raw, "entities")
+    def from_raw(cls, raw: object, *, strict: bool = False) -> EntitiesSchema:
+        return _parse_raw_wrapper(cls, raw, "entities", strict=strict)
 
 
 class ValidationCandidateSchema(BaseModel):

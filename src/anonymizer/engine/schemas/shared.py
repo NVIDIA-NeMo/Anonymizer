@@ -24,13 +24,26 @@ def _parse_raw_wrapper(
     raw: object,
     key: str,
     fallback_keys: tuple[str, ...] = (),
+    *,
+    strict: bool = False,
 ) -> T:
-    """Parse raw DataFrame cell value into a wrapper schema."""
+    """Parse raw DataFrame cell value into a wrapper schema.
+
+    Lenient by default: malformed values parse as an empty model. With ``strict=True``,
+    a malformed non-empty value raises ``ValueError`` (message never includes the value).
+    """
+
+    def _empty(cause: str) -> T:
+        if strict and not _is_empty(raw):
+            raise ValueError(cause)
+        return model_cls()
 
     def _safe_validate(candidate_list: list[object]) -> T:
         try:
             return model_cls.model_validate({key: candidate_list})
         except ValidationError:
+            if strict:
+                raise ValueError("payload failed schema validation") from None
             return model_cls()
 
     if isinstance(raw, model_cls):
@@ -39,7 +52,7 @@ def _parse_raw_wrapper(
         try:
             raw = json.loads(raw)
         except (json.JSONDecodeError, ValueError):
-            return model_cls()
+            return _empty("payload is not valid JSON")
     if isinstance(raw, BaseModel):
         raw = raw.model_dump(mode="python")
 
@@ -60,4 +73,12 @@ def _parse_raw_wrapper(
             as_list = candidate.tolist()
             if isinstance(as_list, list):
                 return _safe_validate(cast(list[object], as_list))
-    return model_cls()
+    return _empty("payload has an unexpected shape")
+
+
+def _is_empty(raw: object) -> bool:
+    if raw is None:
+        return True
+    if isinstance(raw, (str, dict, list)):
+        return not raw
+    return isinstance(raw, float) and raw != raw
