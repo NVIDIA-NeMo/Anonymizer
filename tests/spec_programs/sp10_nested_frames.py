@@ -33,8 +33,9 @@ def _nested(inner_fn=None):
         seen["verifier_var"] = VAR.get()
         return Assessment(NAME not in text, target)
 
-    verifier = Operation.verifier("verifier", inner_verify, {"text": "text", "target": "datum"})
-    inner = prepare(inner_g, Workflow("inner", (Operation("transform", inner_transform), verifier)))
+    verifier = Operation.verifier("verifier", inner_verify, {"text": "text", "target": "datum"}, checks=("name",))
+    inner_ops = (Operation("transform", inner_transform), verifier)
+    inner = prepare(inner_g, Workflow("inner", inner_ops, requires=("name",)))
 
     def outer_op(text: str) -> str:
         r = protect(inner)

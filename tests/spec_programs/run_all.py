@@ -30,6 +30,7 @@ PROGRAMS = [
     "sp19_admission_integrity",
     "sp20_produced_mentions",
     "sp21_ledger_scale",
+    "sp22_checks_and_reasons",
     "sp28_typed_context",
     "sp29_assembly_order",
 ]

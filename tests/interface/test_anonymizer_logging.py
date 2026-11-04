@@ -479,6 +479,8 @@ def test_evaluate_caught_replace_workflow_exception_logs_debug_and_public_warnin
     assert "Replace judges workflow failed; evaluation scores may be unavailable." in messages
     assert "Entity coverage score unavailable for 2/2 records" in messages
     assert evaluated.trace_dataframe[COL_ENTITY_COVERAGE].isna().all()
+    for column in run_result.dataframe.columns:
+        assert evaluated.dataframe[column].equals(run_result.dataframe[column])
 
 
 def test_preview_set_preview_num_records_capped(stub_input: AnonymizerInput) -> None:

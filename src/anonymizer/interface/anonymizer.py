@@ -119,7 +119,7 @@ REPLACE_METRICS = register_kind("replace-metrics", lambda v: isinstance(v, dict)
 REWRITE_METRICS = register_kind("rewrite-metrics", lambda v: isinstance(v, dict), copy=dict)
 COVERAGE_METRICS = register_kind("coverage-metrics", lambda v: isinstance(v, dict), copy=dict)
 
-# Non-covering verifiers by verdict column: (verifier name, reason when the verdict is not 1.0).
+# Verifiers by verdict column: (verifier name, reason when the verdict is not 1.0).
 _ASSESSMENTS = {
     COL_JUDGE_EVALUATION: ("rewrite-judge", ""),
     COL_DETECTION_VALID: ("detection-validity", "detection_invalid"),
@@ -161,8 +161,8 @@ def _evaluate_on_graph(
     """Run each judge body over the whole frame as one invocation, then the model-free verifiers per row.
 
     A row is a target whose datum is its candidate text; nothing reads it. Each body fans its returned frame out by
-    position, so a row a judge dropped or could not score carries ``None`` verdicts, never a failed target. Only
-    entity coverage is a covering verifier. The output frame is the last body's, unfiltered; a body's own error is
+    position, so a row a judge dropped or could not score carries ``None`` verdicts, never a failed target. The
+    workflow requires no checks, so the verifiers report and qualify nothing. The output frame is the last body's, unfiltered; a body's own error is
     raised as 0.4.0 raised it.
     """
     texts = frame[candidate_column] if candidate_column in frame.columns else [None] * len(frame)

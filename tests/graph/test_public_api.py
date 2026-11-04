@@ -27,6 +27,7 @@ PUBLIC_NAMES = {
     "PreparedProtection",
     "ProtectionGraph",
     "ProtectionResult",
+    "Reason",
     "Requests",
     "TargetOutcome",
     "Workflow",

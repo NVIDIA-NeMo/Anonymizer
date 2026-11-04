@@ -23,7 +23,10 @@ from tests.spec_programs._builder import Checks
 
 # A target whose text contains "bad" is not met; every other target is met.
 CHECK = Operation.verifier(
-    "check", lambda text, target: Assessment("bad" not in text, target), {"text": TEXT, "target": DATUM}
+    "check",
+    lambda text, target: Assessment("bad" not in text, target),
+    {"text": TEXT, "target": DATUM},
+    checks=("check",),
 )
 
 
@@ -39,7 +42,7 @@ def _run(
         dependencies=tuple(Dependency(ts[a], ts[b]) for a, b in deps),
         groups=tuple(OutputGroup(tuple(ts[i] for i in grp)) for grp in groups),
     )
-    return protect(prepare(g, Workflow("w", (CHECK,), **kw))), ts
+    return protect(prepare(g, Workflow("w", (CHECK,), requires=("check",), **kw))), ts
 
 
 def _view(r: ProtectionResult, ts: tuple) -> list[tuple[str, bool, str]]:
@@ -54,7 +57,7 @@ def program() -> list[dict[str, str]]:
 
     r, ts = _run(("a", "bad"), groups=((0, 1),))
     v = _view(r, ts)
-    c.check("E18.2", v == [("met", False, "withheld"), ("not_met", False, "unsatisfied")], f"group={v}")
+    c.check("E18.2", v == [("met", False, "withheld"), ("not_met", False, "failed")], f"group={v}")
 
     r, ts = _run(("a", "b"), deps=((0, 1),))
     c.check("E18.3", _view(r, ts) == [("met", True, "")] * 2, f"released={_view(r, ts)}")

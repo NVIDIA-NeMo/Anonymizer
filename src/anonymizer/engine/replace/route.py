@@ -297,10 +297,12 @@ def _protect_rows(
                 "application": REPLACEMENT_APPLICATION,
                 "target": DATUM,
             },
+            checks=("replacements_applied",),
         ),
     )
     operations = (*(s for s in (detect_op, map_step) if s is not None), *operations)
-    workflow = Workflow(name, operations, release="annotation" if annotate else "protected")
+    release = "annotation" if annotate else "protected"
+    workflow = Workflow(name, operations, release=release, requires=("replacements_applied",))
     # The facade admits the workload it was given, as 0.4.0 did: its limits are sized to the input.
     limits = Limits(
         max_operations=len(operations),

@@ -64,7 +64,7 @@ def _verifier(seen: list[str]) -> Operation:
         seen.append(text)
         return Assessment("BAD" not in text, target)
 
-    return Operation.verifier("assess", assess, {"text": TEXT, "target": DATUM}, Requests.none())
+    return Operation.verifier("assess", assess, {"text": TEXT, "target": DATUM}, Requests.none(), ("assess",))
 
 
 _METRICS = {COL_UTILITY_SCORE: 0.9, COL_LEAKAGE_MASS: 0.0, COL_ANY_HIGH_LEAKED: False}

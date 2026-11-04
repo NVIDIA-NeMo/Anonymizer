@@ -26,9 +26,11 @@ def main() -> None:
     bob = scope.datum("Bob uses bob@example.test")
     graph = g.ProtectionGraph(scope, (alice, bob))
 
-    # Compose: one transform, then one verifier over the transform's output.
-    verifier = g.Operation.verifier("check-names", check_names, {"text": "text", "target": "datum"})
-    workflow = g.Workflow("redact-names", (g.Operation("redact-alice", redact_alice), verifier))
+    # Compose: one transform, then one verifier over the transform's output answering the required check.
+    inputs = {"text": "text", "target": "datum"}
+    verifier = g.Operation.verifier("check-names", check_names, inputs, checks=("names_removed",))
+    steps = (g.Operation("redact-alice", redact_alice), verifier)
+    workflow = g.Workflow("redact-names", steps, requires=("names_removed",))
 
     # Prepare admits the workflow before any callback runs; protect runs it on this thread.
     prepared = g.prepare(graph, workflow, limits=g.Limits(max_targets=2))
@@ -43,6 +45,7 @@ def main() -> None:
         )
     assert result.outcome(alice).protected and result.protected[alice] == "[NAME] uses alice@example.test"
     assert result.outcome(bob).qualification == "not_met" and bob not in result.protected
+    assert result.outcome(bob).reasons == (g.Reason("failed", "names_removed", "check-names"),)
 
     summary = result.summary()
     print(summary.render())
