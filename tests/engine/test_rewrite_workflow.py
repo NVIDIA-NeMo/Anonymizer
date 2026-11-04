@@ -47,7 +47,6 @@ from anonymizer.engine.rewrite.rewrite_workflow import (
     RewriteWorkflow,
     _detection_valid_fraction,
     _join_new_columns,
-    _Rows,
 )
 
 _REPLACE_PATCH = "anonymizer.engine.rewrite.rewrite_workflow.LlmReplaceWorkflow"
@@ -614,7 +613,7 @@ def _deterministic_evaluation(row: dict[str, Any]) -> dict[str, Any]:
     row[COL_PRIVACY_QA_REANSWER] = {"answers": []}
     row[COL_QUALITY_QA_COMPARE] = {"per_item": []}
     row[COL_UTILITY_SCORE] = 0.9
-    row[COL_LEAKAGE_MASS] = 2.0 if needs_repair else 0.0
+    row[COL_LEAKAGE_MASS] = 3.0 if needs_repair else 0.0
     row[COL_WEIGHTED_LEAKAGE_RATE] = 0.0
     row[COL_ANY_HIGH_LEAKED] = False
     row[COL_NEEDS_REPAIR] = needs_repair
@@ -628,9 +627,10 @@ def _deterministic_repair(row: dict[str, Any]) -> dict[str, Any]:
     return row
 
 
-def test_repair_loop_through_real_adapter_keeps_each_repair(
+def test_repair_loop_through_run_returns_each_rows_last_repair(
     tmp_path: Path,
     stub_rewrite_model_selection: RewriteModelSelection,
+    stub_replace_model_selection: ReplaceModelSelection,
 ) -> None:
     adapter = NddAdapter(DataDesigner(artifact_path=tmp_path / "artifacts", auto_configure_logging=False))
     workflow = RewriteWorkflow(adapter)
@@ -654,33 +654,37 @@ def test_repair_loop_through_real_adapter_keeps_each_repair(
             ]
         )
     )
-    rows = _Rows(
-        pd.DataFrame(
-            {
-                RECORD_ID_COLUMN: ["twice", "exhausted"],
-                COL_TEXT: ["Alice works at Acme", "Bob works at Beta"],
-                COL_REWRITTEN_TEXT: ["twice-0", "exhausted-0"],
-                COL_PRIVACY_QA: [dict(_PRIVACY_QA), dict(_PRIVACY_QA)],
-                _REPAIRS_NEEDED: [2, 5],
-            }
-        )
+    # The input frame already carries the pipeline outputs, so the model-backed pre-loop steps do nothing.
+    workflow._replacement_map = Mock(return_value=None)
+    workflow._pipeline = Mock(return_value=None)
+    entities = {"entities_by_value": [{"value": "Alice", "labels": ["first_name"]}]}
+    df = pd.DataFrame(
+        {
+            RECORD_ID_COLUMN: ["twice", "exhausted"],
+            COL_TEXT: ["Alice works at Acme", "Bob works at Beta"],
+            COL_ENTITIES_BY_VALUE: [entities, entities],
+            COL_REWRITTEN_TEXT: ["twice-0", "exhausted-0"],
+            COL_PRIVACY_QA: [dict(_PRIVACY_QA), dict(_PRIVACY_QA)],
+            _REPAIRS_NEEDED: [2, 5],
+        }
     )
 
-    stages = workflow._evaluate_repair_stages(
-        rows,
+    result = workflow.run(
+        df,
         model_configs=[],
         selected_models=stub_rewrite_model_selection,
+        replace_model_selection=stub_replace_model_selection,
         privacy_goal=_PRIVACY_GOAL,
         evaluation=EvaluationCriteria(max_repair_iterations=3),
-        preview_num_records=None,
     )
-    for _, stage in stages:
-        stage()
 
-    assert rows.failed == []
-    assert _by_id(rows.frame, COL_REWRITTEN_TEXT) == {"twice": "twice-2", "exhausted": "exhausted-3"}
-    assert _by_id(rows.frame, COL_REPAIR_ITERATIONS) == {"twice": 2, "exhausted": 3}
-    assert _by_id(rows.frame, COL_PRIVACY_QA) == {"twice": _PRIVACY_QA, "exhausted": _PRIVACY_QA}
+    out = result.dataframe
+    assert result.failed_records == []
+    assert _by_id(out, COL_REWRITTEN_TEXT) == {"twice": "twice-2", "exhausted": "exhausted-3"}
+    assert _by_id(out, COL_REPAIR_ITERATIONS) == {"twice": 2, "exhausted": 3}
+    assert _by_id(out, COL_LEAKAGE_MASS) == {"twice": 0.0, "exhausted": 3.0}
+    assert {k: bool(v) for k, v in _by_id(out, COL_NEEDS_HUMAN_REVIEW).items()} == {"twice": False, "exhausted": True}
+    assert _by_id(out, COL_PRIVACY_QA) == {"twice": _PRIVACY_QA, "exhausted": _PRIVACY_QA}
 
 
 def test_replacement_unavailable_can_be_repaired(
