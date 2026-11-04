@@ -522,7 +522,8 @@ class TestLifecycleValidationRequests:
         responses = ValidationRequestDecisionSets.model_validate(output[COL_VALIDATION_DECISIONS]).responses
         assert [decision.id for decision in responses[0].decisions] == ["c1", "c2"]
 
-    def test_duplicate_assigned_alias_retries_same_single_alias_request(self) -> None:
+    @pytest.mark.parametrize(("restarts", "corrections"), [(0, 0), (2, 1)])
+    def test_duplicate_assigned_alias_retries_same_single_alias_request(self, restarts: int, corrections: int) -> None:
         text = "Alice"
         detection_result = _detection_result(
             text,
@@ -549,12 +550,18 @@ class TestLifecycleValidationRequests:
             pool=["v0"],
             max_entities_per_call=5,
             excerpt_window_chars=20,
+            max_conversation_restarts=restarts,
+            max_correction_steps=corrections,
             prompt_template=_MINIMAL_TEMPLATE,
         )
 
         output = asyncio.run(chunked_validate_row_async(row, params, {"v0": facade}))
 
         assert len(facade.calls) == 2
+        assert all(
+            call["kwargs"] == {"max_conversation_restarts": restarts, "max_correction_steps": corrections}
+            for call in facade.calls
+        )
         decision_sets = ValidationRequestDecisionSets.model_validate(output[COL_VALIDATION_DECISIONS])
         assert [item.decision for item in decision_sets.responses[0].decisions] == [ValidationChoice.keep]
         assert decision_sets.responses[0].decisions[0].decision is ValidationChoice.keep
@@ -972,20 +979,21 @@ class TestChunkedValidationGenerator:
         generator.resource_provider.run_config = RunConfig.model_validate(policy)
         row = _build_row(
             text="Alice",
-            seed_entities=[_entity_span("a", "Alice", "first_name", 0, 5)],
-            candidates=_candidates_schema(("a", "Alice", "first_name")),
+            observations=[_lifecycle_observation("a", "Alice", "first_name", 0, 5)],
         )
         request = client.acompletion
         request.side_effect = [
             ChatCompletionResponse(message=AssistantMessage(content="not JSON"))
         ] * invalid_responses + [
             ChatCompletionResponse(
-                message=AssistantMessage(content='```json\n{"decisions":[{"id":"a","decision":"keep"}]}\n```')
+                message=AssistantMessage(content='```json\n{"decisions":[{"id":"c1","decision":"keep"}]}\n```')
             )
         ]
         if succeeds:
             out = asyncio.run(generator.agenerate(row))
-            assert out[COL_VALIDATION_DECISIONS]["decisions"][0]["decision"] == "keep"
+            responses = ValidationRequestDecisionSets.model_validate(out[COL_VALIDATION_DECISIONS]).responses
+            assert responses[0].decisions[0].id == "c1"
+            assert responses[0].decisions[0].decision is ValidationChoice.keep
             assert request.call_count == invalid_responses + 1
         else:
             with pytest.raises(ModelGenerationValidationFailureError):
