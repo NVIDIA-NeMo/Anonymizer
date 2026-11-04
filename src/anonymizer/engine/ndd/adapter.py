@@ -727,8 +727,8 @@ def _failure_reasons_by_record(
     task_traces: list[_TaskTrace],
     buffer_size: int,
 ) -> dict[str, str]:
-    """Map each record to the reason of its last failed task, leaving out rows whose failure later recovered."""
-    last_error: dict[int, _TaskTrace] = {}
+    """Map each record to the reason of its earliest failed column, leaving out columns that later recovered."""
+    errors: dict[int, dict[object, _TaskTrace]] = {}
     for trace in task_traces:
         status = _trace_attr(trace, "status")
         row_group = _trace_attr(trace, "row_group")
@@ -739,17 +739,16 @@ def _failure_reasons_by_record(
         positions = (
             range(start, min(start + buffer_size, len(record_ids))) if row_index is None else [start + row_index]
         )
+        column = _trace_attr(trace, "column")
         for position in positions:
             if status == "error":
-                last_error[position] = trace
-            elif (earlier := last_error.get(position)) is not None and _trace_attr(earlier, "column") == _trace_attr(
-                trace, "column"
-            ):
-                del last_error[position]
+                errors.setdefault(position, {})[column] = trace
+            else:
+                errors.get(position, {}).pop(column, None)
     return {
-        record_ids[position]: _failure_reason(trace)
-        for position, trace in last_error.items()
-        if position < len(record_ids)
+        record_ids[position]: _failure_reason(next(iter(by_column.values())))
+        for position, by_column in errors.items()
+        if by_column and position < len(record_ids)
     }
 
 

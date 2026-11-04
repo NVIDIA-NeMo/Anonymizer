@@ -829,8 +829,11 @@ class Anonymizer:
         all_failures = [*detection_result.failed_records, *post_detection_failures]
         if all_failures:
             logger.warning("%d record(s) failed during pipeline processing.", len(all_failures))
+            # Counts only: record ids can be caller-supplied identifiers, so they stay at DEBUG.
+            for (step, reason), count in Counter((f.step, " ".join(f.reason.split())) for f in all_failures).items():
+                logger.warning("  %d × %s: %s", count, step, reason)
             for f in all_failures:
-                logger.warning("  %s (%s: %s)", f.record_id, f.step, " ".join(f.reason.split()))
+                logger.debug("  %s (%s: %s)", f.record_id, f.step, f.reason)
         text_col = context.resolved_text_column
         renamed_trace = _rename_output_columns(final_df, resolved_text_column=text_col)
         logger.info("🎉 Pipeline complete — %d records processed, %d total failures", num_records, len(all_failures))

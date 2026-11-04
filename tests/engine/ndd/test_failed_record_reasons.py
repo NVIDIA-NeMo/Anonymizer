@@ -355,7 +355,7 @@ def test_custom_column_exception_echoing_a_cause_marker_cannot_steer_the_reason(
 def test_multiline_exception_markers_do_not_leak_into_reasons_or_warnings(
     tmp_path: Path, caplog: pytest.LogCaptureFixture, payload: str
 ) -> None:
-    """PR #349 promises input-free reasons; Anonymizer also publishes them in per-record WARNINGs."""
+    """PR #349 promises input-free reasons; Anonymizer also publishes them in WARNING counts."""
     sensitive_values = _inputs(3, bad={1})
     df = sensitive_values.copy()
     df.loc[1, COL_TEXT] = "note" + payload.format(text=df.loc[1, COL_TEXT])
@@ -379,7 +379,8 @@ def test_multiline_exception_markers_do_not_leak_into_reasons_or_warnings(
         )
     warnings = [record.getMessage() for record in caplog.records if record.levelno == logging.WARNING]
     assert output.failed_records == result.failed_records
-    assert any(result.failed_records[0].record_id in message and reasons[1] in message for message in warnings)
+    assert any(reasons[1] in message for message in warnings)
+    assert not any(result.failed_records[0].record_id in message for message in warnings)
     _assert_quotes_no_input([*reasons.values(), *warnings], sensitive_values)
 
 
@@ -430,16 +431,34 @@ def test_untraced_reason_breaks_ties_by_first_recorded_cause() -> None:
     assert adapter._untraced_reason(reasons) == f"{_UNTRACED} (most common: b: x)"
 
 
-def test_untraced_summary_is_skipped_when_every_missing_row_has_a_trace(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(adapter, "_failure_reasons_by_record", lambda **_: {"1": "traced"})
-    monkeypatch.setattr(adapter, "_untraced_reason", Mock(side_effect=AssertionError("summary built")))
-    ids = pd.DataFrame({RECORD_ID_COLUMN: ["0", "1"]})
+def test_concurrent_column_failures_keep_the_permanent_cause(tmp_path: Path) -> None:
+    # Row 1: "truncated" is cut off (permanent) while "flaky" is still waiting on a 503. The 503 lands after the row
+    # is dropped, and the flaky retry on row 2 keeps the row group open, so "flaky" is re-dispatched on the dropped
+    # row 1 and reported as ok.
+    df = _inputs(3, bad=set())
+    df.loc[1, COL_TEXT] += " BOTH"
+    df.loc[2, COL_TEXT] += " FLAKY"
 
-    failed = NddAdapter._detect_missing_records(
-        Mock(), workflow_name="w", input_df=ids, output_df=ids.iloc[:1], task_traces=[]
-    )
+    def script(_model: str, prompt: str, earlier: int) -> tuple[int, str, str]:
+        if "BOTH" in prompt and "truncated:" in prompt:
+            return cut_off()
+        if ("BOTH" in prompt or ("FLAKY" in prompt and earlier < 4)) and "flaky:" in prompt:
+            time.sleep(0.6)
+            return 503, "temporarily unavailable", ""
+        return COMPLETE
 
-    assert [(f.record_id, f.reason) for f in failed] == [("1", "traced")]
+    columns: list[ColumnConfigT] = [
+        LLMStructuredColumnConfig(
+            name=name, prompt=name + ": {{ " + COL_TEXT + " }}", model_alias="m", output_format=_Disposition
+        )
+        for name in ("truncated", "flaky")
+    ]
+
+    tagged, result = _run(tmp_path, script, df, columns=columns)
+
+    reasons = _reasons_by_position(tagged, result)
+    assert list(reasons) == [1]
+    assert reasons[1].startswith(f"{_PREFIX}: truncated: ") and "max_tokens" in reasons[1]
 
 
 def test_detector_offset_mismatch_reason_is_reported(tmp_path: Path) -> None:
