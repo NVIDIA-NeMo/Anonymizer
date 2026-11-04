@@ -106,6 +106,10 @@ def prepare(
         for i, (_, op) in enumerate(ops)
         if op.is_verifier and plan.sources[i].get("text") == k.Source(final_text, "text")
     )
+    answered = {c for i in covering for c in ops[i][1].checks}
+    if unanswered := [c for c in workflow.requires if c not in answered]:
+        # Evidence on earlier text is a diagnostic; a requirement only it answers could never be met.
+        raise k.GraphRejection("required_check_not_final", ", ".join(unanswered))
     if planned.bound == "opaque":
         planned = Count(None, "unknown")
     names = tuple(n for n, _ in ops)

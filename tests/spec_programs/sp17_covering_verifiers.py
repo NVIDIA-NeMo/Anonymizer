@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""SP-17 covering verifiers and phase-scoped bodies with their own ports (E17.1-E17.9)."""
+"""SP-17 covering verifiers and phase-scoped bodies with their own ports (E17.1-E17.10)."""
 
 from __future__ import annotations
 
@@ -12,10 +12,10 @@ import pandas as pd
 from anonymizer.engine.constants import COL_DETECTION_VALID, COL_ENTITY_COVERAGE, COL_JUDGE_EVALUATION
 from anonymizer.engine.graph_core.authoring import DATUM, TEXT, Assessment, Operation, Requests, Workflow
 from anonymizer.engine.graph_core.execution import Reason, prepare
-from anonymizer.engine.graph_core.kernel import register_kind
+from anonymizer.engine.graph_core.kernel import GraphRejection, register_kind
 from anonymizer.engine.ndd.failed_record import FailedRecord
 from anonymizer.interface.anonymizer import COVERAGE_METRICS, REWRITE_METRICS, _evaluate_on_graph, _Judge
-from tests.spec_programs._builder import Checks, graph, run
+from tests.spec_programs._builder import Checks, graph, rejected, run
 
 TEXTS = ("alpha", "beta", "gamma")
 METRICS = register_kind("sp17-metrics", lambda v: isinstance(v, dict))
@@ -100,24 +100,36 @@ def program() -> list[dict[str, str]]:
         f"qualification={[o.qualification for o in o2]}, reason={o2[1].reason}, terminal={o2[1].terminal}",
     )
 
-    # E17.3 only a verifier whose text input binds to the final text producer is covering; a required check that no
-    # covering verifier answers is missing.
+    # E17.3 only a verifier whose text input binds to the final text producer is covering; requiring a check that no
+    # covering verifier answers is rejected at prepare.
     early = _verifier("early", dict.fromkeys(("alpha", "beta", "gamma"), True), "")
     tail = Operation("tail", lambda text: text + "!")
     no_text = Operation.verifier("no-text", lambda target: Assessment(True, target), {"target": DATUM})
     late = _verifier("late", dict.fromkeys(("alpha!", "beta!", "gamma!"), True), "")
     p3 = prepare(g, Workflow("w", (_upper(), early, tail, no_text)))
     p3_late = prepare(g, Workflow("w", (_upper(), early, tail, no_text, late)))
-    r3 = run(g, _upper(), early, tail, no_text)
+    code3 = rejected(lambda: run(g, _upper(), early, tail, no_text))
     c.check(
         "E17.3",
         p3.covering_verifiers == frozenset()
         and p3_late.covering_verifiers == {4}
-        and r3.outcome(a).qualification == "not_met"
-        and r3.outcome(a).reasons == (Reason("missing", "early"),)
-        and r3.state.rows[0].outputs[1]["assessment"].satisfied is True,
+        and code3 == "required_check_not_final",
         f"covering earlier-bound/no-text={sorted(p3.covering_verifiers)}, with a final-text verifier="
-        f"{sorted(p3_late.covering_verifiers)}, qualification={r3.outcome(a).qualification}",
+        f"{sorted(p3_late.covering_verifiers)}, rejection={code3}",
+    )
+
+    # E17.10 a required check no verifier declares is rejected at prepare, naming the check, before any callback.
+    calls10: list[str] = []
+    counted = Operation("counted", lambda text: calls10.append(text) or text)
+    try:
+        prepare(g, Workflow("w", (counted, late), requires=("late", "typo")))
+        rejection10 = None
+    except GraphRejection as exc:
+        rejection10 = (exc.code, exc.detail)
+    c.check(
+        "E17.10",
+        rejection10 == ("required_check_not_final", "typo") and calls10 == [],
+        f"rejection={rejection10}, callbacks={len(calls10)}",
     )
 
     # E17.4 invocation bodies with different ports feed their own verifiers; a shared port name feeds the last body.
