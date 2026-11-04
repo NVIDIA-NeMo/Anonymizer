@@ -90,6 +90,12 @@ def prepare(
     ``request_budget`` selects a hard external-request budget.
     """
     limits = limits or Limits()
+
+    def requirements(w: Workflow) -> tuple[str, ...]:
+        return (*w.requires, *(c for s in w.steps if isinstance(s, Workflow) for c in requirements(s)))
+
+    # A nested workflow's requirements are requirements of the invocation.
+    workflow = replace(workflow, requires=tuple(dict.fromkeys(requirements(workflow))))
     ops = workflow.flatten()
     admitted = frozenset(name for name, _ in ops) if capabilities is None else frozenset(capabilities)
     _admit(graph, ops, limits, admitted)

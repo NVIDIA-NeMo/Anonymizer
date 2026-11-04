@@ -118,3 +118,14 @@ def test_required_check_must_be_answered_by_a_final_text_verifier() -> None:
     assert attempt((draft, early, revise, final), ("final_clean",)) == ("admitted", "met")
     assert attempt(shared, ("clean",)) == ("admitted", "met")
     assert attempt((draft, early, revise), ())[0] == "admitted"
+
+    def nested(*steps: graph.Operation, requires: tuple[str, ...]) -> graph.Workflow:
+        return graph.Workflow("inner", steps, requires=requires)
+
+    assert attempt((draft, nested(revise, final, requires=("final_clean",))), ()) == ("admitted", "met")
+    assert attempt((nested(draft, early, requires=("draft_clean",)), revise, final), ("final_clean",)) == (
+        "required_check_not_final",
+        "draft_clean",
+    )
+    failing = verifier("check-final", "final_clean", False)
+    assert attempt((draft, nested(revise, failing, requires=("final_clean",))), ()) == ("admitted", "not_met")
