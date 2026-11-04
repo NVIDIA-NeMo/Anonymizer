@@ -16,6 +16,7 @@ runs per row.
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 import time
 from collections.abc import Callable, Sequence
@@ -58,7 +59,7 @@ from anonymizer.engine.replace.llm_replace_workflow import (
     REPLACEMENT_MAP_SOURCE_LLM,
     LlmReplaceWorkflow,
 )
-from anonymizer.engine.replace.replace_runner import ReplacementResult
+from anonymizer.engine.replace.replace_runner import ReplacementResult, _drop_malformed_entities
 from anonymizer.engine.replace.strategies import (
     _build_local_replacement_map,
     _parse_replacements,
@@ -172,7 +173,19 @@ def run_replace_pipeline(
     graph = ProtectionGraph(scope, tuple(scope.datum(str(text)) for text in dataframe[COL_TEXT]))
     state = DetectState()
     failures, detected, owners, elapsed = state.failures, state.detected, state.owners, state.elapsed
-    detect_op = detect_step(dataframe, detect, state)
+    malformed: list[FailedRecord] = []
+
+    def detect_replaceable(frame: pd.DataFrame) -> EntityDetectionResult:
+        """``detect``, less the rows whose entity payload is malformed; those fail at ``replace``."""
+        result = detect(frame)
+        kept, failed = _drop_malformed_entities(result.dataframe.reset_index(drop=True))
+        if not failed:
+            return result
+        malformed.extend(failed)
+        positions = result.source_positions and tuple(result.source_positions[i] for i in kept.index)
+        return dataclasses.replace(result, dataframe=kept.reset_index(drop=True), source_positions=positions)
+
+    detect_op = detect_step(dataframe, detect_replaceable, state)
     tracker = ProgressTracker(total=len(graph.targets), label="Replacement")
     map_step = build_map = None
     if isinstance(replace_method, Substitute):
@@ -197,6 +210,7 @@ def run_replace_pipeline(
         detect_op,
     )
     replace_elapsed = time.perf_counter() - started - sum(elapsed)  # detection records its own stage
+    failures.extend(malformed)
     if not detected:  # no targets: the step never ran, but the detector still sees the (empty) input
         detect_op.fn(())
     if state.unresolved:

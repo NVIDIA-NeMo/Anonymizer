@@ -29,6 +29,7 @@ from anonymizer.engine.constants import (
     COL_TYPE_FIDELITY_JUDGE,
     COL_TYPE_FIDELITY_VALID,
 )
+from anonymizer.engine.detection.detection_workflow import EntityDetectionResult
 from anonymizer.engine.evaluation.detection_judge import DetectionJudgeWorkflow
 from anonymizer.engine.evaluation.replace.attribute_fidelity_judge import AttributeFidelityJudgeWorkflow
 from anonymizer.engine.evaluation.replace.relational_consistency_judge import RelationalConsistencyJudgeWorkflow
@@ -127,27 +128,34 @@ def test_substitute_runner_applies_generated_map(
     }
 
 
+@pytest.mark.parametrize("replace_method", [Redact(), Substitute()], ids=["redact", "substitute"])
 @pytest.mark.parametrize(
     "malformed",
     ["{not json", {"entities": [{"value": "Bob", "start_position": "x"}]}, 42],
     ids=["json", "schema", "shape"],
 )
 def test_malformed_entities_row_fails_while_others_are_replaced(
+    replace_method: Redact | Substitute,
     malformed: object,
     stub_model_configs: list[ModelConfig],
     stub_replace_model_selection: ReplaceModelSelection,
     stub_entities: list[dict],
 ) -> None:
-    dataframe = pd.DataFrame(
-        {
-            COL_TEXT: ["Alice works at Acme", "Bob works at Acme"],
-            COL_FINAL_ENTITIES: [{"entities": stub_entities[:1]}, malformed],
-            RECORD_ID_COLUMN: ["r0", "r1"],
-        }
-    )
-    result = ReplacementWorkflow().run(
+    def _generate_map_only(dataframe: pd.DataFrame, **_: object) -> LlmReplaceResult:
+        replacements = [{"original": "Alice", "label": "first_name", "synthetic": "Maya"}]
+        return LlmReplaceResult(
+            dataframe=dataframe.assign(**{COL_REPLACEMENT_MAP: [{"replacements": replacements}] * len(dataframe)}),
+            failed_records=[],
+        )
+
+    llm_workflow = Mock()
+    llm_workflow.generate_map_only.side_effect = _generate_map_only
+    dataframe = pd.DataFrame({COL_TEXT: ["Alice works at Acme", "Bob works at Acme"], RECORD_ID_COLUMN: ["r0", "r1"]})
+    detected = dataframe.assign(**{COL_FINAL_ENTITIES: [{"entities": stub_entities[:1]}, malformed]})
+    result = ReplacementWorkflow(llm_workflow=llm_workflow).run_with_detection(
         dataframe,
-        replace_method=Redact(),
+        detect=lambda _frame: EntityDetectionResult(dataframe=detected, failed_records=[]),
+        replace_method=replace_method,
         model_configs=stub_model_configs,
         selected_models=stub_replace_model_selection,
     )
