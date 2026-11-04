@@ -48,6 +48,7 @@ from anonymizer.engine.rewrite.rewrite_workflow import (
     _detection_valid_fraction,
     _join_new_columns,
 )
+from anonymizer.interface.errors import AnonymizerWorkflowError
 
 _REPLACE_PATCH = "anonymizer.engine.rewrite.rewrite_workflow.LlmReplaceWorkflow"
 
@@ -61,6 +62,13 @@ _PRIVACY_GOAL = PrivacyGoal(
 )
 
 _EVALUATION = EvaluationCriteria()
+
+
+def _positional(dataframe: pd.DataFrame, failed_records: list) -> WorkflowRunResult:
+    """An adapter result that reports one source position per returned row, in input order."""
+    return WorkflowRunResult(
+        dataframe=dataframe, failed_records=failed_records, source_positions=tuple(range(len(dataframe)))
+    )
 
 
 def test_join_new_columns_preserves_surviving_target_order() -> None:
@@ -192,15 +200,15 @@ def _standard_side_effect(
     The final-judge no longer runs inside run() — it only runs via evaluate().
     """
     return [
-        WorkflowRunResult(dataframe=pipeline_df, failed_records=[]),
-        WorkflowRunResult(dataframe=eval_df, failed_records=[]),
+        _positional(dataframe=pipeline_df, failed_records=[]),
+        _positional(dataframe=eval_df, failed_records=[]),
     ]
 
 
 def _mock_replace(mock_cls: Mock, replace_df: pd.DataFrame) -> None:
     """Configure a patched LlmReplaceWorkflow class to return replace_df."""
     mock_cls.return_value.generate_map_only.return_value = Mock(
-        dataframe=replace_df, failed_records=[], source_positions=None
+        dataframe=replace_df, failed_records=[], source_positions=tuple(range(len(replace_df)))
     )
 
 
@@ -335,14 +343,14 @@ def test_failed_records_accumulated_across_steps(
 
     adapter = Mock()
     adapter.run_workflow.side_effect = [
-        WorkflowRunResult(dataframe=stub_pipeline_df, failed_records=[failed_pipeline]),
-        WorkflowRunResult(dataframe=stub_eval_df, failed_records=[failed_eval]),
+        _positional(dataframe=stub_pipeline_df, failed_records=[failed_pipeline]),
+        _positional(dataframe=stub_eval_df, failed_records=[failed_eval]),
     ]
 
     with patch(_REPLACE_PATCH) as mock_replace_cls:
         mock_replace_cls.return_value.generate_map_only.return_value = Mock(
             dataframe=stub_replace_df,
-            source_positions=None,
+            source_positions=tuple(range(len(stub_replace_df))),
             failed_records=[FailedRecord(record_id="d", step="replace-map-generation", reason="timeout")],
         )
         wf = RewriteWorkflow(adapter=adapter)
@@ -557,17 +565,17 @@ def test_repair_loop_runs_up_to_max_iterations(
 
     adapter.run_workflow.side_effect = [
         # pipeline (domain + disposition + QA + rewrite)
-        WorkflowRunResult(dataframe=rewrite_gen_df, failed_records=[]),
+        _positional(dataframe=rewrite_gen_df, failed_records=[]),
         # evaluate-0 -> needs repair
-        WorkflowRunResult(dataframe=eval_needs_repair, failed_records=[]),
+        _positional(dataframe=eval_needs_repair, failed_records=[]),
         # repair-0
-        WorkflowRunResult(dataframe=repaired_df, failed_records=[]),
+        _positional(dataframe=repaired_df, failed_records=[]),
         # evaluate-1 -> still needs repair
-        WorkflowRunResult(dataframe=eval_needs_repair, failed_records=[]),
+        _positional(dataframe=eval_needs_repair, failed_records=[]),
         # repair-1
-        WorkflowRunResult(dataframe=repaired_df, failed_records=[]),
+        _positional(dataframe=repaired_df, failed_records=[]),
         # evaluate-final (after loop exhaustion)
-        WorkflowRunResult(dataframe=eval_needs_repair, failed_records=[]),
+        _positional(dataframe=eval_needs_repair, failed_records=[]),
     ]
 
     with patch(_REPLACE_PATCH) as mock_replace_cls:
@@ -888,10 +896,10 @@ def test_replacement_unavailable_can_be_repaired(
     replace_df["_replacement_map"] = [{"replacements": []}]
     adapter = Mock()
     adapter.run_workflow.side_effect = [
-        WorkflowRunResult(dataframe=pipeline_df, failed_records=[]),
-        WorkflowRunResult(dataframe=initial_eval, failed_records=[]),
-        WorkflowRunResult(dataframe=repaired, failed_records=[]),
-        WorkflowRunResult(dataframe=passing_eval, failed_records=[]),
+        _positional(dataframe=pipeline_df, failed_records=[]),
+        _positional(dataframe=initial_eval, failed_records=[]),
+        _positional(dataframe=repaired, failed_records=[]),
+        _positional(dataframe=passing_eval, failed_records=[]),
     ]
 
     with patch(_REPLACE_PATCH) as mock_replace_cls:
@@ -957,10 +965,10 @@ def test_only_failing_rows_sent_to_repair(
     replace_df["_replacement_map"] = [{"replacements": []}, {"replacements": []}]
 
     adapter.run_workflow.side_effect = [
-        WorkflowRunResult(dataframe=rewrite_gen_df, failed_records=[]),
-        WorkflowRunResult(dataframe=eval_df, failed_records=[]),
-        WorkflowRunResult(dataframe=repaired_row, failed_records=[]),
-        WorkflowRunResult(dataframe=eval_after_repair, failed_records=[]),
+        _positional(dataframe=rewrite_gen_df, failed_records=[]),
+        _positional(dataframe=eval_df, failed_records=[]),
+        _positional(dataframe=repaired_row, failed_records=[]),
+        _positional(dataframe=eval_after_repair, failed_records=[]),
     ]
 
     with patch(_REPLACE_PATCH) as mock_replace_cls:
@@ -1020,10 +1028,10 @@ def test_repair_iterations_tracked_per_row(
     replace_df["_replacement_map"] = [{"replacements": []}]
 
     adapter.run_workflow.side_effect = [
-        WorkflowRunResult(dataframe=rewrite_gen_df, failed_records=[]),
-        WorkflowRunResult(dataframe=eval_needs_repair, failed_records=[]),
-        WorkflowRunResult(dataframe=repaired_df, failed_records=[]),
-        WorkflowRunResult(dataframe=eval_pass, failed_records=[]),
+        _positional(dataframe=rewrite_gen_df, failed_records=[]),
+        _positional(dataframe=eval_needs_repair, failed_records=[]),
+        _positional(dataframe=repaired_df, failed_records=[]),
+        _positional(dataframe=eval_pass, failed_records=[]),
     ]
 
     with patch(_REPLACE_PATCH) as mock_replace_cls:
@@ -1107,8 +1115,8 @@ def test_evaluate_dropping_rows_degrades_gracefully(
     eval_failed = FailedRecord(record_id="rec-1", step="rewrite-evaluate-0", reason="LLM timeout")
 
     adapter.run_workflow.side_effect = [
-        WorkflowRunResult(dataframe=rewrite_gen_df, failed_records=[]),
-        WorkflowRunResult(dataframe=eval_df, failed_records=[eval_failed]),
+        _positional(dataframe=rewrite_gen_df, failed_records=[]),
+        _positional(dataframe=eval_df, failed_records=[eval_failed]),
     ]
 
     with patch(_REPLACE_PATCH) as mock_replace_cls:
@@ -1172,13 +1180,13 @@ def test_repair_dropping_rows_degrades_gracefully(
     replace_df["_replacement_map"] = [{"replacements": []}, {"replacements": []}]
 
     adapter.run_workflow.side_effect = [
-        WorkflowRunResult(dataframe=rewrite_gen_df, failed_records=[]),
+        _positional(dataframe=rewrite_gen_df, failed_records=[]),
         # initial evaluate
-        WorkflowRunResult(dataframe=eval_df, failed_records=[]),
+        _positional(dataframe=eval_df, failed_records=[]),
         # repair (drops rec-1)
-        WorkflowRunResult(dataframe=repaired_df, failed_records=[repair_failed]),
+        _positional(dataframe=repaired_df, failed_records=[repair_failed]),
         # re-evaluate
-        WorkflowRunResult(dataframe=eval_after, failed_records=[]),
+        _positional(dataframe=eval_after, failed_records=[]),
     ]
 
     with patch(_REPLACE_PATCH) as mock_replace_cls:
@@ -1234,8 +1242,8 @@ def test_passthrough_rows_get_defaults(
     replace_df["_replacement_map"] = [{"replacements": []}]
 
     adapter.run_workflow.side_effect = [
-        WorkflowRunResult(dataframe=rewrite_gen_df, failed_records=[]),
-        WorkflowRunResult(dataframe=eval_df, failed_records=[]),
+        _positional(dataframe=rewrite_gen_df, failed_records=[]),
+        _positional(dataframe=eval_df, failed_records=[]),
     ]
 
     with patch(_REPLACE_PATCH) as mock_replace_cls:
@@ -1262,6 +1270,51 @@ def test_passthrough_rows_get_defaults(
 # ---------------------------------------------------------------------------
 # Tests: evaluate() — happy path and column presence
 # ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("positions", [(1, 0), None], ids=["explicit-positions", "unreported"])
+def test_rewrite_pipeline_rows_join_by_declared_correspondence(
+    positions: tuple[int, ...] | None,
+    stub_model_configs: list[ModelConfig],
+    stub_rewrite_model_selection: RewriteModelSelection,
+    stub_replace_model_selection: ReplaceModelSelection,
+) -> None:
+    """Pipeline rows returned in reverse join to their own records, or fail as ``uncorrelated_output``."""
+    stub_entities = {"entities_by_value": [{"value": "Ann", "labels": ["first_name"]}]}
+    dataframe = pd.DataFrame({COL_TEXT: ["Ann called", "Bob called"], COL_ENTITIES_BY_VALUE: [stub_entities] * 2})
+
+    def run_workflow(df: pd.DataFrame, *, workflow_name: str, **_: object) -> WorkflowRunResult:
+        out = df.drop(columns=[RECORD_ID_COLUMN], errors="ignore").copy()
+        if workflow_name == "rewrite-pipeline":
+            out = out.iloc[::-1].reset_index(drop=True)
+            out[COL_REWRITTEN_TEXT] = ["rewrite of " + text for text in out[COL_TEXT]]
+            out[COL_REPAIR_ITERATIONS] = 0
+            return WorkflowRunResult(dataframe=out, failed_records=[], source_positions=positions)
+        out[COL_NEEDS_REPAIR] = False
+        out[COL_UTILITY_SCORE] = 0.9
+        out[COL_LEAKAGE_MASS] = 0.0
+        out[COL_ANY_HIGH_LEAKED] = False
+        return _positional(dataframe=out, failed_records=[])
+
+    adapter = Mock()
+    adapter.run_workflow.side_effect = run_workflow
+    replace_df = dataframe.assign(_replacement_map=[{"replacements": []}] * 2)
+    with patch(_REPLACE_PATCH) as mock_replace_cls:
+        _mock_replace(mock_replace_cls, replace_df)
+        run = lambda: RewriteWorkflow(adapter=adapter).run(  # noqa: E731
+            dataframe,
+            model_configs=stub_model_configs,
+            selected_models=stub_rewrite_model_selection,
+            replace_model_selection=stub_replace_model_selection,
+            privacy_goal=_PRIVACY_GOAL,
+            evaluation=_EVALUATION,
+        )
+        if positions is None:
+            with pytest.raises(AnonymizerWorkflowError, match="uncorrelated_output"):
+                run()
+            return
+        df = run().dataframe
+    assert df[COL_REWRITTEN_TEXT].tolist() == ["rewrite of " + text for text in df[COL_TEXT]]
 
 
 def test_evaluate_produces_judge_evaluation_column(
@@ -1542,7 +1595,7 @@ def test_combined_runner_overriding_build_graph_with_release_signature_runs(
 
     def run(kind: type[CombinedRewriteWorkflow]) -> tuple[pd.DataFrame, CustomColumnConfig]:
         adapter = Mock()
-        adapter.run_workflow.side_effect = [WorkflowRunResult(stub_eval_df, [])]
+        adapter.run_workflow.side_effect = [_positional(stub_eval_df, [])]
         with patch(_REPLACE_PATCH) as replacement:
             _mock_replace(replacement, stub_df_with_entities)
             result = kind(adapter).run(
