@@ -28,6 +28,7 @@ class GraphRejection(Exception):
     def __init__(self, code: str, detail: str = "") -> None:
         super().__init__(f"{code}: {detail}" if detail else code)
         self.code = code
+        self.detail = detail
 
 
 # ---------------------------------------------------------------- artifact kinds (routes register their own)
@@ -35,21 +36,28 @@ class GraphRejection(Exception):
 
 @dataclass(frozen=True)
 class ArtifactKind:
-    """A registered value kind for typed ports: a membership check and an optional UTF-8 byte measure."""
+    """A registered value kind for typed ports: a membership check, an optional UTF-8 byte measure and an optional
+    copy applied to each accepted value, so the producer cannot change it afterwards."""
 
     name: str
     check: Callable[[Any], bool]
     measure: Callable[[Any], int | None] | None = None
+    copy: Callable[[Any], Any] | None = None
 
 
 _KINDS: dict[str, ArtifactKind] = {}
 _KINDS_LOCK = threading.Lock()
 
 
-def register_kind(name: str, check: Callable[[Any], bool], measure: Callable[[Any], int | None] | None = None) -> str:
+def register_kind(
+    name: str,
+    check: Callable[[Any], bool],
+    measure: Callable[[Any], int | None] | None = None,
+    copy: Callable[[Any], Any] | None = None,
+) -> str:
     """Register an artifact kind once; re-registering the same name returns it unchanged (idempotent by name)."""
     with _KINDS_LOCK:
-        _KINDS.setdefault(name, ArtifactKind(name, check, measure))
+        _KINDS.setdefault(name, ArtifactKind(name, check, measure, copy))
     return name
 
 
@@ -260,22 +268,41 @@ def _outputs(node: Node, raw: Any) -> Mapping[str, Any]:
         raw = {ports[0]: raw}
     if not isinstance(raw, Mapping) or set(raw) != set(ports):
         raise TypeError("output ports mismatch")
+    accepted: dict[str, Any] = {}
     for port, value in raw.items():
-        if not kind(node.outputs[port]).check(value):
+        found = kind(node.outputs[port])
+        if not found.check(value):
             raise TypeError(f"output port {port!r} is not of kind {node.outputs[port]!r}")
-    return MappingProxyType(dict(raw))
+        accepted[port] = found.copy(value) if found.copy else value
+    return MappingProxyType(accepted)
 
 
-def _accept(state: State, node: Node, index: int, unit: int, raw: Any, observed: int | None = None) -> None:
-    """Complete the node with a returned value's outputs, or fail it as ``invalid_output``."""
-    try:
-        event = Completed(unit, index, _outputs(node, raw), observed)
-    except TypeError as exc:
-        event = Failed(unit, index, "invalid_output", exc, observed)
-    apply(state, event)
+# Called with a node index and one publication's (unit, outputs); returns a failure reason for each unit it rejects.
+Review = Callable[[int, list[tuple[int, Mapping[str, Any]]]], Mapping[int, str]]
 
 
-def _run_target(plan: Plan, state: State, index: int, unit: int) -> None:
+def _publish(
+    node: Node, index: int, published: list[tuple[int, Any, int | None]], review: Review | None
+) -> dict[int, Event]:
+    """One event per unit of one publication: every value is checked and ``review`` sees the whole publication
+    before any unit completes; a returned value that is not the node's outputs fails as ``invalid_output``."""
+    events: dict[int, Event] = {}
+    accepted: list[tuple[int, Mapping[str, Any], int | None]] = []
+    for unit, raw, observed in published:
+        try:
+            accepted.append((unit, _outputs(node, raw), observed))
+        except TypeError as exc:
+            events[unit] = Failed(unit, index, "invalid_output", exc, observed)
+    rejected = review(index, [(unit, outputs) for unit, outputs, _ in accepted]) if review and accepted else {}
+    for unit, outputs, observed in accepted:
+        reason = rejected.get(unit)
+        events[unit] = (
+            Failed(unit, index, reason, None, observed) if reason else Completed(unit, index, outputs, observed)
+        )
+    return events
+
+
+def _run_target(plan: Plan, state: State, index: int, unit: int, review: Review | None) -> None:
     """One call for one unit; a raised ``Exception`` fails the unit as ``raised``."""
     apply(state, Dispatched(unit, index))
     node = plan.nodes[index]
@@ -285,10 +312,10 @@ def _run_target(plan: Plan, state: State, index: int, unit: int) -> None:
         except Exception as exc:
             apply(state, Failed(unit, index, "raised", exc, observed.requests))
             return
-    _accept(state, node, index, unit, raw, observed.requests)
+    apply(state, _publish(node, index, [(unit, raw, observed.requests)], review)[unit])
 
 
-def _run_invocation(plan: Plan, state: State, index: int, units: list[int]) -> None:
+def _run_invocation(plan: Plan, state: State, index: int, units: list[int], review: Review | None) -> None:
     """One call over every unit; a returned ``None`` is ``missing_output``, an ``Exception`` instance ``raised``."""
     for unit in units:
         apply(state, Dispatched(unit, index))
@@ -312,19 +339,26 @@ def _run_invocation(plan: Plan, state: State, index: int, units: list[int]) -> N
         for unit in units:
             apply(state, Failed(unit, index, "invalid_output", error, first.get(unit)))
         return
+    events: dict[int, Event] = {}
+    published: list[tuple[int, Any, int | None]] = []
     for unit, entry in zip(units, raw):
         count = first.get(unit)
         match entry:
             case None:
-                apply(state, Failed(unit, index, "missing_output", None, count))
+                events[unit] = Failed(unit, index, "missing_output", None, count)
             case Exception():
-                apply(state, Failed(unit, index, "raised", entry, count))
+                events[unit] = Failed(unit, index, "raised", entry, count)
             case _:
-                _accept(state, node, index, unit, entry, count)
+                published.append((unit, entry, count))
+    events.update(_publish(node, index, published, review))
+    for unit in units:
+        apply(state, events[unit])
 
 
-def execute(plan: Plan, state: State, cancelled: Callable[[], bool]) -> None:
+def execute(plan: Plan, state: State, cancelled: Callable[[], bool], review: Review | None = None) -> None:
     """Run the nodes in order, each over every ready unit in order, on the calling thread.
+
+    ``review`` checks each publication (one call's accepted outputs) before any of its units completes.
 
     Cancellation is checked before each per-target call and the invocation call. An ``Exception`` fails its unit
     (an invocation: every unit); ``BaseException`` (``KeyboardInterrupt``) propagates unchanged.
@@ -336,13 +370,13 @@ def execute(plan: Plan, state: State, cancelled: Callable[[], bool]) -> None:
                 if cancelled():
                     apply(state, CancelRequested())
                     return
-                _run_invocation(plan, state, index, ready)
+                _run_invocation(plan, state, index, ready, review)
         else:
             for unit in ready:
                 if cancelled():
                     apply(state, CancelRequested())
                     return
-                _run_target(plan, state, index, unit)
+                _run_target(plan, state, index, unit, review)
     if cancelled():
         apply(state, CancelRequested())
 

@@ -32,6 +32,7 @@ from anonymizer.engine.constants import (
     COL_REPLACEMENT_MAP,
     COL_REPLACEMENT_MAP_SOURCE,
     COL_TEXT,
+    RECORD_ID_COLUMN,
 )
 from anonymizer.engine.detection.detect_step import DetectState, accepted_mentions, detect_step, missing
 from anonymizer.engine.detection.detection_workflow import EntityDetectionResult
@@ -70,8 +71,8 @@ from anonymizer.measurement import record_stage
 
 logger = logging.getLogger("anonymizer")
 
-REPLACEMENT_MAP = register_kind("replacement-map", lambda v: isinstance(v, dict))
-REPLACEMENT_APPLICATION = register_kind("replacement-application", lambda v: isinstance(v, dict))
+REPLACEMENT_MAP = register_kind("replacement-map", lambda v: isinstance(v, dict), copy=dict)
+REPLACEMENT_APPLICATION = register_kind("replacement-application", lambda v: isinstance(v, dict), copy=dict)
 
 
 def run_local_route(
@@ -162,8 +163,10 @@ def run_replace_pipeline(
     """Run ``detect``, the Substitute map step and the per-target replace and verify as one invocation.
 
     A row the detector drops fails at ``detect`` and blocks the later steps. Output rows are the detection frame's
-    rows for the targets that reached the end. A result that is not verifiably one input row per returned row (see
-    ``resolve_positions``) fails every target at ``detect``, and ``reroute`` replaces over the detection frame as returned.
+    rows for the targets that reached the end; a row that fails at a step for any reason other than missing output
+    (which that step's workflow already reports) is returned as a failed record naming the step and the reason. A
+    result that is not verifiably one input row per returned row (see ``resolve_positions``) fails every target at
+    ``detect``, and ``reroute`` replaces over the detection frame as returned.
     """
     scope = GraphScope()
     graph = ProtectionGraph(scope, tuple(scope.datum(str(text)) for text in dataframe[COL_TEXT]))
@@ -201,7 +204,13 @@ def run_replace_pipeline(
         return ReplacementResult(rerouted.dataframe, [*failures, *rerouted.failed_records], detected[0], elapsed[0])
     targets = [d for d in graph.targets if result.outcome(d).available]
     row_of = {datum: row for row, datum in enumerate(owners)}
-    output_df = detected[0].dataframe.iloc[[row_of[d] for d in targets]].reset_index(drop=True)
+    frame = detected[0].dataframe
+    ids = list((frame[RECORD_ID_COLUMN] if RECORD_ID_COLUMN in frame.columns else frame.index).astype(str))
+    # A returned row with no output is a failed record; ``missing_output`` rows were reported by their own step.
+    for a in result.attempts:
+        if a.status == "failed" and a.reason != "missing_output" and a.target in row_of and a.target not in targets:
+            failures.append(FailedRecord(ids[row_of[a.target]], a.operation, a.reason))
+    output_df = frame.iloc[[row_of[d] for d in targets]].reset_index(drop=True)
     output_df[COL_REPLACEMENT_MAP] = [result.value(d, "replacement_map") for d in targets]
     if map_step:
         output_df[COL_REPLACEMENT_MAP_SOURCE] = REPLACEMENT_MAP_SOURCE_LLM
@@ -296,7 +305,7 @@ def _protect_rows(
     limits = Limits(
         max_operations=len(operations),
         max_targets=len(graph.targets),
-        max_mentions=len(graph.mentions),
+        max_mentions=sum(len(d.text) for d in graph.targets),
         max_context_items=0,
     )
     return graph, _run(graph, workflow, limits)

@@ -81,7 +81,7 @@ from anonymizer.measurement import record_stage, stage_timer
 
 logger = logging.getLogger("anonymizer.rewrite.workflow")
 
-REWRITE_METRICS = register_kind("rewrite-metrics", lambda v: isinstance(v, dict))
+REWRITE_METRICS = register_kind("rewrite-metrics", lambda v: isinstance(v, dict), copy=dict)
 
 _PASSTHROUGH_DEFAULTS: dict[str, object] = {
     COL_UTILITY_SCORE: 1.0,
@@ -319,7 +319,12 @@ def _protect_rewrite(
         ),
     )
     workflow = Workflow("rewrite", operations)
-    limits = Limits(max_operations=len(operations), max_targets=len(graph.targets), max_mentions=0, max_context_items=0)
+    limits = Limits(
+        max_operations=len(operations),
+        max_targets=len(graph.targets),
+        max_mentions=sum(len(d.text) for d in graph.targets),
+        max_context_items=0,
+    )
     result = protect(prepare(graph, workflow, limits=limits))
     steps = [step for _, step in workflow.flatten()]
     for entry in result.state.entries:

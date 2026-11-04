@@ -115,9 +115,9 @@ if TYPE_CHECKING:
 logger = logging.getLogger("anonymizer")
 
 
-REPLACE_METRICS = register_kind("replace-metrics", lambda v: isinstance(v, dict))
-REWRITE_METRICS = register_kind("rewrite-metrics", lambda v: isinstance(v, dict))
-COVERAGE_METRICS = register_kind("coverage-metrics", lambda v: isinstance(v, dict))
+REPLACE_METRICS = register_kind("replace-metrics", lambda v: isinstance(v, dict), copy=dict)
+REWRITE_METRICS = register_kind("rewrite-metrics", lambda v: isinstance(v, dict), copy=dict)
+COVERAGE_METRICS = register_kind("coverage-metrics", lambda v: isinstance(v, dict), copy=dict)
 
 # Non-covering verifiers by verdict column: (verifier name, reason when the verdict is not 1.0).
 _ASSESSMENTS = {

@@ -8,8 +8,11 @@ Anonymizer owns identity, accounting and qualification here; the kernel owns top
 
 from __future__ import annotations
 
+import hashlib
+import secrets
 from collections import Counter
-from dataclasses import dataclass, field
+from collections.abc import Mapping
+from dataclasses import dataclass, field, fields, replace
 from functools import cached_property
 from itertools import islice
 from typing import Any
@@ -28,10 +31,12 @@ from anonymizer.engine.graph_core.authoring import (
     Operation,
     ProtectionGraph,
     Workflow,
+    mention_problem,
     utf8_size,
 )
 
 SEEDS = {"text": TEXT, "source": TEXT, "mentions": MENTIONS, "context": CONTEXT, "target": DATUM}
+_SEAL_KEY = secrets.token_bytes(32)
 
 
 @dataclass(frozen=True)
@@ -56,6 +61,8 @@ class PreparedProtection:
     names: tuple[str, ...]
     planned_requests: Count
     covering_verifiers: frozenset[int]
+    capabilities: frozenset[str] = frozenset()
+    seal: str = field(default="", repr=False)
 
     def summary(self) -> InspectionSummary:
         return InspectionSummary(self.names, len(self.graph.targets), self.planned_requests)
@@ -79,23 +86,8 @@ def prepare(
     """
     limits = limits or Limits()
     ops = workflow.flatten()
-    if len(ops) > limits.max_operations:
-        raise k.GraphRejection("over_limit", "max_operations")
-    if len(graph.targets) > limits.max_targets:
-        raise k.GraphRejection("over_limit", "max_targets")
-    if len(graph.mentions) > limits.max_mentions:
-        raise k.GraphRejection("over_limit", "max_mentions")
-    if limits.max_text_bytes is not None and any(utf8_size(d.text) > limits.max_text_bytes for d in graph.targets):
-        raise k.GraphRejection("over_byte_ceiling", "max_text_bytes")
-    static = [_static_text(i) for cs in graph.context for i in cs.items if not isinstance(i, ContextSource)]
-    sources = [i for cs in graph.context for i in cs.items if isinstance(i, ContextSource)]
-    if len(static) + sum(s.max_items for s in sources) > limits.max_context_items:
-        raise k.GraphRejection("over_limit", "max_context_items")
-    if limits.max_context_bytes is not None and sum(map(utf8_size, static)) > limits.max_context_bytes:
-        raise k.GraphRejection("over_byte_ceiling", "max_context_bytes")
-    admitted = {name for name, _ in ops} if capabilities is None else set(capabilities)
-    if not ops or any(name not in admitted for name, _ in ops):
-        raise k.GraphRejection("capability_not_admitted")
+    admitted = frozenset(name for name, _ in ops) if capabilities is None else frozenset(capabilities)
+    _admit(graph, ops, limits, admitted)
     planned = _planned(ops, len(graph.targets))
     if request_budget is not None and (planned.value is None or planned.bound == "opaque"):
         raise k.GraphRejection("hard_budget_without_visibility")  # never downgraded to soft
@@ -111,7 +103,37 @@ def prepare(
     )
     if planned.bound == "opaque":
         planned = Count(None, "unknown")
-    return PreparedProtection(graph, workflow, limits, plan, tuple(n for n, _ in ops), planned, covering)
+    names = tuple(n for n, _ in ops)
+    prepared = PreparedProtection(graph, workflow, limits, plan, names, planned, covering, admitted)
+    return replace(prepared, seal=_seal(prepared))
+
+
+def _seal(p: PreparedProtection) -> str:
+    """A process-local digest of the identities of everything admission produced."""
+    ids = repr(tuple(id(getattr(p, f.name)) for f in fields(p) if f.name != "seal"))
+    return hashlib.blake2b(ids.encode(), key=_SEAL_KEY).hexdigest()
+
+
+def _admit(
+    graph: ProtectionGraph, ops: tuple[tuple[str, Operation], ...], limits: Limits, admitted: frozenset[str]
+) -> None:
+    """The limit and capability checks, run at preparation and again before execution."""
+    if len(ops) > limits.max_operations:
+        raise k.GraphRejection("over_limit", "max_operations")
+    if len(graph.targets) > limits.max_targets:
+        raise k.GraphRejection("over_limit", "max_targets")
+    if len(graph.mentions) > limits.max_mentions:
+        raise k.GraphRejection("over_limit", "max_mentions")
+    if limits.max_text_bytes is not None and any(utf8_size(d.text) > limits.max_text_bytes for d in graph.targets):
+        raise k.GraphRejection("over_byte_ceiling", "max_text_bytes")
+    static = [_static_text(i) for cs in graph.context for i in cs.items if not isinstance(i, ContextSource)]
+    sources = [i for cs in graph.context for i in cs.items if isinstance(i, ContextSource)]
+    if len(static) + sum(s.max_items for s in sources) > limits.max_context_items:
+        raise k.GraphRejection("over_limit", "max_context_items")
+    if limits.max_context_bytes is not None and sum(map(utf8_size, static)) > limits.max_context_bytes:
+        raise k.GraphRejection("over_byte_ceiling", "max_context_bytes")
+    if not ops or any(name not in admitted for name, _ in ops):
+        raise k.GraphRejection("capability_not_admitted")
 
 
 def _static_text(item: Datum | ContextView) -> str:
@@ -246,13 +268,20 @@ class ProtectionResult:
         )
 
     def ledger(self) -> tuple[tuple[Datum, str, str], ...]:
-        """One terminal per target and operation, dispatched or not."""
-        stopped = k.Status.CANCELLED if self.state.cancelled else k.Status.BLOCKED
-        return tuple(
-            (d, name, {k.Status.PENDING: stopped}.get(status, status).value)
-            for u, d in enumerate(self.targets)
-            for name, status in zip(self.prepared.names, self.state.rows[u].status)
-        )
+        """One terminal per target and operation, dispatched or not.
+
+        A node that never ran is ``blocked`` when its target had already failed or closed, else ``cancelled`` if
+        the invocation was cancelled; a later cancellation does not relabel an earlier failure's blocked nodes.
+        """
+        ledger = []
+        for d, row in zip(self.targets, self.state.rows):
+            failed = bool(row.closed) or k.Status.FAILED in row.status
+            stopped = k.Status.CANCELLED if self.state.cancelled and not failed else k.Status.BLOCKED
+            ledger += [
+                (d, name, (stopped if s == k.Status.PENDING else s).value)
+                for name, s in zip(self.prepared.names, row.status)
+            ]
+        return tuple(ledger)
 
     def summary(self) -> InspectionSummary:
         p = self.prepared
@@ -313,8 +342,9 @@ def protect(prepared: PreparedProtection, *, cancel: k.CancelToken | None = None
     ``cancel`` stops new dispatches and retrievals; a frame nested in another inherits its
     cancellation.
     """
-    if not isinstance(prepared, PreparedProtection):
+    if not isinstance(prepared, PreparedProtection) or prepared.seal != _seal(prepared):
         raise k.GraphRejection("not_prepared")
+    _admit(prepared.graph, prepared.workflow.flatten(), prepared.limits, prepared.capabilities)
     return k.run_in_frame(_protect, prepared, token=cancel)
 
 
@@ -346,8 +376,32 @@ def _protect(p: PreparedProtection) -> ProtectionResult:
     state = k.initial_state(p.plan, seeds)
     for u in closed:
         k.apply(state, k.Closed(u, "binding_failed"))
-    k.execute(p.plan, state, cancelled)
+    k.execute(p.plan, state, cancelled, _mention_review(p))
     return _reconcile(p, state, tuple(retrievals))
+
+
+def _mention_review(p: PreparedProtection) -> k.Review:
+    """Check produced mentions at acceptance: each publication's are valid for their target, and the publication
+    as a whole fits what remains of ``max_mentions`` after the declared and earlier accepted mentions."""
+    room = p.limits.max_mentions - len(p.graph.mentions)
+    ports = [[port for port, name in node.outputs.items() if name == MENTIONS] for node in p.plan.nodes]
+
+    def review(index: int, published: list[tuple[int, Mapping[str, Any]]]) -> dict[int, str]:
+        nonlocal room
+        failed: dict[int, str] = {}
+        count = 0
+        for unit, outputs in published:
+            for port in ports[index]:
+                if problem := mention_problem(outputs[port], p.graph.targets[unit]):
+                    failed[unit] = problem
+                    break
+                count += len(outputs[port])
+        if count > room:  # every target of an over-limit publication fails
+            return {unit: failed.get(unit, "over_limit") for unit, _ in published}
+        room -= count
+        return failed
+
+    return review
 
 
 def _bind(g: ProtectionGraph, limits: Limits, cancelled: Any) -> tuple[list[Retrieval], dict[str, tuple | None]]:
@@ -396,11 +450,12 @@ def _reconcile(p: PreparedProtection, state: k.State, retrievals: tuple[Retrieva
         status = k.unit_terminal(row, state.cancelled)
         terminal = "success" if status == k.Status.SUCCEEDED else status.value
         reason = "" if terminal == "success" else row.closed or failures.get(u, terminal)
+        # Unattributed, foreign or swapped evidence from any verifier destroys attribution.
+        assessments = [v for out in row.outputs.values() for v in out.values() if isinstance(v, Assessment)]
+        consistent = consistent and all(a.target == d for a in assessments)
         quals = []
         for i in p.covering_verifiers:
             a: Assessment | None = row.outputs.get(i, {}).get("assessment")
-            if a is not None and a.target is not None and a.target != d:
-                consistent = False  # foreign or swapped evidence destroys attribution
             quals.append(a.satisfied is True if a is not None else False)
         if terminal != "success":
             qual = "not_met"
@@ -415,14 +470,21 @@ def _reconcile(p: PreparedProtection, state: k.State, retrievals: tuple[Retrieva
     released = {d for d, (_, q, _) in zip(g.targets, verdicts) if q == "met"}
     if p.workflow.release != "protected":
         released = set()
-    changed = True
-    while changed:
-        before = len(released)
-        released -= {dep.dependent for dep in g.dependencies if dep.on not in released}
-        for grp in g.groups:
-            if not set(grp.members) <= released:
-                released -= set(grp.members)
-        changed = len(released) != before
+    # Worklist withholding: each target and each group is withheld at most once.
+    dependents: dict[Datum, list[Datum]] = {}
+    for dep in g.dependencies:
+        dependents.setdefault(dep.on, []).append(dep.dependent)
+    group_of = {m: i for i, grp in enumerate(g.groups) for m in grp.members}
+    withheld = [d for d in g.targets if d not in released]
+    spent: set[int] = set()
+    for d in withheld:  # grows while iterating
+        i = group_of.get(d, -1)
+        members = () if i < 0 or i in spent else g.groups[i].members
+        spent.add(i)
+        for nxt in (*dependents.get(d, ()), *members):
+            if nxt in released:
+                released.discard(nxt)
+                withheld.append(nxt)
     outcomes = []
     for u, (d, (terminal, qual, reason)) in enumerate(zip(g.targets, verdicts)):
         available = any("text" in out for out in state.rows[u].outputs.values())

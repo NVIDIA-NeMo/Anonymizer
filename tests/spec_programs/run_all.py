@@ -26,6 +26,10 @@ PROGRAMS = [
     "sp15_stage_sequence",
     "sp16_bounded_operation",
     "sp17_covering_verifiers",
+    "sp18_release",
+    "sp19_admission_integrity",
+    "sp20_produced_mentions",
+    "sp21_ledger_scale",
 ]
 RETIRED_SP8 = [f"E8.{i}" for i in range(1, 6)]
 
