@@ -30,6 +30,8 @@ PROGRAMS = [
     "sp19_admission_integrity",
     "sp20_produced_mentions",
     "sp21_ledger_scale",
+    "sp28_typed_context",
+    "sp29_assembly_order",
 ]
 RETIRED_SP8 = [f"E8.{i}" for i in range(1, 6)]
 

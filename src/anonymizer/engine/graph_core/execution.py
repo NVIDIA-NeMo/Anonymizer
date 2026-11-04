@@ -11,7 +11,7 @@ from __future__ import annotations
 import hashlib
 import secrets
 from collections import Counter
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, fields, replace
 from functools import cached_property
 from itertools import islice
@@ -94,7 +94,7 @@ def prepare(
     if request_budget is not None and planned.value is not None and planned.value > request_budget:
         raise k.GraphRejection("over_request_budget")
     nodes = tuple(k.Node(name, op.inputs, op.outputs, op.fn, op.scope) for name, op in ops)
-    plan = k.compile_sequence(nodes, SEEDS)
+    plan = k.compile_sequence(nodes, {**SEEDS, "context": _context_kind(graph)})
     final_text = max((i for i, n in enumerate(nodes) if "text" in n.outputs), default=None)
     covering = frozenset(
         i
@@ -132,8 +132,28 @@ def _admit(
         raise k.GraphRejection("over_limit", "max_context_items")
     if limits.max_context_bytes is not None and sum(map(utf8_size, static)) > limits.max_context_bytes:
         raise k.GraphRejection("over_byte_ceiling", "max_context_bytes")
+    for src in sources:  # an unknown kind, or one without a measure under a byte ceiling, is unsupported
+        ceiling = src.max_bytes is not None or limits.max_context_bytes is not None
+        if k.kind(src.kind).measure is None and ceiling:
+            raise k.GraphRejection("unsupported_context_kind", src.name)
+    _context_kind(graph)
     if not ops or any(name not in admitted for name, _ in ops):
         raise k.GraphRejection("capability_not_admitted")
+
+
+def _context_kind(graph: ProtectionGraph) -> str:
+    """The ``context`` seed kind: ``context`` for text items, else the one structured kind every item has.
+
+    A consumer reading ``context`` must declare this kind on its port, so a mismatch is rejected at compilation.
+    """
+    kinds = {i.kind if isinstance(i, ContextSource) else TEXT for cs in graph.context for i in cs.items} - {TEXT}
+    if not kinds:
+        return CONTEXT
+    if len(kinds) > 1 or any(
+        not isinstance(i, ContextSource) or i.kind == TEXT for cs in graph.context for i in cs.items
+    ):
+        raise k.GraphRejection("unsupported_context_kind", "mixed")
+    return kinds.pop()
 
 
 def _static_text(item: Datum | ContextView) -> str:
@@ -156,11 +176,12 @@ def _planned(ops: tuple[tuple[str, Operation], ...], targets: int) -> Count:
 
 @dataclass(frozen=True)
 class ContextItem:
-    """One bound context artifact, attributable to its source."""
+    """One bound context artifact, attributable to its source; ``text`` holds a value of kind ``kind``."""
 
     source: str
     index: int
-    text: str = field(repr=False)
+    text: Any = field(repr=False)
+    kind: str = TEXT
 
 
 @dataclass(frozen=True)
@@ -254,6 +275,36 @@ class ProtectionResult:
     def content(self) -> tuple[tuple[Datum, str | None], ...]:
         """Content projection: each target with its final candidate text (not a Protected claim)."""
         return tuple((d, self.value(d) if o.available else None) for d, o in zip(self.targets, self.outcomes))
+
+    def compose(self, parts: Sequence[Datum]) -> str:
+        """Caller-authored composition: the candidate texts of ``parts`` in the caller's order, any subset.
+
+        A listed part that did not succeed with an available candidate is rejected as ``unavailable_input``, never
+        dropped.
+        """
+        return "".join(self._available(d) for d in parts)
+
+    def reconstruct(self, parts: Sequence[Datum], source: Mapping[Datum, int]) -> str:
+        """Source reconstruction: the candidate texts of ``parts`` in the order of their ``source`` positions.
+
+        Every part must be in ``source`` (``not_in_source``), at most one part may take a position
+        (``conflicting_position``) and every position in ``source`` must be taken (``missing_source_part``).
+        """
+        taken: dict[int, Datum] = {}
+        for d in parts:
+            if d not in source:
+                raise k.GraphRejection("not_in_source")
+            if taken.setdefault(source[d], d) is not d:
+                raise k.GraphRejection("conflicting_position", str(source[d]))
+        if missing := set(source.values()) - set(taken):
+            raise k.GraphRejection("missing_source_part", str(min(missing)))
+        return self.compose([taken[i] for i in sorted(taken)])
+
+    def _available(self, target: Datum) -> str:
+        o = self.outcome(target)
+        if o.terminal != "success" or not o.available:
+            raise k.GraphRejection("unavailable_input", o.reason or o.terminal)
+        return self.value(target)
 
     @property
     def protected(self) -> dict[Datum, str]:
@@ -414,14 +465,21 @@ def _bind(g: ProtectionGraph, limits: Limits, cancelled: Any) -> tuple[list[Retr
             retrievals.append(Retrieval(src.name, "not_started", src.max_items, None, None))
             bound[src.name] = None
             continue
-        status, items = "ok", []
+        status, items, found = "ok", [], k.kind(src.kind)
         try:
             items = list(islice(iter(src.provider()), src.max_items + 1))
         except Exception:
             status = "failed"
-        if status == "ok" and not all(isinstance(t, str) for t in items):
+        sizes = None
+        try:  # a check or measure that rejects or raises on an item makes it invalid
+            if status == "ok" and not all(map(found.check, items)):
+                status = "invalid_item"
+            sizes = [found.measure(t) for t in items] if status == "ok" and found.measure else None
+        except Exception:
             status = "invalid_item"
-        size = sum(map(utf8_size, items)) if status != "failed" and status != "invalid_item" else None
+        if sizes is not None and None in sizes:
+            status, sizes = "invalid_item", None
+        size = sum(n or 0 for n in sizes) if sizes is not None else None
         if status == "ok" and len(items) > src.max_items:
             status = "overflow"  # one over closes as overflow, never truncated
         ceiling = src.max_bytes
@@ -432,7 +490,9 @@ def _bind(g: ProtectionGraph, limits: Limits, cancelled: Any) -> tuple[list[Retr
             status = "over_byte_ceiling"
         observed = len(items) if status != "failed" else None
         retrievals.append(Retrieval(src.name, status, src.max_items, observed, size))
-        bound[src.name] = tuple(ContextItem(src.name, i, t) for i, t in enumerate(items)) if status == "ok" else None
+        bound[src.name] = (
+            tuple(ContextItem(src.name, i, t, src.kind) for i, t in enumerate(items)) if status == "ok" else None
+        )
     return retrievals, bound
 
 
