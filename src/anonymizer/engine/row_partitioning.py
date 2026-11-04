@@ -34,7 +34,8 @@ def split_rows(
     """
     working = df.copy()
     working[ROW_ORDER_COL] = range(len(working))
-    mask = working[column].apply(predicate)
+    # An empty frame yields an object-typed mask, which pandas would read as a column selector.
+    mask = working[column].apply(predicate).astype(bool)
     return working[mask].copy(), working[~mask].copy()
 
 
