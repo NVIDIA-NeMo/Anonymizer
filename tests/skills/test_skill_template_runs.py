@@ -55,6 +55,8 @@ PLACEHOLDER_VALUES = {
     "preserve": "The social relationships and the sequence of events in the text",
     "instructions": "keep names plausible ",
 }
+REPLACE_JUDGE_LINE = "{}: 3/3 passed (0 unscored)"
+REPLACE_JUDGES = ("type_fidelity_valid", "relational_consistency_valid", "attribute_fidelity_valid")
 READER_ITEM = re.compile(r"([\w.\-]+\.\w+)\s*\((?:[^)]*?)(pd\.read_\w+)\)")
 
 
@@ -180,9 +182,24 @@ def _assert_reported_saves_load(output: str, workdir: Path, expected_rows: int) 
     return frames
 
 
+def _assert_judge_summary(output: str, strategy: str, evaluate: bool) -> None:
+    """With ``--evaluate`` the template prints its mode's judge summary for all three rows; without it, none."""
+    expected = ["entity_coverage: mean=1.00  scored=3/3"]
+    if strategy == "replace":
+        expected += [REPLACE_JUDGE_LINE.format(judge) for judge in REPLACE_JUDGES]
+    else:
+        expected.append("judge_evaluation: 3/3 scored")
+    lines = output.splitlines()
+    for line in expected:
+        assert (line in lines) == evaluate, f"{line!r} {'missing from' if evaluate else 'unexpected in'}:\n{output}"
+
+
+@pytest.mark.parametrize("evaluate", [False, True], ids=["plain", "evaluate"])
 @pytest.mark.parametrize("strategy", ["rewrite", "replace"])
-def test_template_preview_saves_files_that_load(strategy: str, run_template: Callable[..., str], workdir: Path) -> None:
-    output = run_template(strategy, "--num-records", "3")
+def test_template_preview_saves_files_that_load(
+    strategy: str, evaluate: bool, run_template: Callable[..., str], workdir: Path
+) -> None:
+    output = run_template(strategy, "--num-records", "3", *(["--evaluate"] if evaluate else []))
 
     assert "Previewed 3 rows." in output
     frames = _assert_reported_saves_load(output, workdir, expected_rows=3)
@@ -191,13 +208,15 @@ def test_template_preview_saves_files_that_load(strategy: str, run_template: Cal
     assert set(frames["preview.parquet"].columns) <= set(frames["preview_trace.pkl"].columns)
     if strategy == "rewrite":
         assert "leakage_mass:" in output and "utility_score:" in output
+    _assert_judge_summary(output, strategy, evaluate)
 
 
+@pytest.mark.parametrize("evaluate", [False, True], ids=["plain", "evaluate"])
 @pytest.mark.parametrize("strategy", ["rewrite", "replace"])
 def test_template_full_run_writes_output_parquet(
-    strategy: str, run_template: Callable[..., str], workdir: Path
+    strategy: str, evaluate: bool, run_template: Callable[..., str], workdir: Path
 ) -> None:
-    output = run_template(strategy, "--full")
+    output = run_template(strategy, "--full", *(["--evaluate"] if evaluate else []))
 
     assert "Wrote 3 rows to output.parquet" in output
     path = workdir / "output.parquet"
@@ -205,6 +224,7 @@ def test_template_full_run_writes_output_parquet(
     saved = pd.read_parquet(path)
     assert len(saved) == 3
     assert ("text_replaced" if strategy == "replace" else "text_rewritten") in saved.columns
+    _assert_judge_summary(output, strategy, evaluate)
 
 
 def test_substitute_run_with_entities_in_every_row_round_trips_through_parquet(
