@@ -121,14 +121,14 @@ AnonymizerConfig(replace=Hash(key=os.environ["ANONYMIZER_HASH_KEY"]))
 
 !!! warning "Unkeyed hashes of low-entropy values are reversible"
 
-    Without a `key`, anyone with the output can recover dates of birth, phone numbers, ZIP codes and similar values by hashing candidates ([#348](https://github.com/NVIDIA-NeMo/Anonymizer/issues/348)). Set `key` when the hashed values must not be recoverable. With a key, the digest is HMAC-SHA256 of the text with case and whitespace folded, so "Acme Corp" and "ACME  corp" get the same token; the same key gives the same tokens across runs. Keep the key secret; without one, output is unchanged from earlier releases.
+    Without a `key`, anyone with the output can recover dates of birth, phone numbers, ZIP codes and similar values by hashing candidates ([#348](https://github.com/NVIDIA-NeMo/Anonymizer/issues/348)). Set `key` when the hashed values must not be recoverable. With a key, the digest is HMAC-SHA256 of the text with case and whitespace folded, so "Acme Corp" and "ACME  corp" get the same token; the same key gives the same tokens across runs. Keep the key secret; without one, output is unchanged from earlier releases. An empty or whitespace-only key is rejected. Serialized configs mask the key, so a keyed config loaded back from JSON fails validation until you pass the key again.
 
 | Field | Default | Description |
 |-------|---------|-------------|
 | `algorithm` | `sha256` | Hash algorithm (`sha256`, `sha1`, or `md5`). |
 | `digest_length` | `12` | Number of hex characters to keep (6--64). |
 | `format_template` | `<HASH_{label}_{digest}>` | Template with `{digest}` required; `{label}` optional. |
-| `key` | `None` | Secret key. When set, the digest is HMAC-SHA256 of the case- and whitespace-folded text and `algorithm` is ignored. |
+| `key` | `None` | Secret key, not empty. When set, the digest is HMAC-SHA256 of the case- and whitespace-folded text, and `algorithm` must stay `sha256`. |
 
 ---
 

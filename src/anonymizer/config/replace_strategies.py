@@ -9,7 +9,7 @@ import re
 from string import Formatter
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, BeforeValidator, Field, SecretStr, field_validator
+from pydantic import BaseModel, BeforeValidator, Field, SecretStr, field_validator, model_validator
 
 
 def _normalize_replace_kind(value: Any) -> Any:
@@ -131,8 +131,28 @@ class Hash(ReplaceMethodBase):
     key: SecretStr | None = Field(
         default=None,
         description="Secret key. When set, the digest is HMAC-SHA256 of the case- and whitespace-folded text "
-        "and `algorithm` is ignored; without a key, unkeyed digests of low-entropy values are reversible.",
+        "and `algorithm` must stay `sha256`; without a key, unkeyed digests of low-entropy values are reversible.",
     )
+
+    @field_validator("key")
+    @classmethod
+    def validate_key(cls, value: SecretStr | None) -> SecretStr | None:
+        if value is None:
+            return value
+        secret = value.get_secret_value()
+        if not secret.strip():
+            raise ValueError("key must not be empty or whitespace")
+        if set(secret) == {"*"}:
+            raise ValueError(
+                "key is a masked placeholder; a keyed Hash does not survive serialization, so pass the real key"
+            )
+        return value
+
+    @model_validator(mode="after")
+    def validate_keyed_algorithm(self) -> Hash:
+        if self.key is not None and self.algorithm != "sha256":
+            raise ValueError("a keyed Hash always uses HMAC-SHA256; leave algorithm at its default 'sha256'")
+        return self
 
     @field_validator("format_template")
     @classmethod

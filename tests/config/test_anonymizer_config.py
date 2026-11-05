@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+from typing import Literal
 
 import pytest
 from pydantic import ValidationError
@@ -44,6 +45,25 @@ def test_keyed_hash_folds_case_and_whitespace_and_depends_on_key() -> None:
     assert token != Hash(key="other").replace(text="Acme  Corp", label="company_name")
     assert token != Hash().replace(text="acme corp", label="company_name")
     assert "s3cr3t" not in repr(keyed)
+
+
+@pytest.mark.parametrize("key", ["", "   ", "\t\n"], ids=["empty", "spaces", "whitespace"])
+def test_hash_rejects_blank_key(key: str) -> None:
+    with pytest.raises(ValidationError, match="key must not be empty"):
+        Hash(key=key)
+
+
+def test_keyed_hash_config_does_not_reload_from_json_with_masked_key() -> None:
+    dumped = AnonymizerConfig(replace=Hash(key="s3cr3t")).model_dump_json()
+    assert "s3cr3t" not in dumped
+    with pytest.raises(ValidationError, match="masked placeholder"):
+        AnonymizerConfig.model_validate_json(dumped)
+
+
+@pytest.mark.parametrize("algorithm", ["sha1", "md5"])
+def test_keyed_hash_rejects_non_default_algorithm(algorithm: Literal["sha1", "md5"]) -> None:
+    with pytest.raises(ValidationError, match="HMAC-SHA256"):
+        Hash(key="s3cr3t", algorithm=algorithm)
 
 
 def test_rewrite_defaults_privacy_goal() -> None:
