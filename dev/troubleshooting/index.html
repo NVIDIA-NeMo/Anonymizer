@@ -3206,7 +3206,7 @@
 <h2 id="diagnostics-what-to-read-first">Diagnostics: what to read first<a class="headerlink" href="#diagnostics-what-to-read-first" title="Permanent link">&para;</a></h2>
 <p>Most fixes start with one of these.</p>
 <h3 id="did-the-run-actually-complete-cleanly">Did the run actually complete cleanly?<a class="headerlink" href="#did-the-run-actually-complete-cleanly" title="Permanent link">&para;</a></h3>
-<p>Before debugging quality, confirm the run wasn't degraded by infra problems. Anonymizer never silently drops rows — every dropped record appears on <code>result.failed_records</code> with full provenance:</p>
+<p>Before debugging quality, confirm the run wasn't degraded by infra problems. Anonymizer logs a WARNING with the number of failed records, and every dropped record appears on <code>result.failed_records</code> with its step and reason:</p>
 <pre class="highlight"><code class="language-python">for fr in result.failed_records:
     print(fr.record_id, fr.step, fr.reason)</code></pre>
 <p>Common patterns and what they mean:</p>
@@ -3220,29 +3220,44 @@
 </thead>
 <tbody>
 <tr>
-<td><code>Record missing from workflow output</code> at <code>step="detection"</code></td>
-<td>Validator pool exhausted on at least one chunk for this row — usually rate limiting (429s) burning through the AIMD throttler's retry budget</td>
-<td><strong>Model/provider config issue, not strategy.</strong> See <a href="#rate-limits-dropped-rows">Rate limits / dropped rows</a> below</td>
+<td><code>max_tokens</code></td>
+<td>The model used its whole output budget, often on hidden reasoning, before finishing the answer</td>
+<td>Raise <code>inference_parameters.max_tokens</code> for that alias in <code>models.yaml</code>. See <a href="../concepts/models/">Models</a></td>
 </tr>
 <tr>
-<td><code>Record missing from workflow output</code> at <code>step="replace-map-generation"</code> or <code>step="rewrite-*"</code></td>
-<td>Same as above but for the replace/rewrite stage</td>
-<td>Same fix</td>
+<td><code>timed out</code></td>
+<td>Requests took longer than the alias's timeout, which is 60 seconds when <code>inference_parameters.timeout</code> is not set; large <code>max_tokens</code> budgets on reasoning models often need longer</td>
+<td>Set <code>inference_parameters.timeout</code> for that alias in <code>models.yaml</code> (the bundled configs use 300). If the reason says local request admission timed out, the request was never sent: lower <code>max_parallel_requests</code> instead. See <a href="../concepts/models/">Models</a></td>
+</tr>
+<tr>
+<td><code>no error was recorded for this row</code></td>
+<td>The row never completed and left no error of its own, while other rows failed; <code>most common:</code> names their most frequent cause</td>
+<td>Investigate the named most-common cause first as a run-level hint; it does not establish why this particular row is missing. Only if rows still go missing, check the shutdown error rate in <code>data_designer_run_config</code></td>
+</tr>
+<tr>
+<td><code>does not match the source span</code></td>
+<td>The GLiNER server returned entity offsets that are inconsistent with the text</td>
+<td>Restart the self-hosted GLiNER server from a current Anonymizer release (see the <a href="../concepts/self-hosting-gliner/">self-hosting guide</a>); servers started from older code can return offsets that do not match the text</td>
+</tr>
+<tr>
+<td><code>Record missing from workflow output</code> with no other cause, at <code>step="entity-detection"</code>, <code>step="replace-map-generation"</code> or <code>step="rewrite-*"</code></td>
+<td>Often rate limiting (429s) exhausting the retry budget of the model pool</td>
+<td>See <a href="#rate-limits-dropped-rows">Rate limits / dropped rows</a> below</td>
 </tr>
 <tr>
 <td><code>Output is missing required tracking column</code></td>
-<td>Internal — file an issue</td>
-<td>—</td>
+<td>Internal; file an issue</td>
+<td>None</td>
 </tr>
 </tbody>
 </table>
-<p>If <code>failed_records</code> is non-empty, <strong>fix that first.</strong> Strategy/prompt knobs (<code>risk_tolerance</code>, <code>protect</code>, <code>gliner_threshold</code>) won't help — those rows didn't fail because of bad output, they failed because the model never returned an output at all.</p>
+<p>If <code>failed_records</code> is non-empty, <strong>fix that first.</strong> Strategy/prompt knobs (<code>risk_tolerance</code>, <code>protect</code>, <code>gliner_threshold</code>) won't help: those rows didn't fail because of bad output, they failed because the workflow never produced a usable output for them.</p>
 <h3 id="rate-limits-dropped-rows">Rate limits / dropped rows<a class="headerlink" href="#rate-limits-dropped-rows" title="Permanent link">&para;</a></h3>
 <p>If you have rows failing with <code>Record missing from workflow output</code>, the chain is:
 GLiNER candidate set → chunked into validator calls → each call dispatched to a model in the validator pool → <code>ThrottledModelClient</code> does AIMD on 429s → if every alias in the pool fails on at least one chunk, the row drops.</p>
 <p>Fix in this order:</p>
 <ol>
-<li><strong>If failures are at <code>step="detection"</code>, add aliases to the validator pool</strong> in <code>models.yaml</code>. The validator is the only role that supports a pool — set <code>entity_validator</code> to a list of aliases and chunked validation will round-robin across them, giving you failover when one provider rate-limits. Every other role (detector, augmenter, rewriter, evaluator, etc.) is a single alias.</li>
+<li><strong>If failures are at <code>step="entity-detection"</code>, add aliases to the validator pool</strong> in <code>models.yaml</code>. The validator is the only role that supports a pool — set <code>entity_validator</code> to a list of aliases and chunked validation will round-robin across them, giving you failover when one provider rate-limits. Every other role (detector, augmenter, rewriter, evaluator, etc.) is a single alias.</li>
 <li><strong>Lower <code>validation_max_entities_per_call</code></strong> (default <code>100</code>) on <code>Detect</code> if individual validator requests exceed a context or per-request token limit. This creates more calls, each of which repeats the full resolved label/example section, so it can increase total tokens and is not necessarily helpful for a tokens-per-minute limit.</li>
 <li><strong>Switch the heavy alias to a different <code>provider</code></strong> in <code>providers.yaml</code>. If you're hammering one tenant's quota, moving to a second deployment of the same model helps more than tuning batch sizes. This is the only lever for non-validator stages (rewrite, evaluate, etc.) since they don't have pools.</li>
 <li><strong>Re-run on just the failed records</strong> — filter the input dataframe to those <code>record_id</code>s and call <code>anonymizer.run</code> again. Failures are usually transient.</li>
