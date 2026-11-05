@@ -82,7 +82,7 @@ Key columns:
 | `utility_score` | 0–1 quality preservation score |
 | `weighted_leakage_rate` | Leakage normalized by maximum possible leakage |
 | `any_high_leaked` | Whether any high-sensitivity entity leaked through |
-| `needs_human_review` | Crossed the configured threshold |
+| `needs_human_review` | Crossed the configured threshold, or (after `evaluate()`) the coverage judge reported missed entities |
 | `judge_evaluation` | Final-judge qualitative comments |
 
 ### Re-run with `Annotate` to see detection output
