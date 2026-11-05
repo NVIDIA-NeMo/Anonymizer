@@ -61,3 +61,22 @@ def _parse_raw_wrapper(
             if isinstance(as_list, list):
                 return _safe_validate(cast(list[object], as_list))
     return model_cls()
+
+
+def to_python(raw: object) -> object:
+    """Recursively normalize nested model/array/scalar payloads to plain Python."""
+    if isinstance(raw, BaseModel):
+        return to_python(raw.model_dump(mode="python"))
+    if isinstance(raw, dict):
+        return {key: to_python(value) for key, value in raw.items()}
+    if isinstance(raw, (list, tuple)):
+        return [to_python(value) for value in raw]
+    if _is_list_convertible(raw):
+        return to_python(raw.tolist())
+    item = getattr(raw, "item", None)
+    if callable(item):
+        try:
+            return item()
+        except (TypeError, ValueError):
+            pass
+    return raw
