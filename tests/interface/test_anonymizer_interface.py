@@ -28,8 +28,11 @@ from anonymizer.engine.constants import (
     COL_DETECTED_ENTITIES,
     COL_DETECTION_VALID,
     COL_ENTITIES_BY_VALUE,
+    COL_ENTITY_COVERAGE,
     COL_FINAL_ENTITIES,
     COL_JUDGE_EVALUATION,
+    COL_MISSED_ENTITIES,
+    COL_NEEDS_HUMAN_REVIEW,
     COL_REPLACED_TEXT,
     COL_REPLACEMENT_MAP,
     COL_REWRITTEN_TEXT,
@@ -1409,3 +1412,45 @@ def test_evaluate_passes_detection_context_to_coverage_judge(stub_input: Anonymi
     assert mock_coverage_wf.call_args.kwargs["excluded_entity_labels"] == ["email"]
     assert evaluated.data_summary == "Customer support transcripts."
     assert evaluated.excluded_entity_labels == ["email"]
+
+
+_MISSED = [{"value": "Smith", "label": "last_name", "reasoning": "kept verbatim"}]
+
+
+@pytest.mark.parametrize(
+    ("initial_flag", "coverage", "missed", "expected_flag"),
+    [
+        (False, 0.5, _MISSED, True),
+        (True, 0.5, _MISSED, True),
+        (False, 1.0, [], False),
+        (False, None, None, False),
+    ],
+    ids=["missed-flags", "already-flagged", "no-missed-unchanged", "coverage-unavailable-unchanged"],
+)
+def test_evaluate_rewrite_flags_rows_with_missed_entities(
+    stub_input: AnonymizerInput,
+    initial_flag: bool,
+    coverage: float | None,
+    missed: list[dict[str, str]] | None,
+    expected_flag: bool,
+) -> None:
+    """evaluate() sets needs_human_review when the coverage judge reports missed entities."""
+    anonymizer, _, _, rewrite_runner = _make_anonymizer()
+    run_result = anonymizer.run(config=AnonymizerConfig(rewrite=Rewrite()), data=stub_input)
+    eval_df = pd.DataFrame(
+        {
+            COL_TEXT: ["Alice Smith works at Acme"],
+            COL_REWRITTEN_TEXT: ["Beth Smith works at Globex"],
+            COL_NEEDS_HUMAN_REVIEW: pd.array([initial_flag], dtype="boolean"),
+        }
+    )
+    rewrite_runner.evaluate.return_value = RewriteResult(dataframe=eval_df, failed_records=[])
+    coverage_df = eval_df.assign(**{COL_ENTITY_COVERAGE: [coverage], COL_MISSED_ENTITIES: [missed]})
+
+    with patch("anonymizer.interface.anonymizer.EntityCoverageWorkflow") as mock_coverage_wf:
+        mock_coverage_wf.return_value.run_non_critical.return_value = (coverage_df, [])
+        evaluated = anonymizer.evaluate(run_result)
+
+    assert evaluated.dataframe[COL_NEEDS_HUMAN_REVIEW].tolist() == [expected_flag]
+    assert str(evaluated.dataframe[COL_NEEDS_HUMAN_REVIEW].dtype) == "boolean"
+    assert run_result.dataframe[COL_NEEDS_HUMAN_REVIEW].tolist() == [False] * len(run_result.dataframe)

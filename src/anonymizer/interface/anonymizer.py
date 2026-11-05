@@ -213,6 +213,16 @@ def _has_entities_for_evaluation(raw: object) -> bool:
     return bool(EntitiesByValueSchema.from_raw(raw).entities_by_value)
 
 
+def _flag_missed_entities(df: pd.DataFrame) -> pd.DataFrame:
+    """Set needs_human_review on rows whose coverage judge reported missed entities."""
+    if COL_NEEDS_HUMAN_REVIEW not in df.columns or COL_MISSED_ENTITIES not in df.columns:
+        return df
+    # .str.len() sizes list and array cells and gives NaN for None or NaN; astype(object) keeps .str
+    # usable when every cell is NaN.
+    missed = df[COL_MISSED_ENTITIES].astype(object).str.len().gt(0)
+    return df.assign(**{COL_NEEDS_HUMAN_REVIEW: df[COL_NEEDS_HUMAN_REVIEW].mask(missed, True)})
+
+
 def _log_unavailable_scores(
     dataframe: pd.DataFrame,
     checks: list[tuple[str, str, pd.Series | None]],
@@ -734,6 +744,7 @@ class Anonymizer:
                     ),
                 ],
             )
+            judged_df = _flag_missed_entities(judged_df)
         else:
             if replace_method is None:
                 raise ValueError("Replace evaluation requires an associated replace method.")

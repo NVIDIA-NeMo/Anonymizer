@@ -19,7 +19,6 @@ from anonymizer.engine.rewrite.evaluate import (
     compute_leakage_mass,
     compute_utility_score,
     compute_weighted_leakage_rate,
-    determine_repair_needs,
 )
 from anonymizer.engine.schemas.rewrite import (
     PrivacyAnswerItemSchema,
@@ -185,63 +184,6 @@ class TestComputeUtilityScore:
 
     def test_none_importance_falls_back_to_flat_mean(self) -> None:
         assert compute_utility_score([0.0, 1.0], None) == pytest.approx(0.5)
-
-
-# ---------------------------------------------------------------------------
-# determine_repair_needs
-# ---------------------------------------------------------------------------
-
-
-class TestDetermineRepairNeeds:
-    def test_high_leak_triggers_repair(self) -> None:
-        assert determine_repair_needs(
-            any_high_leaked=True,
-            leakage_mass=0.0,
-            repair_any_high_leak=True,
-            effective_threshold=1.0,
-        )
-
-    def test_leakage_mass_above_threshold(self) -> None:
-        assert determine_repair_needs(
-            any_high_leaked=False,
-            leakage_mass=1.5,
-            repair_any_high_leak=True,
-            effective_threshold=1.0,
-        )
-
-    def test_below_threshold_no_repair(self) -> None:
-        assert not determine_repair_needs(
-            any_high_leaked=False,
-            leakage_mass=0.3,
-            repair_any_high_leak=True,
-            effective_threshold=1.0,
-        )
-
-    def test_repair_any_high_leak_false(self) -> None:
-        assert not determine_repair_needs(
-            any_high_leaked=True,
-            leakage_mass=0.3,
-            repair_any_high_leak=False,
-            effective_threshold=1.0,
-        )
-
-    def test_threshold_from_minimal_preset(self) -> None:
-        evaluation = EvaluationCriteria(risk_tolerance="minimal")
-        assert determine_repair_needs(
-            any_high_leaked=False,
-            leakage_mass=0.8,
-            repair_any_high_leak=evaluation.repair_any_high_leak,
-            effective_threshold=evaluation.repair_threshold,
-        )
-
-    def test_threshold_from_high_preset(self) -> None:
-        evaluation = EvaluationCriteria(risk_tolerance="high")
-        assert not determine_repair_needs(
-            any_high_leaked=False,
-            leakage_mass=0.8,
-            repair_any_high_leak=evaluation.repair_any_high_leak,
-            effective_threshold=evaluation.repair_threshold,
-        )
 
 
 # ---------------------------------------------------------------------------

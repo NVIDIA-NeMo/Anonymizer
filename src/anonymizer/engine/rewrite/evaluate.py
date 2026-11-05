@@ -31,6 +31,7 @@ from anonymizer.engine.constants import (
 from anonymizer.engine.ndd.adapter import NddAdapter
 from anonymizer.engine.ndd.model_loader import resolve_model_alias
 from anonymizer.engine.prompt_utils import substitute_placeholders
+from anonymizer.engine.rewrite.findings import needs_repair
 from anonymizer.engine.rewrite.parsers import (
     parse_privacy_answers,
     parse_privacy_qa,
@@ -57,11 +58,6 @@ logger = logging.getLogger("anonymizer.rewrite.evaluate")
 
 class MetricsParams(BaseModel):
     sensitivity_weights: dict[str, float]
-
-
-class RepairNeedsParams(BaseModel):
-    repair_any_high_leak: bool
-    effective_threshold: float
 
 
 # ---------------------------------------------------------------------------
@@ -421,19 +417,6 @@ def compute_weighted_leakage_rate(
     return leakage_mass / max_possible_mass
 
 
-def determine_repair_needs(
-    *,
-    any_high_leaked: bool,
-    leakage_mass: float,
-    repair_any_high_leak: bool,
-    effective_threshold: float,
-) -> bool:
-    """Decide whether a single row needs repair."""
-    if repair_any_high_leak and any_high_leaked:
-        return True
-    return leakage_mass > effective_threshold
-
-
 # ---------------------------------------------------------------------------
 # Custom column generator factories
 # ---------------------------------------------------------------------------
@@ -525,14 +508,9 @@ def _compute_metrics_columns(row: dict[str, Any], generator_params: MetricsParam
 
 
 @custom_column_generator(required_columns=[COL_ANY_HIGH_LEAKED, COL_LEAKAGE_MASS])
-def _determine_repair_needs_column(row: dict[str, Any], generator_params: RepairNeedsParams) -> dict[str, Any]:
-    """Set _needs_repair flag based on evaluation criteria."""
-    row[COL_NEEDS_REPAIR] = determine_repair_needs(
-        any_high_leaked=bool(row.get(COL_ANY_HIGH_LEAKED, False)),
-        leakage_mass=float(row.get(COL_LEAKAGE_MASS, 0.0)),
-        repair_any_high_leak=generator_params.repair_any_high_leak,
-        effective_threshold=generator_params.effective_threshold,
-    )
+def _determine_repair_needs_column(row: dict[str, Any], generator_params: EvaluationCriteria) -> dict[str, Any]:
+    """Set _needs_repair from the preset's repair findings."""
+    row[COL_NEEDS_REPAIR] = needs_repair(row, generator_params)
     return row
 
 
@@ -592,9 +570,6 @@ class EvaluateWorkflow:
             CustomColumnConfig(
                 name=COL_NEEDS_REPAIR,
                 generator_function=_determine_repair_needs_column,
-                generator_params=RepairNeedsParams(
-                    repair_any_high_leak=evaluation.repair_any_high_leak,
-                    effective_threshold=evaluation.repair_threshold,
-                ),
+                generator_params=evaluation,
             ),
         ]
