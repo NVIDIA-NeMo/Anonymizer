@@ -147,7 +147,8 @@ def _harmonize_replacement_maps(maps: list[dict]) -> list[dict]:
     """Give each (label, folded value) the first record's substitute, re-cased to each original.
 
     Labels in ``_PER_RECORD_LABELS`` are harmonized only within a record. An entry keeps its own
-    substitute when the shared one would equal another value or substitute in its record.
+    substitute when the shared one would equal a value in its record, another entry's own substitute,
+    or a substitute already assigned in that record.
     """
     run_wide: dict[tuple[str, str], tuple[str, str]] = {}
     harmonized: list[dict] = []
@@ -157,11 +158,14 @@ def _harmonize_replacement_maps(maps: list[dict]) -> list[dict]:
         record: dict[tuple[str, str], tuple[str, str]] = {}
         out = []
         for key, entry in keyed:
-            shared = run_wide.get(key) if key[0] not in _PER_RECORD_LABELS else None
-            source = record.setdefault(key, shared or (entry["original"], entry["synthetic"]))
-            synthetic = _recase(source[1], like=entry["original"], source=source[0])
-            taken = {_fold(e["original"]) for _, e in keyed} | {_fold(e["synthetic"]) for k, e in keyed if k != key}
-            out.append({**entry, "synthetic": entry["synthetic"] if _fold(synthetic) in taken else synthetic})
+            if key not in record:
+                shared = run_wide.get(key) if key[0] not in _PER_RECORD_LABELS else None
+                taken = {_fold(e["original"]) for _, e in keyed} | {_fold(e["synthetic"]) for k, e in keyed if k != key}
+                taken |= {_fold(assigned) for _, assigned in record.values()}
+                own = (entry["original"], entry["synthetic"])
+                record[key] = shared if shared is not None and _fold(shared[1]) not in taken else own
+            source = record[key]
+            out.append({**entry, "synthetic": _recase(source[1], like=entry["original"], source=source[0])})
         for key, source in record.items():
             if key[0] not in _PER_RECORD_LABELS:
                 run_wide.setdefault(key, source)

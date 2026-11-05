@@ -452,6 +452,19 @@ def _rmap(*entries: tuple[str, str, str]) -> dict[str, list[dict[str, str]]]:
             id="shared-substitute-taken-in-record-keeps-own",
         ),
         pytest.param(
+            [
+                _rmap(("Acme", "company_name", "Globex")),
+                _rmap(("Hooli", "company_name", "Globex")),
+                _rmap(("Acme", "company_name", "Initech"), ("Hooli", "company_name", "Umbrella")),
+            ],
+            [
+                _rmap(("Acme", "company_name", "Globex")),
+                _rmap(("Hooli", "company_name", "Globex")),
+                _rmap(("Acme", "company_name", "Globex"), ("Hooli", "company_name", "Umbrella")),
+            ],
+            id="shared-substitute-assigned-earlier-in-record-keeps-own",
+        ),
+        pytest.param(
             [_rmap(("Acme", "company_name", "Globex"), ("Portland", "city", "Austin"))],
             [_rmap(("Acme", "company_name", "Globex"), ("Portland", "city", "Austin"))],
             id="single-record-no-op",
