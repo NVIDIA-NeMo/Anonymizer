@@ -32,6 +32,7 @@ from anonymizer.engine.evaluation.judge_base import _BaseJudgeWorkflow
 from anonymizer.engine.evaluation.replace.attribute_fidelity_judge import AttributeFidelityJudgeWorkflow
 from anonymizer.engine.evaluation.replace.relational_consistency_judge import RelationalConsistencyJudgeWorkflow
 from anonymizer.engine.evaluation.replace.type_fidelity_judge import TypeFidelityJudgeWorkflow
+from anonymizer.engine.graph_core.execution import TargetOutcome
 from anonymizer.engine.ndd.adapter import RECORD_ID_COLUMN, FailedRecord, NddAdapter
 from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceWorkflow
 from anonymizer.engine.replace.strategies import apply_local_replace_strategy
@@ -50,6 +51,7 @@ class ReplacementResult:
     failed_records: list[FailedRecord]
     detection: EntityDetectionResult | None = None  # set when detection ran in the same invocation
     detection_elapsed: float = 0.0
+    outcomes: tuple[TargetOutcome, ...] | None = None  # one per output row, when the rows ran as one invocation
 
 
 def _drop_malformed_entities(dataframe: pd.DataFrame) -> tuple[pd.DataFrame, list[FailedRecord]]:

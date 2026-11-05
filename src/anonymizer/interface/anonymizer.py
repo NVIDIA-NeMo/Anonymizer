@@ -561,6 +561,7 @@ class Anonymizer:
                 entity_labels=config.detect.entity_labels,
                 excluded_entity_labels=config.detect.excluded_entity_labels,
                 data_summary=result.data_summary,
+                _outcomes=result._outcomes,
             )
         except KeyboardInterrupt:
             status = TaskStatusEnum.CANCELED
@@ -985,6 +986,7 @@ class Anonymizer:
             )
             final_df, post_detection_failures = replace_result.dataframe, list(replace_result.failed_records)
             replacement_elapsed = time.perf_counter() - t0
+            outcomes = None
         elif config.replace is not None:
             replace_result = self._replace_runner.run_with_detection(
                 input_df,
@@ -1003,6 +1005,7 @@ class Anonymizer:
             replacement_elapsed = time.perf_counter() - t0 - detection_elapsed
             final_df = replace_result.dataframe
             post_detection_failures = replace_result.failed_records[len(detection_failures) :]
+            outcomes = replace_result.outcomes
         else:
             assert config.rewrite is not None
             privacy_goal = admitted_goal
@@ -1031,6 +1034,7 @@ class Anonymizer:
                 rewrite_result = rewrite_runner.run(detected_df, **rewrite_options)
                 post_detection_failures = list(rewrite_result.failed_records)
                 replacement_elapsed = time.perf_counter() - t0
+                outcomes = None
             else:
                 rewrite_result = rewrite_runner.run_with_detection(
                     input_df, detect=detect_then_announce, **rewrite_options
@@ -1043,6 +1047,7 @@ class Anonymizer:
                 detection_elapsed = rewrite_result.detection_elapsed
                 replacement_elapsed = time.perf_counter() - t0 - detection_elapsed
                 post_detection_failures = rewrite_result.failed_records[len(detection_failures) :]
+                outcomes = rewrite_result.outcomes
             final_df = rewrite_result.dataframe
         entity_count = _count_entities(detected_df)
         detection_failed = len(detection_failures)
@@ -1092,6 +1097,7 @@ class Anonymizer:
             entity_labels=config.detect.entity_labels,
             excluded_entity_labels=config.detect.excluded_entity_labels,
             data_summary=data.data_summary,
+            _outcomes=outcomes,
         )
 
     def _validate_preflight_config(self, config: AnonymizerConfig) -> None:

@@ -243,7 +243,8 @@ def run_replace_pipeline(
         output_row_count=len(output_df),
         failed_record_count=len(failures) - len(detected[0].failed_records),
     )
-    return ReplacementResult(output_df, failures, detected[0], elapsed[0])
+    outcomes = tuple(result.outcome(d) for d in targets)
+    return ReplacementResult(output_df, failures, detected[0], elapsed[0], outcomes)
 
 
 def _lower(

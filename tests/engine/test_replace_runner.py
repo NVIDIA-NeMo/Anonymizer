@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from unittest.mock import Mock
 
 import numpy as np
@@ -10,6 +11,7 @@ import pandas as pd
 import pytest
 from data_designer.config.models import ModelConfig
 
+from anonymizer.config.anonymizer_config import AnonymizerConfig, AnonymizerInput
 from anonymizer.config.models import EvaluateModelSelection, ReplaceModelSelection
 from anonymizer.config.replace_strategies import Hash, Redact, Substitute
 from anonymizer.engine.constants import (
@@ -29,7 +31,7 @@ from anonymizer.engine.constants import (
     COL_TYPE_FIDELITY_JUDGE,
     COL_TYPE_FIDELITY_VALID,
 )
-from anonymizer.engine.detection.detection_workflow import EntityDetectionResult
+from anonymizer.engine.detection.detection_workflow import EntityDetectionResult, EntityDetectionWorkflow
 from anonymizer.engine.evaluation.detection_judge import DetectionJudgeWorkflow
 from anonymizer.engine.evaluation.replace.attribute_fidelity_judge import AttributeFidelityJudgeWorkflow
 from anonymizer.engine.evaluation.replace.relational_consistency_judge import RelationalConsistencyJudgeWorkflow
@@ -38,6 +40,7 @@ from anonymizer.engine.ndd.adapter import RECORD_ID_COLUMN, FailedRecord, Workfl
 from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceResult
 from anonymizer.engine.replace.replace_runner import ReplacementWorkflow
 from anonymizer.engine.schemas import EntitiesSchema
+from anonymizer.interface.anonymizer import Anonymizer
 
 
 def _build_entities_payload(payload_kind: str) -> object:
@@ -645,3 +648,49 @@ def test_detection_output_with_numpy_entities_flows_through_redact(
     replaced = result.dataframe[COL_REPLACED_TEXT].iloc[0]
     assert "Alice" not in replaced
     assert "[REDACTED_FIRST_NAME]" in replaced
+
+
+@pytest.mark.parametrize("omit_bob", [True, False], ids=["map-omits-bob", "map-complete"])
+def test_run_reports_each_rows_protection_outcome(omit_bob: bool, tmp_path: Path, stub_entities: list[dict]) -> None:
+    """A Substitute map that omits a detected entity leaves its row ``not_met``; the frame is unchanged."""
+    replacements = [
+        {"original": "Alice", "label": "first_name", "synthetic": "Maya"},
+        {"original": "Acme", "label": "organization", "synthetic": "NovaCorp"},
+        *([] if omit_bob else [{"original": "Bob", "label": "first_name", "synthetic": "Ravi"}]),
+    ]
+
+    def _generate_map_only(dataframe: pd.DataFrame, **_: object) -> LlmReplaceResult:
+        maps = [{"replacements": replacements}] * len(dataframe)
+        frame = dataframe.assign(**{COL_REPLACEMENT_MAP: maps})
+        return LlmReplaceResult(dataframe=frame, failed_records=[], source_positions=tuple(range(len(frame))))
+
+    llm_workflow = Mock()
+    llm_workflow.generate_map_only.side_effect = _generate_map_only
+    texts = ["Alice works at Acme", "Bob works at Acme"]
+    bob = [{"value": "Bob", "label": "first_name", "start_position": 0, "end_position": 3}, dict(stub_entities[1])]
+    bob[1].update(start_position=13, end_position=17)
+    detector = Mock(spec=EntityDetectionWorkflow)
+    detector.run.side_effect = lambda frame, **_: EntityDetectionResult(
+        dataframe=frame.assign(**{COL_FINAL_ENTITIES: [{"entities": stub_entities}, {"entities": bob}]}),
+        failed_records=[],
+        source_positions=(0, 1),
+    )
+    csv_path = tmp_path / "input.csv"
+    pd.DataFrame({"text": texts}).to_csv(csv_path, index=False)
+    anonymizer = Anonymizer(detection_workflow=detector, replace_runner=ReplacementWorkflow(llm_workflow=llm_workflow))
+
+    result = anonymizer.run(
+        config=AnonymizerConfig(replace=Substitute(), emit_telemetry=False),
+        data=AnonymizerInput(source=str(csv_path), text_column="text"),
+    )
+
+    assert result.dataframe["text_replaced"].tolist() == [
+        "Maya works at NovaCorp",
+        "Bob works at NovaCorp" if omit_bob else "Ravi works at NovaCorp",
+    ]
+    assert result.outcome(0).qualification == "met"
+    second = result.outcome(1)
+    assert second.qualification == ("not_met" if omit_bob else "met")
+    assert any(reason.check == "replacements_applied" for reason in second.reasons) is omit_bob
+    with pytest.raises(IndexError):
+        result.outcome(2)

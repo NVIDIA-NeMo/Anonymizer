@@ -50,7 +50,7 @@ from anonymizer.engine.graph_core.authoring import (
     Requests,
     Workflow,
 )
-from anonymizer.engine.graph_core.execution import ProtectionResult, prepare, protect
+from anonymizer.engine.graph_core.execution import ProtectionResult, TargetOutcome, prepare, protect
 from anonymizer.engine.graph_core.kernel import register_kind
 from anonymizer.engine.graph_core.stages import run_stages
 from anonymizer.engine.ndd.adapter import FailedRecord, NddAdapter
@@ -226,6 +226,7 @@ class RewriteResult:
     source_positions: tuple[int, ...] | None = None
     detection: EntityDetectionResult | None = None  # set when detection ran in the same invocation
     detection_elapsed: float = 0.0
+    outcomes: tuple[TargetOutcome, ...] | None = None  # one per output row, when the rows ran as one invocation
 
 
 # ---------------------------------------------------------------------------
@@ -560,7 +561,9 @@ class RewriteWorkflow:
             failed_record_count=len(rows.failed),
         )
         positions = tuple(sorted([*frame[ROW_ORDER_COL], *passthrough_rows[ROW_ORDER_COL]]))
-        return RewriteResult(output, [*state.failures, *rows.failed], positions, detection, detection_elapsed)
+        outcomes = tuple(result.outcome(state.owners[order]) for order in positions)
+        failed = [*state.failures, *rows.failed]
+        return RewriteResult(output, failed, positions, detection, detection_elapsed, outcomes)
 
     def _produce(
         self,
