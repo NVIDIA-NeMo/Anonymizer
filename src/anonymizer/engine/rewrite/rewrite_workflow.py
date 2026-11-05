@@ -24,7 +24,6 @@ from anonymizer.engine.constants import (
     COL_QUALITY_QA_COMPARE,
     COL_QUALITY_QA_REANSWER,
     COL_REPAIR_ITERATIONS,
-    COL_REWRITE_REPLACEMENT_READY,
     COL_REWRITTEN_TEXT,
     COL_REWRITTEN_TEXT_NEXT,
     COL_TEXT,
@@ -37,6 +36,7 @@ from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceWorkflow
 from anonymizer.engine.rewrite.domain_classification import DomainClassificationWorkflow
 from anonymizer.engine.rewrite.evaluate import EvaluateWorkflow
 from anonymizer.engine.rewrite.final_judge import FinalJudgeWorkflow
+from anonymizer.engine.rewrite.findings import needs_human_review
 from anonymizer.engine.rewrite.parsers import normalize_payload
 from anonymizer.engine.rewrite.qa_generation import QAGenerationWorkflow
 from anonymizer.engine.rewrite.repair import RepairWorkflow
@@ -387,11 +387,6 @@ class RewriteWorkflow:
         _normalize_evaluation_payloads(df)
         all_failed.extend(eval_result.failed_records)
 
-        replacement_unavailable = (
-            ~df[COL_REWRITE_REPLACEMENT_READY].apply(bool)
-            if COL_REWRITE_REPLACEMENT_READY in df.columns
-            else pd.Series(False, index=df.index)
-        )
         repair_columns = self._repair_wf.columns(
             selected_models=selected_models,
             privacy_goal=privacy_goal,
@@ -449,20 +444,10 @@ class RewriteWorkflow:
             all_failed.extend(eval_result.failed_records)
 
             df = pd.concat([passing_rows, failing_rows], ignore_index=True)
-            replacement_unavailable = (
-                ~df[COL_REWRITE_REPLACEMENT_READY].apply(bool)
-                if COL_REWRITE_REPLACEMENT_READY in df.columns
-                else pd.Series(False, index=df.index)
-            )
 
-        # Compute needs_human_review from objective metrics after the loop exhausts.
-        needs_review = df[COL_REWRITTEN_TEXT].isna() | replacement_unavailable
-        needs_review = needs_review | df[COL_ANY_HIGH_LEAKED].apply(bool)
-        if evaluation.flag_utility_below is not None:
-            needs_review = needs_review | (df[COL_UTILITY_SCORE].apply(float) < evaluation.flag_utility_below)
-        if evaluation.flag_leakage_above is not None:
-            needs_review = needs_review | (df[COL_LEAKAGE_MASS].apply(float) > evaluation.flag_leakage_above)
-        df[COL_NEEDS_HUMAN_REVIEW] = needs_review
+        # Flag for human review from the preset's flag findings after the loop exhausts.
+        flags = [needs_human_review(row, evaluation) for row in df.to_dict("records")]
+        df[COL_NEEDS_HUMAN_REVIEW] = pd.Series(flags, index=df.index, dtype=bool)
 
         return df, all_failed
 

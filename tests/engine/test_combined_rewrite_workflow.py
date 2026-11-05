@@ -202,6 +202,36 @@ def test_finalizer_selects_last_executed_iteration(
     assert result[COL_NEEDS_HUMAN_REVIEW] is (not replacement_ready)
 
 
+@pytest.mark.parametrize(("leakage_mass", "expected"), [(0.1, False), (np.nan, True), (None, True)])
+def test_finalizer_flags_unavailable_leakage(
+    stub_rewrite_model_selection: RewriteModelSelection,
+    stub_replace_model_selection: ReplaceModelSelection,
+    leakage_mass: float | None,
+    expected: bool,
+) -> None:
+    graph = CombinedRewriteWorkflow(adapter=Mock()).build_graph(
+        selected_models=stub_rewrite_model_selection,
+        replace_model_selection=stub_replace_model_selection,
+        privacy_goal=_PRIVACY_GOAL,
+        evaluation=EvaluationCriteria(max_repair_iterations=0),
+    )
+    (state,) = graph.evaluation_states
+    row = {
+        COL_REWRITE_REPLACEMENT_READY: True,
+        state.rewritten_text: "Rewrite",
+        state.utility_score: 0.9,
+        state.leakage_mass: leakage_mass,
+        state.any_high_leaked: False,
+        state.needs_repair: False,
+    }
+    finalizer = graph.columns[-1]
+    assert isinstance(finalizer, CustomColumnConfig)
+
+    result = finalizer.generator_function(row, finalizer.generator_params)
+
+    assert result[COL_NEEDS_HUMAN_REVIEW] is expected
+
+
 def test_combined_graph_preserves_malformed_rewrite_handling(
     stub_rewrite_model_selection: RewriteModelSelection,
     stub_replace_model_selection: ReplaceModelSelection,

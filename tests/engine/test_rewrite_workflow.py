@@ -273,6 +273,42 @@ def test_has_entities_returns_false_for_none() -> None:
     assert _has_entities(None) is False
 
 
+def test_unavailable_leakage_flags_for_review(
+    stub_model_configs: list[ModelConfig],
+    stub_rewrite_model_selection: RewriteModelSelection,
+    stub_replace_model_selection: ReplaceModelSelection,
+    stub_df_with_entities: pd.DataFrame,
+    stub_replace_df: pd.DataFrame,
+    stub_pipeline_df: pd.DataFrame,
+    stub_eval_df: pd.DataFrame,
+) -> None:
+    def run(eval_df: pd.DataFrame) -> pd.DataFrame:
+        adapter = Mock()
+        adapter.run_workflow.side_effect = _standard_side_effect(stub_pipeline_df, eval_df)
+        with patch(_REPLACE_PATCH) as mock_replace_cls:
+            _mock_replace(mock_replace_cls, stub_replace_df)
+            return (
+                RewriteWorkflow(adapter=adapter)
+                .run(
+                    stub_df_with_entities,
+                    model_configs=stub_model_configs,
+                    selected_models=stub_rewrite_model_selection,
+                    replace_model_selection=stub_replace_model_selection,
+                    privacy_goal=_PRIVACY_GOAL,
+                    evaluation=_EVALUATION,
+                )
+                .dataframe
+            )
+
+    baseline = run(stub_eval_df)
+    flagged = run(stub_eval_df.assign(**{COL_LEAKAGE_MASS: np.nan}))
+
+    assert baseline[COL_NEEDS_HUMAN_REVIEW].tolist() == [False]
+    assert flagged[COL_NEEDS_HUMAN_REVIEW].tolist() == [True]
+    unchanged = [COL_LEAKAGE_MASS, COL_NEEDS_HUMAN_REVIEW]
+    pd.testing.assert_frame_equal(flagged.drop(columns=unchanged), baseline.drop(columns=unchanged))
+
+
 # ---------------------------------------------------------------------------
 # Tests: full pipeline call order
 # ---------------------------------------------------------------------------
