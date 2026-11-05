@@ -38,7 +38,7 @@ AnonymizerConfig(replace=Substitute(
 |-------|---------|-------------|
 | `instructions` | `None` | Additional instructions for the LLM replacement generator. |
 
-Within one `run()` or `preview()` call, Substitute is string-consistent per label: values that match after case folding and whitespace normalization get the same substitute in every record, re-cased to match each original ("Acme" → "Globex", "ACME" → "GLOBEX"). First and last names are the exception: they stay consistent within a record but not across records, because a shared first name in two records is usually two different people. This is string matching, not identity resolution: two people with the same full name share a substitute, and "A. Chen" and "Alice Chen" do not. Substitutes are not stable across calls; use `Hash` for that.
+Within one `run()` or `preview()` call, Substitute is string-consistent per label: values that match after case folding and whitespace normalization get the same substitute in every record, re-cased to match each original ("Acme" → "Globex", "ACME" → "GLOBEX"). First and last names are the exception: they stay consistent within a record but not across records, because a shared first name in two records is usually two different people. This is string matching, not identity resolution: equal strings share a substitute even when they refer to different things (with a custom `full_name` label, two different people named "Alice Chen" share one), and "A. Chen" and "Alice Chen" do not. Substitutes are not stable across calls; use `Hash` for that.
 
 !!! note "Model role"
 

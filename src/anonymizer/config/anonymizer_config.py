@@ -253,7 +253,8 @@ class Rewrite(BaseModel):
     )
     use_combined_graph: bool = Field(
         default=False,
-        description="Run rewrite and conditional repair iterations in one Data Designer graph.",
+        description="Run rewrite and conditional repair iterations in one Data Designer graph. Replacement maps "
+        "are then built per record, so substitutes are not shared across records.",
     )
     strict_entity_protection: bool = Field(
         default=False,
