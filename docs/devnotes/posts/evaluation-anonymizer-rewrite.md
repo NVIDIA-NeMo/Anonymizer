@@ -162,6 +162,9 @@ For example, a rewrite might preserve that the person is a pediatric cardiologis
 
 After repair ends, `needs_human_review` becomes `True` when the rewrite is missing, a high-sensitivity item still leaks, utility falls below the selected preset's threshold, or leakage mass exceeds its review threshold.
 
+!!! note "`needs_human_review=False` is not a guarantee"
+    A row without the flag can still leak sensitive information. Coverage contributes to the flag only when `evaluate()` runs, and both detection and the coverage judge can miss entities, depending on model accuracy.
+
 <div class="output-columns-table" markdown>
 
 | Output column | Meaning |
