@@ -1209,6 +1209,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#anonymizer.config.rewrite.Finding" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-class"></code>&nbsp;Finding
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#anonymizer.config.rewrite.PrivacyGoal" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1308,6 +1319,28 @@
     <span class="md-ellipsis">
       
         <code class="doc-symbol doc-symbol-toc doc-symbol-attribute"></code>&nbsp;repair_any_high_leak
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#anonymizer.config.rewrite.EvaluationCriteria.repair_on" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-attribute"></code>&nbsp;repair_on
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#anonymizer.config.rewrite.EvaluationCriteria.flag_on" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-attribute"></code>&nbsp;flag_on
       
     </span>
   </a>
@@ -2891,6 +2924,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#anonymizer.config.rewrite.Finding" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-class"></code>&nbsp;Finding
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#anonymizer.config.rewrite.PrivacyGoal" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2990,6 +3034,28 @@
     <span class="md-ellipsis">
       
         <code class="doc-symbol doc-symbol-toc doc-symbol-attribute"></code>&nbsp;repair_any_high_leak
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#anonymizer.config.rewrite.EvaluationCriteria.repair_on" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-attribute"></code>&nbsp;repair_on
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#anonymizer.config.rewrite.EvaluationCriteria.flag_on" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-attribute"></code>&nbsp;flag_on
       
     </span>
   </a>
@@ -3174,6 +3240,14 @@
             </td>
           </tr>
           <tr class="doc-section-item">
+            <td><code><a class="autorefs autorefs-internal" title="            Finding (anonymizer.config.rewrite.Finding)" href="#anonymizer.config.rewrite.Finding">Finding</a></code></td>
+            <td>
+              <div class="doc-md-description">
+                <p>Named conditions on an evaluated rewrite row that a preset can repair on or flag for review.</p>
+              </div>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
             <td><code><a class="autorefs autorefs-internal" title="            PrivacyGoal
 
 
@@ -3246,6 +3320,61 @@
 <li><strong>high</strong> — High leakage threshold (2.0), does not auto-repair
   individual high-sensitivity leaks.</li>
 </ul>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<div class="doc doc-children">
+
+
+
+
+
+
+
+
+
+
+
+
+  </div>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-class">
+
+
+
+<h3 id="anonymizer.config.rewrite.Finding" class="doc doc-heading">
+<code class="doc-symbol doc-symbol-heading doc-symbol-class"></code>            <code>Finding</code>
+
+
+<a href="#anonymizer.config.rewrite.Finding" class="headerlink" title="Permanent link">&para;</a></h3>
+
+
+    <div class="doc doc-contents ">
+            <p class="doc doc-class-bases">
+              Bases: <code><span title="str">str</span></code>, <code><span title="enum.Enum">Enum</span></code></p>
+
+
+
+        <p>Named conditions on an evaluated rewrite row that a preset can repair on or flag for review.</p>
+<p>Any finding can flag a row for review; only a <code>RepairFinding</code> can send it to repair. What each
+one means is written once, in <code>present_findings</code> (<code>anonymizer.engine.rewrite.findings</code>).</p>
 
 
 
@@ -3573,6 +3702,50 @@ while still producing evaluation metrics.</p>
     <div class="doc doc-contents ">
 
         <p>Whether any single high-sensitivity leak triggers repair.</p>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h4 id="anonymizer.config.rewrite.EvaluationCriteria.repair_on" class="doc doc-heading">
+<code class="doc-symbol doc-symbol-heading doc-symbol-attribute"></code>            <code class="highlight language-python">repair_on</code>
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-property"><code>property</code></small>
+  </span>
+
+<a href="#anonymizer.config.rewrite.EvaluationCriteria.repair_on" class="headerlink" title="Permanent link">&para;</a></h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Findings that send a row to repair.</p>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h4 id="anonymizer.config.rewrite.EvaluationCriteria.flag_on" class="doc doc-heading">
+<code class="doc-symbol doc-symbol-heading doc-symbol-attribute"></code>            <code class="highlight language-python">flag_on</code>
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-property"><code>property</code></small>
+  </span>
+
+<a href="#anonymizer.config.rewrite.EvaluationCriteria.flag_on" class="headerlink" title="Permanent link">&para;</a></h4>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Findings that flag a row for human review.</p>
 
     </div>
 
