@@ -62,8 +62,9 @@ def test_keyed_hash_config_does_not_reload_from_json_with_masked_key() -> None:
 
 @pytest.mark.parametrize("algorithm", ["sha1", "md5"])
 def test_keyed_hash_rejects_non_default_algorithm(algorithm: Literal["sha1", "md5"]) -> None:
-    with pytest.raises(ValidationError, match="HMAC-SHA256"):
+    with pytest.raises(ValidationError, match="HMAC-SHA256") as exc_info:
         Hash(key="s3cr3t", algorithm=algorithm)
+    assert "s3cr3t" not in str(exc_info.value)
 
 
 def test_rewrite_defaults_privacy_goal() -> None:

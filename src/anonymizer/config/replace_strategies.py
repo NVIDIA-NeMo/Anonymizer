@@ -9,7 +9,7 @@ import re
 from string import Formatter
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, BeforeValidator, Field, SecretStr, field_validator, model_validator
+from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, SecretStr, field_validator, model_validator
 
 
 def _normalize_replace_kind(value: Any) -> Any:
@@ -119,6 +119,9 @@ class Annotate(ReplaceMethodBase):
 
 class Hash(ReplaceMethodBase):
     """Replace each entity with a deterministic hash token."""
+
+    # Validation errors would otherwise echo the plaintext key.
+    model_config = ConfigDict(hide_input_in_errors=True)
 
     kind: Literal["hash"] = "hash"
     algorithm: Literal["sha256", "sha1", "md5"] = Field(default="sha256", description="Hash algorithm.")
