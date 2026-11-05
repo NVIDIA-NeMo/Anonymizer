@@ -3,6 +3,10 @@
 
 from __future__ import annotations
 
+import functools
+import inspect
+import sys
+from collections.abc import Callable
 from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
@@ -442,18 +446,50 @@ def test_detector_signature_keyword_acceptance(name: str, accepts: bool) -> None
     assert _accepts_entity_label_examples(getattr(_DetectorSignatures, name)) is accepts
 
 
-@pytest.mark.parametrize("error", [TypeError, ValueError])
+@pytest.mark.skipif(sys.version_info < (3, 14), reason="needs PEP 649 lazy annotations")
+@pytest.mark.parametrize(("name", "accepts"), [("keyword", True), ("positional_only", False)])
+def test_detector_signature_ignores_unresolvable_lazy_annotations(name: str, accepts: bool) -> None:
+    # Compile without this module's future import so annotations stay lazy, like a TYPE_CHECKING-only type.
+    source = (
+        "def keyword(dataframe: Missing, *, entity_label_examples: Missing) -> None: ...\n"
+        "def positional_only(dataframe: Missing, /) -> None: ...\n"
+    )
+    namespace: dict[str, Callable[..., object]] = {}
+    exec(compile(source, "<detector>", "exec", dont_inherit=True), namespace)
+
+    assert _accepts_entity_label_examples(namespace[name]) is accepts
+
+
+def _invalid_signature(run: Mock) -> Callable[..., object]:
+    run.__signature__ = object()
+    return run
+
+
+def _misbound_partial(run: Mock) -> Callable[..., object]:
+    run.__signature__ = inspect.Signature()
+    return functools.partial(run, unbound=None)
+
+
+@pytest.mark.parametrize(
+    ("error", "make_opaque"),
+    [(TypeError, _invalid_signature), (ValueError, _misbound_partial)],
+)
 def test_non_introspectable_detector_keeps_configured_examples(
-    stub_input: AnonymizerInput, error: type[Exception]
+    stub_input: AnonymizerInput,
+    error: type[Exception],
+    make_opaque: Callable[[Mock], Callable[..., object]],
 ) -> None:
     examples = {"api_key": ["acme_live_x"]}
     config = AnonymizerConfig(detect={"entity_label_examples": examples}, replace=Redact())
     anonymizer, detector, _, _ = _make_anonymizer()
+    run = detector.run
+    detector.run = make_opaque(run)
+    with pytest.raises(error):
+        inspect.signature(detector.run)
 
-    with patch("anonymizer.interface.anonymizer.inspect.signature", side_effect=error("opaque callable")):
-        anonymizer.run(config=config, data=stub_input)
+    anonymizer.run(config=config, data=stub_input)
 
-    assert detector.run.call_args.kwargs["entity_label_examples"] == examples
+    assert run.call_args.kwargs["entity_label_examples"] == examples
 
 
 def test_export_detection_paths_pass_entity_label_examples(

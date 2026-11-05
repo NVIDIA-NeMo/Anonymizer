@@ -7,6 +7,7 @@ import inspect
 import logging
 import os
 import re
+import sys
 import time
 import uuid
 from collections import Counter
@@ -99,6 +100,9 @@ if TYPE_CHECKING:
     import pandas as pd
     from data_designer.config.config_builder import DataDesignerConfigBuilder
 
+if sys.version_info >= (3, 14):
+    import annotationlib
+
 logger = logging.getLogger("anonymizer")
 
 
@@ -161,7 +165,12 @@ class _DetectionExampleKwargs(TypedDict, total=False):
 def _accepts_entity_label_examples(method: Callable[..., object]) -> bool:
     """Check keyword support; preserve forwarding when a callable cannot be inspected."""
     try:
-        parameters = inspect.signature(method).parameters
+        if sys.version_info >= (3, 14):
+            # Leave unresolvable lazy annotations (e.g. TYPE_CHECKING-only types) as forward references.
+            signature = inspect.signature(method, annotation_format=annotationlib.Format.FORWARDREF)
+        else:
+            signature = inspect.signature(method)
+        parameters = signature.parameters
     except (TypeError, ValueError):
         return True
     parameter = parameters.get("entity_label_examples")
