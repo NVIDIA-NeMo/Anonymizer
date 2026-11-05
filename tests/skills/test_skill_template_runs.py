@@ -256,7 +256,7 @@ def test_rewrite_evaluate_with_entities_in_every_row_round_trips_through_parquet
     assert saved["judge_evaluation"].tolist() == expected
 
 
-def test_template_run_resolves_every_alias_through_custom_providers(
+def test_template_run_reaches_detector_validator_and_rewriter_through_custom_providers(
     run_template: Callable[..., str], endpoint: StubEndpoint
 ) -> None:
     run_template("rewrite", "--full")
