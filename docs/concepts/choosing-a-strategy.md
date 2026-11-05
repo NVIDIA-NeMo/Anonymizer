@@ -173,9 +173,9 @@ The four strategies are summarised in [Replace](replace.md#strategy-comparison).
 
 Keep instructions short (one or two sentences). Long instructions compete with the per-entity context and degrade quality.
 
-!!! note "Substitute is per-row, not per-dataset"
+!!! note "Substitute is per-call, not per-dataset"
 
-    Within a single row, repeated mentions of the same value get one consistent replacement (entities are grouped by value before the LLM call). **Across rows the LLM has no shared memory** — each row is an independent call, so "Alice" in row 1 and "Alice" in row 47 will likely get different replacements. If you need stable cross-row mappings (e.g. to re-join records by an identifier), use `Hash` instead, or post-process `result.trace_dataframe["_replacement_map"]`.
+    Within one `run()` or `preview()` call, repeated values get one substitute across rows, per label and ignoring case and whitespace differences. First and last names are consistent only within a row. **Separate calls share nothing**, so "Acme" in two calls will likely get different replacements. If you need stable mappings across calls (e.g. to re-join records by an identifier), use `Hash` instead. See [Substitute](replace.md#substitute).
 
 ---
 

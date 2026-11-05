@@ -17,6 +17,7 @@ from anonymizer.engine.replace.llm_replace_workflow import (
     _INTERNAL_COLUMNS,
     LlmReplaceWorkflow,
     _filter_replacement_map_to_input_entities,
+    _harmonize_replacement_maps,
 )
 from anonymizer.engine.schemas.detection import EntitiesByValueSchema
 
@@ -391,3 +392,72 @@ def test_filter_replacement_map_empty_warning_does_not_leak_pii(
     assert "first_name" in caplog.text
     _assert_no_pii_in_logs(caplog, extra_secrets=("Acme Corp", "NovaCorp"))
     assert result == {"replacements": []}
+
+
+def _rmap(*entries: tuple[str, str, str]) -> dict[str, list[dict[str, str]]]:
+    return {"replacements": [{"original": o, "label": label, "synthetic": s} for o, label, s in entries]}
+
+
+@pytest.mark.parametrize(
+    ("maps", "expected"),
+    [
+        pytest.param(
+            [_rmap(("Acme Corp", "company_name", "Globex")), _rmap(("Acme Corp", "company_name", "Initech"))],
+            [_rmap(("Acme Corp", "company_name", "Globex")), _rmap(("Acme Corp", "company_name", "Globex"))],
+            id="cross-record-same-key",
+        ),
+        pytest.param(
+            [
+                _rmap(("Portland", "city", "Austin")),
+                _rmap(("PORTLAND", "city", "DENVER")),
+                _rmap(("portland", "city", "x")),
+            ],
+            [
+                _rmap(("Portland", "city", "Austin")),
+                _rmap(("PORTLAND", "city", "AUSTIN")),
+                _rmap(("portland", "city", "austin")),
+            ],
+            id="case-variant",
+        ),
+        pytest.param(
+            [_rmap(("Acme Corp", "company_name", "Globex")), _rmap(("Acme\u202fCorp", "company_name", "Initech"))],
+            [_rmap(("Acme Corp", "company_name", "Globex")), _rmap(("Acme\u202fCorp", "company_name", "Globex"))],
+            id="narrow-no-break-space-variant",
+        ),
+        pytest.param(
+            [_rmap(("Jordan", "city", "Austin")), _rmap(("Jordan", "country", "Peru"))],
+            [_rmap(("Jordan", "city", "Austin")), _rmap(("Jordan", "country", "Peru"))],
+            id="label-collision-kept-separate",
+        ),
+        pytest.param(
+            [
+                _rmap(("Alice", "first_name", "Maya"), ("ALICE", "first_name", "NORA")),
+                _rmap(("Alice", "first_name", "Lena")),
+            ],
+            [
+                _rmap(("Alice", "first_name", "Maya"), ("ALICE", "first_name", "MAYA")),
+                _rmap(("Alice", "first_name", "Lena")),
+            ],
+            id="names-per-record-but-harmonized-within-record",
+        ),
+        pytest.param(
+            [
+                _rmap(("Acme", "company_name", "Globex")),
+                _rmap(("Acme", "company_name", "Initech"), ("Hooli", "company_name", "Globex")),
+            ],
+            [
+                _rmap(("Acme", "company_name", "Globex")),
+                _rmap(("Acme", "company_name", "Initech"), ("Hooli", "company_name", "Globex")),
+            ],
+            id="shared-substitute-taken-in-record-keeps-own",
+        ),
+        pytest.param(
+            [_rmap(("Acme", "company_name", "Globex"), ("Portland", "city", "Austin"))],
+            [_rmap(("Acme", "company_name", "Globex"), ("Portland", "city", "Austin"))],
+            id="single-record-no-op",
+        ),
+        pytest.param([_rmap(), _rmap()], [_rmap(), _rmap()], id="empty-map"),
+    ],
+)
+def test_harmonize_replacement_maps(maps: list[dict], expected: list[dict]) -> None:
+    assert _harmonize_replacement_maps(maps) == expected

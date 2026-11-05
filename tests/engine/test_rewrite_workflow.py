@@ -34,6 +34,7 @@ from anonymizer.engine.constants import (
     COL_QUALITY_QA_COMPARE,
     COL_QUALITY_QA_REANSWER,
     COL_REPAIR_ITERATIONS,
+    COL_REPLACEMENT_MAP,
     COL_REWRITE_REPLACEMENT_READY,
     COL_REWRITTEN_TEXT,
     COL_REWRITTEN_TEXT_NEXT,
@@ -1521,3 +1522,38 @@ def test_run_needs_human_review_not_overwritten_by_evaluate(
     )
 
     assert bool(result.dataframe[COL_NEEDS_HUMAN_REVIEW].iloc[0]) is True
+
+
+def test_rewrite_injects_harmonized_replacement_map(
+    stub_model_configs: list[ModelConfig],
+    stub_rewrite_model_selection: RewriteModelSelection,
+    stub_replace_model_selection: ReplaceModelSelection,
+) -> None:
+    seeds: list[pd.DataFrame] = []
+    synthetics = iter(["Globex", "Initech"])
+
+    def run_workflow(dataframe: pd.DataFrame, *, workflow_name: str, **_: object) -> WorkflowRunResult:
+        if workflow_name == "replace-map-generation":
+            maps = [
+                {"replacements": [{"original": "Acme", "label": "company_name", "synthetic": next(synthetics)}]}
+                for _ in range(len(dataframe))
+            ]
+            return WorkflowRunResult(dataframe=dataframe.assign(**{COL_REPLACEMENT_MAP: maps}), failed_records=[])
+        seeds.append(dataframe)
+        raise RuntimeError("stop after the rewrite pipeline seed")
+
+    adapter = Mock()
+    adapter.run_workflow.side_effect = run_workflow
+    entities = {"entities_by_value": [{"value": "Acme", "labels": ["company_name"]}]}
+    dataframe = pd.DataFrame({COL_TEXT: ["Acme hired Bo", "Acme fired Al"], COL_ENTITIES_BY_VALUE: [entities] * 2})
+    with pytest.raises(RuntimeError, match="stop after"):
+        RewriteWorkflow(adapter=adapter).run(
+            dataframe,
+            model_configs=stub_model_configs,
+            selected_models=stub_rewrite_model_selection,
+            replace_model_selection=stub_replace_model_selection,
+            privacy_goal=_PRIVACY_GOAL,
+            evaluation=_EVALUATION,
+        )
+    injected = [json.loads(m)["replacements"][0]["synthetic"] for m in seeds[0][COL_REPLACEMENT_MAP]]
+    assert injected == ["Globex", "Globex"]

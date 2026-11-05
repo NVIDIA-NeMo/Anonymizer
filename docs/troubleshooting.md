@@ -219,7 +219,7 @@ Symptoms: every "Alice" becomes "Maya," every city becomes "Springfield," every 
 
 1. **Add domain hints to `Substitute.instructions`** — see [Choosing a strategy > Writing Substitute.instructions](concepts/choosing-a-strategy.md#writing-substituteinstructions).
 2. **Check the `replacement_generator` model** — small models default-collapse to high-frequency names. Try a stronger model for this role.
-3. **If you need stable cross-row mappings**, use `Hash` or post-process `result.trace_dataframe["_replacement_map"]`. `Substitute` is consistent within a row but not across rows: repeated mentions of the same value in one row collapse to one replacement (so a person's name stays consistent in a single document), but across rows the LLM has no shared state, so "Alice" in different rows usually gets different replacements.
+3. **If you need stable mappings across calls**, use `Hash`. `Substitute` gives a value one substitute across all rows of one call, except first and last names, which are consistent only within a row; separate calls share nothing.
 
 ### Hash output isn't stable across runs
 

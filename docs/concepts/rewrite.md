@@ -35,6 +35,8 @@ The text is then rewritten to reduce identifiability, applying targeted transfor
 | `remove` | Deletes the entity entirely | Cases where neither replacement nor generalization can preserve meaning without retaining the identifying detail |
 | `leave_as_is` | Leaves the entity unchanged | Entities judged not to require protection in context |
 
+Entities with the `replace` method take their substitutes from the same per-call replacement map as [Substitute](replace.md#substitute), so equal values get the same substitute across records. The rewrite and repair models can still change the surrounding text and the substitutes themselves, so the rewritten output does not guarantee it.
+
 ---
 
 ## Basic usage

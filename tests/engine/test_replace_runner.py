@@ -772,3 +772,36 @@ def test_detection_output_with_numpy_entities_flows_through_redact(
     replaced = result.dataframe[COL_REPLACED_TEXT].iloc[0]
     assert "Alice" not in replaced
     assert "[REDACTED_FIRST_NAME]" in replaced
+
+
+def test_substitute_run_gives_equal_values_one_substitute_across_records(
+    stub_model_configs: list[ModelConfig],
+    stub_replace_model_selection: ReplaceModelSelection,
+) -> None:
+    synthetics = iter(["Globex", "Initech"])
+
+    def run_workflow(dataframe: pd.DataFrame, **_: object) -> WorkflowRunResult:
+        maps = [
+            {"replacements": [{"original": "Acme", "label": "company_name", "synthetic": next(synthetics)}]}
+            for _ in range(len(dataframe))
+        ]
+        return WorkflowRunResult(dataframe=dataframe.assign(**{COL_REPLACEMENT_MAP: maps}), failed_records=[])
+
+    adapter = Mock()
+    adapter.run_workflow.side_effect = run_workflow
+    entity = {"value": "Acme", "label": "company_name", "start_position": 0, "end_position": 4}
+    dataframe = pd.DataFrame(
+        {
+            COL_TEXT: ["Acme hired Bo", "Acme fired Al"],
+            COL_FINAL_ENTITIES: [{"entities": [entity]}] * 2,
+            COL_ENTITIES_BY_VALUE: [{"entities_by_value": [{"value": "Acme", "labels": ["company_name"]}]}] * 2,
+            RECORD_ID_COLUMN: ["r0", "r1"],
+        }
+    )
+    result = ReplacementWorkflow(llm_workflow=LlmReplaceWorkflow(adapter=adapter)).run(
+        dataframe,
+        replace_method=Substitute(),
+        model_configs=stub_model_configs,
+        selected_models=stub_replace_model_selection,
+    )
+    assert result.dataframe[COL_REPLACED_TEXT].tolist() == ["Globex hired Bo", "Globex fired Al"]

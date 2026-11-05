@@ -117,10 +117,56 @@ class LlmReplaceWorkflow:
         output_df[COL_REPLACEMENT_MAP_SOURCE] = REPLACEMENT_MAP_SOURCE_LLM
 
         combined = merge_and_reorder(output_df, passthrough_rows)
+        combined[COL_REPLACEMENT_MAP] = _harmonize_replacement_maps(combined[COL_REPLACEMENT_MAP].tolist())
         return LlmReplaceResult(
             dataframe=combined.drop(columns=list(_INTERNAL_COLUMNS), errors="ignore"),
             failed_records=run_result.failed_records,
         )
+
+
+# Shared first or last names in different records usually belong to different people, so they keep
+# per-record substitutes; their case variants within one record are still harmonized.
+_PER_RECORD_LABELS = frozenset({"first_name", "last_name"})
+
+
+def _fold(value: str) -> str:
+    return " ".join(value.casefold().split())
+
+
+def _recase(synthetic: str, *, like: str, source: str) -> str:
+    if like == source:
+        return synthetic
+    if like.isupper():
+        return synthetic.upper()
+    if like.islower():
+        return synthetic.lower()
+    return synthetic.title() if like[:1].isupper() and (synthetic.isupper() or synthetic.islower()) else synthetic
+
+
+def _harmonize_replacement_maps(maps: list[dict]) -> list[dict]:
+    """Give each (label, folded value) the first record's substitute, re-cased to each original.
+
+    Labels in ``_PER_RECORD_LABELS`` are harmonized only within a record. An entry keeps its own
+    substitute when the shared one would equal another value or substitute in its record.
+    """
+    run_wide: dict[tuple[str, str], tuple[str, str]] = {}
+    harmonized: list[dict] = []
+    for raw in maps:
+        entries = raw.get("replacements", []) if isinstance(raw, dict) else []
+        keyed = [((e["label"], _fold(e["original"])), e) for e in entries]
+        record: dict[tuple[str, str], tuple[str, str]] = {}
+        out = []
+        for key, entry in keyed:
+            shared = run_wide.get(key) if key[0] not in _PER_RECORD_LABELS else None
+            source = record.setdefault(key, shared or (entry["original"], entry["synthetic"]))
+            synthetic = _recase(source[1], like=entry["original"], source=source[0])
+            taken = {_fold(e["original"]) for _, e in keyed} | {_fold(e["synthetic"]) for k, e in keyed if k != key}
+            out.append({**entry, "synthetic": entry["synthetic"] if _fold(synthetic) in taken else synthetic})
+        for key, source in record.items():
+            if key[0] not in _PER_RECORD_LABELS:
+                run_wide.setdefault(key, source)
+        harmonized.append({**raw, "replacements": out} if isinstance(raw, dict) else raw)
+    return harmonized
 
 
 def _enrich_entities_for_template(parsed: EntitiesByValueSchema) -> list[dict[str, str | list[str]]]:
