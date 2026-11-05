@@ -33,6 +33,19 @@ def test_hash_is_deterministic() -> None:
     assert value == strategy.replace(text="alice@example.com", label="email")
 
 
+def test_unkeyed_hash_output_is_unchanged() -> None:
+    assert Hash().replace(text="Alice", label="first_name") == "<HASH_FIRST_NAME_3bc51062973c>"
+
+
+def test_keyed_hash_folds_case_and_whitespace_and_depends_on_key() -> None:
+    keyed = Hash(key="s3cr3t")
+    token = keyed.replace(text="Acme  Corp", label="company_name")
+    assert token == keyed.replace(text="ACME\u202fcorp", label="company_name")
+    assert token != Hash(key="other").replace(text="Acme  Corp", label="company_name")
+    assert token != Hash().replace(text="acme corp", label="company_name")
+    assert "s3cr3t" not in repr(keyed)
+
+
 def test_rewrite_defaults_privacy_goal() -> None:
     config = AnonymizerConfig(rewrite=Rewrite())
     assert config.rewrite is not None

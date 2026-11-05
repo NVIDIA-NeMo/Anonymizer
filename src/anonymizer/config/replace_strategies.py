@@ -4,11 +4,12 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
 import re
 from string import Formatter
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, BeforeValidator, Field, field_validator
+from pydantic import BaseModel, BeforeValidator, Field, SecretStr, field_validator
 
 
 def _normalize_replace_kind(value: Any) -> Any:
@@ -127,6 +128,11 @@ class Hash(ReplaceMethodBase):
     format_template: str = Field(
         default="<HASH_{label}_{digest}>", description="Template with {digest} required and optional {label}."
     )
+    key: SecretStr | None = Field(
+        default=None,
+        description="Secret key. When set, the digest is HMAC-SHA256 of the case- and whitespace-folded text "
+        "and `algorithm` is ignored; without a key, unkeyed digests of low-entropy values are reversible.",
+    )
 
     @field_validator("format_template")
     @classmethod
@@ -145,7 +151,12 @@ class Hash(ReplaceMethodBase):
             text: Original entity text (e.g. ``"Alice"``).
             label: Entity label (e.g. ``"first_name"``).
         """
-        digest = hashlib.new(self.algorithm, text.encode("utf-8")).hexdigest()[: self.digest_length]
+        if self.key is None:
+            digest = hashlib.new(self.algorithm, text.encode("utf-8")).hexdigest()[: self.digest_length]
+        else:
+            folded = " ".join(text.casefold().split()).encode("utf-8")
+            key = self.key.get_secret_value().encode("utf-8")
+            digest = hmac.new(key, folded, hashlib.sha256).hexdigest()[: self.digest_length]
         return self._render_template(
             template=self.format_template,
             text=text,
