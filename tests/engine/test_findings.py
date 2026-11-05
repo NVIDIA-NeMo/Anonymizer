@@ -75,6 +75,28 @@ def test_finding_rule(finding: Finding, overrides: dict[str, Any], expected: boo
     assert (finding in present_findings(_row(**overrides), _LOW)) is expected
 
 
+@pytest.mark.parametrize(
+    ("risk_tolerance", "expect_repair"),
+    [
+        (RiskTolerance.minimal, True),
+        (RiskTolerance.low, True),
+        (RiskTolerance.moderate, True),
+        (RiskTolerance.high, False),
+    ],
+)
+def test_nan_any_high_leaked_is_high_leak_and_repairs_except_high(
+    risk_tolerance: RiskTolerance, expect_repair: bool
+) -> None:
+    """Compatibility exception: ``bool(nan)`` is truthy, so NaN reads as a high leak, not only unavailable evidence."""
+    ev = EvaluationCriteria(risk_tolerance=risk_tolerance)
+    row = _row(**{COL_ANY_HIGH_LEAKED: _NAN})
+    findings = present_findings(row, ev)
+    assert Finding.high_leak in findings
+    assert Finding.unavailable_evidence in findings
+    assert needs_repair(row, ev) is expect_repair
+    assert needs_human_review(row, ev) is True
+
+
 def test_every_finding_holds_somewhere_and_unavailable_evidence_only_flags() -> None:
     assert {finding for finding, _, expected in _CASES if expected} == set(Finding)
     for bundle in _RISK_TOLERANCE_BUNDLES.values():
