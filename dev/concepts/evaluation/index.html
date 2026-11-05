@@ -3604,7 +3604,7 @@ with open("/tmp/preview.pkl", "rb") as f:
 evaluated = anonymizer.evaluate(loaded)</code></pre>
 <hr />
 <h3 id="entity-coverage_1">Entity Coverage<a class="headerlink" href="#entity-coverage_1" title="Permanent link">&para;</a></h3>
-<p>Same judge as in replace mode — see <a href="#entity-coverage">Entity Coverage</a> above. It <strong>always runs</strong> and emits <code>entity_coverage</code> and <code>missed_entities</code>.</p>
+<p>Same judge as in replace mode — see <a href="#entity-coverage">Entity Coverage</a> above. It <strong>always runs</strong> and emits <code>entity_coverage</code> and <code>missed_entities</code>. In Rewrite mode, <code>evaluate()</code> also sets <code>needs_human_review=True</code> on any row whose <code>missed_entities</code> is non-empty.</p>
 <hr />
 <h3 id="entity-detection-judge_1">Entity Detection Judge<a class="headerlink" href="#entity-detection-judge_1" title="Permanent link">&para;</a></h3>
 <p>Same judge as in replace mode — see <a href="#entity-detection-judge">Entity Detection Judge</a> above, and like there it is <strong>opt-in</strong> via <code>EvaluateConfig(compute_detection_validity=True)</code> (off by default). In rewrite mode, <code>detection_valid</code> is returned as a <strong>0–1 fraction</strong> (the share of detected entities that passed), rather than a boolean. A value of <code>1.0</code> means all detections are valid; lower values mean more entities were flagged — the value itself is the fraction that passed.</p>

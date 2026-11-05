@@ -4135,6 +4135,7 @@ per-judge model/prompt overrides, etc.).</p>
             time.perf_counter() - stage_start,
         )
         all_failed.extend(coverage_failed)
+        judged_df = _flag_missed_entities(judged_df)
         renamed_trace = _rename_output_columns(judged_df, resolved_text_column=text_column)
         result = AnonymizerResult(
             dataframe=_build_user_dataframe(

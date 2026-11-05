@@ -3196,7 +3196,7 @@
     C --&gt; D[Rewrite result]
     D --&gt; E[Optional Anonymizer.evaluate]
     E --&gt; F[Post-hoc evaluation\nCoverage · privacy · quality · style]</code></pre>
-<p>Automatic rewrite evaluation scores each generated text for privacy leakage and preserved meaning. If leakage triggers the configured repair criteria, Anonymizer rewrites the text and evaluates it again, stopping when it passes or reaches the maximum number of repair iterations. It then flags outputs for human review when residual leakage or low utility meets the configured review criteria. Post-hoc evaluation is an optional, separate step that you run by calling <code>evaluate()</code> after anonymization. It adds informational judge outputs without rewriting the text again or changing the existing human-review decision, and you can configure a different LLM for each judge role. See <a href="../after-anonymization--part-i-evaluating-replace-mode/#anonymization-and-evaluation-as-separate-steps">Part 1</a> for more about this workflow.</p>
+<p>Automatic rewrite evaluation scores each generated text for privacy leakage and preserved meaning. If leakage triggers the configured repair criteria, Anonymizer rewrites the text and evaluates it again, stopping when it passes or reaches the maximum number of repair iterations. It then flags outputs for human review when residual leakage or low utility meets the configured review criteria. Post-hoc evaluation is an optional, separate step that you run by calling <code>evaluate()</code> after anonymization. It adds informational judge outputs without rewriting the text again, and leaves the human-review decision unchanged except that rows whose coverage judge reports missed entities are also flagged, and you can configure a different LLM for each judge role. See <a href="../after-anonymization--part-i-evaluating-replace-mode/#anonymization-and-evaluation-as-separate-steps">Part 1</a> for more about this workflow.</p>
 <pre class="highlight"><code class="language-python">from anonymizer import Anonymizer, AnonymizerConfig, AnonymizerInput, EvaluateConfig, Rewrite
 
 anonymizer = Anonymizer()
@@ -3294,6 +3294,10 @@ evaluated = anonymizer.evaluate(
 <p><code>risk_tolerance</code> controls the repair and review thresholds. The default is <code>low</code>; use <code>minimal</code> for a stricter posture or <code>moderate</code> / <code>high</code> for more tolerance. Setting <code>max_repair_iterations=0</code> disables repair but still computes the rewrite metrics.</p>
 <h3 id="human-review-which-records-still-need-attention">Human Review: Which Records Still Need Attention?<a class="headerlink" href="#human-review-which-records-still-need-attention" title="Permanent link">&para;</a></h3>
 <p>After repair ends, <code>needs_human_review</code> becomes <code>True</code> when the rewrite is missing, a high-sensitivity item still leaks, utility falls below the selected preset's threshold, or leakage mass exceeds its review threshold.</p>
+<div class="admonition note">
+<p class="admonition-title"><code>needs_human_review=False</code> is not a guarantee</p>
+<p>A row without the flag can still leak sensitive information. Coverage contributes to the flag only when <code>evaluate()</code> runs, and both detection and the coverage judge can miss entities, depending on model accuracy.</p>
+</div>
 <div class="output-columns-table">
 <table>
 <thead>
@@ -3305,7 +3309,7 @@ evaluated = anonymizer.evaluate(
 <tbody>
 <tr>
 <td><code>needs_human_review</code></td>
-<td>Final review flag based on the rewrite metrics</td>
+<td>Final review flag based on the rewrite metrics; <code>evaluate()</code> also sets it when <code>missed_entities</code> is non-empty</td>
 </tr>
 </tbody>
 </table>
@@ -3315,7 +3319,7 @@ evaluated = anonymizer.evaluate(
 <h2 id="post-hoc-evaluation-what-does-an-independent-judge-see">Post-Hoc Evaluation: What Does an Independent Judge See?<a class="headerlink" href="#post-hoc-evaluation-what-does-an-independent-judge-see" title="Permanent link">&para;</a></h2>
 <p>The report includes entity coverage and a holistic rewrite judgment, with detection validity available as an opt-in audit.</p>
 <h3 id="entity-coverage-were-all-in-scope-entities-detected">Entity Coverage: Were All In-Scope Entities Detected?<a class="headerlink" href="#entity-coverage-were-all-in-scope-entities-detected" title="Permanent link">&para;</a></h3>
-<p>Entity coverage works the same way in Rewrite and Replace modes: an independent judge identifies literal sensitive values covered by the configured entity types and measures how many Anonymizer detected. It does not include latent entities—sensitive information implied rather than explicitly stated—or other clues that can only be inferred. See <a href="../after-anonymization--part-i-evaluating-replace-mode/#entity-coverage-were-all-in-scope-entities-detected">Part 1: Entity Coverage</a> for the calculation, output columns, and interpretation guidance.</p>
+<p>Entity coverage works the same way in Rewrite and Replace modes: an independent judge identifies literal sensitive values covered by the configured entity types and measures how many Anonymizer detected. It does not include latent entities—sensitive information implied rather than explicitly stated—or other clues that can only be inferred. See <a href="../after-anonymization--part-i-evaluating-replace-mode/#entity-coverage-were-all-in-scope-entities-detected">Part 1: Entity Coverage</a> for the calculation, output columns, and interpretation guidance. In Rewrite mode, <code>evaluate()</code> also sets <code>needs_human_review=True</code> on any row whose <code>missed_entities</code> is non-empty.</p>
 <h3 id="privacy-did-the-rewrite-reduce-linkage-risk">Privacy: Did the Rewrite Reduce Linkage Risk?<a class="headerlink" href="#privacy-did-the-rewrite-reduce-linkage-risk" title="Permanent link">&para;</a></h3>
 <p>The privacy rubric compares the rewritten record with the original and estimates whether a realistic attacker could link them. It considers surviving direct identifiers and details that may not identify someone alone but can do so when combined, called quasi-identifiers.</p>
 <ul>
