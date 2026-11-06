@@ -412,6 +412,12 @@ _NNBSP = _maps([("person", "John Smith", "Mark Lee"), ("person", "John\u202fsmit
 _TWO_LABELS = _maps([("city", "Paris", "Lyon")], [("first_name", "Paris", "Dana")])
 _COLLISION = _maps([("company", "Acme", "Nova")], [("company", "Acme", "Zeta"), ("company", "Initech", "Nova")])
 _SINGLE = _maps([("company", "Acme", "Nova"), ("person", "Bob", "Tim")])
+_VARIANT = _maps([("first_name", "Alice", "Maya"), ("first_name", "ALICE", "NORA"), ("first_name", "MAYA", "LENA")])
+_DOTLESS = _maps([("first_name", "Ayşe", "Yıldız"), ("first_name", "AYŞE", "Can"), ("first_name", "YILDIZ", "Deniz")])
+_RUN_VARIANT = _maps(
+    [("first_name", "Alice", "Maya")],
+    [("first_name", "Ann", "Mia"), ("first_name", "ALICE", "NORA"), ("first_name", "MAYA", "LENA")],
+)
 
 
 @pytest.mark.parametrize(
@@ -424,8 +430,22 @@ _SINGLE = _maps([("company", "Acme", "Nova"), ("person", "Bob", "Tim")])
         (_ANN_TWICE, _ANN_TWICE, _maps([("first_name", "Ann", "Bea")], [("first_name", "Ann", "Bea")])),
         (_COLLISION, _COLLISION, _COLLISION),
         (_SINGLE, _SINGLE, _SINGLE),
+        (_VARIANT, _VARIANT, _VARIANT),
+        (_RUN_VARIANT, _RUN_VARIANT, _RUN_VARIANT),
+        (_DOTLESS, _DOTLESS, _DOTLESS),
     ],
-    ids=["cross-record", "case", "nnbsp", "two-labels", "first-name", "collision", "single"],
+    ids=[
+        "cross-record",
+        "case",
+        "nnbsp",
+        "two-labels",
+        "first-name",
+        "collision",
+        "single",
+        "variant",
+        "run-variant",
+        "dotless-i",
+    ],
 )
 def test_fold_replacement_maps(maps: list[dict], record: list[dict], run: list[dict]) -> None:
     assert _fold_replacement_maps(maps, "record") == record

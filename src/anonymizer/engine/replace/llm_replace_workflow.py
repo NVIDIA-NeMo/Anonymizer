@@ -144,25 +144,31 @@ def _recase(synthetic: str, *, like: str, source: str) -> str:
 def _fold_replacement_maps(maps: list[dict], consistency: Literal["record", "run"]) -> list[dict]:
     """Give entries with the same (label, case- and whitespace-folded value) one substitute, re-cased to each original.
 
-    ``"record"`` shares within each record; ``"run"`` also gives each key the first record's substitute. An entry
-    keeps its own substitute when the shared one would equal a value in its record, another entry's own substitute,
-    or a substitute already assigned in that record.
+    ``"record"`` shares within each record; ``"run"`` also gives each key the first record's substitute. Every entry,
+    including a later variant of a key, keeps its own substitute when the shared one would equal a value in its
+    record, another entry's own substitute, or a substitute already emitted for another key in that record.
     """
     run_wide: dict[tuple[str, str], tuple[str, str]] = {}
     folded: list[dict] = []
     for raw in maps:
         keyed = [((e["label"], _fold(e["original"])), e) for e in raw.get("replacements", [])]
         record: dict[tuple[str, str], tuple[str, str]] = {}
+        emitted: list[tuple[tuple[str, str], str]] = []
         out = []
         for key, entry in keyed:
-            if key not in record:
-                shared = run_wide.get(key)
-                taken = {_fold(e["original"]) for _, e in keyed} | {_fold(e["synthetic"]) for k, e in keyed if k != key}
-                taken |= {_fold(assigned) for _, assigned in record.values()}
-                own = (entry["original"], entry["synthetic"])
-                record[key] = shared if shared is not None and _fold(shared[1]) not in taken else own
-            source = record[key]
-            out.append({**entry, "synthetic": _recase(source[1], like=entry["original"], source=source[0])})
+            own = (entry["original"], entry["synthetic"])
+            first = key not in record
+            source = record.setdefault(key, run_wide.get(key, own))
+            taken = {_fold(e["original"]) for _, e in keyed} | {_fold(e["synthetic"]) for k, e in keyed if k != key}
+            taken |= {synthetic for k, synthetic in emitted if k != key}
+            synthetic = _recase(source[1], like=entry["original"], source=source[0])
+            if source != own and _fold(synthetic) in taken:
+                source = own
+                if first:
+                    record[key] = own
+                synthetic = _recase(source[1], like=entry["original"], source=source[0])
+            emitted.append((key, _fold(synthetic)))
+            out.append({**entry, "synthetic": synthetic})
         if consistency == "run":
             for key, source in record.items():
                 run_wide.setdefault(key, source)
