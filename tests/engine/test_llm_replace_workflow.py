@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import logging
+import random
+from typing import Literal
 from unittest.mock import Mock
 
 import pandas as pd
@@ -17,6 +19,7 @@ from anonymizer.engine.replace.llm_replace_workflow import (
     _INTERNAL_COLUMNS,
     LlmReplaceWorkflow,
     _filter_replacement_map_to_input_entities,
+    _fold,
     _fold_replacement_maps,
 )
 from anonymizer.engine.schemas.detection import EntitiesByValueSchema
@@ -338,37 +341,17 @@ def test_filter_replacement_map_anomaly_summaries_do_not_leak_pii(
     _assert_no_pii_in_logs(caplog, extra_secrets=("Acme Corp", "NovaCorp"))
 
 
-def test_filter_replacement_map_repairs_synthetic_original_collisions_without_pii(
+def test_fold_repairs_synthetic_original_collisions_without_pii(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     """Synthetic values must not reuse another protected original from the same row."""
-    parsed_entities = EntitiesByValueSchema.model_validate(
-        {
-            "entities_by_value": [
-                {"value": "1979-01-01", "labels": ["date"]},
-                {"value": "1980-02-02", "labels": ["date"]},
-            ]
-        }
-    )
-    raw_map = {
-        "replacements": [
-            {"original": "1979-01-01", "label": "date", "synthetic": "1980-02-02"},
-            {"original": "1980-02-02", "label": "date", "synthetic": "1991-03-04"},
-        ]
-    }
+    maps = _maps([("date", "1979-01-01", "1980-02-02"), ("date", "1980-02-02", "1991-03-04")])
 
     with caplog.at_level(logging.WARNING, logger="anonymizer"):
-        result = _filter_replacement_map_to_input_entities(
-            raw_map=raw_map, parsed_entities=parsed_entities, record_id="row-collision"
-        )
+        result = _fold_replacement_maps(maps, "record")
 
-    assert result == {
-        "replacements": [
-            {"original": "1979-01-01", "label": "date", "synthetic": "[SUBSTITUTE_DATE_1]"},
-            {"original": "1980-02-02", "label": "date", "synthetic": "1991-03-04"},
-        ]
-    }
-    assert "synthetic-original collision" in caplog.text
+    assert result == _maps([("date", "1979-01-01", "[SUBSTITUTE_DATE_1]"), ("date", "1980-02-02", "1991-03-04")])
+    assert "placeholder substitutes to avoid collisions" in caplog.text
     assert "date" not in caplog.text
     _assert_no_pii_in_logs(caplog, extra_secrets=("1979-01-01", "1980-02-02", "1991-03-04"))
 
@@ -413,6 +396,17 @@ _TWO_LABELS = _maps([("city", "Paris", "Lyon")], [("first_name", "Paris", "Dana"
 _COLLISION = _maps([("company", "Acme", "Nova")], [("company", "Acme", "Zeta"), ("company", "Initech", "Nova")])
 _SINGLE = _maps([("company", "Acme", "Nova"), ("person", "Bob", "Tim")])
 _VARIANT = _maps([("first_name", "Alice", "Maya"), ("first_name", "ALICE", "NORA"), ("first_name", "MAYA", "LENA")])
+_VARIANT_FOLDED = _maps(
+    [
+        ("first_name", "Alice", "[SUBSTITUTE_FIRST_NAME_1]"),
+        ("first_name", "ALICE", "[SUBSTITUTE_FIRST_NAME_1]"),
+        ("first_name", "MAYA", "LENA"),
+    ]
+)
+_SAME_OWN = _maps([("first_name", "Alice", "Maya"), ("first_name", "Bob", "Maya")])
+_SAME_OWN_FOLDED = _maps([("first_name", "Alice", "Maya"), ("first_name", "Bob", "[SUBSTITUTE_FIRST_NAME_1]")])
+_UNMAPPED = _maps([("first_name", "Alice", "Maya")])
+_UNMAPPED_FOLDED = _maps([("first_name", "Alice", "[SUBSTITUTE_FIRST_NAME_1]")])
 _DOTLESS = _maps([("first_name", "Ayşe", "Yıldız"), ("first_name", "AYŞE", "Can"), ("first_name", "YILDIZ", "Deniz")])
 _RUN_VARIANT = _maps(
     [("first_name", "Alice", "Maya")],
@@ -421,19 +415,24 @@ _RUN_VARIANT = _maps(
 
 
 @pytest.mark.parametrize(
-    ("maps", "record", "run"),
+    ("maps", "record", "run", "requested"),
     [
-        (_ACME_TWICE, _ACME_TWICE, _maps([("company", "Acme", "Nova")], [("company", "Acme", "Nova")])),
-        (_CASE, *[_maps([("person", "John Smith", "Mark Lee"), ("person", "JOHN SMITH", "MARK LEE")])] * 2),
-        (_NNBSP, *[_maps([("person", "John Smith", "Mark Lee"), ("person", "John\u202fsmith", "Mark Lee")])] * 2),
-        (_TWO_LABELS, _TWO_LABELS, _TWO_LABELS),
-        (_ANN_TWICE, _ANN_TWICE, _maps([("first_name", "Ann", "Bea")], [("first_name", "Ann", "Bea")])),
-        (_COLLISION, _COLLISION, _COLLISION),
-        (_SINGLE, _SINGLE, _SINGLE),
-        (_VARIANT, _VARIANT, _VARIANT),
-        (_RUN_VARIANT, _RUN_VARIANT, _RUN_VARIANT),
-        (_DOTLESS, _DOTLESS, _DOTLESS),
-    ],
+        (*row, None)
+        for row in [
+            (_ACME_TWICE, _ACME_TWICE, _maps([("company", "Acme", "Nova")], [("company", "Acme", "Nova")])),
+            (_CASE, *[_maps([("person", "John Smith", "Mark Lee"), ("person", "JOHN SMITH", "MARK LEE")])] * 2),
+            (_NNBSP, *[_maps([("person", "John Smith", "Mark Lee"), ("person", "John\u202fsmith", "Mark Lee")])] * 2),
+            (_TWO_LABELS, _TWO_LABELS, _TWO_LABELS),
+            (_ANN_TWICE, _ANN_TWICE, _maps([("first_name", "Ann", "Bea")], [("first_name", "Ann", "Bea")])),
+            (_COLLISION, _COLLISION, _COLLISION),
+            (_SINGLE, _SINGLE, _SINGLE),
+            (_VARIANT, *[_VARIANT_FOLDED] * 2),
+            (_RUN_VARIANT, _RUN_VARIANT, _RUN_VARIANT),
+            (_DOTLESS, _DOTLESS, _DOTLESS),
+            (_SAME_OWN, *[_SAME_OWN_FOLDED] * 2),
+        ]
+    ]
+    + [(_UNMAPPED, *[_UNMAPPED_FOLDED] * 2, [{"Alice", "Maya"}])],
     ids=[
         "cross-record",
         "case",
@@ -445,8 +444,45 @@ _RUN_VARIANT = _maps(
         "variant",
         "run-variant",
         "dotless-i",
+        "same-own",
+        "unmapped-entity",
     ],
 )
-def test_fold_replacement_maps(maps: list[dict], record: list[dict], run: list[dict]) -> None:
-    assert _fold_replacement_maps(maps, "record") == record
-    assert _fold_replacement_maps(maps, "run") == run
+def test_fold_replacement_maps(
+    maps: list[dict], record: list[dict], run: list[dict], requested: list[set[str]] | None
+) -> None:
+    assert _fold_replacement_maps(maps, "record", requested) == record
+    assert _fold_replacement_maps(maps, "run", requested) == run
+
+
+@pytest.mark.parametrize("consistency", ["record", "run"])
+def test_fold_never_emits_a_colliding_substitute(consistency: Literal["record", "run"]) -> None:
+    rng = random.Random(20261106)
+    names = ["Ayşe", "Yıldız", "İsmail", "Irmak", "ılgın", "Maya", "Alice", "Lena"]
+
+    def variant(name: str) -> str:
+        cased = rng.choice([name, name.upper(), name.lower(), name.title()])
+        return rng.choice(["", " "]) + cased.replace("a", rng.choice(["a", "A"])) + rng.choice(["", "  "])
+
+    maps = [
+        {
+            "replacements": [
+                {
+                    "label": rng.choice(["first_name", "city"]),
+                    "original": variant(o),
+                    "synthetic": variant(rng.choice(names)),
+                }
+                for o in rng.choices(names, k=rng.randint(1, 6))
+            ]
+        }
+        for _ in range(300)
+    ]
+    unmapped = [{variant(o) for o in rng.choices(names, k=rng.randint(0, 2))} for _ in maps]
+    for raw, extra, out in zip(maps, unmapped, _fold_replacement_maps(maps, consistency, unmapped), strict=True):
+        originals = {_fold(e["original"]) for e in raw["replacements"]} | {_fold(v) for v in extra}
+        by_value: dict[str, set[tuple[str, str]]] = {}
+        for e in out["replacements"]:
+            value = _fold(e["synthetic"])
+            assert value not in originals, (raw, out)
+            by_value.setdefault(value, set()).add((e["label"], _fold(e["original"])))
+        assert all(len(keys) == 1 for keys in by_value.values()), (raw, out)

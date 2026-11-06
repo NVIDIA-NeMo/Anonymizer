@@ -119,7 +119,10 @@ class LlmReplaceWorkflow:
         # Input positions of the rows that came back, in output order: the rows the LLM dropped are absent.
         positions = tuple(sorted((*passthrough_rows[ROW_ORDER_COL], *output_df[ROW_ORDER_COL])))
         combined = merge_and_reorder(output_df, passthrough_rows)
-        combined[COL_REPLACEMENT_MAP] = _fold_replacement_maps(combined[COL_REPLACEMENT_MAP].tolist(), consistency)
+        requested = [_requested_values(EntitiesByValueSchema.from_raw(v)) for v in combined[entities_column]]
+        combined[COL_REPLACEMENT_MAP] = _fold_replacement_maps(
+            combined[COL_REPLACEMENT_MAP].tolist(), consistency, requested
+        )
         return LlmReplaceResult(
             dataframe=combined.drop(columns=list(_INTERNAL_COLUMNS), errors="ignore"),
             failed_records=run_result.failed_records,
@@ -141,39 +144,66 @@ def _recase(synthetic: str, *, like: str, source: str) -> str:
     return synthetic.title() if like[:1].isupper() and (synthetic.isupper() or synthetic.islower()) else synthetic
 
 
-def _fold_replacement_maps(maps: list[dict], consistency: Literal["record", "run"]) -> list[dict]:
+def _fold_replacement_maps(
+    maps: list[dict], consistency: Literal["record", "run"], requested: list[set[str]] | None = None
+) -> list[dict]:
     """Give entries with the same (label, case- and whitespace-folded value) one substitute, re-cased to each original.
 
-    ``"record"`` shares within each record; ``"run"`` also gives each key the first record's substitute. Every entry,
-    including a later variant of a key, keeps its own substitute when the shared one would equal a value in its
-    record, another entry's own substitute, or a substitute already emitted for another key in that record.
+    ``"record"`` shares within each record; ``"run"`` also gives each key the first record's substitute. An emitted
+    substitute collides when its folded form equals a value in its record (its map's originals and ``requested``) or a substitute another key already emitted
+    there; a shared substitute also collides with another key's own proposal. A colliding entry falls back to its own
+    substitute, then to a placeholder. The first entry of a key fixes the record's shared substitute; a later
+    colliding variant falls back for itself only, so a third variant still tries the shared one.
     """
     run_wide: dict[tuple[str, str], tuple[str, str]] = {}
     folded: list[dict] = []
-    for raw in maps:
+    for index, raw in enumerate(maps):
         keyed = [((e["label"], _fold(e["original"])), e) for e in raw.get("replacements", [])]
+        originals = {key[1] for key, _ in keyed} | {_fold(v) for v in (requested[index] if requested else ())}
+        proposed: dict[str, set[tuple[str, str]]] = {}
+        for key, entry in keyed:
+            proposed.setdefault(_fold(entry["synthetic"]), set()).add(key)
+        emitted: dict[str, set[tuple[str, str]]] = {}
+
+        def collides(value: str, key: tuple[str, str], *, shared: bool) -> bool:
+            others = (proposed.get(value, set()) if shared else set()) | emitted.get(value, set())
+            return value in originals or bool(others - {key})
+
         record: dict[tuple[str, str], tuple[str, str]] = {}
-        emitted: list[tuple[tuple[str, str], str]] = []
+        placeholders: Counter[str] = Counter()
         out = []
         for key, entry in keyed:
             own = (entry["original"], entry["synthetic"])
             first = key not in record
             source = record.setdefault(key, run_wide.get(key, own))
-            taken = {_fold(e["original"]) for _, e in keyed} | {_fold(e["synthetic"]) for k, e in keyed if k != key}
-            taken |= {synthetic for k, synthetic in emitted if k != key}
             synthetic = _recase(source[1], like=entry["original"], source=source[0])
-            if source != own and _fold(synthetic) in taken:
+            if collides(_fold(synthetic), key, shared=True):
                 source = own
+                synthetic = entry["synthetic"]
+                if collides(_fold(synthetic), key, shared=False):
+                    placeholders[entry["label"]] += 1
+                    taken = originals | proposed.keys() | emitted.keys()
+                    synthetic = _collision_safe_synthetic(
+                        entry["label"], index=placeholders[entry["label"]], protected_original_values=taken
+                    )
+                    source = (entry["original"], synthetic)
                 if first:
-                    record[key] = own
-                synthetic = _recase(source[1], like=entry["original"], source=source[0])
-            emitted.append((key, _fold(synthetic)))
+                    record[key] = source
+            emitted.setdefault(_fold(synthetic), set()).add(key)
             out.append({**entry, "synthetic": synthetic})
+        if placeholders:
+            logger.warning(
+                "Replacement map used placeholder substitutes to avoid collisions; replaced=%d", placeholders.total()
+            )
         if consistency == "run":
             for key, source in record.items():
                 run_wide.setdefault(key, source)
         folded.append({**raw, "replacements": out})
     return folded
+
+
+def _requested_values(parsed: EntitiesByValueSchema) -> set[str]:
+    return {entity.value for entity in parsed.entities_by_value if entity.value}
 
 
 def _enrich_entities_for_template(parsed: EntitiesByValueSchema) -> list[dict[str, str | list[str]]]:
@@ -216,50 +246,27 @@ def _filter_replacement_map_to_input_entities(
         for label in entity.labels
         if entity.value and label
     }
-    protected_original_values = {value for value, _ in allowed_pairs}
     filtered: list[dict[str, str]] = []
     seen: set[tuple[str, str]] = set()
-    synthetic_collision_labels: Counter[str] = Counter()
     for replacement in parsed_map.replacements:
         key = (replacement.original, replacement.label)
         if key not in allowed_pairs or key in seen:
             continue
-        if replacement.synthetic in protected_original_values:
-            synthetic_collision_labels[replacement.label] += 1
-            seen.add(key)
-            filtered.append(
-                {
-                    "original": replacement.original,
-                    "label": replacement.label,
-                    "synthetic": _collision_safe_synthetic(
-                        replacement.label,
-                        index=synthetic_collision_labels[replacement.label],
-                        protected_original_values=protected_original_values,
-                    ),
-                }
-            )
-            continue
         seen.add(key)
         filtered.append(replacement.model_dump())
 
-    if synthetic_collision_labels:
-        logger.warning(
-            "Replacement map repaired synthetic-original collision entries; repaired=%d",
-            sum(synthetic_collision_labels.values()),
-        )
     if logger.isEnabledFor(logging.DEBUG):
         raw_pairs = {(r.original, r.label) for r in parsed_map.replacements}
         filtered_pairs = {(f["original"], f["label"]) for f in filtered}
         unrequested_labels = Counter(label for _, label in (raw_pairs - allowed_pairs))
         unfilled_labels = Counter(label for _, label in (allowed_pairs - filtered_pairs))
         logger.debug(
-            "Replacement map: requested=%d raw=%d filtered=%d unrequested=%d unfilled=%d collisions=%d",
+            "Replacement map: requested=%d raw=%d filtered=%d unrequested=%d unfilled=%d",
             len(allowed_pairs),
             len(parsed_map.replacements),
             len(filtered),
             sum(unrequested_labels.values()),
             sum(unfilled_labels.values()),
-            sum(synthetic_collision_labels.values()),
         )
     if not filtered and allowed_pairs:
         logger.warning(
@@ -274,7 +281,7 @@ def _collision_safe_synthetic(label: str, *, index: int, protected_original_valu
     label_token = "".join(char.upper() if char.isalnum() else "_" for char in label).strip("_") or "VALUE"
     while True:
         candidate = f"[SUBSTITUTE_{label_token}_{index}]"
-        if candidate not in protected_original_values:
+        if _fold(candidate) not in protected_original_values:
             return candidate
         index += 1
 

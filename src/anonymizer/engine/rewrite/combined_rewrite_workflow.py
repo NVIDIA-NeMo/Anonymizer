@@ -48,7 +48,9 @@ from anonymizer.engine.replace.llm_replace_workflow import (
     _create_entity_examples,
     _enrich_entities_for_template,
     _filter_replacement_map_to_input_entities,
+    _fold_replacement_maps,
     _get_replacement_mapping_prompt,
+    _requested_values,
 )
 from anonymizer.engine.rewrite.domain_classification import DomainClassificationWorkflow
 from anonymizer.engine.rewrite.evaluate import EvaluateWorkflow
@@ -149,11 +151,13 @@ def _prepare_replacement_inputs(row: dict[str, Any]) -> dict[str, Any]:
     side_effect_columns=[COL_REPLACEMENT_MAP_SOURCE],
 )
 def _filter_replacement_map(row: dict[str, Any]) -> dict[str, Any]:
-    row[COL_REPLACEMENT_MAP] = _filter_replacement_map_to_input_entities(
+    parsed = EntitiesByValueSchema.from_raw(row.get(COL_ENTITIES_BY_VALUE))
+    filtered = _filter_replacement_map_to_input_entities(
         raw_map=row.get(COL_REPLACEMENT_MAP_RAW, {"replacements": []}),
-        parsed_entities=EntitiesByValueSchema.from_raw(row.get(COL_ENTITIES_BY_VALUE)),
+        parsed_entities=parsed,
         record_id=str(row.get(RECORD_ID_COLUMN, "")),
     )
+    row[COL_REPLACEMENT_MAP] = _fold_replacement_maps([filtered], "record", [_requested_values(parsed)])[0]
     row[COL_REPLACEMENT_MAP_SOURCE] = REPLACEMENT_MAP_SOURCE_LLM
     return row
 

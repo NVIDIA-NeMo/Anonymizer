@@ -29,6 +29,8 @@ from anonymizer.engine.constants import (
     COL_NEEDS_REPAIR,
     COL_REPAIR_ITERATIONS,
     COL_REPLACEMENT_APPLICATION,
+    COL_REPLACEMENT_MAP,
+    COL_REPLACEMENT_MAP_RAW,
     COL_REWRITE_REPLACEMENT_READY,
     COL_REWRITTEN_TEXT,
     COL_REWRITTEN_TEXT_INITIAL,
@@ -45,6 +47,7 @@ from anonymizer.engine.rewrite.combined_rewrite_workflow import (
     CombinedRewriteWorkflow,
     EvaluationState,
     RepairState,
+    _filter_replacement_map,
 )
 from anonymizer.engine.rewrite.rewrite_workflow import RewriteWorkflow
 from anonymizer.measurement import MeasurementCollector, measurement_session
@@ -740,3 +743,30 @@ def test_graph_validates_with_data_designer(
     )
 
     data_designer.validate(builder)
+
+
+@pytest.mark.parametrize(
+    "replacements",
+    [
+        [
+            {"original": "Alice", "label": "first_name", "synthetic": "MAYA"},
+            {"original": "Maya", "label": "first_name", "synthetic": "Lena"},
+        ],
+        [{"original": "Alice", "label": "first_name", "synthetic": "Maya"}],
+    ],
+    ids=["mapped", "unmapped"],
+)
+def test_filter_step_folds_substitutes_against_row_originals(replacements: list[dict]) -> None:
+    row = {
+        COL_REPLACEMENT_MAP_RAW: {"replacements": replacements},
+        COL_ENTITIES_BY_VALUE: {
+            "entities_by_value": [
+                {"value": "Alice", "labels": ["first_name"]},
+                {"value": "Maya", "labels": ["first_name"]},
+            ]
+        },
+    }
+
+    replacements = _filter_replacement_map(row)[COL_REPLACEMENT_MAP]["replacements"]
+
+    assert {r["synthetic"].casefold() for r in replacements}.isdisjoint({"alice", "maya"})
