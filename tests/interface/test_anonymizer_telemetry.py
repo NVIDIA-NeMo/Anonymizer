@@ -404,6 +404,27 @@ class TestFailureAggregation:
         # Distinct iteration numbers seen
         assert event.repair_iterations_triggered == 2
 
+    def test_combined_rewrite_failures_count_as_pipeline(
+        self,
+        captured_events: list[AnonymizerEvent],
+        stub_input: AnonymizerInput,
+    ) -> None:
+        _df = pd.DataFrame({COL_TEXT: ["a"], COL_REWRITTEN_TEXT: ["b"]})
+        _df.attrs["original_text_column"] = "text"
+        combined_runner = Mock(spec=RewriteWorkflow)
+        stub_run_with_detection(combined_runner)  # the line's run() detects through run_with_detection
+        combined_runner.run.return_value = RewriteResult(
+            dataframe=_df,
+            failed_records=[FailedRecord(record_id="r1", step="rewrite-combined", reason="x")],
+        )
+        anonymizer, *_ = _make_anonymizer()
+        anonymizer._combined_rewrite_runner = combined_runner
+        anonymizer.run(config=AnonymizerConfig(rewrite=Rewrite(use_combined_graph=True)), data=stub_input)
+
+        event = captured_events[0]
+        assert event.rewrite_pipeline_failure_count == 1
+        assert event.unknown_step_failure_count == 0
+
     def test_unknown_step_lands_in_catch_all(
         self,
         captured_events: list[AnonymizerEvent],
