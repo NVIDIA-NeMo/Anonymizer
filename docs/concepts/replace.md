@@ -3,7 +3,7 @@
 
 # Replace
 
-Replace mode replaces each [detected entity](detection.md) with an alternative token. Anonymizer provides four strategies. 
+Replace mode replaces each [detected entity](detection.md) with an alternative token. Anonymizer provides four strategies.
 
 ---
 
@@ -37,6 +37,9 @@ AnonymizerConfig(replace=Substitute(
 | Field | Default | Description |
 |-------|---------|-------------|
 | `instructions` | `None` | Additional instructions for the LLM replacement generator. |
+| `consistency` | `"record"` | `"record"` gives each value one substitute within its record; `"run"` gives it one substitute across the whole run. |
+
+Values match on label plus text, ignoring case and whitespace differences. The default `"record"` keeps each record's substitutes independent of other records. `"run"` makes records linkable across the output and preserves how often each value occurs, so use it only for datasets where joins across related documents are needed and unlinkability is not. Otherwise, use [Hash](#hash) for joins.
 
 !!! note "Model role"
 
@@ -69,8 +72,10 @@ AnonymizerConfig(replace=Redact(format_template="[{label}]"))
 
 | Field | Default | Description |
 |-------|---------|-------------|
-| `format_template` | `[REDACTED_{label}]` | Template with optional `{label}` placeholder. |
+| `format_template` | `[REDACTED_{label}]` | Nonempty replacement template with optional `{label}` placeholder. |
 | `normalize_label` | `True` | Uppercase and clean the label before substitution. |
+
+Empty templates and statically empty renders, such as `{label:.0}`, raise a configuration error. If a label-dependent template renders an empty string during replacement, Redact raises `ValueError` instead of silently keeping the entity. Whitespace replacements remain valid.
 
 ---
 

@@ -50,6 +50,7 @@ from anonymizer.engine.replace.replace_runner import ReplacementResult, Replacem
 from anonymizer.engine.rewrite.rewrite_workflow import RewriteResult, RewriteWorkflow
 from anonymizer.interface.anonymizer import Anonymizer, _accepts_entity_label_examples, _resolve_model_providers
 from anonymizer.interface.errors import InvalidConfigError, InvalidInputError
+from tests.conftest import stub_run_with_detection
 
 
 @pytest.fixture
@@ -73,6 +74,7 @@ def _make_anonymizer(
         {COL_TEXT: ["Alice works at Acme"], COL_REPLACED_TEXT: ["[REDACTED] works at [REDACTED]"]}
     )
     replace_runner = Mock(spec=ReplacementWorkflow)
+    stub_run_with_detection(replace_runner)
     replace_runner.run.return_value = replace_return or ReplacementResult(
         dataframe=_replace_df,
         failed_records=[],
@@ -89,6 +91,7 @@ def _make_anonymizer(
         }
     )
     rewrite_runner = Mock(spec=RewriteWorkflow)
+    stub_run_with_detection(rewrite_runner)
     rewrite_runner.run.return_value = rewrite_return or RewriteResult(
         dataframe=_rewrite_df,
         failed_records=[],
@@ -171,8 +174,16 @@ def test_run_in_memory_records_tracks_dropped_caller_id_and_survivor_order() -> 
             COL_TAGGED_TEXT: surviving_texts,
         }
     )
+
+    def create(config_builder, **_kwargs):
+        seed = pd.read_parquet(config_builder.get_seed_config().source.path)
+        key_column = next(c for c in seed.columns if c.startswith("_anonymizer_source_"))
+        survivors = seed[seed[RECORD_ID_COLUMN].isin(surviving_ids)]
+        echoed = detected.assign(**{key_column: survivors[key_column].tolist()})
+        return SimpleNamespace(load_dataset=Mock(return_value=echoed))
+
     data_designer = Mock(spec=DataDesigner)
-    data_designer.create.return_value = SimpleNamespace(load_dataset=Mock(return_value=detected))
+    data_designer.create.side_effect = create
 
     result = Anonymizer(data_designer=data_designer).run(
         config=AnonymizerConfig(replace=Redact(), emit_telemetry=False),
@@ -231,7 +242,7 @@ def test_run_passes_entity_label_examples_only_to_detection_workflow(stub_input:
     assert detection_wf.run.call_args.kwargs["entity_label_examples"] == examples
     assert result.entity_labels == ["vendor_api_key"]
     assert not hasattr(result, "entity_label_examples")
-    assert "entity_label_examples" not in replace_runner.run.call_args.kwargs
+    assert "entity_label_examples" not in replace_runner.run_with_detection.call_args.kwargs
     assert "acme_live_abc123" not in (result.dataframe.to_json() or "")
 
 
@@ -248,7 +259,7 @@ def test_rewrite_run_passes_entity_label_examples_to_detection_workflow(stub_inp
     assert detection_wf.run.call_args.kwargs["entity_label_examples"] == examples
     assert detection_wf.run.call_args.kwargs["tag_latent_entities"] is True
     assert result.entity_labels == ["vendor_api_key"]
-    assert "entity_label_examples" not in rewrite_runner.run.call_args.kwargs
+    assert "entity_label_examples" not in rewrite_runner.run_with_detection.call_args.kwargs
     assert "acme_live_abc123" not in (result.dataframe.to_json() or "")
 
 
@@ -1071,7 +1082,7 @@ def test_run_raises_invalid_config_before_workflows(
         anonymizer.run(config=AnonymizerConfig(replace=Substitute()), data=stub_input)
 
     detection_wf.run.assert_not_called()
-    replace_runner.run.assert_not_called()
+    replace_runner.run_with_detection.assert_not_called()
 
 
 def test_preview_raises_invalid_config_before_workflows(
@@ -1090,7 +1101,7 @@ def test_preview_raises_invalid_config_before_workflows(
         anonymizer.preview(config=AnonymizerConfig(rewrite=Rewrite()), data=stub_input, num_records=1)
 
     detection_wf.run.assert_not_called()
-    replace_runner.run.assert_not_called()
+    replace_runner.run_with_detection.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -1104,8 +1115,8 @@ def test_run_rewrite_calls_rewrite_runner(stub_input: AnonymizerInput) -> None:
 
     anonymizer.run(config=config, data=stub_input)
 
-    rewrite_runner.run.assert_called_once()
-    call_kwargs = rewrite_runner.run.call_args.kwargs
+    rewrite_runner.run_with_detection.assert_called_once()
+    call_kwargs = rewrite_runner.run_with_detection.call_args.kwargs
     assert config.rewrite is not None
     assert call_kwargs["privacy_goal"] == config.rewrite.privacy_goal
     assert call_kwargs["evaluation"] == config.rewrite.evaluation
@@ -1115,13 +1126,14 @@ def test_run_rewrite_uses_combined_runner_when_enabled(stub_input: AnonymizerInp
     config = AnonymizerConfig(rewrite=Rewrite(use_combined_graph=True))
     anonymizer, _, _, rewrite_runner = _make_anonymizer()
     combined_runner = Mock(spec=RewriteWorkflow)
+    stub_run_with_detection(combined_runner)
     combined_runner.run.return_value = rewrite_runner.run.return_value
     anonymizer._combined_rewrite_runner = combined_runner
 
     anonymizer.run(config=config, data=stub_input)
 
-    rewrite_runner.run.assert_not_called()
-    combined_runner.run.assert_called_once()
+    rewrite_runner.run_with_detection.assert_not_called()
+    combined_runner.run_with_detection.assert_called_once()
 
 
 def test_run_rewrite_rejects_missing_privacy_goal_before_workflows(stub_input: AnonymizerInput) -> None:
@@ -1134,7 +1146,7 @@ def test_run_rewrite_rejects_missing_privacy_goal_before_workflows(stub_input: A
         anonymizer.run(config=config, data=stub_input)
 
     detection_workflow.run.assert_not_called()
-    rewrite_runner.run.assert_not_called()
+    rewrite_runner.run_with_detection.assert_not_called()
 
 
 def test_run_rewrite_output_columns(stub_input: AnonymizerInput) -> None:

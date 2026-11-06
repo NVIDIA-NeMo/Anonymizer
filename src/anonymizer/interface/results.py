@@ -9,6 +9,7 @@ import pandas as pd
 
 from anonymizer.config.replace_strategies import ReplaceMethod
 from anonymizer.config.rewrite import PrivacyGoal
+from anonymizer.engine.graph_core.execution import TargetOutcome
 from anonymizer.engine.ndd.adapter import FailedRecord
 from anonymizer.interface.display import render_record_html
 
@@ -19,6 +20,24 @@ class _DisplayMixin:
     trace_dataframe: pd.DataFrame
     resolved_text_column: str
     _display_cycle_index: int
+    _outcomes: tuple[TargetOutcome, ...] | None
+
+    def outcome(self, row: int) -> TargetOutcome:
+        """The protection outcome of output row ``row``: its ``qualification`` and the ``reasons`` behind it.
+
+        ``qualification`` is ``"met"`` when every required check passed for the row, ``"not_met"`` when one
+        failed (its reasons name the check), and ``"not_assessed"`` when a check could not decide.
+
+        Raises:
+            IndexError: ``row`` is not an output row, or this result carries no outcomes (an ``evaluate()``,
+                custom runner's or hand-built result).
+        """
+        outcomes = getattr(self, "_outcomes", None)  # absent on results pickled before outcomes were kept
+        if outcomes is None:
+            raise IndexError("This result carries no protection outcomes.")
+        if row < 0 or row >= len(outcomes):
+            raise IndexError(f"Record index {row} is out of bounds for {len(outcomes)} records.")
+        return outcomes[row]
 
     def display_record(self, index: int | None = None) -> None:
         """Render a record with entity highlights and replacement map in a notebook.
@@ -92,6 +111,7 @@ class AnonymizerResult(_DisplayMixin):
     excluded_entity_labels: list[str] | None = None
     id_column: str | None = None
     _display_cycle_index: int = field(default=0, init=False, repr=False)
+    _outcomes: tuple[TargetOutcome, ...] | None = field(default=None, repr=False, compare=False)
 
     def __repr__(self) -> str:
         return (
@@ -153,6 +173,7 @@ class PreviewResult(_DisplayMixin):
     excluded_entity_labels: list[str] | None = None
     id_column: str | None = None
     _display_cycle_index: int = field(default=0, init=False, repr=False)
+    _outcomes: tuple[TargetOutcome, ...] | None = field(default=None, repr=False, compare=False)
 
     def __repr__(self) -> str:
         return (

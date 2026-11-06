@@ -344,7 +344,7 @@ class TelemetryHandler:
             # Telemetry is best-effort; never raise into the caller's pipeline.
             # Logged at DEBUG so it's surfaceable via `logging.getLogger("anonymizer")`
             # without spamming default-level output.
-            logger.debug("Telemetry flush failed", exc_info=True)
+            logger.debug("Telemetry flush failed")
 
     @staticmethod
     def _run_sync(coro: Any) -> Any:
