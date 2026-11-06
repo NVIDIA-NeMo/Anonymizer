@@ -82,6 +82,9 @@ class StageMeasurement(_MeasurementEnvelope):
         "EntityDetectionWorkflow.run",
         "ReplacementWorkflow.run",
         "RewriteWorkflow.run",
+        "graph_prepare",
+        "graph_protect",
+        "graph_reconcile",
     ]
     status: Literal["completed", "error"]
     elapsed_sec: NonNegativeFloat
@@ -96,6 +99,9 @@ class StageMeasurement(_MeasurementEnvelope):
     tag_latent_entities: StrictBool | None = None
     entity_row_count: NonNegativeInt | None = None
     passthrough_row_count: NonNegativeInt | None = None
+    operation_count: NonNegativeInt | None = None
+    target_count: NonNegativeInt | None = None
+    terminal_counts: dict[Literal["success", "failed", "cancelled", "blocked"], NonNegativeInt] | None = None
 
 
 class _WorkflowMeasurement(_MeasurementEnvelope):
