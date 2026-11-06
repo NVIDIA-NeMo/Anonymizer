@@ -48,6 +48,9 @@ class Substitute(ReplaceMethodBase):
     instructions: str | None = Field(
         default=None, description="Additional instructions for the LLM replacement generator."
     )
+    consistency: Literal["record", "run"] = Field(
+        default="record", description="Share one substitute per value within each record, or across the whole run."
+    )
 
 
 class Redact(ReplaceMethodBase):

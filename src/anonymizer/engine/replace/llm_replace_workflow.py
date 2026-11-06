@@ -7,6 +7,7 @@ import json
 import logging
 from collections import Counter
 from dataclasses import dataclass
+from typing import Literal
 
 import pandas as pd
 from data_designer.config.column_configs import LLMStructuredColumnConfig
@@ -63,6 +64,7 @@ class LlmReplaceWorkflow:
         instructions: str | None = None,
         entities_column: str = COL_ENTITIES_BY_VALUE,
         preview_num_records: int | None = None,
+        consistency: Literal["record", "run"] = "record",
     ) -> LlmReplaceResult:
         working_df = dataframe.copy()
 
@@ -117,11 +119,55 @@ class LlmReplaceWorkflow:
         # Input positions of the rows that came back, in output order: the rows the LLM dropped are absent.
         positions = tuple(sorted((*passthrough_rows[ROW_ORDER_COL], *output_df[ROW_ORDER_COL])))
         combined = merge_and_reorder(output_df, passthrough_rows)
+        combined[COL_REPLACEMENT_MAP] = _fold_replacement_maps(combined[COL_REPLACEMENT_MAP].tolist(), consistency)
         return LlmReplaceResult(
             dataframe=combined.drop(columns=list(_INTERNAL_COLUMNS), errors="ignore"),
             failed_records=run_result.failed_records,
             source_positions=positions,
         )
+
+
+def _fold(value: str) -> str:
+    return " ".join(value.casefold().split())
+
+
+def _recase(synthetic: str, *, like: str, source: str) -> str:
+    if like == source:
+        return synthetic
+    if like.isupper():
+        return synthetic.upper()
+    if like.islower():
+        return synthetic.lower()
+    return synthetic.title() if like[:1].isupper() and (synthetic.isupper() or synthetic.islower()) else synthetic
+
+
+def _fold_replacement_maps(maps: list[dict], consistency: Literal["record", "run"]) -> list[dict]:
+    """Give entries with the same (label, case- and whitespace-folded value) one substitute, re-cased to each original.
+
+    ``"record"`` shares within each record; ``"run"`` also gives each key the first record's substitute. An entry
+    keeps its own substitute when the shared one would equal a value in its record, another entry's own substitute,
+    or a substitute already assigned in that record.
+    """
+    run_wide: dict[tuple[str, str], tuple[str, str]] = {}
+    folded: list[dict] = []
+    for raw in maps:
+        keyed = [((e["label"], _fold(e["original"])), e) for e in raw.get("replacements", [])]
+        record: dict[tuple[str, str], tuple[str, str]] = {}
+        out = []
+        for key, entry in keyed:
+            if key not in record:
+                shared = run_wide.get(key)
+                taken = {_fold(e["original"]) for _, e in keyed} | {_fold(e["synthetic"]) for k, e in keyed if k != key}
+                taken |= {_fold(assigned) for _, assigned in record.values()}
+                own = (entry["original"], entry["synthetic"])
+                record[key] = shared if shared is not None and _fold(shared[1]) not in taken else own
+            source = record[key]
+            out.append({**entry, "synthetic": _recase(source[1], like=entry["original"], source=source[0])})
+        if consistency == "run":
+            for key, source in record.items():
+                run_wide.setdefault(key, source)
+        folded.append({**raw, "replacements": out})
+    return folded
 
 
 def _enrich_entities_for_template(parsed: EntitiesByValueSchema) -> list[dict[str, str | list[str]]]:

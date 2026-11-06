@@ -17,6 +17,7 @@ from anonymizer.engine.replace.llm_replace_workflow import (
     _INTERNAL_COLUMNS,
     LlmReplaceWorkflow,
     _filter_replacement_map_to_input_entities,
+    _fold_replacement_maps,
 )
 from anonymizer.engine.schemas.detection import EntitiesByValueSchema
 
@@ -398,3 +399,34 @@ def test_filter_replacement_map_empty_warning_does_not_leak_pii(
     assert "first_name" not in caplog.text
     _assert_no_pii_in_logs(caplog, extra_secrets=("Acme Corp", "NovaCorp"))
     assert result == {"replacements": []}
+
+
+def _maps(*records: list[tuple[str, str, str]]) -> list[dict]:
+    return [{"replacements": [{"label": lb, "original": o, "synthetic": sy} for lb, o, sy in r]} for r in records]
+
+
+_ACME_TWICE = _maps([("company", "Acme", "Nova")], [("company", "Acme", "Zeta")])
+_ANN_TWICE = _maps([("first_name", "Ann", "Bea")], [("first_name", "Ann", "Cy")])
+_CASE = _maps([("person", "John Smith", "Mark Lee"), ("person", "JOHN SMITH", "Paul Hu")])
+_NNBSP = _maps([("person", "John Smith", "Mark Lee"), ("person", "John\u202fsmith", "Paul Hu")])
+_TWO_LABELS = _maps([("city", "Paris", "Lyon")], [("first_name", "Paris", "Dana")])
+_COLLISION = _maps([("company", "Acme", "Nova")], [("company", "Acme", "Zeta"), ("company", "Initech", "Nova")])
+_SINGLE = _maps([("company", "Acme", "Nova"), ("person", "Bob", "Tim")])
+
+
+@pytest.mark.parametrize(
+    ("maps", "record", "run"),
+    [
+        (_ACME_TWICE, _ACME_TWICE, _maps([("company", "Acme", "Nova")], [("company", "Acme", "Nova")])),
+        (_CASE, *[_maps([("person", "John Smith", "Mark Lee"), ("person", "JOHN SMITH", "MARK LEE")])] * 2),
+        (_NNBSP, *[_maps([("person", "John Smith", "Mark Lee"), ("person", "John\u202fsmith", "Mark Lee")])] * 2),
+        (_TWO_LABELS, _TWO_LABELS, _TWO_LABELS),
+        (_ANN_TWICE, _ANN_TWICE, _maps([("first_name", "Ann", "Bea")], [("first_name", "Ann", "Bea")])),
+        (_COLLISION, _COLLISION, _COLLISION),
+        (_SINGLE, _SINGLE, _SINGLE),
+    ],
+    ids=["cross-record", "case", "nnbsp", "two-labels", "first-name", "collision", "single"],
+)
+def test_fold_replacement_maps(maps: list[dict], record: list[dict], run: list[dict]) -> None:
+    assert _fold_replacement_maps(maps, "record") == record
+    assert _fold_replacement_maps(maps, "run") == run

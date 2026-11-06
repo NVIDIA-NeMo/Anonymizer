@@ -135,7 +135,9 @@ def _substitute_map_step(
 
     def generate_maps(target: tuple[Datum, ...]) -> list[dict[str, Any] | None]:
         source, owners = frame(target)
-        result = llm_workflow.generate_map_only(source, instructions=replace_method.instructions, **map_arguments)
+        result = llm_workflow.generate_map_only(
+            source, instructions=replace_method.instructions, consistency=replace_method.consistency, **map_arguments
+        )
         failures.extend(result.failed_records)
         positions = resolve_source_positions(source, result.dataframe, result.source_positions)
         maps = (

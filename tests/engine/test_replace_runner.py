@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Literal
 from unittest.mock import Mock
 
 import numpy as np
@@ -37,7 +38,7 @@ from anonymizer.engine.evaluation.replace.attribute_fidelity_judge import Attrib
 from anonymizer.engine.evaluation.replace.relational_consistency_judge import RelationalConsistencyJudgeWorkflow
 from anonymizer.engine.evaluation.replace.type_fidelity_judge import TypeFidelityJudgeWorkflow
 from anonymizer.engine.ndd.adapter import RECORD_ID_COLUMN, FailedRecord, WorkflowRunResult
-from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceResult
+from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceResult, LlmReplaceWorkflow
 from anonymizer.engine.replace.replace_runner import ReplacementWorkflow
 from anonymizer.engine.schemas import EntitiesSchema
 from anonymizer.interface.anonymizer import Anonymizer
@@ -88,6 +89,42 @@ def test_local_replace_runner_with_custom_format_template(
     )
     assert result.failed_records == []
     assert result.dataframe[COL_REPLACED_TEXT].iloc[0] == "*** works at ***"
+
+
+@pytest.mark.parametrize(("consistency", "expected"), [("record", ["Maya", "Nora"]), ("run", ["Maya", "Maya"])])
+def test_substitute_consistency_shares_values_across_records_only_for_run(
+    consistency: Literal["record", "run"],
+    expected: list[str],
+    stub_model_configs: list[ModelConfig],
+    stub_replace_model_selection: ReplaceModelSelection,
+) -> None:
+    def generate(dataframe: pd.DataFrame, **_: object) -> WorkflowRunResult:
+        out = dataframe.copy()
+        out[COL_REPLACEMENT_MAP] = [
+            {"replacements": [{"original": "Alice", "label": "first_name", "synthetic": name}]}
+            for name in ["Maya", "Nora"]
+        ]
+        return WorkflowRunResult(dataframe=out, failed_records=[], source_positions=(0, 1))
+
+    adapter = Mock()
+    adapter.run_workflow.side_effect = generate
+    entities = {"entities": [{"value": "Alice", "label": "first_name", "start_position": 0, "end_position": 5}]}
+    frame = pd.DataFrame(
+        {
+            COL_TEXT: ["Alice called", "Alice wrote"],
+            COL_FINAL_ENTITIES: [entities, entities],
+            COL_ENTITIES_BY_VALUE: [{"entities_by_value": [{"value": "Alice", "labels": ["first_name"]}]}] * 2,
+        }
+    )
+    result = ReplacementWorkflow(llm_workflow=LlmReplaceWorkflow(adapter=adapter)).run_with_detection(
+        frame,
+        detect=lambda df: EntityDetectionResult(df, [], tuple(range(len(df)))),
+        replace_method=Substitute(consistency=consistency),
+        model_configs=stub_model_configs,
+        selected_models=stub_replace_model_selection,
+    )
+    assert adapter.run_workflow.call_count == 1
+    assert result.dataframe[COL_REPLACED_TEXT].tolist() == [f"{expected[0]} called", f"{expected[1]} wrote"]
 
 
 def test_substitute_runner_applies_generated_map(
