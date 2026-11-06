@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+from typing import Literal
 
 import pytest
 from pydantic import ValidationError
@@ -31,6 +32,46 @@ def test_hash_is_deterministic() -> None:
     strategy = Hash()
     value = strategy.replace(text="alice@example.com", label="email")
     assert value == strategy.replace(text="alice@example.com", label="email")
+
+
+def test_unkeyed_hash_output_is_unchanged() -> None:
+    assert Hash().replace(text="Alice", label="first_name") == "<HASH_FIRST_NAME_3bc51062973c>"
+
+
+def test_keyed_hash_folds_case_and_whitespace_and_depends_on_key() -> None:
+    keyed = Hash(key="s3cr3t")
+    token = keyed.replace(text="Acme  Corp", label="company_name")
+    assert token == keyed.replace(text="ACME\u202fcorp", label="company_name")
+    assert token != Hash(key="other").replace(text="Acme  Corp", label="company_name")
+    assert token != Hash().replace(text="acme corp", label="company_name")
+    assert "s3cr3t" not in repr(keyed)
+
+
+def test_keyed_hash_output_is_hmac_sha256_of_folded_text() -> None:
+    # From `printf 'acme corp' | openssl dgst -sha256 -hmac s3cr3t`, first 12 hex characters.
+    expected = "<HASH_COMPANY_NAME_44cf69ecb37f>"
+    tokens = {Hash(key="s3cr3t").replace(text="Acme  Corp", label="company_name") for _ in range(2)}
+    assert tokens == {expected}
+
+
+@pytest.mark.parametrize("key", ["", "   ", "\t\n"], ids=["empty", "spaces", "whitespace"])
+def test_hash_rejects_blank_key(key: str) -> None:
+    with pytest.raises(ValidationError, match="key must not be empty"):
+        Hash(key=key)
+
+
+def test_keyed_hash_config_does_not_reload_from_json_with_masked_key() -> None:
+    dumped = AnonymizerConfig(replace=Hash(key="s3cr3t")).model_dump_json()
+    assert "s3cr3t" not in dumped
+    with pytest.raises(ValidationError, match="masked placeholder"):
+        AnonymizerConfig.model_validate_json(dumped)
+
+
+@pytest.mark.parametrize("algorithm", ["sha1", "md5"])
+def test_keyed_hash_rejects_non_default_algorithm(algorithm: Literal["sha1", "md5"]) -> None:
+    with pytest.raises(ValidationError, match="HMAC-SHA256") as exc_info:
+        Hash(key="s3cr3t", algorithm=algorithm)
+    assert "s3cr3t" not in str(exc_info.value)
 
 
 def test_rewrite_defaults_privacy_goal() -> None:
