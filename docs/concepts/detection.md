@@ -225,7 +225,7 @@ For `gliner_threshold`, start with the default `0.3`. If you're seeing too many 
 
 ## Model roles
 
-The detection pipeline uses three model roles, each mapped to a model alias in the default config:
+The detection pipeline uses three model roles, each mapped to a model alias in the bundled configs:
 
 | Role | Default alias | Purpose |
 |------|--------------|---------|

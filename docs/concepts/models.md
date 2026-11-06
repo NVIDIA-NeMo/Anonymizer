@@ -31,7 +31,7 @@ export OPENROUTER_API_KEY="your-openrouter-api-key"
 | `nemotron-30b-thinking` | [`nvidia/nemotron-3-nano-30b-a3b`](https://openrouter.ai/nvidia/nemotron-3-nano-30b-a3b) | Latent detection, rewrite evaluation, final judge |
 | `nemotron-super` | [`nvidia/nemotron-3-super-120b-a12b`](https://openrouter.ai/nvidia/nemotron-3-super-120b-a12b) | Entity coverage evaluation |
 
-Each pipeline stage has a **role** mapped to one of these aliases. See the full role list in the default configs: [`detection.yaml`](https://github.com/NVIDIA-NeMo/Anonymizer/blob/main/src/anonymizer/config/default_model_configs/detection.yaml), [`replace.yaml`](https://github.com/NVIDIA-NeMo/Anonymizer/blob/main/src/anonymizer/config/default_model_configs/replace.yaml), [`rewrite.yaml`](https://github.com/NVIDIA-NeMo/Anonymizer/blob/main/src/anonymizer/config/default_model_configs/rewrite.yaml).
+Each pipeline stage has a **role** mapped to one of these aliases. See the full role list in the bundled configs: [`detection.yaml`](https://github.com/NVIDIA-NeMo/Anonymizer/blob/main/src/anonymizer/config/default_model_configs/detection.yaml), [`replace.yaml`](https://github.com/NVIDIA-NeMo/Anonymizer/blob/main/src/anonymizer/config/default_model_configs/replace.yaml), [`rewrite.yaml`](https://github.com/NVIDIA-NeMo/Anonymizer/blob/main/src/anonymizer/config/default_model_configs/rewrite.yaml).
 
 ---
 
