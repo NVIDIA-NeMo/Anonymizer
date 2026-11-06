@@ -32,6 +32,7 @@ from data_designer.config.utils.constants import TRACE_COLUMN_POSTFIX
 from data_designer.config.utils.trace_type import TraceType
 
 from anonymizer.engine.constants import RECORD_ID_COLUMN
+from anonymizer.engine.ndd.storage import prepare_json_storage_column, prepare_json_storage_seed
 from anonymizer.interface.errors import AnonymizerWorkflowError
 from anonymizer.measurement import current_collector, record_ndd_workflow
 
@@ -116,8 +117,8 @@ _MODEL_TRACE_PURPOSE: ContextVar[str | None] = ContextVar("anonymizer_dd_model_t
 def _normalize_column_for_data_designer(column: ColumnConfigT) -> ColumnConfigT:
     """Convert marked private config subclasses to DataDesigner's registered types."""
     if getattr(type(column), "_normalize_for_data_designer", False):
-        return LLMStructuredColumnConfig.model_validate(column.model_dump())
-    return column
+        column = LLMStructuredColumnConfig.model_validate(column.model_dump())
+    return prepare_json_storage_column(column)
 
 
 @dataclass(frozen=True)
@@ -402,6 +403,9 @@ class NddAdapter:
         This is the engine boundary for *executing* DataDesigner workflows.
         Engine sub-workflows declare column configs and call this method;
         they do not call `DataDesigner.create()` or `.preview()` directly.
+        Registered nested engine columns use DD JSON storage at seed and
+        artifact boundaries; callers continue to receive logical dict/list
+        values. Existing field-level storage metadata is preserved.
 
         Args:
             df: Input DataFrame.
@@ -443,19 +447,20 @@ class NddAdapter:
 
         with tempfile.TemporaryDirectory(prefix=f"anonymizer_{workflow_name}_") as tmp_dir:
             seed_path = str(Path(tmp_dir) / "seed.parquet")
-            seed_source = LocalFileSeedSource.from_dataframe(workflow_input_df, seed_path)
-
-            config_builder = DataDesignerConfigBuilder(model_configs=model_configs)
-            config_builder.with_seed_dataset(seed_source, sampling_strategy=SamplingStrategy.ORDERED)
-            for column in columns:
-                # DataDesigner resolves built-in generators by exact config
-                # type. A private subclass can keep sensitive prompt fields
-                # out of reprs in our workflow specs, then become the
-                # registered built-in config at the execution boundary.
-                config_builder.add_column(_normalize_column_for_data_designer(column))
-
             task_traces: list[_TaskTrace] = []
             try:
+                workflow_input_df = prepare_json_storage_seed(workflow_input_df)
+                seed_source = LocalFileSeedSource.from_dataframe(workflow_input_df, seed_path)
+
+                config_builder = DataDesignerConfigBuilder(model_configs=model_configs)
+                config_builder.with_seed_dataset(seed_source, sampling_strategy=SamplingStrategy.ORDERED)
+                for column in columns:
+                    # DataDesigner resolves built-in generators by exact config
+                    # type. A private subclass can keep sensitive prompt fields
+                    # out of reprs in our workflow specs, then become the
+                    # registered built-in config at the execution boundary.
+                    config_builder.add_column(_normalize_column_for_data_designer(column))
+
                 with self._run_lock, usage_probe, _temporary_dd_task_trace(self._data_designer, collector=collector):
                     if preview_num_records is None:
                         run_results = self._data_designer.create(
@@ -579,7 +584,11 @@ class NddAdapter:
             The assembled ``DataDesignerConfigBuilder`` (seed dataset + columns added).
         """
         workflow_input_df = self._attach_record_ids(df=df)
-        seed_source = LocalFileSeedSource.from_dataframe(workflow_input_df, str(seed_path))
+        try:
+            workflow_input_df = prepare_json_storage_seed(workflow_input_df)
+            seed_source = LocalFileSeedSource.from_dataframe(workflow_input_df, str(seed_path))
+        except Exception as exc:
+            raise AnonymizerWorkflowError(f"Workflow seed preparation failed: {exc}") from exc
         config_builder = DataDesignerConfigBuilder(model_configs=model_configs)
         config_builder.with_seed_dataset(seed_source, sampling_strategy=SamplingStrategy.ORDERED)
         for column in columns:
