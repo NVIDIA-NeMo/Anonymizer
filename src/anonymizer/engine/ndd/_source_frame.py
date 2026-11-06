@@ -144,6 +144,7 @@ class WorkflowSourceFrame:
             dataframe: pd.DataFrame,
             batch_stage: Any,
             subfolder: str | None = None,
+            **kwargs: Any,
         ) -> Any:
             if batch_stage in {BatchStage.PARTIAL_RESULT, BatchStage.FINAL_RESULT}:
                 if subfolder or list(dataframe.columns).count(self.key_column) != 1:
@@ -157,6 +158,7 @@ class WorkflowSourceFrame:
                 dataframe.drop(columns=self.key_column, errors="ignore"),
                 batch_stage,
                 subfolder=subfolder,
+                **kwargs,
             )
 
         def load_dataset(batch_stage: Any = BatchStage.FINAL_RESULT) -> pd.DataFrame:

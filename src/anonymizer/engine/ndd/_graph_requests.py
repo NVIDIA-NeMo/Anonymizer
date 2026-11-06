@@ -14,7 +14,7 @@ from typing import Any
 
 from anonymizer.interface.errors import AnonymizerWorkflowError
 
-SUPPORTED_DATA_DESIGNER_RANGE = ">=0.9.4,<0.10"
+SUPPORTED_DATA_DESIGNER_RANGE = ">=0.10.0,<0.11"
 """DataDesigner releases the source-frame binding supports.
 
 The binding relies on private DataDesigner hooks, so it checks for them instead of an exact version. Must stay in
