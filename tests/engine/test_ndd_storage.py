@@ -15,6 +15,7 @@ import pyarrow.parquet as pq
 import pytest
 from data_designer.config import custom_column_generator
 from data_designer.config.column_configs import CustomColumnConfig, LLMStructuredColumnConfig
+from data_designer.config.errors import InvalidFileFormatError
 from data_designer.config.models import ModelConfig, ModelProvider
 from data_designer.config.run_config import RunConfig
 from data_designer.config.seed_source import LocalFileSeedSource
@@ -41,6 +42,7 @@ from anonymizer.engine.detection.detection_workflow import EntityDetectionWorkfl
 from anonymizer.engine.ndd.adapter import NddAdapter
 from anonymizer.engine.ndd.storage import prepare_json_storage_column, prepare_json_storage_seed
 from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceWorkflow
+from anonymizer.engine.schemas import EntitiesSchema
 from anonymizer.interface.errors import AnonymizerWorkflowError
 
 _USER_JSON_TEXT = "user_json_text"
@@ -235,6 +237,34 @@ def test_build_config_uses_same_storage_contract(tmp_path: Path) -> None:
     assert read_storage_plan(pq.read_schema(path)).columns == {COL_VALIDATION_DECISIONS: [[]]}
 
 
+@pytest.mark.parametrize("mode", ["run", "preview", "export"])
+@pytest.mark.parametrize("failure", ["metadata", "encoding"])
+def test_seed_storage_errors_use_workflow_error(tmp_path: Path, mode: str, failure: str) -> None:
+    designer = DataDesigner(
+        artifact_path=tmp_path,
+        model_providers=[ModelProvider(name="unused-synthetic", endpoint="http://127.0.0.1:9/v1")],
+        auto_configure_logging=False,
+    )
+    adapter = NddAdapter(designer)
+    dataframe = pd.DataFrame({COL_TEXT: ["Synthetic record"], COL_VALIDATION_DECISIONS: [{"score": float("inf")}]})
+    if failure == "metadata":
+        dataframe.attrs[JSON_STORAGE_RUN_KEY] = {"version": 2, "columns": {COL_VALIDATION_DECISIONS: [[]]}}
+
+    with pytest.raises(AnonymizerWorkflowError) as captured:
+        if mode == "export":
+            adapter.build_config(dataframe, model_configs=[], columns=[], seed_path=tmp_path / "seed.parquet")
+        else:
+            adapter.run_workflow(
+                dataframe,
+                model_configs=[],
+                columns=[],
+                workflow_name="synthetic-invalid-seed",
+                preview_num_records=1 if mode == "preview" else None,
+            )
+
+    assert isinstance(captured.value.__cause__, InvalidFileFormatError)
+
+
 @pytest.mark.parametrize("next_step", ["substitute", "latent"])
 def test_actual_workflow_handoff_from_batch_loaded_detection(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, next_step: str
@@ -248,18 +278,23 @@ def test_actual_workflow_handoff_from_batch_loaded_detection(
         model_providers=[ModelProvider(name="synthetic", endpoint="http://127.0.0.1:9/v1")],
         auto_configure_logging=False,
     )
+    designer.set_run_config(RunConfig(buffer_size=2))
     adapter = NddAdapter(designer)
+    texts = ["No names one", "No names two", "Ada one", "Ada two"]
+    entities = {"entities_by_value": [{"value": "Ada", "labels": ["first_name"]}]}
     detected = adapter.run_workflow(
         pd.DataFrame(
             {
-                COL_TEXT: ["Synthetic Ada record"],
-                COL_TAGGED_TEXT: ["Synthetic Ada record"],
-                COL_TAG_NOTATION: ["sentinel"],
-                COL_ENTITIES_BY_VALUE: [{"entities_by_value": [{"value": "Ada", "labels": ["first_name"]}]}],
+                COL_TEXT: texts,
+                COL_TAGGED_TEXT: texts,
+                COL_TAG_NOTATION: ["sentinel"] * len(texts),
+                COL_ENTITIES_BY_VALUE: [{"entities_by_value": []}] * 2 + [entities] * 2,
             }
         ),
         model_configs=[],
-        columns=[CustomColumnConfig(name=COL_VALIDATION_DECISIONS, generator_function=_generate_nested_decisions)],
+        columns=[
+            CustomColumnConfig(name=COL_VALIDATION_DECISIONS, generator_function=_generate_seed_entities_side_effect)
+        ],
         workflow_name="synthetic-detection-batch",
     )
     configs = [ModelConfig(alias="synthetic", model="synthetic-model", provider="synthetic")]
@@ -269,7 +304,7 @@ def test_actual_workflow_handoff_from_batch_loaded_detection(
             model_configs=configs,
             selected_models=ReplaceModelSelection(replacement_generator="synthetic"),
         )
-        assert result.dataframe[COL_REPLACEMENT_MAP].tolist() == [{"replacements": []}]
+        assert result.dataframe[COL_REPLACEMENT_MAP].tolist() == [{"replacements": []}] * len(texts)
     else:
         result = EntityDetectionWorkflow(adapter).identify_latent_entities(
             detected.dataframe,
@@ -283,8 +318,16 @@ def test_actual_workflow_handoff_from_batch_loaded_detection(
             gliner_detection_threshold=0.3,
             privacy_goal=None,
         )
-        assert result.dataframe[COL_LATENT_ENTITIES].tolist() == [{"latent_entities": []}]
+        assert result.dataframe[COL_LATENT_ENTITIES].tolist() == [{"latent_entities": []}] * len(texts)
+    assert detected.failed_records == []
     assert result.failed_records == []
+    assert result.dataframe[COL_TEXT].tolist() == texts
+    assert result.dataframe[RECORD_ID_COLUMN].tolist() == detected.dataframe[RECORD_ID_COLUMN].tolist()
+    entity_spans = [EntitiesSchema.from_raw(raw).entities for raw in result.dataframe[COL_VALIDATED_SEED_ENTITIES]]
+    assert [
+        [(entity.value, entity.label, entity.start_position, entity.end_position) for entity in entities]
+        for entities in entity_spans
+    ] == [[], [], [("Ada", "first_name", 0, 3)], [("Ada", "first_name", 0, 3)]]
     assert result.dataframe[COL_VALIDATION_DECISIONS].tolist() == detected.dataframe[COL_VALIDATION_DECISIONS].tolist()
 
 
@@ -298,6 +341,7 @@ def test_side_effect_storage_is_not_implied_by_producer() -> None:
 
 
 def test_dd010_all_failed_batch_still_raises_not_failed_records(tmp_path: Path) -> None:
+    # #331 tracks returning failed records for all-failed batches; retain the current exception until then.
     designer = DataDesigner(
         artifact_path=tmp_path,
         model_providers=[ModelProvider(name="unused-synthetic", endpoint="http://127.0.0.1:9/v1")],

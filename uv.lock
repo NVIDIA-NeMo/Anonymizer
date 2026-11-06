@@ -2595,7 +2595,7 @@ requires-dist = [
     { name = "certifi", specifier = ">=2026.10.19" },
     { name = "cryptography", specifier = ">=46.0.6" },
     { name = "cyclopts", specifier = ">=3" },
-    { name = "data-designer", specifier = ">=0.10.0,<2" },
+    { name = "data-designer", specifier = ">=0.10.0,<0.11" },
     { name = "datasets", marker = "extra == 'notebooks'", specifier = ">=4.0.0,<6" },
     { name = "gliner2", marker = "extra == 'notebooks'", specifier = "==2.0.0" },
     { name = "httpx", specifier = ">=0.27.0" },

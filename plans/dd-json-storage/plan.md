@@ -23,22 +23,22 @@ all-failed semantics as part of this storage prerequisite.
 
 ## Verification and scope
 
-- The supported range is `data-designer>=0.10.0,<2`; resolved config and engine are
+- The supported range is `data-designer>=0.10.0,<0.11`; resolved config and engine are
   both 0.10.0. Notebook Pillow is updated to its compatible 13.x range.
-- Real synthetic DataDesigner batch generation and handoffs into the production
-  Substitute map and latent-detection workflows pass. Only the model facade and
-  remote readiness check are mocked for those two workflow tests.
-- Engine, interface, and config tests: 1,153 passed. Full repository typecheck,
-  changed-file Ruff, and offline lock freshness check passed.
-- Full `tests/` run: 1,613 passed and five environment-blocked tests. All five
-  passed when rerun with local socket permissions and a shorter temporary path
-  (1,618 distinct tests passed across the main run and bounded rerun).
-- Fresh-install check: a new isolated virtualenv installed the built wheel
-  non-editably over 113 hash-locked runtime/dev dependencies exported from this
-  branch's lockfile. From outside the checkout, Python isolated mode and a
-  separate pytest config verified site-packages imports and passed all 28
-  adapter/storage regressions. DD, DD config, and DD engine were each 0.10.0;
-  package dependency compatibility passed. No existing environment was reused.
+- Normalize registered and explicitly planned seed columns to plain Python
+  values, including object-dtype NumPy arrays and scalars, before JSON encoding.
+  Preserve existing field-level storage paths and unrelated user columns.
+- Cover empty and populated row groups with `buffer_size=2`, carrying the
+  resulting side-effect diagnostics into the production Substitute map and
+  latent-detection workflows. Mock only model generation and remote readiness;
+  use real scheduling, prompt rendering, response parsing, and Parquet I/O.
+- Check malformed storage metadata and invalid JSON values through run, preview,
+  and exported-config paths. Seed preparation and writes must raise
+  `AnonymizerWorkflowError` with the original exception chained.
+- Run adapter/storage regressions, the full test suite, and `make check`.
+  Keep revision-specific validation results in the PR description.
+- Verify a non-editable wheel install over the locked dependencies from outside
+  the checkout, including dependency compatibility and adapter/storage tests.
 - A deterministic custom generator that fails every row still produces
   `AnonymizerWorkflowError`, caused by `DataDesignerGenerationError`, under
   DataDesigner 0.10.0. This upgrade does not resolve #331.

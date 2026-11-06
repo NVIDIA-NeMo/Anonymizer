@@ -417,7 +417,7 @@ class NddAdapter:
         Returns:
             `WorkflowRunResult` with the output DataFrame and any `FailedRecord` entries.
         """
-        workflow_input_df = prepare_json_storage_seed(self._attach_record_ids(df=df))
+        workflow_input_df = self._attach_record_ids(df=df)
         logger.debug("NDD workflow '%s' starting with %d records", workflow_name, len(workflow_input_df))
         col_names = [c.name for c in columns]
         logger.debug("NDD workflow '%s': %d columns %s", workflow_name, len(col_names), col_names)
@@ -447,19 +447,20 @@ class NddAdapter:
 
         with tempfile.TemporaryDirectory(prefix=f"anonymizer_{workflow_name}_") as tmp_dir:
             seed_path = str(Path(tmp_dir) / "seed.parquet")
-            seed_source = LocalFileSeedSource.from_dataframe(workflow_input_df, seed_path)
-
-            config_builder = DataDesignerConfigBuilder(model_configs=model_configs)
-            config_builder.with_seed_dataset(seed_source, sampling_strategy=SamplingStrategy.ORDERED)
-            for column in columns:
-                # DataDesigner resolves built-in generators by exact config
-                # type. A private subclass can keep sensitive prompt fields
-                # out of reprs in our workflow specs, then become the
-                # registered built-in config at the execution boundary.
-                config_builder.add_column(_normalize_column_for_data_designer(column))
-
             task_traces: list[_TaskTrace] = []
             try:
+                workflow_input_df = prepare_json_storage_seed(workflow_input_df)
+                seed_source = LocalFileSeedSource.from_dataframe(workflow_input_df, seed_path)
+
+                config_builder = DataDesignerConfigBuilder(model_configs=model_configs)
+                config_builder.with_seed_dataset(seed_source, sampling_strategy=SamplingStrategy.ORDERED)
+                for column in columns:
+                    # DataDesigner resolves built-in generators by exact config
+                    # type. A private subclass can keep sensitive prompt fields
+                    # out of reprs in our workflow specs, then become the
+                    # registered built-in config at the execution boundary.
+                    config_builder.add_column(_normalize_column_for_data_designer(column))
+
                 with self._run_lock, usage_probe, _temporary_dd_task_trace(self._data_designer, collector=collector):
                     if preview_num_records is None:
                         run_results = self._data_designer.create(
@@ -582,8 +583,12 @@ class NddAdapter:
         Returns:
             The assembled ``DataDesignerConfigBuilder`` (seed dataset + columns added).
         """
-        workflow_input_df = prepare_json_storage_seed(self._attach_record_ids(df=df))
-        seed_source = LocalFileSeedSource.from_dataframe(workflow_input_df, str(seed_path))
+        workflow_input_df = self._attach_record_ids(df=df)
+        try:
+            workflow_input_df = prepare_json_storage_seed(workflow_input_df)
+            seed_source = LocalFileSeedSource.from_dataframe(workflow_input_df, str(seed_path))
+        except Exception as exc:
+            raise AnonymizerWorkflowError(f"Workflow seed preparation failed: {exc}") from exc
         config_builder = DataDesignerConfigBuilder(model_configs=model_configs)
         config_builder.with_seed_dataset(seed_source, sampling_strategy=SamplingStrategy.ORDERED)
         for column in columns:
