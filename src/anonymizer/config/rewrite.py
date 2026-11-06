@@ -86,8 +86,6 @@ _FLAG_ON = (
     Finding.unavailable_evidence,
 )
 
-# confirmed_leak rows (#358 proposal): if #358 decides repair everywhere, add it to `high`'s repair_on;
-# if flag only, remove it from every repair_on.
 _RISK_TOLERANCE_BUNDLES: dict[RiskTolerance, _RiskToleranceBundle] = {
     RiskTolerance.minimal: _RiskToleranceBundle(
         repair_threshold=0.6,
@@ -114,7 +112,7 @@ _RISK_TOLERANCE_BUNDLES: dict[RiskTolerance, _RiskToleranceBundle] = {
         repair_threshold=2.0,
         flag_utility_below=0.3,
         flag_leakage_above=3.0,
-        repair_on=(Finding.leakage_above_repair,),  # #358: add Finding.confirmed_leak if repair everywhere.
+        repair_on=(Finding.leakage_above_repair,),
         flag_on=_FLAG_ON,
     ),
 }
