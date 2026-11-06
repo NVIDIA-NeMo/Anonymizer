@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""SP-18 release: dependencies, all-or-none groups, declaration order and annotation output (E18.1-E18.6)."""
+"""SP-18 release: dependencies, all-or-none groups, declaration order and annotation output (E18.1-E18.7)."""
 
 from __future__ import annotations
 
@@ -13,6 +13,7 @@ from anonymizer.engine.graph_core.authoring import (
     Assessment,
     Dependency,
     GraphScope,
+    Limits,
     Operation,
     OutputGroup,
     ProtectionGraph,
@@ -31,7 +32,11 @@ CHECK = Operation.verifier(
 
 
 def _run(
-    texts: tuple[str, ...], deps: tuple[tuple[int, int], ...] = (), groups: tuple[tuple[int, ...], ...] = (), **kw: Any
+    texts: tuple[str, ...],
+    deps: tuple[tuple[int, int], ...] = (),
+    groups: tuple[tuple[int, ...], ...] = (),
+    limits: Limits | None = None,
+    **kw: Any,
 ) -> tuple[ProtectionResult, tuple]:
     """Targets from ``texts``; ``deps`` are (dependent, on) and ``groups`` member positions."""
     scope = GraphScope()
@@ -42,7 +47,7 @@ def _run(
         dependencies=tuple(Dependency(ts[a], ts[b]) for a, b in deps),
         groups=tuple(OutputGroup(tuple(ts[i] for i in grp)) for grp in groups),
     )
-    return protect(prepare(g, Workflow("w", (CHECK,), requires=("check",), **kw))), ts
+    return protect(prepare(g, Workflow("w", (CHECK,), requires=("check",), **kw), limits=limits)), ts
 
 
 def _view(r: ProtectionResult, ts: tuple) -> list[tuple[str, bool, str]]:
@@ -85,4 +90,14 @@ def program() -> list[dict[str, str]]:
     r, ts = _run(("a", "b", "c", "bad", "e"), deps=((1, 0), (2, 1)), groups=((0, 3),))
     released = [o.protected for o in map(r.outcome, ts)]
     c.check("E18.6", released == [False, False, False, False, True], f"released={released}")
+
+    # A 5,000-target chain, each depending on the next, declared forward and backward: the not-met tail withholds
+    # every target, with no recursion.
+    n = 5000
+    texts = tuple(f"t{i}" for i in range(n - 1)) + ("bad",)
+    chain = tuple((i, i + 1) for i in range(n - 1))
+    forward, fts = _run(texts, chain, limits=Limits(max_targets=n))
+    backward, bts = _run(texts, tuple(reversed(chain)), limits=Limits(max_targets=n))
+    fv, bv = _view(forward, fts), _view(backward, bts)
+    c.check("E18.7", fv == bv and not forward.protected and fv[0][2] == "withheld", f"identical={fv == bv}")
     return c.lines
