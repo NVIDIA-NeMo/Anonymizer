@@ -28,6 +28,7 @@ from anonymizer.config.anonymizer_config import (
 from anonymizer.config.models import ModelSelection, ReplaceModelSelection
 from anonymizer.config.replace_strategies import Redact, Substitute
 from anonymizer.engine.constants import (
+    COL_ATTRIBUTE_FIDELITY_VALID,
     COL_DETECTED_ENTITIES,
     COL_DETECTION_VALID,
     COL_ENTITIES_BY_VALUE,
@@ -36,11 +37,13 @@ from anonymizer.engine.constants import (
     COL_JUDGE_EVALUATION,
     COL_MISSED_ENTITIES,
     COL_NEEDS_HUMAN_REVIEW,
+    COL_RELATIONAL_CONSISTENCY_VALID,
     COL_REPLACED_TEXT,
     COL_REPLACEMENT_MAP,
     COL_REWRITTEN_TEXT,
     COL_TAGGED_TEXT,
     COL_TEXT,
+    COL_TYPE_FIDELITY_VALID,
     RECORD_ID_COLUMN,
 )
 from anonymizer.engine.detection.detection_workflow import EntityDetectionResult, EntityDetectionWorkflow
@@ -1546,3 +1549,67 @@ def test_evaluate_rewrite_flags_rows_with_missed_entities(
     assert evaluated.dataframe[COL_NEEDS_HUMAN_REVIEW].tolist() == [expected_flag]
     assert str(evaluated.dataframe[COL_NEEDS_HUMAN_REVIEW].dtype) == "boolean"
     assert run_result.dataframe[COL_NEEDS_HUMAN_REVIEW].tolist() == [False] * len(run_result.dataframe)
+
+
+def _assessments(result: object, row: int) -> dict[str, tuple[str, str]]:
+    outcome = result.outcome(row)  # ty: ignore[unresolved-attribute]
+    assert outcome.qualification == "not_assessed" and not outcome.protected
+    return {reason.check: (reason.code, reason.cause) for reason in outcome.reasons}
+
+
+def test_evaluate_replace_reports_each_judge_through_outcome(stub_input: AnonymizerInput) -> None:
+    anonymizer, _, replace_runner, _ = _make_anonymizer()
+    run_result = anonymizer.run(config=AnonymizerConfig(replace=Substitute()), data=stub_input)
+    before = (run_result._outcomes, run_result.dataframe.copy(), run_result.trace_dataframe.copy())
+    eval_df = pd.DataFrame(
+        {
+            COL_TEXT: ["Alice works at Acme"],
+            COL_REPLACED_TEXT: ["Beth works at Globex"],
+            COL_ENTITY_COVERAGE: [1.0],
+            COL_TYPE_FIDELITY_VALID: [True],
+            COL_RELATIONAL_CONSISTENCY_VALID: [False],
+            COL_ATTRIBUTE_FIDELITY_VALID: [None],
+        }
+    )
+    replace_runner.evaluate.return_value = ReplacementResult(dataframe=eval_df, failed_records=[])
+
+    evaluated = anonymizer.evaluate(run_result)
+
+    assert _assessments(evaluated, 0) == {
+        "coverage": ("passed", ""),
+        "type-fidelity": ("passed", ""),
+        "relational-consistency": ("failed", "relational_inconsistent"),
+        "attribute-fidelity": ("could_not_assess", "judge_unavailable"),
+    }
+    assert run_result._outcomes is before[0]
+    pd.testing.assert_frame_equal(run_result.dataframe, before[1])
+    pd.testing.assert_frame_equal(run_result.trace_dataframe, before[2])
+
+
+def test_evaluate_rewrite_reports_each_judge_through_outcome(stub_input: AnonymizerInput) -> None:
+    anonymizer, _, _, rewrite_runner = _make_anonymizer()
+    run_result = anonymizer.run(config=AnonymizerConfig(rewrite=Rewrite()), data=stub_input)
+    eval_df = pd.DataFrame(
+        {
+            COL_TEXT: ["Alice works at Acme"],
+            COL_REWRITTEN_TEXT: ["Alice works at Globex"],
+            COL_NEEDS_HUMAN_REVIEW: pd.array([False], dtype="boolean"),
+            COL_JUDGE_EVALUATION: [None],
+            COL_DETECTION_VALID: [1.0],
+        }
+    )
+    rewrite_runner.evaluate.return_value = RewriteResult(dataframe=eval_df, failed_records=[])
+    coverage_df = eval_df.assign(
+        **{COL_ENTITY_COVERAGE: [0.5], COL_MISSED_ENTITIES: [[{"value": "Alice", "label": "first_name"}]]}
+    )
+
+    with patch("anonymizer.interface.anonymizer.EntityCoverageWorkflow") as mock_coverage_wf:
+        mock_coverage_wf.return_value.run_non_critical.return_value = (coverage_df, [])
+        evaluated = anonymizer.evaluate(run_result, config=EvaluateConfig(compute_detection_validity=True))
+
+    assert _assessments(evaluated, 0) == {
+        "coverage": ("failed", "entities_leaked"),
+        "rewrite-judge": ("could_not_assess", "judge_unavailable"),
+        "detection-validity": ("passed", ""),
+    }
+    assert run_result.dataframe[COL_NEEDS_HUMAN_REVIEW].tolist() == [False]
