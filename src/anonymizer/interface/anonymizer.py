@@ -214,19 +214,24 @@ def _evaluate_on_graph(
 
 
 def _reported_outcomes(result: ProtectionResult) -> tuple[TargetOutcome, ...]:
-    """Each row's outcome with every verifier's assessment appended as a ``passed``, ``failed`` or
-    ``could_not_assess`` reason naming the verifier; qualification and release stay as derived."""
+    """Each row's outcome with every verifier's assessment appended as a reason naming the verifier, ordered
+    ``passed`` < ``could_not_assess`` < ``failed`` so ``reason`` names the worst check; qualification and release
+    stay as derived."""
     codes = {True: "passed", False: "failed", None: "could_not_assess"}
+    rank = {"passed": 0, "could_not_assess": 1, "failed": 2}
     names = result.prepared.names
     return tuple(
         replace(
             outcome,
             reasons=(
                 *outcome.reasons,
-                *(
-                    Reason(codes[a.satisfied], names[i], names[i], a.reason)
-                    for i, out in sorted(row.outputs.items())
-                    if isinstance(a := out.get("assessment"), Assessment)
+                *sorted(
+                    (
+                        Reason(codes[a.satisfied], names[i], names[i], a.reason)
+                        for i, out in sorted(row.outputs.items())
+                        if isinstance(a := out.get("assessment"), Assessment)
+                    ),
+                    key=lambda r: rank[r.code],
                 ),
             ),
         )
