@@ -28,9 +28,14 @@ class _DisplayMixin:
         ``qualification`` is ``"met"`` when every required check passed for the row, ``"not_met"`` when one
         failed (its reasons name the check), and ``"not_assessed"`` when a check could not decide.
 
+        On an ``evaluate()`` result the outcome only reports and is never protected: its ``reasons`` hold one
+        ``passed``, ``could_not_assess`` or ``failed`` reason per judge check, in that order, whose ``cause`` says why
+        (``"judge_unavailable"`` when the judge gave no score). A ``passed`` rewrite-judge check means the judge
+        returned a score, not that it approved. The evaluated result is not changed.
+
         Raises:
-            IndexError: ``row`` is not an output row, or this result carries no outcomes (an ``evaluate()``,
-                custom runner's or hand-built result).
+            IndexError: ``row`` is not an output row, or this result carries no outcomes (a custom runner's or
+                hand-built result).
         """
         outcomes = getattr(self, "_outcomes", None)  # absent on results pickled before outcomes were kept
         if outcomes is None:
