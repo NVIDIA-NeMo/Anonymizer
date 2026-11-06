@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 
 import pandas as pd
 
+from anonymizer.config.anonymizer_config import DetectionScope
 from anonymizer.config.replace_strategies import ReplaceMethod
 from anonymizer.config.rewrite import PrivacyGoal
 from anonymizer.engine.graph_core.execution import TargetOutcome
@@ -98,6 +99,9 @@ class AnonymizerResult(_DisplayMixin):
         id_column: Record identifier column retained in ``dataframe`` for
             in-memory record input. File-backed input currently leaves this as
             ``None``.
+        detection_scope: The resolved detection scope the run used: effective
+            labels, exclusions, GLiNER threshold, and whether augmentation may
+            add labels. ``None`` on ``evaluate()`` and hand-built results.
     """
 
     dataframe: pd.DataFrame
@@ -110,6 +114,7 @@ class AnonymizerResult(_DisplayMixin):
     data_summary: str | None = None
     excluded_entity_labels: list[str] | None = None
     id_column: str | None = None
+    detection_scope: DetectionScope | None = None
     _display_cycle_index: int = field(default=0, init=False, repr=False)
     _outcomes: tuple[TargetOutcome, ...] | None = field(default=None, repr=False, compare=False)
 
@@ -159,6 +164,9 @@ class PreviewResult(_DisplayMixin):
         id_column: Record identifier column retained in ``dataframe`` for
             in-memory record input. File-backed input currently leaves this as
             ``None``.
+        detection_scope: The resolved detection scope the run used: effective
+            labels, exclusions, GLiNER threshold, and whether augmentation may
+            add labels. ``None`` on ``evaluate()`` and hand-built results.
     """
 
     dataframe: pd.DataFrame
@@ -172,6 +180,7 @@ class PreviewResult(_DisplayMixin):
     data_summary: str | None = None
     excluded_entity_labels: list[str] | None = None
     id_column: str | None = None
+    detection_scope: DetectionScope | None = None
     _display_cycle_index: int = field(default=0, init=False, repr=False)
     _outcomes: tuple[TargetOutcome, ...] | None = field(default=None, repr=False, compare=False)
 

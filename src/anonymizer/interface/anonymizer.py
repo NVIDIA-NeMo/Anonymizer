@@ -543,6 +543,7 @@ class Anonymizer:
                 rewrite_config=result.rewrite_config,
                 entity_labels=config.detect.entity_labels,
                 excluded_entity_labels=config.detect.excluded_entity_labels,
+                detection_scope=result.detection_scope,
                 data_summary=result.data_summary,
                 _outcomes=result._outcomes,
             )
@@ -1075,6 +1076,7 @@ class Anonymizer:
             rewrite_config=admitted_goal,
             entity_labels=config.detect.entity_labels,
             excluded_entity_labels=config.detect.excluded_entity_labels,
+            detection_scope=config.detect.resolved_scope,
             data_summary=data.data_summary,
             _outcomes=outcomes,
         )
@@ -1083,6 +1085,8 @@ class Anonymizer:
         """Run semantic preflight checks shared by validate, run, and preview."""
         if config.rewrite is not None and config.rewrite.privacy_goal is None:
             raise InvalidConfigError("rewrite.privacy_goal must not be None")
+        if conflicts := config.detect.detector_declaration_conflicts():
+            raise InvalidConfigError(" ".join(conflicts))
         try:
             validate_model_alias_references(
                 self._model_configs,
