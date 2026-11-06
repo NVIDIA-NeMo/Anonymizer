@@ -196,7 +196,7 @@ These causes look the same in the column:
 | Utility too low | `utility_score` below `flag_utility_below` for your tolerance |
 | Leakage and utility both | Almost always means `protect` and `preserve` are pulling in opposite directions |
 
-A confirmed leak means one entity marked for protection can still be deduced, at any sensitivity and any judge confidence. Every `risk_tolerance` preset flags it, including `high`, so loosening the tolerance does not clear the flag. Find the leaked entity (see [Working with flagged records](concepts/rewrite.md#working-with-flagged-records)), then refine `privacy_goal.protect` or set `strict_entity_protection=True`.
+A confirmed leak means at least one entity marked for protection can still be deduced, at any sensitivity and any judge confidence. Every `risk_tolerance` preset flags it, including `high`, so loosening the tolerance does not clear the flag. Find the leaked entity (see [Working with flagged records](concepts/rewrite.md#working-with-flagged-records)), then refine `privacy_goal.protect`. `strict_entity_protection=True` does not help here: it marks every entity for protection, so it adds privacy questions and can add flags.
 
 For leakage and utility both, the fix is rewriting the privacy goal so it draws a cleaner line between "remove this" and "keep this." See [Choosing a strategy > Privacy goal](concepts/choosing-a-strategy.md#5-rewrite-privacy-goal).
 
