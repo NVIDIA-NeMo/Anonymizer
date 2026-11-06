@@ -165,7 +165,7 @@ def _filter_replacement_map_to_input_entities(
         for label in entity.labels
         if entity.value and label
     }
-    protected_original_values = {value for value, _ in allowed_pairs}
+    folded_protected_values = {_fold(value) for value, _ in allowed_pairs}
     filtered: list[dict[str, str]] = []
     seen: set[tuple[str, str]] = set()
     synthetic_collision_labels: Counter[str] = Counter()
@@ -173,7 +173,7 @@ def _filter_replacement_map_to_input_entities(
         key = (replacement.original, replacement.label)
         if key not in allowed_pairs or key in seen:
             continue
-        if replacement.synthetic in protected_original_values:
+        if _fold(replacement.synthetic) in folded_protected_values:
             synthetic_collision_labels[replacement.label] += 1
             seen.add(key)
             filtered.append(
@@ -183,7 +183,7 @@ def _filter_replacement_map_to_input_entities(
                     "synthetic": _collision_safe_synthetic(
                         replacement.label,
                         index=synthetic_collision_labels[replacement.label],
-                        protected_original_values=protected_original_values,
+                        folded_protected_values=folded_protected_values,
                     ),
                 }
             )
@@ -228,11 +228,15 @@ def _filter_replacement_map_to_input_entities(
     return {"replacements": filtered}
 
 
-def _collision_safe_synthetic(label: str, *, index: int, protected_original_values: set[str]) -> str:
+def _fold(value: str) -> str:
+    return " ".join(value.casefold().split())
+
+
+def _collision_safe_synthetic(label: str, *, index: int, folded_protected_values: set[str]) -> str:
     label_token = "".join(char.upper() if char.isalnum() else "_" for char in label).strip("_") or "VALUE"
     while True:
         candidate = f"[SUBSTITUTE_{label_token}_{index}]"
-        if candidate not in protected_original_values:
+        if _fold(candidate) not in folded_protected_values:
             return candidate
         index += 1
 
