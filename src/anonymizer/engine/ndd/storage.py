@@ -13,7 +13,6 @@ from collections.abc import Iterable
 from typing import TYPE_CHECKING
 
 import pandas as pd
-import pyarrow as pa
 from data_designer.config.column_configs import LLMStructuredColumnConfig
 from data_designer.config.utils.storage_encoding import read_dataframe_storage_plan
 from data_designer.config.utils.storage_schema import JSON_STORAGE_RUN_KEY, JsonStoragePlan, compile_json_storage_schema
@@ -35,6 +34,7 @@ from anonymizer.engine.constants import (
     COL_VALIDATION_DECISIONS,
     COL_VALIDATION_SKELETON,
 )
+from anonymizer.engine.schemas.shared import to_python
 
 if TYPE_CHECKING:
     from data_designer.config.column_types import ColumnConfigT
@@ -66,10 +66,11 @@ def prepare_json_storage_seed(
 ) -> pd.DataFrame:
     """Carry explicit DD storage metadata without mutating input logical values.
 
-    Arrow-backed batch columns must first be materialized through Arrow's typed
-    reader: pandas otherwise reuses their old nested physical dtype on write,
-    even after DD has encoded a storage copy. No guessed parsing or string
-    conversion is used, and unrelated Arrow-backed columns are left untouched.
+    Each planned column is rebuilt as an object column of plain Python values.
+    pandas would otherwise reuse an Arrow-backed column's old nested dtype on
+    write, and DD's JSON encoder rejects the numpy arrays, numpy scalars and NaN
+    that a batch read can return. No guessed parsing or string conversion is
+    used, and unrelated columns are left untouched.
     """
     frame = dataframe.copy()
     plan = read_dataframe_storage_plan(frame)
@@ -78,10 +79,8 @@ def prepare_json_storage_seed(
         if name in frame.columns:
             columns.setdefault(name, [[]])
     for name in columns:
-        series = frame[name]
-        if isinstance(series.dtype, pd.ArrowDtype):
-            values = pa.array(series).to_pylist()
-            frame[name] = pd.Series(values, index=frame.index, dtype=object)
+        values = [None if _is_missing(value) else to_python(value) for value in frame[name].tolist()]
+        frame[name] = pd.Series(values, index=frame.index, dtype=object)
     if columns:
         frame.attrs[JSON_STORAGE_RUN_KEY] = JsonStoragePlan(columns=columns).model_dump()
     return frame
@@ -99,3 +98,7 @@ def prepare_json_storage_column(column: ColumnConfigT) -> ColumnConfigT:
     if column.name in JSON_STORAGE_COLUMNS and column.storage_encoding is None:
         return column.model_copy(update={"storage_encoding": "json"})
     return column
+
+
+def _is_missing(value: object) -> bool:
+    return value is None or value is pd.NA or (isinstance(value, float) and value != value)

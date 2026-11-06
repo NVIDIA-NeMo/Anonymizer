@@ -82,3 +82,22 @@ def _is_empty(raw: object) -> bool:
     if isinstance(raw, (str, dict, list)):
         return not raw
     return isinstance(raw, float) and raw != raw
+
+
+def to_python(raw: object) -> object:
+    """Recursively normalize nested model/array/scalar payloads to plain Python."""
+    if isinstance(raw, BaseModel):
+        return to_python(raw.model_dump(mode="python"))
+    if isinstance(raw, dict):
+        return {key: to_python(value) for key, value in raw.items()}
+    if isinstance(raw, (list, tuple)):
+        return [to_python(value) for value in raw]
+    if _is_list_convertible(raw):
+        return to_python(raw.tolist())
+    item = getattr(raw, "item", None)
+    if callable(item):
+        try:
+            return item()
+        except (TypeError, ValueError):
+            pass
+    return raw

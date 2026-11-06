@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import Mock
 
+import numpy as np
 import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -15,6 +16,7 @@ import pytest
 from data_designer.config import custom_column_generator
 from data_designer.config.column_configs import CustomColumnConfig, LLMStructuredColumnConfig
 from data_designer.config.models import ModelConfig, ModelProvider
+from data_designer.config.run_config import RunConfig
 from data_designer.config.seed_source import LocalFileSeedSource
 from data_designer.config.utils.io_helpers import read_parquet_dataset
 from data_designer.config.utils.storage_encoding import read_storage_plan
@@ -31,6 +33,7 @@ from anonymizer.engine.constants import (
     COL_TAG_NOTATION,
     COL_TAGGED_TEXT,
     COL_TEXT,
+    COL_VALIDATED_SEED_ENTITIES,
     COL_VALIDATION_DECISIONS,
     RECORD_ID_COLUMN,
 )
@@ -61,6 +64,14 @@ def _generate_latent_entities(row: dict[str, Any]) -> dict[str, Any]:
 def _generate_side_effect(row: dict[str, Any]) -> dict[str, Any]:
     row[COL_VALIDATION_DECISIONS] = {"decisions": []}
     row[_PLUGIN_DIAGNOSTIC] = [{"request": "synthetic", "empty": {}}]
+    return row
+
+
+@custom_column_generator(required_columns=[COL_TEXT], side_effect_columns=[COL_VALIDATED_SEED_ENTITIES])
+def _generate_seed_entities_side_effect(row: dict[str, Any]) -> dict[str, Any]:
+    span = {"value": "Ada", "label": "first_name", "start_position": 0, "end_position": 3}
+    row[COL_VALIDATION_DECISIONS] = {"decisions": []}
+    row[COL_VALIDATED_SEED_ENTITIES] = {"entities": [span] if row[COL_TEXT].startswith("Ada") else []}
     return row
 
 
@@ -161,6 +172,54 @@ def test_real_batch_write_read_write_preserves_nested_outputs(tmp_path: Path) ->
     assert second.dataframe[COL_VALIDATION_DECISIONS].tolist() == first.dataframe[COL_VALIDATION_DECISIONS].tolist()
     assert second.dataframe[COL_LATENT_ENTITIES].tolist() == [{"latent_entities": []}]
     assert COL_VALIDATION_DECISIONS in second.dataframe.attrs[JSON_STORAGE_RUN_KEY]["columns"]
+
+
+def test_registered_side_effect_survives_row_groups_with_different_nested_types(tmp_path: Path) -> None:
+    # Empty row groups infer a different nested type than populated ones, so DD reads the side-effect column back
+    # as object arrays; the next seed must still encode it as JSON.
+    designer = DataDesigner(
+        artifact_path=tmp_path,
+        model_providers=[ModelProvider(name="unused-synthetic", endpoint="http://127.0.0.1:9/v1")],
+        auto_configure_logging=False,
+    )
+    designer.set_run_config(RunConfig(buffer_size=2))
+    adapter = NddAdapter(designer)
+    first = adapter.run_workflow(
+        pd.DataFrame({COL_TEXT: ["No names", "No names", "Ada one", "Ada two"]}),
+        model_configs=[],
+        columns=[
+            CustomColumnConfig(name=COL_VALIDATION_DECISIONS, generator_function=_generate_seed_entities_side_effect)
+        ],
+        workflow_name="synthetic-detection",
+    )
+    second = adapter.run_workflow(
+        first.dataframe,
+        model_configs=[],
+        columns=[CustomColumnConfig(name=COL_LATENT_ENTITIES, generator_function=_generate_latent_entities)],
+        workflow_name="synthetic-latent",
+    )
+
+    assert first.failed_records == second.failed_records == []
+    span = {"value": "Ada", "label": "first_name", "start_position": 0, "end_position": 3}
+    assert second.dataframe[COL_VALIDATED_SEED_ENTITIES].tolist() == [{"entities": []}] * 2 + [{"entities": [span]}] * 2
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        (float("nan"), None),
+        (
+            {"entities": np.array([{"start_position": np.int64(0)}], dtype=object)},
+            {"entities": [{"start_position": 0}]},
+        ),
+    ],
+    ids=["nan", "numpy"],
+)
+def test_seed_values_are_plain_python_before_json_encoding(tmp_path: Path, value: Any, expected: Any) -> None:
+    prepared = prepare_json_storage_seed(pd.DataFrame({COL_VALIDATION_DECISIONS: [value]}))
+    source = LocalFileSeedSource.from_dataframe(prepared, str(tmp_path / "seed.parquet"))
+
+    assert read_parquet_dataset(Path(source.path))[COL_VALIDATION_DECISIONS].tolist() == [expected]
 
 
 def test_build_config_uses_same_storage_contract(tmp_path: Path) -> None:
