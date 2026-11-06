@@ -3374,6 +3374,11 @@ Detect(
 <p>Configured examples affect detection only; they do not guide substitution or evaluation.</p>
 <p>The validator receives the full resolved examples: built-in plus configured examples for default labels, and configured examples for non-default labels. The augmenter receives all active label names but only configured examples, which show it the intended value shape beyond the label name alone. Built-in examples are omitted from the augmenter to limit prompt growth. Keep configured lists short because the validator's full example set is repeated for each validation chunk.</p>
 <p><code>entity_label_examples</code> is currently configured through the Python <code>Detect</code> API; the CLI does not provide a mapping syntax for this field.</p>
+<p>When injecting a custom <code>detection_workflow</code> into <code>Anonymizer</code>, older methods without
+an <code>entity_label_examples</code> keyword continue to work when no examples are configured.
+If examples are configured, <code>run()</code>, <code>preview()</code>, and the detection export methods raise
+<code>InvalidConfigError</code> when the corresponding detector method cannot accept them. Update
+the custom method to accept the keyword or remove <code>Detect.entity_label_examples</code>.</p>
 <h3 id="excluding-entity-labels">Excluding entity labels<a class="headerlink" href="#excluding-entity-labels" title="Permanent link">&para;</a></h3>
 <p>Use <code>excluded_entity_labels</code> to omit specific labels from detection without having to enumerate the entire label set. Excluded labels are removed from the active label set before GLiNER runs. If a model still emits an excluded label, final filtering prevents it from appearing in detection results.</p>
 <pre class="highlight"><code class="language-python"># Detect all defaults except occupation and gender
