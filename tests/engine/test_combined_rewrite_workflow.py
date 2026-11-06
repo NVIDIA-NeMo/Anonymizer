@@ -232,6 +232,36 @@ def test_finalizer_flags_unavailable_leakage(
     assert result[COL_NEEDS_HUMAN_REVIEW] is expected
 
 
+def test_combined_graph_flags_and_repairs_confirmed_leak(
+    stub_rewrite_model_selection: RewriteModelSelection,
+    stub_replace_model_selection: ReplaceModelSelection,
+) -> None:
+    graph = CombinedRewriteWorkflow(adapter=Mock()).build_graph(
+        selected_models=stub_rewrite_model_selection,
+        replace_model_selection=stub_replace_model_selection,
+        privacy_goal=_PRIVACY_GOAL,
+        evaluation=EvaluationCriteria(risk_tolerance="moderate", max_repair_iterations=1),
+    )
+    state = graph.evaluation_states[0]
+    answers = {"answers": [{"id": 1, "answer": "yes", "confidence": 0.9, "reason": "kept verbatim"}]}
+    row = {
+        COL_REWRITE_REPLACEMENT_READY: True,
+        state.rewritten_text: "Rewrite",
+        state.privacy_reanswer: answers,
+        state.utility_score: 0.9,
+        state.leakage_mass: 0.1,
+        state.any_high_leaked: False,
+    }
+    columns = {column.name: column for column in graph.columns if isinstance(column, CustomColumnConfig)}
+    repair = columns[state.needs_repair]
+    row = repair.generator_function(row, repair.generator_params)
+    assert row[state.needs_repair] is True
+
+    finalizer = graph.columns[-1]
+    assert isinstance(finalizer, CustomColumnConfig)
+    assert finalizer.generator_function(row, finalizer.generator_params)[COL_NEEDS_HUMAN_REVIEW] is True
+
+
 def test_combined_graph_preserves_malformed_rewrite_handling(
     stub_rewrite_model_selection: RewriteModelSelection,
     stub_replace_model_selection: ReplaceModelSelection,

@@ -13,6 +13,7 @@ from anonymizer.config.rewrite import PrivacyGoal
 from anonymizer.engine.constants import (
     COL_ANY_HIGH_LEAKED,
     COL_LEAKAGE_MASS,
+    COL_LEAKED_PRIVACY_ITEMS,
     COL_REWRITE_BASELINE_TEXT,
     COL_REWRITTEN_TEXT,
     COL_REWRITTEN_TEXT_NEXT,
@@ -135,6 +136,27 @@ class TestRenderRepairPrompt:
         params = RepairParams(privacy_goal_str=_STUB_PRIVACY_GOAL.to_prompt_string(), max_privacy_leak=1.0)
         result = _render_repair_prompt(row, params)
         assert "WARNING" not in result
+
+    def test_leak_below_target_still_requires_every_item_fixed(self) -> None:
+        # A confirmed_leak row is repaired even though its leakage mass already meets the target.
+        row = {
+            COL_TEXT: "Alice lives in Seattle.",
+            COL_REWRITTEN_TEXT: "Maria lives in Seattle.",
+            COL_LEAKAGE_MASS: 0.1,
+            COL_ANY_HIGH_LEAKED: False,
+            COL_UTILITY_SCORE: 0.9,
+            COL_LEAKED_PRIVACY_ITEMS: '- [MEDIUM] city: "Seattle"',
+        }
+        params = RepairParams(privacy_goal_str=_STUB_PRIVACY_GOAL.to_prompt_string(), max_privacy_leak=1.5)
+
+        result = _render_repair_prompt(row, params)
+
+        issues = result.split("<privacy_issues>")[1].split("</privacy_issues>")[0]
+        assert "Leakage mass: 0.1 (target: < 1.5)" in issues
+        assert (
+            "Every item listed below MUST be fixed, even when the leakage mass is already below the target." in issues
+        )
+        assert '- [MEDIUM] city: "Seattle"' in issues
 
 
 # ---------------------------------------------------------------------------
