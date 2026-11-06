@@ -1546,3 +1546,36 @@ def test_evaluate_rewrite_flags_rows_with_missed_entities(
     assert evaluated.dataframe[COL_NEEDS_HUMAN_REVIEW].tolist() == [expected_flag]
     assert str(evaluated.dataframe[COL_NEEDS_HUMAN_REVIEW].dtype) == "boolean"
     assert run_result.dataframe[COL_NEEDS_HUMAN_REVIEW].tolist() == [False] * len(run_result.dataframe)
+
+
+@pytest.mark.parametrize(
+    "detect",
+    [
+        {"entity_labels": ["first_name", "email"], "detector_labels": ["first_name"], "detector_labels_fixed": True},
+        {"detector_labels_fixed": True},
+        {"detector_offset_unit": "utf16_code_unit"},
+    ],
+)
+def test_conflicting_detector_declarations_rejected_before_detection(stub_input: AnonymizerInput, detect: dict) -> None:
+    anonymizer, detection_wf, _, _ = _make_anonymizer()
+    with pytest.raises(InvalidConfigError):
+        anonymizer.run(config=AnonymizerConfig(detect=detect, replace=Redact()), data=stub_input)
+    detection_wf.run.assert_not_called()
+
+
+def test_matching_detector_declaration_runs_and_reports_scope(stub_input: AnonymizerInput) -> None:
+    detect = {
+        "entity_labels": ["first_name", "email"],
+        "excluded_entity_labels": ["email"],
+        "detector_labels": ["first_name", "email", "city"],
+        "detector_labels_fixed": True,
+        "detector_offset_unit": "code_point",
+    }
+    anonymizer, _, _, _ = _make_anonymizer()
+
+    result = anonymizer.preview(config=AnonymizerConfig(detect=detect, replace=Redact()), data=stub_input)
+
+    assert result.detection_scope is not None
+    assert result.detection_scope.effective_labels == ["first_name"]
+    assert result.detection_scope.excluded_labels == ["email"]
+    assert result.detection_scope.augmentation_may_add_labels is False

@@ -75,6 +75,9 @@ records use the same caller-provided IDs in `result.failed_records`. Use
 | `gliner_threshold` | `0.3` | GLiNER confidence threshold (0.0--1.0). Lower values detect more entities but may increase false positives. |
 | `validation_max_entities_per_call` | `100` | Maximum candidate entities per validator LLM call. Rows with more candidates are split into chunks. See [Chunked validation](#chunked-validation). |
 | `validation_excerpt_window_chars` | `500` | Characters of context included before and after a chunk's entity spans in the validator prompt. Bounds per-chunk prompt size; not the model's context-window limit. |
+| `detector_offset_unit` | `None` | Declared offset unit of the detector's spans. Only `"code_point"` is accepted; any other value raises `InvalidConfigError` before work starts. |
+| `detector_labels` | `None` | Declared label set the detector supports. Unset declares nothing. |
+| `detector_labels_fixed` | `False` | Declares `detector_labels` fixed: every effective label must be in it (and it must be set), or `run()` / `preview()` raise `InvalidConfigError` before work starts. |
 
 ---
 
@@ -216,6 +219,10 @@ Detect(entity_labels=["first_name", "email", "city"], excluded_entity_labels=["c
 
 !!! warning
     Exclusions always win. Configured examples for an excluded label are ignored with a warning that names the label but never the example values. A total overlap with the default or explicit label set raises a `ValueError` instead of silently detecting nothing.
+
+### Resolved detection scope
+
+`result.detection_scope` on `run()` and `preview()` results reports the scope the run used: `effective_labels` (after exclusions), `excluded_labels`, `gliner_threshold`, and `augmentation_may_add_labels`. The last is `True` when `entity_labels` is unset, because the augmenter may then add labels outside the effective set; with explicit `entity_labels`, final entities are restricted to them. Finding no entities describes the result under this scope, not proof that the text contains no sensitive information.
 
 ## Tuning the threshold
 

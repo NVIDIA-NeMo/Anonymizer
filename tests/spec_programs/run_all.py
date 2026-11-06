@@ -35,6 +35,7 @@ PROGRAMS = [
     "sp28_typed_context",
     "sp29_assembly_order",
     "sp31_result_correspondence",
+    "sp32_detector_scope",
 ]
 RETIRED_SP8 = [f"E8.{i}" for i in range(1, 6)]
 
