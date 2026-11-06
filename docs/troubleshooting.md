@@ -82,7 +82,7 @@ Key columns:
 | `utility_score` | 0–1 quality preservation score |
 | `weighted_leakage_rate` | Leakage normalized by maximum possible leakage |
 | `any_high_leaked` | Whether any high-sensitivity entity leaked through |
-| `needs_human_review` | Crossed the configured threshold, or (after `evaluate()`) the coverage judge reported missed entities |
+| `needs_human_review` | One of the preset's review findings still held after the repair loop (leakage or utility past its threshold, a high-sensitivity or confirmed leak, a missing rewrite or replacement map, or missing metrics), or (after `evaluate()`) the coverage judge reported missed entities. See [Working with flagged records](concepts/rewrite.md#working-with-flagged-records) |
 | `judge_evaluation` | Final-judge qualitative comments |
 
 ### Re-run with `Annotate` to see detection output
@@ -187,23 +187,27 @@ Most common causes:
 
 ### Most rows have `needs_human_review=True`
 
-Three failure modes look the same in the column:
+These causes look the same in the column:
 
 | Cause | Diagnosis |
 |---|---|
 | Leakage too high | `weighted_leakage_rate` near 1, or `any_high_leaked=True` |
+| Confirmed leak | `leakage_mass` below the flag threshold and `any_high_leaked=False`, but an answer in the trace column `_privacy_qa_reanswer` is `"yes"` |
 | Utility too low | `utility_score` below `flag_utility_below` for your tolerance |
-| Both | Almost always means `protect` and `preserve` are pulling in opposite directions |
+| Leakage and utility both | Almost always means `protect` and `preserve` are pulling in opposite directions |
 
-For the third case, the fix is rewriting the privacy goal so it draws a cleaner line between "remove this" and "keep this." See [Choosing a strategy > Privacy goal](concepts/choosing-a-strategy.md#5-rewrite-privacy-goal).
+A confirmed leak means one entity marked for protection can still be deduced, at any sensitivity and any judge confidence. Every `risk_tolerance` preset flags it, including `high`, so loosening the tolerance does not clear the flag. Find the leaked entity (see [Working with flagged records](concepts/rewrite.md#working-with-flagged-records)), then refine `privacy_goal.protect` or set `strict_entity_protection=True`.
+
+For leakage and utility both, the fix is rewriting the privacy goal so it draws a cleaner line between "remove this" and "keep this." See [Choosing a strategy > Privacy goal](concepts/choosing-a-strategy.md#5-rewrite-privacy-goal).
 
 ### Repair runs every iteration but never converges
 
 Symptom: every record uses all `max_repair_iterations` and still ends up flagged.
 
 1. The leakage threshold for your `risk_tolerance` may be unreachable for your data. Look at the *floor* of `leakage_mass` across repair iterations — if it plateaus above the threshold, the data has more sensitive content than the threshold permits given current detection coverage.
-2. Loosen `risk_tolerance` one step, **only after** confirming detection has caught everything you can see. Loosening before detection is solid just hides the leak.
-3. Set `max_repair_iterations=0` for an audit pass. You'll get the metrics without paying for repair attempts that won't succeed, which makes it easy to see how far off you are.
+2. If `leakage_mass` is already below the repair threshold, the records are being repaired for a confirmed leak: under `minimal`, `low` and `moderate`, a record goes back to repair while any answer in `_privacy_qa_reanswer` is `"yes"`, however low its leakage mass. Check which entity the judge still finds deducible, then refine `privacy_goal.protect` for it. Only `high` stops repairing confirmed leaks, and it still flags them.
+3. Loosen `risk_tolerance` one step, **only after** confirming detection has caught everything you can see. Loosening before detection is solid just hides the leak.
+4. Set `max_repair_iterations=0` for an audit pass. You'll get the metrics without paying for repair attempts that won't succeed, which makes it easy to see how far off you are.
 
 ---
 

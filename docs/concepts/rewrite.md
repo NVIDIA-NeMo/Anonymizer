@@ -88,14 +88,15 @@ config = AnonymizerConfig(
 
 Controls the automated repair loop and human review flagging. Each preset bundles a coherent set of behaviors:
 
-| Preset | Repair threshold | Repair on any high leak | Flag utility below | Flag leakage above |
-|--------|-----------------|------------------------|--------------------|--------------------|
-| `minimal` | 0.6 | Yes | 0.6 | 1.0 |
-| `low` | 1.0 | Yes | 0.5 | 2.0 |
-| `moderate` | 1.5 | Yes | 0.4 | 2.5 |
-| `high` | 2.0 | No | 0.3 | 3.0 |
+| Preset | Repair threshold | Repair on any high leak | Repair on any confirmed leak | Flag utility below | Flag leakage above |
+|--------|-----------------|------------------------|-----------------------------|--------------------|--------------------|
+| `minimal` | 0.6 | Yes | Yes | 0.6 | 1.0 |
+| `low` | 1.0 | Yes | Yes | 0.5 | 2.0 |
+| `moderate` | 1.5 | Yes | Yes | 0.4 | 2.5 |
+| `high` | 2.0 | No | No | 0.3 | 3.0 |
 
 The **repair threshold** is the leakage mass above which a record is sent for repair.
+A **high leak** is a high-sensitivity entity that can still be deduced from the rewrite. A **confirmed leak** is any entity marked for protection that can still be deduced, whatever its sensitivity, the judge's confidence, or the record's leakage mass. Every preset, `high` included, flags a record with either kind of leak for human review if the leak remains after the repair loop.
 > Leakage mass is a confidence-weighted sum of leaked entities, where each entity's weight reflects its sensitivity (high=1.0, medium=0.6, low=0.3).
 > A leakage mass of 1.0 roughly equals one high-sensitivity entity leaked at full confidence.
 
@@ -159,6 +160,22 @@ Repair and review decisions are made from named *findings* about each evaluated 
 ```python
 flagged = result.trace_dataframe[result.trace_dataframe["needs_human_review"] == True]
 flagged[["utility_score", "leakage_mass", "any_high_leaked"]].head()
+```
+
+A record flagged for `confirmed_leak` alone can look clean in these three columns: utility is fine, `leakage_mass` is below the threshold, and `any_high_leaked` is `False`. No output column records the finding, but the trace column `_privacy_qa_reanswer` holds the judge's answers. A record has a confirmed leak when any of them is `"yes"`; match each answer's `id` to the question in `_privacy_qa` to see which entity leaked.
+
+```python
+import json
+
+def confirmed_leak(answers) -> bool:
+    if isinstance(answers, str):
+        answers = json.loads(answers)
+    if not isinstance(answers, dict):
+        return False
+    return any(answer["answer"] == "yes" for answer in answers.get("answers", []))
+
+flagged = flagged.assign(confirmed_leak=flagged["_privacy_qa_reanswer"].map(confirmed_leak))
+flagged[["leakage_mass", "any_high_leaked", "confirmed_leak", "_privacy_qa_reanswer"]].head()
 ```
 
 **Tune and re-run:** Adjust settings and re-run on flagged records:
