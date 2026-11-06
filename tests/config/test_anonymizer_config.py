@@ -47,6 +47,13 @@ def test_keyed_hash_folds_case_and_whitespace_and_depends_on_key() -> None:
     assert "s3cr3t" not in repr(keyed)
 
 
+def test_keyed_hash_output_is_hmac_sha256_of_folded_text() -> None:
+    # From `printf 'acme corp' | openssl dgst -sha256 -hmac s3cr3t`, first 12 hex characters.
+    expected = "<HASH_COMPANY_NAME_44cf69ecb37f>"
+    tokens = {Hash(key="s3cr3t").replace(text="Acme  Corp", label="company_name") for _ in range(2)}
+    assert tokens == {expected}
+
+
 @pytest.mark.parametrize("key", ["", "   ", "\t\n"], ids=["empty", "spaces", "whitespace"])
 def test_hash_rejects_blank_key(key: str) -> None:
     with pytest.raises(ValidationError, match="key must not be empty"):
