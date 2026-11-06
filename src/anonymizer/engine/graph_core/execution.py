@@ -8,8 +8,10 @@ Anonymizer owns identity, accounting and qualification here; the kernel owns top
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import secrets
+import sys
 from collections import Counter
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, fields, replace
@@ -89,6 +91,19 @@ def prepare(
     ``capabilities`` names the operation implementations admitted for this invocation (default: the workflow's);
     ``request_budget`` selects a hard external-request budget.
     """
+    with _measure("graph_prepare", operation_count=None, target_count=len(graph.targets)) as m:
+        prepared = _prepare(graph, workflow, limits, capabilities, request_budget)
+        m["operation_count"] = len(prepared.names)
+    return prepared
+
+
+def _prepare(
+    graph: ProtectionGraph,
+    workflow: Workflow,
+    limits: Limits | None,
+    capabilities: tuple[str, ...] | None,
+    request_budget: int | None,
+) -> PreparedProtection:
     limits = limits or Limits()
 
     def requirements(w: Workflow) -> tuple[str, ...]:
@@ -339,6 +354,23 @@ class ProtectionResult:
             raise k.GraphRejection("missing_source_part", str(min(missing)))
         return self.compose([taken[i] for i in sorted(taken)])
 
+    def assemble_regions(self, source: str, regions: Sequence[tuple[int, int, Datum]]) -> str:
+        """Region assembly: ``source`` with each ``(start, end, target)`` range replaced by that target's candidate.
+
+        Ranges index the original ``source`` whatever the replacement lengths; text outside them is kept. A range
+        outside ``source`` (``region_out_of_bounds``) or overlapping another (``overlapping_region``) is rejected,
+        and a target without an available candidate is ``unavailable_input``, never filled with source text.
+        """
+        out, at = [], 0
+        for start, end, d in sorted(regions, key=lambda r: (r[0], r[1])):
+            if not 0 <= start <= end <= len(source):
+                raise k.GraphRejection("region_out_of_bounds", f"{start}:{end}")
+            if start < at:
+                raise k.GraphRejection("overlapping_region", f"{start}:{end}")
+            out += [source[at:start], d]
+            at = end
+        return "".join(x if isinstance(x, str) else self._available(x) for x in [*out, source[at:]])
+
     def _available(self, target: Datum) -> str:
         o = self.outcome(target)
         if o.terminal != "success" or not o.available:
@@ -441,7 +473,24 @@ def protect(prepared: PreparedProtection, *, cancel: k.CancelToken | None = None
     if not isinstance(prepared, PreparedProtection) or prepared.seal != _seal(prepared):
         raise k.GraphRejection("not_prepared")
     _admit(prepared.graph, prepared.workflow.flatten(), prepared.limits, prepared.capabilities)
-    return k.run_in_frame(_protect, prepared, token=cancel)
+    with _measure("graph_protect", **_counts(prepared)) as m:
+        result = k.run_in_frame(_protect, prepared, token=cancel)
+        m["terminal_counts"] = dict(Counter(o.terminal for o in result.outcomes))
+    return result
+
+
+def _measure(stage: str, **fields: Any) -> contextlib.AbstractContextManager[dict[str, Any]]:
+    """A measurement stage when a measurement session can be active (its module is loaded), else a no-op."""
+    if "anonymizer.measurement.session" not in sys.modules:
+        return contextlib.nullcontext(fields)
+    from anonymizer.measurement.recorders import stage_timer
+
+    return stage_timer(stage, **fields)
+
+
+def _counts(p: PreparedProtection) -> dict[str, int]:
+    """The content-free sizes a boundary measurement carries."""
+    return {"operation_count": len(p.names), "target_count": len(p.graph.targets)}
 
 
 def _protect(p: PreparedProtection) -> ProtectionResult:
@@ -473,7 +522,10 @@ def _protect(p: PreparedProtection) -> ProtectionResult:
     for u in closed:
         k.apply(state, k.Closed(u, "binding_failed"))
     k.execute(p.plan, state, cancelled, _mention_review(p))
-    return _reconcile(p, state, tuple(retrievals))
+    with _measure("graph_reconcile", **_counts(p)) as m:
+        result = _reconcile(p, state, tuple(retrievals))
+        m["terminal_counts"] = dict(Counter(o.terminal for o in result.outcomes))
+    return result
 
 
 def _mention_review(p: PreparedProtection) -> k.Review:

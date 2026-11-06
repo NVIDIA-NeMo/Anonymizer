@@ -792,6 +792,9 @@ class StageTableRow(_MetricTableRow):
         "EntityDetectionWorkflow.run",
         "ReplacementWorkflow.run",
         "RewriteWorkflow.run",
+        "graph_prepare",
+        "graph_protect",
+        "graph_reconcile",
     ]
     status: Literal["completed", "error"]
 

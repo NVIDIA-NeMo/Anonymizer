@@ -56,4 +56,26 @@ def program() -> list[dict[str, str]]:
         == report
     )
     c.check("E29.4", same, f"declaration order changed, results equal={same}")
+    scope = GraphScope()
+    head, tail = scope.datum("h" * 100), scope.datum("t" * 100)
+    regions = run(
+        ProtectionGraph(scope, (head, tail)),
+        Operation("op", lambda text: text[:60] if text[0] == "h" else text + "x" * 30),
+    )
+    doc = "h" * 100 + "t" * 100
+    out = regions.assemble_regions(doc, [(100, 200, tail), (0, 100, head)])
+    kept = regions.assemble_regions("<" + doc + ">", [(101, 201, tail)])
+    overlap = rejected(lambda: regions.assemble_regions(doc, [(0, 101, head), (100, 200, tail)]))
+    bounds = rejected(lambda: regions.assemble_regions(doc, [(150, 201, tail)]))
+    c.check(
+        "E29.5",
+        out == "h" * 60 + "t" * 100 + "x" * 30
+        and kept == "<" + "h" * 100 + "t" * 100 + "x" * 30 + ">"
+        and (overlap, bounds) == ("overlapping_region", "region_out_of_bounds"),
+        f"len={len(out)}, overlap={overlap}, bounds={bounds}",
+    )
+    code = rejected(
+        lambda: failed.assemble_regions(OPENING + FINDINGS, [(len(OPENING), len(OPENING) + 10, f_findings)])
+    )
+    c.check("E29.6", code == "unavailable_input", f"code={code}")
     return c.lines
