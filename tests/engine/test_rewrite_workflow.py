@@ -312,7 +312,7 @@ def test_unavailable_leakage_flags_for_review(
 _CONFIRMED_LEAK = {"answers": [{"id": 1, "answer": "yes", "confidence": 0.9, "reason": "kept verbatim"}]}
 
 
-def test_confirmed_leak_with_low_leakage_is_flagged_and_repaired(
+def test_confirmed_leak_with_low_leakage_is_flagged(
     stub_model_configs: list[ModelConfig],
     stub_rewrite_model_selection: RewriteModelSelection,
     stub_replace_model_selection: ReplaceModelSelection,
@@ -321,8 +321,6 @@ def test_confirmed_leak_with_low_leakage_is_flagged_and_repaired(
     stub_pipeline_df: pd.DataFrame,
     stub_eval_df: pd.DataFrame,
 ) -> None:
-    from anonymizer.engine.rewrite.evaluate import _determine_repair_needs_column
-
     eval_df = stub_eval_df.assign(**{COL_PRIVACY_QA_REANSWER: [_CONFIRMED_LEAK] * len(stub_eval_df)})
     adapter = Mock()
     adapter.run_workflow.side_effect = _standard_side_effect(stub_pipeline_df, eval_df)
@@ -339,9 +337,6 @@ def test_confirmed_leak_with_low_leakage_is_flagged_and_repaired(
 
     assert result.dataframe[COL_LEAKAGE_MASS].tolist() == [0.1]
     assert result.dataframe[COL_NEEDS_HUMAN_REVIEW].tolist() == [True]
-    row = eval_df.iloc[0].to_dict()
-    moderate = EvaluationCriteria(risk_tolerance="moderate")
-    assert _determine_repair_needs_column(row, moderate)[COL_NEEDS_REPAIR] is True
 
 
 # ---------------------------------------------------------------------------
@@ -824,6 +819,89 @@ def test_repair_loop_stops_after_successful_repair(
     assert result[COL_REWRITTEN_TEXT].iloc[0] == "rec repaired 1"
     assert result[COL_REPAIR_ITERATIONS].iloc[0] == 2
     assert not bool(result[COL_NEEDS_REPAIR].iloc[0])
+
+
+class _ConfirmedLeakAdapter:
+    """Adapter-shaped stub whose evaluate step runs the workflow's real repair-needs column.
+
+    ``leaked_evaluations`` maps a record id to how many evaluations answer a privacy question "yes";
+    later evaluations answer "no". Leakage mass stays at 0.1, below every preset's repair threshold.
+    """
+
+    def __init__(self, leaked_evaluations: dict[str, int]) -> None:
+        self.leaked_evaluations = leaked_evaluations
+        self.seeds: dict[str, pd.DataFrame] = {}
+
+    def run_workflow(
+        self, seed: pd.DataFrame, *, workflow_name: str, columns: list[Any], **_: object
+    ) -> WorkflowRunResult:
+        self.seeds[workflow_name] = seed.copy()
+        output = seed.copy()
+        record_ids = output[RECORD_ID_COLUMN].astype(str)
+        iteration = int(workflow_name.rsplit("-", 1)[1]) if workflow_name[-1].isdigit() else 0
+        if workflow_name == "rewrite-pipeline":
+            output[COL_REWRITTEN_TEXT] = [f"{record_id} initial" for record_id in record_ids]
+            output[COL_PRIVACY_QA] = [dict(_PRIVACY_QA) for _ in record_ids]
+        elif workflow_name.startswith("rewrite-evaluate-"):
+            output[COL_PRIVACY_QA_REANSWER] = [
+                _CONFIRMED_LEAK if iteration < self.leaked_evaluations[record_id] else {"answers": []}
+                for record_id in record_ids
+            ]
+            output[COL_UTILITY_SCORE] = 0.9
+            output[COL_LEAKAGE_MASS] = 0.1
+            output[COL_WEIGHTED_LEAKAGE_RATE] = 0.0
+            output[COL_ANY_HIGH_LEAKED] = False
+            repair_needs = next(column for column in columns if column.name == COL_NEEDS_REPAIR)
+            rows = [
+                repair_needs.generator_function(row, repair_needs.generator_params) for row in output.to_dict("records")
+            ]
+            output[COL_NEEDS_REPAIR] = [row[COL_NEEDS_REPAIR] for row in rows]
+        elif workflow_name.startswith("rewrite-repair-"):
+            output[COL_LEAKED_PRIVACY_ITEMS] = f"leaked items {iteration}"
+            output[COL_REWRITTEN_TEXT_NEXT] = [f"{record_id} repaired {iteration}" for record_id in record_ids]
+        return WorkflowRunResult(dataframe=output, failed_records=[])
+
+
+def test_confirmed_leak_is_repaired_and_reevaluated(
+    stub_model_configs: list[ModelConfig],
+    stub_rewrite_model_selection: RewriteModelSelection,
+    stub_replace_model_selection: ReplaceModelSelection,
+) -> None:
+    adapter = _ConfirmedLeakAdapter({"clean": 0, "cleared": 1, "persists": 99})
+    record_ids = list(adapter.leaked_evaluations)
+    dataframe = pd.DataFrame(
+        {
+            RECORD_ID_COLUMN: record_ids,
+            COL_TEXT: [f"Alice works at Acme ({record_id})" for record_id in record_ids],
+            COL_ENTITIES_BY_VALUE: [
+                {"entities_by_value": [{"value": "Alice", "labels": ["first_name"]}]} for _ in record_ids
+            ],
+        }
+    )
+    with patch(_REPLACE_PATCH) as mock_replace_cls:
+        _mock_replace(mock_replace_cls, dataframe.copy())
+        result = (
+            RewriteWorkflow(adapter=Mock(wraps=adapter))
+            .run(
+                dataframe,
+                model_configs=stub_model_configs,
+                selected_models=stub_rewrite_model_selection,
+                replace_model_selection=stub_replace_model_selection,
+                privacy_goal=_PRIVACY_GOAL,
+                evaluation=EvaluationCriteria(risk_tolerance="moderate", max_repair_iterations=1),
+            )
+            .dataframe
+        )
+
+    assert adapter.seeds["rewrite-repair-0"][RECORD_ID_COLUMN].tolist() == ["cleared", "persists"]
+    assert adapter.seeds["rewrite-evaluate-1"][COL_REWRITTEN_TEXT].tolist() == [
+        "cleared repaired 0",
+        "persists repaired 0",
+    ]
+    assert _by_id(result, COL_LEAKAGE_MASS) == {"clean": 0.1, "cleared": 0.1, "persists": 0.1}
+    assert _by_id(result, COL_REPAIR_ITERATIONS) == {"clean": 0, "cleared": 1, "persists": 1}
+    assert _by_id(result, COL_NEEDS_REPAIR) == {"clean": False, "cleared": False, "persists": True}
+    assert _by_id(result, COL_NEEDS_HUMAN_REVIEW) == {"clean": False, "cleared": False, "persists": True}
 
 
 _REPAIRS_NEEDED = "repairs_needed"
