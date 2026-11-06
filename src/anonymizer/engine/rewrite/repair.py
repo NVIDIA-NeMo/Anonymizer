@@ -100,6 +100,7 @@ def _render_repair_prompt(row: dict[str, Any], params: RepairParams) -> str:
 <privacy_issues>
 The following questions about sensitive information can still be answered from the rewrite.
 Leakage mass: <<LEAKAGE_MASS>> (target: < <<MAX_PRIVACY_LEAK>>)<<HIGH_WARN>>
+Every item listed below MUST be fixed, even when the leakage mass is already below the target.
 <<LEAKED_ITEMS>>
 </privacy_issues>
 
