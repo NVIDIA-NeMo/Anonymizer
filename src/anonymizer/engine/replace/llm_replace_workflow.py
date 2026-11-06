@@ -255,7 +255,7 @@ The replacements must:
 
 The replacements must NOT:
    - be a synonym or near-synonym of the original value
-   - e a closely related specialization of the same role
+   - be a closely related specialization of the same role
 
 Prefer replacements that shift the concept to a different but plausible value within a related domain, \
 or a nearby role that is clearly distinct from the original.
