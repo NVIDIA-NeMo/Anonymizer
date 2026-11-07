@@ -223,6 +223,8 @@ class EntityDetectionWorkflow:
                 ChunkedValidationConfig(
                     name=COL_VALIDATION_DECISIONS,
                     pool=list(validator_aliases),
+                    allowed_entity_labels=labels if label_config.strict_labels else None,
+                    excluded_entity_labels=list(excluded_entity_labels or []),
                     max_entities_per_call=validation_max_entities_per_call,
                     excerpt_window_chars=validation_excerpt_window_chars,
                     single_chunk_full_text=validation_single_chunk_full_text,

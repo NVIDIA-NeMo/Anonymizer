@@ -14,7 +14,8 @@ Plugin columns call :func:`chunked_validate_row_async` directly.
 
 Failure contract. Each chunk attempts its round-robin primary first and
 fails over sequentially to the rest of the pool; a chunk only fails when
-every pool member has raised. The first failing chunk re-raises out of
+every pool member has raised or bounded completeness retries are exhausted.
+The first failing chunk re-raises out of
 the generator, DataDesigner drops the row, and
 ``NddAdapter._detect_missing_records`` surfaces it as a ``FailedRecord``.
 Raw text never silently leaks through as unscrubbed output.
@@ -53,7 +54,9 @@ from anonymizer.engine.detection.postprocess import (
 )
 from anonymizer.engine.schemas import (
     EntitiesSchema,
+    RawValidationDecisionSchema,
     RawValidationDecisionsSchema,
+    ValidationCandidateSchema,
     ValidationCandidatesSchema,
     ValidationDecisionsSchema,
     ValidationSkeletonDecisionSchema,
@@ -61,6 +64,9 @@ from anonymizer.engine.schemas import (
 )
 
 logger = logging.getLogger("anonymizer.detection.chunked_validation")
+
+_MAX_COMPLETENESS_RETRIES = 2
+_INVALID_RECLASS_LABELS = frozenset({"none", "null"})
 
 # Jinja2 environment used to render the per-chunk validation prompt.
 # The template mirrors the production prompt exactly: we substitute the same
@@ -106,6 +112,9 @@ class ChunkedValidationParams(BaseModel):
             ``_seed_tagged_text``, ``_validation_skeleton``, ``_tag_notation``
             placeholders). Typically produced by ``_get_validation_prompt``.
         system_prompt: Optional system prompt forwarded to each chunk call.
+        allowed_entity_labels: Optional effective label set for reclassifications.
+            None permits new labels.
+        excluded_entity_labels: Labels that reclassifications must never produce.
 
     ``prompt_template`` and ``system_prompt`` are marked ``repr=False`` because
     DataDesigner's pre-generation logger f-strings this model
@@ -125,6 +134,8 @@ class ChunkedValidationParams(BaseModel):
     single_chunk_full_text: bool = True
     prompt_template: str = Field(repr=False)
     system_prompt: str | None = Field(default=None, repr=False)
+    allowed_entity_labels: list[str] | None = None
+    excluded_entity_labels: list[str] = Field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -296,7 +307,7 @@ def merge_chunk_decisions(
 # ---------------------------------------------------------------------------
 
 
-async def _dispatch_chunk_async(
+async def _request_chunk_async(
     *,
     facades: list[tuple[str, Any]],
     prompt: str,
@@ -304,6 +315,7 @@ async def _dispatch_chunk_async(
     chunk_index: int,
     max_conversation_restarts: int,
     max_correction_steps: int,
+    completeness_attempt: int = 0,
 ) -> RawValidationDecisionsSchema:
     """Dispatch a chunk with sequential failover through the validator pool."""
     recipe = PydanticResponseRecipe(data_type=RawValidationDecisionsSchema)
@@ -317,7 +329,7 @@ async def _dispatch_chunk_async(
                 prompt=final_prompt,
                 parser=recipe.parse,
                 system_prompt=final_system,
-                purpose=f"entity-validation-chunk-{chunk_index}-attempt-{attempt_index}",
+                purpose=f"entity-validation-chunk-{chunk_index}-completeness-{completeness_attempt}-attempt-{attempt_index}",
                 max_conversation_restarts=max_conversation_restarts,
                 max_correction_steps=max_correction_steps,
             )
@@ -353,10 +365,116 @@ async def _dispatch_chunk_async(
 
     if last_exc is None:
         raise RuntimeError(
-            "_dispatch_chunk_async was called with an empty facades list; "
+            "_request_chunk_async was called with an empty facades list; "
             "this violates the caller contract (a non-empty validator pool)."
         )
     raise last_exc
+
+
+def _collect_valid_decisions(
+    output: RawValidationDecisionsSchema,
+    pending: list[ValidationCandidateSchema],
+    accepted: dict[str, RawValidationDecisionSchema],
+    params: ChunkedValidationParams,
+) -> list[ValidationCandidateSchema]:
+    """Accept only usable decisions for this request, preserving earlier verdicts."""
+    expected = {candidate.id for candidate in pending}
+    allowed = (
+        {label.strip().casefold() for label in params.allowed_entity_labels}
+        if params.allowed_entity_labels is not None
+        else None
+    )
+    excluded = {label.strip().casefold() for label in params.excluded_entity_labels}
+    for decision in output.decisions:
+        if decision.id not in expected or decision.id in accepted or decision.decision is None:
+            continue
+        if decision.decision.value == "reclass":
+            label = decision.proposed_label.strip()
+            normalized = label.casefold()
+            if (
+                not label
+                or normalized in _INVALID_RECLASS_LABELS
+                or normalized in excluded
+                or (allowed is not None and normalized not in allowed)
+            ):
+                continue
+            decision = decision.model_copy(update={"proposed_label": label})
+        accepted[decision.id] = decision
+    return [candidate for candidate in pending if candidate.id not in accepted]
+
+
+def _render_retry_prompt(
+    *, pending: list[ValidationCandidateSchema], excerpt: str, notation: TagNotation, params: ChunkedValidationParams
+) -> str:
+    prompt = render_chunk_prompt(
+        template=params.prompt_template,
+        excerpt=excerpt,
+        skeleton=build_chunk_skeleton(pending),
+        notation=notation,
+    )
+    return prompt + (
+        "\nCorrection required: return one explicit keep, drop, or reclass decision for every "
+        "candidate in the supplied skeleton. Earlier responses omitted these candidates, returned "
+        "a null decision, or supplied an invalid reclassification label. Preserve candidate IDs. "
+        "For reclass, supply a non-empty, non-excluded label permitted by the prompt; "
+        "never use none or null as a label. Empty proposed labels are valid for keep and drop. "
+        "If a value is outside the protection scope, drop it rather than forcing it into a class. "
+        "Return decisions only for the supplied candidates."
+    )
+
+
+def _check_retry_budget(pending: list[ValidationCandidateSchema], *, chunk_index: int, attempt: int) -> None:
+    if attempt == _MAX_COMPLETENESS_RETRIES:
+        ids = ", ".join(candidate.id for candidate in pending)
+        raise ValueError(
+            f"Validator chunk {chunk_index} has {len(pending)} unresolved candidate(s) after "
+            f"{attempt + 1} completeness attempts; missing or invalid decisions for IDs: {ids}"
+        )
+    logger.warning(
+        "validator chunk %d: completeness attempt %d left %d unresolved candidate(s); retrying only those candidates",
+        chunk_index,
+        attempt + 1,
+        len(pending),
+    )
+
+
+async def _dispatch_chunk_async(
+    *,
+    facades: list[tuple[str, Any]],
+    prompt: str,
+    system_prompt: str | None,
+    chunk_index: int,
+    chunk_candidates_: list[ValidationCandidateSchema],
+    excerpt: str,
+    notation: TagNotation,
+    params: ChunkedValidationParams,
+) -> RawValidationDecisionsSchema:
+    """Async counterpart with the same bounded completeness and failover contract."""
+    pending = chunk_candidates_
+    accepted: dict[str, RawValidationDecisionSchema] = {}
+    for attempt in range(_MAX_COMPLETENESS_RETRIES + 1):
+        output = await _request_chunk_async(
+            facades=facades,
+            prompt=prompt,
+            system_prompt=system_prompt,
+            chunk_index=chunk_index,
+            completeness_attempt=attempt,
+            max_conversation_restarts=params.max_conversation_restarts,
+            max_correction_steps=params.max_correction_steps,
+        )
+        pending = _collect_valid_decisions(output, pending, accepted, params)
+        if not pending:
+            if attempt:
+                logger.info(
+                    "validator chunk %d: completed %d candidate decisions after %d completeness retry(s)",
+                    chunk_index,
+                    len(chunk_candidates_),
+                    attempt,
+                )
+            return RawValidationDecisionsSchema(decisions=[accepted[c.id] for c in chunk_candidates_])
+        _check_retry_budget(pending, chunk_index=chunk_index, attempt=attempt)
+        prompt = _render_retry_prompt(pending=pending, excerpt=excerpt, notation=notation, params=params)
+    raise RuntimeError("Unreachable completeness retry state")
 
 
 def _build_dispatch_kwargs_per_chunk(
@@ -461,8 +579,10 @@ def _build_dispatch_kwargs_per_chunk(
                 "prompt": prompt,
                 "system_prompt": params.system_prompt,
                 "chunk_index": chunk_index,
-                "max_conversation_restarts": params.max_conversation_restarts,
-                "max_correction_steps": params.max_correction_steps,
+                "chunk_candidates_": chunk_candidates_,
+                "excerpt": excerpt,
+                "notation": notation,
+                "params": params,
             }
         )
 

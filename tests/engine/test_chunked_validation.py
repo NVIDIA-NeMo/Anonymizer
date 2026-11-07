@@ -548,7 +548,7 @@ class TestChunkedValidateRowPoolOfOne:
         )
         row = _build_row(text=text, seed_entities=spans, candidates=candidates)
 
-        facade = FakeFacade("v0", response={"decisions": [{"id": "a", "decision": "keep"}]})
+        facade = _selective_facade("v0", {"a": {"id": "a", "decision": "keep"}, "b": {"id": "b", "decision": "keep"}})
         params = ChunkedValidationParams(
             pool=["v0"],
             max_entities_per_call=10,
@@ -643,17 +643,9 @@ class TestChunkedValidateRowPoolOfTwoRoundRobin:
         candidates = _candidates_schema(*[(f"e{i}", chr(ord("A") + i), "first_name") for i in range(6)])
         row = _build_row(text=text, seed_entities=spans, candidates=candidates)
 
-        def make_response(chunk_size: int) -> Callable[[str], dict]:
-            def _respond(prompt: str) -> dict:
-                # Parse out which entity ids are in this chunk from the skeleton.
-                # We can't easily, so just return empty decisions — the dispatch
-                # order assertion is about which alias was called, not contents.
-                return {"decisions": []}
-
-            return _respond
-
-        v0 = FakeFacade("v0", response=make_response(2))
-        v1 = FakeFacade("v1", response=make_response(2))
+        decisions = {f"e{i}": {"id": f"e{i}", "decision": "keep"} for i in range(6)}
+        v0 = _selective_facade("v0", decisions)
+        v1 = _selective_facade("v1", decisions)
         params = ChunkedValidationParams(
             pool=["v0", "v1"],
             max_entities_per_call=2,
@@ -673,7 +665,7 @@ class TestChunkedValidateRowAsync:
             spans = [_entity_span(f"e{i}", chr(ord("A") + i), "first_name", i * 2, i * 2 + 1) for i in range(4)]
             candidates = _candidates_schema(*[(f"e{i}", chr(ord("A") + i), "first_name") for i in range(4)])
             row = _build_row(text=text, seed_entities=spans, candidates=candidates)
-            facade = AsyncTrackingFacade("v0", response={"decisions": []})
+            facade = AsyncTrackingFacade("v0", response=_keep_requested_candidates)
             params = ChunkedValidationParams(
                 pool=["v0"],
                 max_entities_per_call=1,
@@ -1121,14 +1113,14 @@ class TestChunkedValidationRegression:
             ("f", "Eve", "first_name"),
         )
         # Deterministic per-id decisions covering all branches.
-        # ``f`` intentionally has no decision: downstream must keep it as-is,
-        # regardless of whether it lands in its own chunk or shares one.
+        # Every candidate must receive a usable verdict, independent of partitioning.
         decisions_by_id: dict[str, dict[str, Any]] = {
             "a": {"id": "a", "decision": "keep"},
             "b": {"id": "b", "decision": "drop"},
             "c": {"id": "c", "decision": "reclass", "proposed_label": "location"},
             "d": {"id": "d", "decision": "keep"},
             "e": {"id": "e", "decision": "reclass", "proposed_label": "surname"},
+            "f": {"id": "f", "decision": "keep"},
         }
         return spans, candidates, decisions_by_id
 
@@ -1180,7 +1172,7 @@ class TestChunkedValidationRegression:
         assert _summarize(single_validated) == _summarize(multi_validated)
 
         # Keep/reclass/drop/untouched tallies match the fixed decision set.
-        expected_tally = {"keep": 2, "reclass": 2, "drop": 1, "untouched": 1}
+        expected_tally = {"keep": 3, "reclass": 2, "drop": 1, "untouched": 0}
         assert _tally(spans, single_validated, single_doc) == expected_tally
         assert _tally(spans, multi_validated, multi_doc) == expected_tally
 
@@ -1195,3 +1187,196 @@ class TestChunkedValidationRegression:
             ("f", "first_name"),  # untouched (no decision)
             # "b" dropped
         ]
+
+
+def _keep_requested_candidates(prompt: str) -> dict[str, Any]:
+    ids = re.findall(r"'id':\s*'([^']+)'", prompt)
+    return {"decisions": [{"id": candidate_id, "decision": "keep"} for candidate_id in ids]}
+
+
+def _retry_test_row() -> dict[str, Any]:
+    return _build_row(
+        text="Alice met Bob.",
+        seed_entities=[_entity_span("a", "Alice", "first_name", 0, 5), _entity_span("b", "Bob", "first_name", 10, 13)],
+        candidates=_candidates_schema(("a", "Alice", "first_name"), ("b", "Bob", "first_name")),
+    )
+
+
+def _run_retry_case(facade: FakeFacade, **overrides: Any) -> dict[str, Any]:
+    params = ChunkedValidationParams(
+        pool=["v0"],
+        max_entities_per_call=25,
+        excerpt_window_chars=50,
+        prompt_template=_MINIMAL_TEMPLATE,
+        **overrides,
+    )
+    row = _retry_test_row()
+    return asyncio.run(chunked_validate_row_async(row, params, {"v0": facade}))
+
+
+def test_completeness_retry_preserves_decisions_and_context() -> None:
+    responses = iter(
+        [
+            {"decisions": [{"id": "a", "decision": "drop"}, {"id": "b", "decision": None}]},
+            {"decisions": [{"id": "a", "decision": "keep"}, {"id": "unknown", "decision": "keep"}]},
+            {"decisions": [{"id": "b", "decision": "keep", "proposed_label": ""}]},
+        ]
+    )
+    facade = FakeFacade("v0", response=lambda _: next(responses))
+    result = _run_retry_case(facade)
+    decisions = result[COL_VALIDATION_DECISIONS]["decisions"]
+    assert [(d["id"], d["decision"]) for d in decisions] == [("a", "drop"), ("b", "keep")]
+    assert len(facade.calls) == 3
+    original_excerpt = facade.calls[0]["prompt"].split("|SKELETON:")[0]
+    for call in facade.calls[1:]:
+        assert call["prompt"].startswith(original_excerpt)
+        assert "'id': 'a'" not in call["prompt"]
+        assert "'id': 'b'" in call["prompt"]
+    assert len({call["purpose"] for call in facade.calls}) == 3
+
+
+@pytest.mark.parametrize("label", [None, "", "  ", "none", "NoNe", "NULL", "not_allowed", "excluded"])
+def test_invalid_reclassification_is_retried(label: str | None) -> None:
+    responses = iter(
+        [
+            {
+                "decisions": [
+                    {"id": "a", "decision": "keep"},
+                    {"id": "b", "decision": "reclass", "proposed_label": label},
+                ]
+            },
+            {"decisions": [{"id": "b", "decision": "reclass", "proposed_label": " last_name "}]},
+        ]
+    )
+    facade = FakeFacade("v0", response=lambda _: next(responses))
+    result = _run_retry_case(
+        facade,
+        allowed_entity_labels=["first_name", "last_name", "excluded"],
+        excluded_entity_labels=["EXCLUDED"],
+    )
+    decisions = result[COL_VALIDATION_DECISIONS]["decisions"]
+    assert decisions[1]["proposed_label"] == "last_name"
+    assert len(facade.calls) == 2
+
+
+def test_incomplete_validation_exhausts_budget_and_fails_row() -> None:
+    facade = FakeFacade("v0", response={"decisions": [{"id": "a", "decision": "keep"}]})
+    with pytest.raises(ValueError, match=r"1 unresolved candidate.*3 completeness attempts.*b"):
+        _run_retry_case(facade)
+    assert len(facade.calls) == 3
+
+
+def test_empty_reclass_label_cannot_silently_keep_original() -> None:
+    facade = FakeFacade(
+        "v0",
+        response={
+            "decisions": [
+                {"id": "a", "decision": "keep"},
+                {"id": "b", "decision": "reclass", "proposed_label": "none"},
+            ]
+        },
+    )
+    with pytest.raises(ValueError, match="unresolved candidate"):
+        _run_retry_case(facade)
+    assert len(facade.calls) == 3
+
+
+def test_permissive_validation_allows_new_nonexcluded_label() -> None:
+    facade = FakeFacade(
+        "v0",
+        response={
+            "decisions": [
+                {"id": "a", "decision": "drop", "proposed_label": None},
+                {"id": "b", "decision": "reclass", "proposed_label": "custom_label"},
+            ]
+        },
+    )
+    result = _run_retry_case(facade)
+    assert result[COL_VALIDATION_DECISIONS]["decisions"][1]["proposed_label"] == "custom_label"
+    assert len(facade.calls) == 1
+
+
+def test_completeness_retry_preserves_alias_failover() -> None:
+    responses = iter(
+        [
+            {"decisions": [{"id": "a", "decision": "drop"}]},
+            RuntimeError("primary unavailable during retry"),
+        ]
+    )
+
+    def respond(prompt: str) -> dict[str, Any]:
+        result = next(responses)
+        if isinstance(result, Exception):
+            raise result
+        return result
+
+    primary = FakeFacade("v0", response=respond)
+    secondary = FakeFacade("v1", response={"decisions": [{"id": "b", "decision": "keep"}]})
+    params = ChunkedValidationParams(
+        pool=["v0", "v1"],
+        max_entities_per_call=25,
+        excerpt_window_chars=50,
+        prompt_template=_MINIMAL_TEMPLATE,
+    )
+    row = _retry_test_row()
+    models = {"v0": primary, "v1": secondary}
+    result = asyncio.run(chunked_validate_row_async(row, params, models))
+    assert [(d["id"], d["decision"]) for d in result[COL_VALIDATION_DECISIONS]["decisions"]] == [
+        ("a", "drop"),
+        ("b", "keep"),
+    ]
+    assert len(primary.calls) == 2
+    assert len(secondary.calls) == 1
+    assert "'id': 'a'" not in secondary.calls[0]["prompt"]
+
+
+def test_decisions_from_other_chunks_do_not_satisfy_completeness() -> None:
+    facade = FakeFacade("v0", response={"decisions": [{"id": "a", "decision": "keep"}]})
+    params = ChunkedValidationParams(
+        pool=["v0"],
+        max_entities_per_call=1,
+        excerpt_window_chars=50,
+        max_parallel_chunks=1,
+        prompt_template=_MINIMAL_TEMPLATE,
+    )
+    row = _retry_test_row()
+    with pytest.raises(ValueError, match="IDs: b"):
+        asyncio.run(chunked_validate_row_async(row, params, {"v0": facade}))
+    assert COL_VALIDATION_DECISIONS not in row
+
+
+def test_permissive_mode_still_retries_excluded_reclassification() -> None:
+    facade = FakeFacade(
+        "v0",
+        response={
+            "decisions": [
+                {"id": "a", "decision": "keep"},
+                {"id": "b", "decision": "reclass", "proposed_label": " secret "},
+            ]
+        },
+    )
+    with pytest.raises(ValueError, match="unresolved candidate"):
+        _run_retry_case(facade, excluded_entity_labels=["SECRET"])
+    assert len(facade.calls) == 3
+
+
+def test_plugin_passes_label_policy_to_retry_validation() -> None:
+    config = ChunkedValidationConfig(
+        name=COL_VALIDATION_DECISIONS,
+        pool=["v0"],
+        max_entities_per_call=25,
+        excerpt_window_chars=50,
+        prompt_template=_MINIMAL_TEMPLATE,
+        allowed_entity_labels=["first_name", "last_name"],
+        excluded_entity_labels=["last_name"],
+    )
+    generator = ChunkedValidationGenerator(
+        config,
+        resource_provider=SimpleNamespace(  # ty: ignore[invalid-argument-type]
+            model_registry=FakeModelRegistry({"v0": FakeFacade("v0")}),
+            run_config=SimpleNamespace(max_conversation_restarts=0, max_conversation_correction_steps=0),
+        ),
+    )
+    params = generator._params({"v0": FakeFacade("v0")})
+    assert params.allowed_entity_labels == ["first_name", "last_name"]
+    assert params.excluded_entity_labels == ["last_name"]
