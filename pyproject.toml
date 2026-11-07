@@ -8,7 +8,7 @@ license = "Apache-2.0"
 
 dependencies = [
     "certifi>=2026.10.19", # Updated CA bundle for the eMudhra compromise
-    "data-designer>=0.9.4,<0.10",
+    "data-designer>=0.10.0,<0.11",
     "pydantic>=2.9,<3",
     "pydantic-settings>=2.12,<3",
     "cyclopts>=3",
@@ -26,7 +26,7 @@ notebooks = [
     "jupyter>=1.0.0,<2",
     "jupytext>=1.16.0,<2",
     "pip>=26.2.2",
-    "pillow>=12.0.0,<13",
+    "pillow>=13.0.0,<14",
 ]
 
 [project.scripts]
@@ -101,6 +101,13 @@ include = ["src", "tests", "tests_e2e", "docs", "scripts", "tools"]
 [tool.ty.environment]
 python-version = "3.11"
 root = ["src", ".", "tools/measurement"]
+
+[[tool.ty.overrides]]
+include = ["src/anonymizer/notebooks/local_inference/gliner2/backend.py"]
+
+[tool.ty.overrides.analysis]
+# Notebook dependencies may be absent; inline ignores fail when they are installed.
+allowed-unresolved-imports = ["torch", "gliner2"]
 
 [tool.coverage.run]
 omit = []

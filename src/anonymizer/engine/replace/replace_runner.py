@@ -20,6 +20,7 @@ from anonymizer.config.replace_strategies import (
 )
 from anonymizer.engine.constants import (
     COL_ENTITIES_BY_VALUE,
+    COL_FINAL_ENTITIES,
     COL_REPLACEMENT_APPLICATION,
     COL_REPLACEMENT_MAP,
 )
@@ -32,6 +33,7 @@ from anonymizer.engine.evaluation.replace.type_fidelity_judge import TypeFidelit
 from anonymizer.engine.ndd.adapter import RECORD_ID_COLUMN, FailedRecord, NddAdapter
 from anonymizer.engine.replace.llm_replace_workflow import LlmReplaceWorkflow
 from anonymizer.engine.replace.strategies import apply_local_replace_strategy, apply_replacement_map
+from anonymizer.engine.schemas import EntitiesSchema
 from anonymizer.measurement import stage_timer
 
 logger = logging.getLogger("anonymizer.replace")
@@ -43,6 +45,23 @@ class ReplacementResult:
 
     dataframe: pd.DataFrame
     failed_records: list[FailedRecord]
+
+
+def _drop_malformed_entities(dataframe: pd.DataFrame) -> tuple[pd.DataFrame, list[FailedRecord]]:
+    """Split off rows whose entity payload is malformed so they fail instead of passing through unreplaced."""
+    if COL_FINAL_ENTITIES not in dataframe.columns:
+        return dataframe, []
+    keep: list[bool] = []
+    failed: list[FailedRecord] = []
+    for position, (index, raw) in enumerate(dataframe[COL_FINAL_ENTITIES].items()):
+        try:
+            EntitiesSchema.from_raw(raw, strict=True)
+            keep.append(True)
+        except ValueError as exc:
+            keep.append(False)
+            record_id = dataframe[RECORD_ID_COLUMN].iloc[position] if RECORD_ID_COLUMN in dataframe.columns else index
+            failed.append(FailedRecord(record_id=str(record_id), step="replace", reason=f"malformed entities: {exc}"))
+    return (dataframe[keep] if failed else dataframe), failed
 
 
 class ReplacementWorkflow:
@@ -85,10 +104,10 @@ class ReplacementWorkflow:
             input_row_count=len(dataframe),
         ) as measurement:
             logger.debug("replacement strategy: %s on %d records", strategy, len(dataframe))
+            dataframe, failed_records = _drop_malformed_entities(dataframe)
 
             if isinstance(replace_method, (Annotate, Redact, Hash)):
                 local_df = apply_local_replace_strategy(dataframe, strategy=replace_method)
-                failed_records: list[FailedRecord] = []
             elif isinstance(replace_method, Substitute):
                 if self._llm_workflow is None:
                     raise ValueError("Substitute requires an llm_workflow, but none was provided.")
@@ -100,7 +119,7 @@ class ReplacementWorkflow:
                     preview_num_records=preview_num_records,
                 )
                 local_df = apply_replacement_map(map_result.dataframe)
-                failed_records = list(map_result.failed_records)
+                failed_records.extend(map_result.failed_records)
             else:
                 raise ValueError(f"Unsupported replace method: {type(replace_method).__name__}")
 

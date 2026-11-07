@@ -130,14 +130,16 @@ model_configs:
     model: gpt-5
     provider: openai
     inference_parameters:
-      max_tokens: 4096
+      max_tokens: 16384
       temperature: 0.3
+      timeout: 300
   - alias: claude-sonnet
     model: anthropic/claude-sonnet-4
     provider: openrouter
     inference_parameters:
       max_tokens: 8192
       temperature: 0.3
+      timeout: 300
 ```
 
 ```python
@@ -148,6 +150,8 @@ anonymizer = Anonymizer(
 ```
 
 You can pass `model_configs` as either a YAML file path or a YAML string.
+
+Reasoning models need a larger `max_tokens` than non-reasoning ones because hidden reasoning spends the budget before the answer is written; the bundled configs use 8192-16384. Raise `inference_parameters.max_tokens` for an alias when dropped rows' `failed_records` reason names `max_tokens`. A larger budget also takes longer to generate: the bundled configs pair it with `timeout: 300` (seconds). Without `inference_parameters.timeout`, a request times out after 60 seconds, and dropped rows' reason says the request `timed out`.
 
 Roles you don't override keep their default alias selections, but those aliases must still exist in your `model_configs` pool.
 

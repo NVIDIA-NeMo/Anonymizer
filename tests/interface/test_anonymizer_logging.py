@@ -586,7 +586,7 @@ def test_local_replace_logs_progress_for_large_datasets(tmp_path: Path, caplog: 
         {
             COL_TEXT: [f"Name{i} works here" for i in range(num_records)],
             COL_DETECTED_ENTITIES: entities,
-            COL_FINAL_ENTITIES: entities,
+            COL_FINAL_ENTITIES: [{"entities": e} for e in entities],
         }
     )
     detection_workflow = Mock(spec=EntityDetectionWorkflow)

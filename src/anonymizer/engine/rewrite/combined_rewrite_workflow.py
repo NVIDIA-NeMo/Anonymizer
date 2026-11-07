@@ -12,7 +12,6 @@ from data_designer.config import SkipConfig, custom_column_generator
 from data_designer.config.column_configs import CustomColumnConfig, LLMStructuredColumnConfig
 from data_designer.config.column_types import ColumnConfigT
 from data_designer.config.models import ModelConfig
-from pydantic import BaseModel
 
 from anonymizer.config.models import ReplaceModelSelection, RewriteModelSelection
 from anonymizer.config.rewrite import EvaluationCriteria, PrivacyGoal
@@ -51,6 +50,7 @@ from anonymizer.engine.replace.llm_replace_workflow import (
 )
 from anonymizer.engine.rewrite.domain_classification import DomainClassificationWorkflow
 from anonymizer.engine.rewrite.evaluate import EvaluateWorkflow
+from anonymizer.engine.rewrite.findings import needs_human_review
 from anonymizer.engine.rewrite.parsers import normalize_payload
 from anonymizer.engine.rewrite.qa_generation import QAGenerationWorkflow
 from anonymizer.engine.rewrite.repair import RepairWorkflow
@@ -99,11 +99,6 @@ class CombinedRewriteGraph:
     evaluation_states: list[EvaluationState]
     repair_states: list[RepairState]
     internal_columns: list[str]
-
-
-class _FinalizationParams(BaseModel):
-    flag_utility_below: float | None
-    flag_leakage_above: float | None
 
 
 def _iteration_column(column: str, iteration: int) -> str:
@@ -221,8 +216,8 @@ def _remap_custom_column(
             side_effect_columns=side_effect_columns,
             model_aliases=model_aliases,
         )
-        def remapped_generator(row: dict[str, Any], generator_params: Any, models: dict) -> dict[str, Any]:
-            generated = generator(_canonical_row(row, mapping), generator_params, models)
+        async def remapped_generator(row: dict[str, Any], generator_params: Any, models: dict) -> dict[str, Any]:
+            generated = await generator(_canonical_row(row, mapping), generator_params, models)
             return _copy_remapped_outputs(row, generated, outputs, mapping)
 
     elif column.generator_params is not None:
@@ -351,7 +346,7 @@ def _finalization_column(
         required_columns=required_columns,
         side_effect_columns=side_effect_columns,
     )
-    def finalize(row: dict[str, Any], generator_params: _FinalizationParams) -> dict[str, Any]:
+    def finalize(row: dict[str, Any], generator_params: EvaluationCriteria) -> dict[str, Any]:
         state = next(
             (candidate for candidate in reversed(states) if row.get(candidate.needs_repair) is not None),
             states[0],
@@ -366,26 +361,13 @@ def _finalization_column(
         row[COL_ANY_HIGH_LEAKED] = row.get(state.any_high_leaked)
         row[COL_NEEDS_REPAIR] = row.get(state.needs_repair)
         row[COL_REPAIR_ITERATIONS] = state.iteration
-
-        needs_review = (
-            row[COL_REWRITTEN_TEXT] is None
-            or not bool(row.get(COL_REWRITE_REPLACEMENT_READY, True))
-            or bool(row[COL_ANY_HIGH_LEAKED])
-        )
-        if generator_params.flag_utility_below is not None:
-            needs_review = needs_review or float(row[COL_UTILITY_SCORE]) < generator_params.flag_utility_below
-        if generator_params.flag_leakage_above is not None:
-            needs_review = needs_review or float(row[COL_LEAKAGE_MASS]) > generator_params.flag_leakage_above
-        row[COL_NEEDS_HUMAN_REVIEW] = needs_review
+        row[COL_NEEDS_HUMAN_REVIEW] = needs_human_review(row, generator_params)
         return row
 
     return CustomColumnConfig(
         name=COL_REWRITTEN_TEXT,
         generator_function=finalize,
-        generator_params=_FinalizationParams(
-            flag_utility_below=evaluation.flag_utility_below,
-            flag_leakage_above=evaluation.flag_leakage_above,
-        ),
+        generator_params=evaluation,
         propagate_skip=False,
     )
 
