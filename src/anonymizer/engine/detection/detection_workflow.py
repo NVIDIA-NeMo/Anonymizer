@@ -788,12 +788,21 @@ The rules below override the generic structural exclusions and
 PARTIAL-TOKEN rule where explicitly stated.
 
 Structure:
-- DROP candidates that serve only as transcript structure, such as
-  role/speaker markers, chat-template tokens, tool/function names,
-  argument names, JSON keys, line numbers, or formatting prefixes.
+- DROP candidates whose function is to identify a message role, speaker
+  category, channel, or tool operation rather than a sensitive entity.
+  This includes role names within transcript headers or delimiters,
+  channel annotations, and tool/function names.
+- Recognize structure from the surrounding format and repeated message
+  pattern, not from a fixed list of tag spellings. For example,
+  "assistant" in a role header identifies a conversation role, not a
+  personal username.
+- DROP candidates that serve only as argument names, JSON keys, line
+  numbers, or formatting prefixes.
 - Structural position alone is not a reason to DROP a candidate.
-  If the candidate itself exposes sensitive information, assess its
-  label and sensitivity using the guidance in this prompt.
+  If the candidate itself exposes sensitive information, such as a
+  personal name used as a speaker label or an account identifier used
+  as a JSON key, assess its label and sensitivity using the guidance
+  in this prompt.
 - Use surrounding fields and nested or escaped content to interpret
   candidates. Interpret escapes for context, but do not decode, normalize,
   expand, or rewrite candidate text. Preserve supplied IDs and values.
