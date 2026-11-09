@@ -394,6 +394,11 @@ _CASE = _maps([("person", "John Smith", "Mark Lee"), ("person", "JOHN SMITH", "P
 _NNBSP = _maps([("person", "John Smith", "Mark Lee"), ("person", "John\u202fsmith", "Paul Hu")])
 _TWO_LABELS = _maps([("city", "Paris", "Lyon")], [("first_name", "Paris", "Dana")])
 _COLLISION = _maps([("company", "Acme", "Nova")], [("company", "Acme", "Zeta"), ("company", "Initech", "Nova")])
+_COLLISION_RUN = _maps(
+    [("company", "Acme", "Nova")], [("company", "Acme", "Nova"), ("company", "Initech", "[SUBSTITUTE_COMPANY_1]")]
+)
+_CROSS_KEY = _maps([("first_name", "Alice", "Maya")], [("first_name", "Carl", "Maya")])
+_CROSS_KEY_RUN = _maps([("first_name", "Alice", "Maya")], [("first_name", "Carl", "[SUBSTITUTE_FIRST_NAME_1]")])
 _SINGLE = _maps([("company", "Acme", "Nova"), ("person", "Bob", "Tim")])
 _VARIANT = _maps([("first_name", "Alice", "Maya"), ("first_name", "ALICE", "NORA"), ("first_name", "MAYA", "LENA")])
 _VARIANT_FOLDED = _maps(
@@ -424,7 +429,8 @@ _RUN_VARIANT = _maps(
             (_NNBSP, *[_maps([("person", "John Smith", "Mark Lee"), ("person", "John\u202fsmith", "Mark Lee")])] * 2),
             (_TWO_LABELS, _TWO_LABELS, _TWO_LABELS),
             (_ANN_TWICE, _ANN_TWICE, _maps([("first_name", "Ann", "Bea")], [("first_name", "Ann", "Bea")])),
-            (_COLLISION, _COLLISION, _COLLISION),
+            (_COLLISION, _COLLISION, _COLLISION_RUN),
+            (_CROSS_KEY, _CROSS_KEY, _CROSS_KEY_RUN),
             (_SINGLE, _SINGLE, _SINGLE),
             (_VARIANT, *[_VARIANT_FOLDED] * 2),
             (_RUN_VARIANT, _RUN_VARIANT, _RUN_VARIANT),
@@ -440,6 +446,7 @@ _RUN_VARIANT = _maps(
         "two-labels",
         "first-name",
         "collision",
+        "cross-key",
         "single",
         "variant",
         "run-variant",
@@ -478,6 +485,7 @@ def test_fold_never_emits_a_colliding_substitute(consistency: Literal["record", 
         for _ in range(300)
     ]
     unmapped = [{variant(o) for o in rng.choices(names, k=rng.randint(0, 2))} for _ in maps]
+    run_wide: dict[str, set[tuple[str, str]]] = {}
     for raw, extra, out in zip(maps, unmapped, _fold_replacement_maps(maps, consistency, unmapped), strict=True):
         originals = {_fold(e["original"]) for e in raw["replacements"]} | {_fold(v) for v in extra}
         by_value: dict[str, set[tuple[str, str]]] = {}
@@ -486,3 +494,7 @@ def test_fold_never_emits_a_colliding_substitute(consistency: Literal["record", 
             assert value not in originals, (raw, out)
             by_value.setdefault(value, set()).add((e["label"], _fold(e["original"])))
         assert all(len(keys) == 1 for keys in by_value.values()), (raw, out)
+        for value, keys in by_value.items():
+            run_wide.setdefault(value, set()).update(keys)
+    if consistency == "run":
+        assert all(len(keys) == 1 for keys in run_wide.values()), run_wide

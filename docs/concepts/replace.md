@@ -39,7 +39,7 @@ AnonymizerConfig(replace=Substitute(
 | `instructions` | `None` | Additional instructions for the LLM replacement generator. |
 | `consistency` | `"record"` | `"record"` gives each value one substitute within its record; `"run"` gives it one substitute across the whole run. |
 
-Values match on label plus text, ignoring case and whitespace differences. The default `"record"` keeps each record's substitutes independent of other records. `"run"` makes records linkable across the output and preserves how often each value occurs, so use it only for datasets where joins across related documents are needed and unlinkability is not. Otherwise, use [Hash](#hash) for joins.
+Values match on label plus text, ignoring case and whitespace differences. The default `"record"` keeps each record's substitutes independent of other records. `"run"` makes records linkable across the output and preserves how often each value occurs. In `"run"` mode two different values never share a substitute. Use it only for datasets where joins across related documents are needed and unlinkability is not. Otherwise, use [Hash](#hash) for joins.
 
 !!! note "Model role"
 
