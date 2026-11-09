@@ -30,6 +30,7 @@ from anonymizer.engine.ndd.adapter import FailedRecord
 from anonymizer.engine.rewrite.rewrite_workflow import RewriteWorkflow
 from anonymizer.interface.anonymizer import Anonymizer
 
+
 @pytest.mark.parametrize("rejected", [[0], [0, 1]])
 def test_rewrite_reports_rows_that_fail_detection(tmp_path: Path, rejected: list[int]) -> None:
     texts = ["Alice Smith lives here", "Bob Jones is here"]
