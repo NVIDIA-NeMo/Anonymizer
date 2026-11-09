@@ -83,3 +83,12 @@ Ownership: stay; owner=anonymizer.interface.factory; helper=_create_endpoint_ano
 Ownership: stay; owner=anonymizer.interface.factory; helper=_build_gliner_model_configuration; evidence=parsed model pool, providers, selections, endpoint; reason=coordinates third-party model/provider domains with factory injection.
 Ownership: stay; owner=inference_service_compiler.runtime; helper=validate_plan; evidence=CLI delegation and configured command/cwd subprocess; reason=controller owns execution effects and structured failures.
 Ownership: stay; owner=inference_service_compiler.runtime; helper=_child_environment; evidence=validate_plan and launch_plan callers; reason=shared serving-child environment policy belongs beside process execution.
+
+
+### Follow-up verification
+
+All four correctness fixes and the three streamlining changes are complete on `codex/252-serving-reduction`. Implementation revision `b8cc9939` passed the full suite: **1,717 tests**, with no failures. `make check`, the strict `make docs-build`, and `git diff --check` passed.
+
+The pinned vLLM 0.29.0 environment parsed and validated all nine profiles from the assembled source. Assertions checked effective model IDs, model/tokenizer revisions, served aliases, and the complete middleware sequence. Generation cases included two user middlewares; both Factory cases retained ownership and chat compatibility middleware. Validation-only execution was also checked with model preparation and CUDA toolchain setup forbidden. Separate real-parser checks confirmed explicit empty origins, rejection of unknown empty options, explicit false (including underscore spelling), and preservation of upstream defaults for omitted options.
+
+The actual-parser probe uses a test-only CPU platform override, not a production change. It establishes argument behavior and preliminary validation; GPU serving, model compatibility, and weight loading remain untested. Evidence is retained at `/stable-cache/anonymizer-serving-reduction/final/`, alongside the earlier worker reproductions. The final source review found no additional changes needed within the authorized scope.
