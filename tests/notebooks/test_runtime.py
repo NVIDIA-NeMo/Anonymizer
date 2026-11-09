@@ -240,3 +240,23 @@ def test_start_failure_restores_credentials(monkeypatch: pytest.MonkeyPatch) -> 
             pass
     assert _runtime.os.environ[_runtime.LOCAL_TOKEN_ENV] == "original"
     assert _runtime._runtime is None
+
+
+def test_exit_cleanup_stops_runtime_with_active_context(monkeypatch: pytest.MonkeyPatch) -> None:
+    _runtime.stop_local_runtime()
+    monkeypatch.setenv(_runtime.LOCAL_TOKEN_ENV, "original")
+    process = Mock()
+    process.poll.return_value = None
+    candidate = _runtime._LocalRuntime(process, "http://127.0.0.1:1234/v1", "cpu", "cpu", "token")
+
+    def start(_: str) -> _runtime._LocalRuntime:
+        _runtime._set_token_environment(candidate.token)
+        return candidate
+
+    with patch.object(_runtime, "_start_runtime", side_effect=start), patch.object(_runtime, "_wait_until_ready"):
+        with _runtime.runtime_context("cpu"):
+            _runtime._shutdown_runtime()
+            process.terminate.assert_called_once()
+            assert _runtime.os.environ[_runtime.LOCAL_TOKEN_ENV] == "original"
+            assert _runtime._runtime is None
+    process.terminate.assert_called_once()

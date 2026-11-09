@@ -103,10 +103,16 @@ def runtime_context(requested_device: str) -> Iterator[_LocalRuntime]:
 
 def stop_local_runtime() -> None:
     """Stop the owned child process; repeated calls are safe."""
-    global _runtime
     with _runtime_lock:
         if _context_count:
             raise RuntimeError("Cannot stop a native runtime while a context is active.")
+        _shutdown_runtime()
+
+
+def _shutdown_runtime() -> None:
+    """Stop the process even if an active context survives interpreter shutdown."""
+    global _runtime
+    with _runtime_lock:
         runtime = _runtime
         _runtime = None
         try:
@@ -388,4 +394,4 @@ def _set_token_environment(token: str) -> None:
     os.environ[LOCAL_TOKEN_ENV] = token
 
 
-atexit.register(stop_local_runtime)
+atexit.register(_shutdown_runtime)
