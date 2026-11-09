@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from bisect import bisect_left
 from collections import defaultdict
 from collections.abc import Iterable
 
@@ -162,9 +163,18 @@ def reconcile_candidates(candidates: Iterable[AdmittedCandidate]) -> tuple[Admit
     for source_ref in sorted(by_source, key=_source_ref_key):
         ordered = _rank_candidates(by_source[source_ref])
         accepted: list[AdmittedCandidate] = []
+        # Accepted spans are disjoint, so keeping their bounds sorted by start (and therefore by end) lets
+        # a candidate be checked against its two neighbours instead of every accepted span.
+        accepted_starts: list[int] = []
+        accepted_ends: list[int] = []
         for candidate in ordered:
-            if any(_overlaps(candidate, existing) for existing in accepted):
+            index = bisect_left(accepted_starts, candidate.start_position)
+            if index > 0 and accepted_ends[index - 1] > candidate.start_position:
                 continue
+            if index < len(accepted_starts) and accepted_starts[index] < candidate.end_position:
+                continue
+            accepted_starts.insert(index, candidate.start_position)
+            accepted_ends.insert(index, candidate.end_position)
             accepted.append(candidate)
         reconciled.extend(sorted(accepted, key=_publication_key))
     return tuple(reconciled)
