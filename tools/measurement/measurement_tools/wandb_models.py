@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 from collections.abc import Mapping
 from enum import StrEnum
@@ -797,6 +798,17 @@ class StageTableRow(_MetricTableRow):
         "graph_reconcile",
     ]
     status: Literal["completed", "error"]
+    operation_count: NonNegativeInt | None = None
+    target_count: NonNegativeInt | None = None
+    # Table cells hold scalars only, so the per-status mapping is carried as compact sorted JSON.
+    terminal_counts: StrictStr | None = None
+
+    @field_validator("terminal_counts", mode="before")
+    @classmethod
+    def encode_terminal_counts(cls, value: Any) -> Any:
+        if isinstance(value, Mapping):
+            return json.dumps(dict(value), sort_keys=True, separators=(",", ":"))
+        return value
 
 
 class RecordTableRow(_MetricTableRow):
@@ -1162,7 +1174,15 @@ OUTBOUND_FIELD_POLICIES: dict[type[BaseModel], dict[str, FieldPolicy]] = {
         data_class=DataClass.pseudonymous,
         exposure=Exposure.table_opt_in,
     ),
-    StageTableRow: _aggregate_policies("record_type", "stage", "status", exposure=Exposure.table_opt_in),
+    StageTableRow: _aggregate_policies(
+        "record_type",
+        "stage",
+        "status",
+        "operation_count",
+        "target_count",
+        "terminal_counts",
+        exposure=Exposure.table_opt_in,
+    ),
     RecordTableRow: _aggregate_policies(
         "record_type",
         "mode",
