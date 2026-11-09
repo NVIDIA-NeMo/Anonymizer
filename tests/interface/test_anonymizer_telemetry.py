@@ -19,7 +19,7 @@ from anonymizer.engine.detection.detection_workflow import EntityDetectionResult
 from anonymizer.engine.ndd.adapter import FailedRecord
 from anonymizer.engine.replace.replace_runner import ReplacementResult, ReplacementWorkflow
 from anonymizer.engine.rewrite.rewrite_workflow import RewriteResult, RewriteWorkflow
-from anonymizer.interface.anonymizer import Anonymizer
+from anonymizer.interface.anonymizer import Anonymizer, _collect_failure_counts
 from anonymizer.telemetry import (
     NOT_APPLICABLE,
     AnonymizerEvent,
@@ -441,6 +441,14 @@ class TestFailureAggregation:
         event = captured_events[0]
         assert event.unknown_step_failure_count == 1
         assert event.entity_detection_failure_count == 0
+
+    def test_graph_operation_steps_count_in_their_fields(self) -> None:
+        failed = [
+            FailedRecord(record_id=f"r{i}", step=step, reason="x")
+            for i, step in enumerate(("detect", "substitute-map", "replace"))
+        ]
+        counts = _collect_failure_counts(failed)
+        assert (counts["entity_detection"], counts["replace_map_generation"], counts["unknown"]) == (1, 1, 1)
 
     def test_no_failures_counts_zero(
         self,

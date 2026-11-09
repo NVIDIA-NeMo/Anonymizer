@@ -1446,11 +1446,11 @@ def _collect_step_models(
 def _step_to_field(step: str) -> str:
     """Map a FailedRecord.step (workflow_name) to a schema failure-count field key."""
     match step:
-        case "entity-detection":
+        case "entity-detection" | "detect":
             return "entity_detection"
         case "latent-entity-detection":
             return "latent_detection"
-        case "replace-map-generation":
+        case "replace-map-generation" | "substitute-map":
             return "replace_map_generation"
         case "rewrite-pipeline" | "rewrite-combined":
             return "rewrite_pipeline"
