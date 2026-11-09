@@ -130,7 +130,8 @@ def _compile_vllm(spec: LocalInferenceServiceSpec) -> CommandSpec:
         "hf-token",
         "config",
     }
-    conflict = reserved.intersection(key.replace("_", "-") for key in config)
+    # argparse accepts unambiguous long-option prefixes; block them before JSON serialization.
+    conflict = {key for key in config if any(option.startswith(key) for option in reserved)}
     if conflict:
         raise CompilationError(
             CompilerDiagnostic(
