@@ -121,6 +121,21 @@ def _expected_wandb_workload(metadata: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def test_benchmark_detect_metadata_includes_post_exclusion_effective_labels(
+    run_benchmarks_tool: ModuleType,
+) -> None:
+    metadata = run_benchmarks_tool._detect_metadata(
+        {
+            "entity_labels": ["email", "city"],
+            "excluded_entity_labels": ["email"],
+        }
+    )
+
+    assert metadata["entity_label_count"] == 2
+    assert metadata["effective_entity_labels"] == ["city"]
+    assert metadata["effective_entity_label_count"] == 1
+
+
 def test_build_wandb_metadata_projects_sweep_run_tags(tmp_path: Path, run_benchmarks_tool: ModuleType) -> None:
     spec = _minimal_benchmark_spec(
         run_benchmarks_tool,
@@ -453,6 +468,62 @@ def test_wandb_config_projects_only_declared_metadata(wandb_setup_tool: ModuleTy
     assert config.sweep_params == {"configs_all_detect_gliner_threshold": 0.3}
     assert config.sdk_values()["sweep_param_configs_all_detect_gliner_threshold"] == 0.3
     assert config.sdk_values()["measurement_schema_version"] == 2
+
+
+def test_wandb_comparer_prefers_effective_entity_label_count_with_historical_fallback(
+    wandb_setup_tool: ModuleType,
+) -> None:
+    models = sys.modules["measurement_tools.wandb_models"]
+    metadata = wandb_setup_tool.WandbRunMetadata(
+        benchmark=wandb_setup_tool.BenchmarkMetadata(suite_id="suite-a"),
+        configs=(
+            models.ConfigMetadata(
+                id="new",
+                detect=models.DetectMetadata(
+                    entity_label_count=5,
+                    effective_entity_labels=["email", "city"],
+                    effective_entity_label_count=2,
+                ),
+            ),
+            models.ConfigMetadata(
+                id="historical",
+                detect=models.DetectMetadata(entity_label_count=3),
+            ),
+        ),
+    )
+
+    assert metadata.comparer_values()["benchmark_entity_label_counts"] == "2,3"
+
+
+def test_wandb_detect_metadata_rejects_inconsistent_effective_label_count(
+    wandb_setup_tool: ModuleType,
+) -> None:
+    assert wandb_setup_tool is not None
+    models = sys.modules["measurement_tools.wandb_models"]
+
+    with pytest.raises(ValidationError, match="must equal the length"):
+        models.DetectMetadata(
+            effective_entity_labels=["email", "city"],
+            effective_entity_label_count=3,
+        )
+
+
+@pytest.mark.parametrize(
+    "metadata",
+    [
+        {"effective_entity_labels": ["email"]},
+        {"effective_entity_label_count": 1},
+    ],
+)
+def test_wandb_detect_metadata_requires_effective_fields_together(
+    wandb_setup_tool: ModuleType,
+    metadata: dict[str, Any],
+) -> None:
+    assert wandb_setup_tool is not None
+    models = sys.modules["measurement_tools.wandb_models"]
+
+    with pytest.raises(ValidationError, match="must be provided together"):
+        models.DetectMetadata(**metadata)
 
 
 def test_wandb_benchmark_identity_requires_pr_for_candidate_branch(wandb_import_tool: ModuleType) -> None:

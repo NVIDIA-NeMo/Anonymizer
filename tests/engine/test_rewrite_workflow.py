@@ -33,7 +33,7 @@ from anonymizer.engine.constants import (
     COL_WEIGHTED_LEAKAGE_RATE,
 )
 from anonymizer.engine.ndd.adapter import RECORD_ID_COLUMN, FailedRecord, WorkflowRunResult
-from anonymizer.engine.rewrite.rewrite_workflow import RewriteWorkflow, _detection_valid_fraction
+from anonymizer.engine.rewrite.rewrite_workflow import RewriteWorkflow, _detection_valid_fraction, _join_new_columns
 
 _REPLACE_PATCH = "anonymizer.engine.rewrite.rewrite_workflow.LlmReplaceWorkflow"
 
@@ -47,6 +47,27 @@ _PRIVACY_GOAL = PrivacyGoal(
 )
 
 _EVALUATION = EvaluationCriteria()
+
+
+def test_join_new_columns_preserves_surviving_target_order() -> None:
+    target = pd.DataFrame(
+        {
+            RECORD_ID_COLUMN: ["turn-2", "dropped", "turn-1"],
+            "existing": [2, 0, 1],
+        }
+    )
+    source = pd.DataFrame(
+        {
+            RECORD_ID_COLUMN: ["turn-1", "turn-2"],
+            "new": [10, 20],
+        }
+    )
+
+    result = _join_new_columns(target, source)
+
+    assert result[RECORD_ID_COLUMN].tolist() == ["turn-2", "turn-1"]
+    assert result["existing"].tolist() == [2, 1]
+    assert result["new"].tolist() == [20, 10]
 
 
 @pytest.fixture
@@ -548,7 +569,7 @@ def test_repair_loop_runs_up_to_max_iterations(
     assert len(repair_calls) == max_iters
 
 
-def test_replacement_unavailable_remains_failed_closed_through_repair(
+def test_replacement_unavailable_can_be_repaired(
     stub_model_configs: list[ModelConfig],
     stub_rewrite_model_selection: RewriteModelSelection,
     stub_replace_model_selection: ReplaceModelSelection,
@@ -557,7 +578,7 @@ def test_replacement_unavailable_remains_failed_closed_through_repair(
     pipeline_df = stub_df_with_entities.copy()
     pipeline_df["_anonymizer_row_order"] = [0]
     pipeline_df[COL_REWRITE_REPLACEMENT_READY] = False
-    pipeline_df[COL_REWRITTEN_TEXT] = None
+    pipeline_df[COL_REWRITTEN_TEXT] = "draft requiring protection"
 
     initial_eval = pipeline_df.copy()
     initial_eval[COL_NEEDS_REPAIR] = True
@@ -569,6 +590,7 @@ def test_replacement_unavailable_remains_failed_closed_through_repair(
     repaired[COL_REWRITTEN_TEXT_NEXT] = "apparently safe repaired text"
 
     passing_eval = repaired.copy()
+    passing_eval[COL_REWRITTEN_TEXT] = "apparently safe repaired text"
     passing_eval[COL_NEEDS_REPAIR] = False
     passing_eval[COL_UTILITY_SCORE] = 1.0
     passing_eval[COL_LEAKAGE_MASS] = 0.0
@@ -596,8 +618,12 @@ def test_replacement_unavailable_remains_failed_closed_through_repair(
 
     row = result.dataframe.iloc[0]
     assert row[COL_REWRITE_REPLACEMENT_READY] is False or not bool(row[COL_REWRITE_REPLACEMENT_READY])
-    assert pd.isna(row[COL_REWRITTEN_TEXT])
+    assert row[COL_REWRITTEN_TEXT] == "apparently safe repaired text"
+    assert row[COL_REPAIR_ITERATIONS] == 1
     assert bool(row[COL_NEEDS_HUMAN_REVIEW]) is True
+    workflow_names = [call.kwargs["workflow_name"] for call in adapter.run_workflow.call_args_list]
+    assert "rewrite-repair-0" in workflow_names
+    assert "rewrite-evaluate-1" in workflow_names
 
 
 def test_only_failing_rows_sent_to_repair(

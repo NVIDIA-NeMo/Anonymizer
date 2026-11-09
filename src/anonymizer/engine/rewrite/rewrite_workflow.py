@@ -146,12 +146,10 @@ def _join_new_columns(
             dropped,
         )
         surviving_ids = set(source[RECORD_ID_COLUMN].astype(str))
-        target = (
-            target[target[RECORD_ID_COLUMN].astype(str).isin(surviving_ids)]
-            .sort_values(RECORD_ID_COLUMN)
-            .reset_index(drop=True)
-        )
-        source = source.sort_values(RECORD_ID_COLUMN).reset_index(drop=True)
+        target = target[target[RECORD_ID_COLUMN].astype(str).isin(surviving_ids)].reset_index(drop=True)
+        source = source.copy()
+        source.index = source[RECORD_ID_COLUMN].astype(str)
+        source = source.loc[target[RECORD_ID_COLUMN].astype(str)].reset_index(drop=True)
 
     skip = set(seed_cols) if seed_cols else set()
     for col in source.columns:
@@ -394,8 +392,6 @@ class RewriteWorkflow:
             if COL_REWRITE_REPLACEMENT_READY in df.columns
             else pd.Series(False, index=df.index)
         )
-        df.loc[replacement_unavailable, COL_REWRITTEN_TEXT] = None
-
         repair_columns = self._repair_wf.columns(
             selected_models=selected_models,
             privacy_goal=privacy_goal,
@@ -403,7 +399,7 @@ class RewriteWorkflow:
         )
 
         for iteration in range(evaluation.max_repair_iterations):
-            needs_repair_mask = df[COL_NEEDS_REPAIR].apply(bool) & ~replacement_unavailable
+            needs_repair_mask = df[COL_NEEDS_REPAIR].apply(bool)
             if not needs_repair_mask.any():
                 logger.info("Evaluate-repair loop: all rows pass at iteration %d", iteration)
                 break
@@ -460,8 +456,7 @@ class RewriteWorkflow:
             )
 
         # Compute needs_human_review from objective metrics after the loop exhausts.
-        df.loc[replacement_unavailable, COL_REWRITTEN_TEXT] = None
-        needs_review = df[COL_REWRITTEN_TEXT].isna()
+        needs_review = df[COL_REWRITTEN_TEXT].isna() | replacement_unavailable
         needs_review = needs_review | df[COL_ANY_HIGH_LEAKED].apply(bool)
         if evaluation.flag_utility_below is not None:
             needs_review = needs_review | (df[COL_UTILITY_SCORE].apply(float) < evaluation.flag_utility_below)

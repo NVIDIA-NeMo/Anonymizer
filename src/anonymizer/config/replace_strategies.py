@@ -8,19 +8,14 @@ import re
 from string import Formatter
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, Discriminator, Field, Tag, field_validator
+from pydantic import BaseModel, BeforeValidator, Field, field_validator
 
 
-def _resolve_replace_tag(v: Any) -> str:
-    """Callable discriminator: class name for instances, 'kind' key for dicts."""
-    if isinstance(v, BaseModel):
-        return type(v).__name__.lower()
-    if isinstance(v, dict):
-        kind = v.get("kind")
-        if isinstance(kind, str) and kind:
-            return kind.lower()
-        raise TypeError(f"dict is missing a valid 'kind' key: {v!r}")
-    raise TypeError(f"Cannot resolve replace tag for type {type(v).__name__!r}")
+def _normalize_replace_kind(value: Any) -> Any:
+    """Lowercase the ``kind`` key of dict input so ``{"kind": "Redact"}`` is accepted."""
+    if isinstance(value, dict) and isinstance(value.get("kind"), str):
+        return {**value, "kind": value["kind"].lower()}
+    return value
 
 
 class ReplaceMethodBase(BaseModel):
@@ -49,6 +44,7 @@ class ReplaceMethodBase(BaseModel):
 class Substitute(ReplaceMethodBase):
     """Replace entities with LLM-generated synthetic values."""
 
+    kind: Literal["substitute"] = "substitute"
     instructions: str | None = Field(
         default=None, description="Additional instructions for the LLM replacement generator."
     )
@@ -57,6 +53,7 @@ class Substitute(ReplaceMethodBase):
 class Redact(ReplaceMethodBase):
     """Replace each entity with a configurable redaction template."""
 
+    kind: Literal["redact"] = "redact"
     format_template: str = Field(
         default="[REDACTED_{label}]", description="Template with optional {label} placeholder."
     )
@@ -90,6 +87,7 @@ class Redact(ReplaceMethodBase):
 class Annotate(ReplaceMethodBase):
     """Tag each entity with a readable label token."""
 
+    kind: Literal["annotate"] = "annotate"
     format_template: str = Field(
         default="<{text}, {label}>", description="Template with {text} and {label} placeholders."
     )
@@ -121,6 +119,7 @@ class Annotate(ReplaceMethodBase):
 class Hash(ReplaceMethodBase):
     """Replace each entity with a deterministic hash token."""
 
+    kind: Literal["hash"] = "hash"
     algorithm: Literal["sha256", "sha1", "md5"] = Field(default="sha256", description="Hash algorithm.")
     digest_length: int = Field(
         default=12, ge=6, le=64, description="Number of hex characters to keep from the hash digest."
@@ -156,16 +155,15 @@ class Hash(ReplaceMethodBase):
 
 
 ReplaceMethod = Annotated[
-    Annotated[Annotate, Tag("annotate")]
-    | Annotated[Redact, Tag("redact")]
-    | Annotated[Hash, Tag("hash")]
-    | Annotated[Substitute, Tag("substitute")],
-    Discriminator(_resolve_replace_tag),
+    Annotate | Redact | Hash | Substitute,
+    Field(discriminator="kind"),
+    BeforeValidator(_normalize_replace_kind),
 ]
 
 LocalReplaceMethod = Annotated[
-    Annotated[Annotate, Tag("annotate")] | Annotated[Redact, Tag("redact")] | Annotated[Hash, Tag("hash")],
-    Discriminator(_resolve_replace_tag),
+    Annotate | Redact | Hash,
+    Field(discriminator="kind"),
+    BeforeValidator(_normalize_replace_kind),
 ]
 
 

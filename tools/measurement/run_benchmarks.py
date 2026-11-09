@@ -54,6 +54,7 @@ from anonymizer.config.anonymizer_config import (
 )
 from anonymizer.config.replace_strategies import Annotate, Hash, Redact, Substitute
 from anonymizer.config.rewrite import DEFAULT_PRESERVE_TEXT, DEFAULT_PROTECT_TEXT, PrivacyGoal, RiskTolerance
+from anonymizer.engine.constants import DEFAULT_ENTITY_LABELS
 from anonymizer.engine.io.constants import SUPPORTED_IO_FORMATS
 from anonymizer.engine.ndd.model_loader import parse_model_configs, validate_model_alias_references
 from anonymizer.interface.anonymizer import Anonymizer
@@ -1376,9 +1377,17 @@ def _sweep_metadata(run_tags: dict[str, Any]) -> dict[str, Any] | None:
 
 def _detect_metadata(detect: dict[str, Any]) -> dict[str, Any]:
     entity_labels = detect.get("entity_labels")
+    validated = Detect.model_validate(detect)
+    configured_labels = (
+        list(DEFAULT_ENTITY_LABELS) if validated.entity_labels is None else list(validated.entity_labels)
+    )
+    excluded_labels = set(validated.excluded_entity_labels or [])
+    effective_entity_labels = [label for label in configured_labels if label not in excluded_labels]
     metadata = {
         "entity_label_source": "custom" if isinstance(entity_labels, list) else "default",
         "entity_label_count": len(entity_labels) if isinstance(entity_labels, list) else None,
+        "effective_entity_labels": effective_entity_labels,
+        "effective_entity_label_count": len(effective_entity_labels),
     }
     if isinstance(entity_labels, list):
         metadata["entity_label_set_hash"] = _stable_hash(",".join(sorted(map(str, entity_labels))))

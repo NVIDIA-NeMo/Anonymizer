@@ -102,6 +102,7 @@ def test_create_anonymizer_uses_runtime_endpoint() -> None:
     build_configuration.assert_called_once_with(
         model_configs=None,
         model_providers=None,
+        extra_body={"chunk_length": 128, "overlap": 32},
         endpoint=_runtime.GlinerEndpoint(
             url=runtime.endpoint,
             model=_runtime.MODEL_ID,

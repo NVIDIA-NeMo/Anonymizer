@@ -125,6 +125,7 @@ def _build_gliner_model_configuration(
     model_configs: str | Path | None,
     model_providers: list[ModelProvider] | str | Path | None,
     endpoint: GlinerEndpoint,
+    extra_body: dict[str, int] | None = None,
 ) -> _AnonymizerModelConfiguration:
     """Inject one detector while preserving all unrelated caller configuration."""
     _validate_gliner_model_inputs(model_configs=model_configs, model_providers=model_providers)
@@ -137,7 +138,11 @@ def _build_gliner_model_configuration(
             "model": endpoint.model,
             "provider": GLINER_PROVIDER_NAME,
             "skip_health_check": True,
-            "inference_parameters": {"max_parallel_requests": 8, "timeout": 120},
+            "inference_parameters": {
+                "max_parallel_requests": 8,
+                "timeout": 120,
+                **({"extra_body": extra_body} if extra_body is not None else {}),
+            },
         }
     )
     selections = parsed.selected_models.model_dump(mode="json")

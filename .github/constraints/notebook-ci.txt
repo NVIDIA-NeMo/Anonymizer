@@ -1,0 +1,7 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# CPU GitHub runner only. Resolve through the official PyTorch CPU wheel listing
+# configured by PIP_FIND_LINKS in build-notebooks.yml. Keep the explicit +cpu
+# suffix so pip cannot fall back to a CUDA build from the default package index.
+torch==2.14.1+cpu

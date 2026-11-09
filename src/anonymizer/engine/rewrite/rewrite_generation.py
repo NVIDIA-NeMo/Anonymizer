@@ -232,8 +232,8 @@ def _prepare_rewrite_tagged_text(row: dict[str, Any]) -> dict[str, Any]:
         replace_pairs <= admitted_pairs and application.applied_span_count == application.targeted_span_count
     )
     if not row[COL_REWRITE_REPLACEMENT_READY]:
-        # Keep the original tags for a diagnostic-safe unavailable result; extraction
-        # below prevents this row from being accepted as a successful rewrite.
+        # Use the original tagged text so the rewrite can protect unresolved entities;
+        # retain the readiness flag for diagnostics and human review.
         row[COL_REWRITE_TAGGED_TEXT] = row.get(COL_TAGGED_TEXT, "")
         row[COL_REWRITE_BASELINE_TEXT] = None
         return row
@@ -323,9 +323,7 @@ def _extract_rewritten_text(row: dict[str, Any]) -> dict[str, Any]:
     a failed rewrite from a valid one.
     """
     if not row.get(COL_REWRITE_REPLACEMENT_READY, True):
-        logger.warning("Required rewrite replacement was unavailable; marking rewritten text unavailable.")
-        row[COL_REWRITTEN_TEXT] = None
-        return row
+        logger.warning("Required rewrite replacement was unavailable; retaining generated rewrite for evaluation.")
     try:
         full_rewrite = row[COL_FULL_REWRITE]
         if hasattr(full_rewrite, "model_dump"):

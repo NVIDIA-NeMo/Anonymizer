@@ -23,7 +23,13 @@ from data_designer.config.utils.trace_type import TraceType
 from data_designer.interface.data_designer import DataDesigner
 
 import anonymizer.measurement as measurement
-from anonymizer.config.anonymizer_config import AnonymizerConfig, AnonymizerInput, Detect
+from anonymizer.config.anonymizer_config import (
+    AnonymizerConfig,
+    AnonymizerInput,
+    Detect,
+    TextRecord,
+    TextRecordsInput,
+)
 from anonymizer.config.models import DetectionModelSelection
 from anonymizer.config.replace_strategies import Redact
 from anonymizer.engine.constants import (
@@ -57,6 +63,7 @@ from anonymizer.measurement import (
     estimate_llm_calls_by_stage,
     measurement_session,
     record_record_metrics,
+    record_run_metadata,
     stage_timer,
 )
 from anonymizer.measurement.metrics.rewrite import _output_contains_original_value
@@ -472,6 +479,8 @@ def test_anonymizer_records_per_record_measurement_without_raw_pii(tmp_path: Pat
     assert run_record["input_has_data_summary"] is False
     assert run_record["detect"]["entity_label_source"] == "default"
     assert run_record["detect"]["entity_label_count"] > 0
+    assert run_record["detect"]["effective_entity_label_count"] == run_record["detect"]["entity_label_count"]
+    assert len(run_record["detect"]["effective_entity_labels"]) == run_record["detect"]["effective_entity_label_count"]
     assert run_record["detect"]["excluded_entity_labels"] is None
     assert run_record["replace"]["strategy"] == "Redact"
     assert run_record["replace"]["normalize_label"] is True
@@ -490,6 +499,30 @@ def test_detect_config_metadata_includes_excluded_entity_labels() -> None:
     metadata = _detect_config_metadata(detect)
     assert metadata["excluded_entity_labels"] == ["email"]
     assert metadata["entity_labels"] == ["email", "first_name"]
+    assert metadata["entity_label_count"] == 2
+    assert metadata["effective_entity_labels"] == ["first_name"]
+    assert metadata["effective_entity_label_count"] == 1
+
+
+def test_run_metadata_describes_in_memory_records() -> None:
+    collector = MeasurementCollector(record_hash_key="test-key")
+    data = TextRecordsInput(records=[TextRecord(id="record-1", text="synthetic text")])
+
+    with measurement_session(collector):
+        record_run_metadata(
+            config=AnonymizerConfig(replace=Redact()),
+            data=data,
+            mode="replace",
+            strategy="Redact",
+            input_row_count=1,
+            preview_num_records=None,
+            model_configs=[],
+        )
+
+    run_record = next(record for record in collector.records if record["record_type"] == "run")
+    assert run_record["input_source"] == {"kind": "in_memory", "scheme": None, "suffix": None}
+    assert run_record["input_text_column"] == "text"
+    assert run_record["input_has_id_column"] is True
 
 
 def test_detect_config_metadata_exclusions_none_when_not_set() -> None:
@@ -498,6 +531,22 @@ def test_detect_config_metadata_exclusions_none_when_not_set() -> None:
     detect = Detect()
     metadata = _detect_config_metadata(detect)
     assert metadata["excluded_entity_labels"] is None
+
+
+def test_detect_config_metadata_omits_entity_label_example_values() -> None:
+    from anonymizer.measurement.records.run import _detect_config_metadata
+
+    secret_example = "real-production-secret"
+    metadata = _detect_config_metadata(
+        Detect(
+            entity_labels=["vendor_api_key"],
+            entity_label_examples={"vendor_api_key": [secret_example]},
+        )
+    )
+
+    assert secret_example not in json.dumps(metadata)
+    assert "entity_label_examples" not in metadata
+    assert metadata["effective_entity_labels"] == ["vendor_api_key"]
 
 
 def test_anonymizer_measurement_config_writes_jsonl(tmp_path: Path) -> None:

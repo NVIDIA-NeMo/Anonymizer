@@ -10,13 +10,15 @@ from unittest.mock import Mock
 
 import pandas as pd
 import pytest
-from data_designer.config.column_configs import LLMTextColumnConfig
+from data_designer.config.column_configs import LLMStructuredColumnConfig, LLMTextColumnConfig
 from data_designer.config.column_types import ColumnConfigT
 from data_designer.config.models import ModelConfig
 from data_designer.interface.data_designer import DataDesigner
 
+from anonymizer.engine.detection.detection_workflow import _PrivatePromptLLMStructuredColumnConfig
 from anonymizer.engine.ndd import adapter as ndd_adapter
 from anonymizer.engine.ndd.adapter import RECORD_ID_COLUMN, NddAdapter
+from anonymizer.engine.schemas import AugmentedEntitiesSchema
 from anonymizer.interface.errors import AnonymizerWorkflowError
 
 _FORBIDDEN_BACKEND_STRINGS = ("Data Designer", "DataDesigner", "data_designer", "DD")
@@ -65,6 +67,25 @@ def _make_columns() -> list[ColumnConfigT]:
 
 def test_as_alias_list_drops_none_items_before_stringifying() -> None:
     assert ndd_adapter._as_alias_list(["validator", None, "", 0]) == ["validator", "0"]
+
+
+def test_private_structured_config_normalizes_to_registered_type() -> None:
+    prompt = "Sensitive prompt content"
+    private_config = _PrivatePromptLLMStructuredColumnConfig(
+        name="entities",
+        prompt=prompt,
+        model_alias="test-model-alias",
+        output_format=AugmentedEntitiesSchema,
+    )
+
+    normalized = ndd_adapter._normalize_column_for_data_designer(private_config)
+
+    assert type(normalized) is LLMStructuredColumnConfig
+    assert normalized.prompt == prompt
+    assert normalized.output_format == private_config.output_format
+    assert isinstance(normalized.output_format, dict)
+    assert normalized.output_format["title"] == "AugmentedEntitiesSchema"
+    assert prompt not in repr(private_config)
 
 
 def test_attach_record_ids_adds_deterministic_ids() -> None:

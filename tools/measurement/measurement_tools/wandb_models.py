@@ -375,9 +375,21 @@ class DetectMetadata(StrictFrozenModel):
     entity_label_source: Literal["custom", "default"] | None = None
     entity_label_count: NonNegativeInt | None = None
     entity_label_set_hash: StrictStr | None = None
+    effective_entity_labels: list[StrictStr] | None = None
+    effective_entity_label_count: NonNegativeInt | None = None
     gliner_threshold: Probability | None = None
     validation_max_entities_per_call: NonNegativeInt | None = None
     validation_excerpt_window_chars: NonNegativeInt | None = None
+
+    @model_validator(mode="after")
+    def validate_effective_label_count(self) -> DetectMetadata:
+        labels_present = self.effective_entity_labels is not None
+        count_present = self.effective_entity_label_count is not None
+        if labels_present != count_present:
+            raise ValueError("effective_entity_labels and effective_entity_label_count must be provided together")
+        if labels_present and self.effective_entity_label_count != len(self.effective_entity_labels or []):
+            raise ValueError("effective_entity_label_count must equal the length of effective_entity_labels")
+        return self
 
 
 class ReplaceMetadata(StrictFrozenModel):
@@ -517,7 +529,16 @@ class WandbRunMetadata(StrictFrozenModel):
         _set_scalar(
             values,
             "benchmark_entity_label_counts",
-            _compact_values(item.detect.entity_label_count if item.detect else None for item in self.configs),
+            _compact_values(
+                (
+                    item.detect.effective_entity_label_count
+                    if item.detect and item.detect.effective_entity_label_count is not None
+                    else item.detect.entity_label_count
+                    if item.detect
+                    else None
+                )
+                for item in self.configs
+            ),
         )
         _set_scalar(
             values,
@@ -1043,6 +1064,8 @@ OUTBOUND_FIELD_POLICIES: dict[type[BaseModel], dict[str, FieldPolicy]] = {
         "entity_label_source",
         "entity_label_count",
         "entity_label_set_hash",
+        "effective_entity_labels",
+        "effective_entity_label_count",
         "gliner_threshold",
         "validation_max_entities_per_call",
         "validation_excerpt_window_chars",

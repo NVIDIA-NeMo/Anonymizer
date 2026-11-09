@@ -66,14 +66,19 @@ class AnonymizerResult(_DisplayMixin):
             with ``replace_method``.
         entity_labels: Allowlist of entity labels that were in scope during
             detection. Preserved for ``evaluate()`` so the coverage judge scopes
-            its evaluation to the same label set. ``None`` means all default
-            labels were in scope.
+            its evaluation to the same label set. ``None`` means detection was
+            permissive: default labels were configured, and the augmenter may
+            have emitted additional labels. Configured examples are intentionally
+            not persisted for evaluation.
         data_summary: Optional dataset context supplied with the original input.
             Preserved for ``evaluate()`` so entity-coverage judging uses the
             same context as detection.
         excluded_entity_labels: Labels that were explicitly excluded from
             detection. Preserved for ``evaluate()`` so the coverage judge does
             not penalise the output for not anonymizing excluded labels.
+        id_column: Record identifier column retained in ``dataframe`` for
+            in-memory record input. File-backed input currently leaves this as
+            ``None``.
     """
 
     dataframe: pd.DataFrame
@@ -85,6 +90,7 @@ class AnonymizerResult(_DisplayMixin):
     entity_labels: list[str] | None = None
     data_summary: str | None = None
     excluded_entity_labels: list[str] | None = None
+    id_column: str | None = None
     _display_cycle_index: int = field(default=0, init=False, repr=False)
 
     def __repr__(self) -> str:
@@ -120,14 +126,19 @@ class PreviewResult(_DisplayMixin):
             dispatch the rewrite judges. Mutually exclusive with ``replace_method``.
         entity_labels: Allowlist of entity labels that were in scope during
             detection. Preserved for ``evaluate()`` so the coverage judge scopes
-            its evaluation to the same label set. ``None`` means all default
-            labels were in scope.
+            its evaluation to the same label set. ``None`` means detection was
+            permissive: default labels were configured, and the augmenter may
+            have emitted additional labels. Configured examples are intentionally
+            not persisted for evaluation.
         data_summary: Optional dataset context supplied with the original input.
             Preserved for ``evaluate()`` so entity-coverage judging uses the
             same context as detection.
         excluded_entity_labels: Labels that were explicitly excluded from
             detection. Preserved for ``evaluate()`` so the coverage judge does
             not penalise the output for not anonymizing excluded labels.
+        id_column: Record identifier column retained in ``dataframe`` for
+            in-memory record input. File-backed input currently leaves this as
+            ``None``.
     """
 
     dataframe: pd.DataFrame
@@ -140,6 +151,7 @@ class PreviewResult(_DisplayMixin):
     entity_labels: list[str] | None = None
     data_summary: str | None = None
     excluded_entity_labels: list[str] | None = None
+    id_column: str | None = None
     _display_cycle_index: int = field(default=0, init=False, repr=False)
 
     def __repr__(self) -> str:

@@ -79,12 +79,18 @@ def test_models_requires_token_and_reports_checkpoint_identity(monkeypatch: pyte
     assert metadata["revision"] == MODEL_REVISION
 
 
-def test_chat_completion_returns_anonymizer_entity_contract(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize(
+    ("chunk_options", "expected_window"),
+    [({}, (128, 32)), ({"chunk_length": 256, "overlap": 64}, (256, 64))],
+)
+def test_chat_completion_returns_anonymizer_entity_contract(
+    monkeypatch: pytest.MonkeyPatch, chunk_options: dict[str, int], expected_window: tuple[int, int]
+) -> None:
     monkeypatch.setenv(server.TOKEN_ENV, "secret")
     entities = [{"text": "Alice", "label": "first_name", "start": 0, "end": 5, "score": 0.9}]
     with (
         patch.object(server, "model", object()),
-        patch.object(server.detector, "detect", AsyncMock(return_value=entities)),
+        patch.object(server.detector, "detect", AsyncMock(return_value=entities)) as detect,
     ):
         client = TestClient(server.app, raise_server_exceptions=False)
         response = client.post(
@@ -94,8 +100,12 @@ def test_chat_completion_returns_anonymizer_entity_contract(monkeypatch: pytest.
                 "model": MODEL_ID,
                 "messages": [{"role": "user", "content": "Alice"}],
                 "labels": ["first_name"],
+                **chunk_options,
             },
         )
     assert response.status_code == 200
     content = json.loads(response.json()["choices"][0]["message"]["content"])
     assert content == {"entities": entities}
+    assert detect.await_args is not None
+    params = detect.await_args.args[1]
+    assert (params.chunk_length, params.overlap) == expected_window

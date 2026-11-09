@@ -19,7 +19,7 @@
 # # 🕵️ Rewriting Legal Documents
 #
 # Rewriting legal text (TAB dataset) with a domain-specific privacy goal
-# and custom entity labels tailored for legal proceedings.
+# and non-default entity labels tailored for legal proceedings.
 #
 # #### 📚 What you'll learn
 #

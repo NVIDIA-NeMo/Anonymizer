@@ -4,7 +4,8 @@
 from __future__ import annotations
 
 import pandas as pd
-from data_designer.config.column_configs import LLMStructuredColumnConfig
+import pytest
+from pydantic import ValidationError
 
 from anonymizer.config.models import EvaluateModelSelection
 from anonymizer.engine.constants import (
@@ -20,6 +21,7 @@ from anonymizer.engine.evaluation.replace.relational_consistency_judge import (
     _judge_prompt,
     _replacements_for_judge,
 )
+from anonymizer.engine.workflow_columns.evaluation.judge.config import JudgeColumnConfig, JudgeKind
 
 _flatten_judgment = RelationalConsistencyJudgeWorkflow._flatten_judgment
 
@@ -107,6 +109,95 @@ def test_replacements_for_judge_returns_empty_for_malformed() -> None:
 # ---------------------------------------------------------------------------
 # Tests: _flatten_judgment
 # ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("all_consistent", "relations", "accepted"),
+    [
+        (True, None, True),
+        (True, [], True),
+        (
+            True,
+            [
+                {
+                    "description": "city <-> state",
+                    "entities": ["Austin (city) -> Portland", "TX (state) -> OR"],
+                    "passes": True,
+                    "reasoning": "Portland is in Oregon.",
+                }
+            ],
+            True,
+        ),
+        (
+            True,
+            [
+                {
+                    "description": "city <-> state",
+                    "entities": ["Austin (city) -> Portland", "TX (state) -> CA"],
+                    "passes": False,
+                    "reasoning": "Portland is not in California.",
+                }
+            ],
+            False,
+        ),
+        (False, None, False),
+        (False, [], False),
+        (
+            False,
+            [
+                {
+                    "description": "city <-> state",
+                    "entities": ["Austin (city) -> Portland", "TX (state) -> OR"],
+                    "passes": True,
+                    "reasoning": "Portland is in Oregon.",
+                }
+            ],
+            False,
+        ),
+        (
+            False,
+            [
+                {
+                    "description": "city <-> state",
+                    "entities": ["Austin (city) -> Portland", "TX (state) -> CA"],
+                    "passes": False,
+                    "reasoning": "Portland is not in California.",
+                }
+            ],
+            True,
+        ),
+    ],
+)
+def test_judgment_schema_normalizes_positive_null_and_enforces_verdict_consistency(
+    all_consistent: bool,
+    relations: list[dict[str, object]] | None,
+    accepted: bool,
+) -> None:
+    payload = {"all_consistent": all_consistent, "relations": relations}
+    if not accepted:
+        with pytest.raises(ValidationError):
+            RelationalConsistencyJudgmentSchema.model_validate(payload)
+        return
+
+    judgment = RelationalConsistencyJudgmentSchema.model_validate(payload)
+    assert judgment.model_dump()["relations"] == (relations or [])
+
+
+def test_judgment_schema_does_not_normalize_null_nested_relation_entities() -> None:
+    with pytest.raises(ValidationError):
+        RelationalConsistencyJudgmentSchema.model_validate(
+            {
+                "all_consistent": False,
+                "relations": [
+                    {
+                        "description": "city <-> state",
+                        "entities": None,
+                        "passes": False,
+                        "reasoning": "Portland is not in California.",
+                    }
+                ],
+            }
+        )
 
 
 def test_flatten_judgment_all_consistent_keeps_invalid_empty() -> None:
@@ -254,10 +345,10 @@ def test_evaluate_invokes_adapter_with_correct_alias_and_schema(
 
     assert captured["workflow_name"] == "replace-relational-consistency-judge"
     col = captured["columns"][0]
-    assert isinstance(col, LLMStructuredColumnConfig)
+    assert isinstance(col, JudgeColumnConfig)
     assert col.name == COL_RELATIONAL_CONSISTENCY_JUDGE
     assert col.model_alias == stub_evaluate_model_selection.replace_relational_consistency_judge
-    assert col.output_format == RelationalConsistencyJudgmentSchema.model_json_schema()
+    assert col.judge_kind == JudgeKind.RELATIONAL_CONSISTENCY.value
 
     assert bool(result.dataframe[COL_RELATIONAL_CONSISTENCY_VALID].iloc[0]) is True
     assert result.dataframe[COL_RELATIONAL_CONSISTENCY_INVALID_RELATIONS].iloc[0] == []

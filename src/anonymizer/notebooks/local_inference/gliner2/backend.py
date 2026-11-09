@@ -9,10 +9,13 @@ import json
 import os
 import shutil
 import tempfile
+from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import Any
 
 SUPPORTED_DEVICES = ("auto", "cuda", "mps", "cpu")
+DEFAULT_CHUNK_LENGTH = 128
+DEFAULT_OVERLAP = 32
 MODEL_ID = "fastino/gliner2-privacy-filter-PII-multi"
 MODEL_REVISION = "59894c087cb2923b01f337d4ee72f6ff84d5bdd6"
 
@@ -132,7 +135,7 @@ def detect_entities_for_texts(
     flat_ner: bool,
     inference_batch_size: int,
 ) -> list[list[dict[str, Any]]]:
-    """Detect entities while retaining the existing character-chunk contract."""
+    """Detect entities in overlapping native word windows with source-safe spans."""
     if not labels:
         return [[] for _ in texts]
     _validate_chunk_params(chunk_length, overlap)
@@ -141,7 +144,7 @@ def detect_entities_for_texts(
 
     chunk_records: list[tuple[int, int, str]] = []
     for text_index, source_text in enumerate(texts):
-        for chunk, offset in _create_text_chunks(source_text, chunk_length, overlap):
+        for chunk, offset in _create_text_chunks(source_text, chunk_length, overlap, model.processor.word_splitter):
             chunk_records.append((text_index, offset, chunk))
     results: list[list[dict[str, Any]]] = [[] for _ in texts]
     if not chunk_records:
@@ -158,8 +161,11 @@ def detect_entities_for_texts(
     )
     if not isinstance(raw_results, list) or len(raw_results) != len(chunk_records):
         raise ValueError("Unexpected GLiNER2 batch result shape.")
-    for (text_index, offset, _), raw_result in zip(chunk_records, raw_results, strict=True):
-        for entity in flatten_result(raw_result):
+    for (text_index, offset, chunk), raw_result in zip(chunk_records, raw_results, strict=True):
+        for raw_entity in flatten_result(raw_result):
+            entity = _ground_chunk_entity(raw_entity, chunk)
+            if entity is None:
+                continue
             entity["start"] += offset
             entity["end"] += offset
             results[text_index].append(entity)
@@ -176,15 +182,41 @@ def _validate_chunk_params(chunk_length: int, overlap: int) -> None:
         raise ValueError("overlap must be less than chunk_length")
 
 
-def _create_text_chunks(text: str, chunk_length: int, overlap: int) -> list[tuple[str, int]]:
+def _create_text_chunks(
+    text: str,
+    chunk_length: int,
+    overlap: int,
+    word_splitter: Callable[[str, bool], Iterable[tuple[str, int, int]]],
+) -> list[tuple[str, int]]:
+    """Window the model's native word boundaries without changing source coordinates."""
+    words = [(start, end) for _, start, end in word_splitter(text, False)]
     chunks: list[tuple[str, int]] = []
-    start = 0
-    while start < len(text):
-        chunks.append((text[start : start + chunk_length], start))
-        if start + chunk_length >= len(text):
+    for first in range(0, len(words), chunk_length - overlap):
+        last = min(first + chunk_length, len(words))
+        start, end = words[first][0], words[last - 1][1]
+        chunks.append((text[start:end], start))
+        if last == len(words):
             break
-        start += chunk_length - overlap
     return chunks
+
+
+def _ground_chunk_entity(entity: dict[str, Any], chunk: str) -> dict[str, Any] | None:
+    """Remove the pinned GLiNER2 implementation's single synthetic terminal period."""
+    start, end = int(entity["start"]), int(entity["end"])
+    value = str(entity["text"])
+    invalid_span = f"GLiNER2 returned inconsistent offsets [{start}, {end}) for a chunk of length {len(chunk)}"
+    if not value.strip():
+        raise ValueError(invalid_span)
+    if 0 <= start < end <= len(chunk) and value == chunk[start:end]:
+        return entity
+    appended = bool(chunk) and not chunk.endswith((".", "!", "?"))
+    if appended and 0 <= start <= len(chunk) and end == len(chunk) + 1 and value == chunk[start:] + ".":
+        if start == len(chunk):
+            return None
+        entity["text"] = chunk[start:]
+        entity["end"] = len(chunk)
+        return entity
+    raise ValueError(invalid_span)
 
 
 def _resolve_document_overlaps(

@@ -218,3 +218,21 @@ assert __import__('anonymizer').__file__.startswith({str(installed)!r})
         check=False,
     )
     assert completed.returncode == 0, completed.stderr
+
+
+def test_native_factory_preserves_word_chunk_defaults(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from anonymizer.notebooks import _runtime
+
+    runtime = _runtime._LocalRuntime(
+        process=Mock(),
+        endpoint="http://127.0.0.1:1234/v1",
+        requested_device="cpu",
+        selected_device="cpu",
+        token="token",
+    )
+    monkeypatch.setattr(_runtime, "_ensure_runtime", lambda _device: runtime)
+    client = anonymizer.create_anonymizer(gliner=anonymizer.NativeGliner(device="cpu"), artifact_path=tmp_path)
+    detector = next(
+        model for model in client._model_configs if model.alias == client._selected_models.detection.entity_detector
+    )
+    assert detector.inference_parameters.extra_body == {"chunk_length": 128, "overlap": 32}

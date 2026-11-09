@@ -36,6 +36,7 @@ from anonymizer.interface.factory import (
 )
 from anonymizer.notebooks._model_config import LOCAL_TOKEN_ENV
 from anonymizer.notebooks.local_inference.gliner2 import MODEL_ID, MODEL_REVISION
+from anonymizer.notebooks.local_inference.gliner2.backend import DEFAULT_CHUNK_LENGTH, DEFAULT_OVERLAP
 
 logger = logging.getLogger(__name__)
 
@@ -107,6 +108,7 @@ def _create_native_anonymizer(
                 model=MODEL_ID,
                 api_key_env=LOCAL_TOKEN_ENV,
             ),
+            extra_body={"chunk_length": DEFAULT_CHUNK_LENGTH, "overlap": DEFAULT_OVERLAP},
         )
         return _new_anonymizer(
             model_configs=configuration.model_configs,

@@ -23,6 +23,8 @@ from fastapi import FastAPI, HTTPException, Request
 
 try:
     from .backend import (  # noqa: TID252 - direct-script fallback keeps server dependencies isolated
+        DEFAULT_CHUNK_LENGTH,
+        DEFAULT_OVERLAP,
         MODEL_ID,
         MODEL_REVISION,
         detect_entities_for_texts,
@@ -31,6 +33,8 @@ try:
     )
 except ImportError:  # Direct execution inside the isolated notebook-server environment.
     from backend import (  # ty: ignore[unresolved-import] -- direct-script import path
+        DEFAULT_CHUNK_LENGTH,
+        DEFAULT_OVERLAP,
         MODEL_ID,
         MODEL_REVISION,
         detect_entities_for_texts,
@@ -40,8 +44,6 @@ except ImportError:  # Direct execution inside the isolated notebook-server envi
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8001
-DEFAULT_CHUNK_LENGTH = 384
-DEFAULT_OVERLAP = 128
 DEFAULT_FLAT_NER = False
 DEFAULT_INFERENCE_BATCH_SIZE = 8
 TOKEN_ENV = "ANONYMIZER_LOCAL_GLINER2_TOKEN"
