@@ -34,6 +34,7 @@ from anonymizer.engine.constants import (
     COL_TEXT,
     COL_UTILITY_SCORE,
     COL_WEIGHTED_LEAKAGE_RATE,
+    RECORD_ID_COLUMN,
 )
 from anonymizer.engine.detection.detect_step import DetectState, detect_step
 from anonymizer.engine.detection.detection_workflow import EntityDetectionResult
@@ -503,9 +504,10 @@ class RewriteWorkflow:
         """Run ``detect``, then ``rewrite`` and the final checks over every input row as one invocation.
 
         ``rewrite`` splits the detection frame on its entities: rows with none take the passthrough defaults and the
-        rest go through ``_produce``, the stages ``run`` uses. A row the detector drops fails at ``detect`` and is
-        absent from the output. A result that is not verifiably one input row per returned row fails every target at
-        ``detect``, and ``run`` rewrites the detection frame as returned. ``stage`` names the measurement.
+        rest go through ``_produce``, the stages ``run`` uses. A row the detector drops, or whose mentions the graph
+        rejects, fails at ``detect`` and is absent from the output. A result that is not verifiably one input row per
+        returned row fails every target at ``detect``, and ``run`` rewrites the detection frame as returned. ``stage``
+        names the measurement.
         """
         started = time.perf_counter()
         evaluation = options["evaluation"]
@@ -516,16 +518,17 @@ class RewriteWorkflow:
         rows = _Rows(pd.DataFrame())
         parts: list[tuple[pd.DataFrame, pd.DataFrame]] = []
 
-        def split() -> tuple[pd.DataFrame, pd.DataFrame]:
-            if not parts:
+        def split(keep: set[Datum]) -> tuple[pd.DataFrame, pd.DataFrame]:
+            if not parts:  # only rows whose target reached ``rewrite``: a target that failed ``detect`` is dropped
+                halves = split_rows(state.detected[0].dataframe, column=COL_ENTITIES_BY_VALUE, predicate=_has_entities)
                 parts.append(
-                    split_rows(state.detected[0].dataframe, column=COL_ENTITIES_BY_VALUE, predicate=_has_entities)
+                    tuple(f[f[ROW_ORDER_COL].map(lambda o: state.owners[o] in keep).astype(bool)] for f in halves)
                 )
                 rows.frame = parts[0][0]
             return parts[0]
 
         def rewrite(target: tuple[Datum, ...]) -> list[dict[str, object] | RewriteUnavailable | None]:
-            entity_rows, passthrough_rows = split()
+            entity_rows, passthrough_rows = split(set(target))
             if not entity_rows.empty:
                 self._produce(rows, **options)()
                 rows.frame = rows.frame.sort_values(ROW_ORDER_COL).reset_index(drop=True)
@@ -543,7 +546,15 @@ class RewriteWorkflow:
             rerouted = self.run(detection.dataframe, **options)
             failed = [*state.failures, *rerouted.failed_records]
             return RewriteResult(rerouted.dataframe, failed, rerouted.source_positions, detection, detection_elapsed)
-        entity_rows, passthrough_rows = split()
+        entity_rows, passthrough_rows = split(set())  # empty only if ``rewrite`` never ran
+        rejected = {a.target: a.reason for a in result.attempts if a.operation == "detect" and a.status == "failed"}
+        frame = detection.dataframe
+        ids = list((frame[RECORD_ID_COLUMN] if RECORD_ID_COLUMN in frame.columns else frame.index).astype(str))
+        rows.failed.extend(
+            FailedRecord(ids[row], "detect", rejected[datum])
+            for row, datum in enumerate(state.owners)
+            if datum in rejected and rejected[datum] != "missing_output"
+        )
         _apply_passthrough_defaults(passthrough_rows)
         frame = rows.frame
         if entity_rows.empty:
