@@ -30,11 +30,17 @@ def spec(config: dict[str, object]) -> models.LocalInferenceServiceSpec:
     [
         "api-key",
         "api-ke",
+        "api-key.value",
+        "api-ke.value",
+        "api_ke.value",
         "api_ke",
         "hf-token",
         "hf-toke",
+        "hf-token.value",
+        "hf-toke.value",
         "hf_toke",
         "mode",
+        "model.value",
         "hos",
         "por",
         "revisio",
@@ -49,14 +55,14 @@ def test_owned_options_rejected_before_serialization(key: str) -> None:
     assert SYNTHETIC not in error.value.diagnostic.model_dump_json()
 
 
-@pytest.mark.parametrize("key", ["api-ke", "hf_toke"])
+@pytest.mark.parametrize("key", ["api-ke", "hf_toke", "api-ke.value", "hf-token.value"])
 def test_cli_rejects_credentials_without_writing_plan(
     key: str, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     profile = tmp_path / "profile.toml"
     output = tmp_path / "plan.json"
     profile.write_text(
-        f'schema_version = "inference-service.local-spec/v2"\n[task]\nkind = "generation"\n[model]\nmodel_id = "example/model"\n[vllm.config]\n{key} = "{SYNTHETIC}"\n[local]\n'
+        f'schema_version = "inference-service.local-spec/v2"\n[task]\nkind = "generation"\n[model]\nmodel_id = "example/model"\n[vllm.config]\n"{key}" = "{SYNTHETIC}"\n[local]\n'
     )
     with pytest.raises(SystemExit) as error:
         cli.compile_plan(profile=profile, output=output)
@@ -68,9 +74,12 @@ def test_cli_rejects_credentials_without_writing_plan(
 
 
 def test_unrelated_native_options_and_environment_route_preserved() -> None:
-    plan = compiler.compile_profile(spec({"api-server-count": 2, "enable-prefix-caching": False}))
+    plan = compiler.compile_profile(
+        spec({"api-server-count": 2, "enable-prefix-caching": False, "compilation-config.level": 2})
+    )
     config = json.loads(plan.command.render_argv()[3])
     assert config["api-server-count"] == 2
+    assert config["compilation-config.level"] == 2
     assert config["enable-prefix-caching"] is False
     assert "hf-token" not in config
     assert plan.readiness.bearer_token_environment_variable == "LOCAL_KEY"
