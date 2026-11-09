@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import logging
 from collections import Counter
+from collections.abc import Container
 from dataclasses import dataclass
 from typing import Literal
 
@@ -190,9 +191,10 @@ def _fold_replacement_maps(
                 if collides(_fold(synthetic), key, shared=False):
                     placeholders[entry["label"]] += 1
                     used += 1
-                    protected = originals | proposed.keys() | emitted.keys() | taken.keys()
                     synthetic = _collision_safe_synthetic(
-                        entry["label"], index=placeholders[entry["label"]], protected_original_values=protected
+                        entry["label"],
+                        index=placeholders[entry["label"]],
+                        protected_original_values=(originals, proposed, emitted, taken),
                     )
                     source = (entry["original"], synthetic)
                 if first:
@@ -285,11 +287,11 @@ def _filter_replacement_map_to_input_entities(
     return {"replacements": filtered}
 
 
-def _collision_safe_synthetic(label: str, *, index: int, protected_original_values: set[str]) -> str:
+def _collision_safe_synthetic(label: str, *, index: int, protected_original_values: tuple[Container[str], ...]) -> str:
     label_token = "".join(char.upper() if char.isalnum() else "_" for char in label).strip("_") or "VALUE"
     while True:
         candidate = f"[SUBSTITUTE_{label_token}_{index}]"
-        if _fold(candidate) not in protected_original_values:
+        if not any(_fold(candidate) in values for values in protected_original_values):
             return candidate
         index += 1
 
