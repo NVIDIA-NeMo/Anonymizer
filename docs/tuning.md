@@ -182,7 +182,7 @@ After every candidate run, apply the same quality gate to the retained output. S
 
 ### Optional deployment-specific controls
 
-- **Self-hosted GLiNER:** The reference server can coalesce concurrent requests. Vary coalescing only after selecting detector-side admission, and measure queue delay and available host or accelerator utilization. See [Self-hosting GLiNER](concepts/self-hosting-gliner.md#reference-implementation) for its controls and defaults.
+- **Self-hosted GLiNER:** The reference server can coalesce concurrent requests. Vary coalescing only after selecting detector-side admission, and measure queue delay and available host or accelerator utilization. See [Self-hosting GLiNER](concepts/self-hosting-gliner.md#running-the-development-server-directly) for its controls and defaults.
 - **External detection execution:** `export_detection_config()` and `export_detection_builder_for_seed(..., job_index=..., num_jobs=...)` can export and partition detection for an external DataDesigner executor. They do not distribute the complete Replace or Rewrite pipeline. See the [`Anonymizer` API reference](reference/anonymizer/interface/anonymizer.md).
 
 ## 5. Select the production setting

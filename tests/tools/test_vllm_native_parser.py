@@ -5,27 +5,32 @@
 from __future__ import annotations
 
 import json
+import os
+from pathlib import Path
 from types import SimpleNamespace
+from typing import Any, NoReturn
 from unittest import mock
+
+import pytest
 
 from inference_service_compiler import vllm_runtime
 
 
-def test_parser_validation_and_server_invocation(monkeypatch):
-    observed = {}
+def test_parser_validation_and_server_invocation(monkeypatch: pytest.MonkeyPatch) -> None:
+    observed: dict[str, Any] = {}
     args = SimpleNamespace(
         model_tag=None, model="nvidia/gliner-pii", revision="pin", served_model_name=None, mamba_backend=None
     )
 
     class Parser:
-        _option_string_actions = {
+        _option_string_actions: dict[str, object] = {
             "--enable-prefix-caching": SimpleNamespace(default=None),
             "--no-enable-prefix-caching": object(),
         }
 
-        def parse_args(self, argv):
-            observed["config"] = json.loads(open(argv[1], encoding="utf-8").read())
-            observed["plugins"] = __import__("os").environ["VLLM_PLUGINS"]
+        def parse_args(self, argv: list[str]) -> SimpleNamespace:
+            observed["config"] = json.loads(Path(argv[1]).read_text(encoding="utf-8"))
+            observed["plugins"] = os.environ["VLLM_PLUGINS"]
             return args
 
     parser = Parser()
@@ -54,7 +59,7 @@ def test_parser_validation_and_server_invocation(monkeypatch):
     ]
     monkeypatch.delenv("VLLM_USE_FLASHINFER_SAMPLER", raising=False)
     vllm_runtime.run_server([*argv, "--validate"])
-    assert "VLLM_USE_FLASHINFER_SAMPLER" not in __import__("os").environ
+    assert "VLLM_USE_FLASHINFER_SAMPLER" not in os.environ
     assert observed["validated"] is args
     assert observed["config"]["enable-prefix-caching"] is False
     assert observed["plugins"] == "deberta_gliner,deberta_gliner_io"
@@ -68,11 +73,10 @@ def test_parser_validation_and_server_invocation(monkeypatch):
     assert observed["setup"]
 
 
-def test_invalid_arguments_stop_before_preparation_and_server(monkeypatch):
-    import pytest
+def test_invalid_arguments_stop_before_preparation_and_server(monkeypatch: pytest.MonkeyPatch) -> None:
 
     class Parser:
-        def parse_args(self, argv):
+        def parse_args(self, argv: list[str]) -> NoReturn:
             raise ValueError("invalid upstream option")
 
     cli = SimpleNamespace(make_arg_parser=lambda _: Parser())
@@ -87,8 +91,7 @@ def test_invalid_arguments_stop_before_preparation_and_server(monkeypatch):
     prepare.assert_not_called()
 
 
-def test_false_option_must_be_known_and_representable(monkeypatch):
-    import pytest
+def test_false_option_must_be_known_and_representable(monkeypatch: pytest.MonkeyPatch) -> None:
 
     parser = SimpleNamespace(_option_string_actions={"--known": SimpleNamespace(default=True)})
     cli = SimpleNamespace(make_arg_parser=lambda _: parser)

@@ -59,7 +59,6 @@ uv.lock.bak
 # Environments
 .env
 .env.*
-.mise.local.toml
 env/
 venv/
 ENV/

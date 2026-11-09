@@ -30,3 +30,26 @@ Use meaningful lifetime, startup-failure, credential restoration, provider prese
 - Created isolated integration and three producer branches from #301. Existing main and PR worktrees remain untouched.
 - Main merge conflicts occur in self-hosting documentation, navigation, notebook model configuration, and its tests. Retain new factory architecture and main's native chunk settings; combine documentation/navigation.
 - Producers inspected their scopes and proposed `native_runtime(device=...)` with an interface session, and `[vllm.config]` native option mapping with `validate --plan`.
+
+- Baseline merge committed at `b8526c28`; 33 focused tests and repository hooks passed. Existing MkDocs custom tags required the YAML hook's syntax-only mode; no hooks were bypassed.
+- Terra producer tips: native `cba3eace`, vLLM `954bb425`, docs `6bd9aa30`. Mirador prepared and promoted their signed commits to `c0b76cbd` on the isolated implementation branch; producer branches were retained.
+- Native controller/server/backend now live under the engine. `native_runtime(device=...)` exposes an interface session; nesting, borrowing, credential restoration, startup failure, and interpreter-exit cleanup are covered. Notebook entry points remain wrappers.
+- vLLM options are an explicit `[vllm.config]` mapping. The serving child uses the pinned upstream YAML loader/parser/validation/runner; compilation stays pure. `validate --plan` does not start a server. Structured diagnostics, ownership proof, distinct receipts, and Factory revision preparation remain.
+- Combined revision `c0b76cbd`: full unit suite **1,679 passed**, `make check` passed, strict docs build passed. Cross-interpreter tests require host process access here: the baseline's missing `/proc` start marker disappears outside filesystem isolation.
+- Existing vLLM 0.29.0/Python 3.12 environment validated all nine migrated profiles with a test-only CPU platform override, plus omitted defaults and explicit booleans. GPU execution and model feasibility were not exercised. Production does not override platform detection.
+- Review fixes preserve native caller configuration and 128/32 chunk settings, prevent false-valued unknown options from disappearing in the upstream loader, and prohibit literal credential options in serialized native config. Inherited `HF_TOKEN` remains supported.
+- Final integration cleanup fixes a renamed documentation anchor and test annotations, removes an unrelated ignore entry, and excludes the scorecard section from this serving change. Its exact standalone patch is retained in the durable experiment record for separate work.
+
+## Ownership review
+
+Source search was used because astnav was unavailable. Scope is the merged implementation relative to `b8526c28`, not unrelated changes inherited from main.
+
+- Ownership: move; owner=anonymizer.engine.local_inference; evidence=native controller/server/backend relocation and absence of interface/notebook imports; reason=process, listener, environment, and shutdown ownership belongs to the engine.
+- Ownership: stay; owner=anonymizer.interface.factory; evidence=create_anonymizer/native_runtime/NativeRuntimeSession call paths; reason=public input validation, client construction, and the lifetime-facing API coordinate the engine with the public facade.
+- Ownership: stay; owner=anonymizer.interface.factory; evidence=_create_endpoint_anonymizer/_build_gliner_model_configuration/_validate_gliner_model_inputs/_new_anonymizer; reason=the GLiNER factory injects its reserved detector into external DataDesigner model/provider inputs and constructs the facade, rather than transforming one owned config type.
+- Ownership: stay; owner=inference_service_compiler.compiler; evidence=_compile_vllm/_validate_factory_detection; reason=coordinate task, model, endpoint, credential routing, pinned integration, and serialized process command across domains.
+- Ownership: stay; owner=inference_service_compiler.vllm_runtime; evidence=load_and_validate_arguments/run_server; reason=third-party parser/config-file IO, plugin initialization, model preparation, and upstream server execution belong to the serving child.
+
+## Remaining limits
+
+The new validation command performs upstream argument and preliminary cross-option checks. It does not construct a complete model engine configuration or establish GPU/model compatibility. Native runtime tests use synthetic process/model fixtures; no model download or paid service call was performed.

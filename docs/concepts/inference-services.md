@@ -102,6 +102,14 @@ The v2 profile schema has four top-level sections, with `[vllm.config]` nested u
 - `[vllm.config]` supplies vLLM options using upstream configuration names, such as `reasoning-parser` and `gpu-memory-utilization`. Omitted options use the pinned vLLM defaults; explicit values, including `false`, are retained.
 - `[local]` sets the bind address, port, startup timeout, and shutdown timeout.
 
+Keep model identity and revision in `[model]`, the served name in `[vllm]`, and
+the bind address in `[local]`; these values cannot be overridden through
+`[vllm.config]`. Supply API credentials through the environment variable named
+by `[vllm].api_key_env`, and use `HF_TOKEN` for Hugging Face access. Literal
+`api-key` and `hf-token` configuration values are rejected so credentials do not
+enter plans or process arguments. Recompile existing plans after migrating
+profiles to `[vllm.config]`.
+
 ## Deploy on the GPU host
 
 ### Install
