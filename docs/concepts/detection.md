@@ -222,7 +222,7 @@ Detect(entity_labels=["first_name", "email", "city"], excluded_entity_labels=["c
 
 ### Resolved detection scope
 
-`result.detection_scope` on `run()` and `preview()` results reports the scope the run used: `effective_labels` (after exclusions), `allowed_labels`, `excluded_labels`, and `gliner_threshold`. `allowed_labels` is None when `entity_labels` is unset; validation and augmentation may then produce labels outside `effective_labels`. With explicit `entity_labels`, `allowed_labels` equals `effective_labels` and final entities are restricted to them. Finding no entities describes the result under this scope, not proof that the text contains no sensitive information.
+`result.detection_scope` on `run()` and `preview()` results reports the scope the run used: `effective_labels` (after exclusions), `allowed_labels`, `excluded_labels`, and `gliner_threshold`. `allowed_labels` is None when `entity_labels` is unset; validation and augmentation may then produce labels outside `effective_labels`. With explicit `entity_labels`, `allowed_labels` equals `effective_labels` and final entities are restricted to them. In Rewrite mode, latent entities come from a prompt that does not receive the label list, and only exclusions are applied to them. The scope describes final detected entities; `allowed_labels` does not bound the latent entities a rewrite may act on. Finding no entities describes the result under this scope, not proof that the text contains no sensitive information.
 
 ## Tuning the threshold
 
