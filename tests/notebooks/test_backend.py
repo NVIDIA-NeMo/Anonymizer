@@ -13,7 +13,7 @@ from typing import Any
 import pytest
 
 from anonymizer.engine.detection.postprocess import parse_raw_entities
-from anonymizer.notebooks.local_inference.gliner2.backend import (
+from anonymizer.engine.local_inference.gliner2.backend import (
     _prepare_transformers_v4_snapshot,
     _resolve_document_overlaps,
     detect_entities_for_texts,

@@ -13,7 +13,7 @@ from unittest.mock import AsyncMock, Mock, patch
 import pytest
 from fastapi.testclient import TestClient
 
-from anonymizer.notebooks.local_inference.gliner2 import MODEL_ID, MODEL_REVISION, server
+from anonymizer.engine.local_inference.gliner2 import MODEL_ID, MODEL_REVISION, server
 
 
 def test_main_serves_an_inherited_listener(monkeypatch: pytest.MonkeyPatch) -> None:

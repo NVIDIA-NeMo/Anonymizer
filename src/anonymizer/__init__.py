@@ -41,7 +41,13 @@ if TYPE_CHECKING:
         NativeGliner as NativeGliner,
     )
     from anonymizer.interface.factory import (
+        NativeRuntimeSession as NativeRuntimeSession,
+    )
+    from anonymizer.interface.factory import (
         create_anonymizer as create_anonymizer,
+    )
+    from anonymizer.interface.factory import (
+        native_runtime as native_runtime,
     )
 
 # Export as an immutable public constant so callers can inspect defaults
@@ -54,7 +60,7 @@ def __getattr__(name: str) -> object:
         from anonymizer.interface.anonymizer import Anonymizer
 
         return Anonymizer
-    if name in {"GlinerEndpoint", "NativeGliner", "create_anonymizer"}:
+    if name in {"GlinerEndpoint", "NativeGliner", "NativeRuntimeSession", "create_anonymizer", "native_runtime"}:
         from anonymizer.interface import factory
 
         return getattr(factory, name)
@@ -78,6 +84,7 @@ __all__ = [
     "LoggingConfig",
     "ModelProvider",
     "NativeGliner",
+    "NativeRuntimeSession",
     "PrivacyGoal",
     "Redact",
     "Rewrite",
@@ -88,4 +95,5 @@ __all__ = [
     "TextRecordsInput",
     "configure_logging",
     "create_anonymizer",
+    "native_runtime",
 ]

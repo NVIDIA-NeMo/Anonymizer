@@ -10,7 +10,7 @@ from unittest.mock import Mock, patch
 
 import pytest
 
-from anonymizer.notebooks import _runtime
+from anonymizer.engine.local_inference import runtime as _runtime
 
 
 def test_isolated_server_environment_requires_gliner2_local_extra() -> None:
@@ -56,9 +56,9 @@ def test_start_runtime_passes_reserved_listener_to_child(tmp_path: Path) -> None
     process.poll.return_value = 0
 
     with (
-        patch("anonymizer.notebooks._runtime._ensure_server_environment", return_value=tmp_path),
-        patch("anonymizer.notebooks._runtime._reserve_listener", return_value=listener),
-        patch("anonymizer.notebooks._runtime.subprocess.Popen", return_value=process) as popen,
+        patch("anonymizer.engine.local_inference.runtime._ensure_server_environment", return_value=tmp_path),
+        patch("anonymizer.engine.local_inference.runtime._reserve_listener", return_value=listener),
+        patch("anonymizer.engine.local_inference.runtime.subprocess.Popen", return_value=process) as popen,
     ):
         runtime = _runtime._start_runtime("cpu")
 
@@ -68,58 +68,6 @@ def test_start_runtime_passes_reserved_listener_to_child(tmp_path: Path) -> None
     assert listener.fileno() == -1
     assert runtime.endpoint.startswith("http://127.0.0.1:")
     _runtime._restore_token_environment()
-
-
-def test_create_anonymizer_uses_runtime_endpoint() -> None:
-    runtime = _runtime._LocalRuntime(
-        process=Mock(),
-        endpoint="http://127.0.0.1:1234/v1",
-        requested_device="cpu",
-        selected_device="cpu",
-        token="generated-token",
-    )
-    configuration = Mock(model_configs="models", model_providers=[])
-    anonymizer = Mock()
-
-    with (
-        patch("anonymizer.notebooks._runtime._validate_gliner_model_inputs"),
-        patch("anonymizer.notebooks._runtime._ensure_runtime", return_value=runtime),
-        patch(
-            "anonymizer.notebooks._runtime._build_gliner_model_configuration",
-            return_value=configuration,
-        ) as build_configuration,
-        patch("anonymizer.notebooks._runtime._new_anonymizer", return_value=anonymizer),
-    ):
-        result = _runtime._create_native_anonymizer(
-            request=_runtime.NativeGliner(device="cpu"),
-            model_configs=None,
-            model_providers=None,
-            artifact_path=None,
-            data_designer_run_config=None,
-        )
-
-    assert result is anonymizer
-    build_configuration.assert_called_once_with(
-        model_configs=None,
-        model_providers=None,
-        extra_body={"chunk_length": 128, "overlap": 32},
-        endpoint=_runtime.GlinerEndpoint(
-            url=runtime.endpoint,
-            model=_runtime.MODEL_ID,
-            api_key_env=_runtime.LOCAL_TOKEN_ENV,
-        ),
-    )
-
-
-def test_create_anonymizer_is_compatibility_wrapper_for_public_native_request() -> None:
-    expected = Mock()
-    with patch("anonymizer.interface.factory.create_anonymizer", return_value=expected) as public_factory:
-        result = _runtime.create_anonymizer(gliner_device="cpu")
-
-    assert result is expected
-    public_factory.assert_called_once()
-    request = public_factory.call_args.kwargs["gliner"]
-    assert request.device == "cpu"
 
 
 def test_stop_local_runtime_is_idempotent() -> None:
@@ -203,8 +151,8 @@ def test_interrupted_startup_stops_candidate_and_restores_token(monkeypatch: pyt
         return candidate
 
     with (
-        patch("anonymizer.notebooks._runtime._start_runtime", side_effect=start_runtime),
-        patch("anonymizer.notebooks._runtime._wait_until_ready", side_effect=KeyboardInterrupt),
+        patch("anonymizer.engine.local_inference.runtime._start_runtime", side_effect=start_runtime),
+        patch("anonymizer.engine.local_inference.runtime._wait_until_ready", side_effect=KeyboardInterrupt),
         pytest.raises(KeyboardInterrupt),
     ):
         _runtime._ensure_runtime("auto")
@@ -226,7 +174,69 @@ def test_read_metadata_rejects_wrong_revision() -> None:
     response = Mock()
     response.json.return_value = {"data": [{"id": _runtime.MODEL_ID, "revision": "moving-head", "device": "cpu"}]}
     with (
-        patch("anonymizer.notebooks._runtime.httpx.get", return_value=response),
+        patch("anonymizer.engine.local_inference.runtime.httpx.get", return_value=response),
         pytest.raises(ValueError, match="pinned"),
     ):
         _runtime._read_metadata(runtime)
+
+
+def test_scoped_runtime_owns_process_until_last_context(monkeypatch: pytest.MonkeyPatch) -> None:
+    _runtime.stop_local_runtime()
+    monkeypatch.setenv(_runtime.LOCAL_TOKEN_ENV, "original")
+    process = Mock()
+    process.poll.return_value = None
+    candidate = _runtime._LocalRuntime(process, "http://127.0.0.1:1234/v1", "cpu", "cpu", "token")
+
+    def start(_: str) -> _runtime._LocalRuntime:
+        _runtime._set_token_environment(candidate.token)
+        return candidate
+
+    with (
+        patch.object(_runtime, "_start_runtime", side_effect=start),
+        patch.object(_runtime, "_wait_until_ready"),
+        patch.object(_runtime, "_verify_readiness"),
+    ):
+        with _runtime.runtime_context("cpu") as outer:
+            with _runtime.runtime_context("cpu") as inner:
+                assert outer is inner
+                with pytest.raises(RuntimeError, match="session"):
+                    with _runtime.singleton_runtime("cpu"):
+                        pass
+                with pytest.raises(RuntimeError, match="context"):
+                    _runtime.stop_local_runtime()
+            process.terminate.assert_not_called()
+        process.terminate.assert_called_once()
+    assert _runtime.os.environ[_runtime.LOCAL_TOKEN_ENV] == "original"
+
+
+def test_scoped_runtime_borrows_existing_singleton() -> None:
+    _runtime.stop_local_runtime()
+    process = Mock()
+    process.poll.return_value = None
+    candidate = _runtime._LocalRuntime(process, "http://127.0.0.1:1234/v1", "cpu", "cpu", "token")
+    _runtime._runtime = candidate
+    try:
+        with patch.object(_runtime, "_verify_readiness"):
+            with _runtime.runtime_context("cpu") as runtime:
+                assert runtime is candidate
+                with pytest.raises(RuntimeError, match="context"):
+                    with _runtime.runtime_context("cuda"):
+                        pass
+        process.terminate.assert_not_called()
+    finally:
+        _runtime.stop_local_runtime()
+
+
+def test_start_failure_restores_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
+    _runtime.stop_local_runtime()
+    monkeypatch.setenv(_runtime.LOCAL_TOKEN_ENV, "original")
+
+    def fail_start(_: str) -> _runtime._LocalRuntime:
+        _runtime._set_token_environment("temporary")
+        raise OSError("startup failed")
+
+    with patch.object(_runtime, "_start_runtime", side_effect=fail_start), pytest.raises(OSError, match="startup"):
+        with _runtime.runtime_context("cpu"):
+            pass
+    assert _runtime.os.environ[_runtime.LOCAL_TOKEN_ENV] == "original"
+    assert _runtime._runtime is None

@@ -15,23 +15,16 @@ from data_designer.config.models import ModelProvider
 from pydantic import ValidationError
 
 import anonymizer
-from anonymizer.engine.ndd.model_loader import parse_model_configs
 
 
 def test_external_endpoint_preserves_bundled_generation_providers() -> None:
-    with patch("anonymizer.interface.factory._new_anonymizer", return_value=Mock()) as constructor:
-        anonymizer.create_anonymizer(
-            gliner=anonymizer.GlinerEndpoint(
-                url="http://127.0.0.1:43210/v1", model="org/gliner-served", api_key_env=None
-            )
-        )
-
-    arguments = constructor.call_args.kwargs
-    parsed = parse_model_configs(arguments["model_configs"])
-    assert parsed.selected_models.detection.entity_detector == "anonymizer-gliner-detector"
-    assert any(provider.name == "openrouter" for provider in arguments["model_providers"])
+    client = anonymizer.create_anonymizer(
+        gliner=anonymizer.GlinerEndpoint(url="http://127.0.0.1:43210/v1", model="org/gliner-served", api_key_env=None)
+    )
+    assert client._selected_models.detection.entity_detector == "anonymizer-gliner-detector"
+    assert any(provider.name == "openrouter" for provider in client._resolved_providers)
     injected = next(
-        provider for provider in arguments["model_providers"] if provider.name == "anonymizer-gliner-endpoint"
+        provider for provider in client._resolved_providers if provider.name == "anonymizer-gliner-endpoint"
     )
     assert injected.endpoint == "http://127.0.0.1:43210/v1"
 
@@ -80,33 +73,24 @@ def test_external_endpoint_injects_detector_and_preserves_other_configuration() 
         }
     )
     provider = ModelProvider(name="custom", endpoint="https://example.test/v1", api_key="CUSTOM_KEY")
-    constructed = Mock()
-
-    with patch("anonymizer.interface.factory._new_anonymizer", return_value=constructed) as constructor:
-        result = create_anonymizer(
-            gliner=GlinerEndpoint(
-                url="https://gliner.example.test/v1",
-                model="org/gliner-served",
-                api_key_env="GLINER_TOKEN",
-            ),
-            model_configs=source,
-            model_providers=[provider],
-        )
-
-    assert result is constructed
-    arguments = constructor.call_args.kwargs
-    parsed = parse_model_configs(arguments["model_configs"])
-    injected = next(config for config in parsed.model_configs if config.alias == "anonymizer-gliner-detector")
+    result = create_anonymizer(
+        gliner=GlinerEndpoint(
+            url="https://gliner.example.test/v1", model="org/gliner-served", api_key_env="GLINER_TOKEN"
+        ),
+        model_configs=source,
+        model_providers=[provider],
+    )
+    injected = next(config for config in result._model_configs if config.alias == "anonymizer-gliner-detector")
     assert injected.model == "org/gliner-served"
     assert injected.provider == "anonymizer-gliner-endpoint"
     assert injected.skip_health_check is True
-    assert next(config for config in parsed.model_configs if config.alias == "custom-llm").model == "test/llm"
-    assert parsed.selected_models.detection.entity_detector == "anonymizer-gliner-detector"
-    assert parsed.selected_models.detection.entity_validator == ["custom-llm"]
-    assert parsed.selected_models.detection.entity_augmenter == "custom-llm"
-    assert parsed.selected_models.replace.replacement_generator == "custom-llm"
-    assert arguments["model_providers"][0] is provider
-    endpoint_provider = arguments["model_providers"][-1]
+    assert next(config for config in result._model_configs if config.alias == "custom-llm").model == "test/llm"
+    assert result._selected_models.detection.entity_detector == "anonymizer-gliner-detector"
+    assert result._selected_models.detection.entity_validator == ["custom-llm"]
+    assert result._selected_models.detection.entity_augmenter == "custom-llm"
+    assert result._selected_models.replace.replacement_generator == "custom-llm"
+    assert result._resolved_providers[0] is provider
+    endpoint_provider = result._resolved_providers[-1]
     assert endpoint_provider.name == "anonymizer-gliner-endpoint"
     assert endpoint_provider.endpoint == "https://gliner.example.test/v1"
     assert endpoint_provider.api_key == "GLINER_TOKEN"
@@ -135,24 +119,6 @@ def test_external_endpoint_rejects_reserved_name_collisions(collision: str) -> N
             model_configs=model_configs,
             model_providers=providers,
         )
-
-
-def test_native_request_delegates_to_owned_runtime() -> None:
-    NativeGliner = anonymizer.NativeGliner
-    create_anonymizer = anonymizer.create_anonymizer
-    expected = Mock()
-    request = NativeGliner(device="cpu")
-    with patch("anonymizer.notebooks._runtime._create_native_anonymizer", return_value=expected) as native:
-        result = create_anonymizer(gliner=request)
-
-    assert result is expected
-    native.assert_called_once_with(
-        request=request,
-        model_configs=None,
-        model_providers=None,
-        artifact_path=None,
-        data_designer_run_config=None,
-    )
 
 
 def test_external_endpoint_does_not_import_or_control_native_runtime() -> None:
@@ -207,7 +173,7 @@ def is_forbidden(name):
 assert all(is_forbidden(module) for module in forbidden)
 loaded = sorted(name for name in sys.modules if is_forbidden(name))
 assert not loaded, loaded
-assert 'anonymizer.notebooks._runtime' not in sys.modules
+assert 'anonymizer.engine.local_inference.runtime' not in sys.modules
 assert __import__('anonymizer').__file__.startswith({str(installed)!r})
 """
     completed = subprocess.run(
@@ -221,7 +187,7 @@ assert __import__('anonymizer').__file__.startswith({str(installed)!r})
 
 
 def test_native_factory_preserves_word_chunk_defaults(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    from anonymizer.notebooks import _runtime
+    from anonymizer.engine.local_inference import runtime as _runtime
 
     runtime = _runtime._LocalRuntime(
         process=Mock(),
@@ -230,9 +196,69 @@ def test_native_factory_preserves_word_chunk_defaults(tmp_path: Path, monkeypatc
         selected_device="cpu",
         token="token",
     )
-    monkeypatch.setattr(_runtime, "_ensure_runtime", lambda _device: runtime)
+    from contextlib import nullcontext
+
+    monkeypatch.setattr(_runtime, "singleton_runtime", lambda _device: nullcontext(runtime))
     client = anonymizer.create_anonymizer(gliner=anonymizer.NativeGliner(device="cpu"), artifact_path=tmp_path)
     detector = next(
         model for model in client._model_configs if model.alias == client._selected_models.detection.entity_detector
     )
     assert detector.inference_parameters.extra_body == {"chunk_length": 128, "overlap": 32}
+
+
+def test_session_builds_real_client_and_preserves_configuration(tmp_path: Path) -> None:
+    from anonymizer.engine.local_inference import runtime as controller
+
+    process = Mock()
+    process.poll.return_value = None
+    candidate = controller._LocalRuntime(process, "http://127.0.0.1:1234/v1", "cpu", "cpu", "token")
+    provider = ModelProvider(name="custom", endpoint="https://example.test/v1", api_key="CUSTOM_KEY")
+    source = json.dumps({"model_configs": [{"alias": "custom-llm", "model": "test/llm", "provider": "custom"}]})
+    with (
+        patch.object(controller, "_start_runtime", return_value=candidate),
+        patch.object(controller, "_wait_until_ready"),
+        anonymizer.native_runtime(device="cpu") as session,
+    ):
+        client = session.create_anonymizer(model_configs=source, model_providers=[provider], artifact_path=tmp_path)
+        assert session.endpoint.url == candidate.endpoint
+        assert client._selected_models.detection.entity_detector == "anonymizer-gliner-detector"
+        assert any(item.alias == "custom-llm" for item in client._model_configs)
+        assert client._resolved_providers[0] is provider
+        assert client._resolved_providers[-1].endpoint == candidate.endpoint
+        detector = next(item for item in client._model_configs if item.alias == "anonymizer-gliner-detector")
+        assert detector.inference_parameters.extra_body == {"chunk_length": 128, "overlap": 32}
+        process.terminate.assert_not_called()
+    process.terminate.assert_called_once()
+
+
+def test_session_cleans_up_when_client_construction_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+    from anonymizer.engine.local_inference import runtime as controller
+
+    monkeypatch.setenv(controller.LOCAL_TOKEN_ENV, "original")
+    process = Mock()
+    process.poll.return_value = None
+    candidate = controller._LocalRuntime(process, "http://127.0.0.1:1234/v1", "cpu", "cpu", "token")
+
+    def start(_: str) -> controller._LocalRuntime:
+        controller._set_token_environment("token")
+        return candidate
+
+    with (
+        patch.object(controller, "_start_runtime", side_effect=start),
+        patch.object(controller, "_wait_until_ready"),
+        pytest.raises(ValueError, match="reserved"),
+        anonymizer.native_runtime(device="cpu") as session,
+    ):
+        session.create_anonymizer(
+            model_providers=[ModelProvider(name="anonymizer-gliner-endpoint", endpoint="https://example.test")]
+        )
+    process.terminate.assert_called_once()
+    assert controller.os.environ[controller.LOCAL_TOKEN_ENV] == "original"
+
+
+def test_notebook_factory_remains_a_native_singleton_wrapper() -> None:
+    from anonymizer.notebooks import _runtime
+
+    with patch.object(_runtime, "create_public_anonymizer", return_value=Mock()) as factory:
+        _runtime.create_anonymizer(gliner_device="cpu")
+    assert factory.call_args.kwargs["gliner"] == anonymizer.NativeGliner(device="cpu")
