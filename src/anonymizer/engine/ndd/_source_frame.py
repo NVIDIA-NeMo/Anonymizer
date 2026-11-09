@@ -138,6 +138,7 @@ class WorkflowSourceFrame:
         load = storage.load_dataset
         write_metadata = storage.write_metadata
         batches: dict[str, tuple[str, ...]] = {}
+        source_keys = frozenset(self.keys)
 
         def write_file(
             parquet_file_name: str,
@@ -150,7 +151,7 @@ class WorkflowSourceFrame:
                 if subfolder or list(dataframe.columns).count(self.key_column) != 1:
                     raise AnonymizerWorkflowError("Workflow storage has no source correspondence")
                 keys = tuple(dataframe[self.key_column])
-                if any(type(key) is not str or key not in self.keys for key in keys) or len(set(keys)) != len(keys):
+                if any(type(key) is not str or key not in source_keys for key in keys) or len(set(keys)) != len(keys):
                     raise AnonymizerWorkflowError("Workflow storage has invalid source correspondence")
                 batches[parquet_file_name] = keys
             return write(
@@ -175,7 +176,7 @@ class WorkflowSourceFrame:
             return dataframe
 
         def public_metadata(metadata: dict[str, Any]) -> Any:
-            # DD 0.9.4 persists seed-column statistics alongside the public dataset.
+            # DataDesigner persists seed-column statistics alongside the public dataset.
             if "column_statistics" in metadata:
                 metadata = {
                     **metadata,
